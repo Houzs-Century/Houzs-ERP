@@ -93,11 +93,11 @@ export function EditProjectSheet({
 
   const fieldStyle: React.CSSProperties = {
     width: "100%", boxSizing: "border-box", fontSize: 13, padding: "9px 10px", borderRadius: 9,
-    border: "1px solid var(--line)", background: "#fff", color: "var(--ink)", fontFamily: "inherit",
+    border: "1px solid var(--line)", background: "var(--hz-c-surface)", color: "var(--ink)", fontFamily: "inherit",
   };
   const labelStyle: React.CSSProperties = {
     fontSize: 9.5, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase",
-    color: "#767b6e", marginBottom: 4, display: "block",
+    color: "var(--hz-c-ink-muted)", marginBottom: 4, display: "block",
   };
   const disabled = saving || busy;
 
@@ -119,7 +119,7 @@ export function EditProjectSheet({
             <div>
               <label style={labelStyle}>Event name</label>
               <input style={fieldStyle} value={name} onChange={(e) => setName(e.target.value)} placeholder="Event name" aria-label="Event name" />
-              {nameBlank && <div style={{ fontSize: 11.5, color: "#b23a3a", marginTop: 3 }}>The event name can't be blank.</div>}
+              {nameBlank && <div style={{ fontSize: 11.5, color: "var(--hz-c-err)", marginTop: 3 }}>The event name can't be blank.</div>}
             </div>
           )}
           <div>
@@ -146,7 +146,7 @@ export function EditProjectSheet({
               <DateField value={endDate} onChange={setEndDate} style={fieldStyle} aria-label="End date" />
             </div>
           </div>
-          {dateInvalid && <div style={{ fontSize: 11.5, color: "#b23a3a" }}>End date must be on or after the start date.</div>}
+          {dateInvalid && <div style={{ fontSize: 11.5, color: "var(--hz-c-err)" }}>End date must be on or after the start date.</div>}
         </div>
         <div className="sheet-foot">
           <button className="tinybtn" style={{ flex: 1 }} onClick={onClose} disabled={disabled}>Cancel</button>

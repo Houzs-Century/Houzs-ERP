@@ -119,7 +119,7 @@ export function PosTerminalsTab() {
               <td className={cn(td, "text-[10.5px]")}>{t.prepared_at ? formatDateTime(t.prepared_at) : <Pill tone="warn">NOT YET</Pill>}</td>
               <td className={cn(td, "text-[10.5px] text-ink-muted")}>{t.last_seen_at ? formatDateTime(t.last_seen_at) : "--"}</td>
               <td className={cn(td, "text-[10.5px] text-ink-muted")}>{t.last_sync_at ? formatDateTime(t.last_sync_at) : "--"}</td>
-              <td className={cn(td, "text-right font-mono", t.pending_count > 0 && "font-semibold text-amber-800")}>{t.pending_count}{t.pending_count > 0 && <div className="text-[9.5px]">{fmtSen(t.pending_amount_sen)}</div>}</td>
+              <td className={cn(td, "text-right font-mono", t.pending_count > 0 && "font-semibold text-amber-800 dark:text-amber-300")}>{t.pending_count}{t.pending_count > 0 && <div className="text-[9.5px]">{fmtSen(t.pending_amount_sen)}</div>}</td>
               <td className={cn(td, "font-mono text-[10px]")}>{t.app_version ?? "--"}</td>
               <td className={td}>{t.active ? <Pill tone={t.prepared_at ? "ok" : "muted"}>{t.status}</Pill> : <Pill tone="bad">INACTIVE</Pill>}</td>
               <td className={cn(td, "whitespace-nowrap")}>{t.active ? <><button type="button" className={primaryBtn} disabled={t.project_id == null} title={t.project_id == null ? "Set the event first" : "Show a one-time code for the device"} onClick={() => void pairDevice(t)}>Pair device</button>{" "}<button type="button" className={ghostBtn} onClick={() => void deactivate(t)}>Deactivate</button></> : <button type="button" className={ghostBtn} onClick={() => void patch(t, { active: true }, `${t.code} reactivated`)}>Reactivate</button>}</td>

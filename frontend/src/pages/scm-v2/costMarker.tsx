@@ -13,7 +13,7 @@ export const costMarker = (state?: MfgProductRow['costAnchorState']) => {
   if (state === 'conflict') return dot('var(--c-warn, #b76b00)', 'Suppliers differ — took the highest');
   if (state === 'empty') {
     return (
-      <span title="No supplier cost — fix in Binding" style={{ marginLeft: 5, fontSize: '10px', fontWeight: 700, color: 'var(--c-error, #b71c1c)', border: '1px solid var(--c-error, #b71c1c)', borderRadius: 4, padding: '0 4px', verticalAlign: 'middle' }}>Gap</span>
+      <span title="No supplier cost — fix in Binding" style={{ marginLeft: 5, fontSize: '10px', fontWeight: 700, color: 'var(--c-error, var(--hz-dk-err, #b71c1c))', border: '1px solid var(--c-error, #b71c1c)', borderRadius: 4, padding: '0 4px', verticalAlign: 'middle' }}>Gap</span>
     );
   }
   return null;

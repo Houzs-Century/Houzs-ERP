@@ -19,7 +19,7 @@ import {
 
 const btn: CSSProperties = {
   fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 6, cursor: 'pointer',
-  border: '1px solid var(--line-strong, #d1d5db)', background: 'var(--c-paper, #fff)', color: 'var(--c-ink, #111827)',
+  border: '1px solid var(--line-strong, #d1d5db)', background: 'var(--c-paper, var(--hz-c-surface))', color: 'var(--c-ink, #111827)',
 };
 
 const methodLabel = (code: string): string =>

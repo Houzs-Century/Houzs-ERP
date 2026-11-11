@@ -25,14 +25,14 @@ import {
 const blank = (v: string | null) => (v === null ? <span className="italic text-ink-muted">blank</span> : v);
 
 const ERROR_BOX =
-  "whitespace-pre-line rounded-lg border border-[#B71C1C]/35 bg-[#B71C1C]/[0.07] px-3 py-2 text-[12px] text-[#B71C1C]";
+  "whitespace-pre-line rounded-lg border border-[#B71C1C]/35 bg-[#B71C1C]/[0.07] px-3 py-2 text-[12px] text-[color:var(--hz-dk-err,#B71C1C)]";
 
 function Count({ label, value, tone }: { label: string; value: number; tone?: "change" | "reject" }) {
   const cls =
     tone === "change" && value > 0
       ? "border-primary/40 bg-primary-soft text-primary-ink"
       : tone === "reject" && value > 0
-        ? "border-[#B71C1C]/35 bg-[#B71C1C]/[0.07] text-[#B71C1C]"
+        ? "border-[#B71C1C]/35 bg-[#B71C1C]/[0.07] text-[color:var(--hz-dk-err,#B71C1C)]"
         : "border-border bg-surface text-ink";
   return (
     <div className={`rounded-lg border px-3 py-2 ${cls}`}>
@@ -116,7 +116,7 @@ export function PoLineImportPreviewView({
                   <tr key={`${p.docNo}-${p.field}-rej`} className="border-t border-border-subtle" data-status="po-rejected">
                     <td className="px-2.5 py-1.5 font-semibold">{p.docNo}</td>
                     <td className="px-2.5 py-1.5">{poLineImportSpec(p.field).header}</td>
-                    <td colSpan={2} className="px-2.5 py-1.5 text-[#B71C1C]">{p.reason}</td>
+                    <td colSpan={2} className="px-2.5 py-1.5 text-[color:var(--hz-dk-err,#B71C1C)]">{p.reason}</td>
                   </tr>
                 ))}
               </tbody>
@@ -163,7 +163,7 @@ export function PoLineImportPreviewView({
                     return (
                       <tr key={r.rowNumber} className="border-t border-border-subtle" data-status="rejected">
                         {lead(1)}
-                        <td colSpan={3} className="px-2.5 py-1.5 text-[#B71C1C]">Refused: {r.reason}</td>
+                        <td colSpan={3} className="px-2.5 py-1.5 text-[color:var(--hz-dk-err,#B71C1C)]">Refused: {r.reason}</td>
                       </tr>
                     );
                   }

@@ -731,11 +731,11 @@ export function MobileConvertWizard({
           <button onClick={guardedBack} className="back" aria-label="Cancel">
             <span className="chev">{"‹"}</span> Cancel
           </button>
-          <span style={{ fontSize: 11, color: "#767b6e" }}>Step {step} of 2 · {stepLabel}</span>
+          <span style={{ fontSize: 11, color: "var(--hz-c-ink-muted)" }}>Step {step} of 2 · {stepLabel}</span>
         </div>
-        <div className="ey" style={{ color: "#a16a2e", marginTop: 6 }}>{meta.eyebrow}</div>
+        <div className="ey" style={{ color: "var(--hz-c-accent)", marginTop: 6 }}>{meta.eyebrow}</div>
         <div className="scr-title" style={{ marginTop: 2 }}>{meta.transferTitle}</div>
-        <div className="tnum" style={{ fontSize: 11.5, color: "#767b6e", marginTop: 3 }}>
+        <div className="tnum" style={{ fontSize: 11.5, color: "var(--hz-c-ink-muted)", marginTop: 3 }}>
           {/* Spec sub-line: "From {{source_doc_no}}" once a source is chosen;
               before that, the invitation to pick one. The invitation is SINGULAR
               even where the picker takes several sources — it names the source
@@ -831,13 +831,13 @@ export function MobileConvertWizard({
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 9 }}>
             {meta.hasLinePicker ? (
               <>
-                <span style={{ fontSize: 11.5, color: "#767b6e" }}>{picks.length} {picks.length === 1 ? "line" : "lines"}</span>
-                <span className="money" style={{ fontSize: 17, fontWeight: 800, color: "#0c3f39" }}>{fmtSen(pickedTotalSen)}</span>
+                <span style={{ fontSize: 11.5, color: "var(--hz-c-ink-muted)" }}>{picks.length} {picks.length === 1 ? "line" : "lines"}</span>
+                <span className="money" style={{ fontSize: 17, fontWeight: 800, color: "var(--hz-c-primary-ink)" }}>{fmtSen(pickedTotalSen)}</span>
               </>
             ) : (
               <>
-                <span style={{ fontSize: 11.5, color: "#767b6e" }}>{grnPicks.length} {grnPicks.length === 1 ? "line" : "lines"}</span>
-                <span className="money" style={{ fontSize: 17, fontWeight: 800, color: "#0c3f39" }}>{fmtSen(grnPickedTotalSen)}</span>
+                <span style={{ fontSize: 11.5, color: "var(--hz-c-ink-muted)" }}>{grnPicks.length} {grnPicks.length === 1 ? "line" : "lines"}</span>
+                <span className="money" style={{ fontSize: 17, fontWeight: 800, color: "var(--hz-c-primary-ink)" }}>{fmtSen(grnPickedTotalSen)}</span>
               </>
             )}
           </div>
@@ -883,7 +883,7 @@ function SourceStep({
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
         {supplierFilter && selectedPoIds.length > 0 && (
-          <div style={{ fontSize: 11, color: "#a16a2e", padding: "0 2px" }}>
+          <div style={{ fontSize: 11, color: "var(--hz-c-accent)", padding: "0 2px" }}>
             One supplier per Goods Receipt — tap more of this supplier's POs to combine.
           </div>
         )}
@@ -895,17 +895,17 @@ function SourceStep({
                 <span className="so-row-name" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                   {str(r.supplier?.name) || str(r.po_number)}
                 </span>
-                <span className="spill" style={{ background: on ? "#e1efed" : "#f4f6f3", color: on ? "#0c3f39" : "#767b6e", border: on ? "none" : "1px solid #e3e6e0", flex: "none" }}>
+                <span className="spill" style={{ background: on ? "var(--hz-c-primary-soft)" : "var(--hz-c-surface-2)", color: on ? "var(--hz-c-primary-ink)" : "var(--hz-c-ink-muted)", border: on ? "none" : "1px solid var(--hz-c-border-subtle)", flex: "none" }}>
                   {on ? "Selected" : str(r.status) || "—"}
                 </span>
               </div>
               <div className="so-grid">
                 <span className="so-k">Order</span>
-                <span className="so-v money" style={{ fontWeight: 700, color: "#0c3f39" }}>{str(r.po_number) || "—"}</span>
+                <span className="so-v money" style={{ fontWeight: 700, color: "var(--hz-c-primary-ink)" }}>{str(r.po_number) || "—"}</span>
                 <span className="so-k">Date</span>
                 <span className="so-v">{dm(r.po_date)}</span>
                 <span className="so-k">Total</span>
-                <span className="so-v money" style={{ fontSize: 14, fontWeight: 800, color: "#11140f" }}>{fmtSen(r.total_sen)}</span>
+                <span className="so-v money" style={{ fontSize: 14, fontWeight: 800, color: "var(--hz-c-ink)" }}>{fmtSen(r.total_sen)}</span>
               </div>
               {on && <Check />}
             </div>
@@ -932,16 +932,16 @@ function SourceStep({
                 {str(r.debtor_name) || docNo}
               </span>
               {r.status && (
-                <span className="spill" style={{ background: "#f4f6f3", color: "#767b6e", border: "1px solid #e3e6e0", flex: "none" }}>{str(r.status)}</span>
+                <span className="spill" style={{ background: "var(--hz-c-surface-2)", color: "var(--hz-c-ink-muted)", border: "1px solid var(--hz-c-border-subtle)", flex: "none" }}>{str(r.status)}</span>
               )}
             </div>
             <div className="so-grid">
               <span className="so-k">{kind === "so" ? "Order" : "Delivery"}</span>
-              <span className="so-v money" style={{ fontWeight: 700, color: "#0c3f39" }}>{docNo || "—"}</span>
+              <span className="so-v money" style={{ fontWeight: 700, color: "var(--hz-c-primary-ink)" }}>{docNo || "—"}</span>
               <span className="so-k">Date</span>
               <span className="so-v">{dm(date)}</span>
               <span className="so-k">Total</span>
-              <span className="so-v money" style={{ fontSize: 14, fontWeight: 800, color: "#11140f" }}>{fmtSen(totalC)}</span>
+              <span className="so-v money" style={{ fontSize: 14, fontWeight: 800, color: "var(--hz-c-ink)" }}>{fmtSen(totalC)}</span>
             </div>
           </div>
         );
@@ -1005,19 +1005,19 @@ function LinesStep({
                   style={{ marginTop: 2, width: 16, height: 16, flex: "none", accentColor: "#16695f" }}
                 />
                 <span style={{ minWidth: 0, flex: 1 }}>
-                  <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: "#11140f", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{l.label}</span>
+                  <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: "var(--hz-c-ink)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{l.label}</span>
                   {/* Owner rule 2026-08-19 — the variant summary, so three sofa
                       modules under one model name are three DIFFERENT rows on
                       the phone too. Wraps (no ellipsis): a truncated
                       "BF-01 / SEAT 24 / LEG …" is the same ambiguity again. */}
                   {l.variantLine && (
-                    <span style={{ display: "block", marginTop: 2, fontSize: 11, color: "#767b6e" }}><span>{DESCRIPTION_2_LABEL}: </span><span>{l.variantLine}</span></span>
+                    <span style={{ display: "block", marginTop: 2, fontSize: 11, color: "var(--hz-c-ink-muted)" }}><span>{DESCRIPTION_2_LABEL}: </span><span>{l.variantLine}</span></span>
                   )}
                   {l.notReadyReason && (
-                    <span style={{ display: "block", marginTop: 3, fontSize: 11, fontWeight: 600, color: "#a16a2e" }}>Not ready: {l.notReadyReason}</span>
+                    <span style={{ display: "block", marginTop: 3, fontSize: 11, fontWeight: 600, color: "var(--hz-c-accent)" }}>Not ready: {l.notReadyReason}</span>
                   )}
                   {/* Spec #convert meta: "Outstanding ×{outstanding} of {qty}". */}
-                  <span className="tnum" style={{ display: "block", marginTop: 3, fontSize: 11, color: "#767b6e" }}>
+                  <span className="tnum" style={{ display: "block", marginTop: 3, fontSize: 11, color: "var(--hz-c-ink-muted)" }}>
                     Outstanding ×{l.remaining} of {ofQty} · {fmtSen(l.unitPriceSen)} each
                   </span>
                 </span>
@@ -1025,13 +1025,13 @@ function LinesStep({
               {l.checked && (
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginTop: 9, paddingTop: 9, borderTop: "1px solid #eceee9" }}>
                   {/* Spec stepper: − {convert_qty} + , clamped 1..remaining. */}
-                  <div style={{ display: "inline-flex", alignItems: "center", border: "1px solid #d6d9d2", borderRadius: 8 }}>
+                  <div style={{ display: "inline-flex", alignItems: "center", border: "1px solid var(--hz-c-border)", borderRadius: 8 }}>
                     <button
                       type="button"
                       aria-label="Decrease quantity"
                       onClick={dec}
                       disabled={qtyNum <= 1}
-                      style={{ width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", color: qtyNum <= 1 ? "#c2c6bd" : "#16695f", background: "none", border: "none", fontFamily: "inherit", fontSize: 17, cursor: qtyNum <= 1 ? "default" : "pointer" }}
+                      style={{ width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", color: qtyNum <= 1 ? "#c2c6bd" : "var(--hz-c-primary)", background: "none", border: "none", fontFamily: "inherit", fontSize: 17, cursor: qtyNum <= 1 ? "default" : "pointer" }}
                     >
                       −
                     </button>
@@ -1042,19 +1042,19 @@ function LinesStep({
                       onChange={(e) => onSetLine(l.lineId, { qty: e.target.value })}
                       onBlur={() => onSetLine(l.lineId, { qty: String(clampQty(l.qty, l.remaining)) })}
                       aria-label="Quantity to convert"
-                      style={{ width: 40, height: 30, textAlign: "center", border: "none", borderLeft: "1px solid #eceee9", borderRight: "1px solid #eceee9", background: "none", outline: "none", fontFamily: "inherit", fontSize: 13, fontWeight: 700, color: "#11140f" }}
+                      style={{ width: 40, height: 30, textAlign: "center", border: "none", borderLeft: "1px solid #eceee9", borderRight: "1px solid #eceee9", background: "none", outline: "none", fontFamily: "inherit", fontSize: 13, fontWeight: 700, color: "var(--hz-c-ink)" }}
                     />
                     <button
                       type="button"
                       aria-label="Increase quantity"
                       onClick={inc}
                       disabled={qtyNum >= l.remaining}
-                      style={{ width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", color: qtyNum >= l.remaining ? "#c2c6bd" : "#16695f", background: "none", border: "none", fontFamily: "inherit", fontSize: 17, cursor: qtyNum >= l.remaining ? "default" : "pointer" }}
+                      style={{ width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", color: qtyNum >= l.remaining ? "#c2c6bd" : "var(--hz-c-primary)", background: "none", border: "none", fontFamily: "inherit", fontSize: 17, cursor: qtyNum >= l.remaining ? "default" : "pointer" }}
                     >
                       +
                     </button>
                   </div>
-                  <span className="tnum" style={{ fontSize: 13, fontWeight: 800, color: "#0c3f39" }}>{fmtSen(pickLineValueSen(l, qtyNum))}</span>
+                  <span className="tnum" style={{ fontSize: 13, fontWeight: 800, color: "var(--hz-c-primary-ink)" }}>{fmtSen(pickLineValueSen(l, qtyNum))}</span>
                 </div>
               )}
             </div>
@@ -1106,7 +1106,7 @@ function GrnLinesStep({
   return (
     <>
       <ChangeSource onClick={onChangeSource} label="Change selection" />
-      <div style={{ fontSize: 11, color: "#a16a2e", padding: "0 2px 10px" }}>
+      <div style={{ fontSize: 11, color: "var(--hz-c-accent)", padding: "0 2px 10px" }}>
         Set the quantity received per line. This creates a DRAFT Goods Receipt — review it and post it from the receipt to move stock (nothing is received yet).
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
@@ -1126,34 +1126,34 @@ function GrnLinesStep({
                   style={{ marginTop: 2, width: 16, height: 16, flex: "none", accentColor: "#16695f" }}
                 />
                 <span style={{ minWidth: 0, flex: 1 }}>
-                  <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: "#11140f", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{l.description || l.itemCode}</span>
+                  <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: "var(--hz-c-ink)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{l.description || l.itemCode}</span>
                   {/* Owner rule 2026-08-19 — RECEIVING is where getting the
                       module wrong costs the most: the stock lands under a code
                       whose variants nobody checked. GrnPickLine already carried
                       itemGroup + variants (they are needed to CREATE the GRN
                       line); only the render was missing them. */}
                   {variantLine && (
-                    <span style={{ display: "block", marginTop: 2, fontSize: 11, color: "#767b6e" }}><span>{DESCRIPTION_2_LABEL}: </span><span>{variantLine}</span></span>
+                    <span style={{ display: "block", marginTop: 2, fontSize: 11, color: "var(--hz-c-ink-muted)" }}><span>{DESCRIPTION_2_LABEL}: </span><span>{variantLine}</span></span>
                   )}
                   {l.supplierSku && (
-                    <span style={{ display: "block", marginTop: 2, fontSize: 11, fontWeight: 600, color: "#767b6e", fontFamily: "var(--font-mono, monospace)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    <span style={{ display: "block", marginTop: 2, fontSize: 11, fontWeight: 600, color: "var(--hz-c-ink-muted)", fontFamily: "var(--font-mono, monospace)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                       Supplier SKU: {l.supplierSku}
                     </span>
                   )}
-                  <span className="tnum" style={{ display: "block", marginTop: 3, fontSize: 11, color: "#767b6e" }}>
+                  <span className="tnum" style={{ display: "block", marginTop: 3, fontSize: 11, color: "var(--hz-c-ink-muted)" }}>
                     Outstanding ×{l.remaining} of {ofQty} · {fmtSen(l.unitPriceSen)} each
                   </span>
                 </span>
               </label>
               {l.checked && (
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginTop: 9, paddingTop: 9, borderTop: "1px solid #eceee9" }}>
-                  <div style={{ display: "inline-flex", alignItems: "center", border: "1px solid #d6d9d2", borderRadius: 8 }}>
+                  <div style={{ display: "inline-flex", alignItems: "center", border: "1px solid var(--hz-c-border)", borderRadius: 8 }}>
                     <button
                       type="button"
                       aria-label="Decrease quantity"
                       onClick={dec}
                       disabled={qtyNum <= 1}
-                      style={{ width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", color: qtyNum <= 1 ? "#c2c6bd" : "#16695f", background: "none", border: "none", fontFamily: "inherit", fontSize: 17, cursor: qtyNum <= 1 ? "default" : "pointer" }}
+                      style={{ width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", color: qtyNum <= 1 ? "#c2c6bd" : "var(--hz-c-primary)", background: "none", border: "none", fontFamily: "inherit", fontSize: 17, cursor: qtyNum <= 1 ? "default" : "pointer" }}
                     >
                       −
                     </button>
@@ -1164,19 +1164,19 @@ function GrnLinesStep({
                       onChange={(e) => onSetLine(l.poItemId, { qty: e.target.value })}
                       onBlur={() => onSetLine(l.poItemId, { qty: String(clampQty(l.qty, l.remaining)) })}
                       aria-label="Quantity received"
-                      style={{ width: 40, height: 30, textAlign: "center", border: "none", borderLeft: "1px solid #eceee9", borderRight: "1px solid #eceee9", background: "none", outline: "none", fontFamily: "inherit", fontSize: 13, fontWeight: 700, color: "#11140f" }}
+                      style={{ width: 40, height: 30, textAlign: "center", border: "none", borderLeft: "1px solid #eceee9", borderRight: "1px solid #eceee9", background: "none", outline: "none", fontFamily: "inherit", fontSize: 13, fontWeight: 700, color: "var(--hz-c-ink)" }}
                     />
                     <button
                       type="button"
                       aria-label="Increase quantity"
                       onClick={inc}
                       disabled={qtyNum >= l.remaining}
-                      style={{ width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", color: qtyNum >= l.remaining ? "#c2c6bd" : "#16695f", background: "none", border: "none", fontFamily: "inherit", fontSize: 17, cursor: qtyNum >= l.remaining ? "default" : "pointer" }}
+                      style={{ width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", color: qtyNum >= l.remaining ? "#c2c6bd" : "var(--hz-c-primary)", background: "none", border: "none", fontFamily: "inherit", fontSize: 17, cursor: qtyNum >= l.remaining ? "default" : "pointer" }}
                     >
                       +
                     </button>
                   </div>
-                  <span className="tnum" style={{ fontSize: 13, fontWeight: 800, color: "#0c3f39" }}>{fmtSen(l.unitPriceSen * qtyNum)}</span>
+                  <span className="tnum" style={{ fontSize: 13, fontWeight: 800, color: "var(--hz-c-primary-ink)" }}>{fmtSen(l.unitPriceSen * qtyNum)}</span>
                 </div>
               )}
             </div>
@@ -1201,13 +1201,13 @@ function GrnLinesStep({
 
 // ── Small shared UI ──────────────────────────────────────────────────────────
 function Muted({ children, danger }: { children: React.ReactNode; danger?: boolean }) {
-  return <div style={{ textAlign: "center", color: danger ? "#b23a3a" : "#9aa093", fontSize: 12, padding: "26px 0" }}>{children}</div>;
+  return <div style={{ textAlign: "center", color: danger ? "var(--hz-c-err)" : "var(--hz-c-ink-soft)", fontSize: 12, padding: "26px 0" }}>{children}</div>;
 }
 function ChangeSource({ onClick, label = "Change source" }: { onClick: () => void; label?: string }) {
   return (
     <span
       onClick={onClick}
-      style={{ display: "inline-flex", alignItems: "center", gap: 3, marginBottom: 11, fontSize: 12.5, fontWeight: 600, color: "#16695f", cursor: "pointer" }}
+      style={{ display: "inline-flex", alignItems: "center", gap: 3, marginBottom: 11, fontSize: 12.5, fontWeight: 600, color: "var(--hz-c-primary)", cursor: "pointer" }}
     >
       <span style={{ fontSize: 15, lineHeight: 1 }}>{"‹"}</span> {label}
     </span>

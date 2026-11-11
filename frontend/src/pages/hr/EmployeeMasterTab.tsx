@@ -92,7 +92,7 @@ export function EmployeeMasterTab() {
           <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} /> Show inactive and resigned
         </label>
         {unlinked > 0 && (
-          <span className="text-[11px] text-amber-800">
+          <span className="text-[11px] text-amber-800 dark:text-amber-300">
             {unlinked} active {unlinked === 1 ? "employee has" : "employees have"} no ERP account yet and cannot punch in.
           </span>
         )}

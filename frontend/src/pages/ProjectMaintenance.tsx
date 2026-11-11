@@ -1395,7 +1395,7 @@ function ChecklistItemsEditor({ templateId }: { templateId: number }) {
                             <div className="flex items-center justify-end gap-1.5">
                               {!!item.requires_review && (
                                 <span
-                                  className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-800"
+                                  className="inline-flex items-center gap-1 rounded-full bg-amber-100 dark:bg-amber-900/40 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-800 dark:text-amber-300"
                                   title="Review required before this task can be marked done"
                                 >
                                   <ShieldCheck size={9} /> Review

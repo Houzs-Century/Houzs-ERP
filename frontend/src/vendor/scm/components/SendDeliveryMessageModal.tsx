@@ -294,7 +294,7 @@ export const SendDeliveryMessageModal = ({ rows, onClose, onSent, kind = 'delive
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                   <MessageSquare size={14} strokeWidth={1.75} aria-hidden style={{ color: 'var(--c-burnt)' }} />
                   <strong style={{ fontSize: 'var(--fs-13)' }}>{list[0]?.debtor_name ?? '—'}</strong>
-                  <span style={{ color: 'var(--c-muted, #767b6e)', fontSize: 'var(--fs-12)' }}>{phoneKey(list[0]?.phone)}</span>
+                  <span style={{ color: 'var(--c-muted, var(--hz-c-ink-muted))', fontSize: 'var(--fs-12)' }}>{phoneKey(list[0]?.phone)}</span>
                   {kind === 'balance_reminder' && (
                     <span style={{ marginLeft: 'auto', fontSize: 'var(--fs-12)', color: groupOwed > 0 ? 'var(--ink, #221f20)' : 'var(--c-burnt)' }}>
                       {groupOwed > 0 ? `Owing RM ${rm(groupOwed)}` : 'Nothing owed — will be skipped'}
@@ -337,7 +337,7 @@ export const SendDeliveryMessageModal = ({ rows, onClose, onSent, kind = 'delive
                 {list.map((r) => (
                   <div key={r.so_doc_no} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 'var(--fs-12)', padding: '2px 0' }}>
                     <span>{r.row_type === 'assr' ? `${r.ref} · ${assrJobKindLabel(r.job_kind)}` : r.so_doc_no}{r.branding ? ` · ${r.branding}` : ''}</span>
-                    <span style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--c-muted, #767b6e)' }}>{effectiveDate(r)}</span>
+                    <span style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--c-muted, var(--hz-c-ink-muted))' }}>{effectiveDate(r)}</span>
                   </div>
                 ))}
               </div>
@@ -345,7 +345,7 @@ export const SendDeliveryMessageModal = ({ rows, onClose, onSent, kind = 'delive
           })}
 
           {noPhone.length > 0 && (
-            <div style={{ padding: 'var(--space-3)', border: '1px dashed var(--line)', borderRadius: 'var(--radius-md)', color: 'var(--c-muted, #767b6e)', fontSize: 'var(--fs-12)' }}>
+            <div style={{ padding: 'var(--space-3)', border: '1px dashed var(--line)', borderRadius: 'var(--radius-md)', color: 'var(--c-muted, var(--hz-c-ink-muted))', fontSize: 'var(--fs-12)' }}>
               Skipped — no usable phone: {noPhone.map((r) => (r.row_type === 'assr' ? r.ref : r.so_doc_no)).join(', ')}
             </div>
           )}

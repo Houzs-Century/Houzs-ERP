@@ -860,7 +860,7 @@ function MobileAppInner() {
       <TabLocked title="SO Maintenance" />
     ) : (
       <div className="hz-m" style={{ position: "fixed", inset: 0, display: "flex", flexDirection: "column", background: "var(--app-bg)" }}>
-        <header style={{ background: "#fff", borderBottom: "1px solid var(--line)", padding: "calc(env(safe-area-inset-top) + 16px) 16px 14px" }}>
+        <header style={{ background: "var(--hz-c-surface)", borderBottom: "1px solid var(--line)", padding: "calc(env(safe-area-inset-top) + 16px) 16px 14px" }}>
           <button onClick={back} style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", color: "var(--teal)", fontFamily: "inherit", fontSize: 13, fontWeight: 600 }}>‹ Back</button>
           <div style={{ fontSize: 19, fontWeight: 800, color: "var(--ink)", marginTop: 6 }}>SO Maintenance</div>
         </header>
@@ -955,7 +955,7 @@ function MobileAppInner() {
     const grnScanEntry = k === "grns" && canOperateGoodsReceipts(can, pageAccess) ? (
       <button
         onClick={() => setScreen({ t: "grn-scan", key: k, title: screen.title })}
-        style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", justifyContent: "center", height: 44, borderRadius: 12, border: "1px solid #16695f", background: "#fff", color: "#16695f", fontFamily: "inherit", fontSize: 13.5, fontWeight: 700, cursor: "pointer", marginBottom: 12 }}
+        style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", justifyContent: "center", height: 44, borderRadius: 12, border: "1px solid var(--hz-c-primary)", background: "var(--hz-c-surface)", color: "var(--hz-c-primary)", fontFamily: "inherit", fontSize: 13.5, fontWeight: 700, cursor: "pointer", marginBottom: 12 }}
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#16695f" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M3 12h18" /></svg>
         Scan delivery order
@@ -1202,8 +1202,8 @@ function MobileAppInner() {
             <div className="grab" />
             <div className="sheet-head">
               <div>
-                <div className="ey" style={{ color: "#a16a2e" }}>Menu</div>
-                <div style={{ fontSize: 16, fontWeight: 800, color: "#11140f", marginTop: 2 }}>Where to next?</div>
+                <div className="ey" style={{ color: "var(--hz-c-accent)" }}>Menu</div>
+                <div style={{ fontSize: 16, fontWeight: 800, color: "var(--hz-c-ink)", marginTop: 2 }}>Where to next?</div>
               </div>
               <button className="sheet-x" onClick={() => setMenuOpen(false)}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg>
@@ -1226,7 +1226,7 @@ function MobileAppInner() {
                   </div>
                 </div>
               ))}
-              {menuGroups.length === 0 && <div style={{ textAlign: "center", color: "#9aa093", fontSize: 12, padding: "24px 0" }}>No modules available for your position.</div>}
+              {menuGroups.length === 0 && <div style={{ textAlign: "center", color: "var(--hz-c-ink-soft)", fontSize: 12, padding: "24px 0" }}>No modules available for your position.</div>}
             </div>
           </div>
         </div>
@@ -1248,10 +1248,10 @@ function MobileAppInner() {
 function TabLocked({ title }: { title: string }) {
   return (
     <div className="hz-m" style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", background: "var(--app-bg)" }}>
-      <header style={{ background: "#fff", borderBottom: "1px solid var(--line)", padding: "calc(env(safe-area-inset-top) + 16px) 16px 14px" }}>
+      <header style={{ background: "var(--hz-c-surface)", borderBottom: "1px solid var(--line)", padding: "calc(env(safe-area-inset-top) + 16px) 16px 14px" }}>
         <div style={{ fontSize: 19, fontWeight: 800, color: "var(--ink)" }}>{title}</div>
       </header>
-      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#9aa093", fontSize: 12.5, padding: 24, textAlign: "center" }}>
+      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--hz-c-ink-soft)", fontSize: 12.5, padding: 24, textAlign: "center" }}>
         Your position doesn't have access to this section.
       </div>
     </div>
@@ -1264,11 +1264,11 @@ function TabLocked({ title }: { title: string }) {
 function UrlDeadEnd({ title, body, onHome }: { title: string; body: string; onHome: () => void }) {
   return (
     <div className="hz-m" style={{ position: "fixed", inset: 0, display: "flex", flexDirection: "column", background: "var(--app-bg)" }}>
-      <header style={{ background: "#fff", borderBottom: "1px solid var(--line)", padding: "calc(env(safe-area-inset-top) + 16px) 16px 14px" }}>
+      <header style={{ background: "var(--hz-c-surface)", borderBottom: "1px solid var(--line)", padding: "calc(env(safe-area-inset-top) + 16px) 16px 14px" }}>
         <div style={{ fontSize: 19, fontWeight: 800, color: "var(--ink)" }}>{title}</div>
       </header>
       <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, padding: 24, textAlign: "center" }}>
-        <div style={{ color: "#9aa093", fontSize: 12.5, lineHeight: 1.6, maxWidth: 300 }}>{body}</div>
+        <div style={{ color: "var(--hz-c-ink-soft)", fontSize: 12.5, lineHeight: 1.6, maxWidth: 300 }}>{body}</div>
         <button
           onClick={onHome}
           style={{ background: "var(--teal)", color: "#fff", border: "none", borderRadius: 10, padding: "10px 20px", fontFamily: "inherit", fontSize: 13, fontWeight: 700 }}
@@ -1319,11 +1319,11 @@ function MobileNotFound({ path, onHome }: { path: string; onHome: () => void }) 
 function Stub({ title, onBack }: { title: string; onBack: () => void }) {
   return (
     <div className="hz-m" style={{ position: "fixed", inset: 0, display: "flex", flexDirection: "column", background: "var(--app-bg)" }}>
-      <header style={{ background: "#fff", borderBottom: "1px solid var(--line)", padding: "calc(env(safe-area-inset-top) + 16px) 16px 14px" }}>
+      <header style={{ background: "var(--hz-c-surface)", borderBottom: "1px solid var(--line)", padding: "calc(env(safe-area-inset-top) + 16px) 16px 14px" }}>
         <button onClick={onBack} style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", color: "var(--teal)", fontFamily: "inherit", fontSize: 13, fontWeight: 600 }}>‹ Back</button>
         <div style={{ fontSize: 19, fontWeight: 800, color: "var(--ink)", marginTop: 6 }}>{title}</div>
       </header>
-      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#9aa093", fontSize: 12.5, padding: 24, textAlign: "center" }}>
+      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--hz-c-ink-soft)", fontSize: 12.5, padding: 24, textAlign: "center" }}>
         Building this screen next — it will match your design and connect to the live data.
       </div>
     </div>

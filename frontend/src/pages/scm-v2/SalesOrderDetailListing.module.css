@@ -17,10 +17,10 @@
 /* Doc. No. cell — the row identifier, coloured in the petrol accent. */
 .codeCell {
   font-weight: 600;
-  color: #16695f;
+  color: var(--hz-c-primary);
 }
 
 /* Muted dash / secondary cell text. */
 .muted {
-  color: #767b6e;
+  color: var(--hz-c-ink-muted);
 }

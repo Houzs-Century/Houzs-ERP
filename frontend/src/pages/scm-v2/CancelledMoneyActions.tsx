@@ -14,7 +14,7 @@ export type TickedOrder = { docNo: string; status: string; customer: string | nu
 
 const btn: React.CSSProperties = {
   padding: '4px 12px', borderRadius: 6, border: '1px solid var(--c-line, rgba(34,31,32,0.2))',
-  background: 'var(--c-paper, #fff)', cursor: 'pointer', fontSize: 'var(--fs-12)', fontWeight: 600,
+  background: 'var(--c-paper, var(--hz-c-surface))', cursor: 'pointer', fontSize: 'var(--fs-12)', fontWeight: 600,
 };
 
 /** The ticked orders as sources, in the order they were ticked, and the

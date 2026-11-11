@@ -227,7 +227,7 @@ export function PoBulkSupplierDateModal({
         </label>
 
         {error && (
-          <div className="rounded-lg border border-[#B71C1C]/35 bg-[#B71C1C]/[0.07] px-3 py-2 text-[12px] text-[#B71C1C]">
+          <div className="rounded-lg border border-[#B71C1C]/35 bg-[#B71C1C]/[0.07] px-3 py-2 text-[12px] text-[color:var(--hz-dk-err,#B71C1C)]">
             {error}
           </div>
         )}

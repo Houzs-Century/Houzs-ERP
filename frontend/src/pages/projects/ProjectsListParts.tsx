@@ -267,7 +267,7 @@ export function SectionTaskBadges({ map }: { map?: string | null }) {
               ? "border border-synced/40 bg-synced/15 text-synced"
               : t.kind === "overdue"
                 ? "border border-err/40 bg-err/15 text-err"
-                : "border border-amber-500 bg-amber-100 text-amber-800",
+                : "border border-amber-500 bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300",
           )}
         >
           <span className="truncate">{t.title}</span>

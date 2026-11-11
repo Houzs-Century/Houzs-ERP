@@ -923,7 +923,7 @@ const SoLineCardInner = ({
                 onChange={(e) => { setSearch(e.target.value); setShowPicker(true); }}
               />
               {unmatchedFreeText && !showPicker && (
-                <div style={{ fontSize: 10.5, lineHeight: 1.35, color: 'var(--c-festive-b, #B8331F)', marginTop: 2 }}>
+                <div style={{ fontSize: 10.5, lineHeight: 1.35, color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))', marginTop: 2 }}>
                   Not in the catalog — pick a product from the list; free-typed lines cannot be saved.
                 </div>
               )}
@@ -1006,7 +1006,7 @@ const SoLineCardInner = ({
               {multiMode && multiPicked.length > 0 && (
                 <li
                   className={styles.suggestItem}
-                  style={{ position: 'sticky', bottom: 0, background: 'var(--accent, #16695f)', color: '#fff', textAlign: 'center', fontWeight: 700, cursor: 'pointer' }}
+                  style={{ position: 'sticky', bottom: 0, background: 'var(--accent, var(--hz-c-primary))', color: '#fff', textAlign: 'center', fontWeight: 700, cursor: 'pointer' }}
                   onMouseDown={(e) => { e.preventDefault(); commitMulti(); }}
                 >
                   Add {multiPicked.length} product{multiPicked.length > 1 ? 's' : ''}
@@ -1221,7 +1221,7 @@ const SoLineCardInner = ({
             />
           </div>
           {colourKiv && (
-            <div style={{ fontSize: 'var(--fs-11)', fontWeight: 600, color: 'var(--c-festive-b, #B8331F)' }}>
+            <div style={{ fontSize: 'var(--fs-11)', fontWeight: 600, color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' }}>
               Colour KIV — confirm the colour before a Processing Date can be set.
             </div>
           )}
@@ -1323,7 +1323,7 @@ const SoLineCardInner = ({
             )}
           </div>
           {colourKiv && (
-            <div style={{ fontSize: 'var(--fs-11)', fontWeight: 600, color: 'var(--c-festive-b, #B8331F)' }}>
+            <div style={{ fontSize: 'var(--fs-11)', fontWeight: 600, color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' }}>
               Colour KIV — confirm the colour before a Processing Date can be set.
             </div>
           )}

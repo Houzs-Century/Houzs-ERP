@@ -67,7 +67,7 @@ export const PvTextEdit = ({ pvId, notes, lines, payTo, onClose }: {
           <PvPayToFields value={bank} onChange={setBank} />
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-          <span style={{ flex: 1, fontSize: 'var(--fs-12)', color: 'var(--c-festive-b, #B8331F)' }}>{failed}</span>
+          <span style={{ flex: 1, fontSize: 'var(--fs-12)', color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' }}>{failed}</span>
           <Button variant="ghost" size="sm" disabled={save.isPending} onClick={onClose}>Cancel</Button>
           <Button variant="primary" size="sm" disabled={save.isPending} onClick={() => void submit()}>{save.isPending ? 'Saving…' : 'Save'}</Button>
         </div>

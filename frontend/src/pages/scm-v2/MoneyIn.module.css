@@ -3,7 +3,7 @@
    toolbar over the table. Colours are the design's own, on the ERP's Theme C,
    in the batch-3/4 pattern (MoneyOut.module.css). */
 
-.page { --ink: #11140f; --text: #414539; --detail: #5f6459; --muted: #767b6e; --faint: #a9ada3; --line: #d6d9d2; --petrol: #16695f;
+.page { --ink: var(--hz-c-ink); --text: var(--hz-c-ink-secondary); --detail: #5f6459; --muted: var(--hz-c-ink-muted); --faint: #a9ada3; --line: var(--hz-c-border); --petrol: var(--hz-c-primary);
   /* The sand tint of a document still open (the design's OPEN_BG). */
   --open-bg: #fcf7ec;
   display: flex; flex-direction: column; gap: 12px; color: var(--ink); font-variant-numeric: tabular-nums; }
@@ -16,18 +16,18 @@
 @container (min-width: 1180px) { .cardsEight { grid-template-columns: repeat(8, minmax(0, 1fr)); } }
 .card {
   display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-width: 0; padding: 12px 14px;
-  border: 1px solid var(--line); border-radius: 10px; background: #ffffff; color: inherit; font: inherit; text-align: left;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--hz-c-surface); color: inherit; font: inherit; text-align: left;
 }
 button.card { cursor: pointer; }
-button.card:hover { border-color: #b9d6d1; }
-.cardOn, button.cardOn:hover { background: #f6faf9; border-color: var(--petrol); box-shadow: inset 0 0 0 1px var(--petrol); }
+button.card:hover { border-color: var(--hz-dk-primary-line, #b9d6d1); }
+.cardOn, button.cardOn:hover { background: var(--hz-dk-primary-soft, #f6faf9); border-color: var(--petrol); box-shadow: inset 0 0 0 1px var(--petrol); }
 .cardHead { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12.5px; color: var(--text); }
 .cardHead svg { flex: none; color: var(--muted); }
 .cardLabel { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cardValue { font-size: 20px; font-weight: 600; line-height: 1.1; }
 .cardValueZero { color: var(--faint); }
 .cardSub { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--muted); }
-.cardSubBad { color: #a83434; font-weight: 600; }
+.cardSubBad { color: var(--hz-dk-err, #a83434); font-weight: 600; }
 
 /* ── The row over the table: chips · list title · the date range. ── */
 .stack { display: flex; flex-direction: column; gap: 10px; }
@@ -39,33 +39,33 @@ button.card:hover { border-color: #b9d6d1; }
 .chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .chip {
   display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border: 1px solid var(--line); border-radius: 999px;
-  background: #ffffff; color: var(--ink); font: 600 12px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer; white-space: nowrap;
+  background: var(--hz-c-surface); color: var(--ink); font: 600 12px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer; white-space: nowrap;
 }
-.chip:hover { background: #f4f6f3; }
+.chip:hover { background: var(--hz-c-surface-2); }
 .chipOn, .chipOn:hover { background: #11140f; border-color: #11140f; color: #ffffff; }
 .chipCount { font-weight: 500; color: var(--muted); }
 .chipOn .chipCount { color: #c2c6bd; }
 
 /* Segments: a grey track, the one in use white with a shadow. */
-.segs { display: inline-flex; gap: 2px; max-width: 100%; padding: 3px; border-radius: 9px; background: #eef0ec; overflow-x: auto; scrollbar-width: none; }
+.segs { display: inline-flex; gap: 2px; max-width: 100%; padding: 3px; border-radius: 9px; background: var(--hz-c-bg); overflow-x: auto; scrollbar-width: none; }
 .seg {
   flex: none; display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border: 0; border-radius: 7px;
   background: transparent; color: var(--detail); font: 500 13px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer; white-space: nowrap;
 }
-.segOn { background: #ffffff; color: #0c3f39; font-weight: 600; box-shadow: 0 1px 2px rgba(17, 24, 16, 0.14); }
+.segOn { background: var(--hz-c-surface); color: var(--hz-c-primary-ink); font-weight: 600; box-shadow: 0 1px 2px rgba(17, 24, 16, 0.14); }
 
 /* Status tags: 20px, 4px radius, 11/600. */
 .tag { display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: 4px; font-size: 11px; font-weight: 600; line-height: 1; white-space: nowrap; }
-.toneLate { background: #fbeeee; color: #a83434; }
-.toneWarn { background: #f7f1e3; color: #7a5a1e; }
-.toneInfo { background: #eaf3f1; color: #1d5c54; }
-.toneCalm { background: #f0f2ee; color: #5b6055; }
+.toneLate { background: var(--hz-dk-err-bg, #fbeeee); color: var(--hz-dk-err, #a83434); }
+.toneWarn { background: var(--hz-dk-warning-bg, #f7f1e3); color: var(--hz-dk-accent-ink, #7a5a1e); }
+.toneInfo { background: var(--hz-dk-primary-soft, #eaf3f1); color: var(--hz-dk-primary-ink, #1d5c54); }
+.toneCalm { background: var(--hz-dk-surface-2, #f0f2ee); color: var(--hz-dk-ink-secondary, #5b6055); }
 .tags { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 
 /* A clickable document number: 13/600, dotted underline. */
 .docLink {
   font: 600 13px 'IBM Plex Sans', system-ui, sans-serif; color: inherit; text-decoration: underline dotted;
-  text-underline-offset: 3px; text-decoration-color: #a9ada3; font-variant-numeric: tabular-nums; cursor: pointer;
+  text-underline-offset: 3px; text-decoration-color: var(--hz-dk-ink-soft, #a9ada3); font-variant-numeric: tabular-nums; cursor: pointer;
 }
 .docLink:hover { color: var(--petrol); text-decoration-color: var(--petrol); }
 /* A cancelled document's number is struck through (index.css dt-cancel-strike,
@@ -82,137 +82,137 @@ button.card:hover { border-color: #b9d6d1; }
 /* ── Buttons (the design): a white one, the petrol one that does the step, the
    red-outlined one that undoes. 34px on a page head, 26px in a row. ── */
 .btn {
-  display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border: 1px solid #d6d9d2; border-radius: 6px;
-  background: #ffffff; color: #414539; font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer; white-space: nowrap;
+  display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border: 1px solid var(--hz-c-border); border-radius: 6px;
+  background: var(--hz-c-surface); color: var(--hz-c-ink-secondary); font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer; white-space: nowrap;
 }
-.btn:hover:not(:disabled) { background: #f4f6f3; }
+.btn:hover:not(:disabled) { background: var(--hz-c-surface-2); }
 .btn:disabled { opacity: 0.55; cursor: default; }
-.btnPrimary { background: #16695f; border-color: #16695f; color: #ffffff; }
+.btnPrimary { background: var(--hz-c-primary); border-color: var(--hz-c-primary); color: #ffffff; }
 .btnPrimary:hover:not(:disabled) { background: #0f5a51; }
-.btnDanger { border-color: #e2b8b8; color: #a83434; }
-.btnDanger:hover:not(:disabled) { background: #fbeeee; }
+.btnDanger { border-color: #e2b8b8; color: var(--hz-dk-err, #a83434); }
+.btnDanger:hover:not(:disabled) { background: var(--hz-dk-err-bg, #fbeeee); }
 .btnSmall { height: 28px; padding: 0 10px; font-size: 12px; }
 
 /* Row buttons: right-aligned, ⋯ last. */
 .acts { display: inline-flex; align-items: center; justify-content: flex-end; gap: 6px; width: 100%; }
 .act {
-  height: 26px; padding: 0 10px; border: 1px solid #b9d6d1; border-radius: 6px; background: #e1efed; color: #0c3f39;
+  height: 26px; padding: 0 10px; border: 1px solid var(--hz-dk-primary-line, #b9d6d1); border-radius: 6px; background: var(--hz-c-primary-soft); color: var(--hz-c-primary-ink);
   font: 600 12px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer; white-space: nowrap;
 }
-.act:hover:not(:disabled) { background: #d3e7e3; }
+.act:hover:not(:disabled) { background: var(--hz-dk-primary-soft, #d3e7e3); }
 .act:disabled { opacity: 0.55; cursor: default; }
-.actLink { padding: 0; border: 0; background: none; font: 600 12px 'IBM Plex Sans', system-ui, sans-serif; color: #16695f; cursor: pointer; }
+.actLink { padding: 0; border: 0; background: none; font: 600 12px 'IBM Plex Sans', system-ui, sans-serif; color: var(--hz-c-primary); cursor: pointer; }
 .actLink:hover { text-decoration: underline; }
 .more {
-  width: 26px; height: 26px; display: inline-grid; place-items: center; border: 1px solid #d6d9d2; border-radius: 6px; background: #ffffff;
-  color: #414539; cursor: pointer;
+  width: 26px; height: 26px; display: inline-grid; place-items: center; border: 1px solid var(--hz-c-border); border-radius: 6px; background: var(--hz-c-surface);
+  color: var(--hz-c-ink-secondary); cursor: pointer;
 }
-.more:hover { background: #f4f6f3; }
+.more:hover { background: var(--hz-c-surface-2); }
 .menu {
-  position: fixed; z-index: 80; min-width: 180px; padding: 4px; border: 1px solid #d6d9d2; border-radius: 8px; background: #ffffff;
+  position: fixed; z-index: 80; min-width: 180px; padding: 4px; border: 1px solid var(--hz-c-border); border-radius: 8px; background: var(--hz-c-surface);
   box-shadow: 0 12px 32px -12px rgba(17, 24, 16, 0.3);
 }
 .menuItem {
   width: 100%; display: flex; align-items: center; gap: 8px; padding: 7px 10px; border: 0; border-radius: 6px; background: transparent;
-  text-align: left; font: 13px 'IBM Plex Sans', system-ui, sans-serif; color: #11140f; cursor: pointer;
+  text-align: left; font: 13px 'IBM Plex Sans', system-ui, sans-serif; color: var(--hz-c-ink); cursor: pointer;
 }
-.menuItem:hover { background: #f4f6f3; }
-.menuDanger { color: #a83434; }
-.menuRule { height: 1px; margin: 4px 2px; background: #e3e6e0; }
+.menuItem:hover { background: var(--hz-c-surface-2); }
+.menuDanger { color: var(--hz-dk-err, #a83434); }
+.menuRule { height: 1px; margin: 4px 2px; background: var(--hz-c-surface-dim); }
 
 /* The search box with its clear ×. */
 .search {
-  display: flex; align-items: center; gap: 6px; flex: 1; max-width: 460px; height: 34px; padding: 0 10px; border: 1px solid #d6d9d2;
-  border-radius: 8px; background: #ffffff; color: #767b6e;
+  display: flex; align-items: center; gap: 6px; flex: 1; max-width: 460px; height: 34px; padding: 0 10px; border: 1px solid var(--hz-c-border);
+  border-radius: 8px; background: var(--hz-c-surface); color: var(--hz-c-ink-muted);
 }
-.search:focus-within { border-color: #16695f; }
-.search input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; font: 13px 'IBM Plex Sans', system-ui, sans-serif; color: #11140f; }
-.clear { display: grid; place-items: center; width: 22px; height: 22px; border: 0; border-radius: 4px; background: transparent; color: #767b6e; cursor: pointer; }
-.clear:hover { background: #f4f6f3; }
+.search:focus-within { border-color: var(--hz-c-primary); }
+.search input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; font: 13px 'IBM Plex Sans', system-ui, sans-serif; color: var(--hz-c-ink); }
+.clear { display: grid; place-items: center; width: 22px; height: 22px; border: 0; border-radius: 4px; background: transparent; color: var(--hz-c-ink-muted); cursor: pointer; }
+.clear:hover { background: var(--hz-c-surface-2); }
 
 /* The batch bar, once something is ticked: `<n> ticked · RM x`, the actions,
    Clear; the notes under it. */
 .batch {
-  display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; border: 1px solid #b9d6d1; border-radius: 8px; background: #f6faf9; font-size: 13px;
+  display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; border: 1px solid var(--hz-dk-primary-line, #b9d6d1); border-radius: 8px; background: var(--hz-dk-primary-soft, #f6faf9); font-size: 13px;
 }
 .batchRow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.batchNotes { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: #5f6459; }
+.batchNotes { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--hz-dk-ink-secondary, #5f6459); }
 
 /* ── The ask: an inline banner above the table or the document (the design's
    askVals) — title, body, an optional reason, Keep it and the go button. Red
    when it undoes something, petrol when it moves the document on. ── */
-.ask { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: 8px; background: #fbeeee; color: #7a2222; }
-.askGo { background: #eaf3f1; color: #1d5c54; }
+.ask { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: 8px; background: var(--hz-dk-err-bg, #fbeeee); color: var(--hz-dk-expired-text, #7a2222); }
+.askGo { background: var(--hz-dk-primary-soft, #eaf3f1); color: var(--hz-dk-primary-ink, #1d5c54); }
 .askTitle { font-size: 13px; font-weight: 600; }
 .askBody { font-size: 12px; line-height: 1.45; }
 .askRow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .askInput {
-  flex: 1; min-width: 240px; height: 32px; box-sizing: border-box; padding: 0 10px; border: 1px solid #c2c6bd; border-radius: 6px;
-  background: #ffffff; color: #11140f; font: 12.5px 'IBM Plex Sans', system-ui, sans-serif; outline: none;
+  flex: 1; min-width: 240px; height: 32px; box-sizing: border-box; padding: 0 10px; border: 1px solid var(--hz-c-border-strong); border-radius: 6px;
+  background: var(--hz-c-surface); color: var(--hz-c-ink); font: 12.5px 'IBM Plex Sans', system-ui, sans-serif; outline: none;
 }
-.askInput:focus { border-color: #16695f; }
+.askInput:focus { border-color: var(--hz-c-primary); }
 .askKeep {
-  height: 32px; display: inline-flex; align-items: center; padding: 0 12px; border: 1px solid #d6d9d2; border-radius: 6px; background: #ffffff;
-  color: #414539; font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer; white-space: nowrap;
+  height: 32px; display: inline-flex; align-items: center; padding: 0 12px; border: 1px solid var(--hz-c-border); border-radius: 6px; background: var(--hz-c-surface);
+  color: var(--hz-c-ink-secondary); font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer; white-space: nowrap;
 }
-.askKeep:hover:not(:disabled) { background: #f4f6f3; }
+.askKeep:hover:not(:disabled) { background: var(--hz-c-surface-2); }
 .askButton {
-  height: 32px; padding: 0 14px; border: 1px solid #a83434; border-radius: 6px; background: #a83434; color: #ffffff;
+  height: 32px; padding: 0 14px; border: 1px solid var(--hz-dk-err, #a83434); border-radius: 6px; background: #a83434; color: #ffffff;
   font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer; white-space: nowrap;
 }
-.askButtonGo { border-color: #16695f; background: #16695f; }
+.askButtonGo { border-color: var(--hz-c-primary); background: var(--hz-c-primary); }
 /* Greyed until a required reason is typed — still pressable, so it can say why. */
 .askButtonWaiting { border-color: #c9a3a3; background: #c9a3a3; }
-.askButtonGo.askButtonWaiting { border-color: #8fb3ad; background: #8fb3ad; }
+.askButtonGo.askButtonWaiting { border-color: var(--hz-dk-primary-line, #8fb3ad); background: #8fb3ad; }
 .askButton:disabled { opacity: 0.7; cursor: default; }
 .askError { font-size: 12px; font-weight: 600; }
 
 /* ── The lists rebuilt in batch 5 steps 4–7: the segment divider and count,
    the month nav, the batch bar's Clear and notes. ── */
-.segRule { flex: none; align-self: stretch; width: 1px; margin: 6px 4px; background: #d6d9d2; }
+.segRule { flex: none; align-self: stretch; width: 1px; margin: 6px 4px; background: var(--hz-c-border); }
 .segCount { font-size: 11.5px; font-weight: 500; color: var(--muted); }
 .monthNav { display: inline-flex; align-items: center; gap: 4px; }
 .monthStep {
-  width: 30px; height: 32px; display: grid; place-items: center; border: 1px solid #d6d9d2; border-radius: 6px; background: #ffffff;
-  color: #414539; cursor: pointer;
+  width: 30px; height: 32px; display: grid; place-items: center; border: 1px solid var(--hz-c-border); border-radius: 6px; background: var(--hz-c-surface);
+  color: var(--hz-c-ink-secondary); cursor: pointer;
 }
-.monthStep:hover { background: #f4f6f3; }
+.monthStep:hover { background: var(--hz-c-surface-2); }
 .monthLabel {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; min-width: 100px; box-sizing: border-box;
-  padding: 0 10px; border: 1px solid #d6d9d2; border-radius: 6px; background: #ffffff; font-size: 12.5px; font-weight: 600;
+  padding: 0 10px; border: 1px solid var(--hz-c-border); border-radius: 6px; background: var(--hz-c-surface); font-size: 12.5px; font-weight: 600;
 }
-.monthLabel svg { color: #767b6e; }
+.monthLabel svg { color: var(--hz-c-ink-muted); }
 .monthToggle {
-  margin-left: 6px; padding: 0; border: 0; background: none; color: #16695f; font: 600 12px 'IBM Plex Sans', system-ui, sans-serif;
+  margin-left: 6px; padding: 0; border: 0; background: none; color: var(--hz-c-primary); font: 600 12px 'IBM Plex Sans', system-ui, sans-serif;
   cursor: pointer; white-space: nowrap;
 }
 .batchClear {
-  padding: 0; margin-left: 4px; border: 0; background: none; color: #767b6e; font: 12px 'IBM Plex Sans', system-ui, sans-serif;
+  padding: 0; margin-left: 4px; border: 0; background: none; color: var(--hz-c-ink-muted); font: 12px 'IBM Plex Sans', system-ui, sans-serif;
   text-decoration: underline; text-underline-offset: 2px; cursor: pointer;
 }
 .batchNote { display: inline-flex; align-items: flex-start; gap: 8px; line-height: 1.45; }
-.batchNote svg { flex: none; margin-top: 1px; color: #16695f; }
+.batchNote svg { flex: none; margin-top: 1px; color: var(--hz-c-primary); }
 .topRow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .waiting { font-size: 12px; color: var(--muted); white-space: nowrap; }
 
 /* ── The month check (Receipts): the figures, the state, the rows behind a
    difference, each with its step. ── */
-.check { display: flex; flex-direction: column; gap: 10px; padding: 16px 18px; border: 1px solid var(--line); border-radius: 10px; background: #ffffff; }
+.check { display: flex; flex-direction: column; gap: 10px; padding: 16px 18px; border: 1px solid var(--line); border-radius: 10px; background: var(--hz-c-surface); }
 .checkHead { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
 .checkTitle { font-size: 15px; font-weight: 600; }
 .checkFig { display: flex; align-items: center; gap: 14px; }
 .checkOp { font-size: 16px; color: var(--faint); }
 .checkLabel { font-size: 12px; color: var(--muted); }
 .checkValue { font-size: 16px; font-weight: 600; }
-.checkGood { color: #2f8a5b; }
-.checkBad { color: #a83434; }
+.checkGood { color: var(--hz-c-synced); }
+.checkBad { color: var(--hz-dk-err, #a83434); }
 .checkState { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; }
-.checkGroup { padding-top: 8px; border-top: 1px solid #eef0ec; }
-.checkGroupTitle { margin-bottom: 2px; font-size: 12.5px; font-weight: 600; color: #a83434; }
+.checkGroup { padding-top: 8px; border-top: 1px solid var(--hz-dk-border-subtle, #eef0ec); }
+.checkGroupTitle { margin-bottom: 2px; font-size: 12.5px; font-weight: 600; color: var(--hz-dk-err, #a83434); }
 .checkRow { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 4px 0; font-size: 12.5px; }
 .checkRowText { flex: 1; min-width: 200px; color: var(--text); }
 .checkAct {
-  height: 26px; padding: 0 10px; border: 1px solid #b9d6d1; border-radius: 5px; background: #e1efed; color: #0c3f39;
+  height: 26px; padding: 0 10px; border: 1px solid var(--hz-dk-primary-line, #b9d6d1); border-radius: 5px; background: var(--hz-c-primary-soft); color: var(--hz-c-primary-ink);
   font: 600 11.5px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer; white-space: nowrap; text-decoration: none;
   display: inline-flex; align-items: center;
 }
@@ -224,7 +224,7 @@ button.card:hover { border-color: #b9d6d1; }
 .formGrid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; align-items: start; }
 @media (max-width: 960px) { .formGrid { grid-template-columns: minmax(0, 1fr); } }
 .formCol { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
-.formCard { min-width: 0; padding: 16px 18px; border: 1px solid var(--line); border-radius: 10px; background: #ffffff; }
+.formCard { min-width: 0; padding: 16px 18px; border: 1px solid var(--line); border-radius: 10px; background: var(--hz-c-surface); }
 .formCardTitle { margin-bottom: 8px; font-size: 15px; font-weight: 600; }
 .formFields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 @media (max-width: 640px) { .formFields { grid-template-columns: minmax(0, 1fr); } }
@@ -232,51 +232,51 @@ button.card:hover { border-color: #b9d6d1; }
 .formField { min-width: 0; }
 .formLabel { display: block; margin-bottom: 6px; font-size: 12px; font-weight: 600; color: var(--text); }
 .formHint { margin-top: 4px; font-size: 11.5px; line-height: 1.4; color: var(--muted); }
-.formHintBad { color: #a83434; }
+.formHintBad { color: var(--hz-dk-err, #a83434); }
 .formInput {
-  width: 100%; height: 34px; box-sizing: border-box; padding: 0 10px; border: 1px solid #c2c6bd; border-radius: 6px; background: #ffffff;
+  width: 100%; height: 34px; box-sizing: border-box; padding: 0 10px; border: 1px solid var(--hz-c-border-strong); border-radius: 6px; background: var(--hz-c-surface);
   font: 13px 'IBM Plex Sans', system-ui, sans-serif; color: var(--ink); font-variant-numeric: tabular-nums;
 }
 .formInput:focus { outline: none; border-color: var(--petrol); }
-.formInput:disabled { background: #f4f6f3; color: var(--detail); }
+.formInput:disabled { background: var(--hz-c-surface-2); color: var(--detail); }
 .formNote {
-  display: flex; gap: 8px; align-items: flex-start; padding: 10px 12px; border-radius: 8px; background: #f7f1e3; color: #5a3a14;
+  display: flex; gap: 8px; align-items: flex-start; padding: 10px 12px; border-radius: 8px; background: var(--hz-dk-warning-bg, #f7f1e3); color: var(--hz-c-accent-ink);
   font-size: 12.5px; line-height: 1.5;
 }
-.formNote svg { flex: none; margin-top: 2px; color: #7a5a1e; }
+.formNote svg { flex: none; margin-top: 2px; color: var(--hz-dk-accent-ink, #7a5a1e); }
 .lineScroll { overflow-x: auto; }
 .lineHead, .lineRow { display: grid; grid-template-columns: minmax(180px, 240px) minmax(160px, 1fr) 130px 24px; gap: 8px; align-items: center; min-width: 540px; }
 .lineHead { padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 11.5px; font-weight: 600; color: var(--muted); }
-.lineRow { padding: 6px 0; border-bottom: 1px solid #eef0ec; }
+.lineRow { padding: 6px 0; border-bottom: 1px solid var(--hz-dk-border-subtle, #eef0ec); }
 .lineFoot { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 8px; }
 .pickHead, .pickRow { display: grid; grid-template-columns: 16px 132px 92px minmax(120px, 1fr) 104px 136px; gap: 10px; align-items: center; min-width: 620px; }
 .pickHead { margin-top: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 11.5px; font-weight: 600; color: var(--muted); }
-.pickRow { padding: 9px 0; border-bottom: 1px solid #eef0ec; font-size: 13px; }
-.pickNo { font-weight: 600; color: #0c3f39; }
+.pickRow { padding: 9px 0; border-bottom: 1px solid var(--hz-dk-border-subtle, #eef0ec); font-size: 13px; }
+.pickNo { font-weight: 600; color: var(--hz-c-primary-ink); }
 .pickFor { overflow: hidden; color: var(--detail); text-overflow: ellipsis; white-space: nowrap; }
 .pickEmpty { padding: 12px 0 2px; font-size: 12.5px; color: var(--muted); }
 .right { text-align: right; }
-.side { display: flex; flex-direction: column; gap: 10px; padding: 16px 18px; border: 1px solid var(--line); border-radius: 10px; background: #ffffff; }
+.side { display: flex; flex-direction: column; gap: 10px; padding: 16px 18px; border: 1px solid var(--line); border-radius: 10px; background: var(--hz-c-surface); }
 .sideTotal { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .sideTotalLabel { font-size: 13px; color: var(--detail); }
 .sideTotalValue { font-size: 22px; font-weight: 600; letter-spacing: -0.01em; }
 .sideBooks { font-size: 12px; line-height: 1.5; color: var(--detail); }
-.sideWhy { padding: 7px 9px; border-radius: 6px; background: #f7f1e3; color: #7a5a1e; font-size: 12px; line-height: 1.45; }
+.sideWhy { padding: 7px 9px; border-radius: 6px; background: var(--hz-dk-warning-bg, #f7f1e3); color: var(--hz-dk-accent-ink, #7a5a1e); font-size: 12px; line-height: 1.45; }
 .sideButtons { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.formTypes { display: inline-flex; gap: 2px; padding: 3px; border-radius: 9px; background: #eef0ec; }
+.formTypes { display: inline-flex; gap: 2px; padding: 3px; border-radius: 9px; background: var(--hz-c-bg); }
 
 /* Invoices (batch 5 step 5): the switch's backlogs at the head of the page;
    a bill line with its event (the bill form's fifth column). */
 .backlog {
   display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 10px;
-  background: #ffffff; font-size: 13px; color: var(--text);
+  background: var(--hz-c-surface); font-size: 13px; color: var(--text);
 }
 .backlog svg { flex: none; }
 .lineHeadEvent, .lineRowEvent { grid-template-columns: minmax(180px, 220px) minmax(160px, 1fr) 130px minmax(160px, 200px) 24px; min-width: 720px; }
 
 /* Debtor maintenance (batch 5 step 6): the debtor form's address heading, and
    More details — every other party field, folded until asked for. */
-.formSub { margin-top: 4px; padding-top: 12px; border-top: 1px solid #eef0ec; font-size: 12px; font-weight: 600; color: var(--detail); }
+.formSub { margin-top: 4px; padding-top: 12px; border-top: 1px solid var(--hz-dk-border-subtle, #eef0ec); font-size: 12px; font-weight: 600; color: var(--detail); }
 .moreToggle {
   display: inline-flex; align-items: center; gap: 6px; padding: 0; border: 0; background: none;
   font: 600 13px 'IBM Plex Sans', system-ui, sans-serif; color: var(--ink); cursor: pointer;

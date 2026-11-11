@@ -159,7 +159,7 @@ export const ThreePLInvoices = () => {
     {
       key: 'x', label: '', render: (r) => (
         <button type="button" aria-label={`Remove ${r.doNumber ?? 'row'}`} onClick={() => void remove(r)}
-          className="grid h-8 w-8 place-items-center rounded-lg text-ink-muted hover:bg-surface-2 hover:text-[#8a2c2c]">
+          className="grid h-8 w-8 place-items-center rounded-lg text-ink-muted hover:bg-surface-2 hover:text-[color:var(--hz-dk-err,#8a2c2c)]">
           <Trash2 size={14} />
         </button>
       ),
@@ -245,7 +245,7 @@ export const ThreePLInvoices = () => {
           {field('Note', 'note', 220)}
           <button type="button" className={BTN_PRI} onClick={() => void save()} disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>
         </div>
-        {err && <p role="alert" className="text-[13px] font-semibold text-[#8a2c2c]">{err}</p>}
+        {err && <p role="alert" className="text-[13px] font-semibold text-[color:var(--hz-dk-err,#8a2c2c)]">{err}</p>}
       </section>
 
       <TableCard title="Per invoice" count={list.data ? `(${invoiceCount})` : null} label={null} actions={null}

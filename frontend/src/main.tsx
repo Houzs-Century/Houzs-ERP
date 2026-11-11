@@ -8,6 +8,7 @@ import "./index.css";
 // imported, so the rest of Houzs is unaffected). Scopes via :root variables
 // that the vendored /scm/* pages + design-system read from.
 import "./vendor/design-system/tokens.css";
+import "./theme.css";
 import { ToastProvider } from "./hooks/useToast";
 import { DialogProvider } from "./hooks/useDialog";
 import { AuthProvider, primeAuthMe } from "./auth/AuthContext";
@@ -31,6 +32,11 @@ import { registerNativePush } from "./lib/nativePush";
 import { readAuthToken } from "./lib/authToken";
 import { canonicalRedirectUrl } from "./lib/canonicalHost";
 import { appSurfaceForPath, useAppSurface } from "./routing/appSurface";
+
+// index.html already set <html data-theme> before first paint; this only
+// keeps it in step with later changes (Auto, other tabs). Loaded lazily to
+// stay off the first-load budget.
+void import("./lib/theme").then((m) => m.initTheme());
 
 // Canonical-domain guard (owner 2026-07: "我要全部看到 .houzscentury.com").
 // Production also answers on the Cloudflare Pages default host

@@ -70,7 +70,7 @@ type PrRow = Record<string, unknown> & {
 const buildColumns = (): GridColumn<PrRow>[] => [
   {
     key: 'return_number', label: 'Return No.', width: 150, sortable: true,
-    accessor: (r) => <span style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }} className={cancelledDocNoClass(r.status)}>{r.return_number}</span>,
+    accessor: (r) => <span style={{ fontWeight: 700, color: 'var(--hz-c-primary)', fontVariantNumeric: 'tabular-nums' }} className={cancelledDocNoClass(r.status)}>{r.return_number}</span>,
     searchValue: (r) => r.return_number,
     /* Accessor is JSX → export the raw doc-no string or the cell exports blank. */
     exportValue: (r) => r.return_number,
@@ -97,7 +97,7 @@ const buildColumns = (): GridColumn<PrRow>[] => [
   },
   {
     key: 'receive_number', label: transferFromColumnLabel('pcr'), width: 170, sortable: true, groupable: true,
-    accessor: (r) => <span style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }}>{r.pc_receive?.receive_number ?? '—'}</span>,
+    accessor: (r) => <span style={{ fontWeight: 700, color: 'var(--hz-c-primary)', fontVariantNumeric: 'tabular-nums' }}>{r.pc_receive?.receive_number ?? '—'}</span>,
     searchValue: (r) => r.pc_receive?.receive_number ?? '',
     /* Accessor is JSX → export the source receive doc-no string. */
     exportValue: (r) => r.pc_receive?.receive_number ?? '',
@@ -113,7 +113,7 @@ const buildColumns = (): GridColumn<PrRow>[] => [
   {
     key: 'refund_sen', label: 'Refund', width: 130, sortable: true, align: 'right', groupable: false,
     accessor: (r) => (
-      <span style={{ fontFamily: 'var(--font-mark)', color: '#16695f', fontWeight: 800 }}>
+      <span style={{ fontFamily: 'var(--font-mark)', color: 'var(--hz-c-primary)', fontWeight: 800 }}>
         {fmtSen(Number(r.refund_sen ?? 0))}
       </span>
     ),
@@ -154,7 +154,7 @@ type PrItem = Record<string, unknown> & {
 const buildDrilldownColumns = (): GridColumn<PrItem>[] => [
   {
     key: 'item_code', label: 'Item Code', width: 130,
-    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{it.item_code ?? '—'}</span>,
+    accessor: (it) => <span style={{ fontWeight: 700, color: 'var(--hz-c-primary)' }}>{it.item_code ?? '—'}</span>,
     searchValue: (it) => it.item_code ?? '',
     sortFn: (a, b) => (a.item_code ?? '').localeCompare(b.item_code ?? ''),
   },
@@ -188,7 +188,7 @@ const buildDrilldownColumns = (): GridColumn<PrItem>[] => [
   },
   {
     key: 'line_total', label: 'Line Total', width: 120, align: 'right',
-    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{fmtSen(Number(it.line_refund_sen ?? 0))}</span>,
+    accessor: (it) => <span style={{ fontWeight: 700, color: 'var(--hz-c-primary)' }}>{fmtSen(Number(it.line_refund_sen ?? 0))}</span>,
     exportValue: (it) => Number(it.line_refund_sen ?? 0) / 100,
     exportFormat: 'money',
     searchValue: (it) => String(it.line_refund_sen ?? 0),
@@ -204,7 +204,7 @@ const ExpandedLines = ({ pr }: { pr: PrRow }) => {
   }
   if (detail.error) {
     return (
-      <div style={{ padding: '8px 12px', fontSize: 'var(--fs-11)', color: 'var(--c-festive-b, #B8331F)' }}>
+      <div style={{ padding: '8px 12px', fontSize: 'var(--fs-11)', color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' }}>
         Failed to load lines: {detail.error instanceof Error ? detail.error.message : String(detail.error)}
       </div>
     );
@@ -237,7 +237,7 @@ const ExpandedLines = ({ pr }: { pr: PrRow }) => {
           fontFamily: 'var(--font-button)', fontSize: 'var(--fs-10)',
           letterSpacing: '0.06em', textTransform: 'uppercase',
         }}>Subtotal</span>
-        <span>Total <strong style={{ color: '#16695f' }}>{fmtSen(subtotal)}</strong></span>
+        <span>Total <strong style={{ color: 'var(--hz-c-primary)' }}>{fmtSen(subtotal)}</strong></span>
       </div>
     </div>
   );

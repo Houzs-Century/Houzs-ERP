@@ -640,7 +640,7 @@ function VariantsTable({
   if (notConfigured) {
     return (
       <div className="rounded-lg border border-border bg-surface-2 px-5 py-8 text-center">
-        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-[10px] border border-amber-300 bg-warning-bg text-warning-text">
+        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-[10px] border border-amber-300 dark:border-amber-800 bg-warning-bg text-warning-text">
           <Sparkles size={20} />
         </div>
         <div className="mt-3 text-[14px] font-bold text-ink">
@@ -863,7 +863,7 @@ function Toggle({
     >
       <span
         className={cn(
-          "inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-sm transition-transform",
+          "inline-block h-3.5 w-3.5 transform rounded-full bg-surface shadow-sm transition-transform",
           on ? "translate-x-[18px]" : "translate-x-[3px]",
         )}
       />

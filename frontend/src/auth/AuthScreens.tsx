@@ -141,7 +141,7 @@ function AuthShell({
           style={{ animationDelay: "360ms" }}
         >
           <div
-            className="relative overflow-hidden rounded-[28px] border border-white/45 bg-white/[0.62] px-7 py-8 backdrop-blur-2xl backdrop-saturate-150"
+            className="relative overflow-hidden rounded-[28px] border border-white/45 bg-white/[0.62] dark:border-white/10 dark:bg-surface/[0.78] px-7 py-8 backdrop-blur-2xl backdrop-saturate-150"
             style={{
               boxShadow:
                 "0 28px 70px -30px rgba(0,0,0,0.85), inset 0 1px 1px rgba(255,255,255,0.85), inset 0 -14px 30px rgba(255,255,255,0.10)",

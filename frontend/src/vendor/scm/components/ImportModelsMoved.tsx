@@ -17,7 +17,7 @@ export function ImportModelsMoved({ moves }: { moves: ImportModelMove[] | undefi
           </li>
         ))}
       </ul>
-      <p style={{ margin: 'var(--space-1) 0 0', color: '#767b6e' }}>
+      <p style={{ margin: 'var(--space-1) 0 0', color: 'var(--hz-c-ink-muted)' }}>
         Orders already written keep the old category; only new orders use the new one.
       </p>
     </div>

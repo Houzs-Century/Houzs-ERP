@@ -2268,13 +2268,13 @@ export function MobileNewSO({
 
       <div className="scroll hz-scroll" style={{ padding: 12, paddingBottom: 24 }}>
         {loading ? (
-          <div style={{ textAlign: "center", color: "#9aa093", fontSize: 12, padding: "40px 0" }}>Loading{"…"}</div>
+          <div style={{ textAlign: "center", color: "var(--hz-c-ink-soft)", fontSize: 12, padding: "40px 0" }}>Loading{"…"}</div>
         ) : (
           <>
             {fromScan && (
               <div style={{ display: "flex", alignItems: "flex-start", gap: 9, marginBottom: 11, padding: "10px 12px", background: "#eaf2f0", border: "1px solid #cfe1dc", borderRadius: 12 }}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#16695f" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none", marginTop: 1 }}><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z" /><circle cx="12" cy="13" r="3" /></svg>
-                <div style={{ fontSize: 11.5, color: "#16695f", lineHeight: 1.5 }}>
+                <div style={{ fontSize: 11.5, color: "var(--hz-c-primary)", lineHeight: 1.5 }}>
                   Prefilled from your scan. Review every field marked <b>Scanned</b>, correct anything the reader missed, then create the order.
                 </div>
               </div>
@@ -2412,7 +2412,7 @@ export function MobileNewSO({
                 )}
                 {!isEdit && !autoFair.hint && autoVenue?.venueId &&
                   (pickedVenueId == null || pickedVenueId === autoVenue.venueId) && (
-                  <div style={{ fontSize: 10, color: "#16695f", marginTop: -4 }}>
+                  <div style={{ fontSize: 10, color: "var(--hz-c-primary)", marginTop: -4 }}>
                     {autoVenue.source === "SHOWROOM"
                       ? `Auto-filled from your showroom${autoVenue.showroomName ? ` (${autoVenue.showroomName})` : ""}`
                       : autoVenue.projectName
@@ -2436,7 +2436,7 @@ export function MobileNewSO({
                   />
                 </Field>
                 {procDateFrozen && !scheduleDatesLocked && (
-                  <div style={{ fontSize: 10, color: "#9aa093", marginTop: -3 }}>
+                  <div style={{ fontSize: 10, color: "var(--hz-c-ink-soft)", marginTop: -3 }}>
                     Has a Purchase Order — only a Purchaser can change this date.
                   </div>
                 )}
@@ -2451,7 +2451,7 @@ export function MobileNewSO({
                     onChange={(iso) => { setDelivDate(iso); if (iso && !procDate) setProcDate(deriveProcessingDate(iso)); }}
                   />
                 </Field>
-                <div style={{ fontSize: 10, color: "#9aa093", marginTop: -3 }}>
+                <div style={{ fontSize: 10, color: "var(--hz-c-ink-soft)", marginTop: -3 }}>
                   {amendmentMode ? "Changing a date here submits an amendment request — it applies once approved." : "Set both dates together, or leave both empty to keep this a draft."}
                 </div>
                 <RequestProcessingDateRemoval docNo={docNo ?? ""} surface="mobile" show={!!(isEdit && docNo && origProcDate) && !procLocked && !procDateFrozen && !amendmentMode && !migratedLocked && !lineLocked && !canRemoveProcessingDate} />
@@ -2550,12 +2550,12 @@ export function MobileNewSO({
                       </Field>
                     </div>
                     {addressIdentityLocked ? (
-                      <div style={{ fontSize: 10, color: "#a16a2e", marginTop: -3 }}>
+                      <div style={{ fontSize: 10, color: "var(--hz-c-accent)", marginTop: -3 }}>
                         {afterDo.headerOpen ? "The State stays locked after the Delivery Order: it picks the warehouse the goods left from." : identityLocked ? "The customer details and delivery address are locked — this order already has a Delivery Order or Invoice." : <>State, City, Postcode and the address lines are locked — this order&apos;s processing date has passed and it is now on order to the supplier.</>}
                       </div>
                     ) : null}
                     {amendmentMode && (
-                      <div style={{ fontSize: 10, color: "#a16a2e", marginTop: -3 }}>
+                      <div style={{ fontSize: 10, color: "var(--hz-c-accent)", marginTop: -3 }}>
                         Changing the State, City, Postcode or an address line submits an amendment request — it applies once approved.
                       </div>
                     )}
@@ -2589,15 +2589,15 @@ export function MobileNewSO({
                               was code-first with no instruction behind it, purely
                               because it was copied. minWidth:0 lets a long name
                               wrap instead of shouldering the price off the row. */}
-                          <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 600, color: "#11140f", overflowWrap: "anywhere" }}>{lineIdentity({ code: l.itemCode, description: l.name }).primary || "—"} <span style={{ color: "#9aa093" }}>{"×"}{num(l.qty)}</span></span>
-                          <span className="money" style={{ flex: "none", whiteSpace: "nowrap", fontSize: 12.5, fontWeight: 800, color: "#0c3f39" }}>RM {fmt((toSen(l.price) * num(l.qty)) / 100)}</span>
+                          <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 600, color: "var(--hz-c-ink)", overflowWrap: "anywhere" }}>{lineIdentity({ code: l.itemCode, description: l.name }).primary || "—"} <span style={{ color: "var(--hz-c-ink-soft)" }}>{"×"}{num(l.qty)}</span></span>
+                          <span className="money" style={{ flex: "none", whiteSpace: "nowrap", fontSize: 12.5, fontWeight: 800, color: "var(--hz-c-primary-ink)" }}>RM {fmt((toSen(l.price) * num(l.qty)) / 100)}</span>
                         </div>
                       </div>
-                    )) : <div style={{ fontSize: 11.5, color: "#9aa093", padding: "8px 0" }}>No items.</div>}
+                    )) : <div style={{ fontSize: 11.5, color: "var(--hz-c-ink-soft)", padding: "8px 0" }}>No items.</div>}
                     {/* FIX D2/D3 — distinguish the lock reasons in the notice. An
                         already-open amendment takes precedence (procLocked but a
                         second amendment can't be raised yet). */}
-                    <div style={{ fontSize: 10, color: "#9aa093", marginTop: 4 }}>
+                    <div style={{ fontSize: 10, color: "var(--hz-c-ink-soft)", marginTop: 4 }}>
                       {hasOpenAmend
                         ? "An amendment is already pending on this order — line items are locked until it is confirmed or rejected. View its status on the order detail screen."
                         : procLocked
@@ -2609,7 +2609,7 @@ export function MobileNewSO({
                   <>
                     <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
                       {lines.map((l, i) => l.itemId && roLine(l.itemId) ? (
-                        <div key={l.key} data-frozen={frozenItemIds.has(l.itemId) || undefined} style={{ ...roItemBox, ...(frozenItemIds.has(l.itemId) ? FROZEN_LINE_STYLE : {}) }}><div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}><span style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 600, overflowWrap: "anywhere" }}>{lineIdentity({ code: l.itemCode, description: l.name }).primary || "—"} <span style={{ color: "#9aa093" }}>{"×"}{num(l.qty)}</span></span><span className="money" style={{ flex: "none", fontSize: 12.5, fontWeight: 800 }}>RM {fmt((toSen(l.price) * num(l.qty)) / 100)}</span></div>{frozenItemIds.has(l.itemId) && <span style={FROZEN_LINE_LABEL_STYLE}>{FROZEN_LINE_LABEL}</span>}</div>
+                        <div key={l.key} data-frozen={frozenItemIds.has(l.itemId) || undefined} style={{ ...roItemBox, ...(frozenItemIds.has(l.itemId) ? FROZEN_LINE_STYLE : {}) }}><div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}><span style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 600, overflowWrap: "anywhere" }}>{lineIdentity({ code: l.itemCode, description: l.name }).primary || "—"} <span style={{ color: "var(--hz-c-ink-soft)" }}>{"×"}{num(l.qty)}</span></span><span className="money" style={{ flex: "none", fontSize: 12.5, fontWeight: 800 }}>RM {fmt((toSen(l.price) * num(l.qty)) / 100)}</span></div>{frozenItemIds.has(l.itemId) && <span style={FROZEN_LINE_LABEL_STYLE}>{FROZEN_LINE_LABEL}</span>}</div>
                       ) : (
                         <LineCard
                           key={l.key}
@@ -2647,7 +2647,7 @@ export function MobileNewSO({
                   </>
                 )}
                 <div className="so-sub-row"><span style={{ fontSize: 11, color: "var(--mut)" }}>Subtotal</span><span className="money" style={{ fontSize: 17, fontWeight: 800, color: "var(--brand-d)" }}>RM {fmt(subtotal / 100)}</span></div>
-                <div style={{ fontSize: 10, color: "#9aa093" }}>Prices are recomputed by the system when you save.</div>
+                <div style={{ fontSize: 10, color: "var(--hz-c-ink-soft)" }}>Prices are recomputed by the system when you save.</div>
               </div>
             </div>
 
@@ -2698,7 +2698,7 @@ export function MobileNewSO({
                 </div>
                 <button className="addline" onClick={() => setPays((p) => [...p, newPayment(selfCollectorId)])}>+ Add Payment</button>
                 {!!pays.length && (
-                  <div style={{ fontSize: 10, color: "#767b6e", marginTop: 6 }}>
+                  <div style={{ fontSize: 10, color: "var(--hz-c-ink-muted)", marginTop: 6 }}>
                     Payments are recorded on the order when you {isEdit ? "Save" : "Create"}. Every payment needs its slip or receipt photo attached first.
                   </div>
                 )}
@@ -2707,7 +2707,7 @@ export function MobileNewSO({
 
             {/* pre-line so a multi-reason message (humanApiError joins them with
                 newlines) lists in full instead of collapsing onto one line. */}
-            {error && <div style={{ marginTop: 4, fontSize: 12, color: "#b23a3a", textAlign: "center", padding: "0 4px", whiteSpace: "pre-line" }}>{error}</div>}
+            {error && <div style={{ marginTop: 4, fontSize: 12, color: "var(--hz-c-err)", textAlign: "center", padding: "0 4px", whiteSpace: "pre-line" }}>{error}</div>}
           </>
         )}
       </div>
@@ -3105,15 +3105,15 @@ function LineCard({
   return (
     /* Owner 2026-07-04 — hairline borders (--line2 #eceee9); the old
        rgba(34,31,32,.12) dividers read visually heavy on the phone. */
-    <div style={{ border: "1px solid #eceee9", borderRadius: 11, overflow: "hidden" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: "#f4f6f3", borderBottom: "1px solid #eceee9" }}>
-        <span style={{ width: 19, height: 19, flex: "none", borderRadius: 6, background: "#16695f", color: "#fff", fontSize: 10.5, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>{index + 1}</span>
+    <div style={{ border: "1px solid var(--hz-dk-border-subtle, #eceee9)", borderRadius: 11, overflow: "hidden" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: "var(--hz-c-surface-2)", borderBottom: "1px solid #eceee9" }}>
+        <span style={{ width: 19, height: 19, flex: "none", borderRadius: 6, background: "var(--hz-c-primary)", color: "#fff", fontSize: 10.5, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>{index + 1}</span>
         <button
           type="button"
           onClick={onOpenPicker}
           style={{
             flex: 1, minWidth: 0, textAlign: "left", fontFamily: "inherit", cursor: "pointer",
-            background: "#fff", border: picked ? "1px solid #bcdcd7" : "1px dashed #c2c6bd",
+            background: "var(--hz-c-surface)", border: picked ? "1px solid var(--hz-dk-primary-line, #bcdcd7)" : "1px dashed var(--hz-c-border-strong)",
             borderRadius: 9, padding: "6px 9px", display: "flex", alignItems: "center", gap: 7,
           }}
         >
@@ -3135,16 +3135,16 @@ function LineCard({
                  the code when a line has no name, so a row is never unidentifiable.
                  The variant is NOT shown here on purpose — the variant panels sit
                  directly below in this same card, so repeating it would duplicate. */
-              <span style={{ display: "block", fontSize: 12.5, fontWeight: 700, color: "#11140f", overflowWrap: "anywhere" }}>
+              <span style={{ display: "block", fontSize: 12.5, fontWeight: 700, color: "var(--hz-c-ink)", overflowWrap: "anywhere" }}>
                 {lineIdentity({ code: line.itemCode, description: line.name }).primary}
               </span>
             ) : (
-              <span style={{ fontSize: 12.5, fontWeight: 600, color: "#9aa093" }}>Pick a product{"…"}</span>
+              <span style={{ fontSize: 12.5, fontWeight: 600, color: "var(--hz-c-ink-soft)" }}>Pick a product{"…"}</span>
             )}
           </span>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9aa093" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none" }}><polyline points="9 6 15 12 9 18" /></svg>
         </button>
-        {removable && <span onClick={onRemove} style={{ fontSize: 14, color: "#9aa093", cursor: "pointer", padding: "0 2px" }}>{"✕"}</span>}
+        {removable && <span onClick={onRemove} style={{ fontSize: 14, color: "var(--hz-c-ink-soft)", cursor: "pointer", padding: "0 2px" }}>{"✕"}</span>}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 7, padding: 10 }}>
         <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
@@ -3181,18 +3181,18 @@ function LineCard({
           </Field>
         </div>
         <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between" }}>
-          <span style={{ fontSize: 11, color: "#9aa093" }}>
+          <span style={{ fontSize: 11, color: "var(--hz-c-ink-soft)" }}>
             {LINE_CATS.find((c) => c.value === line.cat)?.label ?? "General item"}
             {picked ? "" : " — pick a product"}
           </span>
-          <span style={{ fontSize: 11, color: "#9aa093" }}>
-            Amount <b className="money" style={{ fontSize: 13, fontWeight: 800, color: "#0c3f39" }}>RM {amt}</b>
+          <span style={{ fontSize: 11, color: "var(--hz-c-ink-soft)" }}>
+            Amount <b className="money" style={{ fontSize: 13, fontWeight: 800, color: "var(--hz-c-primary-ink)" }}>RM {amt}</b>
           </span>
         </div>
 
         {/* Category-aware variant panels — REAL hooks. */}
         {picked && !pools.ready && (
-          <div style={{ fontSize: 10.5, color: "#9aa093", padding: "4px 0" }}>Loading options{"…"}</div>
+          <div style={{ fontSize: 10.5, color: "var(--hz-c-ink-soft)", padding: "4px 0" }}>Loading options{"…"}</div>
         )}
 
         {picked && pools.ready && line.cat === "fabric_accessory" && (
@@ -3212,7 +3212,7 @@ function LineCard({
                 colour still open; the server blocks a Processing Date until
                 the colour is confirmed. Same hint as desktop SoLineCard. */}
             {isColourKiv(v) && (
-              <div style={{ fontSize: 10.5, fontWeight: 700, color: "#B8331F" }}>
+              <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--hz-dk-festive-b, #B8331F)" }}>
                 Colour KIV — confirm the colour before a Processing Date can be set.
               </div>
             )}
@@ -3238,14 +3238,14 @@ function LineCard({
               invalid={showErrors && missing.has("fabricCode")} onOpen={onOpenFabricPicker}
             />
             {isColourKiv(v) && (
-              <div style={{ fontSize: 10.5, fontWeight: 700, color: "#B8331F" }}>
+              <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--hz-dk-festive-b, #B8331F)" }}>
                 Colour KIV — confirm the colour before a Processing Date can be set.
               </div>
             )}
             {/* Bedframe build — 3 selects stacked in a responsive grid so DIVAN /
                 LEG / GAP each get full width and read completely (owner: the old
                 3-in-a-row cramped them to "No Le"). */}
-            <div style={{ background: "#f4f6f3", border: "1px solid #eceee9", borderRadius: 10, padding: "9px 10px" }}>
+            <div style={{ background: "var(--hz-c-surface-2)", border: "1px solid var(--hz-dk-border-subtle, #eceee9)", borderRadius: 10, padding: "9px 10px" }}>
               <div className="fld-l" style={{ marginBottom: 7 }}>Bedframe build</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
                 <SpecSel label="Divan" required invalid={showErrors && missing.has("divanHeight")}
@@ -3270,12 +3270,12 @@ function LineCard({
             onClick={onOpenSpecialPicker}
             style={{
               width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
-              padding: "9px 11px", background: "#fff", border: "1px solid #eceee9", borderRadius: 10,
+              padding: "9px 11px", background: "var(--hz-c-surface)", border: "1px solid var(--hz-dk-border-subtle, #eceee9)", borderRadius: 10,
               fontFamily: "inherit", cursor: "pointer",
             }}
           >
-            <span style={{ fontSize: 12.5, fontWeight: 700, color: "#11140f" }}>Special order</span>
-            <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, color: specialCount > 0 ? "#16695f" : "#9aa093" }}>
+            <span style={{ fontSize: 12.5, fontWeight: 700, color: "var(--hz-c-ink)" }}>Special order</span>
+            <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, color: specialCount > 0 ? "var(--hz-c-primary)" : "var(--hz-c-ink-soft)" }}>
               {specialCount > 0 ? `${specialCount} added` : "None"}
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none" }}><polyline points="9 6 15 12 9 18" /></svg>
             </span>
@@ -3283,7 +3283,7 @@ function LineCard({
         )}
 
         {picked && pools.ready && line.cat === "mattress" && (
-          <div style={{ fontSize: 10.5, color: "#767b6e", background: "#f4f6f3", border: "1px solid #eceee9", borderRadius: 9, padding: "7px 9px" }}>
+          <div style={{ fontSize: 10.5, color: "var(--hz-c-ink-muted)", background: "var(--hz-c-surface-2)", border: "1px solid var(--hz-dk-border-subtle, #eceee9)", borderRadius: 9, padding: "7px 9px" }}>
             Mattress SKUs carry their spec in the item itself — no per-line variants to pick.
           </div>
         )}
@@ -3308,7 +3308,7 @@ function LineCard({
             type="button"
             onClick={() => photoInputRef.current?.click()}
             title="Attach a reference photo"
-            style={{ width: 46, flex: "none", alignSelf: "flex-end", height: 38, border: "1px solid #d6d9d2", borderRadius: 9, background: "#f4f6f3", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
+            style={{ width: 46, flex: "none", alignSelf: "flex-end", height: 38, border: "1px solid var(--hz-c-border)", borderRadius: 9, background: "var(--hz-c-surface-2)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
           >
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#16695f" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z" /><circle cx="12" cy="13" r="3" /></svg>
           </button>
@@ -3446,8 +3446,8 @@ function SpecialOrderSheet({ line, pools, showPrices, onChange, onClose }: {
         <div className="grab" />
         <div className="sheet-head">
           <div>
-            <div className="ey" style={{ color: "#a16a2e" }}>Special order</div>
-            <div style={{ fontSize: 16, fontWeight: 800, color: "#11140f", marginTop: 2 }}>Add special orders</div>
+            <div className="ey" style={{ color: "var(--hz-c-accent)" }}>Special order</div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: "var(--hz-c-ink)", marginTop: 2 }}>Add special orders</div>
           </div>
           <button className="sheet-x" onClick={onClose}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg>
@@ -3456,7 +3456,7 @@ function SpecialOrderSheet({ line, pools, showPrices, onChange, onClose }: {
 
         <div className="sheet-scroll" style={{ gap: 9 }}>
           {presets.length === 0 && ghostPicks.length === 0 && (
-            <div style={{ fontSize: 12, color: "#767b6e" }}>
+            <div style={{ fontSize: 12, color: "var(--hz-c-ink-muted)" }}>
               No preset special orders for this model — use “Custom / other” below.
             </div>
           )}
@@ -3467,15 +3467,15 @@ function SpecialOrderSheet({ line, pools, showPrices, onChange, onClose }: {
                 key={a.code}
                 style={{
                   display: "flex", alignItems: "center", gap: 10, fontSize: 13, cursor: "pointer",
-                  border: on ? "1px solid #16695f" : "1px solid rgba(34,31,32,.12)",
-                  background: on ? "#e1efed" : "#fff", borderRadius: 11, padding: "11px 12px",
+                  border: on ? "1px solid var(--hz-c-primary)" : "1px solid rgba(34,31,32,.12)",
+                  background: on ? "var(--hz-c-primary-soft)" : "var(--hz-c-surface)", borderRadius: 11, padding: "11px 12px",
                 }}
               >
                 <input type="checkbox" checked={on} onChange={() => toggleSpecial(a.code)} style={{ width: 18, height: 18, flex: "none", accentColor: "#16695f" }} />
-                <span style={{ flex: 1, minWidth: 0, color: "#11140f", fontWeight: 600 }}>{a.label}</span>
+                <span style={{ flex: 1, minWidth: 0, color: "var(--hz-c-ink)", fontWeight: 600 }}>{a.label}</span>
                 {/* Role gate — non-admin sales sees the NAME only (owner). */}
                 {showPrices && a.sellingPriceSen !== 0 && (
-                  <span className="money" style={{ fontSize: 12, color: "#767b6e", flex: "none" }}>+{fmtSharedSen(a.sellingPriceSen)}</span>
+                  <span className="money" style={{ fontSize: 12, color: "var(--hz-c-ink-muted)", flex: "none" }}>+{fmtSharedSen(a.sellingPriceSen)}</span>
                 )}
               </label>
             );
@@ -3483,10 +3483,10 @@ function SpecialOrderSheet({ line, pools, showPrices, onChange, onClose }: {
           {/* A previously-saved special the Model no longer offers — kept
               visible + untickable so edit never hides what the order carries. */}
           {ghostPicks.map((c) => (
-            <label key={c} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, cursor: "pointer", border: "1px solid rgba(34,31,32,.12)", background: "#fff", borderRadius: 11, padding: "11px 12px" }}>
+            <label key={c} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, cursor: "pointer", border: "1px solid rgba(34,31,32,.12)", background: "var(--hz-c-surface)", borderRadius: 11, padding: "11px 12px" }}>
               <input type="checkbox" checked onChange={() => toggleSpecial(c)} style={{ width: 18, height: 18, flex: "none", accentColor: "#16695f" }} />
-              <span style={{ flex: 1, minWidth: 0, color: "#11140f" }}>{String((v.specialLabels as string[] | undefined)?.[pickedSpecials.indexOf(c)] ?? c)}</span>
-              <span style={{ fontSize: 11, color: "#9aa093", flex: "none" }}>not in model</span>
+              <span style={{ flex: 1, minWidth: 0, color: "var(--hz-c-ink)" }}>{String((v.specialLabels as string[] | undefined)?.[pickedSpecials.indexOf(c)] ?? c)}</span>
+              <span style={{ fontSize: 11, color: "var(--hz-c-ink-soft)", flex: "none" }}>not in model</span>
             </label>
           ))}
 
@@ -3521,8 +3521,8 @@ function SpecialOrderSheet({ line, pools, showPrices, onChange, onClose }: {
               onClick={() => setCustomOpen((o) => !o)}
               style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "4px 2px", background: "transparent", border: "none", fontFamily: "inherit", cursor: "pointer" }}
             >
-              <span style={{ fontSize: 13, fontWeight: 700, color: "#11140f" }}>Custom / other</span>
-              <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, fontWeight: 700, color: hasCustom ? "#16695f" : "#9aa093" }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: "var(--hz-c-ink)" }}>Custom / other</span>
+              <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, fontWeight: 700, color: hasCustom ? "var(--hz-c-primary)" : "var(--hz-c-ink-soft)" }}>
                 {hasCustom ? "1 added" : ""}
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" style={{ transform: (customOpen || hasCustom) ? "rotate(180deg)" : "none", transition: "transform .15s" }}><polyline points="6 9 12 15 18 9" /></svg>
               </span>
@@ -3560,7 +3560,7 @@ function SpecialOrderSheet({ line, pools, showPrices, onChange, onClose }: {
                   <button
                     type="button"
                     onClick={() => setVar({ extraAddonNote: "", extraAddonAmountRM: 0 })}
-                    style={{ alignSelf: "flex-start", fontSize: 12, fontWeight: 600, color: "#b23a3a", background: "transparent", border: "1px solid #e3d2cf", borderRadius: 9, padding: "6px 12px", cursor: "pointer", fontFamily: "inherit" }}
+                    style={{ alignSelf: "flex-start", fontSize: 12, fontWeight: 600, color: "var(--hz-c-err)", background: "transparent", border: "1px solid #e3d2cf", borderRadius: 9, padding: "6px 12px", cursor: "pointer", fontFamily: "inherit" }}
                   >
                     Clear custom order
                   </button>
@@ -3583,7 +3583,7 @@ function SpecialOrderSheet({ line, pools, showPrices, onChange, onClose }: {
 // ---- Shared inline styles ---------------------------------------------------
 
 const roItemBox: React.CSSProperties = {
-  border: "1px solid #eceee9",
+  border: "1px solid var(--hz-dk-border-subtle, #eceee9)",
   borderRadius: 10,
   padding: "9px 11px",
   marginBottom: 7,

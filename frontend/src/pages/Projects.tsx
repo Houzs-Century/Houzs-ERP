@@ -2639,7 +2639,7 @@ function ProjectTeamSection({
                         )}
                         {it.kind === "staff" && (
                           <span
-                            className="ml-auto shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-wider text-amber-700"
+                            className="ml-auto shrink-0 rounded-full bg-amber-100 dark:bg-amber-900/40 px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-300"
                             title="Not in the Sales Team yet — adding puts them in it"
                           >
                             + team
@@ -3359,8 +3359,8 @@ function TaskAttachmentRow({
                   className={cn(
                     "rounded-full border px-2.5 py-0.5 text-[10px] font-bold",
                     actionDraft === "done"
-                      ? "border-green-600 bg-green-100 text-green-700"
-                      : "border-green-300 bg-surface text-green-600 hover:bg-green-50",
+                      ? "border-green-600 bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300"
+                      : "border-green-300 dark:border-green-800 bg-surface text-green-600 dark:text-green-300 hover:bg-green-50 dark:hover:bg-green-950/40",
                   )}
                 >
                   Done
@@ -3371,8 +3371,8 @@ function TaskAttachmentRow({
                   className={cn(
                     "rounded-full border px-2.5 py-0.5 text-[10px] font-bold",
                     actionDraft === "replace"
-                      ? "border-rose-600 bg-rose-100 text-rose-700"
-                      : "border-rose-300 bg-surface text-rose-600 hover:bg-rose-50",
+                      ? "border-rose-600 bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300"
+                      : "border-rose-300 dark:border-rose-800 bg-surface text-rose-600 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-950/40",
                   )}
                 >
                   Replace
@@ -3387,8 +3387,8 @@ function TaskAttachmentRow({
                   className={cn(
                     "rounded-full border px-2.5 py-0.5 text-[10px] font-bold",
                     actionDraft === "done"
-                      ? "border-green-600 bg-green-100 text-green-700"
-                      : "border-green-300 bg-surface text-green-600 hover:bg-green-50",
+                      ? "border-green-600 bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300"
+                      : "border-green-300 dark:border-green-800 bg-surface text-green-600 dark:text-green-300 hover:bg-green-50 dark:hover:bg-green-950/40",
                   )}
                 >
                   Done
@@ -3444,10 +3444,10 @@ function TaskAttachmentRow({
                         className={cn(
                           "rounded px-1.5 py-0.5 font-bold",
                           a.status === "done"
-                            ? "bg-green-100 text-green-700"
+                            ? "bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300"
                             : a.status === "replace"
-                              ? "bg-rose-100 text-rose-700"
-                              : "bg-amber-100 text-amber-700",
+                              ? "bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300"
+                              : "bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300",
                         )}
                       >
                         {a.status === "done"
@@ -4179,7 +4179,7 @@ export function TasklistSections({
 // ── Checklist row ────────────────────────────────────────────
 
 const REVIEW_BADGES: Record<string, { label: string; cls: string }> = {
-  pending_review: { label: "In Review", cls: "bg-amber-100 text-amber-800" },
+  pending_review: { label: "In Review", cls: "bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300" },
   rejected: { label: "Rejected", cls: "bg-err/10 text-err" },
   amended: { label: "Amended", cls: "bg-accent/15 text-accent" },
   approved: { label: "Approved", cls: "bg-synced/15 text-synced" },
@@ -5640,7 +5640,7 @@ function ProjectBanner({
       ? "border-err/40 bg-err/10 text-err"
       : t === "info"
       ? "border-accent/40 bg-accent-soft/30 text-ink"
-      : "border-amber-500/50 bg-amber-50 text-amber-900";
+      : "border-amber-500/50 bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-300";
   const Icon = t === "error" ? AlertOctagon : t === "info" ? Info : AlertTriangle;
   return (
     <div
@@ -5687,16 +5687,16 @@ function roleChipClass(role: string | null | undefined): string {
     case "SALES PIC":
     // Shared sales+driver deliverables (the Defect List pair, owner 2026-07-29).
     case "SALES PIC & DRIVER":
-      return "border-pink-300 bg-pink-100 text-pink-700";
+      return "border-pink-300 dark:border-pink-800 bg-pink-100 dark:bg-pink-900/40 text-pink-700 dark:text-pink-300";
     case "DRIVER":
-      return "border-blue-300 bg-blue-100 text-blue-700";
+      return "border-blue-300 dark:border-blue-800 bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300";
     case "PURCHASER":
-      return "border-orange-300 bg-orange-100 text-orange-700";
+      return "border-orange-300 dark:border-orange-800 bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300";
     case "LOGISTIC":
     case "LOGISTICS":
-      return "border-green-300 bg-green-100 text-green-700";
+      return "border-green-300 dark:border-green-800 bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300";
     case "BD":
-      return "border-purple-300 bg-purple-100 text-purple-700";
+      return "border-purple-300 dark:border-purple-800 bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300";
     default:
       return "border-border bg-bg/40 text-ink-secondary";
   }
@@ -6971,7 +6971,7 @@ function ProjectSalesEntriesSection({
             />
             {showLumpTotal && (
               <span
-                className="rounded bg-emerald-100 px-1.5 py-0.5 text-[8.5px] font-semibold uppercase tracking-wider text-emerald-700"
+                className="rounded bg-emerald-100 dark:bg-emerald-900/40 px-1.5 py-0.5 text-[8.5px] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-300"
                 title="Final lump-sum total for this event (no individual sales logged yet). Logging individual sales will replace this."
               >
                 final total
@@ -7027,7 +7027,7 @@ function ProjectSalesEntriesSection({
                 "inline-flex h-6 items-center gap-1 rounded-md border px-2 text-[10.5px] font-semibold",
                 quickTotalOpen
                   ? "border-emerald-600/60 bg-emerald-600 text-white"
-                  : "border-emerald-600/40 bg-emerald-100 text-emerald-800 hover:bg-emerald-200",
+                  : "border-emerald-600/40 bg-emerald-100 dark:bg-emerald-900/40 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-200 dark:hover:bg-emerald-800/50",
               )}
               title="Set the project's total sales figure directly (shows on the Project List + dashboard)"
             >
@@ -7041,7 +7041,7 @@ function ProjectSalesEntriesSection({
                 "inline-flex h-6 items-center gap-1 whitespace-nowrap rounded-md border px-2 text-[10.5px] font-semibold",
                 quickLogOpen
                   ? "border-amber-500/60 bg-amber-500 text-white"
-                  : "border-amber-500/40 bg-amber-100 text-amber-800 hover:bg-amber-200",
+                  : "border-amber-500/40 bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-800/50",
               )}
               title="Capture amount + ref no only — fill customer details later from the Sales page"
             >
@@ -7070,7 +7070,7 @@ function ProjectSalesEntriesSection({
       {quickTotalOpen && (
         <div className="mb-2 rounded-md border border-emerald-600/40 bg-emerald-50/60 p-2.5">
           <div className="mb-1.5 flex items-center justify-between">
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-800">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
               Total Sales · lump sum for this project
             </span>
           </div>
@@ -7116,12 +7116,12 @@ function ProjectSalesEntriesSection({
       {quickLogOpen && (
         <div className="mb-2 rounded-md border border-amber-500/40 bg-amber-50/60 p-2.5">
           <div className="mb-1.5 flex items-center justify-between">
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-amber-800">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-amber-800 dark:text-amber-300">
               Quick log · amount + ref only
             </span>
             <button
               onClick={() => setQuickLogOpen(false)}
-              className="text-amber-800/60 hover:text-amber-900"
+              className="text-amber-800/60 hover:text-amber-900 dark:hover:text-amber-300"
               aria-label="Close"
             >
               <X size={11} />

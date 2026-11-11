@@ -155,7 +155,7 @@ export function PresenceButton() {
             </span>
             <span className="flex items-center gap-1.5">
               <span className="flex items-center gap-1.5 rounded-full bg-synced py-0.5 pl-1.5 pr-2 font-mono text-[10px] font-semibold uppercase tracking-wider text-white">
-                <span className="h-1.5 w-1.5 rounded-full bg-white" />
+                <span className="h-1.5 w-1.5 rounded-full bg-surface" />
                 {online.length} online
               </span>
               {awayList.length > 0 && (

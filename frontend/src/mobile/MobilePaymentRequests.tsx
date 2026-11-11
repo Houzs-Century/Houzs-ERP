@@ -275,7 +275,7 @@ function RequestDetailScreen({ id, onBack, onEdit, onBalance }: { id: string; on
       <BillMatchesNote matches={r.billMatches} />
       {/* 欠正式单 (item 3): paid on a proforma — the official invoice is uploaded here, Finance checks it. */}
       {r.officialDoc && (
-        <div role="group" aria-label="Official invoice" style={{ display: "flex", flexDirection: "column", gap: 6, padding: "8px 10px", background: "#fff", borderRadius: 10 }}>
+        <div role="group" aria-label="Official invoice" style={{ display: "flex", flexDirection: "column", gap: 6, padding: "8px 10px", background: "var(--hz-c-surface)", borderRadius: 10 }}>
           <OfficialDocChip state={r.officialDoc.state} note={r.officialDoc.note} />
           {r.officialDoc.note && <div style={{ fontSize: 12, color: "var(--mut)" }}>{r.officialDoc.note}</div>}
           {(mine || finance) && (r.officialDoc.state === "OWED" || r.officialDoc.state === "RECEIVED") && (
@@ -298,7 +298,7 @@ function RequestDetailScreen({ id, onBack, onEdit, onBalance }: { id: string; on
         <Note>{refund ? "No file — a refund request needs none." : r.parent_request_id ? `The bill is on ${r.family?.rootNo ?? "the first request"} — nothing to upload again.` : "No bill attached yet."}</Note>
       )}
       {(files.data?.files ?? []).map((f) => (
-        <div key={f.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: "#fff", borderRadius: 10, fontSize: 12.5 }}>
+        <div key={f.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: "var(--hz-c-surface)", borderRadius: 10, fontSize: 12.5 }}>
           <button type="button" onClick={() => void view(f.id)} style={{ flex: 1, textAlign: "left", border: "none", background: "none", color: "var(--brand-d)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.file_name}</button>
           {/* 申请一定要有: the last file stays — attach the right one first. */}
           {mayAttach && (files.data?.files ?? []).length > 1 && (
@@ -442,7 +442,7 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: PaymentReques
           <input ref={libRef} type="file" accept={PV_FILE_ACCEPT} multiple style={{ display: "none" }} aria-label="Pick bill files"
             onChange={(e) => { void takeFiles([...files, ...(e.target.files ?? [])]); e.target.value = ""; }} />
           {files.map((f, i) => (
-            <div key={`${f.name}-${i}`} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: "#fff", borderRadius: 10, fontSize: 12.5 }}>
+            <div key={`${f.name}-${i}`} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: "var(--hz-c-surface)", borderRadius: 10, fontSize: 12.5 }}>
               <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
               <button type="button" onClick={() => void takeFiles(files.filter((_, k) => k !== i))} style={{ border: "none", background: "none", color: "#a33", fontSize: 12 }}>Remove</button>
             </div>

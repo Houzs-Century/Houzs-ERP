@@ -116,7 +116,7 @@ export const EditDpOrderDrawer = ({ row, onClose }: { row: DpOrderRow; onClose: 
         </div>
 
         <div className={styles.drawerBody}>
-          <div style={{ margin: '0 0 var(--space-3)', fontSize: 'var(--fs-12)', color: 'var(--c-muted, #767b6e)' }}>
+          <div style={{ margin: '0 0 var(--space-3)', fontSize: 'var(--fs-12)', color: 'var(--c-muted, var(--hz-c-ink-muted))' }}>
             {dpJobTypeLabel(row.job_type)} · Pending Schedule. A job can be edited until it is scheduled.
           </div>
 
@@ -125,7 +125,7 @@ export const EditDpOrderDrawer = ({ row, onClose }: { row: DpOrderRow; onClose: 
           {isTransfer && (
             <div style={{ ...fieldRow, padding: 'var(--space-3)', border: '1px solid var(--border, rgba(34,31,32,0.12))', borderRadius: '6px' }}>
               <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>
-                From (origin) <span style={{ textTransform: 'none', color: 'var(--c-muted, #767b6e)' }}>— optional</span>
+                From (origin) <span style={{ textTransform: 'none', color: 'var(--c-muted, var(--hz-c-ink-muted))' }}>— optional</span>
               </div>
               <label style={fieldRow}>
                 <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>From name</div>

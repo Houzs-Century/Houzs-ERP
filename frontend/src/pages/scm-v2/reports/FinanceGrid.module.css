@@ -21,7 +21,7 @@
 .headText { text-align: left; }
 .headSub { display: block; font-size: 11px; font-weight: 500; color: var(--fin-muted); }
 .headGroup { text-align: center; border-bottom: 1px solid var(--fin-rule); font-size: 12px; }
-.headTotal { background: #eceee9; }
+.headTotal { background: var(--hz-dk-surface-2, #eceee9); }
 .dropBefore { box-shadow: inset 3px 0 0 var(--fin-petrol); }
 .sortMark { margin-left: 4px; font-size: 10px; color: var(--fin-petrol); }
 .handle { position: absolute; top: 0; bottom: 0; right: -4px; width: 9px; z-index: 3; cursor: col-resize; touch-action: none; }
@@ -63,7 +63,7 @@
 .leaf { flex: none; width: 18px; }
 
 /* ── Row dresses ── */
-.rowPlain:hover, .rowGroup:hover { background: #f6faf9; }
+.rowPlain:hover, .rowGroup:hover { background: var(--hz-dk-primary-soft, #f6faf9); }
 .rowGroup { font-weight: 600; }
 .rowBlock > * { padding-top: 12px; padding-bottom: 4px; height: auto; font-weight: 700; font-size: 12px; letter-spacing: 0.03em; }
 .rowSub { background: var(--fin-row); font-weight: 600; }
@@ -72,11 +72,11 @@
 .rowFinal { background: var(--fin-info-bg); font-weight: 700; }
 .rowFinal > * { height: 36px; border-top: 1.5px solid var(--fin-petrol-ink); border-bottom: 3px double var(--fin-petrol-ink); }
 .rowRatio > * { color: var(--fin-detail); font-style: italic; }
-.rowWarn > * { color: #7a5a1e; background: #f7f1e3; }
+.rowWarn > * { color: var(--hz-dk-accent-ink, #7a5a1e); background: var(--hz-dk-warning-bg, #f7f1e3); }
 .rowCheck > * { color: var(--fin-detail); font-size: 12.5px; }
 .rowCheck .name { font-style: italic; }
 .rowBad > * { color: var(--fin-red); font-weight: 700; }
-.detailRow > td { padding: 0; background: #f7fbfa; border-bottom: 1px solid #d3e7e3; }
+.detailRow > td { padding: 0; background: #f7fbfa; border-bottom: 1px solid var(--hz-dk-primary-line, #d3e7e3); }
 .detail { padding: 10px 16px 12px 40px; }
 
 /* ── Under the table ── */
@@ -87,22 +87,22 @@
 /* ── The header's right-click menu ── */
 .menu {
   position: fixed; z-index: 1000; min-width: 210px; max-height: 70vh; overflow: auto; padding: 4px;
-  background: var(--fin-surface, #fff); border: 1px solid var(--fin-line, #d6d9d2); border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(17, 20, 15, 0.16); font-size: 13px; color: var(--fin-ink, #11140f);
+  background: var(--fin-surface, var(--hz-c-surface)); border: 1px solid var(--fin-line, var(--hz-c-border)); border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(17, 20, 15, 0.16); font-size: 13px; color: var(--fin-ink, var(--hz-c-ink));
 }
 .menuItem {
   display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 10px; border: 0; border-radius: 5px;
   background: none; font: inherit; color: inherit; text-align: left; cursor: pointer; white-space: nowrap;
 }
-.menuItem:hover, .menuItem:focus-visible { background: var(--fin-paper, #f4f6f3); outline: none; }
-.menuItem:disabled { color: var(--fin-muted, #767b6e); cursor: default; background: none; }
-.menuSep { height: 1px; margin: 4px 2px; background: var(--fin-rule, #e3e6e0); }
-.menuTitle { padding: 6px 10px 2px; font-size: 11px; font-weight: 600; color: var(--fin-muted, #767b6e); text-transform: uppercase; letter-spacing: 0.04em; }
+.menuItem:hover, .menuItem:focus-visible { background: var(--fin-paper, var(--hz-c-surface-2)); outline: none; }
+.menuItem:disabled { color: var(--fin-muted, var(--hz-c-ink-muted)); cursor: default; background: none; }
+.menuSep { height: 1px; margin: 4px 2px; background: var(--fin-rule, var(--hz-c-surface-dim)); }
+.menuTitle { padding: 6px 10px 2px; font-size: 11px; font-weight: 600; color: var(--fin-muted, var(--hz-c-ink-muted)); text-transform: uppercase; letter-spacing: 0.04em; }
 .menuCheck { width: 14px; height: 14px; accent-color: var(--fin-petrol, #16695f); }
 
 /* ── Pills and flags the lists use ── */
 .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11.5px; font-weight: 600; background: var(--fin-paper); color: var(--fin-text); border: 1px solid var(--fin-rule); }
-.pillAlt { background: var(--fin-petrol-pale, #e1efed); color: var(--fin-petrol-ink); border-color: transparent; }
-.flag { font-size: 11.5px; color: #7a5a1e; }
+.pillAlt { background: var(--fin-petrol-pale, var(--hz-c-primary-soft)); color: var(--fin-petrol-ink); border-color: transparent; }
+.flag { font-size: 11.5px; color: var(--hz-dk-accent-ink, #7a5a1e); }
 .muted { color: var(--fin-muted); }
 .tick { width: 15px; height: 15px; accent-color: var(--fin-petrol); cursor: pointer; vertical-align: middle; margin: 0; }

@@ -194,7 +194,7 @@ export const DashboardChart = ({
         {hover !== null && (
           <g data-hover={hover}>
             <rect x={colX(hover) + 2} y={PAD.top} width={Math.max(slot - 4, 1)} height={plotH} rx={5} style={{ fill: '#e3efec' }} />
-            <line x1={colX(hover) + 2} x2={colX(hover) + slot - 2} y1={PAD.top + plotH} y2={PAD.top + plotH} style={{ stroke: 'var(--fin-petrol, #16695f)' }} strokeWidth={2} />
+            <line x1={colX(hover) + 2} x2={colX(hover) + slot - 2} y1={PAD.top + plotH} y2={PAD.top + plotH} style={{ stroke: 'var(--fin-petrol, var(--hz-c-primary))' }} strokeWidth={2} />
           </g>
         )}
         {/* The left axis' ticks and grid. */}
@@ -213,7 +213,7 @@ export const DashboardChart = ({
         ))}
         {notes?.map((note, i) => (note ? (
           <text key={`n${i}`} x={xCenter(i)} y={height - padBottom + 31} textAnchor="middle" data-note={i}
-            style={{ fontSize: 10.5, fill: note.loss ? 'var(--fin-late-fg, #a83434)' : 'var(--fin-petrol-ink, #0c3f39)', fontVariantNumeric: 'tabular-nums' }}>
+            style={{ fontSize: 10.5, fill: note.loss ? 'var(--fin-late-fg, var(--hz-dk-err, #a83434))' : 'var(--fin-petrol-ink, #0c3f39)', fontVariantNumeric: 'tabular-nums' }}>
             {note.text}
           </text>
         ) : null))}
@@ -262,8 +262,8 @@ export const DashboardChart = ({
       {hoverCard && hover !== null && (
         <div role="tooltip" data-hover-card={hover} style={{
           position: 'absolute', top: 4, ...cardPos(hover), zIndex: 3, pointerEvents: 'none', boxSizing: 'border-box', minWidth: 212, maxWidth: 300,
-          padding: '10px 12px', background: 'var(--fin-surface, #ffffff)', border: '1px solid var(--fin-line, #d6d9d2)', borderRadius: 8,
-          boxShadow: '0 1px 0 rgba(17,24,16,0.06), 0 12px 28px -12px rgba(17,24,16,0.32)', fontSize: 12, color: 'var(--fin-ink, #11140f)',
+          padding: '10px 12px', background: 'var(--fin-surface, var(--hz-c-surface))', border: '1px solid var(--fin-line, var(--hz-c-border))', borderRadius: 8,
+          boxShadow: '0 1px 0 rgba(17,24,16,0.06), 0 12px 28px -12px rgba(17,24,16,0.32)', fontSize: 12, color: 'var(--fin-ink, var(--hz-c-ink))',
         }}>
           {hoverCard(hover)}
         </div>

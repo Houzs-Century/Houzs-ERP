@@ -20,7 +20,7 @@ export type LoginsPayload = {
 
 const PILL: Record<Verdict, { cls: string; label: string }> = {
   ok: { cls: "border-synced/40 bg-synced/10 text-synced", label: "Normal" },
-  warning: { cls: "border-amber-300 bg-amber-50 text-amber-800", label: "Warning" },
+  warning: { cls: "border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300", label: "Warning" },
   critical: { cls: "border-err/40 bg-err/10 text-err", label: "Critical" },
 };
 

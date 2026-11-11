@@ -242,7 +242,7 @@ export const DpOrders = () => {
       key: 'trip', label: 'Trip', width: '90px',
       getValue: (r) => (r.trip_id ? 'On trip' : ''),
       render: (r) => r.trip_id
-        ? <span style={{ color: 'var(--c-secondary-a, #2F5D4F)' }}>On trip</span>
+        ? <span style={{ color: 'var(--c-secondary-a, var(--hz-dk-secondary-a, #2F5D4F))' }}>On trip</span>
         : <span style={{ color: 'var(--fg-muted)' }}>—</span>,
     },
     {

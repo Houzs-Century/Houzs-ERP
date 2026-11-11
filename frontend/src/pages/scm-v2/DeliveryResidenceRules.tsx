@@ -71,7 +71,7 @@ export const DeliveryResidenceRules = ({ embedded = false }: { embedded?: boolea
       )}
       <ListToolbar search={q} onSearch={setQ} placeholder="Search residence types" shown={shown.length} total={all.length}
         onExport={doExport} newLabel="New Type" onNew={() => setOpen({ mode: 'new' })} />
-      {rules.isError && <p className="text-[13px] text-[#8a2c2c]">The residence rules could not be loaded.</p>}
+      {rules.isError && <p className="text-[13px] text-[color:var(--hz-dk-err,#8a2c2c)]">The residence rules could not be loaded.</p>}
       {rules.isLoading && <p className="text-[13px] text-ink-muted">Loading residence rules…</p>}
       {!rules.isLoading && !rules.isError && shown.length === 0 && (
         <NoMatch text={all.length === 0 ? 'No residence rules came back. Add a building type (e.g. Condo, Landed) to set its service duration and access rules.' : 'No residence type matches this search.'}
@@ -187,7 +187,7 @@ function RuleForm({ rule, onDone }: { rule: ResidenceRuleRow | null; onDone: () 
       </div>
       <Field label="Notes"><input value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} placeholder="e.g. Condo: no delivery before 10:00, book lift at management office" className={inputCls} /></Field>
       <p className="text-[12px] text-ink-muted">Duration is stored in minutes and shown in hours (1.5h = 90 minutes). Leave the time windows blank for no restriction.</p>
-      {problem && f.buildingType !== '' && <p className="text-[12.5px] text-[#8a2c2c]">{problem}</p>}
+      {problem && f.buildingType !== '' && <p className="text-[12.5px] text-[color:var(--hz-dk-err,#8a2c2c)]">{problem}</p>}
       <div className="flex gap-2">
         <button type="button" disabled={problem !== null || pending} onClick={save} className={primaryBtn}>{pending ? 'Saving…' : rule ? 'Save changes' : 'Create Rule'}</button>
         <button type="button" onClick={onDone} className={secondaryBtn}>Cancel</button>

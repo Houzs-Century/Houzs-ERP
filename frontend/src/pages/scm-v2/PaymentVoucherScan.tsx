@@ -495,7 +495,7 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
                   Open ticked as ONE voucher ({tickedLines.length} lines{tickedLines.length > 0 ? `, ${fmtRm(tickedTotalSen)}` : ''})
                 </Button>
                 {tickedCurrencies.size > 1
-                  ? <span style={{ color: 'var(--c-festive-b, #B8331F)' }}>the ticked receipts are in different currencies</span>
+                  ? <span style={{ color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' }}>the ticked receipts are in different currencies</span>
                   : <span style={{ color: 'var(--fg-muted)' }}>· one line per receipt, the payee left for you, every page attached</span>}
               </div>
             </section>
@@ -552,7 +552,7 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
                         <div style={{ display: 'flex', gap: 'var(--space-3)', fontSize: 'var(--fs-12)', color: 'var(--fg-muted)', flexWrap: 'wrap' }}>
                           {b.extraction.vendorRegNo && <span>Reg. no {b.extraction.vendorRegNo}</span>}
                           {b.extraction.sstSen != null && <span>SST {fmtRm(b.extraction.sstSen)}</span>}
-                          {b.extraction.totalSen == null && <span style={{ color: 'var(--c-festive-b, #B8331F)' }}>total unreadable — will need typing</span>}
+                          {b.extraction.totalSen == null && <span style={{ color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' }}>total unreadable — will need typing</span>}
                         </div>
                       )}
                       {b.extraction.lines.length > 0 && (
@@ -637,7 +637,7 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
           {results.filter((b) => !b.ok).map((b) => (
             <section key={`fail-${b.index}`} className={styles.card}>
               <div className={styles.cardBody} style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap', fontSize: 'var(--fs-13)' }}>
-                <span style={{ color: 'var(--c-festive-b, #B8331F)', flex: 1, minWidth: 0 }}>
+                <span style={{ color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))', flex: 1, minWidth: 0 }}>
                   Bill {b.index + 1}{namesOf(b.index) ? ` (${namesOf(b.index)})` : ''} could not be read: {(b as { reason: string }).reason}
                 </span>
                 <Button variant="secondary" size="sm" onClick={() => void readAgain(b.index)} disabled={busy}>

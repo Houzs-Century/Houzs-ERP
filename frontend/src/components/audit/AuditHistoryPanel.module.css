@@ -9,8 +9,8 @@
   right: 0;
   width: min(420px, 92vw);
   height: 100vh;
-  background: #fff;
-  border-left: 1px solid #d6d9d2;
+  background: var(--hz-c-surface);
+  border-left: 1px solid var(--hz-c-border);
   box-shadow: var(--shadow-3);
   z-index: 60;
   display: flex;
@@ -23,7 +23,7 @@
   justify-content: space-between;
   gap: var(--space-2);
   padding: var(--space-3) var(--space-4);
-  border-bottom: 1px solid #d6d9d2;
+  border-bottom: 1px solid var(--hz-c-border);
 }
 
 .historyPanelTitle {
@@ -32,7 +32,7 @@
   font-weight: 700;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: #767b6e;
+  color: var(--hz-c-ink-muted);
   margin: 0;
   display: inline-flex;
   align-items: center;
@@ -58,7 +58,7 @@
   border-radius: 10px;
 }
 .historyItem + .historyItem {
-  border-top: 1px solid #d6d9d2;
+  border-top: 1px solid var(--hz-c-border);
 }
 
 .historyAvatar {
@@ -80,7 +80,7 @@
 .historyLine {
   font-family: var(--font-sans);
   font-size: var(--fs-12);
-  color: #11140f;
+  color: var(--hz-c-ink);
   line-height: 1.4;
 }
 
@@ -91,7 +91,7 @@
 .historyMeta {
   font-family: var(--font-sans);
   font-size: var(--fs-10);
-  color: #767b6e;
+  color: var(--hz-c-ink-muted);
   margin-top: 2px;
   font-variant-numeric: tabular-nums;
 }
@@ -109,7 +109,7 @@
   text-transform: uppercase;
   background: none;
   border: none;
-  color: #0c3f39;
+  color: var(--hz-c-primary-ink);
   cursor: pointer;
   padding: 2px 0;
 }
@@ -118,9 +118,9 @@
 .historyChanges {
   margin-top: 6px;
   padding: var(--space-2);
-  background: #f4f6f3;
+  background: var(--hz-c-surface-2);
   border-radius: 8px;
-  border: 1px solid #d6d9d2;
+  border: 1px solid var(--hz-c-border);
   font-size: var(--fs-11);
   display: flex;
   flex-direction: column;
@@ -141,24 +141,24 @@
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: #767b6e;
+  color: var(--hz-c-ink-muted);
 }
 
 .historyChangeDiff {
   font-family: var(--font-sans);
   font-size: var(--fs-11);
-  color: #11140f;
+  color: var(--hz-c-ink);
   word-break: break-word;
 }
 
 .historyChangeFrom {
-  color: #767b6e;
+  color: var(--hz-c-ink-muted);
   text-decoration: line-through;
 }
 
 .historyChangeArrow {
   margin: 0 6px;
-  color: #767b6e;
+  color: var(--hz-c-ink-muted);
 }
 
 .historyBackdrop {
@@ -175,13 +175,13 @@
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #767b6e;
+  color: var(--hz-c-ink-muted);
   line-height: 1.3;
   padding: var(--space-3);
 }
 
 .historyEmpty {
-  color: #767b6e;
+  color: var(--hz-c-ink-muted);
   padding: var(--space-3);
 }
 

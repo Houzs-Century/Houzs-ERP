@@ -50,11 +50,11 @@ const Amount = ({ cardId, rule, name }: { cardId: string; rule: RateRule; name: 
           <button type="button" className={cn(SMALL_BTN, 'text-primary')} onClick={save} disabled={update.isPending} aria-label="Save amount"><Check size={15} strokeWidth={2} /></button>
           <button type="button" className={SMALL_BTN} onClick={() => { setDraft(null); setErr(null); }} aria-label="Cancel"><X size={15} strokeWidth={2} /></button>
           {/* On a phone the cell has no room for its icons, so delete lives here. */}
-          <button type="button" className={cn(SMALL_BTN, 'hover:text-[#8a2c2c] sm:hidden')} disabled={del.isPending}
+          <button type="button" className={cn(SMALL_BTN, 'hover:text-[color:var(--hz-dk-err,#8a2c2c)] sm:hidden')} disabled={del.isPending}
             onClick={() => del.mutate(rule.id, { onError: writeFailedAs('The rule was not deleted') })}
             aria-label={`Delete ${name} rule`}><Trash2 size={14} strokeWidth={1.75} /></button>
         </span>
-        {err && <span role="alert" className="text-[11.5px] font-semibold text-[#8a2c2c]">{err}</span>}
+        {err && <span role="alert" className="text-[11.5px] font-semibold text-[color:var(--hz-dk-err,#8a2c2c)]">{err}</span>}
       </span>
     );
   }
@@ -65,7 +65,7 @@ const Amount = ({ cardId, rule, name }: { cardId: string; rule: RateRule; name: 
         className="mr-1 min-h-[32px] rounded-md px-1 text-[15px] font-bold tabular-nums text-ink hover:bg-surface-2">{centiToRM(rule.amountSen)}</button>
       <button type="button" className={cn(SMALL_BTN, 'hidden hover:text-primary sm:grid')} onClick={() => setDraft(centiToRM(rule.amountSen))}
         aria-label={`Edit amount for ${name}`}><Pencil size={13} strokeWidth={1.75} /></button>
-      <button type="button" className={cn(SMALL_BTN, 'hidden hover:text-[#8a2c2c] sm:grid')} disabled={del.isPending}
+      <button type="button" className={cn(SMALL_BTN, 'hidden hover:text-[color:var(--hz-dk-err,#8a2c2c)] sm:grid')} disabled={del.isPending}
         onClick={() => del.mutate(rule.id, { onError: writeFailedAs('The rule was not deleted') })}
         aria-label={`Delete ${name} rule`}><Trash2 size={13} strokeWidth={1.75} /></button>
     </span>
@@ -100,7 +100,7 @@ const AddZonePrice = ({ cardId, zone, ruleType }: { cardId: string; zone: string
         <button type="button" className={cn(SMALL_BTN, 'text-primary')} onClick={save} disabled={create.isPending} aria-label={`Save ${name}`}><Check size={15} strokeWidth={2} /></button>
         <button type="button" className={SMALL_BTN} onClick={() => setDraft(null)} aria-label="Cancel"><X size={15} strokeWidth={2} /></button>
       </span>
-      {err && <span role="alert" className="text-[11.5px] font-semibold text-[#8a2c2c]">{err}</span>}
+      {err && <span role="alert" className="text-[11.5px] font-semibold text-[color:var(--hz-dk-err,#8a2c2c)]">{err}</span>}
     </span>
   );
 };
@@ -170,7 +170,7 @@ const ZoneTable = ({ cardId, rows, hidden }: { cardId: string; rows: ZoneRow[]; 
         </table>
       </div>
       {hidden.length > 0 && (
-        <div className="rounded-xl bg-[#f6ecd4] px-3 py-2.5 text-[12.5px] text-[#5a3a14]">
+        <div className="rounded-xl bg-[#f6ecd4] px-3 py-2.5 text-[12.5px] text-accent-ink">
           <p className="mb-1.5 font-semibold">A zone priced twice: the card uses one of these, so delete the one that is wrong.</p>
           {hidden.map((r) => (
             <div key={r.id} className="flex items-center justify-between gap-3 py-0.5">
@@ -255,7 +255,7 @@ const AddRule = ({ cardId, category, zones, onDone }: { cardId: string; category
         <button type="button" className={BTN_PRI} onClick={addRule} disabled={create.isPending}><Plus size={16} strokeWidth={1.75} />{create.isPending ? 'Adding…' : 'Add rule'}</button>
         <button type="button" className={BTN_QUIET} onClick={onDone}>Done</button>
       </div>
-      {err && <p role="alert" className="basis-full text-[13px] font-semibold text-[#8a2c2c]">{err}</p>}
+      {err && <p role="alert" className="basis-full text-[13px] font-semibold text-[color:var(--hz-dk-err,#8a2c2c)]">{err}</p>}
     </div>
   );
 };

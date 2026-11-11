@@ -68,11 +68,11 @@ export function DepositInvoiceSetup() {
               <button type="button" className={css.btnSolid} onClick={onSave} disabled={save.isPending}>{save.isPending ? 'Saving…' : 'Save'}</button>
             )}
             <span className={css.grow} />
-            <span style={{ fontSize: 12.5, fontWeight: 600, color: saved.enabled ? '#2f8a5b' : '#767b6e' }}>
+            <span style={{ fontSize: 12.5, fontWeight: 600, color: saved.enabled ? 'var(--hz-c-synced)' : 'var(--hz-c-ink-muted)' }}>
               {saved.enabled ? `On · payments dated from ${fmtDate(saved.fromDate)}` : 'Off'}
             </span>
           </div>
-          {error && <div className={css.cardFoot} role="alert" style={{ color: '#a83434' }}>{error}</div>}
+          {error && <div className={css.cardFoot} role="alert" style={{ color: 'var(--hz-dk-err, #a83434)' }}>{error}</div>}
           <div className={css.cardFoot}>
             One deposit invoice per customer payment received before the order’s final invoice — Dr the customer, Cr the deposit
             account. Payments dated before the day are left alone; the ones the day leaves without an invoice, and the delivered

@@ -93,7 +93,7 @@ export function ZoneMapCard({ rows, map, usingDefault, byPrefix, selected, onSel
                 ? <div className="self-start rounded-full bg-primary-soft px-3.5 py-1.5 text-[13px] font-semibold text-primary-ink">
                     {postcode} is in {zoneName(foundZone)}{hit?.label && hit.label !== zoneName(foundZone) ? ` · ${hit.label}` : ''}{usingDefault ? ' (built-in map)' : ''}
                   </div>
-                : <div className="self-start rounded-full bg-[#f6dcdc] px-3.5 py-1.5 text-[13px] font-semibold text-[#8a2c2c]">{postcode} is not in any zone</div>
+                : <div className="self-start rounded-full bg-[#f6dcdc] px-3.5 py-1.5 text-[13px] font-semibold text-[color:var(--hz-dk-err,#8a2c2c)]">{postcode} is not in any zone</div>
           )}
 
           <div role="group" aria-label="Zones" className="grid auto-rows-[minmax(58px,auto)] grid-cols-2 gap-2 md:auto-rows-[66px] md:grid-cols-6">
@@ -135,7 +135,7 @@ export function ZoneMapCard({ rows, map, usingDefault, byPrefix, selected, onSel
           <div className="text-[24px] font-bold leading-tight text-ink">{title}</div>
           <div>
             <div className="flex h-5 gap-px overflow-hidden rounded-md" aria-hidden>
-              {byPrefix.map((z, p) => <span key={p} className="flex-1" style={{ background: mine(p) ? '#16695f' : z ? '#d6d9d2' : '#eef0ec' }} />)}
+              {byPrefix.map((z, p) => <span key={p} className="flex-1" style={{ background: mine(p) ? 'var(--hz-c-primary)' : z ? 'var(--hz-c-border)' : 'var(--hz-c-bg)' }} />)}
             </div>
             <div className="mt-1 flex justify-between text-[11px] text-ink-muted"><span>00</span><span>25</span><span>50</span><span>75</span><span>99</span></div>
           </div>

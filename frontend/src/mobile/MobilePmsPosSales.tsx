@@ -19,9 +19,9 @@ import {
 } from "../lib/projectPosSales";
 
 const LABEL: React.CSSProperties = {
-  fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#9aa093",
+  fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--hz-c-ink-soft)",
 };
-const MUTED: React.CSSProperties = { fontSize: 12, color: "#9aa093" };
+const MUTED: React.CSSProperties = { fontSize: 12, color: "var(--hz-c-ink-soft)" };
 /* The pill's tint per status word; a function, not a map, so the desktop's
    Tailwind map stays the only literal of the vocabulary's presentation. */
 function pillStyle(status: PosReceiptStatus): React.CSSProperties {
@@ -53,13 +53,13 @@ export function MobilePmsPosSales({ query }: { query: ReturnType<typeof useMobil
       <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "0 0 6px" }}>
         <span style={LABEL}>POS sales</span>
         {t && (
-          <span className="money" style={{ marginLeft: "auto", fontSize: 12, fontWeight: 700, color: "#414539" }}>
+          <span className="money" style={{ marginLeft: "auto", fontSize: 12, fontWeight: 700, color: "var(--hz-c-ink-secondary)" }}>
             {t.paid_count} · {fmtSen(t.net_sen)}
           </span>
         )}
       </div>
       {t && Object.keys(t.by_method).length > 0 && (
-        <div style={{ fontSize: 11, color: "#414539", margin: "0 0 6px" }}>
+        <div style={{ fontSize: 11, color: "var(--hz-c-ink-secondary)", margin: "0 0 6px" }}>
           {Object.entries(t.by_method).map(([m, sen]) => `${posMethodLabel(m)} ${fmtSen(sen)}`).join(" · ")}
           {t.void_count > 0 ? ` · ${t.void_count} void` : ""}
           {t.return_count > 0 ? ` · ${t.return_count} return` : ""}
@@ -74,7 +74,7 @@ export function MobilePmsPosSales({ query }: { query: ReturnType<typeof useMobil
         return (
           <div key={r.id} style={{ borderTop: "1px solid #e6e8e1", padding: "6px 0" }} onClick={() => setOpen(isOpen ? null : r.id)}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
-              <span className="mono" style={{ fontWeight: 700, color: "#16695f" }}>{r.receipt_no}</span>
+              <span className="mono" style={{ fontWeight: 700, color: "var(--hz-c-primary)" }}>{r.receipt_no}</span>
               <span style={{ ...pillStyle(status), fontSize: 9, fontWeight: 700, borderRadius: 999, padding: "1px 6px" }}>{status}</span>
               <span className="money" style={{ marginLeft: "auto", fontWeight: 700, textDecoration: status === "VOID" ? "line-through" : undefined }}>
                 {r.type === "RETURN" && status !== "VOID" ? "-" : ""}{fmtSen(r.total_sen)}
@@ -87,14 +87,14 @@ export function MobilePmsPosSales({ query }: { query: ReturnType<typeof useMobil
               {r.methods.length > 0 ? ` · ${r.methods.map(posMethodLabel).join(" + ")}` : ""}
             </div>
             {isOpen && (
-              <div style={{ marginTop: 4, fontSize: 11, color: "#414539" }}>
+              <div style={{ marginTop: 4, fontSize: 11, color: "var(--hz-c-ink-secondary)" }}>
                 {r.lines.map((l) => (
                   <div key={l.line_no} style={{ display: "flex", gap: 6 }}>
                     <span style={{ flex: 1 }}>
-                      <span className="mono" style={{ color: "#9aa093" }}>{l.item_code}</span> {l.description}
+                      <span className="mono" style={{ color: "var(--hz-c-ink-soft)" }}>{l.item_code}</span> {l.description}
                     </span>
                     <span className="mono">{l.qty} {l.uom}</span>
-                    <span className="mono" style={{ color: l.disc_label !== "--" ? "#8a4e0e" : "#9aa093" }}>{l.disc_label}</span>
+                    <span className="mono" style={{ color: l.disc_label !== "--" ? "#8a4e0e" : "var(--hz-c-ink-soft)" }}>{l.disc_label}</span>
                     <span className="money">{fmtSen(l.amount_sen)}</span>
                   </div>
                 ))}

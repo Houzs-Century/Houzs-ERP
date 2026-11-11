@@ -249,7 +249,7 @@ function RoleList({
                       {r.name}
                     </span>
                     {r.is_system && (
-                      <span style={{ flex: "none", fontSize: 9, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", color: "var(--gold)", background: "#f3ece0", borderRadius: 999, padding: "2px 6px" }}>
+                      <span style={{ flex: "none", fontSize: 9, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", color: "var(--gold)", background: "var(--hz-c-accent-soft)", borderRadius: 999, padding: "2px 6px" }}>
                         System
                       </span>
                     )}
@@ -404,7 +404,7 @@ function RoleDetail({
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
           <span style={{ fontSize: 19, fontWeight: 800, color: "var(--ink)" }}>{role.name}</span>
           {role.is_system && (
-            <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", color: "var(--gold)", background: "#f3ece0", borderRadius: 999, padding: "2px 6px" }}>
+            <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", color: "var(--gold)", background: "var(--hz-c-accent-soft)", borderRadius: 999, padding: "2px 6px" }}>
               System
             </span>
           )}
@@ -428,7 +428,7 @@ function RoleDetail({
               {role.unknown_permissions!.map((k) => (
                 <span
                   key={k}
-                  style={{ fontFamily: MONO, fontSize: 10.5, color: "var(--ink2)", background: "#fff", border: "1px solid var(--line)", borderRadius: 999, padding: "2px 8px" }}
+                  style={{ fontFamily: MONO, fontSize: 10.5, color: "var(--ink2)", background: "var(--hz-c-surface)", border: "1px solid var(--line)", borderRadius: 999, padding: "2px 8px" }}
                 >
                   {k}
                 </span>
@@ -446,7 +446,7 @@ function RoleDetail({
         ) : (
           <>
           {!hasRows && (
-            <div className="card" style={{ padding: 12, marginBottom: 10, border: "1px solid var(--warning-text, #6e4d12)", background: "var(--warning-bg, #f6efd9)" }}>
+            <div className="card" style={{ padding: 12, marginBottom: 10, border: "1px solid var(--warning-text, #6e4d12)", background: "var(--warning-bg, var(--hz-c-warning-bg))" }}>
               <div style={{ fontSize: 12.5, fontWeight: 700, color: "var(--ink)" }}>Not configured</div>
               <div style={{ fontSize: 11.5, color: "var(--ink2)", marginTop: 4, lineHeight: 1.4 }}>
                 Members still see pages by the old position rule. Set the levels below and save once to make the role the source of truth.
@@ -520,7 +520,7 @@ function RoleDetail({
                         borderRadius: 999,
                         padding: "2px 7px",
                         color: on === 0 ? "var(--mut)" : full ? "var(--green)" : "var(--gold)",
-                        background: on === 0 ? "var(--bg)" : full ? "var(--green-bg)" : "#f3ece0",
+                        background: on === 0 ? "var(--bg)" : full ? "var(--green-bg)" : "var(--hz-c-accent-soft)",
                       }}
                     >
                       {on === 0 ? "—" : `${on}/${total}`}
@@ -583,7 +583,7 @@ function RoleDetail({
               setStaged(new Set(role.permissions));
               setPageStaged({ ...pageBase });
             }}
-            style={{ flex: "none", height: 48, padding: "0 16px", border: "1px solid var(--line-card)", background: "#fff", borderRadius: "var(--r-btn)", fontFamily: "inherit", fontSize: 14, fontWeight: 700, color: "var(--ink2)", cursor: "pointer" }}
+            style={{ flex: "none", height: 48, padding: "0 16px", border: "1px solid var(--line-card)", background: "var(--hz-c-surface)", borderRadius: "var(--r-btn)", fontFamily: "inherit", fontSize: 14, fontWeight: 700, color: "var(--ink2)", cursor: "pointer" }}
           >
             Discard
           </button>
@@ -639,7 +639,7 @@ function MLevelPicker({
               fontWeight: active ? 800 : 500,
               cursor: disabled ? "default" : "pointer",
               color: active ? "#fff" : "var(--mut)",
-              background: active ? "var(--brand, #16695f)" : "var(--bg)",
+              background: active ? "var(--brand, var(--hz-c-primary))" : "var(--bg)",
               opacity: disabled ? 0.5 : 1,
             }}
           >

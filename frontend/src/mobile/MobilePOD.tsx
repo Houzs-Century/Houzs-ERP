@@ -623,7 +623,7 @@ function SignaturePad({ canvasRef, onChange, clearNonce }: {
   const end = () => { drawing.current = false; last.current = null; };
 
   return (
-    <div style={{ background: "#fff", border: "1px solid var(--line)", borderRadius: 13, padding: 14, position: "relative", height: 120 }}>
+    <div style={{ background: "var(--hz-c-surface)", border: "1px solid var(--line)", borderRadius: 13, padding: 14, position: "relative", height: 120 }}>
       <canvas
         ref={canvasRef}
         onPointerDown={start}

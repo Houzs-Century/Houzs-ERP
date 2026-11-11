@@ -46,7 +46,7 @@ export function LegOwnerToggle({
               style={{
                 flex: 1, height: 40, borderRadius: 10, cursor: disabled ? "default" : "pointer", fontFamily: "inherit",
                 fontSize: 13, fontWeight: 600, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
-                border: `1px solid ${on ? BROWN : LINE}`, background: on ? BROWN_SOFT : "#fff", color: on ? BROWN_FG : INK_SEC,
+                border: `1px solid ${on ? BROWN : LINE}`, background: on ? BROWN_SOFT : "var(--hz-c-surface)", color: on ? BROWN_FG : INK_SEC,
                 opacity: disabled ? 0.6 : 1,
               }}
             >

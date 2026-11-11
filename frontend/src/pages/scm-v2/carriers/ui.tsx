@@ -11,11 +11,11 @@ export const INPUT = 'min-h-[40px] w-full rounded-lg border border-border bg-sur
 export const EYEBROW = 'text-[12px] font-bold uppercase tracking-[0.06em] text-ink-muted';
 export const BTN_PRI = 'inline-flex min-h-[40px] items-center gap-1.5 rounded-lg bg-primary px-4 text-[13.5px] font-semibold text-white disabled:opacity-60';
 export const BTN_QUIET = 'inline-flex min-h-[40px] items-center gap-1.5 rounded-lg bg-surface-2 px-4 text-[13.5px] font-semibold text-ink disabled:opacity-60';
-export const ICON_BTN = 'grid h-9 w-9 flex-none place-items-center rounded-lg bg-surface-2 text-ink-secondary hover:text-[#8a2c2c] disabled:opacity-50';
+export const ICON_BTN = 'grid h-9 w-9 flex-none place-items-center rounded-lg bg-surface-2 text-ink-secondary hover:text-[color:var(--hz-dk-err,#8a2c2c)] disabled:opacity-50';
 
 const TONE = {
   green: 'bg-[#dcebe3] text-[#1f5c43]',
-  red: 'bg-[#f6dcdc] text-[#8a2c2c]',
+  red: 'bg-[#f6dcdc] text-[color:var(--hz-dk-err,#8a2c2c)]',
   amber: 'bg-[#f6ecd4] text-[#7a5000]',
   blue: 'bg-[#e7eef6] text-[#1f4f75]',
   grey: 'bg-surface-2 text-ink-muted',
@@ -38,7 +38,7 @@ export const Kpi = ({ label, value, sub, tone }: { label: string; value: ReactNo
   <div className={cn(CARD, 'flex min-w-0 flex-col gap-1 px-4 py-3.5')}>
     <span className={EYEBROW}>{label}</span>
     <span className={cn('text-[22px] font-bold tabular-nums leading-tight',
-      tone === 'red' ? 'text-[#8a2c2c]' : tone === 'amber' ? 'text-[#7a5000]' : tone === 'green' ? 'text-[#1f5c43]' : 'text-ink')}>{value}</span>
+      tone === 'red' ? 'text-[color:var(--hz-dk-err,#8a2c2c)]' : tone === 'amber' ? 'text-[#7a5000]' : tone === 'green' ? 'text-[#1f5c43]' : 'text-ink')}>{value}</span>
     {sub != null && <span className={HINT}>{sub}</span>}
   </div>
 );

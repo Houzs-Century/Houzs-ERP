@@ -424,7 +424,7 @@ function AdjustmentLineRow({
             style={{
               textAlign: 'right',
               fontFamily: 'var(--font-mono)',
-              color: line.qty < 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--c-ink)',
+              color: line.qty < 0 ? 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' : 'var(--c-ink)',
             }}
           />
           {canEnterCost && line.qty > 0 && (
@@ -511,7 +511,7 @@ function AdjustmentLineRow({
                 <span>
                   Resulting balance:{' '}
                   <strong style={{
-                    color: willGoNegative ? 'var(--c-festive-b, #B8331F)' : 'var(--c-ink)',
+                    color: willGoNegative ? 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' : 'var(--c-ink)',
                     fontFamily: 'var(--font-mono)',
                   }}>
                     {(currentBalance ?? 0).toLocaleString('en-MY')}
@@ -639,7 +639,7 @@ function AdjustmentLineRow({
                 border: '1px solid var(--c-festive-b, #B8331F)',
                 borderRadius: 'var(--radius-md)',
                 fontSize: 'var(--fs-13)',
-                color: 'var(--c-festive-b, #B8331F)',
+                color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))',
                 display: 'flex', alignItems: 'center', gap: 'var(--space-2)',
               }}>
                 <AlertTriangle size={16} strokeWidth={1.75} />
@@ -903,7 +903,7 @@ const StockAdjustmentForm = ({ onStartNew, existing }: { onStartNew: () => void;
         <div className={styles.cardBody}>
           <p style={{ margin: '0 0 var(--space-3)', fontSize: 'var(--fs-13)', color: 'var(--fg-muted)' }}>
             Qty is signed: a <strong style={{ color: 'var(--c-ink)' }}>positive</strong> number increases stock
-            (found / recount up), a <strong style={{ color: 'var(--c-festive-b, #B8331F)' }}>negative</strong> number
+            (found / recount up), a <strong style={{ color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' }}>negative</strong> number
             decreases it (write-off / damage / loss).
             {existing && ' Saving moves only the difference from what this adjustment already moved.'}
           </p>

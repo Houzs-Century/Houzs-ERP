@@ -713,7 +713,7 @@ function LogoSlot({
             src={url}
             alt={copy.label}
             className={`h-12 max-w-[160px] shrink-0 rounded-sm object-contain px-2 ${
-              variant === "print" ? "bg-white" : "bg-sidebar"
+              variant === "print" ? "bg-surface" : "bg-sidebar"
             }`}
           />
         ) : (

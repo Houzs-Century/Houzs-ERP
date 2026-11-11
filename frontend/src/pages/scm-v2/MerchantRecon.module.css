@@ -54,8 +54,8 @@
   color: var(--c-ink-soft, #777);
 }
 
-.good { color: var(--c-secondary-a, #2F5D4F); }
-.bad { color: var(--c-festive-b, #B8331F); }
+.good { color: var(--c-secondary-a, var(--hz-dk-secondary-a, #2F5D4F)); }
+.bad { color: var(--c-festive-b, var(--hz-dk-festive-b, #B8331F)); }
 
 /* Two bands, one seam.
    The owner, on a Report cell holding five different facts: 可以分成多个 column

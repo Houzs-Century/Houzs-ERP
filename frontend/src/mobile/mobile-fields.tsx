@@ -6,7 +6,7 @@ export type Opt = { value: string; label: string };
 export function Field({ label, error, scanned, onClear, style, children }: { label: string; error?: boolean; scanned?: boolean; onClear?: () => void; style?: React.CSSProperties; children: React.ReactNode }) {
   return (
     <label className="fld" style={style}>
-      <span className="fld-l" style={{ display: "flex", alignItems: "center", gap: 6, ...(error ? { color: "#b23a3a" } : null) }}>
+      <span className="fld-l" style={{ display: "flex", alignItems: "center", gap: 6, ...(error ? { color: "var(--hz-c-err)" } : null) }}>
         {label}
         {scanned && <ScannedTag />}
         {/* A native date input has no way back once a value is set — the iOS
@@ -17,7 +17,7 @@ export function Field({ label, error, scanned, onClear, style, children }: { lab
           <span
             role="button"
             onClick={(e) => { e.preventDefault(); e.stopPropagation(); onClear(); }}
-            style={{ marginLeft: "auto", color: "#9aa093", fontSize: 9, fontWeight: 700, letterSpacing: ".04em", cursor: "pointer", padding: "0 2px" }}
+            style={{ marginLeft: "auto", color: "var(--hz-c-ink-soft)", fontSize: 9, fontWeight: 700, letterSpacing: ".04em", cursor: "pointer", padding: "0 2px" }}
           >
             CLEAR
           </span>
@@ -30,7 +30,7 @@ export function Field({ label, error, scanned, onClear, style, children }: { lab
 
 function ScannedTag() {
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "1px 6px", borderRadius: 999, background: "#eaf2f0", color: "#16695f", fontSize: 8, fontWeight: 700, letterSpacing: ".04em" }}>
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "1px 6px", borderRadius: 999, background: "#eaf2f0", color: "var(--hz-c-primary)", fontSize: 8, fontWeight: 700, letterSpacing: ".04em" }}>
       <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="#16695f" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z" /><circle cx="12" cy="13" r="3" /></svg>
       SCANNED
     </span>

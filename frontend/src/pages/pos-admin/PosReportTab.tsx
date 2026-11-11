@@ -142,7 +142,7 @@ export function PosReportTab() {
               </Table>
             </div>
           </div>
-          <h3 className="mb-1 mt-3 text-[11px] font-semibold uppercase tracking-brand text-ink-secondary">By item {d.stock_location ? "" : <span className="font-normal normal-case tracking-normal text-amber-800">(no stock location set: stock left is the company total)</span>}</h3>
+          <h3 className="mb-1 mt-3 text-[11px] font-semibold uppercase tracking-brand text-ink-secondary">By item {d.stock_location ? "" : <span className="font-normal normal-case tracking-normal text-amber-800 dark:text-amber-300">(no stock location set: stock left is the company total)</span>}</h3>
           <Table minWidth={760} head={<><th className={th}>Code</th><th className={th}>Description</th><th className={cn(th, "text-right")}>Qty</th><th className={cn(th, "text-right")}>FOC</th><th className={cn(th, "text-right")}>Gross</th><th className={cn(th, "text-right")}>Discount</th><th className={cn(th, "text-right")}>Net</th><th className={cn(th, "text-right")}>Stock left</th></>}>
             {t.by_item.map((i) => {
               const left = d.stock_left[i.item_code];
@@ -150,7 +150,7 @@ export function PosReportTab() {
                 <tr key={i.item_code} className="border-t border-border-subtle">
                   <td className={cn(td, "font-mono")}>{i.item_code}</td><td className={td}>{i.description}</td><td className={cn(td, "text-right")}>{i.qty}</td><td className={cn(td, "text-right")}>{i.foc_qty || "--"}</td>
                   <td className={cn(td, "text-right font-mono")}>{rmCell(i.gross_sen)}</td><td className={cn(td, "text-right font-mono")}>{i.discount_sen ? rmCell(i.discount_sen) : "--"}</td><td className={cn(td, "text-right font-mono font-semibold")}>{rmCell(i.net_sen)}</td>
-                  <td className={cn(td, "text-right font-mono", left != null && left < 0 && "font-semibold text-rose-800")}>{left ?? "--"}</td>
+                  <td className={cn(td, "text-right font-mono", left != null && left < 0 && "font-semibold text-rose-800 dark:text-rose-300")}>{left ?? "--"}</td>
                 </tr>
               );
             })}

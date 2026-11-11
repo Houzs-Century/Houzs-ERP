@@ -153,7 +153,7 @@ export function SoLinePhotoStrip({
                 aria-label="Delete photo"
                 title="Delete photo"
                 disabled={busy}
-                className="absolute -right-1 -top-1 h-4 w-4 rounded-full border border-line bg-white text-[10px] leading-none text-ink-secondary hover:text-red-600 disabled:opacity-50"
+                className="absolute -right-1 -top-1 h-4 w-4 rounded-full border border-line bg-surface text-[10px] leading-none text-ink-secondary hover:text-red-600 dark:hover:text-red-300 disabled:opacity-50"
                 onClick={async (e) => {
                   e.stopPropagation();
                   setBusy(true);

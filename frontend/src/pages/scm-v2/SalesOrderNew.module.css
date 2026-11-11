@@ -25,8 +25,8 @@
 
 /* ── Section card — white, hairline border, soft stone shadow ───────── */
 .card {
-  background: #fff;
-  border: 1px solid #d6d9d2;
+  background: var(--hz-c-surface);
+  border: 1px solid var(--hz-c-border);
   border-radius: 10px;
   overflow: hidden;
   box-shadow: 0 1px 0 rgba(17, 24, 16, 0.04), 0 4px 18px -8px rgba(17, 24, 16, 0.12);
@@ -34,13 +34,13 @@
 
 .cardHeader {
   padding: 11px 20px;
-  border-bottom: 1px solid #e3e6e0;
+  border-bottom: 1px solid var(--hz-c-border-subtle);
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   min-height: 38px;
-  background: #f4f6f3;
+  background: var(--hz-c-surface-2);
 }
 
 .cardTitle {
@@ -52,7 +52,7 @@
   font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: #11140f;
+  color: var(--hz-c-ink);
   line-height: 14px;
   display: inline-flex;
   align-items: center;
@@ -65,7 +65,7 @@
   top: 0;
   width: 3px;
   height: 14px;
-  background: #16695f;
+  background: var(--hz-c-primary);
   border-radius: 3px;
 }
 
@@ -101,7 +101,7 @@
   font-weight: 600;
   letter-spacing: 0.09em;
   text-transform: uppercase;
-  color: #767b6e;
+  color: var(--hz-c-ink-muted);
   margin-bottom: 5px;
   line-height: 1;
 }
@@ -109,13 +109,13 @@
 /* Required-field label — darker ink + heavier weight so mandatory inputs
    read louder than the optional (muted) ones. Pairs with .req below. */
 .fieldLabelReq {
-  color: #11140f;
+  color: var(--hz-c-ink);
   font-weight: 700;
 }
 
 /* Required marker (*) — err red, bold and a touch larger than the label. */
 .req {
-  color: #b23a3a;
+  color: var(--hz-c-err);
   font-weight: 800;
   font-size: 11px;
   margin-left: 3px;
@@ -126,25 +126,25 @@
 .fieldSelect {
   width: 100%;
   height: 36px;
-  border: 1px solid #d6d9d2;
+  border: 1px solid var(--hz-c-border);
   border-radius: 8px;
-  background: #fff;
+  background: var(--hz-c-surface);
   padding: 0 11px;
   font-family: var(--font-sans, system-ui);
   font-size: 13px;
-  color: #11140f;
+  color: var(--hz-c-ink);
   outline: none;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 .fieldInput::placeholder,
-.fieldSelect::placeholder { color: #767b6e; }
+.fieldSelect::placeholder { color: var(--hz-c-ink-muted); }
 .fieldInput:focus,
 .fieldSelect:focus {
-  border-color: #16695f;
+  border-color: var(--hz-c-primary);
   box-shadow: 0 0 0 3px rgba(22, 105, 95, 0.18);
 }
 .fieldInput:disabled,
-.fieldSelect:disabled { background: #f4f6f3; color: #767b6e; cursor: not-allowed; }
+.fieldSelect:disabled { background: var(--hz-c-surface-2); color: var(--hz-c-ink-muted); cursor: not-allowed; }
 
 /* Textarea variant */
 textarea.fieldInput { height: auto; padding: 11px 12px; line-height: 1.5; resize: vertical; }
@@ -157,14 +157,14 @@ textarea.fieldInput { height: auto; padding: 11px 12px; line-height: 1.5; resize
   right: 12px;
   top: 50%;
   transform: translateY(-50%);
-  color: #767b6e;
+  color: var(--hz-c-ink-muted);
   pointer-events: none;
   font-size: 11px;
   line-height: 1;
 }
 
 /* Field-level "edited" tint (scan blue-diff highlight). */
-.edited { border-color: #16695f; background: #e1efed; }
+.edited { border-color: var(--hz-c-primary); background: var(--hz-c-primary-soft); }
 
 /* ── Customer name suggestion popover ──────────────────────────────── */
 .suggestList {
@@ -174,8 +174,8 @@ textarea.fieldInput { height: auto; padding: 11px 12px; line-height: 1.5; resize
   width: 100%;
   max-height: 260px;
   overflow-y: auto;
-  background: #fff;
-  border: 1px solid #c2c6bd;
+  background: var(--hz-c-surface);
+  border: 1px solid var(--hz-c-border-strong);
   border-radius: 10px;
   box-shadow: 0 20px 40px -20px rgba(17, 24, 16, 0.24);
 }
@@ -186,14 +186,14 @@ textarea.fieldInput { height: auto; padding: 11px 12px; line-height: 1.5; resize
   padding: 9px 12px;
   font-family: var(--font-sans, system-ui);
   font-size: 13px;
-  color: #11140f;
-  border-bottom: 1px solid #e3e6e0;
+  color: var(--hz-c-ink);
+  border-bottom: 1px solid var(--hz-c-border-subtle);
   cursor: pointer;
 }
 .suggestItem:last-child { border-bottom: none; }
-.suggestItem:hover { background: #f4f6f3; }
+.suggestItem:hover { background: var(--hz-c-surface-2); }
 .suggestCode {
   font-family: var(--font-mono, monospace);
   font-size: 11px;
-  color: #767b6e;
+  color: var(--hz-c-ink-muted);
 }

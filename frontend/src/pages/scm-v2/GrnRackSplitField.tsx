@@ -49,7 +49,7 @@ export function GrnRackSplitField({ grnId, itemId, lineRackId, qtyAccepted, rack
           ))}
         </div>
       )}
-      <div className={`text-[11.5px] ${split.remaining > 0 ? 'text-amber-700' : 'text-primary'}`}>
+      <div className={`text-[11.5px] ${split.remaining > 0 ? 'text-amber-700 dark:text-amber-300' : 'text-primary'}`}>
         {split.remaining > 0 ? `${split.remaining} of ${qtyAccepted} not on a rack yet` : `All ${qtyAccepted} on racks`}
       </div>
       <div className="flex items-center gap-1.5">
@@ -70,7 +70,7 @@ export function GrnRackSplitField({ grnId, itemId, lineRackId, qtyAccepted, rack
           </>
         )}
       </div>
-      {split.error && <div role="alert" className="text-[11.5px] text-red-700">{split.error}</div>}
+      {split.error && <div role="alert" className="text-[11.5px] text-red-700 dark:text-red-300">{split.error}</div>}
     </div>
   );
 }

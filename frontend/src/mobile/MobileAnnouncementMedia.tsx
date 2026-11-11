@@ -130,7 +130,7 @@ export function Attachments({ ann }: { ann: MediaBearingAnnouncement }) {
 
   return (
     <div>
-      <div className="ey" style={{ color: "#767b6e", margin: "0 2px 8px" }}>Attachments</div>
+      <div className="ey" style={{ color: "var(--hz-c-ink-muted)", margin: "0 2px 8px" }}>Attachments</div>
       {photos.length > 0 && (
         <div style={{ display: "grid", gridTemplateColumns: `repeat(${cols},1fr)`, gap: 7, marginBottom: 8 }}>
           {photos.map((p) => (
@@ -152,17 +152,17 @@ export function Attachments({ ann }: { ann: MediaBearingAnnouncement }) {
             </span>
           </div>
         ) : (
-          <div key={a.r2Key} style={{ display: "flex", alignItems: "center", gap: 10, border: "1px solid #e3e6e0", borderRadius: 11, padding: "10px 12px", marginBottom: 8 }}>
-            <span style={{ width: 34, height: 34, flex: "none", borderRadius: 8, background: "#f8eaea", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div key={a.r2Key} style={{ display: "flex", alignItems: "center", gap: 10, border: "1px solid var(--hz-c-border-subtle)", borderRadius: 11, padding: "10px 12px", marginBottom: 8 }}>
+            <span style={{ width: 34, height: 34, flex: "none", borderRadius: 8, background: "var(--hz-c-err-bg)", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#b23a3a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 3v4a1 1 0 0 0 1 1h4" /><path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2Z" /></svg>
             </span>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 12.5, fontWeight: 700, color: "#11140f", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.name}</div>
-              <div style={{ fontSize: 10.5, color: "#9aa093" }}>
+              <div style={{ fontSize: 12.5, fontWeight: 700, color: "var(--hz-c-ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.name}</div>
+              <div style={{ fontSize: 10.5, color: "var(--hz-c-ink-soft)" }}>
                 {(a.mime || "").includes("pdf") ? "PDF" : "File"}{fmtSize(a.size) ? ` · ${fmtSize(a.size)}` : ""}
               </div>
             </div>
-            <span onClick={() => download(ann, a)} style={{ fontSize: 11, fontWeight: 700, color: "#a16a2e", cursor: "pointer" }}>Download</span>
+            <span onClick={() => download(ann, a)} style={{ fontSize: 11, fontWeight: 700, color: "var(--hz-c-accent)", cursor: "pointer" }}>Download</span>
           </div>
         ),
       )}

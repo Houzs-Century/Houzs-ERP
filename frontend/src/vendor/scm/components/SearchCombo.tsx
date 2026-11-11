@@ -214,7 +214,7 @@ export function SearchCombo({
               ? { bottom: window.innerHeight - pos.top + 2 }
               : { top: pos.bottom + 2 }),
             maxHeight: pos.maxH, overflowY: 'auto',
-            background: 'var(--c-paper, #fff)', border: '1px solid var(--line, rgba(34,31,32,0.2))',
+            background: 'var(--c-paper, var(--hz-c-surface))', border: '1px solid var(--line, rgba(34,31,32,0.2))',
             borderRadius: 'var(--radius-md, 8px)', boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
             fontSize: 'var(--fs-13)',
           }}

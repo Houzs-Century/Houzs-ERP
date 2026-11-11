@@ -1,6 +1,9 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"],
+  // Dark theme is chosen in lib/theme.ts and written to <html data-theme>,
+  // not read from the OS directly, so `dark:` follows the user's choice.
+  darkMode: ["selector", '[data-theme="dark"]'],
   // Semantic utilities the design-system docs (conventions header)
   // enumerate for the claude.ai/design agent — keep them in the
   // compiled CSS even when no in-repo component happens to use them.
@@ -16,38 +19,38 @@ export default {
         // (logo, eyebrows, doc numbers, soft backgrounds).
 
         // ── Canvas ─────────────────────────────────────────
-        bg: "#eef0ec",
-        surface: "#ffffff",
-        "surface-2": "#f4f6f3", // table headers, nested/inset surfaces, search fields
-        "surface-dim": "#e3e6e0",
+        bg: "rgb(var(--hz-bg) / <alpha-value>)",
+        surface: "rgb(var(--hz-surface) / <alpha-value>)",
+        "surface-2": "rgb(var(--hz-surface-2) / <alpha-value>)", // table headers, nested/inset surfaces, search fields
+        "surface-dim": "rgb(var(--hz-surface-dim) / <alpha-value>)",
 
         border: {
-          DEFAULT: "#d6d9d2",
-          subtle: "#e3e6e0",
-          strong: "#c2c6bd",
+          DEFAULT: "rgb(var(--hz-border) / <alpha-value>)",
+          subtle: "rgb(var(--hz-border-subtle) / <alpha-value>)",
+          strong: "rgb(var(--hz-border-strong) / <alpha-value>)",
         },
 
         // ── Ink ────────────────────────────────────────────
         ink: {
-          DEFAULT: "#11140f",
-          secondary: "#414539",
-          muted: "#767b6e",
+          DEFAULT: "rgb(var(--hz-ink) / <alpha-value>)",
+          secondary: "rgb(var(--hz-ink-secondary) / <alpha-value>)",
+          muted: "rgb(var(--hz-ink-muted) / <alpha-value>)",
         },
 
         // ── Primary (petrol/teal) — NEW functional accent ──
         primary: {
-          DEFAULT: "#16695f",
-          soft: "#e1efed", // selected-row bg, soft chips, month-P&L card
-          ink: "#0c3f39", // text on primary-soft
+          DEFAULT: "rgb(var(--hz-primary) / <alpha-value>)",
+          soft: "rgb(var(--hz-primary-soft) / <alpha-value>)", // selected-row bg, soft chips, month-P&L card
+          ink: "rgb(var(--hz-primary-ink) / <alpha-value>)", // text on primary-soft
         },
 
         // ── Brass accent (brand only — not primary CTAs) ───
         accent: {
-          DEFAULT: "#a16a2e",
-          soft: "#f3ece0",
-          bright: "#d8a85a", // gold for text on dark sidebar/headers
-          hover: "#8a5a26",
-          ink: "#5a3a14",
+          DEFAULT: "rgb(var(--hz-accent) / <alpha-value>)",
+          soft: "rgb(var(--hz-accent-soft) / <alpha-value>)",
+          bright: "rgb(var(--hz-accent-bright) / <alpha-value>)", // gold for text on dark sidebar/headers
+          hover: "rgb(var(--hz-accent-hover) / <alpha-value>)",
+          ink: "rgb(var(--hz-accent-ink) / <alpha-value>)",
         },
 
         // ── Sidebar palette (dark ink-green slab) ──────────
@@ -62,14 +65,14 @@ export default {
         },
 
         // ── Semantic ───────────────────────────────────────
-        synced: { DEFAULT: "#2f8a5b", bg: "#e2f0e9" },
-        err: { DEFAULT: "#b23a3a", bg: "#f8eaea" },
+        synced: { DEFAULT: "rgb(var(--hz-synced) / <alpha-value>)", bg: "rgb(var(--hz-synced-bg) / <alpha-value>)" },
+        err: { DEFAULT: "rgb(var(--hz-err) / <alpha-value>)", bg: "rgb(var(--hz-err-bg) / <alpha-value>)" },
         // LEARNING announcements — trend blue, mirrors --c-secondary-b in
-        // vendor tokens.css. Hex literal (not var()) so /40-style opacity
-        // modifiers compose like the other semantic colors here.
-        learning: "#1f3a8a",
-        expired: { bg: "#f7e9e9", text: "#7a2222" },
-        warning: { bg: "#f6efd9", text: "#6e4d12" },
+        // vendor tokens.css. Channel variable so /40-style opacity modifiers
+        // compose like the other semantic colors here.
+        learning: "rgb(var(--hz-learning) / <alpha-value>)",
+        expired: { bg: "rgb(var(--hz-expired-bg) / <alpha-value>)", text: "rgb(var(--hz-expired-text) / <alpha-value>)" },
+        warning: { bg: "rgb(var(--hz-warning-bg) / <alpha-value>)", text: "rgb(var(--hz-warning-text) / <alpha-value>)" },
       },
       fontFamily: {
         // Theme C type spec (Nick 2026-07-03, "IBM PLEX + 思源黑/宋"):
@@ -162,8 +165,8 @@ export default {
       boxShadow: {
         // Soft "stone" shadow — matches the cream canvas without
         // looking like a generic Material drop shadow.
-        stone: "0 1px 0 rgba(17, 24, 16, 0.04), 0 4px 18px -8px rgba(17, 24, 16, 0.12)",
-        slab: "0 1px 0 rgba(17, 24, 16, 0.06), 0 12px 32px -16px rgba(17, 24, 16, 0.25)",
+        stone: "0 1px 0 rgb(var(--hz-shadow) / 0.04), 0 4px 18px -8px rgb(var(--hz-shadow) / 0.12)",
+        slab: "0 1px 0 rgb(var(--hz-shadow) / 0.06), 0 12px 32px -16px rgb(var(--hz-shadow) / 0.25)",
         brass: "0 0 0 1px rgba(161, 106, 46, 0.3), 0 1px 4px rgba(161, 106, 46, 0.18)",
       },
       keyframes: {

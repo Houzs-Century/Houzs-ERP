@@ -27,7 +27,7 @@ type ServicesPayload = { ok: boolean; time: string; services: ServiceRow[] };
 
 const PILL: Record<ServiceStatus, { label: string; cls: string }> = {
   ok: { label: "OK", cls: "border-synced/40 bg-synced/10 text-synced" },
-  warning: { label: "Warning", cls: "border-amber-300 bg-amber-50 text-amber-800" },
+  warning: { label: "Warning", cls: "border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300" },
   critical: { label: "Critical", cls: "border-err/40 bg-err/10 text-err" },
   not_tracked: { label: "Not tracked", cls: "border-border bg-surface text-ink-muted" },
   not_tracked_yet: { label: "Not tracked", cls: "border-border bg-surface text-ink-muted" },

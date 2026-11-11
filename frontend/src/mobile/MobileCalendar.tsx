@@ -544,7 +544,7 @@ export function MobileCalendar({
   }
 
   return (
-    <div className="hz-m" style={{ display: "flex", flexDirection: "column", height: "100%", background: "#fff" }}>
+    <div className="hz-m" style={{ display: "flex", flexDirection: "column", height: "100%", background: "var(--hz-c-surface)" }}>
       {/* Header — brand lockup + search, matching the v7 calendar chrome. The
           month nav / mode / filters live in the scroll body (below), per spec. */}
       <header className="hdr">
@@ -568,13 +568,13 @@ export function MobileCalendar({
       {/* Owner 2026-07-30: 12px → 7px side padding. Every pixel taken off the
           page edge widens all 7 day columns, which is what lets a long event
           name finish on one line inside its bar. */}
-      <div className="scroll" style={{ padding: "12px 7px", paddingBottom: 120, background: "#fff" }}>
+      <div className="scroll" style={{ padding: "12px 7px", paddingBottom: 120, background: "var(--hz-c-surface)" }}>
         {/* Month nav — ‹ · Today · › · right-aligned month title (v7 lockup) */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 11 }}>
           <button onClick={() => nav(-1)} aria-label="Previous month" className="cal-navbtn">‹</button>
           <button onClick={goToday} className="cal-today">Today</button>
           <button onClick={() => nav(1)} aria-label="Next month" className="cal-navbtn">›</button>
-          <div style={{ flex: 1, fontSize: 17, fontWeight: 800, color: "#11140f", textAlign: "right" }}>{MONTHS[month]} {year}</div>
+          <div style={{ flex: 1, fontSize: 17, fontWeight: 800, color: "var(--hz-c-ink)", textAlign: "right" }}>{MONTHS[month]} {year}</div>
         </div>
 
         {/* Month / Week segmented toggle */}

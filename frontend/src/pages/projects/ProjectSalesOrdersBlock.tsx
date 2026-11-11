@@ -67,7 +67,7 @@ function GapPill({ s }: { s: ProjectSalesOrdersSummary }) {
   if (s.notOpenedRm > 0) {
     return (
       <span
-        className="rounded border border-amber-500/40 bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800"
+        className="rounded border border-amber-500/40 bg-amber-100 dark:bg-amber-900/40 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:text-amber-300"
         title="Final total minus the sales orders opened so far — the amount still not keyed into the SO module"
       >
         Not yet opened {formatCurrency(s.notOpenedRm)}{pct}
@@ -77,7 +77,7 @@ function GapPill({ s }: { s: ProjectSalesOrdersSummary }) {
   if (s.notOpenedRm < 0) {
     return (
       <span
-        className="rounded border border-sky-500/40 bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-800"
+        className="rounded border border-sky-500/40 bg-sky-100 dark:bg-sky-900/40 px-1.5 py-0.5 text-[10px] font-semibold text-sky-800 dark:text-sky-300"
         title="The sales orders opened add up to more than the final total typed for this event"
       >
         Orders exceed final total by {formatCurrency(-s.notOpenedRm)}{pct}
@@ -85,7 +85,7 @@ function GapPill({ s }: { s: ProjectSalesOrdersSummary }) {
     );
   }
   return (
-    <span className="rounded border border-emerald-600/40 bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800">
+    <span className="rounded border border-emerald-600/40 bg-emerald-100 dark:bg-emerald-900/40 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800 dark:text-emerald-300">
       Opened orders match the final total
     </span>
   );
@@ -116,7 +116,7 @@ function PickAndMove({ row, onMove, busy }: { row: ProjectSalesOrderRow; onMove:
       <button
         onClick={() => onMove(Number(value))}
         disabled={busy || !value}
-        className="rounded-md border border-amber-500/50 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+        className="rounded-md border border-amber-500/50 bg-amber-50 dark:bg-amber-950/40 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40 disabled:opacity-50"
       >
         Transfer
       </button>
@@ -175,7 +175,7 @@ export function ProjectSalesOrdersBlock({
             <Tile label="Sales" value={formatCurrency(summary.salesRm)} />
             <Tile label="Service revenue" value={formatCurrency(summary.serviceRm)} />
             {summary.draftCount > 0 && (
-              <span className="rounded-full border border-amber-500/40 bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-amber-800">
+              <span className="rounded-full border border-amber-500/40 bg-amber-100 dark:bg-amber-900/40 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-amber-800 dark:text-amber-300">
                 {summary.draftCount} draft
               </span>
             )}
@@ -218,7 +218,7 @@ export function ProjectSalesOrdersBlock({
           <button
             onClick={() => move(byReport(tickedRows))}
             disabled={transfer.isPending || tickedRows.length === 0}
-            className="rounded-md border border-amber-500/50 bg-amber-50 px-2 py-0.5 font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+            className="rounded-md border border-amber-500/50 bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 font-semibold text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40 disabled:opacity-50"
             title="Move the ticked orders to the event whose report lists them: Fair, Venue and Fair Day change, and History records it"
           >
             Transfer ticked ({tickedRows.length})
@@ -226,7 +226,7 @@ export function ProjectSalesOrdersBlock({
           <button
             onClick={() => move(byReport(reported))}
             disabled={transfer.isPending}
-            className="rounded-md border border-amber-600/60 bg-amber-100 px-2 py-0.5 font-semibold text-amber-900 hover:bg-amber-200 disabled:opacity-50"
+            className="rounded-md border border-amber-600/60 bg-amber-100 dark:bg-amber-900/40 px-2 py-0.5 font-semibold text-amber-900 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-800/50 disabled:opacity-50"
             title="Move every order here that another event's report lists to that event"
           >
             {transfer.isPending ? "Transferring…" : `Transfer all to their reported event (${reported.length})`}
@@ -281,7 +281,7 @@ export function ProjectSalesOrdersBlock({
                     <td
                       className={cn(
                         "px-2 py-1.5 text-right font-mono",
-                        r.balance_sen > 0 ? "font-semibold text-amber-700" : "text-ink-muted",
+                        r.balance_sen > 0 ? "font-semibold text-amber-700 dark:text-amber-300" : "text-ink-muted",
                       )}
                     >
                       {fmtSen(r.balance_sen)}
@@ -291,13 +291,13 @@ export function ProjectSalesOrdersBlock({
                       <span
                         className={cn(
                           "inline-flex rounded-full px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider",
-                          isDraft ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800",
+                          isDraft ? "bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300" : "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-800 dark:text-emerald-300",
                         )}
                       >
                         {soStatusLabel(r.status)}
                       </span>
                       {r.venue_differs && (
-                        <span title={`Venue on the order: ${r.venue_differs}`} className="ml-1 inline-flex rounded-full bg-amber-100 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider text-amber-800">
+                        <span title={`Venue on the order: ${r.venue_differs}`} className="ml-1 inline-flex rounded-full bg-amber-100 dark:bg-amber-900/40 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider text-amber-800 dark:text-amber-300">
                           Venue differs
                         </span>
                       )}

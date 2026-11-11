@@ -289,7 +289,7 @@ const labelStyle: CSSProperties = {
   transform: 'translate(-50%, -50%)',
   padding: '2px 8px',
   borderRadius: 999,
-  background: '#fff',
+  background: 'var(--hz-c-surface)',
   border: '1px solid #9cc4ba',
   color: GREEN_DARK,
   font: '700 12px Inter, system-ui, sans-serif',

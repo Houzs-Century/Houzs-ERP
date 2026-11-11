@@ -83,7 +83,7 @@ export const AdvanceKnockOff = ({ pvId, supplierId }: { pvId: string; supplierId
     <section className={styles.card}>
       <div className={styles.cardHeader}>
         <h2 className={styles.cardTitle}>Advance on this voucher</h2>
-        <span style={{ fontSize: 'var(--fs-12)', color: over ? 'var(--c-festive-b, #B8331F)' : 'var(--fg-muted)' }}>
+        <span style={{ fontSize: 'var(--fs-12)', color: over ? 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' : 'var(--fg-muted)' }}>
           {fmtSen(remaining)} unspent{asked > 0 ? ` · applying ${fmtSen(asked)}` : ''}
         </span>
       </div>

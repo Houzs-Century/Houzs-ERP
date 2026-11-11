@@ -29,10 +29,10 @@ import { useToast } from "../hooks/useToast";
  * ------------------------------------------------------------------------- */
 
 const card: React.CSSProperties = {
-  background: "#fff", border: "1px solid var(--line)", borderRadius: 14, padding: 14,
+  background: "var(--hz-c-surface)", border: "1px solid var(--line)", borderRadius: 14, padding: 14,
 };
 const label: React.CSSProperties = {
-  fontSize: 8.5, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#9aa093",
+  fontSize: 8.5, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--hz-c-ink-soft)",
 };
 const field: React.CSSProperties = {
   width: "100%", marginTop: 6, border: "1px solid var(--line)", borderRadius: 10,
@@ -44,13 +44,13 @@ const primary = (enabled: boolean): React.CSSProperties => ({
   cursor: enabled ? "pointer" : "default", opacity: enabled ? 1 : 0.6,
 });
 const danger: React.CSSProperties = {
-  width: "100%", marginTop: 12, background: "#fff", color: "#b23a3a",
+  width: "100%", marginTop: 12, background: "var(--hz-c-surface)", color: "var(--hz-c-err)",
   border: "1px solid rgba(178,58,58,.35)", borderRadius: 11, padding: "12px",
   fontSize: 13.5, fontWeight: 700, fontFamily: "inherit", cursor: "pointer",
 };
-const errText: React.CSSProperties = { fontSize: 11.5, color: "#b23a3a", marginTop: 10 };
+const errText: React.CSSProperties = { fontSize: 11.5, color: "var(--hz-c-err)", marginTop: 10 };
 const hint: React.CSSProperties = {
-  fontSize: 11, color: "#9aa093", marginTop: 11, lineHeight: 1.5, padding: "0 2px",
+  fontSize: 11, color: "var(--hz-c-ink-soft)", marginTop: 11, lineHeight: 1.5, padding: "0 2px",
 };
 
 export function MobileTwoFactorCard() {
@@ -106,7 +106,7 @@ export function MobileTwoFactorCard() {
               <span
                 key={c}
                 style={{
-                  background: "#fff", border: "1px solid var(--line)", borderRadius: 10,
+                  background: "var(--hz-c-surface)", border: "1px solid var(--line)", borderRadius: 10,
                   padding: "10px 6px", textAlign: "center", fontSize: 13.5, fontWeight: 700,
                   color: "var(--ink)",
                 }}
@@ -141,7 +141,7 @@ export function MobileTwoFactorCard() {
         {totp.status?.enabled ? (
           <div style={{ marginTop: 12 }}>
             <div style={{ fontSize: 12.5, color: "var(--ink)" }}>
-              <span style={{ fontWeight: 700, color: "#16695f" }}>Enabled</span>
+              <span style={{ fontWeight: 700, color: "var(--hz-c-primary)" }}>Enabled</span>
               {" · "}
               {totp.status.backup_codes_remaining} backup code
               {totp.status.backup_codes_remaining === 1 ? "" : "s"} left

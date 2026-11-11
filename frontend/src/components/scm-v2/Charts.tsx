@@ -186,7 +186,7 @@ export function Legend({ items }: { items: Array<{ label: string; color: string;
     <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-ink-muted">
       {items.map((it) => (
         <span key={it.label} className="inline-flex items-center gap-1.5">
-          <span className={cn("inline-block", it.dot ? "h-2 w-2 rounded-full border-2 bg-white" : "h-2.5 w-2.5 rounded-sm")} style={it.dot ? { borderColor: it.color } : { background: it.color }} />
+          <span className={cn("inline-block", it.dot ? "h-2 w-2 rounded-full border-2 bg-surface" : "h-2.5 w-2.5 rounded-sm")} style={it.dot ? { borderColor: it.color } : { background: it.color }} />
           {it.label}
         </span>
       ))}

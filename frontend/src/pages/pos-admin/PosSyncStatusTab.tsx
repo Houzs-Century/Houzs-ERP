@@ -28,13 +28,13 @@ export function ageTone(iso: string | null, now: number, warnHours: number, badH
 export const statusTone = (w: SyncStatusWord): "ok" | "warn" | "bad" | "muted" | "info" =>
   w === "SYNCED" ? "ok" : w === "PENDING" ? "info" : w === "PENDING > 3D" ? "warn" : w === "DATA LOST" ? "bad" : "muted";
 
-const ageCls = { ok: "text-emerald-800", warn: "text-amber-800 font-semibold", bad: "text-rose-800 font-semibold", muted: "text-ink-muted" };
+const ageCls = { ok: "text-emerald-800 dark:text-emerald-300", warn: "text-amber-800 dark:text-amber-300 font-semibold", bad: "text-rose-800 dark:text-rose-300 font-semibold", muted: "text-ink-muted" };
 
 function Kpi({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: "bad" | "warn" }) {
   return (
-    <div className={cn("rounded-md border border-border bg-surface px-3 py-2", tone === "bad" && "border-rose-400 bg-rose-50", tone === "warn" && "border-amber-400 bg-amber-50")}>
+    <div className={cn("rounded-md border border-border bg-surface px-3 py-2", tone === "bad" && "border-rose-400 bg-rose-50 dark:bg-rose-950/40", tone === "warn" && "border-amber-400 bg-amber-50 dark:bg-amber-950/40")}>
       <div className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">{label}</div>
-      <div className={cn("text-[20px] font-semibold leading-tight", tone === "bad" && "text-rose-800", tone === "warn" && "text-amber-800")}>{value}</div>
+      <div className={cn("text-[20px] font-semibold leading-tight", tone === "bad" && "text-rose-800 dark:text-rose-300", tone === "warn" && "text-amber-800 dark:text-amber-300")}>{value}</div>
       {sub && <div className="text-[10.5px] text-ink-muted">{sub}</div>}
     </div>
   );
@@ -72,13 +72,13 @@ export function PosSyncStatusTab() {
   return (
     <div>
       {critical.length > 0 && (
-        <div className="mb-2 flex items-start gap-2 rounded-md border border-rose-500 bg-rose-50 p-2 text-[11.5px] text-rose-900">
+        <div className="mb-2 flex items-start gap-2 rounded-md border border-rose-500 bg-rose-50 dark:bg-rose-950/40 p-2 text-[11.5px] text-rose-900 dark:text-rose-300">
           <AlertTriangle size={14} className="mt-0.5 shrink-0" />
           <div><b>CRITICAL: local data lost.</b> {critical.map((a) => `${a.terminal_code ?? "?"} (${a.event_name ?? "no event"}) last reported ${Number(a.detail.last_known_pending_count ?? 0)} unsynced bill(s), ${fmtSen(Number(a.detail.last_known_pending_sen ?? 0))}`).join("; ")}. Recover with <button type="button" className="underline" onClick={() => nav("/pos-admin?tab=import")}>Import backup</button>, then acknowledge below.</div>
         </div>
       )}
       {critical.length === 0 && open.length > 0 && (
-        <div className="mb-2 flex items-start gap-2 rounded-md border border-amber-500 bg-amber-50 p-2 text-[11.5px] text-amber-900">
+        <div className="mb-2 flex items-start gap-2 rounded-md border border-amber-500 bg-amber-50 dark:bg-amber-950/40 p-2 text-[11.5px] text-amber-900 dark:text-amber-300">
           <AlertTriangle size={14} className="mt-0.5 shrink-0" />
           <div>{open.map((a) => `${a.terminal_code ?? "?"}: ${a.title.toLowerCase()}`).join("; ")}. Connect the device and open the POS app to sync; the alert closes on its own at zero pending.</div>
         </div>
@@ -112,8 +112,8 @@ export function PosSyncStatusTab() {
                 <td className={td}>{t.event_name ?? <span className="text-ink-muted">none</span>}{t.event_end && <div className="text-[9.5px] text-ink-muted">ends {t.event_end}</div>}</td>
                 <td className={cn(td, "text-[10.5px]", ageCls[seen])}>{t.last_seen_at ? formatDateTime(t.last_seen_at) : "never"}</td>
                 <td className={cn(td, "text-[10.5px]", t.pending_count > 0 ? ageCls[sync] : ageCls[t.last_sync_at ? "ok" : "muted"])}>{t.last_sync_at ? formatDateTime(t.last_sync_at) : "never"}</td>
-                <td className={cn(td, "text-right font-mono", t.pending_count > 0 && "font-semibold text-amber-800")}>{t.pending_count}</td>
-                <td className={cn(td, "text-right font-mono", t.pending_amount_sen > 0 && "font-semibold text-amber-800")}>{fmtSen(t.pending_amount_sen)}</td>
+                <td className={cn(td, "text-right font-mono", t.pending_count > 0 && "font-semibold text-amber-800 dark:text-amber-300")}>{t.pending_count}</td>
+                <td className={cn(td, "text-right font-mono", t.pending_amount_sen > 0 && "font-semibold text-amber-800 dark:text-amber-300")}>{fmtSen(t.pending_amount_sen)}</td>
                 <td className={td}><Pill tone={statusTone(t.status_word)}>{t.status_word}</Pill></td>
                 <td className={cn(td, "whitespace-nowrap")}>
                   <button type="button" className={ghostBtn} onClick={() => setDetail(t)}>Details</button>{" "}
