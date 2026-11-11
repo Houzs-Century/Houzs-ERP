@@ -22,6 +22,14 @@
  *  Must equal the automation's name in chat.houzscentury.com exactly. */
 export const CONNECT_DELIVERY_AUTOMATION = 'New Delivery Follow-up';
 
+/** The Connect automation fired when a Service Case (ASSR) is created, matched
+ *  BY NAME — must equal the automation's name in chat.houzscentury.com exactly.
+ *  Its flow sends the button-less template hc_service_case_received (params
+ *  full_name + ref_1 = the SO/order ref + assr_no) acknowledging the request.
+ *  Re-enabled 2026-11-11 (owner), gated: only a case whose order has a DO is
+ *  acknowledged — the gate lives in assrConnectAck.ts, not here. */
+export const CONNECT_SERVICE_CASE_AUTOMATION = 'Service Case Received';
+
 /** The Connect automation fired for the weekly Service Case status update,
  *  matched BY NAME — must equal the automation's name in chat.houzscentury.com
  *  exactly. Its flow sends the button-less template hc_service_case_status_update
@@ -267,6 +275,28 @@ export function buildDeliveryFollowUp(
   }
   if (ctx.extra) Object.assign(attributes, ctx.extra);
   return { phone, name, automation: ctx.automation || CONNECT_DELIVERY_AUTOMATION, attributes };
+}
+
+/** Build the /api/webhooks/erp body for the one-off acknowledgement sent to the
+ *  customer when a Service Case (ASSR) is created. Unlike the delivery follow-up
+ *  this opens no Confirm / Amend conversation: the template is button-less, so
+ *  there is no callback_url and no conversation reset — just the customer name,
+ *  the Sales Order the case is about (ref_1, the delivery convention) and the
+ *  service case number, which the template features as its focus. The case number
+ *  rides in assr_no, its OWN dedicated Connect field (not a shared ref_* slot) so
+ *  it never collides with a delivery ref. */
+export function buildServiceCaseReceived(
+  phone: string,
+  name: string,
+  soNo: string,
+  assrNo: string,
+): ConnectContact {
+  return {
+    phone,
+    name,
+    automation: CONNECT_SERVICE_CASE_AUTOMATION,
+    attributes: { full_name: name, ref_1: soNo, assr_no: assrNo },
+  };
 }
 
 /** Build the /api/webhooks/erp body for the weekly Service Case status update.
