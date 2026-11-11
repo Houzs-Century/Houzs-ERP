@@ -83,3 +83,19 @@ describe('status route', () => {
     expect(block).toContain('validationFailedBody(confirmProblems)');
   });
 });
+
+/* Owner 2026-11-11: Sabah / Sarawak / Labuan / Kelantan / Terengganu / Perlis /
+   Singapore need a transport fee above RM 0. Logic: src/scm/shared/so-transport-fee.test.ts. */
+describe('transport fee gate', () => {
+  test('the confirmed create checks it before the PWP claim loop', () => {
+    const feeAt = routeSource.indexOf('const feeProblem = transportFeeProblem(createState');
+    expect(feeAt).toBeGreaterThan(routeSource.indexOf('collectSoConfirmProblems({'));
+    expect(feeAt).toBeLessThan(routeSource.indexOf('const claimedPwpCodes: Array'));
+  });
+
+  test('the live check asks it on a create and on a scanned draft being confirmed', () => {
+    const validate = between(routeSource, "mfgSalesOrders.post('/validate'", 'return c.json({ problems }, 200);');
+    expect(validate).toContain('transportFeeProblem(');
+    expect(validate).toContain("body.confirmingDraft === true");
+  });
+});

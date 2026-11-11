@@ -58,6 +58,7 @@
 import type { SaveProblem } from '../shared/so-save-problems';
 import { acAgentProblem } from './ac-preflight';
 import { pgrestIn } from './pgrest-in-list';
+import { transportFeeProblem } from '../shared/so-transport-fee';
 
 /** The gate's own third state: not "confirmable" and not "these things are
  *  wrong", but "we could not check". Rendered by the same SaveProblemsList as
@@ -168,17 +169,18 @@ export function collectSoConfirmProblems(facts: SoConfirmFacts): SaveProblem[] {
 export async function soConfirmProblemsForDoc(sb: any, docNo: string): Promise<SaveProblem[]> {
   const { data: head, error: headErr } = await sb
     .from('mfg_sales_orders')
-    .select('salesperson_id, agent, venue, venue_id, company_id')
+    .select('salesperson_id, agent, venue, venue_id, company_id, customer_state, customer_country')
     .eq('doc_no', docNo)
     .maybeSingle();
   if (headErr) return [checkFailedProblem(`header: ${headErr.message}`)];
   const h = (head ?? {}) as {
     salesperson_id?: string | number | null; agent?: string | null;
     venue?: string | null; venue_id?: string | null; company_id?: number | null;
+    customer_state?: string | null; customer_country?: string | null;
   };
   const { data: items, error: itemsErr } = await sb
     .from('mfg_sales_order_items')
-    .select('item_code, item_group, description, line_no, cancelled')
+    .select('item_code, item_group, description, line_no, cancelled, total_sen')
     .eq('doc_no', docNo);
   /* THE ONE THAT LET THE ORDER THROUGH. `items ?? []` folded a failed read into
      an order with NO lines, every per-line rule then had nothing to object to,
@@ -192,7 +194,7 @@ export async function soConfirmProblemsForDoc(sb: any, docNo: string): Promise<S
   const lines = ((items ?? []) as Array<{
     item_code: string | null; item_group: string | null;
     description: string | null;
-    line_no: number | null; cancelled: boolean | null;
+    line_no: number | null; cancelled: boolean | null; total_sen: number | null;
   }>).filter((i) => !i.cancelled);
 
   const codes = [...new Set(lines.map((i) => String(i.item_code ?? '').trim()).filter(Boolean))];
@@ -206,7 +208,7 @@ export async function soConfirmProblemsForDoc(sb: any, docNo: string): Promise<S
     nonCatalogCodes = codes.filter((c) => !known.has(c));
   }
 
-  return collectSoConfirmProblems({
+  const problems = collectSoConfirmProblems({
     salespersonId: h.salesperson_id ?? null,
     agent: h.agent ?? null,
     venue: h.venue ?? null,
@@ -219,4 +221,9 @@ export async function soConfirmProblemsForDoc(sb: any, docNo: string): Promise<S
     })),
     nonCatalogCodes,
   });
+  const feeProblem = transportFeeProblem(h.customer_state ?? null, h.customer_country ?? null, lines.map((i) => ({
+    itemCode: i.item_code, description: i.description, itemGroup: i.item_group, amountSen: Number(i.total_sen ?? 0),
+  })));
+  if (feeProblem) problems.push(feeProblem);
+  return problems;
 }

@@ -65,6 +65,7 @@ import {
   postcodePlaceholder,
 } from "../vendor/scm/lib/address-cascade";
 import { StatePicker } from "../vendor/scm/components/StatePicker";
+import { isTransportFeeLine, TRANSPORT_FEE_ITEM_CODE, transportFeeRegion } from "../vendor/shared/so-transport-fee";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { createLineBody, deferLineDateToHeader, lineDatePinned, withoutLineDate } from "../vendor/scm/lib/so-line-date-defer";
 import { useConfirm, usePrompt } from "../vendor/scm/components/ConfirmDialog";
@@ -1232,6 +1233,15 @@ export function MobileNewSO({
     () => (state ? countryForState(locRows, state) : null) ?? "Malaysia",
     [locRows, state],
   );
+  const feeRegion = transportFeeRegion(state || null, country);
+  const transportFeeLine = lines.find((l) => l.itemCode.trim() && isTransportFeeLine({ itemCode: l.itemCode, description: l.name, itemGroup: l.itemGroup }));
+  const setTransportFee = (price: string) => setLines((prev) => {
+    const at = prev.findIndex((l) => l.key === transportFeeLine?.key);
+    if (at >= 0) return prev.map((l, k) => (k === at ? { ...l, price, priceAuthored: true } : l));
+    return [...prev, {
+      ...newLine(), itemCode: TRANSPORT_FEE_ITEM_CODE, itemGroup: "service", name: TRANSPORT_FEE_ITEM_CODE, price, priceAuthored: true,
+    }];
+  });
 
   /* ── FIX D2/D3 — processing-date LOCK (mirror the backend + SalesOrderDetail).
      The backend locks an SO once "today (MYT)" is strictly AFTER its processing
@@ -1397,7 +1407,7 @@ export function MobileNewSO({
   const buildSoValidateDraft = useCallback((asDraftFlag: boolean) => ({
     debtorName: name,
     phone,
-    items: namedLines.map((l) => ({ itemCode: l.itemCode, itemGroup: l.itemGroup, variants: l.variants, qty: l.qty })),
+    items: namedLines.map((l) => ({ itemCode: l.itemCode, itemGroup: l.itemGroup, variants: l.variants, qty: l.qty, description: l.name.trim(), unitPriceSen: toSen(l.price) })),
     asDraft: asDraftFlag,
     isEdit,
     hasVenue: isEdit || !!outgoingVenueName || !!outgoingVenueId,
@@ -1407,6 +1417,8 @@ export function MobileNewSO({
     companyCode: branding.companyCode,
     salesLocation,
     customerState: state,
+    customerCountry: country,
+    confirmingDraft: mode === "edit-draft",
     processingDate: asDraftFlag ? "" : procDate,
     customerDeliveryDate: asDraftFlag ? "" : delivDate,
     fillAddressLater: false,
@@ -1424,7 +1436,7 @@ export function MobileNewSO({
       convertedFromDocNo: p.convertedFromDocNo ?? "",
       amountSen: toSen(p.amount),
     })),
-  }), [name, phone, namedLines, isEdit, outgoingVenueName, outgoingVenueId, fairPick, noFair, autoFair.why, resolvedVenueName, linkedFair, linkedDay, canChangeSalesperson, outgoingSalespersonId, selfStaffMatch, branding.companyCode, salesLocation, state, procDate, delivDate, addr1, postcode, origProcDate, origDelivDate, origPhone, origItems, pays]);
+  }), [name, phone, namedLines, isEdit, outgoingVenueName, outgoingVenueId, fairPick, noFair, autoFair.why, resolvedVenueName, linkedFair, linkedDay, canChangeSalesperson, outgoingSalespersonId, selfStaffMatch, branding.companyCode, salesLocation, state, country, mode, procDate, delivDate, addr1, postcode, origProcDate, origDelivDate, origPhone, origItems, pays]);
 
   /* A slip date outside the window blocks the save (the payments post AFTER the
      create) — except a too-old row, which becomes an admin request (isBackdateRow). */
@@ -2645,6 +2657,17 @@ export function MobileNewSO({
                     </div>
                     <button className="addline" onClick={() => setLines((p) => [...p, newLine()])}>+ {ADD_LINE_LABEL}</button>
                   </>
+                )}
+                {feeRegion && (
+                  /* Owner 2026-11-11: the slip writes the transport fee into its total, so
+                     the scan never reads it as a line. Typed here, it becomes the
+                     TRANSPORTATION CHARGES line; RM 0 cannot be confirmed. */
+                  <label style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 9 }}>
+                    <span style={{ fontSize: 12, fontWeight: 700 }}>Transport fee to {feeRegion} (RM)</span>
+                    <input className="fld-i" inputMode="decimal" value={transportFeeLine?.price ?? ""} placeholder="0.00"
+                      onChange={(e) => setTransportFee(e.target.value)}
+                      style={{ width: 120, textAlign: "right", borderColor: num(transportFeeLine?.price ?? "") > 0 ? undefined : "var(--hz-c-err)" }} />
+                  </label>
                 )}
                 <div className="so-sub-row"><span style={{ fontSize: 11, color: "var(--mut)" }}>Subtotal</span><span className="money" style={{ fontSize: 17, fontWeight: 800, color: "var(--brand-d)" }}>RM {fmt(subtotal / 100)}</span></div>
                 <div style={{ fontSize: 10, color: "var(--hz-c-ink-soft)" }}>Prices are recomputed by the system when you save.</div>

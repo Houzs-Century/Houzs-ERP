@@ -287,6 +287,7 @@ import {
   findFreeTextSoLines, freeTextSoLineResponse,
 } from '../lib/validate-item-codes';
 import { collectSoConfirmProblems, soConfirmProblemsForDoc } from '../lib/so-confirm-gate';
+import { transportFeeProblem } from '../shared/so-transport-fee';
 import { companyRequiresStockLocation, soLocationProblem, soLocationProblemForDoc } from '../lib/so-location-gate';
 import { collectSoSubmitProblems, soPaymentSubFieldGap } from '../shared/so-submit-problems';
 import { soAgentToStamp, readStaffForStamp, followSalespersonToAgent } from '../lib/so-agent';
@@ -2641,6 +2642,21 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       companySql: activeCompanySql(c, 'p.company_id'), keyerId: Number(c.get('houzsUser')?.id ?? NaN), orderDate: soDateForVenue,
     });
     if (fairProblem) confirmProblems.push(fairProblem);
+    /* ...and a transport fee for Sabah / Sarawak / Labuan / Kelantan / Terengganu / Perlis /
+       Singapore (owner 2026-11-11). The POS handover's applyDeliveryFee builds
+       its fee lines after the insert, so that create is not judged here. */
+    if (!body.applyDeliveryFee) {
+      const createState = (body.customerState as string | null | undefined) ?? null;
+      const createCountry = typeof body.customerCountry === 'string' && body.customerCountry.trim()
+        ? body.customerCountry : await deriveCountryFromState(sb, createState);
+      const feeProblem = transportFeeProblem(createState, createCountry, items.map((it) => ({
+        itemCode: (it.itemCode as string | null | undefined) ?? null,
+        description: (it.description as string | null | undefined) ?? null,
+        itemGroup: (it.itemGroup as string | null | undefined) ?? null,
+        amountSen: Number(it.qty ?? 1) * Number(it.unitPriceSen ?? 0) - Number(it.discountSen ?? 0),
+      })));
+      if (feeProblem) confirmProblems.push(feeProblem);
+    }
     if (confirmProblems.length > 0) return c.json(validationFailedBody(confirmProblems), 422);
   }
 
@@ -4933,6 +4949,20 @@ mfgSalesOrders.post('/validate', async (c) => {
       && !mixesSofaWithOtherMain(((body.origItemGroups as unknown[] | undefined) ?? []).map((g) => (typeof g === 'string' ? g : null))),
     paymentGaps,
   });
+  /* Transport fee for the far states and Singapore (owner 2026-11-11). On a
+     create, and on a scanned draft being turned into an order (confirmingDraft);
+     not on an edit of a live order, whose surfaces don't send the line prices.
+     A line posted without unitPriceSen is not judged on its amount. */
+  if (!asDraft && (!isEdit || body.confirmingDraft === true)) {
+    const feeProblem = transportFeeProblem(str(body.customerState) || null, str(body.customerCountry) || null, items.map((it) => ({
+      itemCode: str(it.itemCode) || null,
+      description: str(it.description) || null,
+      itemGroup: str(it.itemGroup) || null,
+      amountSen: it.unitPriceSen === undefined || it.unitPriceSen === null ? null
+        : Number(it.qty ?? 1) * Number(it.unitPriceSen) - Number(it.discountSen ?? 0),
+    })));
+    if (feeProblem) problems.push(feeProblem);
+  }
 
   return c.json({ problems }, 200);
 });

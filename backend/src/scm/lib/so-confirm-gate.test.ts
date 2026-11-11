@@ -238,6 +238,18 @@ describe('soConfirmProblemsForDoc', () => {
     expect(await soConfirmProblemsForDoc(makeSb(clean), 'HC-SO-2607-013')).toEqual([]);
   });
 
+  it('a Sabah draft with no priced transport line is refused (owner 2026-11-11)', async () => {
+    const sabah = clean.map((r) => (r._table === 'mfg_sales_orders' ? { ...r, customer_state: 'Sabah', customer_country: 'Malaysia' } : r));
+    expect(codes(await soConfirmProblemsForDoc(makeSb(sabah), 'HC-SO-2607-013'))).toEqual(['transport_fee_required']);
+    const zeroFee = [...sabah, {
+      _table: 'mfg_sales_order_items', doc_no: 'HC-SO-2607-013', item_code: 'TRANSPORTATION CHARGES',
+      item_group: 'service', description: 'TRANSPORTATION CHARGES', line_no: 2, cancelled: false, total_sen: 0,
+    } as Row, { _table: 'mfg_products', code: 'TRANSPORTATION CHARGES', company_id: 1 } as Row];
+    expect(codes(await soConfirmProblemsForDoc(makeSb(zeroFee), 'HC-SO-2607-013'))).toEqual(['transport_fee_required']);
+    const priced = zeroFee.map((r) => (r.item_code === 'TRANSPORTATION CHARGES' && r._table === 'mfg_sales_order_items' ? { ...r, total_sen: 30000 } : r));
+    expect(await soConfirmProblemsForDoc(makeSb(priced), 'HC-SO-2607-013')).toEqual([]);
+  });
+
   it('an unreadable LINES read refuses instead of confirming a lineless order', async () => {
     const problems = await soConfirmProblemsForDoc(makeSb(clean, ['mfg_sales_order_items']), 'HC-SO-2607-013');
     expect(codes(problems)).toEqual(['so_confirm_check_failed']);
