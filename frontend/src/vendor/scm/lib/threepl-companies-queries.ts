@@ -7,6 +7,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 
+/** The entry in this company's supplier master (Supplier maintenance) a carrier
+ *  bills as — scm.threepl_companies.supplier_id. One supplier, one carrier. */
+export type ThreePLSupplierLink = { id: string; code: string; name: string };
+
 export type ThreePLCompanyRow = {
   id: string;
   /** Minted 3PL-### (mig 0242). Null only on a row that predates the backfill
@@ -22,6 +26,8 @@ export type ThreePLCompanyRow = {
   address: string | null;
   isActive: boolean;
   notes: string | null;
+  /** Null when the carrier is not linked to a supplier yet. */
+  supplier: ThreePLSupplierLink | null;
   lorryCount: number;
   driverCount: number;
   helperCount: number;
@@ -39,6 +45,9 @@ export type NewThreePLCompany = {
   address?: string | null;
   notes?: string | null;
   isActive?: boolean;
+  /** Link to a supplier of this company; null unlinks. The server refuses one
+   *  another carrier already holds (409 supplier_linked_elsewhere). */
+  supplierId?: string | null;
 };
 
 /** A carrier's own crew and lorries — read-only (GET /threepl-companies/:id/fleet).
