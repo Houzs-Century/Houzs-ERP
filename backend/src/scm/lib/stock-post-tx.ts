@@ -11,7 +11,9 @@
 // statement throws. The FIFO trigger fires on the movement insert, so it runs in
 // the same transaction.
 //
-// THE SWITCHES (wrangler.toml [vars]): GRN_POST_MODE, DO_SHIP_MODE
+// THE SWITCHES (wrangler.toml [vars]): GRN_POST_MODE, DO_SHIP_MODE,
+// DELIVERY_RETURN_MODE (lib/delivery-return-stock.ts), PURCHASE_RETURN_MODE
+// (lib/purchase-return-stock.ts)
 //   "atomic"   the default; absent or any other value means this too
 //   "two-step" the old path, each write committed on its own. Kept for one
 //              release as the rollback switch; remove once atomic has run clean.
@@ -21,7 +23,7 @@ import type { Sql } from 'postgres';
 import { getSql, resolveDatabaseUrl } from '../../db/pg';
 import { pgTransactionSupabase, settleScmStatements } from './pg-supabase-transaction';
 
-export type StockPostSwitch = 'GRN_POST_MODE' | 'DO_SHIP_MODE';
+export type StockPostSwitch = 'GRN_POST_MODE' | 'DO_SHIP_MODE' | 'DELIVERY_RETURN_MODE' | 'PURCHASE_RETURN_MODE';
 export type StockPostMode = 'atomic' | 'two-step';
 
 /** The client the core writes through: PostgREST-shaped, bound to the transaction. */
@@ -46,6 +48,8 @@ type EnvLike = {
   DATABASE_URL?: string;
   GRN_POST_MODE?: string;
   DO_SHIP_MODE?: string;
+  DELIVERY_RETURN_MODE?: string;
+  PURCHASE_RETURN_MODE?: string;
 } | null | undefined;
 
 export function stockPostMode(env: EnvLike, key: StockPostSwitch): StockPostMode {
@@ -100,7 +104,7 @@ export function stockTxFor(env: EnvLike, key: StockPostSwitch): StockTx | null {
 }
 
 /** What the operator reads when an atomic post wrote nothing. */
-export function stockTxFailureBody(what: 'posted' | 'shipped', failure: { reason: string; detail?: string }) {
+export function stockTxFailureBody(what: 'posted' | 'shipped' | 'received' | 'returned' | 'cancelled', failure: { reason: string; detail?: string }) {
   return {
     error: failure.reason,
     message: `Nothing was ${what}: the change was rolled back as a whole. Please try again.`,

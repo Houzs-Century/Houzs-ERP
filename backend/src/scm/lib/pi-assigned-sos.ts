@@ -13,17 +13,20 @@ import {
   resolvePoSoCoveragePerSkuForPos, resolveDeliveredByCodeForPos, summarizeOrigins,
   type DeliveredDo,
 } from '../routes/po-so-coverage';
+import type { ListMrp } from './list-mrp-source';
 
 /* Collapsed "Assigned SO" column (owner 2026-07-31): a PI inherits its parent
    PO's Assigned SO(s). Resolve the parent PO through the SAME chain the per-line
    drill-down uses (pi.grn_id → grns.purchase_order_id → PO), so the list row and
    its expansion never disagree, then batch the coverage for the whole page in
    ONE pass (computeMrp runs once). Fail-soft: on any error the rows still return,
-   just without the column populated. */
+   just without the column populated. `listMrp`: the deferred list endpoint's
+   snapshot run (lib/list-mrp-source.ts); null = the live shared run. */
 export async function attachPiAssignedSos(
   sb: any,
   c: any,
   rows: Array<{ id: string; grn_id?: string | null } & Record<string, unknown>>,
+  listMrp: Promise<ListMrp> | null,
 ): Promise<Array<Record<string, unknown>>> {
   try {
     const grnIds = [...new Set(rows.map((r) => r.grn_id).filter((x): x is string => !!x))];
@@ -74,7 +77,7 @@ export async function attachPiAssignedSos(
     /* "Delivered" column (owner 2026-07-31): the DO(s) that shipped the goods,
        per CODE via the SAME pi → grn → PO chain, filtered to the PI's codes. */
     const [originsByPo, deliveredByPoCode] = await Promise.all([
-      resolvePoSoCoveragePerSkuForPos(sb, c, poIds),
+      resolvePoSoCoveragePerSkuForPos(sb, c, poIds, listMrp),
       resolveDeliveredByCodeForPos(sb, c, poIds),
     ]);
     return rows.map((r) => {

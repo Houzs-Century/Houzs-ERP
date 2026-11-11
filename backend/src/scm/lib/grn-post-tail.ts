@@ -14,6 +14,7 @@
 
 import { reconcileDropshipBatches } from './inventory-movements';
 import { reconcileUncostedOuts } from './oversell-retrocost';
+import { timed } from '../../lib/step-timing';
 
 /** The buckets the stock IN just opened lots in. Empty when this call wrote no IN. */
 export type GrnTailBucket = {
@@ -53,28 +54,28 @@ export async function runGrnPostTail(sb: ReconcileClient, tail: GrnPostTail): Pr
        batch before receipt consumed no lot; consume that shortfall from the new
        lots so coverage and valuation do not count the shipped units twice.
        Ledger-driven and idempotent. Then restamp the DO lines and their SIs. */
-    const reconcile = await reconcileDropshipBatches(sb, booked.buckets, userId);
+    const reconcile = await timed('tail-dropship', () => reconcileDropshipBatches(sb, booked.buckets, userId));
     await restampDos(sb, reconcile.affectedDoIds, 'dropship');
     /* Oversell retro-cost (mig 0154) — normal DO short-ships that shipped
        uncosted BEFORE this receipt (receiptCutoffTs) take their cost from the
        arriving lots. Drop-ship shorts belong to the reconcile above. */
-    const oversell = await reconcileUncostedOuts(
+    const oversell = await timed('tail-oversell', () => reconcileUncostedOuts(
       sb,
       booked.buckets.map((m) => ({ warehouse_id: m.warehouse_id, item_code: m.item_code, variant_key: m.variant_key })),
       booked.receiptCutoffTs,
       userId,
-    );
+    ));
     await restampDos(sb, oversell.affectedDoIds, 'oversell');
   }
   /* Physical rack placement (separate ledger, mig 0151). */
   try {
     const { placeGrnLinesOnRacks } = await import('./grn-rack-sync');
-    await placeGrnLinesOnRacks(sb, grnId, grnNo, userId);
+    await timed('tail-racks', () => placeGrnLinesOnRacks(sb, grnId, grnNo, userId));
   } catch (e) { console.error('[grn-rack] place failed:', e); }
   /* Which open orders the stock-PO lines of this receipt serve (owner 2026-10-19). */
   try {
     const { recordReceiptAssignments } = await import('./receipt-so-assignment');
-    await recordReceiptAssignments(sb, grnId, companyId);
+    await timed('tail-receipt-so', () => recordReceiptAssignments(sb, grnId, companyId));
   } catch (e) { console.error('[receipt-so] post-grn failed:', e); }
   /* B2C SO auto-allocation — re-walk PENDING SO lines against the new stock. */
   try {

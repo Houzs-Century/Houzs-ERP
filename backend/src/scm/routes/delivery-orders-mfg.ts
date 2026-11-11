@@ -136,6 +136,7 @@ import { queueDoShippedFromStamp, markDoShippedFromReturned, withShippedFromStam
 import { withSoRefDocNos } from '../lib/so-ref-search';
 import { stockTxFor, type StockTx } from '../lib/stock-post-tx'; import { doShipCoreFailure, doShipFailureResponse, keepCreatedDoAsDraft, type DoShipFlip, type DoShipTail } from '../lib/do-ship-atomic';
 import { hasUnreadableLines, unreadableMovementError } from '../lib/failed-read-refusal'; import { noteResyncReadFailure, revertShipOnUnreadLines } from '../lib/do-read-guards';
+import { stepClock, timed } from '../../lib/step-timing';
 
 export const deliveryOrdersMfg = new Hono<{ Bindings: Env; Variables: Variables }>();
 deliveryOrdersMfg.use('*', supabaseAuth);
@@ -850,7 +851,10 @@ async function resolveDoCostBatchMap(
   return { batchBySoItem, notes: hb.notes };
 }
 
-export async function restampDoActualCost(sb: any, deliveryOrderId: string) {
+export async function restampDoActualCost(sb: any, deliveryOrderId: string): Promise<void> {
+  return timed('restamp-do', () => restampDoActualCostInner(sb, deliveryOrderId));
+}
+async function restampDoActualCostInner(sb: Parameters<typeof restampDoActualCost>[0], deliveryOrderId: string) {
   try {
     /* Forward-compat (mig 0057): is_dropship column may not exist yet — retry without it. */
     let hdrRes = await sb.from('delivery_orders')
@@ -2769,6 +2773,7 @@ deliveryOrdersMfg.get('/:id', async (c) => {
 // payment-as-drafts / line items) so the Create-DO screen (prefilled from an
 // SO) can save in one shot. Line items + payments are optional.
 deliveryOrdersMfg.post('/', async (c) => {
+  const lap = stepClock(); // Server-Timing s-do-* laps
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const debtorName = (body.debtorName ?? body.customerName) as string | undefined;
@@ -3038,6 +3043,7 @@ deliveryOrdersMfg.post('/', async (c) => {
   const phoneRaw = (body.phone as string | undefined) ?? null;
   const emPhoneRaw = (body.emergencyContactPhone as string | undefined) ?? null;
 
+  lap('do-checks');
   const { data: header, error: hErr } = await insertWithDocNoRetry<{ id: string; do_number: string }>(
     () => nextNum(sb, c),
     (doNumber) => sb.from('delivery_orders').insert({
@@ -3153,6 +3159,7 @@ deliveryOrdersMfg.post('/', async (c) => {
      their failures rather than undoing the DO, so from here the document exists
      on every remaining exit and this CREATE row is true. */
   await recordDoCreate(sb, c.get('houzsUser'), activeCompanyId(c), h.id, items.length);
+  lap('do-write');
 
   /* ERP -> AutoCount SO->DO. Only an SO-linked DO can be expressed: AutoCount
      builds a DO by transferring lines FROM a source document, so a DO with no
@@ -3191,6 +3198,7 @@ deliveryOrdersMfg.post('/', async (c) => {
      see deductInventoryForDo — mean this never double-deducts even if the
      status is later advanced). LEAK GUARD (DRAFT): a DRAFT DO has NOT shipped —
      skip the deduction AND the SO-delivered sync; both fire on Confirm. */
+  lap('do-ac-queue');
   let movementErrors: string[] = [];
   let emailNotice: string | null = null;
   if (body.asDraft !== true) {
@@ -3200,17 +3208,20 @@ deliveryOrdersMfg.post('/', async (c) => {
     if (!shipTx) movementErrors = await deductInventoryForDo(sb, h.id, user.id);
     // Lines unreadable = nothing moved: keep the DO as a DRAFT rather than let it read shipped.
     if (hasUnreadableLines(movementErrors)) return c.json({ id: h.id, doNumber: h.do_number, ...(await revertShipOnUnreadLines(sb, h.id, activeCompanyId(c) ?? 0, 'LOADED', 'DRAFT', {}, null, movementErrors, h.do_number)) }, 503);
+    lap('do-ship');
 
     /* Requirement #3 (Loo 2026-05-30) — if this DO now fully covers its SO,
        auto-advance the SO to DELIVERED (best-effort, never blocks the DO). The
        POS "My orders" board reflects the flip via Supabase realtime. */
     await syncSoDeliveredFromDo(sb, [(body.soDocNo as string) ?? null], user.id);
+    lap('do-so-sync');
 
     /* Customer DO email (owner trigger "A", 2026-07-17). A non-draft create IS
        the confirm — the DO is born DISPATCHED — so this is the same event the
        deduction above fires on. Gated OFF and fail-closed inside; best-effort,
        never blocks the DO. */
     emailNotice = await maybeSendDeliveryOrderEmail(sb, c.env, h.id);
+    lap('do-email');
   }
 
   /* SO↔DO amend mirror (Houzs port of 2990 fc7f0900, extended) — same rule as
@@ -3251,6 +3262,7 @@ deliveryOrdersMfg.post('/', async (c) => {
     }
   }
 
+  lap('do-amend-mirror');
   return c.json({
     id: h.id,
     doNumber: h.do_number,

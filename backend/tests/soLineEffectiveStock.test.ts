@@ -236,12 +236,14 @@ describe('the SO list rolls up the shared rule, not a raw stored column', () => 
     expect(listEnrichmentRoute.split('stock_status_effective:').length - 1).toBe(1);
   });
 
-  it('the list no longer runs computeMrp — the deferred endpoint does, through the one shared run', () => {
+  it('the list no longer runs computeMrp — the deferred endpoint reads the list snapshot, the detail stays live', () => {
     /* The whole point of the deferral: opening the list must not pay a full MRP
-       run. Neither route calls computeMrp itself any more: soCoverage (called
-       inline by GET /:docNo/items, and by the deferred GET /:docNo/coverage) and
-       the list enrichment both take the ONE run lib/live-mrp-memo.ts holds
-       (HC-0002, 2026-10-22), so a list then an order pays for it once. */
+       run. Neither route calls computeMrp itself: soCoverage (GET /:docNo/items
+       and the deferred GET /:docNo/coverage) takes the live shared run
+       (lib/live-mrp-memo.ts), and the list enrichment reads the 15-min list
+       snapshot through resolveListMrp (lib/list-mrp-source.ts, owner 2026-11-10),
+       which falls back to that same shared run only when the snapshot is
+       missing, stale or Refresh was asked. */
     expect(mfgSalesOrders).not.toContain('mrpForListProm');
     expect(mfgSalesOrders.split('computeMrp(').length - 1).toBe(0);
     expect(mfgSalesOrders.split('sharedLiveMrp(').length - 1).toBe(1); // soCoverage only
@@ -249,7 +251,8 @@ describe('the SO list rolls up the shared rule, not a raw stored column', () => 
     /* The enrichment endpoint takes it once, OFF the list's critical path, and
        flattens it with the pure mrpLineCoverage — never a second run. */
     expect(listEnrichmentRoute.split('computeMrp(').length - 1).toBe(0);
-    expect(listEnrichmentRoute.split('sharedLiveMrp(').length - 1).toBe(1);
+    expect(listEnrichmentRoute.split('sharedLiveMrp(').length - 1).toBe(0);
+    expect(listEnrichmentRoute.split('resolveListMrp(').length - 1).toBe(1);
     expect(listEnrichmentRoute).toContain('mrpLineCoverage(mrp)');
   });
 });

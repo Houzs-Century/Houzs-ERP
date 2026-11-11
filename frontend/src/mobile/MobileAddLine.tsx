@@ -179,7 +179,7 @@ function AddLineRow({ doc, docId, header, onAdded }: { doc: AddLineDoc; docId: s
         </button>
       </div>
 
-      {pickerOpen && <MobileSkuPicker onPick={pick} onClose={() => setPickerOpen(false)} />}
+      {pickerOpen && <MobileSkuPicker serviceOnly={false} onPick={pick} onClose={() => setPickerOpen(false)} />}
     </div>
   );
 }

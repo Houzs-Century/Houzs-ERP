@@ -84,6 +84,51 @@ export async function refreshMrpSnapshot(
   return { result, computedAt: nowIso };
 }
 
+/* The LIST snapshot (scm.mrp_list_snapshots). The PO / GRN / PI / SO list
+   enrichments read the run with UNDATED demand included (includeUndated=true),
+   because an undated SO line still takes supply and still shows its Assigned PO.
+   The page snapshot above hides undated rows, so it cannot serve them; this one
+   is the same engine, same company, the other visibility flag. */
+export async function readListMrpSnapshot(
+  sb: Sb,
+  companyId: number | null,
+): Promise<{ result: MrpResult; computedAt: string } | null> {
+  if (companyId == null) return null;
+  const { data, error } = await sb.from('mrp_list_snapshots')
+    .select('result, computed_at')
+    .eq('company_id', companyId)
+    .maybeSingle();
+  if (error || !data) return null;
+  return { result: data.result as MrpResult, computedAt: data.computed_at as string };
+}
+
+export async function storeListMrpSnapshot(
+  sb: Sb,
+  companyId: number,
+  result: MrpResult,
+  computedAtIso: string,
+): Promise<void> {
+  // Object straight through, never JSON.stringify (the jsonb double-encoding COE).
+  const { error } = await sb.from('mrp_list_snapshots').upsert(
+    { company_id: companyId, result, computed_at: computedAtIso, updated_at: new Date().toISOString() },
+    { onConflict: 'company_id' },
+  );
+  if (error) throw new Error(`mrp_list_snapshot upsert failed: ${error.message}`);
+}
+
+export async function refreshListMrpSnapshot(
+  sb: Sb,
+  companyId: number,
+  leadBuffers: LeadBuffers,
+  nowIso: string,
+): Promise<{ result: MrpResult; computedAt: string }> {
+  const result = await computeMrp(sb, {
+    catFilter: null, whFilter: null, includeUndated: true, companyId, leadBuffers,
+  });
+  await storeListMrpSnapshot(sb, companyId, result, nowIso);
+  return { result, computedAt: nowIso };
+}
+
 /**
  * Refresh one company's snapshot in the background after a write that moves
  * supply. 2990-0034 (2026-11-02): seven POs cancelled at 11:33 stayed "covered"
@@ -97,6 +142,7 @@ export function deferMrpSnapshotRefresh(c: any, sb: Sb, companyId: number, where
   const run = (async () => {
     const leadBuffers = await loadLeadBuffers(c.env.DB);
     await refreshMrpSnapshot(sb, companyId, leadBuffers, new Date().toISOString());
+    await refreshListMrpSnapshot(sb, companyId, leadBuffers, new Date().toISOString());
   })().catch((e: unknown) => {
     // eslint-disable-next-line no-console
     console.error(`[mrp-snapshot] ${where} company=${companyId}`, e);
@@ -108,7 +154,7 @@ export function deferMrpSnapshotRefresh(c: any, sb: Sb, companyId: number, where
 }
 
 /**
- * Refresh every live company's stored MRP snapshot — the scheduled (~15 min)
+ * Refresh every live company's two stored MRP snapshots (page + list) — the scheduled (~15 min)
  * job, run from the Worker's `scheduled()` handler where env.DB + the SCM client
  * are already to hand (so no pgrest-shim / lead-buffer plumbing). Best-effort per
  * company: one company's failure is logged and never blocks another's, and the
@@ -126,6 +172,14 @@ export async function refreshAllMrpSnapshots(env: Env, nowIso: string): Promise<
     } catch (e) {
       // eslint-disable-next-line no-console
       console.error(`[cron mrp-snapshot] company=${companyId}`, e);
+    }
+    try {
+      const { computedAt } = await refreshListMrpSnapshot(sb, companyId, leadBuffers, nowIso);
+      // eslint-disable-next-line no-console
+      console.log(`[cron mrp-list-snapshot] company=${companyId} computedAt=${computedAt}`);
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error(`[cron mrp-list-snapshot] company=${companyId}`, e);
     }
   }
 }

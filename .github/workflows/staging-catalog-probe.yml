@@ -1,11 +1,14 @@
 name: Staging catalog probe (read-only)
 
-# Answers, from the staging database itself, why PostgREST answers
-# "permission denied for view mfg_sales_orders_with_payment_totals" while the
-# catalog lists service_role among the view's SELECT grantees (docs/bugs/0824).
-# One psql session, SELECTs only, then `SET ROLE service_role` and a real read
-# of the view — the same thing PostgREST does. Exit 0 for every legitimate
-# answer; the answer is the output. Manual trigger only. Own concurrency group.
+# Answers, from the staging database itself, what preview branches left behind
+# that main does not create: the tracker rows pg-migrate warns about, and the
+# tables and columns they made, with a row count for each. A stray object is
+# how staging could hide a production failure (a main migration that leans on
+# it passes here and fails on prod), so the answer is the list. The previous
+# question here (docs/bugs/0824, view read as service_role) is closed: the
+# staging Worker's /health reports rest_role=service_role.
+# One psql session, SELECTs only. Exit 0 for every legitimate answer; the
+# answer is the output. Manual trigger only. Own concurrency group.
 
 on:
   workflow_dispatch:
@@ -35,49 +38,32 @@ jobs:
           set -euo pipefail
           case "$DATABASE_URL" in *anogrigyjbduyzclzjgn*) echo "::error::points at PRODUCTION"; exit 1;; esac
           case "$DATABASE_URL" in *minnapsemfzjmtvnnvdd*) echo "target: staging";; *) echo "::error::not the staging project"; exit 1;; esac
-      - name: Ask the catalog, then read the view as service_role
+      - name: List what preview branches left on staging
         env:
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
         run: |
           set -uo pipefail
           P=/usr/lib/postgresql/17/bin/psql
           "$P" "$DATABASE_URL" -v ON_ERROR_STOP=0 -X <<'SQL'
-          \echo === connected as
-          select current_user, session_user;
-          \echo === the view: owner, security options, ACL
-          select c.relname, pg_get_userbyid(c.relowner) as owner, c.reloptions, c.relacl
-            from pg_class c join pg_namespace n on n.oid = c.relnamespace
-           where n.nspname = 'scm' and c.relname = 'mfg_sales_orders_with_payment_totals';
-          \echo === has_table_privilege per role
-          select r.rolname,
-                 has_table_privilege(r.rolname, 'scm.mfg_sales_orders_with_payment_totals', 'SELECT') as view_select,
-                 has_table_privilege(r.rolname, 'scm.mfg_sales_orders', 'SELECT') as table_select,
-                 has_table_privilege(r.rolname, 'scm.mfg_sales_order_payments', 'SELECT') as payments_select,
-                 has_schema_privilege(r.rolname, 'scm', 'USAGE') as scm_usage
-            from pg_roles r
-           where r.rolname in ('service_role','anon','authenticated','authenticator','postgres','hyperdrive_staging')
-              or r.rolname like 'hyperdrive%'
-           order by 1;
-          \echo === roles authenticator can become
-          select m.rolname as member, g.rolname as can_become
-            from pg_auth_members am join pg_roles m on m.oid = am.member join pg_roles g on g.oid = am.roleid
-           where m.rolname = 'authenticator' order by 2;
-          \echo === every relation named like the view, any schema
-          select n.nspname, c.relname, c.relkind from pg_class c join pg_namespace n on n.oid = c.relnamespace
-           where c.relname = 'mfg_sales_orders_with_payment_totals';
-          \echo === PostgREST config on this project (exposed schemas)
-          select name, setting from pg_settings where name like 'pgrst.%';
-          select rolname, rolconfig from pg_roles where rolname in ('authenticator','service_role','anon');
-          \echo === NOW READ THE VIEW AS service_role (what PostgREST does)
-          set role service_role;
-          select current_user;
-          select count(*) as rows_visible from scm.mfg_sales_orders_with_payment_totals;
-          select doc_no, status, paid_total_sen from scm.mfg_sales_orders_with_payment_totals order by so_date desc limit 2;
-          reset role;
-          \echo === and as hyperdrive_staging
-          set role hyperdrive_staging;
-          select count(*) as rows_visible_hyperdrive from scm.mfg_sales_orders_with_payment_totals;
-          reset role;
+          \echo === tracker rows for the service-case preview migrations
+          select filename, checksum, applied_at from _pg_migrations
+           where filename like '2026110%assr%' or filename like '2026111%assr%' order by filename;
+          \echo === tables: present on staging?
+          select t.name, to_regclass('public.' || t.name) is not null as present
+            from (values ('assr_return_dos'), ('assr_case_qc_notes')) t(name);
+          \echo === columns: present on staging? (main creates none of these)
+          select c.table_name, c.column_name, c.data_type from information_schema.columns c
+           where c.table_schema = 'public'
+             and ((c.table_name = 'assr_cases' and c.column_name in ('qc_inspected_at', 'qc_by', 'qc_findings'))
+               or (c.table_name = 'assr_supplier_returns' and c.column_name = 'expected_return_at'))
+           order by 1, 2;
+          \echo === rows held in the stray objects
+          select 'assr_return_dos' as obj, count(*) from public.assr_return_dos
+          union all select 'assr_case_qc_notes', count(*) from public.assr_case_qc_notes
+          union all select 'assr_cases with qc_* set', count(*) from public.assr_cases
+           where qc_inspected_at is not null or qc_by is not null or qc_findings is not null
+          union all select 'assr_supplier_returns with expected_return_at', count(*) from public.assr_supplier_returns
+           where expected_return_at is not null;
           \echo === done
           SQL
           echo "probe finished (errors above are the answer, not a failure of the probe)"

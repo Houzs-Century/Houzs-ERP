@@ -138,7 +138,7 @@ const send = (app: Hono, method: string, url: string, body?: Row) =>
     method,
     headers: { 'content-type': 'application/json' },
     ...(body ? { body: JSON.stringify(body) } : {}),
-  });
+  }, { DELIVERY_RETURN_MODE: 'two-step' }); // no database behind these fakes; deliveryReturnAtomic.test.ts covers atomic
 
 /* Each document, its table, the row it starts from, and the URL that cancels
    it. The point of the table is that these four are ONE defect, so they get ONE

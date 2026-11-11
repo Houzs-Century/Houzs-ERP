@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import {
-  parseDays, routeSql, slowestSql, totalsSql, readAeAnswer, routeLines, table, pivotBrowserSlow, normalizePage,
+  parseDays, routeSql, slowestSql, totalsSql, writeRouteCompanySql, readAeAnswer, routeLines, slowestLines, table, pivotBrowserSlow, normalizePage,
 } from '../scripts/lib/slow-routes.mjs';
 
 describe('AE SQL', () => {
@@ -18,6 +18,23 @@ describe('AE SQL', () => {
     expect(sql).toContain("blob1 = 'req'");
     expect(sql).toContain('blob5 AS method, blob2 AS route');
     expect(sql).toContain("INTERVAL '7' DAY");
+  });
+
+  it('reads company from blob6 and database work from double2/double3, as requestLog.ts writes them', () => {
+    const src = readFileSync(new URL('../src/middleware/requestLog.ts', import.meta.url), 'utf8');
+    expect(src).toContain('c.req.method, companyId == null ? "" : String(companyId)]');
+    expect(src).toContain('doubles: [ms, db.ms, db.n]');
+    expect(slowestSql(7, 20)).toContain('blob6 AS company, double1 AS ms, double2 AS db_ms, double3 AS db_n');
+    for (const sql of [routeSql(7, 40), writeRouteCompanySql(7, 40)]) {
+      // only points that recorded database work, so old zero points do not dilute the average
+      expect(sql).toContain('sumIf(_sample_interval, double3 > 0) AS db_pts');
+      expect(sql).toContain('sumIf(double2 * _sample_interval, double3 > 0) AS db_ms_sum');
+      expect(sql).not.toContain('count()');
+    }
+    const byCo = writeRouteCompanySql(7, 40);
+    expect(byCo).toContain('GROUP BY method, route, company');
+    expect(byCo).toContain("blob6 != ''");
+    expect(byCo).toContain("blob5 = 'POST'");
   });
 
   it('weights every aggregate by _sample_interval', () => {
@@ -57,6 +74,24 @@ describe('routeLines + table', () => {
     expect(l).toMatchObject({ n: 200, p95: '3500', 'over3s%': '5.0', total_s: '60' });
     expect(table([l]).split('\n')).toHaveLength(3);
     expect(table([])).toBe('(none)');
+  });
+
+  it('averages database work over the points that recorded it, and says - when none did', () => {
+    const base = { method: 'POST', route: '/api/scm/grns', n: 100, p50: 1, p95: 1, p99: 1, max_ms: 1, over_slow: 0, total_ms: 1000 };
+    expect(routeLines([{ ...base, db_pts: 40, db_ms_sum: 80000, db_n_sum: 4200 }])[0]).toMatchObject({ db_ms: '2000', db_n: '105.0' });
+    const none = routeLines([{ ...base, db_pts: 0, db_ms_sum: 0, db_n_sum: 0 }])[0];
+    expect(none).toMatchObject({ db_ms: '-', db_n: '-' });
+    expect(none).not.toHaveProperty('company');
+    expect(routeLines([{ ...base, company: '1', db_pts: 0 }])[0]).toMatchObject({ company: '1' });
+  });
+
+  it('shows company and database work on the slowest requests, - on old points', () => {
+    const [fresh, old] = slowestLines([
+      { timestamp: 't', method: 'POST', route: '/r', status: '201', request_id: 'id1', company: '2', ms: 9100.4, db_ms: 7000, db_n: 312 },
+      { timestamp: 't', method: 'POST', route: '/r', status: '201', request_id: 'id2', company: '', ms: 8000, db_ms: 0, db_n: 0 },
+    ]);
+    expect(fresh).toMatchObject({ company: '2', ms: '9100', db_ms: '7000', db_n: '312' });
+    expect(old).toMatchObject({ company: '-', db_ms: '-', db_n: '-' });
   });
 });
 

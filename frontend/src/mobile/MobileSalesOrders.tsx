@@ -19,6 +19,7 @@ import { SearchScopeHint } from "../components/SearchScopeHint";
 import { SourcePosRowMobile } from "./source-chips";
 import { poCellChips } from "../lib/soPoChips";
 import { useEnrichedSoListRows } from "../vendor/scm/lib/sales-order-queries";
+import { MrpAsOf } from "../components/MrpAsOf";
 import { identityStorageKey } from "../lib/storageIdentity";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../hooks/useServerSearch";
 import { appendSoListFilterParams, useSoListFilters } from "../vendor/scm/lib/so-list-filter-state";
@@ -268,7 +269,7 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
   // Deferred MRP enrichment for every loaded card (READY chips + readiness /
   // planning badges), healed a beat later. Shared with desktop; the hook chunks
   // the doc set at 100 so infinite scroll stays bounded (soListEnrichment.ts).
-  const enrichedRows = useEnrichedSoListRows(rows, !listLoading);
+  const { rows: enrichedRows, mrp: mrpStatus } = useEnrichedSoListRows(rows, !listLoading);
   const totalCount = data?.pages[0]?.total ?? 0;
 
   /* Summary bar totals — full-set rev/out from the server `aggregates` (page-0
@@ -558,6 +559,7 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
             </>}
           </div>
         )}
+        <MrpAsOf status={mrpStatus} className="mx-0.5 mb-2.5" />
 
         {/* Period filter chips (h-scroll). */}
         <div className="chips" style={{ marginBottom: 11 }}>

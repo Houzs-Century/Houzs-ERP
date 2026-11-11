@@ -27,7 +27,7 @@
     "frontend/src/components/DataTable.tsx": 3544,
     "frontend/src/mobile/MobileDeliveryPlanning.tsx": 2449,
     "frontend/src/mobile/MobileModuleList.tsx": 2103,
-    "frontend/src/mobile/MobileNewSO.tsx": 3748,
+    "frontend/src/mobile/MobileNewSO.tsx": 3591,
     "frontend/src/mobile/MobilePMS.tsx": 4491,
     "frontend/src/mobile/MobileSODetail.tsx": 2118,
     "frontend/src/mobile/MobileServiceCase.tsx": 3381,

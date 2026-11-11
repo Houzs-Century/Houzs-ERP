@@ -19,7 +19,9 @@ import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { repairHeldQty, editLineCapRefusal, addLineCapRefusal } from '../lib/purchase-return-repair-held';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
-import { writeMovements, reverseMovements, defaultWarehouseId } from '../lib/inventory-movements';
+import { writeMovements, reverseMovements } from '../lib/inventory-movements';
+import { cancelPrAtomically, isPrFlipMiss, postCreatedPrAtomically, prStockFailureBody, prStockOutCore, recountGrnReturned, resolvePrLineWarehouses, type PrCreated, type PrFlipResult } from '../lib/purchase-return-stock';
+import { stockTxFor } from '../lib/stock-post-tx';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { todayMyt } from '../lib/my-time';
@@ -31,7 +33,7 @@ import {
   orderSofaModuleRowsWithinBuilds,
   sortSoLinesByGroupRank,
 } from '../shared/so-line-display';
-import { recomputePoReceived, resolvePoBatchByItem } from './grns';
+import { resolvePoBatchByItem } from './grns';
 import { assertSourceLinesInCompany } from '../lib/ref-in-company';
 import { assertLinkedLineItemsMatch } from '../lib/line-link-item-identity';
 import { findUnlinkedPrLines, unlinkedReturnResponse } from '../lib/return-unlinked-lines';
@@ -53,7 +55,7 @@ import {
   PURCHASE_RETURN_REASON_CODES,
 } from '../shared/purchase-return-reasons';
 import { chunkIn } from '../lib/paginate-all';
-import { linesUnreadableBody, unreadableMovementError } from '../lib/failed-read-refusal';
+import { linesUnreadableBody } from '../lib/failed-read-refusal';
 import {
   PR_HEADER_COLS,
   PR_LIST_SELECT,
@@ -115,93 +117,17 @@ async function recomputePrTotals(sb: any, prId: string) {
   }
 }
 
-/* ── GRN→PR consumption helper (migration 0106, unified model) ──────────────
-   Track grn_items.returned_qty as PR lines are drawn from / adjusted against /
-   released back to a GRN line. base = qty_accepted (you can return up to what
-   was accepted); remaining = qty_accepted - returned_qty. Mirrors
-   adjustGrnInvoicedQty in purchase-invoices.ts. */
+/* ── GRN→PR consumption (migration 0106, unified model) ──────────────────────
+   grn_items.returned_qty is RECOUNTED from the live (non-cancelled, CREDIT) PR
+   lines, then the PO line's received_qty from it (lib/purchase-return-stock.ts,
+   recountGrnReturned, which carries the rules). This entry point is the
+   best-effort one (two-step creates and cancels, line edits): a recount that
+   did not land is logged and the write it follows stands. `_delta` is ignored
+   (kept for call-site compatibility). */
 export async function adjustGrnReturnedQty(sb: any, grnItemId: string, _delta?: number) {
-  if (!grnItemId) return;
-  /* RECOUNT-from-live (Wei Siang 2026-06-03 audit fix) — returned_qty is the SUM
-     of qty_returned across LIVE (non-cancelled) purchase_return_items for this GRN
-     line, clamped to [0, qty_accepted]. The old `cur + delta` arithmetic drifted
-     PERMANENTLY if any one adjust was dropped (best-effort swallow) or replayed —
-     it never reconverged, and it feeds two integrity gates (PO re-open + PI
-     over-bill headroom). A recount self-heals, exactly like recomputeGrnInvoiced /
-     recomputeGrnReceived. `_delta` is ignored (kept for call-site compatibility);
-     every caller already mutated the PR rows BEFORE calling, so the live sum is
-     authoritative. */
-  /* The ERROR is the signal, never the emptiness — the same rule the mirror this
-     docblock names (recomputeGrnInvoiced, purchase-invoices.ts) already follows
-     on all three of its reads. `?? []` cannot tell a failed read from a GRN line
-     with no live PR lines, and the two mean opposite things here: the recount
-     below turns an empty result into `returned_qty = 0`, which RELEASES the GRN
-     line — the same goods become returnable again AND the PI over-bill headroom
-     (qty_accepted - invoiced_qty - returned_qty) re-opens, with nothing raised.
-     A GRN line whose PR lines have genuinely all gone resolves error === null
-     with data === [] and MUST still fall through to that release; that is the
-     recount model working. Nothing is written above this point. */
-  const { data: prLines, error: prLinesErr } = await sb.from('purchase_return_items')
-    .select('qty_returned, purchase_return_id')
-    .eq('grn_item_id', grnItemId);
-  if (prLinesErr) {
-    /* eslint-disable-next-line no-console */
-    console.error('[adjustGrnReturnedQty] PR line read failed — returned_qty left unchanged:', grnItemId, prLinesErr.message);
-    return;
-  }
-  const rows = (prLines ?? []) as Array<{ qty_returned: number; purchase_return_id: string }>;
-  const prIds = [...new Set(rows.map((r) => r.purchase_return_id).filter(Boolean))];
-  const cancelled = new Set<string>();
-  /* HC-0221: a CREDIT return the supplier will not replace keeps the PO received. */
-  const noReplacement = new Set<string>();
-  if (prIds.length > 0) {
-    /* Same rule, opposite direction: an empty `cancelled` from a FAILED read
-       reads as "no return here is cancelled", so a cancelled PR's qty is counted
-       as still returned and the GRN line stays consumed against a return that
-       was voided. */
-    const { data: prs, error: prsErr } = await sb.from('purchase_returns').select('id, status, kind, supplier_replaces').in('id', prIds);
-    if (prsErr) {
-      /* eslint-disable-next-line no-console */
-      console.error('[adjustGrnReturnedQty] PR status read failed — returned_qty left unchanged:', grnItemId, prsErr.message);
-      return;
-    }
-    /* A REPAIR return keeps the goods on the books (they move to the repair
-       warehouse and come back), so it does not consume the receipt: counting it
-       re-opened the PO as unreceived while the unit sat in KL SERVICE
-       (2990-PRT-2610-001 / 2990-PO-2607-018). Only a CREDIT return does.
-       It still is not returnable again: the return caps subtract repairHeldQty. */
-    for (const p of (prs ?? []) as Array<{ id: string; status: string; kind: string | null; supplier_replaces: boolean | null }>) {
-      if ((p.status ?? '').toUpperCase() === 'CANCELLED' || p.kind === 'REPAIR') cancelled.add(p.id);
-      else if (p.supplier_replaces === false) noReplacement.add(p.id);
-    }
-  }
-  let returned = 0;
-  let closed = 0;
-  for (const r of rows) {
-    if (cancelled.has(r.purchase_return_id)) continue;
-    returned += Number(r.qty_returned ?? 0);
-    if (noReplacement.has(r.purchase_return_id)) closed += Number(r.qty_returned ?? 0);
-  }
-
-  const { data: gi } = await sb.from('grn_items')
-    .select('qty_accepted, purchase_order_item_id').eq('id', grnItemId).maybeSingle();
-  if (!gi) return;
-  const accepted = (gi as { qty_accepted: number }).qty_accepted ?? 0;
-  const next = Math.min(accepted, Math.max(0, returned)); // clamp [0, accepted]
-  const nextClosed = Math.min(next, Math.max(0, closed));
-  const { error: updErr } = await sb.from('grn_items').update({ returned_qty: next, returned_closed_qty: nextClosed }).eq('id', grnItemId);
-  if (updErr) {
-    /* A rejected UPDATE left returned_qty STALE with nothing logged, and it is
-       read by two integrity gates (PO re-open + PI over-bill headroom). Do not
-       recount the PO off a GRN line we failed to move. */
-    /* eslint-disable-next-line no-console */
-    console.error('[adjustGrnReturnedQty] returned_qty update failed — GRN line left STALE:', grnItemId, updErr.message);
-    return;
-  }
-  // Returning goods nets down the parent PO line's received_qty (re-opens for a
-  // replacement shipment). Recount it from live GRN lines.
-  const poItemId = (gi as { purchase_order_item_id: string | null }).purchase_order_item_id;
-  if (poItemId) await recomputePoReceived(sb, [poItemId]);
+  const r = await recountGrnReturned(sb, grnItemId);
+  /* eslint-disable-next-line no-console */
+  if (!r.ok) console.error('[adjustGrnReturnedQty]', r.reason);
 }
 
 /* The screen read: the list's filter + order (lib/purchase-return-list-read.ts,
@@ -376,66 +302,36 @@ purchaseReturns.get('/:id/linked', async (c) => {
   return c.json({ grn, purchaseOrder: po });
 });
 
-/* PR-DRAFT-removal — shared inventory-OUT side-effect. Called inline on
-   POST so the new PR is created as POSTED with movements already written.
-   Best-effort: doesn't roll back the row on movement failure. */
-/* ── resolvePrLineWarehouses (Agent D 2026-05-31, TASK #32) ───────────────────
-   PER-WAREHOUSE CORRECTNESS for the supplier-return side. A Purchase Return
-   takes stock OUT of the warehouse the goods were RECEIVED into — i.e. the
-   source GRN line's warehouse. A PR built via /from-grns can batch lines from
-   several GRNs that may sit in different warehouses (same supplier), so a single
-   primary-GRN warehouse for every line could draw OUT of the wrong warehouse.
-   Resolve per line via grn_item_id → grn_items.grn_id → grns.warehouse_id.
+/* The supplier-return OUT (lib/purchase-return-stock.ts, prStockOutCore), on
+   `sb`, then the SO allocation re-walk. The two-step create path. */
+export async function writePurchaseReturnMovements(sb: any, prId: string, returnNumber: string, grnId: string | null, userId: string): Promise<string[]> {
+  const out = await prStockOutCore(sb, prId, returnNumber, grnId, userId);
+  if (out.wrote) await afterPrStockOut(sb);
+  return out.errors;
+}
+/* PR post = stock OUT to supplier → other READY SOs that needed it may regress.
+   Re-walk SO allocation. Best-effort; after commit in the atomic create. */
+async function afterPrStockOut(sb: any): Promise<void> {
+  try {
+    const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
+    await recomputeSoStockAllocation(sb);
+  } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-pr-post failed:', e); }
+}
 
-   Resolution order per PR line:
-     1. the source GRN line's GRN warehouse (grn_item_id → … → grns)
-     2. the primary GRN's warehouse (manual lines with no grn_item_id)
-     3. the return's OWN company's default warehouse (last-resort fallback)
-
-   Returns a map of purchase_return_items.id → warehouse_id (or null when even
-   the fallbacks are absent — the caller skips those lines). */
-async function resolvePrLineWarehouses(
-  sb: any,
-  items: Array<{ id: string; grn_item_id?: string | null }>,
-  primaryGrnId: string | null,
-  /* The return's company (2026-08-03) — step 3 is per company. It used to be a
-     company-blind draw across every company's is_default warehouses, decided by
-     alphabetical `code` order. */
-  companyId: number | undefined,
-): Promise<Map<string, string | null>> {
-  const out = new Map<string, string | null>();
-  const grnItemIds = [...new Set(items
-    .map((it) => it.grn_item_id ?? null)
-    .filter((x): x is string => !!x))];
-
-  // grn_item_id → grn_id → warehouse_id.
-  const grnItemToGrn = new Map<string, string | null>();
-  const grnIds = new Set<string>();
-  if (grnItemIds.length > 0) {
-    const { data: giRows } = await sb.from('grn_items')
-      .select('id, grn_id').in('id', grnItemIds);
-    for (const r of (giRows ?? []) as Array<{ id: string; grn_id: string | null }>) {
-      grnItemToGrn.set(r.id, r.grn_id ?? null);
-      if (r.grn_id) grnIds.add(r.grn_id);
-    }
+/* PURCHASE_RETURN_MODE=atomic (default): the create's OUT, GRN returned and PO
+   received recount in ONE transaction (postCreatedPrAtomically). null = two-step,
+   the caller runs the old writes. A rollback deletes the just-created return and
+   answers 503; the idempotency claim is released so the retry runs again. */
+async function postCreatedPr(c: any, sb: any, h: PrCreated, grnId: string | null, userId: string, grnItemIds: Array<string | null | undefined>): Promise<{ refused: Response } | { done: true } | null> {
+  const prTx = stockTxFor(c.env, 'PURCHASE_RETURN_MODE');
+  if (!prTx) return null;
+  const out = await postCreatedPrAtomically(prTx, sb, h, grnId, activeCompanyId(c) ?? null, userId, grnItemIds);
+  if (!out.ok) {
+    if (out.removed) markIdempotencyNoWrite(c);
+    return { refused: c.json(out.body, 503) };
   }
-  if (primaryGrnId) grnIds.add(primaryGrnId);
-  const grnWh = new Map<string, string | null>();
-  if (grnIds.size > 0) {
-    const { data: grnRows } = await sb.from('grns')
-      .select('id, warehouse_id').in('id', [...grnIds]);
-    for (const r of (grnRows ?? []) as Array<{ id: string; warehouse_id: string | null }>) {
-      grnWh.set(r.id, r.warehouse_id ?? null);
-    }
-  }
-
-  const fallback = (primaryGrnId ? grnWh.get(primaryGrnId) ?? null : null) ?? (await defaultWarehouseId(sb, companyId));
-  for (const it of items) {
-    const grnId = it.grn_item_id ? (grnItemToGrn.get(it.grn_item_id) ?? null) : null;
-    const fromGrn = grnId ? (grnWh.get(grnId) ?? null) : null;
-    out.set(it.id, fromGrn ?? fallback);
-  }
-  return out;
+  if (out.wrote) await afterPrStockOut(sb);
+  return { done: true };
 }
 
 /* warehouseCodeMap (Agent D 2026-05-31, TASK #32) — warehouse_id → display
@@ -454,127 +350,6 @@ async function warehouseCodeMap(
   return out;
 }
 
-export async function writePurchaseReturnMovements(sb: any, prId: string, returnNumber: string, grnId: string | null, userId: string): Promise<string[]> {
-  // Multi-company: the PR's movements inherit the PR header's company.
-  const { data: prHeader, error: prHeaderErr } = await sb.from('purchase_returns')
-    .select('company_id, kind, repair_warehouse_id').eq('id', prId).maybeSingle();
-  if (prHeaderErr) return [unreadableMovementError('the purchase return', prHeaderErr)];
-  const prHead = prHeader as { company_id?: number | null; kind?: string | null; repair_warehouse_id?: string | null } | null;
-  const prCompanyId = prHead?.company_id ?? null;
-  /* A REPAIR return does not take the goods off the books: they go to the
-     supplier and are expected back, so each line's OUT is paired with an IN to
-     the repair warehouse. Until then the warehouse did this by hand with a
-     stock transfer, which recorded the move and nothing else (owner
-     2026-09-28). NULL for a CREDIT return, and the DB CHECK guarantees a REPAIR
-     one has it. */
-  const repairWarehouseId = prHead?.kind === 'REPAIR' ? (prHead.repair_warehouse_id ?? null) : null;
-  const { data: items, error: itemsErr } = await sb.from('purchase_return_items')
-    .select('id, grn_item_id, item_code, material_name, qty_returned, item_group, variants')
-    .eq('purchase_return_id', prId);
-  if (itemsErr || !items) return itemsErr ? [unreadableMovementError('the purchase return lines', itemsErr)] : [];
-  // Per-line warehouse — each line draws OUT of its source GRN line's warehouse,
-  // not a single primary-GRN default (a batched PR can span warehouses).
-  const lineWh = await resolvePrLineWarehouses(
-    sb,
-    items as Array<{ id: string; grn_item_id?: string | null }>,
-    grnId,
-    prCompanyId ?? undefined,
-  );
-
-  /* Resolve the dye-lot batch each returned line drew in at GRN time so the
-     return OUT consumes the EXACT PO/dye-lot it came from — not plain FIFO across
-     a different lot. The source GRN's IN movement stamped batch_no = source PO
-     number (migration 0120, keyed by warehouse+product+variant). We map each PR
-     line → its source GRN (grn_item_id → grn_items.grn_id, else primary grnId),
-     read those GRNs' IN movements, and match the bucket. Only sofa/batched lines
-     resolve to a non-null batch; un-batched RM stays plain FIFO. Forward-compat:
-     pre-0120 the column is absent → retry without it → every line un-batched. */
-  const itemList = (items ?? []) as Array<{ id: string; grn_item_id?: string | null; item_code: string; material_name: string | null; qty_returned: number; item_group?: string | null; variants?: VariantAttrs | null }>;
-  // PR line id → source GRN id (its own GRN line's GRN, else the primary GRN).
-  const lineGrnId = new Map<string, string | null>();
-  {
-    const giIds = [...new Set(itemList.map((it) => it.grn_item_id ?? null).filter((x): x is string => !!x))];
-    const giToGrn = new Map<string, string | null>();
-    if (giIds.length > 0) {
-      const { data: giRows } = await sb.from('grn_items').select('id, grn_id').in('id', giIds);
-      for (const r of (giRows ?? []) as Array<{ id: string; grn_id: string | null }>) giToGrn.set(r.id, r.grn_id ?? null);
-    }
-    for (const it of itemList) {
-      lineGrnId.set(it.id, (it.grn_item_id ? giToGrn.get(it.grn_item_id) : null) ?? grnId ?? null);
-    }
-  }
-  // Read the IN movements of every source GRN, keyed `grnId::warehouse::code::variant` → batch_no.
-  const batchByBucket = new Map<string, string>();
-  {
-    const srcGrnIds = [...new Set([...lineGrnId.values()].filter((x): x is string => !!x))];
-    if (srcGrnIds.length > 0) {
-      let inRes = await sb.from('inventory_movements')
-        .select('source_doc_id, item_code, variant_key, warehouse_id, batch_no')
-        .eq('source_doc_type', 'GRN').eq('movement_type', 'IN').in('source_doc_id', srcGrnIds);
-      if (inRes.error && (inRes.error.message ?? '').includes('batch_no')) {
-        inRes = { data: [], error: null } as typeof inRes;
-      }
-      for (const m of (inRes.data ?? []) as Array<{ source_doc_id: string; item_code: string; variant_key: string | null; warehouse_id: string; batch_no?: string | null }>) {
-        if (m.batch_no == null) continue;
-        batchByBucket.set(`${m.source_doc_id}::${m.warehouse_id}::${m.item_code}::${bk.bucketIdFor(prCompanyId, m.variant_key)}`, m.batch_no);
-      }
-    }
-  }
-
-  const prKeyOf = await bk.stockBucketKeyResolver(sb, prCompanyId, itemList.map((it) => bk.stockKeyLine(it, lineWh.get(it.id) ?? null)));
-  const movements = itemList
-    .filter((it) => it.qty_returned > 0)
-    .map((it) => {
-      const warehouseId = lineWh.get(it.id) ?? null;
-      if (!warehouseId) return null;
-      const variantKey = prKeyOf(bk.stockKeyLine(it, warehouseId));
-      const srcGrn = lineGrnId.get(it.id) ?? null;
-      const batchNo = srcGrn ? (batchByBucket.get(`${srcGrn}::${warehouseId}::${it.item_code}::${bk.bucketIdFor(prCompanyId, variantKey)}`) ?? null) : null;
-      return {
-        movement_type: 'OUT' as const,
-        warehouse_id: warehouseId,
-        item_code: it.item_code,
-        variant_key: variantKey,
-        product_name: it.material_name,
-        qty: it.qty_returned,
-        source_doc_type: 'PURCHASE_RETURN' as const,
-        source_doc_id: prId,
-        source_doc_no: returnNumber,
-        // Stamp the source GRN line's dye-lot batch so the FIFO trigger depletes
-        // THAT PO/lot, not a different one. Only when the GRN IN had a batch.
-        ...(batchNo ? { batch_no: batchNo } : {}),
-        performed_by: userId,
-      };
-    })
-    .filter((m): m is NonNullable<typeof m> => m !== null);
-  /* The repair leg. Same line, same quantity, same batch — one movement pair,
-     so the stock is never in two places and never in none. */
-  const repairIns = repairWarehouseId
-    ? movements.map((m) => ({ ...m, movement_type: 'IN' as const, warehouse_id: repairWarehouseId }))
-    : [];
-  const movementErrors: string[] = [];
-  if (movements.length > 0) {
-    /* Capture the best-effort write result so the caller can surface a failed
-       stock OUT (was silently swallowed — PR created with stock NOT returned to
-       the supplier and the caller never told). No rollback; just make it loud. */
-    const res = await writeMovements(sb, movements, prCompanyId);
-    if (!res.ok) movementErrors.push(`OUT ${returnNumber}: ${res.reason ?? 'unknown'}`);
-    if (repairIns.length > 0) {
-      /* Reported, never assumed: an IN that failed after a clean OUT means the
-         goods left the warehouse and landed nowhere, which is the one outcome
-         a repair return must not hide. */
-      const inRes = await writeMovements(sb, repairIns, prCompanyId);
-      if (!inRes.ok) movementErrors.push(`IN ${returnNumber}: ${inRes.reason ?? 'unknown'}`);
-    }
-    /* PR post = stock OUT to supplier → other READY SOs that needed it may
-       regress. Re-walk SO allocation. Best-effort. */
-    try {
-      const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
-      await recomputeSoStockAllocation(sb);
-    } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-pr-post failed:', e); }
-  }
-  return movementErrors;
-}
 
 /* ── checkPrStockAvailability (audit gap #7) ─────────────────────────────────
    On-hand floor for the supplier-return OUT. A Purchase Return writes an
@@ -1105,15 +880,17 @@ purchaseReturns.post('/', async (c) => {
     }
   }
 
-  const movementErrors = await writePurchaseReturnMovements(sb, h.id, h.return_number, grnId, user.id);
-
-  /* Audit fix #3 — consume each GRN-linked line's returned_qty (0106). The
-     bare-create path never did this, so a PR raised here didn't net down the
-     source GRN line / PO received_qty — only /from-grns and /from-grn did.
-     Now parity: every GRN-linked line increments returned_qty by its (clamped)
-     returned qty. Manual lines (no grn_item_id) are skipped. */
-  for (const r of itemRows) {
-    if (r.grn_item_id) await adjustGrnReturnedQty(sb, r.grn_item_id, Number(r.qty_returned));
+  /* Atomic (default): the OUT and the recounts below in one transaction. */
+  const atomic = await postCreatedPr(c, sb, h, grnId, user.id, itemRows.map((r) => r.grn_item_id));
+  if (atomic && 'refused' in atomic) return atomic.refused;
+  let movementErrors: string[] = [];
+  if (!atomic) {
+    movementErrors = await writePurchaseReturnMovements(sb, h.id, h.return_number, grnId, user.id);
+    /* Audit fix #3 — consume each GRN-linked line's returned_qty (0106), as
+       /from-grns and /from-grn do. Manual lines (no grn_item_id) are skipped. */
+    for (const r of itemRows) {
+      if (r.grn_item_id) await adjustGrnReturnedQty(sb, r.grn_item_id, Number(r.qty_returned));
+    }
   }
 
   return c.json({ id: h.id, returnNumber: h.return_number, movementErrors: movementErrors.length ? movementErrors : undefined }, 201);
@@ -1269,12 +1046,14 @@ export const createPurchaseReturnFromGrnsHandler = async (c: Context<{ Bindings:
   const { error: iErr } = await sb.from('purchase_return_items').insert(stampCompany(rows, c));
   if (iErr) { await sb.from('purchase_returns').delete().eq('id', h.id); return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500); }
 
-  // Consume each GRN line: increment returned_qty by the returned qty (0106).
-  for (const it of rejectedItems) {
-    await adjustGrnReturnedQty(sb, it.id, it._qty);
+  const atomic = await postCreatedPr(c, sb, h, primaryGrnId, user.id, rejectedItems.map((it) => it.id));
+  if (atomic && 'refused' in atomic) return atomic.refused;
+  let movementErrors: string[] = [];
+  if (!atomic) {
+    // Consume each GRN line: increment returned_qty by the returned qty (0106).
+    for (const it of rejectedItems) await adjustGrnReturnedQty(sb, it.id, it._qty);
+    movementErrors = await writePurchaseReturnMovements(sb, h.id, h.return_number, primaryGrnId, user.id);
   }
-
-  const movementErrors = await writePurchaseReturnMovements(sb, h.id, h.return_number, primaryGrnId, user.id);
 
   return c.json({ id: h.id, returnNumber: h.return_number, grnCount: grnList.length, lineCount: rejectedItems.length, movementErrors: movementErrors.length ? movementErrors : undefined }, 201);
 };
@@ -1407,12 +1186,14 @@ export const createPurchaseReturnFromGrnHandler = async (c: Context<{ Bindings: 
   const { error: iErr } = await sb.from('purchase_return_items').insert(stampCompany(rows, c));
   if (iErr) { await sb.from('purchase_returns').delete().eq('id', h.id); return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500); }
 
-  // Consume each GRN line: increment returned_qty by the returned remaining (0106).
-  for (const it of lines) {
-    await adjustGrnReturnedQty(sb, it.id, it._remaining);
+  const atomic = await postCreatedPr(c, sb, h, g.id, user.id, lines.map((it) => it.id));
+  if (atomic && 'refused' in atomic) return atomic.refused;
+  let movementErrors: string[] = [];
+  if (!atomic) {
+    // Consume each GRN line: increment returned_qty by the returned remaining (0106).
+    for (const it of lines) await adjustGrnReturnedQty(sb, it.id, it._remaining);
+    movementErrors = await writePurchaseReturnMovements(sb, h.id, h.return_number, g.id, user.id);
   }
-
-  const movementErrors = await writePurchaseReturnMovements(sb, h.id, h.return_number, g.id, user.id);
   // Refresh header refund_sen from the inserted lines (parity with GRN).
   await recomputePrTotals(sb, h.id);
 
@@ -1485,8 +1266,10 @@ purchaseReturns.patch('/:id/complete', completePurchaseReturnHandler);
      2. Reverses the inventory OUT: writes an IN movement per line for
         qty_returned (negating the original OUT), to the same warehouse the
         create path debited (GRN's warehouse_id, else default).
-   Step 2 is best-effort (mirrors writePurchaseReturnMovements / the GRN cancel
-   in grns.ts) — a movement failure does not un-cancel the PR. */
+     3. Recounts each GRN line's returned_qty and the PO line's received_qty.
+   PURCHASE_RETURN_MODE=atomic (default): 1-3 are ONE transaction, so a failed
+   reversal or recount leaves the PR as it was (503, nothing written). two-step:
+   2-3 are best-effort and a movement failure does not un-cancel the PR. */
 export const cancelPurchaseReturnHandler = async (c: any) => {
   const sb = c.get('supabase'); const id = c.req.param('id');
   const user = c.get('user');
@@ -1514,9 +1297,23 @@ export const cancelPurchaseReturnHandler = async (c: any) => {
      the row and only ONE flips it (the other gets no row back → idempotent
      no-op), so the inventory IN reversal + returned_qty release below run
      exactly once, never double-crediting stock. */
-  const { data: updRow, error: updErr } = await scopeToCompanyId(sb.from('purchase_returns').update({
+  const flip = (db: any): Promise<PrFlipResult> => scopeToCompanyId(db.from('purchase_returns').update({
     status: 'CANCELLED', updated_at: new Date().toISOString(),
-  }).eq('id', id), co.companyId).neq('status', 'CANCELLED').neq('status', 'COMPLETED').select('id').maybeSingle();
+  }).eq('id', id), co.companyId).neq('status', 'CANCELLED').neq('status', 'COMPLETED').select('id').maybeSingle()
+    .then((r: unknown) => r as PrFlipResult, (e: { message: string; code?: string }) => ({ data: null, error: e }));
+  /* PURCHASE_RETURN_MODE=atomic (default): the flip, the stock reversal and the
+     GRN / PO recount are ONE transaction (lib/purchase-return-stock.ts); a flip
+     that matched nothing comes back as `flip` and is answered below as before. */
+  const prTx = stockTxFor(c.env, 'PURCHASE_RETURN_MODE');
+  let atomicDone: { reversed: number; openedLotRows: Parameters<typeof reconcileUncostedAfterIn>[1] } | null = null;
+  let flipped: PrFlipResult;
+  if (prTx) {
+    const out = await cancelPrAtomically(prTx, id, user.id, flip);
+    if (out.ok) { flipped = { data: { id }, error: null }; atomicDone = out; }
+    else if (isPrFlipMiss(out)) flipped = out.flip;
+    else return c.json(prStockFailureBody('cancelled', out), 503);
+  } else flipped = await flip(sb);
+  const { data: updRow, error: updErr } = flipped;
   if (updErr) return c.json({ error: 'cancel_failed', reason: updErr.message }, 500);
   if (!updRow) {
     // Lost the race (already cancelled) or it became COMPLETED meanwhile.
@@ -1527,49 +1324,50 @@ export const cancelPurchaseReturnHandler = async (c: any) => {
     return c.json({ error: 'cannot_cancel' }, 409);
   }
 
-  // Reverse the inventory OUT via the shared helper: it reads THIS PR's own OUT
-  // movements and posts an opposite IN per bucket carrying the EXACT batch_no +
-  // unit_cost_sen the OUT stamped — so a sofa return re-enters its dye-lot at the
-  // real cost (not a zero-cost un-batched lot, the old bespoke bug). Idempotent
-  // (signed-net-per-bucket) + per-line-warehouse aware via the original rows.
-  // Best-effort; never un-cancel on a movement failure.
-  try {
-    const rev = await reverseMovements(sb, 'PURCHASE_RETURN', id, user.id);
-    /* PARTIAL FAILURE IS REPORTED. reverseMovements inserts row by row on
-       purpose ("so a single collision doesn't abort the whole reversal",
-       inventory-movements.ts:571) and returns { ok, reversed, skipped, failed,
-       reason }. Only `reversed > 0` was read, so reversed:3 / failed:2 entered
-       the branch below and the handler returned a clean 200 - the cancel
-       reported success while part of the stock never came back.
-
-       The cancel still STANDS (a ledger hiccup must not un-cancel a document);
-       what changes is that the caller is told. */
-    if (!rev.ok) {
-      reversalErrors.push(
-        `Stock reversal incomplete: ${rev.reversed} reversed, ${rev.failed} failed` +
-        (rev.reason ? ` (${rev.reason})` : '') +
-        '. The return is cancelled; run /inventory/reconcile to repair the ledger.',
-      );
-    }
-    if (rev.reversed > 0) {
-      /* PR cancel reversed stock IN → may unlock PENDING SOs. Re-walk. */
-      try {
-        const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
-        await recomputeSoStockAllocation(sb);
-      } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-pr-cancel failed:', e); }
-    }
-  } catch { /* best-effort: never un-cancel on a movement failure */ }
-
-  // Release the GRN-line consumption: decrement returned_qty for every
-  // GRN-linked line (best-effort, mirrors the inventory reversal above). The
-  // lines are reloaded so we know each line's qty_returned + grn_item_id.
-  try {
-    const { data: relLines } = await sb.from('purchase_return_items')
-      .select('qty_returned, grn_item_id').eq('purchase_return_id', id);
-    for (const l of (relLines ?? []) as Array<{ qty_returned: number; grn_item_id: string | null }>) {
-      if (l.grn_item_id) await adjustGrnReturnedQty(sb, l.grn_item_id, -(l.qty_returned ?? 0));
-    }
-  } catch { /* best-effort */ }
+  let reversed = 0;
+  if (atomicDone) {
+    reversed = atomicDone.reversed;
+    // Retro-cost needs the committed lots: after commit, best-effort.
+    await reconcileUncostedAfterIn(sb, atomicDone.openedLotRows, user.id);
+  } else {
+    // Reverse the inventory OUT via the shared helper: it reads THIS PR's own OUT
+    // movements and posts an opposite IN per bucket carrying the EXACT batch_no +
+    // unit_cost_sen the OUT stamped — so a sofa return re-enters its dye-lot at the
+    // real cost (not a zero-cost un-batched lot, the old bespoke bug). Idempotent
+    // (signed-net-per-bucket) + per-line-warehouse aware via the original rows.
+    // Best-effort; never un-cancel on a movement failure.
+    try {
+      const rev = await reverseMovements(sb, 'PURCHASE_RETURN', id, user.id);
+      reversed = rev.reversed;
+      /* PARTIAL FAILURE IS REPORTED. reverseMovements inserts row by row and
+         returns { ok, reversed, skipped, failed, reason }; reading only
+         `reversed > 0` returned a clean 200 on reversed:3 / failed:2. The cancel
+         still STANDS (two-step); what changes is that the caller is told. */
+      if (!rev.ok) {
+        reversalErrors.push(
+          `Stock reversal incomplete: ${rev.reversed} reversed, ${rev.failed} failed` +
+          (rev.reason ? ` (${rev.reason})` : '') +
+          '. The return is cancelled; run /inventory/reconcile to repair the ledger.',
+        );
+      }
+    } catch { /* best-effort: never un-cancel on a movement failure */ }
+    // Release the GRN-line consumption (recount returned_qty for every GRN-linked
+    // line; best-effort, mirrors the reversal above).
+    try {
+      const { data: relLines } = await sb.from('purchase_return_items')
+        .select('qty_returned, grn_item_id').eq('purchase_return_id', id);
+      for (const l of (relLines ?? []) as Array<{ qty_returned: number; grn_item_id: string | null }>) {
+        if (l.grn_item_id) await adjustGrnReturnedQty(sb, l.grn_item_id, -(l.qty_returned ?? 0));
+      }
+    } catch { /* best-effort */ }
+  }
+  if (reversed > 0) {
+    /* PR cancel reversed stock IN → may unlock PENDING SOs. Re-walk. */
+    try {
+      const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
+      await recomputeSoStockAllocation(sb);
+    } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-pr-cancel failed:', e); }
+  }
 
   return c.json({
     purchaseReturn: { id, status: 'CANCELLED' },

@@ -63,3 +63,11 @@ function readForcedOverride(): boolean | null {
     return null;
   }
 }
+
+/** The answer useIsMobile gives on its FIRST render, without a hook — for boot
+ *  code in main.tsx that has to pick which shell's chunks to warm before React
+ *  mounts. Same inputs, same order as the hook's initial state. */
+export function isMobileViewportNow(breakpoint = 1024): boolean {
+  if (typeof window === "undefined") return false;
+  return readForcedOverride() ?? (isTouchDevice() && window.innerWidth < breakpoint);
+}
