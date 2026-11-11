@@ -123,6 +123,14 @@ distinguished by `purpose`. Used by Finance/AP staff; desktop only.
   `/credit-notes/scan`, `/payment-requests/read-bill` — `BILL_READER_PATH` in
   `authed-fetch.ts`) get the 120 s scan wait, and their timeout says nothing
   was saved instead of the duplicate-save warning.
+- The screens read bills through the scan queue (`scm/lib/ai-read-jobs.ts`,
+  client `ai-read-job.ts`): `POST <reader>/enqueue` answers at once with one
+  job per bill (a `scm.scan_jobs` row, `document_type` `AI_*`), the queue
+  consumer runs the unchanged handler, the page polls `GET <reader>/jobs?ids=`
+  and shows each bill queued / reading / read / failed. Same file from the same
+  company while its read is running reuses the job (`file_hash`); a read idle
+  5 minutes is failed by the poll. The receipt read (`/scan-payment/extract`)
+  goes the same way. The synchronous doors stay for old open tabs.
 - Every way out of the pile carries the bill's own pages through `pv-file-handoff.ts` (module stash, never `location.state`): Open as voucher, Open as AP invoice, and Open as bill / Open as ONE bill (New Purchase Invoice, which uploads them to `POST /purchase-invoices/:id/files` right after the create; a failed page is named in the result dialog, never un-saves the invoice).
 - The pile lives in `bill-pile-store.ts` (one per company and per kind) while
   the tab lives (owner 2026-10-06): opening a bill and coming back finds the

@@ -40,6 +40,7 @@ import { companyHeader } from '../../../lib/activeCompany';
 // NOTE: this is the UPLOAD pipeline (q0.8/2000px), NOT vendor/shared/
 // image-compress.ts — that one is OCR-tuned and feeds Claude vision.
 import { isCompressibleImage, prepareImageForUpload } from '../../../lib/imagePipeline';
+import { runOneAiRead } from './ai-read-job';
 
 const API_URL =
   ((import.meta as { env?: Record<string, string | undefined> }).env?.VITE_API_URL
@@ -191,29 +192,16 @@ export type ScanPaymentReceipt = {
 };
 
 export async function scanPaymentReceipt(file: File): Promise<ScanPaymentReceipt> {
+  /* On the scan queue (2026-11-11): the receipt is stored, the read runs in
+     the background and is polled, so no request is held open for the model. */
   const form = new FormData();
   form.append('file', file);
-  const res = await slipFetch(`${API_URL}/scan-payment/extract`, {
-    method: 'POST',
-    headers: { authorization: `Bearer ${token()}`, ...companyHeader() },
-    body: form,
-  }, SLIP_UPLOAD_TIMEOUT_MS);
-  if (!res.ok) {
-    const text = await res.text().catch(() => '<no body>');
-    throw correlateError(new Error(humanApiError(res.status, text)), requestIdFromResponse(res));
-  }
-  const json = await consumeCorrelated(
-    res,
-    () => res.json() as Promise<{ data?: { extracted?: ScanPaymentReceipt } }>,
-  );
+  const json = await runOneAiRead<{ data?: { extracted?: ScanPaymentReceipt } }>('/scan-payment/extract', form, null);
   const extracted = json.data?.extracted;
   /* PaymentsTable currently swallows this and shows its own notice, but any
      future caller will print `err.message` — so the message must already be a
      sentence, not the marker `scan_payment_no_data`. */
-  if (!extracted) throw correlateError(
-    new Error("We couldn't read any details from that receipt photo. Please fill the payment in manually."),
-    requestIdFromResponse(res),
-  );
+  if (!extracted) throw new Error("We couldn't read any details from that receipt photo. Please fill the payment in manually.");
   return extracted;
 }
 

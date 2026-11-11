@@ -81,6 +81,40 @@ describe("a workbook of several tables", () => {
     expect(h.files).toEqual(["both.xlsx"]);
   });
 
+  /* Owner 2026-11-11 (export 出来时注明是 …): what the list is and what narrowed it, above it. */
+  it("prints a sheet's heading above its table — a line a row, then a blank row — and formats only the data", async () => {
+    const matrix = { header: ["Paid on", "Amount"], formats: ["date" as const, "money" as const], body: [["2026-11-05", 3990]] };
+    await writeLineExportBook([{ name: "Payment recorded", matrix, heading: ["Record Payment Received, Bank CANNOT Found", "Dated 2026/05/15 to 2026/11/09 · No filter — every row"] }], "one.xlsx");
+    expect(h.sheets[0]!.aoa).toEqual([
+      ["Record Payment Received, Bank CANNOT Found"],
+      ["Dated 2026/05/15 to 2026/11/09 · No filter — every row"],
+      [],
+      ["Paid on", "Amount"],
+      ["2026-11-05", 3990],
+    ]);
+    expect(h.cells["0:4"]).toEqual({ t: "n", v: excelDaySerial("2026-11-05"), z: "yyyy/mm/dd" });
+    expect(h.cells["1:4"]).toMatchObject({ t: "n", v: 3990, z: "#,##0.00" });
+    /* The heading itself is left as text. */
+    expect(h.cells["0:0"]).toEqual({ t: "s", v: "Record Payment Received, Bank CANNOT Found" });
+  });
+
+  it("a table's own Excel takes the sheet name and heading its page gives, for the rows it writes", async () => {
+    primeInVisitColFilters("docs-sheet", { status: ["Open"] });
+    const asked: number[] = [];
+    render(
+      <DataTable<Doc, Line>
+        tableId="docs-sheet" rows={docs} columns={columns.filter((c) => !c.lineValue)} getRowKey={(d) => d.id} exportName="open-docs" exportXlsx
+        exportSheet={(rows) => { asked.push(rows.length); return { name: "Open documents", heading: [`${rows.length} open`] }; }}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Export" }));
+    await waitFor(() => expect(h.files).toHaveLength(1));
+    expect(asked).toEqual([2]);
+    expect(h.sheets.map((s) => s.name)).toEqual(["Open documents"]);
+    expect(h.aoa.slice(0, 4)).toEqual([["2 open"], [], ["Doc No", "Status", "Total"], ["PO-1", "Open", 15000]]);
+    expect(h.files[0]).toMatch(/^open-docs-\d{4}-\d{2}-\d{2}\.xlsx$/);
+  });
+
   it("a table tells its page the columns showing — a column hidden by default is not among them", async () => {
     const told: string[][] = [];
     render(<DataTable<Doc, Line> tableId="told" columns={columns.map((c) => (c.key === "status" ? { ...c, defaultHidden: true } : c))}

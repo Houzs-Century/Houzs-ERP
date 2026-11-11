@@ -49,7 +49,7 @@ import {
 import { parseEventId, unknownEventRefusal } from '../lib/event-tags';
 import { requireLeafAccount } from './accounting-chart';
 import { supabaseAuth } from '../middleware/auth';
-import { scanSupplierCreditNoteHandler } from './credit-note-scan';
+import { scanSupplierCreditNoteHandler, enqueueCreditNoteScanHandler, pollCreditNoteScanHandler } from './credit-note-scan';
 import {
   appliedByNote, applyCreditNote, carryOutPlan, checkKnockOff, customerParty, debtorParty, depositPaperBlock, knockOffRows, noteAllocations, parseTargets,
   moveNumbers, noteApplications, partyOfNote, partyOpenDocs, removeAllocation, setNoteKnockOff, supplierParty, writePlan,
@@ -824,6 +824,8 @@ creditNotes.get('/', listCreditNotesHandler);
    per-mount Idempotency-Key is released on each and a corrected Save goes through. */
 creditNotes.post('/', noWriteUntilMarked, createCreditNoteHandler);
 creditNotes.post('/scan', scanSupplierCreditNoteHandler);
+creditNotes.post('/scan/enqueue', enqueueCreditNoteScanHandler);
+creditNotes.get('/scan/jobs', pollCreditNoteScanHandler);
 /* Before /:id, or 'knock-off' would be read as a note id. */
 creditNotes.get('/knock-off', supplierKnockOffHandler);
 creditNotes.get('/from-return/:returnId', creditNoteFromReturnHandler);

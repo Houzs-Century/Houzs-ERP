@@ -3,6 +3,7 @@
 One line per open item: what — waiting on — since. Delete the line when it is done. Older items were dropped on 2026-09-15; they are in tag `archive/docs-2026-09-15`.
 
 ## Waiting on owner
+- Half-done documents (HC-GRN-2609-118, HC-GRN-2610-045, HC-DO-2610-319, HC-DO-2610-419): review the plan of `repair-half-done-documents-2026-11.mjs`, then apply; confirm HC-DO-2610-319 (Confirmed since 2026-10-22, not dispatched) really left or is leaving — owner — 2026-11-10
 - Staging DB is shared by every `staging-preview/*` deploy, so a preview's migrations land in staging's tracker before review (5 service-case rows on 2026-11-10; 3 retired in fix/staging-rehearsal). Decide: previews deploy with `skip_migrate`, or keep it and retire each renamed cut — owner — 2026-11-11
 - Delivery Planning SQL board: after the PR merges, set `DP_BOARD_SOURCE = "shadow"` (wrangler.toml), let `scm.delivery_board_shadow_runs` collect a few days, explain every difference, then switch to `"sql"` — owner / dev — 2026-11-10
 - HC-SO-2609-299: is the Taman Akasig delivery address right? It geocodes oddly on the Last Mile map — owner — 2026-11-08
@@ -129,6 +130,7 @@ Measured on prod 2026-10-22, warm: Overview `procurement-overview` 5.5 s, Invent
 - PostgREST aggregates look OFF on prod (exact error code shows in Server-Timing `s-db-agg-*` once this ships; DO list search matching nothing = 12 round trips, 3 with them on), so every aggregate fast path (SO pills + money tiles, DO pills, Outstanding /summary) paid a refused request and then paged its fallback UNORDERED — the SO DELIVERED pill read 746 beside a list total of 747 in one response (2026-10-23). Fix: remember PGRST123 per isolate for 10 min (lib/postgrest-aggregate.ts, Server-Timing `s-db-agg-*`), order every fallback page, DO pills fall back to one ordered status read. Turning aggregates on (`pgrst.db_aggregates_enabled`) is Samuel's call — 2026-10-23
 
 - Delivery Planning, done 2026-10-26/27 (#4958 #4961 #4962 #4963): working tabs read `state=OPEN` (1.5 MB, ~2.3 s, was 5.4 MB / 5-12 s); an edit re-reads only its order (0.4-1.0 s); a trigger-fed change log refreshes others' changes every 30 s (poll 84 ms). Left: All / Delivered still read every row (3.8 s, 5.4 MB); scroll renders ~10 ms per new row (inline editors) — 2026-10-27
+- AI reads on the scan queue (bill reader, request bill, supplier CN, receipt): after the deploy, compare `scan_timing` and p95 of the four `/enqueue` doors with the old synchronous ones; remove the synchronous doors (`/payment-vouchers/extract`, `/credit-notes/scan`, `/payment-requests/read-bill`, `/scan-payment/extract`) once no request reaches them for a week — dev — 2026-11-11
 - Hard-bound cost backfill (`backfill-hard-bound-cost.mjs`, company 1): run the PLAN after #5619 is merged and the cutover no-spec revert has been applied; APPLY waits on the owner (closed months 2026-09 / 2026-10 expected) — 2026-11-10
 
 ## Recurring

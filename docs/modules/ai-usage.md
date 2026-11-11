@@ -8,6 +8,7 @@ IT-only page (`/ai-usage`) showing what the Anthropic API costs each month, by f
 - Each call site wraps its fetch: `await recordAi(tag, fetch(...))` (`services/aiUsage.ts`). Only the fetch is wrapped, so one call is one row even when the caller's own catch also handles parse errors. The body is read from a clone, so the caller's read is untouched. Recording never throws into the caller; a failed insert is a `[ai-usage]` console warning.
 - The row is written through the invocation's own `env.DB`, not `getDb`: a fresh client per call would leave a socket open per row, and an agent run or weekly distill records many calls in one invocation.
 - A call site that retries (`anthropicFetchWithRetry`) records only the final response.
+- The queued AI reads (`scm/lib/ai-read-jobs.ts`: `bill_extract`, `credit_note_extract`, `scan_payment`) run in the queue consumer with the enqueuing caller's company and user, and the job waits for the usage row before it says done.
 - Feature names: `scan_so`, `scan_so_distill`, `cache_warm`, `scan_payment`, `scan_lorry_invoice`, `scan_gr`, `scan_pi`, `scan_pi_match`, `bill_extract`, `credit_note_extract`, `schedule_reconcile`, `setup_invoice_extract`, `floorplan_size`, `announcement_translate`, `assistant`, `agent:<family>` (lowercase, from `agentFeature()`).
 - A new Anthropic call must pass an `AiUsageTag`. Agent and assistant calls go through `agent-brain.ts`, whose options require `aiUsage`.
 
