@@ -194,6 +194,7 @@ export function assrBoardUnionSql(c: CompanyScopeCtx, recentClosedSince: string)
   return `SELECT assr_cases.id            AS id,
               assr_cases.assr_no       AS assr_no,
               assr_cases.company_id    AS company_id,
+              assr_cases.doc_no        AS doc_no,
               assr_cases.status        AS status,
               assr_cases.stage         AS stage,
               assr_cases.customer_name AS customer_name,

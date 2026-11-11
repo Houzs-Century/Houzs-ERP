@@ -164,6 +164,10 @@ describe("Delivery Planning board — a board-marked Delivered leg is DELIVERED 
     // fallback. DO numbers are NOT resolved in the union any more — the row builder
     // runs the case through attachDeliveryOrders (the detail/board's one resolver).
     const sql = assrBoardUnionSql(ctx([1]), SINCE);
+    // doc_no MUST be an output column: the row builder passes it to
+    // attachDeliveryOrders, which resolves the DO numbers (without it, every DO
+    // No. cell goes blank — regression caught on the live board 2026-11-11).
+    expect(sql).toContain("assr_cases.doc_no        AS doc_no");
     expect(sql).toContain("assr_cases.ref_no AS ref_no");
     expect(sql).toContain("assr_cases.delivery_order AS delivery_order");
     expect(sql).toContain("so.ref AS so_ref_src");
