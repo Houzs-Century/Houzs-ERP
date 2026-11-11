@@ -10,7 +10,7 @@ import { DEFAULT_ZONE_PREFIX_MAP, zoneForAddress } from './zone-classify';
 import type { SetLine } from './set-count';
 import type { DeliveryFacts, RateCardSpec } from './delivery-rate-card';
 import { doFacts } from './threepl-do-charge';
-import { cardOut, ruleOut, toCardSpec } from '../routes/delivery-rate-cards';
+import { areaOut, cardOut, ruleOut, toCardSpec } from '../routes/delivery-rate-cards';
 
 type Row = Record<string, unknown>;
 // The 3PL tables are not in the generated Supabase types; same narrow bridge as
@@ -33,12 +33,17 @@ export async function loadCarrierCards(sb: unknown, companyId: number): Promise<
   if (e1 || e2) return { ok: false, reason: (e1 ?? e2).message };
   const carrierName = new Map<string, string>(((carriers ?? []) as Row[]).map((r) => [String(r.id), String(r.name ?? '')]));
   const cards = ((cardRows ?? []) as Row[]).map(cardOut).filter((cd) => cd.carrierCompanyId);
-  const { data: ruleRows, error: e3 } = cards.length
-    ? await scopeToCompanyId(db(sb).from('delivery_rate_rules').select('*'), companyId).in('card_id', cards.map((x) => x.id))
-    : { data: [] as Row[], error: null };
-  if (e3) return { ok: false, reason: e3.message };
+  const [{ data: ruleRows, error: e3 }, { data: areaRows, error: e4 }] = cards.length
+    ? await Promise.all([
+      scopeToCompanyId(db(sb).from('delivery_rate_rules').select('*'), companyId).in('card_id', cards.map((x) => x.id)),
+      /* Each card's priced areas (mig 20261111T1000). */
+      scopeToCompanyId(db(sb).from('delivery_rate_areas').select('*'), companyId).in('card_id', cards.map((x) => x.id)),
+    ])
+    : [{ data: [] as Row[], error: null }, { data: [] as Row[], error: null }];
+  if (e3 || e4) return { ok: false, reason: (e3 ?? e4).message };
   const rules = ((ruleRows ?? []) as Row[]).map(ruleOut);
-  const specByCarrier = new Map(cards.map((cd) => [cd.carrierCompanyId as string, { name: cd.name, spec: toCardSpec(cd, rules.filter((r) => r.cardId === cd.id)) }]));
+  const areas = ((areaRows ?? []) as Row[]).map(areaOut);
+  const specByCarrier = new Map(cards.map((cd) => [cd.carrierCompanyId as string, { name: cd.name, spec: toCardSpec(cd, rules.filter((r) => r.cardId === cd.id), areas) }]));
   return { ok: true, cards: { carrierName, specByCarrier } };
 }
 
@@ -57,7 +62,7 @@ export async function loadDoFacts(scope: CompanyScopeFn, sb: unknown, dos: Reado
   if (soDocs.length) {
     const [{ data: lineRows, error: e5 }, { data: soRows, error: e6 }] = await Promise.all([
       scope(db(sb).from('mfg_sales_order_items').select('doc_no, item_group, qty, cancelled')).in('doc_no', soDocs),
-      scope(db(sb).from('mfg_sales_orders').select('doc_no, postcode, address1, address2')).in('doc_no', soDocs),
+      scope(db(sb).from('mfg_sales_orders').select('doc_no, postcode, address1, address2, address3, address4, city')).in('doc_no', soDocs),
     ]);
     if (e5 || e6) return { ok: false, reason: (e5 ?? e6)!.message };
     for (const l of (lineRows ?? []) as Row[]) {
@@ -70,7 +75,8 @@ export async function loadDoFacts(scope: CompanyScopeFn, sb: unknown, dos: Reado
       linesBySo.set(String(l.doc_no), arr);
     }
     for (const so of (soRows ?? []) as Row[]) {
-      addressBySo.set(String(so.doc_no), [str(so.address1), str(so.address2), str(so.postcode)].filter(Boolean).join(' '));
+      /* The words a town surcharge or a rate card area is found by: the whole address and its city. */
+      addressBySo.set(String(so.doc_no), [str(so.address1), str(so.address2), str(so.address3), str(so.address4), str(so.city), str(so.postcode)].filter(Boolean).join(' '));
       zoneBySo.set(String(so.doc_no), zoneForAddress({ postcode: str(so.postcode), address1: str(so.address1), address2: str(so.address2) }, [...DEFAULT_ZONE_PREFIX_MAP]).zone);
     }
   }
