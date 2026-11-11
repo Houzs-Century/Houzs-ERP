@@ -8,10 +8,9 @@
 // priced with these in place of the card's own; a town price on the same town
 // still adds on top.
 import { useMemo, useState } from 'react';
-import { Check, Pencil, Plus, X } from 'lucide-react';
-import { fmtSen } from '@2990s/shared';
+import { Pencil, Plus } from 'lucide-react';
 import {
-  useAddAreaWithPrices, useCreateRateRule, useDeleteRateArea, useUpdateRateArea,
+  useAddAreaWithPrices, useDeleteRateArea, useUpdateRateArea,
   type NewRateRule, type RateArea, type RateRule,
 } from '../../../vendor/scm/lib/delivery-rate-card-queries';
 import { useConfirm } from '../../../vendor/scm/components/ConfirmDialog';
@@ -19,8 +18,8 @@ import { writeFailedAs } from '../../../vendor/scm/lib/mutation-error';
 import { cn } from '../../../lib/utils';
 import { centiToRM, rmToSen } from './cardSettings';
 import { areaColumns, columnHead, parseTowns, ruleAt, sortTowns, townLabel, type PriceBox } from './rateCardAreas';
-import { AMOUNT_ERROR, PriceEditor } from './ruleEditors';
-import { BTN_PRI, BTN_QUIET, HINT, INPUT, LABEL } from './ui';
+import { AMOUNT_ERROR, AddPriceCell, PriceButton } from './ruleEditors';
+import { BTN_PRI, BTN_QUIET, HINT, INPUT, LABEL, T_CELL, T_HEAD } from './ui';
 
 const ERR = 'text-[12.5px] font-semibold text-[color:var(--hz-dk-err,#8a2c2c)]';
 const townsWord = (n: number) => `${n} ${n === 1 ? 'town' : 'towns'}`;
@@ -74,69 +73,18 @@ const AreaEditor = ({ cardId, area, onDone }: { cardId: string; area: RateArea; 
   );
 };
 
-/* The ruled table's cells: lines on every side, as in a spreadsheet. */
-const CELL = 'border border-border-strong px-2.5 py-1.5 align-top';
-const HEAD = 'border border-border-strong bg-surface-2 px-2.5 py-2 align-bottom text-[12px] font-semibold text-ink-secondary';
-const PRICE_BTN = 'min-h-[28px] w-full rounded-md px-1 text-right tabular-nums text-ink hover:bg-surface-2 hover:text-primary';
-const SMALL_BTN = 'grid h-8 w-8 flex-none place-items-center rounded-lg text-ink-muted hover:bg-surface-2 disabled:opacity-50';
-
-/** A price this area has no box for yet, added from its own cell. */
-const AddCellPrice = ({ cardId, template, label, scope }: {
-  cardId: string; template: Omit<NewRateRule, 'amountSen'>; label: string; scope: string;
-}) => {
-  const create = useCreateRateRule(cardId);
-  const [draft, setDraft] = useState<string | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const what = `${label} price for ${scope}`;
-  if (draft === null) {
-    return (
-      <button type="button" onClick={() => setDraft('')} aria-label={`Add ${what}`} title="The card’s own price applies. Click to give this area its own."
-        className="min-h-[28px] w-full rounded-md px-1 text-right text-ink-muted hover:bg-surface-2 hover:text-primary">—</button>
-    );
-  }
-  const save = () => {
-    const amountSen = rmToSen(draft);
-    if (draft.trim() === '' || amountSen == null) { setErr(AMOUNT_ERROR); return; }
-    create.mutate({ ...template, amountSen }, { onSuccess: () => setDraft(null), onError: writeFailedAs('The price was not added') });
-  };
-  return (
-    <span className="flex flex-col items-end gap-1">
-      <input autoFocus className="min-h-[34px] w-[110px] rounded-lg border border-border bg-surface px-2 text-right text-[14px] tabular-nums text-ink"
-        inputMode="decimal" placeholder="0.00" aria-label={`Amount for ${label} for ${scope}`}
-        value={draft} onChange={(e) => { setErr(null); setDraft(e.target.value); }}
-        onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setDraft(null); }} />
-      <span className="flex items-center gap-1">
-        <button type="button" className={cn(SMALL_BTN, 'text-primary')} onClick={save} disabled={create.isPending} aria-label={`Save ${what}`}>
-          <Check size={15} strokeWidth={2} />
-        </button>
-        <button type="button" className={SMALL_BTN} onClick={() => setDraft(null)} aria-label={`Cancel ${what}`}><X size={15} strokeWidth={2} /></button>
-      </span>
-      {err && <span role="alert" className={ERR}>{err}</span>}
-    </span>
-  );
-};
-
-/** One area's price for one column: the amount (a click changes or removes
- *  it), or a dash where the card's own price applies (a click adds one). */
+/** One area's price for one column, merged down across its towns: the amount
+ *  (a click changes or removes it), or a dash where the card's own price
+ *  applies (a click adds one for the area). */
 const AreaPriceCell = ({ cardId, area, col, rule, rowSpan }: {
   cardId: string; area: RateArea; col: PriceBox; rule: RateRule | null; rowSpan: number;
-}) => {
-  const [editing, setEditing] = useState(false);
-  const name = `${col.label} for ${area.name}`;
-  return (
-    <td rowSpan={rowSpan} className={cn(CELL, 'text-right')}>
-      {rule == null
-        ? <AddCellPrice cardId={cardId} template={{ ...col.rule, areaId: area.id }} label={col.label} scope={area.name} />
-        : editing
-          ? <PriceEditor cardId={cardId} rule={rule} name={name} onDone={() => setEditing(false)} />
-          : (
-            <button type="button" onClick={() => setEditing(true)} aria-label={`Edit ${name}, ${fmtSen(rule.amountSen)}`} className={PRICE_BTN}>
-              {centiToRM(rule.amountSen)}
-            </button>
-          )}
-    </td>
-  );
-};
+}) => (
+  <td rowSpan={rowSpan} className={cn(T_CELL, 'text-right')}>
+    {rule == null
+      ? <AddPriceCell cardId={cardId} rule={{ ...col.rule, areaId: area.id }} label={col.label} scope={area.name} />
+      : <PriceButton cardId={cardId} rule={rule} name={`${col.label} for ${area.name}`} />}
+  </td>
+);
 
 /** One area: a row per town, its name, prices and pencil merged down across them. */
 const AreaRows = ({ cardId, area, rules, columns, editing, onEditing }: {
@@ -150,17 +98,17 @@ const AreaRows = ({ cardId, area, rules, columns, editing, onEditing }: {
       {rows.map((town, i) => (
         <tr key={town || '-'}>
           {i === 0 && (
-            <th scope="rowgroup" rowSpan={span} className={cn(CELL, 'text-left font-normal')}>
+            <th scope="rowgroup" rowSpan={span} className={cn(T_CELL, 'text-left font-normal')}>
               <span className="block text-[13px] font-bold text-ink">{area.name}</span>
               <span className={HINT}>{townsWord(towns.length)}</span>
             </th>
           )}
-          <td className={cn(CELL, 'text-ink-secondary')}>{townLabel(town)}</td>
+          <td className={cn(T_CELL, 'text-ink-secondary')}>{townLabel(town)}</td>
           {i === 0 && columns.map((c) => (
             <AreaPriceCell key={c.key} cardId={cardId} area={area} col={c} rule={ruleAt(rules, area.id, c.key)} rowSpan={span} />
           ))}
           {i === 0 && (
-            <td rowSpan={span} className={cn(CELL, 'w-[44px] text-center')}>
+            <td rowSpan={span} className={cn(T_CELL, 'w-[44px] text-center')}>
               {!editing && (
                 <button type="button" className="grid h-7 w-7 place-items-center rounded-md text-ink-muted hover:bg-surface-2 hover:text-primary"
                   onClick={() => onEditing(true)} aria-label={`Change ${area.name}`}>
@@ -173,7 +121,7 @@ const AreaRows = ({ cardId, area, rules, columns, editing, onEditing }: {
       ))}
       {editing && (
         <tr>
-          <td colSpan={columns.length + 3} className={cn(CELL, 'bg-surface-2/50 py-3')}>
+          <td colSpan={columns.length + 3} className={cn(T_CELL, 'bg-surface-2/50 py-3')}>
             <AreaEditor cardId={cardId} area={area} onDone={() => onEditing(false)} />
           </td>
         </tr>
@@ -245,24 +193,24 @@ export const AreaPrices = ({ cardId, areas, rules, ownRules, template, unit, add
             <table className="w-full min-w-[560px] border-collapse text-[13px] tabular-nums">
               <thead>
                 <tr>
-                  <th scope="col" className={cn(HEAD, 'text-left')}>Area</th>
-                  <th scope="col" className={cn(HEAD, 'text-left')}>Town</th>
-                  {columns.map((c) => <th key={c.key} scope="col" className={cn(HEAD, 'text-right')}>{columnHead(c)}</th>)}
-                  <th scope="col" className={HEAD}><span className="sr-only">Change the area</span></th>
+                  <th scope="col" className={cn(T_HEAD, 'text-left')}>Area</th>
+                  <th scope="col" className={cn(T_HEAD, 'text-left')}>Town</th>
+                  {columns.map((c) => <th key={c.key} scope="col" className={cn(T_HEAD, 'text-right')}>{columnHead(c)}</th>)}
+                  <th scope="col" className={T_HEAD}><span className="sr-only">Change the area</span></th>
                 </tr>
               </thead>
               <tbody aria-label="Everywhere else">
                 <tr className="bg-surface-2/60">
-                  <th scope="row" className={cn(CELL, 'text-left font-normal')}>
+                  <th scope="row" className={cn(T_CELL, 'text-left font-normal')}>
                     <span className="block text-[13px] font-semibold text-ink-secondary">Everywhere else</span>
                     <span className={HINT}>the card’s own prices</span>
                   </th>
-                  <td className={cn(CELL, 'text-ink-muted')}>Towns not in an area below</td>
+                  <td className={cn(T_CELL, 'text-ink-muted')}>Towns not in an area below</td>
                   {columns.map((c) => {
                     const own = ruleAt(ownRules, null, c.key);
-                    return <td key={c.key} className={cn(CELL, 'text-right text-ink-secondary')}>{own ? centiToRM(own.amountSen) : '—'}</td>;
+                    return <td key={c.key} className={cn(T_CELL, 'text-right text-ink-secondary')}>{own ? centiToRM(own.amountSen) : '—'}</td>;
                   })}
-                  <td className={CELL} />
+                  <td className={T_CELL} />
                 </tr>
               </tbody>
               {areas.map((a) => (

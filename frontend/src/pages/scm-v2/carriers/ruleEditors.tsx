@@ -26,6 +26,8 @@ const SMALL_BTN = 'grid h-8 w-8 flex-none place-items-center rounded-lg text-ink
 /* Its own class list rather than INPUT + overrides: cn() only joins, so INPUT's
    w-full would win over a width added after it. */
 const AMOUNT_INPUT = 'min-h-[34px] w-full min-w-[110px] max-w-[150px] rounded-lg border border-border bg-surface px-2 text-right text-[14px] tabular-nums text-ink';
+/* In a table cell the box keeps one width, so the column widens once, evenly. */
+const CELL_INPUT = 'min-h-[34px] w-[120px] rounded-lg border border-border bg-surface px-2 text-right text-[14px] tabular-nums text-ink';
 
 /** One tab's content: title, a quiet note, a hint, actions on the right. */
 export const Panel = ({ section, title, note, hint, actions, children }: {
@@ -47,7 +49,9 @@ export const Panel = ({ section, title, note, hint, actions, children }: {
 
 /** A price being changed: the amount, save, cancel, and remove — remove lives
  *  here rather than as a bin beside every price. */
-export const PriceEditor = ({ cardId, rule, name, onDone }: { cardId: string; rule: RateRule; name: string; onDone: () => void }) => {
+export const PriceEditor = ({ cardId, rule, name, onDone, compact = false }: {
+  cardId: string; rule: RateRule; name: string; onDone: () => void; compact?: boolean;
+}) => {
   const update = useUpdateRateRule(cardId);
   const del = useDeleteRateRule(cardId);
   const [draft, setDraft] = useState(centiToRM(rule.amountSen));
@@ -59,8 +63,8 @@ export const PriceEditor = ({ cardId, rule, name, onDone }: { cardId: string; ru
     update.mutate({ id: rule.id, amountSen }, { onSuccess: onDone }); // the hook's own onError (writeFailed) shows a refusal
   };
   return (
-    <span className="flex flex-col gap-1">
-      <input autoFocus className={AMOUNT_INPUT} inputMode="decimal" aria-label={`Amount for ${name}`}
+    <span className={cn('flex flex-col gap-1', compact && 'items-end')}>
+      <input autoFocus className={compact ? CELL_INPUT : AMOUNT_INPUT} inputMode="decimal" aria-label={`Amount for ${name}`}
         value={draft} onChange={(e) => { setErr(null); setDraft(e.target.value); }}
         onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') onDone(); }} />
       <span className="flex items-center gap-1">
@@ -77,74 +81,48 @@ export const PriceEditor = ({ cardId, rule, name, onDone }: { cardId: string; ru
   );
 };
 
-/** A price, read at a glance; a click opens it to change or remove. */
-export const PriceTile = ({ cardId, cell, scope }: { cardId: string; cell: PriceCell; scope?: string }) => {
+/** A price in a table cell: the amount, which a click opens to change or
+ *  remove. `name` reads "1st set", or "1st set for Kuching zone 3" in an area. */
+export const PriceButton = ({ cardId, rule, name }: { cardId: string; rule: RateRule; name: string }) => {
   const [editing, setEditing] = useState(false);
-  const name = scope ? `${cell.label} for ${scope}` : cell.label;
-  const label = (
-    <span className="flex items-center gap-1.5 text-[12px] font-semibold text-ink-muted">
-      {cell.label}{cell.duplicate && <Pill tone="amber">Twice</Pill>}
-    </span>
-  );
-  if (editing) {
-    return (
-      <div className="flex min-h-[64px] flex-col gap-1.5 rounded-xl bg-surface px-3 py-2.5 ring-1 ring-primary">
-        {label}
-        <PriceEditor cardId={cardId} rule={cell.rule} name={name} onDone={() => setEditing(false)} />
-      </div>
-    );
-  }
+  if (editing) return <PriceEditor cardId={cardId} rule={rule} name={name} onDone={() => setEditing(false)} compact />;
   return (
-    <button type="button" onClick={() => setEditing(true)} aria-label={`Edit ${name}, ${fmtSen(cell.rule.amountSen)}`}
-      className="flex min-h-[64px] flex-col items-start gap-1 rounded-xl bg-surface-2 px-3 py-2.5 text-left hover:ring-1 hover:ring-primary">
-      {label}
-      <span className="text-[18px] font-bold tabular-nums leading-tight text-ink">{fmtSen(cell.rule.amountSen)}</span>
+    <button type="button" onClick={() => setEditing(true)} aria-label={`Edit ${name}, ${fmtSen(rule.amountSen)}`}
+      className="-my-1 min-h-[28px] w-full rounded-md px-1 text-right tabular-nums text-ink hover:bg-surface-2 hover:text-primary">
+      {centiToRM(rule.amountSen)}
     </button>
   );
 };
 
-/** A titled row of tiles. */
-export const TileGrid = ({ title, children }: { title: string; children: ReactNode }) => (
-  <div className="flex flex-col gap-2">
-    <span className="text-[12.5px] font-semibold text-ink-secondary">{title}</span>
-    <div className="grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(140px,1fr))]">{children}</div>
-  </div>
-);
-
-const TILE = 'flex min-h-[64px] flex-col items-start gap-1 rounded-xl px-3 py-2.5 text-left';
-
-/** A price this category could carry and the card does not: a dashed tile
- *  that takes its amount in place. Given a template (an area's missing price),
- *  it adds that price instead — its position or sofa band, for its area. */
-export const AddPriceTile = ({ cardId, ruleType, template, label, scope }: {
-  cardId: string; ruleType: FlatRuleType | null; template?: Omit<NewRateRule, 'amountSen'>; label?: string; scope?: string;
+/** A price the row could carry and does not, added from its own cell. `rule`
+ *  is what it adds — a flat type, or an area's position or sofa band. In an
+ *  area the cell reads "—" (the card's own price applies); on the card, "Add". */
+export const AddPriceCell = ({ cardId, rule, label, scope }: {
+  cardId: string; rule: Omit<NewRateRule, 'amountSen'>; label: string; scope?: string;
 }) => {
   const create = useCreateRateRule(cardId);
   const [draft, setDraft] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const shown = label ?? (ruleType ? RULE_LABEL[ruleType] : 'Price');
-  const name = scope ? `${shown} for ${scope}` : shown;
+  const name = scope ? `${label} for ${scope}` : label;
   /* "Add 3rd set and after price for Kuching zone 3"; "Add Dispose price". */
-  const what = `${shown} price${scope ? ` for ${scope}` : ''}`;
+  const what = `${label} price${scope ? ` for ${scope}` : ''}`;
   if (draft === null) {
     return (
       <button type="button" onClick={() => setDraft('')} aria-label={`Add ${what}`}
-        className={cn(TILE, 'border border-dashed border-border-strong text-ink-muted hover:border-primary hover:text-primary')}>
-        <span className="text-[12px] font-semibold">{shown}</span>
-        <span className="inline-flex items-center gap-1 text-[13px] font-semibold"><Plus size={14} strokeWidth={2} />Add price</span>
+        title={scope ? 'The card’s own price applies. Click to give this area its own.' : 'Not priced yet. Click to add a price.'}
+        className="-my-1 inline-flex min-h-[28px] w-full items-center justify-end gap-1 rounded-md px-1 text-[12.5px] text-ink-muted hover:bg-surface-2 hover:text-primary">
+        {scope ? '—' : <><Plus size={13} strokeWidth={2} />Add</>}
       </button>
     );
   }
   const save = () => {
     const amountSen = rmToSen(draft);
     if (draft.trim() === '' || amountSen == null) { setErr(AMOUNT_ERROR); return; }
-    const body: NewRateRule = template ? { ...template, amountSen } : { ruleType: ruleType ?? 'DISPOSE', amountSen };
-    create.mutate(body, { onSuccess: () => setDraft(null), onError: writeFailedAs('The price was not added') });
+    create.mutate({ ...rule, amountSen }, { onSuccess: () => setDraft(null), onError: writeFailedAs('The price was not added') });
   };
   return (
-    <div className={cn(TILE, 'bg-surface ring-1 ring-primary')}>
-      <span className="text-[12px] font-semibold text-ink-muted">{shown}</span>
-      <input autoFocus className={AMOUNT_INPUT} inputMode="decimal" placeholder="0.00" aria-label={`Amount for ${name}`}
+    <span className="flex flex-col items-end gap-1">
+      <input autoFocus className={CELL_INPUT} inputMode="decimal" placeholder="0.00" aria-label={`Amount for ${name}`}
         value={draft} onChange={(e) => { setErr(null); setDraft(e.target.value); }}
         onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setDraft(null); }} />
       <span className="flex items-center gap-1">
@@ -154,7 +132,7 @@ export const AddPriceTile = ({ cardId, ruleType, template, label, scope }: {
         <button type="button" className={SMALL_BTN} onClick={() => setDraft(null)} aria-label={`Cancel ${what}`}><X size={15} strokeWidth={2} /></button>
       </span>
       {err && <span role="alert" className={ERR_TEXT}>{err}</span>}
-    </div>
+    </span>
   );
 };
 

@@ -1,20 +1,20 @@
 // A rate card's prices, one category at a time. Owner 2026-11-11 on the card
 // editor: 「先帮我重新design 这个UI 先，看了很乱」 — the four categories ran down
 // one long page with a pencil and a bin beside every price. Now each category
-// is a tab, a price is a tile you click to change or remove, outstation towns
+// is a tab, its prices a ruled table (a price clicked changes or removes it), outstation towns
 // sit together by price (OutstationPrices.tsx), and Price check is the fifth
 // tab (「做多一个categories按钮」, PriceCheck.tsx).
 import { useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { Calculator, Plus } from 'lucide-react';
 import type { RateArea, RateCard, RateRule } from '../../../vendor/scm/lib/delivery-rate-card-queries';
 import { cn } from '../../../lib/utils';
-import { CATEGORY_HINT, CATEGORY_LABEL } from '../../../vendor/scm/lib/rate-rule-taxonomy';
-import { CATEGORY_ORDER, flatTitle, flatTypesOf, type RuleBlock, type RuleSection } from './rateCardLayout';
-import { AddPriceTile, AddRule, Panel, PriceTile, TileGrid, panelId, tabId, type RateSection } from './ruleEditors';
+import { CATEGORY_HINT, CATEGORY_LABEL, RULE_LABEL } from '../../../vendor/scm/lib/rate-rule-taxonomy';
+import { CATEGORY_ORDER, flatTitle, flatTypesOf, type FlatRuleType, type PriceCell, type RuleBlock, type RuleSection } from './rateCardLayout';
+import { AddPriceCell, AddRule, Panel, PriceButton, panelId, tabId, type RateSection } from './ruleEditors';
 import { OutstationPrices } from './OutstationPrices';
 import { PriceCheck } from './PriceCheck';
 import type { PriceCheckForm } from './priceCheckFacts';
-import { BTN_QUIET } from './ui';
+import { BTN_QUIET, Pill, T_CELL, T_HEAD, T_SECTION } from './ui';
 
 export type { RateSection } from './ruleEditors';
 const SECTIONS: readonly RateSection[] = [...CATEGORY_ORDER, 'PRICE_CHECK'];
@@ -69,9 +69,12 @@ export const SectionTabs = ({ sections, areaCount, value, onChange }: {
 };
 
 type Ladder = Extract<RuleBlock, { kind: 'ladder' }>;
+interface PriceGroup { id: string; title: string; cells: PriceCell[]; missing: FlatRuleType[] }
 
-/** Delivery, Setup & dismantle and Service calls: their prices as tiles, and a
- *  dashed tile for each price the category could carry and the card does not. */
+/** Delivery, Setup & dismantle and Service calls: their prices as one ruled
+ *  two-column table (owner 2026-11-11: 「这个也整理一下」, like the transporters'
+ *  own rate sheets), a shaded row per kind, and an Add row for each price the
+ *  category could carry and the card does not. */
 const PricesPanel = ({ cardId, section, zones }: { cardId: string; section: RuleSection; zones: string[] }) => {
   const [adding, setAdding] = useState(false);
   const cat = section.category;
@@ -79,7 +82,8 @@ const PricesPanel = ({ cardId, section, zones }: { cardId: string; section: Rule
   const ladders = section.blocks.filter((b): b is Ladder => b.kind === 'ladder');
   const present = new Set(ladders.flatMap((b) => b.cells.map((c) => c.rule.ruleType as string)));
   const missing = flatTypesOf(cat).filter((t) => !present.has(t));
-  const addTiles = missing.map((t) => <AddPriceTile key={t} cardId={cardId} ruleType={t} />);
+  const groups: PriceGroup[] = ladders.map((b) => ({ id: b.id, title: b.title, cells: b.cells, missing: b.id === 'flat' ? missing : [] }));
+  if (!ladders.some((b) => b.id === 'flat') && missing.length > 0) groups.push({ id: 'flat', title: flatTitle(cat), cells: [], missing });
   /* Positions, cap overage and sofa brackets need more than an amount, so
      Delivery keeps the full form; the other two take amounts only. */
   const needsForm = cat === 'DELIVERY';
@@ -91,13 +95,35 @@ const PricesPanel = ({ cardId, section, zones }: { cardId: string; section: Rule
           </button>
         : null}>
       {section.count === 0 && <p className="text-[13px] text-ink-muted">This card has no {label.toLowerCase()} prices yet.</p>}
-      {ladders.map((b) => (
-        <TileGrid key={b.id} title={b.title}>
-          {b.cells.map((c) => <PriceTile key={c.rule.id} cardId={cardId} cell={c} />)}
-          {b.id === 'flat' && addTiles}
-        </TileGrid>
-      ))}
-      {!ladders.some((b) => b.id === 'flat') && addTiles.length > 0 && <TileGrid title={flatTitle(cat)}>{addTiles}</TileGrid>}
+      {groups.length > 0 && (
+        <table className="w-full max-w-[640px] border-collapse text-[13px] tabular-nums">
+          <thead>
+            <tr>
+              <th scope="col" className={cn(T_HEAD, 'text-left')}>Price</th>
+              <th scope="col" className={cn(T_HEAD, 'w-[150px] text-right')}>RM</th>
+            </tr>
+          </thead>
+          {groups.map((g) => (
+            <tbody key={g.id} aria-label={g.title}>
+              <tr><th scope="colgroup" colSpan={2} className={T_SECTION}>{g.title}</th></tr>
+              {g.cells.map((c) => (
+                <tr key={c.rule.id}>
+                  <td className={T_CELL}>
+                    <span className="inline-flex items-center gap-1.5">{c.label}{c.duplicate && <Pill tone="amber">Twice</Pill>}</span>
+                  </td>
+                  <td className={cn(T_CELL, 'text-right')}><PriceButton cardId={cardId} rule={c.rule} name={c.label} /></td>
+                </tr>
+              ))}
+              {g.missing.map((t) => (
+                <tr key={t}>
+                  <td className={cn(T_CELL, 'text-ink-muted')}>{RULE_LABEL[t]}</td>
+                  <td className={cn(T_CELL, 'text-right')}><AddPriceCell cardId={cardId} rule={{ ruleType: t }} label={RULE_LABEL[t]} /></td>
+                </tr>
+              ))}
+            </tbody>
+          ))}
+        </table>
+      )}
       {adding && <AddRule cardId={cardId} category={cat} zones={zones} initialType={null} onDone={() => setAdding(false)} />}
     </Panel>
   );

@@ -206,37 +206,39 @@ const CardList = ({ cards, companies, isLoading, loadFailed, sel, onSelect, onCr
      refused) has no carrier but was never own fleet; a card whose company is
      inactive is not in the carrier list. Neither may hide or vanish. */
   const others = cards.filter((c) => cardKind(c, listed) === 'removed' || cardKind(c, listed) === 'inactive');
-  const priced = companies.filter((co) => byCompany.has(co.id)).length;
   const match = (name: string) => !q.trim() || name.toLowerCase().includes(q.trim().toLowerCase());
+  /* Owner 2026-11-11 「这个sidebar 也要整理」: carriers with a card first, the rest
+     below; full names (two BRIGHTSUNs read alike once cut short); a plain count
+     instead of "SET · per unit · 45 rules"; a pill only when something is off. */
+  const priced = companies.filter((co) => byCompany.has(co.id));
+  const unpriced = companies.filter((co) => !byCompany.has(co.id));
+  const shownPriced = priced.filter((co) => match(co.name));
+  const shownUnpriced = unpriced.filter((co) => match(co.name));
 
   const summary = (c: RateCard) => {
     const n = c.ruleCount ?? 0;
-    return `${c.basis} · per ${c.aggregation.toLowerCase()} · ${n} ${n === 1 ? 'rule' : 'rules'}${c.isActive ? '' : ' · inactive'}`;
+    return n === 0 ? 'No prices yet' : `${n} ${n === 1 ? 'price' : 'prices'}`;
   };
-  const status = (c: RateCard | null) => (c == null
-    ? <Pill tone="amber">No card</Pill>
-    : c.isActive ? <Pill tone="green">Active</Pill> : <Pill tone="grey">Inactive</Pill>);
-  const row = (key: string, on: boolean, name: string, sub: string, subTone: string, badge: ReactNode, onClick: () => void) => (
+  const inactive = (c: RateCard) => (c.isActive ? null : <Pill tone="grey">Inactive</Pill>);
+  const row = (key: string, on: boolean, name: string, sub: string | null, subTone: string, badge: ReactNode, onClick: () => void) => (
     <button key={key} type="button" onClick={onClick} aria-current={on ? 'true' : undefined}
-      className={cn('flex w-full items-center gap-3 border-l-[3px] px-[15px] py-[10px] text-left',
+      className={cn('flex w-full items-start gap-3 border-l-[3px] px-[15px] py-[9px] text-left',
         on ? 'border-primary bg-[color:var(--hz-dk-surface-2,#eef6f3)]' : 'border-transparent hover:bg-surface-2')}>
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="truncate text-[14px] font-bold text-ink">{name}</span>
-        <span className={cn('text-[12.5px]', subTone)}>{sub}</span>
+        <span className={cn('break-words text-[13.5px] leading-snug', sub == null ? 'font-medium text-ink-secondary' : 'font-bold text-ink')}>{name}</span>
+        {sub != null && <span className={cn('text-[12.5px]', subTone)}>{sub}</span>}
       </span>
       {badge}
     </button>
   );
   const group = (label: string) => <div className={cn(EYEBROW, 'px-[18px] pb-1.5 pt-3.5')}>{label}</div>;
-  const shownCompanies = companies.filter((co) => match(co.name));
 
   return (
     <aside aria-label="Carriers" className={cn(CARD, 'w-full overflow-hidden md:w-auto md:min-w-[260px] md:flex-[0_1_320px] lg:sticky lg:top-4')}>
       <div className="border-b border-border px-[18px] pb-3 pt-4">
         <div className="text-[15px] font-bold text-ink">Carriers</div>
         <div className={cn(HINT, 'mt-0.5')}>
-          {companies.length} {companies.length === 1 ? 'carrier' : 'carriers'} · {priced} with a card
-          {companies.length > priced ? ` · ${companies.length - priced} without` : ''}
+          {companies.length} {companies.length === 1 ? 'carrier' : 'carriers'} · {priced.length} with a card
         </div>
         {companies.length >= SEARCH_FROM && (
           <input className={cn(INPUT, 'mt-2.5 min-h-[36px] text-[13px]')} placeholder="Find a carrier" aria-label="Find a carrier"
@@ -252,21 +254,21 @@ const CardList = ({ cards, companies, isLoading, loadFailed, sel, onSelect, onCr
             <button type="button" onClick={onCreateCompany} className="font-semibold text-primary hover:underline">Register one now</button>
           </p>
         )}
-        {companies.length > 0 && group('3PL')}
-        {shownCompanies.map((co) => {
-          const card = byCompany.get(co.id) ?? null;
-          const on = card ? sel?.kind === 'card' && sel.id === card.id : sel?.kind === 'company' && sel.id === co.id;
-          return row(co.id, on, co.name,
-            card ? summary(card) : 'No rate card yet',
-            card ? 'text-ink-muted' : 'font-semibold text-primary',
-            status(card),
-            () => onSelect(card ? { kind: 'card', id: card.id } : { kind: 'company', id: co.id }));
+        {shownPriced.length > 0 && group('With a rate card')}
+        {shownPriced.map((co) => {
+          const card = byCompany.get(co.id);
+          if (!card) return null;
+          return row(co.id, sel?.kind === 'card' && sel.id === card.id, co.name, summary(card), 'text-ink-muted', inactive(card),
+            () => onSelect({ kind: 'card', id: card.id }));
         })}
-        {companies.length > 0 && shownCompanies.length === 0 && <p className="px-[18px] py-3 text-[13px] text-ink-muted">No carrier matches &ldquo;{q.trim()}&rdquo;.</p>}
+        {shownUnpriced.length > 0 && group('No rate card yet')}
+        {shownUnpriced.map((co) => row(co.id, sel?.kind === 'company' && sel.id === co.id, co.name, null, '', null,
+          () => onSelect({ kind: 'company', id: co.id })))}
+        {companies.length > 0 && shownPriced.length + shownUnpriced.length === 0 && <p className="px-[18px] py-3 text-[13px] text-ink-muted">No carrier matches &ldquo;{q.trim()}&rdquo;.</p>}
         {ownFleet.length > 0 && (
           <>
             {group('Own fleet')}
-            {ownFleet.map((c) => row(c.id, sel?.kind === 'card' && sel.id === c.id, c.name, summary(c), 'text-ink-muted', status(c), () => onSelect({ kind: 'card', id: c.id })))}
+            {ownFleet.map((c) => row(c.id, sel?.kind === 'card' && sel.id === c.id, c.name, summary(c), 'text-ink-muted', inactive(c), () => onSelect({ kind: 'card', id: c.id })))}
           </>
         )}
         {others.length > 0 && (
