@@ -85,15 +85,18 @@ vi.mock('./settlement-queries', async (importOriginal) => ({
 }));
 
 const writeBook = vi.fn();
+const writeFile = vi.fn();
 vi.mock('../../components/dataTableLineExport', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../components/dataTableLineExport')>()),
   writeLineExportBook: (...args: unknown[]) => writeBook(...args),
+  writeLineExportFile: (...args: unknown[]) => writeFile(...args),
 }));
 const printPdf = vi.fn();
 vi.mock('../../vendor/scm/lib/unmatched-payments-pdf', () => ({ generateUnmatchedPdf: (...args: unknown[]) => printPdf(...args) }));
 
 import { UnmatchedPayments } from './UnmatchedPayments';
 import { reportLinesOf, withSameMoney } from './unmatchedLists';
+import { primeInVisitColFilters, resetInVisitColFilters } from '../../components/dataTableColFilterMemory';
 
 const draw = (at = '/scm/unmatched-payments') => render(<MemoryRouter initialEntries={[at]}><UnmatchedPayments /></MemoryRouter>);
 /* The row on the list that is open: the other two stay mounted, hidden, and may name the same document. */
@@ -105,9 +108,10 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date('2026-11-10T04:00:00Z'));
   writeBook.mockClear();
+  writeFile.mockClear();
   printPdf.mockClear();
 });
-afterEach(() => { vi.useRealTimers(); });
+afterEach(() => { vi.useRealTimers(); resetInVisitColFilters(); });
 
 describe('three lists on one page', () => {
   test('each list is a tile with its count and money; Payments opens first, the address picks another', () => {
@@ -117,6 +121,9 @@ describe('three lists on one page', () => {
     expect(tab(/^Bank money in\s*3/).textContent).toContain('RM 3,210.00');
     fireEvent.click(tab(/^Bank money in/));
     expect(tab(/^Bank money in/).getAttribute('aria-selected')).toBe('true');
+    /* Owner 2026-11-11: Merchant Report Line -> Bank Money In -> Payment. */
+    expect(screen.getAllByRole('tab').map((t) => /^(Merchant report lines|Bank money in|Payments)/.exec(t.textContent)?.[1]))
+      .toEqual(['Merchant report lines', 'Bank money in', 'Payments']);
   });
 
   test('only open reports overlapping the dates are read, as Merchant Recon reads them', () => {
@@ -250,22 +257,73 @@ describe('Bank money in', () => {
   });
 });
 
-/* Owner 2026-11-10: 要支持可以export 全部 / 也要支持pdf，这个export可以根据我显示的column 来export. */
+/* Owner 2026-11-10: 要支持可以export 全部 / 也要支持pdf，这个export可以根据我显示的column 来export.
+   Owner 2026-11-11: 我filter 了三个card 的东西，但是export 了还是全部 / export 出来时注明是 … /
+   顺序 Merchant Report Line -> Bank Money In -> Payment. */
 describe('Export', () => {
-  test('Export all writes every row of the three lists, a sheet each, whatever chip is on', async () => {
+  const REPORT_TITLE = 'Merchant RECEIVED, CANNOT MATCHED Which Sales Order';
+  const BANK_TITLE = 'Bank Received, CANNOT MATCHED Which Sales Order';
+  const PAY_TITLE = 'Record Payment Received, Bank CANNOT Found';
+  type Sheet = { name: string; heading: string[]; matrix: { header: string[]; body: unknown[][] } };
+  type Part = { title: string; label: string; note: string; view: { matrix: { body: unknown[][] } } };
+
+  test('Export all writes the three lists in the owner\'s order, each under its title — every row when nothing narrows them', async () => {
     draw();
-    fireEvent.click(screen.getByRole('button', { name: 'Card · not on a report (2)' }));
     fireEvent.click(screen.getByRole('button', { name: /Export all · Excel/ }));
     await waitFor(() => expect(writeBook).toHaveBeenCalledTimes(1));
-    const [sheets, fileName] = writeBook.mock.calls[0]! as [Array<{ name: string; matrix: { header: string[]; body: unknown[][] } }>, string];
-    expect(sheets.map((s) => [s.name, s.matrix.body.length])).toEqual([['Merchant report lines', 2], ['Payments', 5], ['Bank money in', 3]]);
-    expect(fileName).toMatch(/^payments-not-matched-all-\d{4}-\d{2}-\d{2}\.xlsx$/);
+    const [sheets, fileName] = writeBook.mock.calls[0]! as [Sheet[], string];
+    expect(sheets.map((s) => [s.name, s.heading[0], s.matrix.body.length])).toEqual([
+      ['Merchant received', REPORT_TITLE, 2],
+      ['Bank received', BANK_TITLE, 3],
+      ['Payment recorded', PAY_TITLE, 5],
+    ]);
+    for (const s of sheets) expect(s.heading[1]).toMatch(/^Dated .* to .* · No filter — every row$/);
+    expect(fileName).toMatch(/^payments-not-matched-\d{4}-\d{2}-\d{2}\.xlsx$/);
     /* The columns each table shows: Collected by, not the hidden Salesperson. */
-    const payments = sheets[1]!.matrix.header;
+    const payments = sheets[2]!.matrix.header;
     expect(payments).toContain('Collected by');
     expect(payments).not.toContain('Salesperson');
     expect(payments).toContain('Where it is stuck');
     expect(payments).toContain('Possibly the same as');
+  });
+
+  test('Export all follows each list\'s chip and column filters, and says them above the list', async () => {
+    primeInVisitColFilters('unmatched-payments', { collectedBy: ['Esther'] });
+    draw();
+    fireEvent.click(screen.getByRole('button', { name: 'Card · not on a report (2)' }));
+    fireEvent.click(tab(/^Bank money in/));
+    fireEvent.click(screen.getByRole('button', { name: 'Card payout (1)' }));
+    fireEvent.click(screen.getByRole('button', { name: /Export all · Excel/ }));
+    await waitFor(() => expect(writeBook).toHaveBeenCalledTimes(1));
+    const [sheets] = writeBook.mock.calls[0]! as [Sheet[]];
+    expect(sheets.map((s) => [s.name, s.matrix.body.length])).toEqual([['Merchant received', 2], ['Bank received', 1], ['Payment recorded', 1]]);
+    expect(sheets.map((s) => s.heading[1]!.replace(/^Dated .* to \S+ · /, ''))).toEqual([
+      'No filter — every row',
+      'Filter: Card payout',
+      'Filter: Card · not on a report · Collected by: Esther',
+    ]);
+    /* The same, on paper. */
+    fireEvent.click(screen.getByRole('button', { name: /Export all · PDF/ }));
+    await waitFor(() => expect(printPdf).toHaveBeenCalledTimes(1));
+    const [parts] = printPdf.mock.calls[0]! as [Part[]];
+    expect(parts.map((p) => [p.title, p.view.matrix.body.length, p.note])).toEqual([
+      [REPORT_TITLE, 2, 'No filter — every row'],
+      [BANK_TITLE, 1, 'Filter: Card payout'],
+      [PAY_TITLE, 1, 'Filter: Card · not on a report · Collected by: Esther'],
+    ]);
+  });
+
+  test('a list\'s own Excel writes what it shows, under its title, in a file of its name', async () => {
+    draw();
+    fireEvent.click(screen.getByRole('button', { name: 'Card · not on a report (2)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Export' }));
+    await waitFor(() => expect(writeFile).toHaveBeenCalledTimes(1));
+    const [matrix, sheetName, fileName, heading] = writeFile.mock.calls[0]! as [{ body: unknown[][] }, string, string, string[]];
+    expect(matrix.body).toHaveLength(2);
+    expect(sheetName).toBe('Payment recorded');
+    expect(fileName).toMatch(/^payment-recorded-\d{4}-\d{2}-\d{2}\.xlsx$/);
+    expect(heading[0]).toBe(PAY_TITLE);
+    expect(heading[1]).toMatch(/^Dated .* · Filter: Card · not on a report$/);
   });
 
   test('a column the reader hid stays out of Export all — on a list not even open', async () => {
@@ -277,32 +335,36 @@ describe('Export', () => {
       fireEvent.click(screen.getByRole('button', { name: /Export all · Excel/ }));
       await waitFor(() => expect(writeBook).toHaveBeenCalledTimes(1));
       const [sheets] = writeBook.mock.calls[0]! as [Array<{ name: string; matrix: { header: string[] } }>];
-      expect(sheets[2]!.matrix.header).not.toContain('Description');
-      expect(sheets[2]!.matrix.header).toContain('Why it is open');
-      expect(sheets[1]!.matrix.header).toContain('Salesperson');
+      expect(sheets[1]!.matrix.header).not.toContain('Description');
+      expect(sheets[1]!.matrix.header).toContain('Why it is open');
+      expect(sheets[2]!.matrix.header).toContain('Salesperson');
     } finally {
       localStorage.removeItem('dt:hidden:unmatched-bank-lines');
       localStorage.removeItem('dt:shown:unmatched-payments');
     }
   });
 
-  test('Export all as a PDF prints the three lists, a part each', async () => {
+  test('Export all as a PDF prints the three lists in the owner\'s order, a part each under its title', async () => {
     draw();
     fireEvent.click(screen.getByRole('button', { name: /Export all · PDF/ }));
     await waitFor(() => expect(printPdf).toHaveBeenCalledTimes(1));
-    const [parts, opts] = printPdf.mock.calls[0]! as [Array<{ title: string; view: { matrix: { body: unknown[][] } } }>, { subtitle: string }];
-    expect(parts.map((p) => [p.title, p.view.matrix.body.length])).toEqual([['Merchant report lines', 2], ['Payments', 5], ['Bank money in', 3]]);
-    expect(opts.subtitle).toMatch(/^Dated .* to .* · every row of the three lists$/);
+    const [parts, opts] = printPdf.mock.calls[0]! as [Part[], { subtitle: string }];
+    expect(parts.map((p) => [p.title, p.label, p.view.matrix.body.length, p.note])).toEqual([
+      [REPORT_TITLE, 'Merchant received', 2, 'No filter — every row'],
+      [BANK_TITLE, 'Bank received', 3, 'No filter — every row'],
+      [PAY_TITLE, 'Payment recorded', 5, 'No filter — every row'],
+    ]);
+    expect(opts.subtitle).toMatch(/^Dated \S+ to \S+$/);
   });
 
-  test('one list\'s PDF prints what that list shows, and says which chip', async () => {
+  test('one list\'s PDF prints what that list shows, under its title, and says which chip', async () => {
     draw();
     fireEvent.click(screen.getByRole('button', { name: 'Card · not on a report (2)' }));
     const payments = screen.getAllByRole('button', { name: /^PDF$/ });
     fireEvent.click(payments[0]!);
     await waitFor(() => expect(printPdf).toHaveBeenCalledTimes(1));
-    const [parts, opts] = printPdf.mock.calls[0]! as [Array<{ title: string; view: { matrix: { body: unknown[][] } } }>, { subtitle: string }];
-    expect(parts.map((p) => [p.title, p.view.matrix.body.length])).toEqual([['Payments', 2]]);
-    expect(opts.subtitle).toMatch(/ · Card · not on a report$/);
+    const [parts, opts] = printPdf.mock.calls[0]! as [Part[], { subtitle: string }];
+    expect(parts.map((p) => [p.title, p.view.matrix.body.length, p.note])).toEqual([[PAY_TITLE, 2, 'Filter: Card · not on a report']]);
+    expect(opts.subtitle).toMatch(/^Dated \S+ to \S+$/);
   });
 });
