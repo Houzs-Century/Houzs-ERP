@@ -376,7 +376,7 @@ const ReconcileTab = ({ acq = null, landing = null, onLandingDone }: {
           exportName="card-payments-not-reported"
           exportXlsx
           onExportPdf={exportCardsPdf}
-          selection={cardTicks.selection}
+          selection={{ ...cardTicks.selection, rowLabel: (p) => `Tick ${p.docNo}` }}
           toolbarExtra={<MarkPreviousButton refs={cardTicks.refs} onDone={cardTicks.clear} onResult={setCardMark} />}
           columns={WAITING_COLUMNS}
           rows={watchlist.data ? waiting : null}

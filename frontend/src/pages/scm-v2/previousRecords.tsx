@@ -150,7 +150,7 @@ export const PreviousRecordsList = () => {
         tableId="previous-payment-records"
         exportName="previous-payment-records"
         exportXlsx
-        selection={ticks.selection}
+        selection={{ ...ticks.selection, rowLabel: (r) => `Tick ${r.docNo ?? r.id}` }}
         toolbarExtra={(
           <Button variant="ghost" size="sm" disabled={ticks.refs.length === 0 || undo.isPending} onClick={press}
             title="Put the ticked payments back where they were">

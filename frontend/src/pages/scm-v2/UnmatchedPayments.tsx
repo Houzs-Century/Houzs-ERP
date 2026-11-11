@@ -377,7 +377,7 @@ export const UnmatchedPayments = () => {
           exportXlsx
           exportSheet={(rows) => ({ name: listOf('payments').sheet, heading: headingOf('payments', rows.length) })}
           onExportPdf={(view) => void printList('payments', view)}
-          selection={payTicks.selection}
+          selection={{ ...payTicks.selection, rowLabel: (r) => `Tick ${r.docNo}` }}
           toolbarExtra={(
             <>
               {pdfButton(() => void printList('payments', tablePdfViewOf(seen.current.payments ?? rowsOn.payments ?? [], shownOr(shown.current.payments, PAYMENT_COLUMNS))), !loaded.payments)}
