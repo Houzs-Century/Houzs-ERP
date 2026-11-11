@@ -805,6 +805,7 @@ function openProblemFor(status: string, breakdowns: BreakdownRow[], openWos: Wor
 
 // ── GET /vehicles/:id — one lorry + full compliance history + windows ────────
 fleetMaintenance.get("/vehicles/:id", requireHouzsPerm("fleet.read"), async (c) => {
+  // company-scope: unified fleet (owner 2026-09-02, bugs/0620) - see the UNIFIED FLEET note above inHouseLorries. The lorry and its warehouse are read by id on purpose; fleet.read/fleet.write is the gate.
   const id = c.req.param("id");
   const sb = c.get("supabase");
   const today = todayMyt();
@@ -1215,6 +1216,7 @@ fleetMaintenance.get("/compliance-attachments/:key{.+}", requireHouzsPerm("fleet
 // duplicates. next_due_* is never written (it is derived); only the raw interval
 // + last-done facts are stored.
 fleetMaintenance.post("/vehicles/:id/plans", requireHouzsPerm("fleet.write"), async (c) => {
+  // company-scope: unified fleet (owner 2026-09-02, bugs/0620) - see the UNIFIED FLEET note above inHouseLorries. The lorry and its warehouse are read by id on purpose; fleet.read/fleet.write is the gate.
   const lorryId = c.req.param("id");
   const sb = c.get("supabase");
 
@@ -1324,6 +1326,7 @@ fleetMaintenance.patch("/plans/:planId", requireHouzsPerm("fleet.write"), async 
 // REJECTED; an abnormal one-day jump is ACCEPTED but flagged for review. GPS
 // distance is never written as the odometer.
 fleetMaintenance.post("/vehicles/:id/mileage", requireHouzsPerm("fleet.write"), async (c) => {
+  // company-scope: unified fleet (owner 2026-09-02, bugs/0620) - see the UNIFIED FLEET note above inHouseLorries. The lorry and its warehouse are read by id on purpose; fleet.read/fleet.write is the gate.
   const lorryId = c.req.param("id");
   const sb = c.get("supabase");
 
@@ -1409,6 +1412,7 @@ async function lorryExists(sb: Variables["supabase"], lorryId: string): Promise<
 // the affected trip(s), suggest replacement lorries / 3PL, and notify the
 // reporter's reporting line through the EXISTING announcements mechanism.
 fleetMaintenance.post("/vehicles/:id/breakdowns", requireHouzsPerm("fleet.write"), async (c) => {
+  // company-scope: unified fleet (owner 2026-09-02, bugs/0620) - see the UNIFIED FLEET note above inHouseLorries. The lorry and its warehouse are read by id on purpose; fleet.read/fleet.write is the gate.
   const lorryId = c.req.param("id");
   const sb = c.get("supabase");
 

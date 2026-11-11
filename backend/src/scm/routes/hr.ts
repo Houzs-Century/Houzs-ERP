@@ -103,7 +103,7 @@ import { MFG_PRODUCT_CATEGORIES } from './mfg-products';
 import { loadKpiUnitsByDoc } from '../lib/kpi-units';
 import { supabaseAuth } from '../middleware/auth';
 import { hasHouzsPerm } from '../lib/houzs-perms';
-import { activeCompanyId } from '../lib/companyScope';
+import { activeCompanyId, scopeToCompanyId } from '../lib/companyScope';
 import { scopeStaffRowsToActiveCompany } from '../lib/staffCompanyScope';
 import { resolveCallerStaffId } from '../lib/salesScope';
 import { chunkIn, paginateAll } from '../lib/paginate-all';
@@ -1345,10 +1345,12 @@ hr.get('/commission', async (c) => {
   if (!closed.ok) return closed.res;
   if (closed.period) {
     const sb = c.get('supabase');
-    const rowsRes = await paginateAll<PayoutRowRec>((f, t) => sb
+    /* The period was found under this company, but a parent predicate is not
+       company scope: the frozen rows carry their own company_id and are read by it. */
+    const rowsRes = await paginateAll<PayoutRowRec>((f, t) => scopeToCompanyId(sb
       .from('hr_payout_rows')
       .select(PAYOUT_ROW_SELECT)
-      .eq('period_id', closed.period!.id)
+      .eq('period_id', closed.period!.id), co.companyId)
       .order('sort_index')
       .range(f, t),
     );

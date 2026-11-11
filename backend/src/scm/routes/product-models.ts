@@ -57,6 +57,7 @@ export const productModels = new Hono<{ Bindings: Env; Variables: Variables }>()
 // The .schema('scm') is REQUIRED — product_models lives in scm; a bare .from()
 // hits the empty public.product_models and 404s every photo (BUG-HISTORY 2026-07-20).
 export const modelPhotoProxyHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
+  // company-scope: PUBLIC pre-auth image proxy, mounted before companyContext on purpose (the 2990 POS <img> is cross-origin and carries no session), so no company can be resolved. The requested R2 key must equal the model's stored photo_url key, which is a server-minted randomUUID.
   const id = c.req.param('id');
   const rawKey = c.req.param('key');
   if (!id || !rawKey) return c.json({ error: 'bad_request' }, 400);

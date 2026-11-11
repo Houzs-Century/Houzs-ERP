@@ -44,7 +44,7 @@ import { recordAi, requestAiTag, type AiUsageTag } from '../../services/aiUsage'
 // factored insert+audit core the interactive POST /:docNo/payments route uses.
 import { createDraftSalesOrder, recordSoPaymentRow } from './mfg-sales-orders';
 import { todayMyt } from '../lib/my-time';
-import { activeCompanyId, scopeToCompanyIdOrOpen } from '../lib/companyScope';
+import { activeCompanyId, scopeToCompany, scopeToCompanyIdOrOpen } from '../lib/companyScope';
 import { type ScanDocumentType, DEFAULT_SCAN_DOCUMENT_TYPE, coerceScanDocumentType } from '../lib/scan-document-type';
 import { jobToJson } from './scan-so-serialize';
 import { normalizePhone, fmtSen } from '../shared';
@@ -4628,10 +4628,11 @@ scanSo.get('/jobs/:id', async (c) => {
       /* non-Workers runtime (tests) — let the floating promise run */
     }
   });
-  const { data, error } = await svc
+  // Same company as the /jobs list: another company's job id answers 404.
+  const { data, error } = await scopeToCompany(svc
     .from('scan_jobs')
     .select('id, status, salesperson, so_doc_no, linked_doc_no, document_type, error, sample_id, duplicate_of, image_keys, created_at, updated_at')
-    .eq('id', id)
+    .eq('id', id), c)
     .limit(1)
     .maybeSingle();
   if (error) {
