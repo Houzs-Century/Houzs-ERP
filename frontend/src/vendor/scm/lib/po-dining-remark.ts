@@ -14,9 +14,12 @@
    the on-screen remark and the printed "Remark:" agree on which lines qualify
    (the same FE/BE mirror the date formatters keep). */
 
-/** DINING is the only catalogue group whose line shows its remark on the PO. */
-export const isDiningGroup = (group: string | null | undefined): boolean =>
-  (group ?? '').trim().toLowerCase() === 'dining';
+/** DINING is the only catalogue group whose line shows its remark on the PO.
+    Byte-mirrored with the backend's isDiningGroup (po-dining-remark.ts) so the
+    shared-mirrors audit keeps them in lockstep — the on-screen remark and the
+    printed "Remark:" must agree on which lines qualify. */
+export const isDiningGroup = (g: string | null | undefined): boolean =>
+  (g ?? '').trim().toLowerCase() === 'dining';
 
 /** The remark to show against a PO line: the line's `notes`, DINING lines only,
  *  trimmed. Null for every non-dining line and for a dining line with no note. */
