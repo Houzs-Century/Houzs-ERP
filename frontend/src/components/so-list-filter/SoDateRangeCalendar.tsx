@@ -78,14 +78,14 @@ export function SoDateRangeCalendar({
                     aria-pressed={isEnd}
                     onClick={() => pick(day)}
                     style={{
-                      border: day === today ? "1px solid #16695f" : "1px solid transparent",
+                      border: day === today ? "1px solid var(--hz-c-primary)" : "1px solid transparent",
                       borderRadius: 7,
                       padding: "5px 0",
                       fontSize: 12,
                       fontFamily: "inherit",
                       cursor: "pointer",
-                      background: isEnd ? "#16695f" : inRange ? "#dcefe9" : "transparent",
-                      color: isEnd ? "#fff" : "#11140f",
+                      background: isEnd ? "var(--hz-c-primary)" : inRange ? "#dcefe9" : "transparent",
+                      color: isEnd ? "#fff" : "var(--hz-c-ink)",
                       fontWeight: isEnd ? 700 : 500,
                     }}
                   >
@@ -102,8 +102,8 @@ export function SoDateRangeCalendar({
 }
 
 const navBtn = {
-  border: "1px solid #d6d9d2",
-  background: "#fff",
+  border: "1px solid var(--hz-c-border)",
+  background: "var(--hz-c-surface)",
   borderRadius: 7,
   width: 28,
   height: 26,

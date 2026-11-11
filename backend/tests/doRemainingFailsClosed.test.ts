@@ -148,7 +148,7 @@ const postJson = (app: Hono, url: string, body?: Row) =>
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body ?? {}),
-  });
+  }, { DELIVERY_RETURN_MODE: 'two-step' }); // no database behind these fakes; deliveryReturnAtomic.test.ts covers atomic
 
 const patchJson = (app: Hono, url: string, body?: Row) =>
   app.request(url, {

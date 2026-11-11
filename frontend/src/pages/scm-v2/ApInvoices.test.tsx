@@ -615,7 +615,7 @@ describe('Supplier bills — the redesign', () => {
       draw();
       expect(screen.getByRole('tab', { name: /Credit notes/ }).textContent).toBe('Credit notes 1');
       /* The posted purchase invoice still owes: sand. The draft bill does not. */
-      expect(tr('2990-PI-2607-005').style.backgroundColor).toBe('rgb(252, 247, 236)');
+      expect(tr('2990-PI-2607-005').getAttribute('style') ?? '').toMatch(/#fcf7ec|252, 247, 236/);
       expect(tr('2990-API-2609-001').style.backgroundColor).toBe('');
       fireEvent.click(screen.getByRole('tab', { name: /Credit notes/ }));
       expect(screen.queryByText('2990-PI-2607-005')).toBeNull();

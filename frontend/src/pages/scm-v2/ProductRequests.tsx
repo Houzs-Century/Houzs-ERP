@@ -58,7 +58,7 @@ const linkBtn: React.CSSProperties = { background: 'none', border: 'none', paddi
 /* The line tables draw their own skin: SalesOrderDetail's .table pins
    nth-child widths for the sales-line layout, which these columns are not. */
 const lineTable: React.CSSProperties = { width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-12)' };
-const th: React.CSSProperties = { fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', textAlign: 'left', padding: '4px 6px', background: '#e3e6e0', borderBottom: '2px solid #d6d9d2', whiteSpace: 'nowrap' };
+const th: React.CSSProperties = { fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', textAlign: 'left', padding: '4px 6px', background: 'var(--hz-c-surface-dim)', borderBottom: '2px solid #d6d9d2', whiteSpace: 'nowrap' };
 const td: React.CSSProperties = { padding: '4px 6px', borderBottom: '1px solid var(--line, #ece9e2)', verticalAlign: 'top' };
 
 const StatusChip = ({ r }: { r: Pick<ProductRequest, 'status'> }) => (
@@ -245,7 +245,7 @@ export const ProductRequests = () => {
           )}
         >
           {detail.status === 'REJECTED' && detail.decision_note && (
-            <div style={{ padding: 'var(--space-3)', borderRadius: 8, background: 'var(--c-cream, #faf8f3)', color: 'var(--c-festive-b, #B8331F)', fontSize: 'var(--fs-13)' }}>
+            <div style={{ padding: 'var(--space-3)', borderRadius: 8, background: 'var(--c-cream, #faf8f3)', color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))', fontSize: 'var(--fs-13)' }}>
               Rejected by {detail.decided_by ?? 'the Purchaser'}{detail.decided_at ? ` on ${fmtDateOrDash(detail.decided_at)}` : ''}: {detail.decision_note}
             </div>
           )}
@@ -549,12 +549,12 @@ export function RequestForm({ initial, onDone, onCancel }: { initial: ProductReq
   };
 
   const grid = (min: number): React.CSSProperties => ({ display: 'grid', gridTemplateColumns: `repeat(auto-fit, minmax(${min}px, 1fr))`, gap: 'var(--space-3)' });
-  const cell: React.CSSProperties = { fontSize: 'var(--fs-12)', padding: '4px 6px', border: '1px solid #d6d9d2', borderRadius: 6, background: '#fff', width: '100%', minWidth: 0 };
+  const cell: React.CSSProperties = { fontSize: 'var(--fs-12)', padding: '4px 6px', border: '1px solid var(--hz-c-border)', borderRadius: 6, background: 'var(--hz-c-surface)', width: '100%', minWidth: 0 };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column' }}>
       {initial?.status === 'REJECTED' && initial.decision_note && (
-        <div style={{ color: 'var(--c-festive-b, #B8331F)', fontSize: 'var(--fs-13)' }}>The Purchaser rejected it: {initial.decision_note}</div>
+        <div style={{ color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))', fontSize: 'var(--fs-13)' }}>The Purchaser rejected it: {initial.decision_note}</div>
       )}
 
       <FormSection n={1} title="What kind of request" first>
@@ -672,7 +672,7 @@ export function RequestForm({ initial, onDone, onCancel }: { initial: ProductReq
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Expected delivery date</span>
             <DateField fullWidth value={v.expectedDeliveryDate ?? ''} onChange={(iso) => set({ expectedDeliveryDate: iso || null })} className={styles.fieldInput} aria-label="Expected delivery date"
-              style={{ background: '#fff', border: '1px solid #d6d9d2', borderRadius: 8 }} />
+              style={{ background: 'var(--hz-c-surface)', border: '1px solid var(--hz-c-border)', borderRadius: 8 }} />
           </label>
         </div>
         <label className={styles.field}>
@@ -735,8 +735,8 @@ function FormSection({ n, title, required = false, first = false, children }: { 
   return (
     <section aria-label={title} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)', padding: 'var(--space-4, 16px) 0', borderTop: first ? 'none' : '1px solid var(--line, #ece9e2)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, fontSize: 'var(--fs-14, 14px)' }}>
-        <span aria-hidden="true" style={{ width: 22, height: 22, borderRadius: '50%', background: 'var(--c-secondary-a, #2F5D4F)', color: '#fff', fontSize: 12, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{n}</span>
-        <span>{title}{required && <span style={{ color: 'var(--c-festive-b, #B8331F)' }}> *</span>}</span>
+        <span aria-hidden="true" style={{ width: 22, height: 22, borderRadius: '50%', background: 'var(--c-secondary-a, var(--hz-dk-secondary-a, #2F5D4F))', color: '#fff', fontSize: 12, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{n}</span>
+        <span>{title}{required && <span style={{ color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' }}> *</span>}</span>
       </div>
       {children}
     </section>

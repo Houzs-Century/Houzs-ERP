@@ -2,35 +2,35 @@
    (2026-11-02, batch 2). Kind colours are the design's KIND table. */
 
 .wrap {
-  --fin-ink: #11140f;
-  --fin-text: #414539;
+  --fin-ink: var(--hz-c-ink);
+  --fin-text: var(--hz-c-ink-secondary);
   --fin-detail: #5f6459;
-  --fin-muted: #767b6e;
-  --fin-line: #d6d9d2;
-  --fin-rule: #e3e6e0;
-  --fin-petrol: #16695f;
+  --fin-muted: var(--hz-c-ink-muted);
+  --fin-line: var(--hz-c-border);
+  --fin-rule: var(--hz-c-border-subtle);
+  --fin-petrol: var(--hz-c-primary);
   display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start;
   color: var(--fin-ink); font-variant-numeric: tabular-nums;
 }
 @media (max-width: 1100px) { .wrap { grid-template-columns: minmax(0, 1fr); } }
 
 .calCard, .dayCard {
-  background: #ffffff; border: 1px solid var(--fin-line); border-radius: 10px;
+  background: var(--hz-c-surface); border: 1px solid var(--fin-line); border-radius: 10px;
   box-shadow: 0 1px 0 rgba(17, 24, 16, 0.04), 0 4px 18px -8px rgba(17, 24, 16, 0.12);
 }
 .calCard { overflow: hidden; min-width: 0; }
 .calHead { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--fin-rule); flex-wrap: wrap; }
 .nav {
   width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid var(--fin-line); border-radius: 6px;
-  background: #ffffff; color: var(--fin-text); cursor: pointer;
+  background: var(--hz-c-surface); color: var(--fin-text); cursor: pointer;
 }
-.nav:hover { background: #f4f6f3; }
+.nav:hover { background: var(--hz-c-surface-2); }
 .calTitle { font-size: 15px; font-weight: 600; min-width: 140px; text-align: center; }
 .grow { flex: 1; }
 .legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 11.5px; color: var(--fin-detail); }
 .legendItem { display: inline-flex; align-items: center; gap: 5px; }
 
-.weekdays { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); border-bottom: 1px solid var(--fin-rule); background: #f9faf8; }
+.weekdays { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); border-bottom: 1px solid var(--fin-rule); background: var(--hz-c-row-hover); }
 .weekdays > span { padding: 6px 8px; font-size: 11px; font-weight: 600; color: var(--fin-muted); }
 .grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
 .cell {
@@ -38,12 +38,12 @@
   border-right: 1px solid var(--fin-rule); border-bottom: 1px solid var(--fin-rule); cursor: pointer; outline: none;
 }
 .cell:nth-child(7n) { border-right: 0; }
-.cell:hover { background: #fbfcfa; }
-.cellOut { background: #fafbf9; }
+.cell:hover { background: var(--hz-dk-surface-2, #fbfcfa); }
+.cellOut { background: var(--hz-dk-surface-2, #fafbf9); }
 .cellOut .num { color: #b5b9b0; }
 .cellSel { box-shadow: inset 0 0 0 2px var(--fin-petrol); }
 .cellToday .num { background: var(--fin-petrol); color: #ffffff; }
-.cellOver { background: #e1efed; }
+.cellOver { background: var(--hz-c-primary-soft); }
 .num {
   align-self: flex-start; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 999px; box-sizing: border-box;
   display: inline-grid; place-items: center; font-size: 11.5px; font-weight: 600; color: var(--fin-text);
@@ -60,11 +60,11 @@
 .more { font-size: 11px; color: var(--fin-muted); padding-left: 2px; }
 
 /* The design's KIND table: dot, ground, ink. */
-.kindPay { --k-dot: #a16a2e; --k-bg: #f3ece0; --k-fg: #5a3a14; }
-.kindIn { --k-dot: #2f8a5b; --k-bg: #e2f0e9; --k-fg: #1e5a3b; }
-.kindRoutine { --k-dot: #16695f; --k-bg: #e1efed; --k-fg: #0c3f39; }
-.kindTask { --k-dot: #414539; --k-bg: #eef0ec; --k-fg: #11140f; }
-.kindLate { --k-dot: #b23a3a; --k-bg: #f8eaea; --k-fg: #7a2222; }
+.kindPay { --k-dot: var(--hz-c-accent); --k-bg: var(--hz-dk-warning-bg, #f3ece0); --k-fg: #5a3a14; }
+.kindIn { --k-dot: var(--hz-c-synced); --k-bg: var(--hz-c-synced-bg); --k-fg: #1e5a3b; }
+.kindRoutine { --k-dot: var(--hz-c-primary); --k-bg: var(--hz-c-primary-soft); --k-fg: var(--hz-c-primary-ink); }
+.kindTask { --k-dot: var(--hz-c-ink-secondary); --k-bg: var(--hz-c-bg); --k-fg: var(--hz-c-ink); }
+.kindLate { --k-dot: var(--hz-c-err); --k-bg: var(--hz-c-err-bg); --k-fg: #7a2222; }
 .dot.kindPay, .dot.kindIn, .dot.kindRoutine, .dot.kindTask, .dot.kindLate { background: var(--k-dot); }
 
 .side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
@@ -82,12 +82,12 @@
 .itemDone { color: var(--fin-muted); text-decoration: line-through; }
 .itemDetail { font-size: 12px; color: var(--fin-detail); }
 .itemAction {
-  margin-top: 4px; height: 26px; padding: 0 10px; border: 1px solid var(--fin-line); border-radius: 6px; background: #ffffff;
+  margin-top: 4px; height: 26px; padding: 0 10px; border: 1px solid var(--fin-line); border-radius: 6px; background: var(--hz-c-surface);
   color: var(--fin-text); font: 600 12px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer;
 }
-.itemAction:hover:not(:disabled) { background: #f4f6f3; }
+.itemAction:hover:not(:disabled) { background: var(--hz-c-surface-2); }
 .itemAmount { flex: none; font-size: 12.5px; font-weight: 600; }
-.amountIn { color: #2f8a5b; }
+.amountIn { color: var(--hz-c-synced); }
 .linkChip {
   display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; color: var(--fin-petrol);
   text-decoration: none; border-bottom: 1px dotted var(--fin-petrol);
@@ -98,7 +98,7 @@
 .nextLabel { flex: 1; }
 .nextCount { color: var(--fin-muted); }
 .nextAmount { min-width: 92px; text-align: right; font-weight: 600; }
-.problem { margin: 10px 14px; padding: 10px 14px; border: 1px solid #e7c9c9; border-radius: 8px; background: #fbeeee; font-size: 12.5px; color: #7a2222; }
+.problem { margin: 10px 14px; padding: 10px 14px; border: 1px solid var(--hz-dk-err-line, #e7c9c9); border-radius: 8px; background: var(--hz-dk-err-bg, #fbeeee); font-size: 12.5px; color: var(--hz-dk-expired-text, #7a2222); }
 
 @media (max-width: 720px) {
   .cell { min-height: 64px; padding: 4px; }

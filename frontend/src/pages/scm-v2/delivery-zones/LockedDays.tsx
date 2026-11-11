@@ -53,7 +53,7 @@ export function LockedDays() {
         <div className="grid gap-3 rounded-xl border border-border bg-surface p-4 sm:grid-cols-[200px_1fr_auto]">
           <label className="flex flex-col gap-1 text-[11.5px] font-semibold text-ink-muted">Day
             <DateField value={date} onChange={setDate} min={today} fullWidth aria-label="Day to lock" invalid={already} />
-            {already && <span className="font-normal text-[#8a2c2c]">This day is already locked.</span>}
+            {already && <span className="font-normal text-[color:var(--hz-dk-err,#8a2c2c)]">This day is already locked.</span>}
           </label>
           <label className="flex flex-col gap-1 text-[11.5px] font-semibold text-ink-muted">Note
             <input value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={500} placeholder="Optional" className={inputCls} />
@@ -67,7 +67,7 @@ export function LockedDays() {
         </div>
       )}
 
-      {locks.isError && <p className="text-[12.5px] text-[#8a2c2c]">Locked days could not be loaded.</p>}
+      {locks.isError && <p className="text-[12.5px] text-[color:var(--hz-dk-err,#8a2c2c)]">Locked days could not be loaded.</p>}
       {!locks.isLoading && !locks.isError && list.length === 0 && (
         <div className="flex items-center gap-3 rounded-xl border border-border bg-surface p-5 text-[13.5px] text-ink-muted">
           <span className="grid h-10 w-10 place-items-center rounded-xl bg-surface-2"><Lock size={18} aria-hidden /></span>

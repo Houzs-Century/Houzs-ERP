@@ -479,5 +479,5 @@ const ProposalDayCard = ({ day, locked, onToggleLock, lockBusy }: {
 
 const selStyle: CSSProperties = {
   padding: '6px 10px', borderRadius: 8, border: '1px solid var(--border, rgba(0,0,0,0.2))',
-  background: 'var(--bg, #fff)', color: 'var(--fg, inherit)', fontSize: 'var(--fs-13)',
+  background: 'var(--bg, var(--hz-c-surface))', color: 'var(--fg, inherit)', fontSize: 'var(--fs-13)',
 };

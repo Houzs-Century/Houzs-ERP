@@ -10,7 +10,7 @@ export function ScanInvoiceLauncher({ onClick }: { onClick: () => void }) {
       onClick={onClick}
       style={{
         display: "flex", alignItems: "center", gap: 8, width: "100%", height: 46,
-        borderRadius: 12, border: "1px solid #16695f", background: "#fff", color: "#16695f",
+        borderRadius: 12, border: "1px solid var(--hz-c-primary)", background: "var(--hz-c-surface)", color: "var(--hz-c-primary)",
         fontFamily: "inherit", fontSize: 13.5, fontWeight: 700, cursor: "pointer",
         justifyContent: "center", marginBottom: 12,
       }}

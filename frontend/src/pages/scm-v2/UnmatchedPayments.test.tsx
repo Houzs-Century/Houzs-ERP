@@ -7,7 +7,8 @@
      • every row says where it is stuck and links the screen that unsticks it; a
        card the merchant matched is matched, not listed (owner 2026-11-10: 已经match
        了就不要出现), and a payment names the same money waiting on another list —
-       the report line that guesses it, the bank line offered its entry (会不会duplicate);
+       the report line that guesses it (a QR line for a QR sale keyed as a transfer,
+       2026-11-11), the bank line offered its entry (会不会duplicate);
      • each list's chips carry their counts and narrow the list and its sentence;
      • Export all writes EVERY row of the three, whatever chip is on, a sheet or
        a part each, with the columns each table shows; one list's PDF prints it;
@@ -92,6 +93,7 @@ const printPdf = vi.fn();
 vi.mock('../../vendor/scm/lib/unmatched-payments-pdf', () => ({ generateUnmatchedPdf: (...args: unknown[]) => printPdf(...args) }));
 
 import { UnmatchedPayments } from './UnmatchedPayments';
+import { reportLinesOf, withSameMoney } from './unmatchedLists';
 
 const draw = (at = '/scm/unmatched-payments') => render(<MemoryRouter initialEntries={[at]}><UnmatchedPayments /></MemoryRouter>);
 /* The row on the list that is open: the other two stay mounted, hidden, and may name the same document. */
@@ -165,6 +167,20 @@ describe('Payments', () => {
     expect(bankLine.getAttribute('href')).toBe('/scm/bank-recon?account=310-0020&month=2026-09');
     /* Nothing on another list: nothing named. */
     expect(within(rowOf('2990-SO-2608-069')).queryByText(/^(Merchant report line|Bank money in) · /)).toBeNull();
+  });
+
+  /* Owner 2026-11-11 (QR 的单 merchant 对上了，也像卡一样): a DuitNow QR sale is keyed as a
+     transfer. Once its QR line is confirmed the server leaves it off; a QR line only guessing
+     it is the same money, named the way a card's line is — before any bank line. */
+  test('a QR sale a QR line guesses names that line, as a card does', () => {
+    const sale = { source: 'SOPAY' as const, id: 'q1', docNo: '2990-SO-2611-090', paidOn: '2026-10-31', amountSen: 200_000, approvalCode: '0000PP', customerName: 'QR Customer' };
+    const qrReport = { id: 384, acquirer_code: 'HLB', file_name: 'hlb-qr-1031.csv', period_from: '2026-10-31', period_to: '2026-10-31', open_count: 2 } as unknown as SettlementBatch;
+    const qrLine = line({ id: 9, line_no: 18, txn_date: '2026-10-31', ref: '0000PP', gross_sen: 200_000, fee_sen: 0, net_sen: 200_000, channel: 'QR', suggested: [sale], candidates: [sale] });
+    const reports = reportLinesOf([qrReport], [{ rows: [qrLine] }], '2026-05-14', '2026-11-10', '2026-11-10');
+    const credit = { ...BANK[2]!, entries: [{ jeNo: 'JE-2610-0448', entryDate: '2026-10-31', doc: '2990-SO-2611-090', who: 'QR Customer', daysApart: 2 }] };
+    const [named] = withSameMoney([row({ paymentId: 'q1', docNo: '2990-SO-2611-090', kind: 'transfer', channel: 'Bank Transfer', amountSen: 200_000,
+      state: 'TRANSFER_NOT_MATCHED', bankAccountCode: '310-0020', statementUpTo: '2026-11-30', jeNo: 'JE-2610-0448' })], reports, [credit]);
+    expect(named!.same).toEqual({ text: 'Merchant report line · HLB · 2026/10/31 · line 18', to: '/scm/merchant-recon?acq=HLB&batch=384&tab=to-choose' });
   });
 
   test('there is no stage for a card the merchant matched — it is matched', () => {

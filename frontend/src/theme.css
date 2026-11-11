@@ -1,0 +1,238 @@
+/* Light and dark palettes for the whole app.
+ *
+ * Every colour the UI paints should resolve to one of these variables, so a
+ * theme is a single block that redefines them. The Tailwind palette in
+ * tailwind.config.js reads the --hz-* CHANNELS ("r g b", no rgb()) so opacity
+ * modifiers like bg-primary/10 still compose.
+ *
+ * The theme is picked in lib/theme.ts and written to <html data-theme>.
+ * Printing is always light: paper is white whatever the screen shows. */
+
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --hz-bg: 238 240 236;
+  --hz-surface: 255 255 255;
+  --hz-surface-2: 244 246 243;
+  --hz-surface-dim: 227 230 224;
+  --hz-border: 214 217 210;
+  --hz-border-subtle: 227 230 224;
+  --hz-border-strong: 194 198 189;
+  --hz-ink: 17 20 15;
+  --hz-ink-secondary: 65 69 57;
+  --hz-ink-muted: 118 123 110;
+  --hz-ink-soft: 154 160 147;
+  --hz-primary: 22 105 95;
+  --hz-primary-soft: 225 239 237;
+  --hz-primary-ink: 12 63 57;
+  --hz-accent: 161 106 46;
+  --hz-accent-soft: 243 236 224;
+  --hz-accent-bright: 216 168 90;
+  --hz-accent-hover: 138 90 38;
+  --hz-accent-ink: 90 58 20;
+  --hz-synced: 47 138 91;
+  --hz-synced-bg: 226 240 233;
+  --hz-err: 178 58 58;
+  --hz-err-bg: 248 234 234;
+  --hz-learning: 31 58 138;
+  --hz-expired-bg: 247 233 233;
+  --hz-expired-text: 122 34 34;
+  --hz-warning-bg: 246 239 217;
+  --hz-warning-text: 110 77 18;
+  --hz-row-hover: 249 250 248;
+  --hz-shadow: 17 24 16;
+
+  /* Full colours for CSS modules and inline styles, which cannot use the
+     channel form directly. */
+  --hz-c-bg: rgb(var(--hz-bg));
+  --hz-c-surface: rgb(var(--hz-surface));
+  --hz-c-surface-2: rgb(var(--hz-surface-2));
+  --hz-c-surface-dim: rgb(var(--hz-surface-dim));
+  --hz-c-border: rgb(var(--hz-border));
+  --hz-c-border-subtle: rgb(var(--hz-border-subtle));
+  --hz-c-border-strong: rgb(var(--hz-border-strong));
+  --hz-c-ink: rgb(var(--hz-ink));
+  --hz-c-ink-secondary: rgb(var(--hz-ink-secondary));
+  --hz-c-ink-muted: rgb(var(--hz-ink-muted));
+  --hz-c-ink-soft: rgb(var(--hz-ink-soft));
+  --hz-c-primary: rgb(var(--hz-primary));
+  --hz-c-primary-soft: rgb(var(--hz-primary-soft));
+  --hz-c-primary-ink: rgb(var(--hz-primary-ink));
+  --hz-c-accent: rgb(var(--hz-accent));
+  --hz-c-accent-soft: rgb(var(--hz-accent-soft));
+  --hz-c-accent-ink: rgb(var(--hz-accent-ink));
+  --hz-c-synced: rgb(var(--hz-synced));
+  --hz-c-synced-bg: rgb(var(--hz-synced-bg));
+  --hz-c-err: rgb(var(--hz-err));
+  --hz-c-err-bg: rgb(var(--hz-err-bg));
+  --hz-c-warning-bg: rgb(var(--hz-warning-bg));
+  --hz-c-warning-text: rgb(var(--hz-warning-text));
+  --hz-c-row-hover: rgb(var(--hz-row-hover));
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --hz-bg: 14 18 16;
+  --hz-surface: 23 28 25;
+  --hz-surface-2: 30 36 33;
+  --hz-surface-dim: 38 45 41;
+  --hz-border: 50 58 53;
+  --hz-border-subtle: 39 46 42;
+  --hz-border-strong: 66 76 70;
+  --hz-ink: 230 233 227;
+  --hz-ink-secondary: 190 196 184;
+  --hz-ink-muted: 145 152 138;
+  --hz-ink-soft: 112 119 107;
+  /* Brighter than the light primary so text links stay readable on the dark
+     surface, and still dark enough to carry white button text. */
+  --hz-primary: 47 145 132;
+  --hz-primary-soft: 22 52 48;
+  --hz-primary-ink: 160 216 207;
+  --hz-accent: 201 154 91;
+  --hz-accent-soft: 46 39 28;
+  --hz-accent-bright: 216 168 90;
+  --hz-accent-hover: 222 180 120;
+  --hz-accent-ink: 227 192 138;
+  --hz-synced: 82 184 130;
+  --hz-synced-bg: 22 48 33;
+  --hz-err: 228 112 112;
+  --hz-err-bg: 58 29 29;
+  --hz-learning: 143 168 240;
+  --hz-expired-bg: 58 29 29;
+  --hz-expired-text: 240 160 160;
+  --hz-warning-bg: 53 44 20;
+  --hz-warning-text: 232 200 120;
+  --hz-row-hover: 30 37 33;
+  --hz-shadow: 0 0 0;
+
+  /* Dark-only names. A colour that was NEAR a token (not equal to it) is
+     written var(--hz-dk-<token>, <its own hex>): undefined in light mode, so
+     the original hex paints unchanged; defined here, so dark mode gets the
+     token. */
+  --hz-dk-surface: rgb(var(--hz-surface));
+  --hz-dk-bg: rgb(var(--hz-bg));
+  --hz-dk-surface-2: rgb(var(--hz-surface-2));
+  --hz-dk-surface-dim: rgb(var(--hz-surface-dim));
+  --hz-dk-border: rgb(var(--hz-border));
+  --hz-dk-border-subtle: rgb(var(--hz-border-subtle));
+  --hz-dk-border-strong: rgb(var(--hz-border-strong));
+  --hz-dk-ink: rgb(var(--hz-ink));
+  --hz-dk-ink-secondary: rgb(var(--hz-ink-secondary));
+  --hz-dk-ink-muted: rgb(var(--hz-ink-muted));
+  --hz-dk-ink-soft: rgb(var(--hz-ink-soft));
+  --hz-dk-primary: rgb(var(--hz-primary));
+  --hz-dk-primary-soft: rgb(var(--hz-primary-soft));
+  --hz-dk-primary-ink: rgb(var(--hz-primary-ink));
+  --hz-dk-accent: rgb(var(--hz-accent));
+  --hz-dk-accent-soft: rgb(var(--hz-accent-soft));
+  --hz-dk-accent-ink: rgb(var(--hz-accent-ink));
+  --hz-dk-synced: rgb(var(--hz-synced));
+  --hz-dk-synced-bg: rgb(var(--hz-synced-bg));
+  --hz-dk-err: rgb(var(--hz-err));
+  --hz-dk-err-bg: rgb(var(--hz-err-bg));
+  --hz-dk-warning-bg: rgb(var(--hz-warning-bg));
+  --hz-dk-warning-text: rgb(var(--hz-warning-text));
+  --hz-dk-row-hover: rgb(var(--hz-row-hover));
+  --hz-dk-expired-text: rgb(var(--hz-expired-text));
+  --hz-dk-primary-line: #2c5a53;
+  --hz-dk-err-line: #6a3434;
+  --hz-dk-secondary-a: #6fb59f;
+  --hz-dk-festive-b: #e8836f;
+
+  /* DataTable frozen columns on odd rows (pre-blended surface-dim over surface). */
+  --hz-dk-row-alt: color-mix(in srgb, rgb(var(--hz-surface-dim)) 35%, rgb(var(--hz-surface)));
+
+  /* Delivery Planning row marks (vendor/scm/lib/delivery-row-mark.ts). */
+  --hz-dk-mark-red: color-mix(in srgb, #e34b3f 26%, rgb(var(--hz-surface)));
+  --hz-dk-mark-orange: color-mix(in srgb, #ef8a2b 26%, rgb(var(--hz-surface)));
+  --hz-dk-mark-yellow: color-mix(in srgb, #eccb2a 26%, rgb(var(--hz-surface)));
+  --hz-dk-mark-green: color-mix(in srgb, #3ea05a 26%, rgb(var(--hz-surface)));
+  --hz-dk-mark-cyan: color-mix(in srgb, #3bb3c0 26%, rgb(var(--hz-surface)));
+  --hz-dk-mark-blue: color-mix(in srgb, #5b8fd6 26%, rgb(var(--hz-surface)));
+  --hz-dk-mark-purple: color-mix(in srgb, #8f74c4 26%, rgb(var(--hz-surface)));
+  --hz-dk-mark-grey: color-mix(in srgb, #9aa0a8 26%, rgb(var(--hz-surface)));
+
+  /* vendor/design-system/tokens.css — the CSS-module pages read these. */
+  --c-cream: rgb(var(--hz-surface));
+  --c-beige: rgb(var(--hz-surface-dim));
+  --c-orange: rgb(var(--hz-primary));
+  --c-burnt: rgb(var(--hz-primary-ink));
+  --c-paper: rgb(var(--hz-surface-2));
+  --c-ink: rgb(var(--hz-ink));
+  --c-secondary-a: #6fb59f;
+  --c-secondary-b: #8fa8f0;
+  --c-festive-a: #6fb59f;
+  --c-festive-b: #e8836f;
+  --bg-subtle: rgb(var(--hz-surface-2));
+  --fg-muted: rgb(var(--hz-ink-muted));
+  --fg-soft: rgb(var(--hz-ink-soft));
+  --fg-on-orange: #ffffff;
+  --line: rgba(230, 233, 227, 0.12);
+  --line-strong: rgba(230, 233, 227, 0.26);
+  --c-error: #e47070;
+  --c-error-bg: rgba(228, 112, 112, 0.14);
+  --c-success-bg: rgba(111, 181, 159, 0.14);
+  --c-warn: #e0a84a;
+  --c-warn-bg: rgba(224, 168, 74, 0.16);
+  --lane-proceed-fg: #8cbcf0;
+  --lane-logistics-fg: #d3a2e0;
+  --lane-ready-fg: #e0a84a;
+  --lane-dispatched-fg: #6fd0c2;
+}
+
+@media print {
+  :root,
+  :root[data-theme="dark"] {
+    color-scheme: light;
+    --hz-bg: 255 255 255;
+    --hz-surface: 255 255 255;
+    --hz-surface-2: 244 246 243;
+    --hz-surface-dim: 227 230 224;
+    --hz-border: 214 217 210;
+    --hz-border-subtle: 227 230 224;
+    --hz-border-strong: 194 198 189;
+    --hz-ink: 17 20 15;
+    --hz-ink-secondary: 65 69 57;
+    --hz-ink-muted: 118 123 110;
+    --hz-ink-soft: 154 160 147;
+    --hz-primary: 22 105 95;
+    --hz-primary-soft: 225 239 237;
+    --hz-primary-ink: 12 63 57;
+    --hz-accent: 161 106 46;
+    --hz-accent-soft: 243 236 224;
+    --hz-accent-ink: 90 58 20;
+    --hz-synced: 47 138 91;
+    --hz-synced-bg: 226 240 233;
+    --hz-err: 178 58 58;
+    --hz-err-bg: 248 234 234;
+    --hz-warning-bg: 246 239 217;
+    --hz-warning-text: 110 77 18;
+    --hz-row-hover: 255 255 255;
+  }
+}
+
+/* Phone surface (mobile.css scopes its own names under .hz-m). */
+:root[data-theme="dark"] .hz-m {
+  --ink: rgb(var(--hz-ink));
+  --ink2: rgb(var(--hz-ink-secondary));
+  --mut: rgb(var(--hz-ink-muted));
+  --mut2: rgb(var(--hz-ink-soft));
+  --brand: rgb(var(--hz-primary));
+  --brand-d: rgb(var(--hz-primary-ink));
+  --brand-bg: rgb(var(--hz-primary-soft));
+  --gold: rgb(var(--hz-accent));
+  --green: rgb(var(--hz-synced));
+  --green-bg: rgb(var(--hz-synced-bg));
+  --amber: #e0a84a;
+  --amber-bg: rgb(var(--hz-warning-bg));
+  --red: rgb(var(--hz-err));
+  --red-bg: rgb(var(--hz-err-bg));
+  --line: rgb(var(--hz-border-subtle));
+  --line-card: rgb(var(--hz-border));
+  --line2: rgb(var(--hz-border-subtle));
+  --bg: rgb(var(--hz-bg));
+  --card: rgb(var(--hz-surface));
+  --app-bg: rgb(var(--hz-bg));
+}

@@ -36,7 +36,7 @@
   flex-direction: column;
   gap: var(--space-3);
   padding: var(--space-4);
-  background: #fff;
+  background: var(--hz-c-surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-1);
@@ -53,7 +53,7 @@
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   overflow: hidden;
-  background: #fff;
+  background: var(--hz-c-surface);
 }
 
 .tableHeader {

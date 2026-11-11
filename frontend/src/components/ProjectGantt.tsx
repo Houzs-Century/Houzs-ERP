@@ -413,7 +413,7 @@ export function ProjectGantt({
                         status === "na" &&
                           "border-ink-muted bg-bg opacity-50",
                         status === "blocked" &&
-                          "border-amber-500 bg-amber-100",
+                          "border-amber-500 bg-amber-100 dark:bg-amber-900/40",
                         status === "pending" &&
                           !overdue &&
                           "border-accent bg-surface",
@@ -463,7 +463,7 @@ export function ProjectGantt({
           Done
         </span>
         <span className="inline-flex items-center gap-1">
-          <span className="inline-block h-2.5 w-2.5 rotate-45 rounded-sm border border-amber-500 bg-amber-100" />
+          <span className="inline-block h-2.5 w-2.5 rotate-45 rounded-sm border border-amber-500 bg-amber-100 dark:bg-amber-900/40" />
           Blocked
         </span>
         <span className="inline-flex items-center gap-1">

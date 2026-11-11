@@ -96,7 +96,7 @@ export function WorkingHoursTab() {
         l.day?.clockIn ? (
           <span className="font-mono text-[11px]">
             {l.day.clockIn} to {l.day.clockOut ?? "..."}
-            {l.day.outSource === "AUTO" && <span className="ml-1 text-amber-800">(no punch-out)</span>}
+            {l.day.outSource === "AUTO" && <span className="ml-1 text-amber-800 dark:text-amber-300">(no punch-out)</span>}
           </span>
         ) : (
           <span className="text-ink-muted">--</span>
@@ -127,7 +127,7 @@ export function WorkingHoursTab() {
             {l.entries.map((e) => (
               <span key={e.id} className="mr-2 whitespace-nowrap">
                 {e.departmentId != null ? deptName.get(e.departmentId) ?? "?" : "No department"} {h2(e.hours)}h
-                {e.source === "MANUAL" && <span className="ml-0.5 text-[9px] font-bold text-sky-700">HR</span>}
+                {e.source === "MANUAL" && <span className="ml-0.5 text-[9px] font-bold text-sky-700 dark:text-sky-300">HR</span>}
               </span>
             ))}
           </span>

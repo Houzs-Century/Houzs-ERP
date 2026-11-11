@@ -110,10 +110,10 @@ export function MessageAcks({
               className={cn(
                 "rounded px-1.5 py-0.5 font-medium",
                 a.ackedAt
-                  ? "bg-green-100 text-green-800"
+                  ? "bg-green-100 dark:bg-green-900/40 text-green-800 dark:text-green-300"
                   : a.overdue
-                    ? "bg-red-100 text-red-700"
-                    : "bg-amber-100 text-amber-800",
+                    ? "bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300"
+                    : "bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300",
               )}
             >
               {a.name}
@@ -132,8 +132,8 @@ export function PendingAcks({ onOpen }: { onOpen: (threadId: string) => void }) 
   const owed = data ?? [];
   if (owed.length === 0) return null;
   return (
-    <div className="space-y-0.5 rounded-md border border-amber-200 bg-amber-50 p-1.5">
-      <p className="flex items-center gap-1.5 px-1.5 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800">
+    <div className="space-y-0.5 rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 p-1.5">
+      <p className="flex items-center gap-1.5 px-1.5 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-300">
         <MailCheck className="h-3 w-3" />
         To acknowledge ({owed.length})
       </p>
@@ -143,7 +143,7 @@ export function PendingAcks({ onOpen }: { onOpen: (threadId: string) => void }) 
           type="button"
           onClick={() => onOpen(o.threadId)}
           title={`${o.fromName || o.fromAddress}: ${o.subject}`}
-          className="flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-xs text-ink hover:bg-amber-100"
+          className="flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-xs text-ink hover:bg-amber-100 dark:hover:bg-amber-900/40"
         >
           <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", o.overdue ? "bg-red-500" : "bg-amber-500")} />
           <span className="truncate">{o.subject}</span>

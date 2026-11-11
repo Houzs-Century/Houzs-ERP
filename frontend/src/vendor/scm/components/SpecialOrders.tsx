@@ -263,7 +263,7 @@ export const SpecialOrders = ({
               />
               <div>
                 <div className={styles.specialsLabel}>{labelFor(code)}</div>
-                <div className={styles.specialsSurcharge} style={{ color: 'var(--c-festive-b, #B8331F)' }}>
+                <div className={styles.specialsSurcharge} style={{ color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' }}>
                   {showPrices ? 'retired — prices RM 0, untick to remove' : 'retired — untick to remove'}
                 </div>
               </div>

@@ -55,7 +55,7 @@ function ServiceRecordForm({ initial, pending, onSave, onCancel }: { initial: Se
       <label className={lbl}>Next service date<DateField value={f.nextDate} onChange={(v) => setF({ ...f, nextDate: v })} fullWidth aria-label="Next service date" /></label>
       <label className={lbl}>Next service at (km)<input inputMode="numeric" value={f.nextKm} onChange={(e) => setF({ ...f, nextKm: e.target.value })} className={inputCls} /></label>
       <label className={`col-span-2 ${lbl}`}>Notes<input value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} className={inputCls} /></label>
-      {problem && f.what !== "" && <p className="col-span-2 text-[12px] text-[#8a2c2c]">{problem}</p>}
+      {problem && f.what !== "" && <p className="col-span-2 text-[12px] text-[color:var(--hz-dk-err,#8a2c2c)]">{problem}</p>}
       <div className="col-span-2 flex gap-2">
         <button type="button" disabled={problem !== null || pending} onClick={() => onSave(f)} className="min-h-[40px] rounded-md bg-primary px-3 text-[12.5px] font-semibold text-white disabled:opacity-50">Save</button>
         <button type="button" onClick={onCancel} className="min-h-[40px] px-2 text-[12.5px] text-ink">Cancel</button>
@@ -85,7 +85,7 @@ export function ServiceRecords({ lorryId }: { lorryId: string }) {
   return (
     <Card title="Service and workshop" action={<span className="flex gap-3"><LinkBtn onClick={() => setAdding(true)}>Add record</LinkBtn><Link to={`/fleet-health/${lorryId}`} className="text-[12.5px] font-semibold text-primary hover:underline">Repairs</Link></span>}>
       {adding && <ServiceRecordForm initial={BLANK_SERVICE} pending={create.isPending} onSave={add} onCancel={() => setAdding(false)} />}
-      {records.isError && <p className="text-[12.5px] text-[#8a2c2c]">Service records could not be loaded.</p>}
+      {records.isError && <p className="text-[12.5px] text-[color:var(--hz-dk-err,#8a2c2c)]">Service records could not be loaded.</p>}
       {!records.isLoading && !records.isError && list.length === 0 && <p className="text-[12.5px] text-ink-muted">No service recorded yet.</p>}
       {list.map((r) => editId === r.id
         ? <ServiceRecordForm key={r.id} initial={serviceFormOf(r)} pending={update.isPending} onSave={(f) => save(r.id, f)} onCancel={() => setEditId(null)} />

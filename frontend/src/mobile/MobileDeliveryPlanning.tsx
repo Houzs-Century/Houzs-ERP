@@ -495,7 +495,7 @@ export function MobileDeliveryPlanning({
               gap: 6,
               fontSize: 12.5,
               fontWeight: 700,
-              color: "#16695f",
+              color: "var(--hz-c-primary)",
               background: "none",
               border: "none",
               cursor: "pointer",
@@ -644,7 +644,7 @@ export function MobileDeliveryPlanning({
             aria-label="Filter by driver"
             value={driverFilter}
             onChange={(e) => setDriverFilter(e.target.value)}
-            style={{ marginTop: 9, width: "100%", height: 34, borderRadius: 8, border: "1px solid var(--line)", padding: "0 8px", fontSize: 13, background: "#fff" }}
+            style={{ marginTop: 9, width: "100%", height: 34, borderRadius: 8, border: "1px solid var(--line)", padding: "0 8px", fontSize: 13, background: "var(--hz-c-surface)" }}
           >
             <option value="">All drivers</option>
             {driverNames.map((n) => <option key={n} value={n}>{n}</option>)}
@@ -760,7 +760,7 @@ function MetaChip({ children }: { children: ReactNode }) {
         fontSize: 10,
         fontWeight: 700,
         color: "#5c6156",
-        background: "#f0f1ed",
+        background: "var(--hz-dk-surface-2, #f0f1ed)",
         border: "1px solid var(--line)",
         padding: "3px 8px",
         borderRadius: 7,
@@ -821,7 +821,7 @@ function SubstatusChip({ value }: { value: string }) {
         fontSize: 10,
         fontWeight: 700,
         color: tone,
-        background: "#f0f1ed",
+        background: "var(--hz-dk-surface-2, #f0f1ed)",
         border: `1px solid ${tone}`,
         padding: "3px 8px",
         borderRadius: 7,
@@ -1025,7 +1025,7 @@ function StopCard({
             alignItems: "center",
             marginTop: 11,
             padding: "9px 11px",
-            background: "#f3ece0",
+            background: "var(--hz-c-accent-soft)",
             border: "1px solid #e8dcc5",
             borderRadius: 10,
           }}
@@ -1152,13 +1152,13 @@ function PdPhotoGroup({
             fontWeight: 700,
             textTransform: "uppercase",
             letterSpacing: ".05em",
-            color: "#767b6e",
+            color: "var(--hz-c-ink-muted)",
           }}
         >
           {title}
         </span>
         {note && (
-          <span style={{ fontSize: 10.5, color: "#9aa093" }}>{note}</span>
+          <span style={{ fontSize: 10.5, color: "var(--hz-c-ink-soft)" }}>{note}</span>
         )}
       </div>
       <div style={{ display: "flex", gap: 8 }}>
@@ -1168,9 +1168,9 @@ function PdPhotoGroup({
             width: 64,
             height: 64,
             flex: "none",
-            border: "1.5px dashed #c2c6bd",
+            border: "1.5px dashed var(--hz-c-border-strong)",
             borderRadius: 11,
-            background: "#f8f9f6",
+            background: "var(--hz-dk-surface-2, #f8f9f6)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -1217,9 +1217,9 @@ function PdAttach({
         alignItems: "center",
         gap: 10,
         padding: 12,
-        border: "1px solid #d6d9d2",
+        border: "1px solid var(--hz-c-border)",
         borderRadius: 11,
-        background: "#f8f9f6",
+        background: "var(--hz-dk-surface-2, #f8f9f6)",
         cursor: "pointer",
         fontFamily: "inherit",
         textAlign: "left",
@@ -1232,7 +1232,7 @@ function PdAttach({
           height: 44,
           flex: "none",
           borderRadius: 9,
-          background: "#e1efed",
+          background: "var(--hz-c-primary-soft)",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -1254,12 +1254,12 @@ function PdAttach({
         </svg>
       </span>
       <div style={{ flex: 1 }}>
-        <div style={{ fontSize: 12.5, fontWeight: 700, color: "#11140f" }}>
+        <div style={{ fontSize: 12.5, fontWeight: 700, color: "var(--hz-c-ink)" }}>
           {title}
         </div>
-        <div style={{ fontSize: 11, color: "#767b6e" }}>{sub}</div>
+        <div style={{ fontSize: 11, color: "var(--hz-c-ink-muted)" }}>{sub}</div>
       </div>
-      <span style={{ fontSize: 16, color: "#16695f" }}>›</span>
+      <span style={{ fontSize: 16, color: "var(--hz-c-primary)" }}>›</span>
     </button>
   );
 }
@@ -1604,7 +1604,7 @@ function StopDetail({
               alignItems: "center",
               gap: 9,
               padding: "10px 12px",
-              background: "#f8eaea",
+              background: "var(--hz-c-err-bg)",
               border: "1px solid #eccccc",
               borderRadius: 11,
               marginBottom: 12,
@@ -1653,10 +1653,10 @@ function StopDetail({
                 justifyContent: "center",
                 gap: 6,
                 height: 42,
-                border: "1px solid #d6d9d2",
+                border: "1px solid var(--hz-c-border)",
                 borderRadius: 11,
-                background: "#fff",
-                color: "#16695f",
+                background: "var(--hz-c-surface)",
+                color: "var(--hz-c-primary)",
                 fontSize: 12.5,
                 fontWeight: 700,
                 textDecoration: "none",
@@ -1685,10 +1685,10 @@ function StopDetail({
                 justifyContent: "center",
                 gap: 6,
                 height: 42,
-                border: "1px solid #eceee9",
+                border: "1px solid var(--hz-dk-border-subtle, #eceee9)",
                 borderRadius: 11,
-                background: "#f4f6f3",
-                color: "#9aa093",
+                background: "var(--hz-c-surface-2)",
+                color: "var(--hz-c-ink-soft)",
                 fontSize: 12.5,
                 fontWeight: 700,
               }}
@@ -1710,10 +1710,10 @@ function StopDetail({
                 justifyContent: "center",
                 gap: 6,
                 height: 42,
-                border: "1px solid #d6d9d2",
+                border: "1px solid var(--hz-c-border)",
                 borderRadius: 11,
-                background: "#fff",
-                color: "#16695f",
+                background: "var(--hz-c-surface)",
+                color: "var(--hz-c-primary)",
                 fontSize: 12.5,
                 fontWeight: 700,
                 textDecoration: "none",
@@ -1743,10 +1743,10 @@ function StopDetail({
                 justifyContent: "center",
                 gap: 6,
                 height: 42,
-                border: "1px solid #eceee9",
+                border: "1px solid var(--hz-dk-border-subtle, #eceee9)",
                 borderRadius: 11,
-                background: "#f4f6f3",
-                color: "#9aa093",
+                background: "var(--hz-c-surface-2)",
+                color: "var(--hz-c-ink-soft)",
                 fontSize: 12.5,
                 fontWeight: 700,
               }}
@@ -1806,10 +1806,10 @@ function StopDetail({
               justifyContent: "center",
               gap: 7,
               height: 44,
-              border: "1.5px solid #16695f",
+              border: "1.5px solid var(--hz-c-primary)",
               borderRadius: 11,
-              background: "#fff",
-              color: "#16695f",
+              background: "var(--hz-c-surface)",
+              color: "var(--hz-c-primary)",
               fontFamily: "inherit",
               fontSize: 13,
               fontWeight: 700,
@@ -1904,7 +1904,7 @@ function StopDetail({
               alignItems: "flex-start",
               gap: 9,
               padding: "11px 12px",
-              background: "#f3ece0",
+              background: "var(--hz-c-accent-soft)",
               border: "1px solid #e8dcc5",
               borderRadius: 11,
               marginBottom: 12,
@@ -2047,7 +2047,7 @@ function StopDetail({
               alignItems: "center",
               justifyContent: "space-between",
               padding: "12px 14px",
-              background: "#f3ece0",
+              background: "var(--hz-c-accent-soft)",
               border: "1px solid #e8dcc5",
               borderRadius: 12,
             }}
@@ -2273,11 +2273,11 @@ function TrackStep({
         )}
       </span>
       <div style={{ flex: 1 }}>
-        <div style={{ fontSize: 12.5, fontWeight: 700, color: "#11140f" }}>
+        <div style={{ fontSize: 12.5, fontWeight: 700, color: "var(--hz-c-ink)" }}>
           {label}
         </div>
         {time && (
-          <div className="tnum" style={{ fontSize: 11, color: "#767b6e" }}>
+          <div className="tnum" style={{ fontSize: 11, color: "var(--hz-c-ink-muted)" }}>
             {time}
           </div>
         )}
@@ -2312,10 +2312,10 @@ function TrackButton({
         justifyContent: "center",
         gap: 7,
         height: primary ? 46 : 44,
-        border: primary ? "none" : "1.5px solid #16695f",
+        border: primary ? "none" : "1.5px solid var(--hz-c-primary)",
         borderRadius: 11,
-        background: primary ? (busy ? "#7fb4ad" : "#16695f") : "#fff",
-        color: primary ? "#fff" : "#16695f",
+        background: primary ? (busy ? "#7fb4ad" : "var(--hz-c-primary)") : "var(--hz-c-surface)",
+        color: primary ? "#fff" : "var(--hz-c-primary)",
         fontFamily: "inherit",
         fontSize: primary ? 13.5 : 13,
         fontWeight: primary ? 800 : 700,

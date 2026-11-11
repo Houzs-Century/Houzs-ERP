@@ -42,7 +42,7 @@ export function ExhibitionSalesTable({
       key: "customer", label: "Customer", getValue: (e) => e.customer_name,
       render: (e) => (e.customer_name === "(quick log)" ? (
         <div className="flex items-center gap-1.5">
-          <span className="rounded-full border border-amber-500/40 bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-amber-800">
+          <span className="rounded-full border border-amber-500/40 bg-amber-100 dark:bg-amber-900/40 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-amber-800 dark:text-amber-300">
             Quick log
           </span>
           {canLogSale && (
@@ -75,7 +75,7 @@ export function ExhibitionSalesTable({
       key: "balance", label: "Balance", align: "right", getValue: balanceOf, exportFormat: "money",
       render: (e) => (
         <span
-          className={cn("font-mono", balanceOf(e) > 0 ? "font-semibold text-amber-700" : "text-ink-muted")}
+          className={cn("font-mono", balanceOf(e) > 0 ? "font-semibold text-amber-700 dark:text-amber-300" : "text-ink-muted")}
           title={balanceOf(e) > 0 ? "Balance to chase post-event" : "Settled in full"}
         >
           {formatCurrency(balanceOf(e))}

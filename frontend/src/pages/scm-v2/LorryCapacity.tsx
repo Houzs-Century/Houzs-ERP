@@ -304,7 +304,7 @@ export const LorryCapacity = ({ period, overviewLorries }: { period: { from: str
 
       {/* Running cost is never shown as a number that is too small: the server says why it is missing. */}
       {data?.km_incomplete && (
-        <p role="status" className="mb-3 text-sm text-amber-700">Running cost not shown: {data.km_incomplete}</p>
+        <p role="status" className="mb-3 text-sm text-amber-700 dark:text-amber-300">Running cost not shown: {data.km_incomplete}</p>
       )}
 
       {/* Per-lorry metric table — the shared DataTable (owner 2026-07-25:

@@ -60,7 +60,7 @@ export function ScanCodesPanel({ jobId, jobsQueryKey }: { jobId: string; jobsQue
     onError: writeFailed,
   });
 
-  const box: React.CSSProperties = { marginTop: 8, padding: 10, borderRadius: 10, border: '1px solid var(--line, #e3e1d9)', background: 'var(--surface, #fff)', fontSize: 12.5 };
+  const box: React.CSSProperties = { marginTop: 8, padding: 10, borderRadius: 10, border: '1px solid var(--line, #e3e1d9)', background: 'var(--surface, var(--hz-c-surface))', fontSize: 12.5 };
   if (result) return <div style={box}>{result}</div>;
   if (isLoading) return <div style={box}>Loading the codes on this delivery order...</div>;
   if (error) return <div style={box}>{error instanceof Error ? error.message : 'Could not load the codes.'}</div>;
@@ -72,21 +72,21 @@ export function ScanCodesPanel({ jobId, jobsQueryKey }: { jobId: string; jobsQue
   return (
     <div style={box}>
       <div style={{ fontWeight: 700, marginBottom: 4 }}>Supplier codes</div>
-      <div style={{ color: 'var(--fg-muted, #767b6e)', marginBottom: 8 }}>
+      <div style={{ color: 'var(--fg-muted, var(--hz-c-ink-muted))', marginBottom: 8 }}>
         Choose which item each code on the delivery order is. Leave a code on "Not on the PO" for free gifts. Saved codes match automatically next time.
       </div>
       {rows.map((r) => (
         <div key={r.printedCode} style={{ padding: '6px 0', borderTop: '1px solid var(--line, #eeece5)' }}>
           <div>
             <span style={{ fontFamily: 'ui-monospace, monospace', fontWeight: 700 }}>{r.printedCode}</span> x{r.qty}
-            {r.status === 'name_matched' && <span style={{ marginLeft: 6, fontWeight: 600, fontSize: 11, color: '#16695f' }}>matched by name</span>}
+            {r.status === 'name_matched' && <span style={{ marginLeft: 6, fontWeight: 600, fontSize: 11, color: 'var(--hz-c-primary)' }}>matched by name</span>}
           </div>
-          {r.description && <div style={{ color: 'var(--fg-muted, #767b6e)', margin: '2px 0 4px' }}>{r.description}</div>}
+          {r.description && <div style={{ color: 'var(--fg-muted, var(--hz-c-ink-muted))', margin: '2px 0 4px' }}>{r.description}</div>}
           <select
             aria-label={`Item for ${r.printedCode}`}
             value={valueOf(r)}
             onChange={(e) => setPicked((cur) => ({ ...cur, [r.printedCode]: e.target.value }))}
-            style={{ width: '100%', minHeight: 36, borderRadius: 8, border: '1px solid var(--line, #d6d3c8)', padding: '0 8px', font: 'inherit', background: '#fff' }}
+            style={{ width: '100%', minHeight: 36, borderRadius: 8, border: '1px solid var(--line, #d6d3c8)', padding: '0 8px', font: 'inherit', background: 'var(--hz-c-surface)' }}
           >
             <option value="">Not on the PO</option>
             {choices.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
@@ -97,7 +97,7 @@ export function ScanCodesPanel({ jobId, jobsQueryKey }: { jobId: string; jobsQue
         type="button"
         disabled={pairs.length === 0 || save.isPending}
         onClick={() => save.mutate(pairs)}
-        style={{ marginTop: 8, minHeight: 36, padding: '0 14px', borderRadius: 8, border: 'none', background: pairs.length === 0 ? '#c9c6bb' : '#16695f', color: '#fff', font: 'inherit', fontWeight: 700, cursor: pairs.length === 0 ? 'default' : 'pointer' }}
+        style={{ marginTop: 8, minHeight: 36, padding: '0 14px', borderRadius: 8, border: 'none', background: pairs.length === 0 ? '#c9c6bb' : 'var(--hz-c-primary)', color: '#fff', font: 'inherit', fontWeight: 700, cursor: pairs.length === 0 ? 'default' : 'pointer' }}
       >
         {save.isPending ? 'Saving...' : `Save ${pairs.length} ${pairs.length === 1 ? 'code' : 'codes'}`}
       </button>

@@ -44,8 +44,8 @@ function RackCell({ grnId, header, line, onSaved }: { grnId: string; header: Hea
     : <RackRow grnId={grnId} header={header} line={line} onSaved={onSaved} />;
 }
 
-const LABEL_STYLE = { fontSize: 9.5, fontWeight: 700, letterSpacing: ".14em", textTransform: "uppercase", color: "#9aa093" } as const;
-const SMALL_BTN = { height: 32, padding: "0 10px", borderRadius: 8, border: "1px solid #e3e6e0", background: "#fff", fontFamily: "inherit", fontSize: 12.5 } as const;
+const LABEL_STYLE = { fontSize: 9.5, fontWeight: 700, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--hz-c-ink-soft)" } as const;
+const SMALL_BTN = { height: 32, padding: "0 10px", borderRadius: 8, border: "1px solid var(--hz-c-border-subtle)", background: "var(--hz-c-surface)", fontFamily: "inherit", fontSize: 12.5 } as const;
 
 function SplitRow({ grnId, header, line, onSaved }: { grnId: string; header: Header; line: Line; onSaved: () => void }) {
   const warehouseId = str(header?.warehouse_id);
@@ -76,16 +76,16 @@ function SplitRow({ grnId, header, line, onSaved }: { grnId: string; header: Hea
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
         <span style={LABEL_STYLE}>Racks</span>
         {split.splits.map((s) => (
-          <span key={s.rackId} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 4px 3px 9px", borderRadius: 999, background: "#e8f1ef", color: "#11140f", fontSize: 12.5 }}>
+          <span key={s.rackId} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 4px 3px 9px", borderRadius: 999, background: "var(--hz-dk-surface-2, #e8f1ef)", color: "var(--hz-c-ink)", fontSize: 12.5 }}>
             {labelOf(s.rackId)} &times; {s.qty}
             <button type="button" aria-label={`Remove ${labelOf(s.rackId)}`} disabled={busy}
               onClick={() => split.remove(s.rackId, onSaved)}
-              style={{ display: "inline-flex", border: "none", background: "transparent", padding: 2, color: "#767b6e" }}>
+              style={{ display: "inline-flex", border: "none", background: "transparent", padding: 2, color: "var(--hz-c-ink-muted)" }}>
               <X size={12} />
             </button>
           </span>
         ))}
-        <span style={{ fontSize: 11.5, color: split.remaining > 0 ? "#8a5a00" : "#16695f" }}>
+        <span style={{ fontSize: 11.5, color: split.remaining > 0 ? "#8a5a00" : "var(--hz-c-primary)" }}>
           {split.remaining > 0 ? `${split.remaining} of ${qtyAccepted} not on a rack yet` : `All ${qtyAccepted} on racks`}
         </span>
       </div>
@@ -95,9 +95,9 @@ function SplitRow({ grnId, header, line, onSaved }: { grnId: string; header: Hea
           <span style={{ fontSize: 13, fontWeight: 600 }}>{labelOf(pending)}</span>
           <input aria-label="Quantity on this rack" inputMode="numeric" value={qty}
             onChange={(e) => setQty(e.target.value.replace(/[^0-9]/g, ""))}
-            style={{ width: 64, height: 32, padding: "0 8px", borderRadius: 8, border: "1px solid #e3e6e0", fontFamily: "inherit", fontSize: 13 }} />
+            style={{ width: 64, height: 32, padding: "0 8px", borderRadius: 8, border: "1px solid var(--hz-c-border-subtle)", fontFamily: "inherit", fontSize: 13 }} />
           <button type="button" onClick={add} disabled={busy || !qty}
-            style={{ ...SMALL_BTN, border: "1px solid #16695f", background: "#16695f", color: "#fff", fontWeight: 600 }}>
+            style={{ ...SMALL_BTN, border: "1px solid var(--hz-c-primary)", background: "var(--hz-c-primary)", color: "#fff", fontWeight: 600 }}>
             Add
           </button>
           <button type="button" onClick={() => setPending("")} style={SMALL_BTN}>Cancel</button>
@@ -105,19 +105,19 @@ function SplitRow({ grnId, header, line, onSaved }: { grnId: string; header: Hea
       ) : !scanOpen && (
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <button type="button" onClick={() => setScanOpen(true)} disabled={busy || options.length === 0}
-            style={{ ...SMALL_BTN, display: "inline-flex", alignItems: "center", gap: 5, border: "1px solid #16695f", color: "#16695f", fontWeight: 600 }}>
+            style={{ ...SMALL_BTN, display: "inline-flex", alignItems: "center", gap: 5, border: "1px solid var(--hz-c-primary)", color: "var(--hz-c-primary)", fontWeight: 600 }}>
             <Camera size={14} /> Scan
           </button>
           <select aria-label="Pick a rack" value="" disabled={busy || options.length === 0}
             onChange={(e) => e.target.value && choose(e.target.value)}
-            style={{ flex: 1, minWidth: 0, height: 32, padding: "0 8px", borderRadius: 8, border: "1px solid #e3e6e0", background: "#fff", fontFamily: "inherit", fontSize: 13 }}>
+            style={{ flex: 1, minWidth: 0, height: 32, padding: "0 8px", borderRadius: 8, border: "1px solid var(--hz-c-border-subtle)", background: "var(--hz-c-surface)", fontFamily: "inherit", fontSize: 13 }}>
             <option value="">{racksQ.isLoading ? "Loading racks…" : options.length === 0 ? "No racks in this warehouse" : "Pick a rack"}</option>
             {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </div>
       )}
       {scanOpen && <RackScanPanel racks={racks} onClose={() => setScanOpen(false)} onRack={choose} />}
-      {split.error && <div role="alert" style={{ fontSize: 11.5, color: "#b23a3a" }}>{split.error}</div>}
+      {split.error && <div role="alert" style={{ fontSize: 11.5, color: "var(--hz-c-err)" }}>{split.error}</div>}
     </div>
   );
 }
@@ -137,7 +137,7 @@ function RackRow({ grnId, header, line, onSaved }: { grnId: string; header: Head
     return (
       <div style={{ flexBasis: "100%", display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginTop: 6 }}>
         <span style={LABEL_STYLE}>Racks</span>
-        <span style={{ fontSize: 12, color: "#11140f" }}>
+        <span style={{ fontSize: 12, color: "var(--hz-c-ink)" }}>
           {postedSplit.map((r) => `${racksQ.labelById.get(r.rackId) ?? "?"} × ${r.qty}`).join(" · ")}
         </span>
       </div>
@@ -160,14 +160,14 @@ function RackRow({ grnId, header, line, onSaved }: { grnId: string; header: Head
 
   return (
     <div style={{ flexBasis: "100%", display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginTop: 6 }}>
-      <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: ".14em", textTransform: "uppercase", color: "#9aa093" }}>Rack</span>
+      <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--hz-c-ink-soft)" }}>Rack</span>
       {editable ? (
         <select
           aria-label="Rack"
           value={current}
           disabled={setRack.isPending || racksQ.isLoading || options.length === 0}
           onChange={(e) => onChange(e.target.value)}
-          style={{ flex: 1, minWidth: 0, height: 34, padding: "0 8px", borderRadius: 8, border: "1px solid #e3e6e0", background: "#fff", fontFamily: "inherit", fontSize: 13, color: "var(--ink)" }}
+          style={{ flex: 1, minWidth: 0, height: 34, padding: "0 8px", borderRadius: 8, border: "1px solid var(--hz-c-border-subtle)", background: "var(--hz-c-surface)", fontFamily: "inherit", fontSize: 13, color: "var(--ink)" }}
         >
           <option value="">
             {racksQ.isLoading ? "Loading racks…" : options.length === 0 ? "No racks in this warehouse" : "— No rack —"}
@@ -175,14 +175,14 @@ function RackRow({ grnId, header, line, onSaved }: { grnId: string; header: Head
           {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
       ) : (
-        <span style={{ fontSize: 12, color: "#11140f" }}>{currentLabel || "—"}</span>
+        <span style={{ fontSize: 12, color: "var(--hz-c-ink)" }}>{currentLabel || "—"}</span>
       )}
       {editable && !scanOpen && (
         <button
           type="button"
           onClick={() => { setError(null); setScanOpen(true); }}
           disabled={setRack.isPending || racksQ.isLoading || options.length === 0}
-          style={{ display: "inline-flex", alignItems: "center", gap: 5, height: 34, padding: "0 10px", borderRadius: 8, border: "1px solid #16695f", background: "#fff", color: "#16695f", fontFamily: "inherit", fontSize: 12.5, fontWeight: 600 }}
+          style={{ display: "inline-flex", alignItems: "center", gap: 5, height: 34, padding: "0 10px", borderRadius: 8, border: "1px solid var(--hz-c-primary)", background: "var(--hz-c-surface)", color: "var(--hz-c-primary)", fontFamily: "inherit", fontSize: 12.5, fontWeight: 600 }}
         >
           <Camera size={14} /> Scan
         </button>
@@ -194,7 +194,7 @@ function RackRow({ grnId, header, line, onSaved }: { grnId: string; header: Head
           onRack={(rackId) => { setScanOpen(false); onChange(rackId); }}
         />
       )}
-      {error && <div role="alert" style={{ flexBasis: "100%", fontSize: 11.5, color: "#b23a3a" }}>{error}</div>}
+      {error && <div role="alert" style={{ flexBasis: "100%", fontSize: 11.5, color: "var(--hz-c-err)" }}>{error}</div>}
     </div>
   );
 }
@@ -224,22 +224,22 @@ function RackScanPanel({ racks, onRack, onClose }: {
   }, [start, stop]);
 
   return (
-    <div style={{ flexBasis: "100%", display: "flex", flexDirection: "column", gap: 6, padding: 8, borderRadius: 10, border: "1px solid #e3e6e0", background: "#f4f6f3" }}>
+    <div style={{ flexBasis: "100%", display: "flex", flexDirection: "column", gap: 6, padding: 8, borderRadius: 10, border: "1px solid var(--hz-c-border-subtle)", background: "var(--hz-c-surface-2)" }}>
       <video ref={scanner.videoRef} playsInline muted style={{ width: "100%", borderRadius: 8, background: "#000" }} />
       <div style={{ display: "flex", gap: 6 }}>
-        <span style={{ flex: 1, fontSize: 11.5, color: "#767b6e", alignSelf: "center" }}>Aim at the rack sticker</span>
+        <span style={{ flex: 1, fontSize: 11.5, color: "var(--hz-c-ink-muted)", alignSelf: "center" }}>Aim at the rack sticker</span>
         {scanner.torchSupported && (
           <button type="button" aria-label="Torch" onClick={() => void scanner.toggleTorch()}
-            style={{ height: 32, padding: "0 10px", borderRadius: 8, border: "1px solid #e3e6e0", background: "#fff" }}>
+            style={{ height: 32, padding: "0 10px", borderRadius: 8, border: "1px solid var(--hz-c-border-subtle)", background: "var(--hz-c-surface)" }}>
             <Flashlight size={14} />
           </button>
         )}
         <button type="button" aria-label="Close scanner" onClick={() => { stop(); onClose(); }}
-          style={{ height: 32, padding: "0 10px", borderRadius: 8, border: "1px solid #e3e6e0", background: "#fff" }}>
+          style={{ height: 32, padding: "0 10px", borderRadius: 8, border: "1px solid var(--hz-c-border-subtle)", background: "var(--hz-c-surface)" }}>
           <X size={14} />
         </button>
       </div>
-      {scanner.cameraError && <div role="alert" style={{ fontSize: 11.5, color: "#b23a3a" }}>{scanner.cameraError}</div>}
+      {scanner.cameraError && <div role="alert" style={{ fontSize: 11.5, color: "var(--hz-c-err)" }}>{scanner.cameraError}</div>}
       {refusal && <div role="status" style={{ fontSize: 11.5, color: "#8a5a00" }}>{refusal}</div>}
     </div>
   );

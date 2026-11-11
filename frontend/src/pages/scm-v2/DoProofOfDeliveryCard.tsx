@@ -63,7 +63,7 @@ export function DoProofOfDeliveryCard({ h }: { h: DoPodFields }) {
           {h.signature_data && (
             <div className="mt-2">
               <div className="text-[12.5px] text-ink-muted">Customer signature</div>
-              <img src={h.signature_data} alt="Customer signature" className="max-h-24 rounded border border-border bg-white" />
+              <img src={h.signature_data} alt="Customer signature" className="max-h-24 rounded border border-border bg-surface" />
             </div>
           )}
           {h.pod_lat != null && h.pod_lng != null && (

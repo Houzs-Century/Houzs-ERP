@@ -60,11 +60,11 @@ const STAGE_LABEL: Record<string, string> = {
 
 const STAGE_COLOR: Record<string, string> = {
   pending_review: "bg-ink-muted/10 text-ink-secondary border-ink-muted/20",
-  under_verification: "bg-amber-500/10 text-amber-700 border-amber-500/30",
-  pending_solution: "bg-amber-500/10 text-amber-700 border-amber-500/30",
-  pending_supplier_pickup: "bg-violet-500/10 text-violet-700 border-violet-500/30",
-  pending_item_ready: "bg-violet-500/10 text-violet-700 border-violet-500/30",
-  pending_delivery_service: "bg-blue-500/10 text-blue-700 border-blue-500/30",
+  under_verification: "bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30",
+  pending_solution: "bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30",
+  pending_supplier_pickup: "bg-violet-500/10 text-violet-700 dark:text-violet-300 border-violet-500/30",
+  pending_item_ready: "bg-violet-500/10 text-violet-700 dark:text-violet-300 border-violet-500/30",
+  pending_delivery_service: "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/30",
   completed: "bg-synced/10 text-synced border-synced/30",
 };
 

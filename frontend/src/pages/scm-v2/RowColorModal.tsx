@@ -21,7 +21,7 @@ export function RowColorModal({ rowKey, title, currentColour, onClose }: {
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        style={{ background: 'var(--c-paper, #fff)', borderRadius: 10, padding: 18, minWidth: 264, boxShadow: '0 12px 40px rgba(0,0,0,0.2)' }}
+        style={{ background: 'var(--c-paper, var(--hz-c-surface))', borderRadius: 10, padding: 18, minWidth: 264, boxShadow: '0 12px 40px rgba(0,0,0,0.2)' }}
       >
         <div style={{ fontWeight: 700 }}>Mark colour</div>
         <div style={{ fontSize: 12, color: 'var(--fg-muted, #777)', margin: '2px 0 14px' }}>{title}</div>

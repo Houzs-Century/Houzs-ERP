@@ -625,7 +625,7 @@ function ProjectListView({
             <button
               onClick={() => { if (tickOnly) setAssignedOnly(!showAssigned); }}
               className={myEventsOn ? "chip on" : "chip"}
-              style={myEventsOn ? undefined : { borderColor: "#bcdcd7", color: "#16695f" }}
+              style={myEventsOn ? undefined : { borderColor: "#bcdcd7", color: "var(--hz-c-primary)" }}
             >
               My events
             </button>
@@ -638,17 +638,17 @@ function ProjectListView({
 
       <div ref={scrollRef} className="scroll" style={{ padding: 14, paddingBottom: 120 }} onScroll={(e) => { if (scrollMemory) scrollMemory.current = e.currentTarget.scrollTop; }}>
 
-        {isLoading && <div style={{ textAlign: "center", color: "#9aa093", fontSize: 12, padding: "26px 0" }}>Loading…</div>}
-        {error && <div style={{ textAlign: "center", color: "#b23a3a", fontSize: 12, padding: "26px 0" }}>Couldn't load projects. Pull to retry.</div>}
+        {isLoading && <div style={{ textAlign: "center", color: "var(--hz-c-ink-soft)", fontSize: 12, padding: "26px 0" }}>Loading…</div>}
+        {error && <div style={{ textAlign: "center", color: "var(--hz-c-err)", fontSize: 12, padding: "26px 0" }}>Couldn't load projects. Pull to retry.</div>}
         {!isLoading && !error && myPendingOn && rows.length === 0 && (
           <div style={{ textAlign: "center", padding: "26px 0" }}>
-            <div style={{ color: "#9aa093", fontSize: 12 }}>Nothing pending on your side.</div>
+            <div style={{ color: "var(--hz-c-ink-soft)", fontSize: 12 }}>Nothing pending on your side.</div>
             <button className="tinybtn" style={{ marginTop: 10 }} onClick={() => setMyPendingOn(false)}>Show all events</button>
           </div>
         )}
         {!isLoading && !error && !myPendingOn && showAssigned && rows.length === 0 && (
           <div style={{ textAlign: "center", padding: "26px 0" }}>
-            <div style={{ color: "#9aa093", fontSize: 12 }}>No events assigned to you{stageFilter !== "all" || debouncedQ ? " match these filters" : " yet"}.</div>
+            <div style={{ color: "var(--hz-c-ink-soft)", fontSize: 12 }}>No events assigned to you{stageFilter !== "all" || debouncedQ ? " match these filters" : " yet"}.</div>
             <button className="tinybtn" style={{ marginTop: 10 }} onClick={() => setAssignedOnly(false)}>Show all events</button>
           </div>
         )}
@@ -699,7 +699,7 @@ function ProjectListView({
                     {!!(r as any).my_pending_titles && (
                       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
                         {String((r as any).my_pending_titles).split("|").map((t: string) => (
-                          <span key={t} className="rbadge" style={{ background: "#fdf1e3", color: "#a16a2e" }}>
+                          <span key={t} className="rbadge" style={{ background: "var(--hz-dk-warning-bg, #fdf1e3)", color: "var(--hz-c-accent)" }}>
                             ⏳ {t}
                           </span>
                         ))}
@@ -707,7 +707,7 @@ function ProjectListView({
                     )}
                     <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, paddingTop: 8, borderTop: "1px solid #f0f1ed" }}>
                       <span className="tnum" style={{ flex: 1, minWidth: 0, fontSize: 11, color: "var(--mut)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {dates}{r.pic_name ? <> · PIC <b style={{ color: "#414539" }}>{r.pic_name}</b></> : ""}
+                        {dates}{r.pic_name ? <> · PIC <b style={{ color: "var(--hz-c-ink-secondary)" }}>{r.pic_name}</b></> : ""}
                       </span>
                       {salesList
                         ? (r.sales_tasks_total ?? 0) > 0 && (
@@ -730,7 +730,7 @@ function ProjectListView({
             {/* "Loading more…" while the next page is in flight; nothing once
                 every page is loaded (hasNextPage false). */}
             {visibleRows.length > 0 && isFetchingNextPage && (
-              <div style={{ textAlign: "center", padding: "14px 0 2px", fontSize: 11.5, color: "#9aa093" }}>Loading more…</div>
+              <div style={{ textAlign: "center", padding: "14px 0 2px", fontSize: 11.5, color: "var(--hz-c-ink-soft)" }}>Loading more…</div>
             )}
             {!visibleRows.length && !searchTransition.isSearching && (
               <div className="empty">
@@ -1326,8 +1326,8 @@ function ProjectDetailView({
       )}
 
       <div className="scroll" style={{ padding: 14, paddingBottom: 120 }}>
-        {isLoading && <div style={{ textAlign: "center", color: "#9aa093", fontSize: 12, padding: "26px 0" }}>Loading…</div>}
-        {error && <div style={{ textAlign: "center", color: "#b23a3a", fontSize: 12, padding: "26px 0" }}>Couldn't load this project.</div>}
+        {isLoading && <div style={{ textAlign: "center", color: "var(--hz-c-ink-soft)", fontSize: 12, padding: "26px 0" }}>Loading…</div>}
+        {error && <div style={{ textAlign: "center", color: "var(--hz-c-err)", fontSize: 12, padding: "26px 0" }}>Couldn't load this project.</div>}
 
         {!isLoading && !error && data && p && (
           <>
@@ -1340,8 +1340,8 @@ function ProjectDetailView({
               <div
                 role="alert"
                 style={{
-                  border: "1px solid #b23a3a", borderRadius: 8, padding: "10px 12px",
-                  marginBottom: 12, fontSize: 12, lineHeight: 1.45, color: "#b23a3a",
+                  border: "1px solid var(--hz-c-err)", borderRadius: 8, padding: "10px 12px",
+                  marginBottom: 12, fontSize: 12, lineHeight: 1.45, color: "var(--hz-c-err)",
                   background: "rgba(178,58,58,0.06)",
                 }}
               >
@@ -1758,7 +1758,7 @@ function ProjectDetailView({
           width: 48,
           height: 48,
           borderRadius: "50%",
-          background: "#16695f",
+          background: "var(--hz-c-primary)",
           color: "#fff",
           border: "none",
           boxShadow: "0 4px 14px rgba(17,20,15,.28)",
@@ -1809,9 +1809,9 @@ function ProjectDetailView({
                     display: "inline-flex",
                     alignItems: "center",
                     gap: 8,
-                    background: i === 0 ? "#16695f" : "#fff",
-                    color: i === 0 ? "#fff" : "#414539",
-                    border: i === 0 ? "none" : "1px solid #d6d9d2",
+                    background: i === 0 ? "var(--hz-c-primary)" : "var(--hz-c-surface)",
+                    color: i === 0 ? "#fff" : "var(--hz-c-ink-secondary)",
+                    border: i === 0 ? "none" : "1px solid var(--hz-c-border)",
                     borderRadius: 22,
                     padding: "9px 14px",
                     boxShadow: "0 4px 12px rgba(17,20,15,.18)",
@@ -1839,7 +1839,7 @@ function ProjectDetailView({
               width: 56,
               height: 56,
               borderRadius: "50%",
-              background: "#16695f",
+              background: "var(--hz-c-primary)",
               color: "#fff",
               border: "none",
               boxShadow: "0 6px 18px rgba(17,20,15,.3)",
@@ -1957,16 +1957,16 @@ function SalesAttending({
   return (
     <>
       <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "10px 0 6px" }}>
-        <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#9aa093" }}>Sales attending</span>
+        <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--hz-c-ink-soft)" }}>Sales attending</span>
         {canWrite && !adding && (available.length > 0 || others.length > 0) && (
           <button className="tinybtn" style={{ marginLeft: "auto" }} disabled={busy} onClick={() => setAdding(true)}>+ Add</button>
         )}
       </div>
       {adding && (
         <div style={{ marginBottom: 8 }}>
-          <div style={{ maxHeight: 240, overflowY: "auto", border: "1px solid #e3e6e0", borderRadius: 10 }}>
+          <div style={{ maxHeight: 240, overflowY: "auto", border: "1px solid var(--hz-c-border-subtle)", borderRadius: 10 }}>
             {pickItems.length === 0 && (
-              <div style={{ fontSize: 12, color: "#9aa093", padding: "9px 11px" }}>Everyone is already attending.</div>
+              <div style={{ fontSize: 12, color: "var(--hz-c-ink-soft)", padding: "9px 11px" }}>Everyone is already attending.</div>
             )}
             {pickItems.map((it, i) => (
               <label
@@ -1979,16 +1979,16 @@ function SalesAttending({
                   disabled={busy}
                   onChange={() => (it.kind === "rep" ? toggle(it.id) : toggleStaff(it.id))}
                 />
-                {it.kind === "rep" && <span className="money" style={{ fontSize: 10, color: "#9aa093" }}>{it.code || "—"}</span>}
+                {it.kind === "rep" && <span className="money" style={{ fontSize: 10, color: "var(--hz-c-ink-soft)" }}>{it.code || "—"}</span>}
                 <span style={{ fontSize: 13, flex: 1, minWidth: 0 }}>{it.name}</span>
                 {it.kind === "staff" && (
-                  <span style={{ fontSize: 8.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".05em", color: "#b4791a", background: "#fdf1dc", borderRadius: 10, padding: "1px 6px" }} title="Not in the Sales Team yet — adding puts them in it">+ team</span>
+                  <span style={{ fontSize: 8.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".05em", color: "#b4791a", background: "var(--hz-dk-warning-bg, #fdf1dc)", borderRadius: 10, padding: "1px 6px" }} title="Not in the Sales Team yet — adding puts them in it">+ team</span>
                 )}
               </label>
             ))}
             {others.length > 0 && (
               <button type="button" onClick={() => setShowOthers(!showOthers)}
-                style={{ display: "block", width: "100%", textAlign: "left", padding: "9px 11px", borderTop: "1px solid #eceee9", background: "none", border: 0, color: "#16695f", fontSize: 12 }}>
+                style={{ display: "block", width: "100%", textAlign: "left", padding: "9px 11px", borderTop: "1px solid #eceee9", background: "none", border: 0, color: "var(--hz-c-primary)", fontSize: 12 }}>
                 {showOthers ? "Hide staff outside the Sales Team" : `Show other staff (${others.length}) - not in the Sales Team`}
               </button>
             )}
@@ -1996,7 +1996,7 @@ function SalesAttending({
           <div style={{ display: "flex", gap: 7, marginTop: 7 }}>
             <button
               className="tinybtn"
-              style={{ background: "#16695f", borderColor: "#16695f", color: "#fff" }}
+              style={{ background: "var(--hz-c-primary)", borderColor: "#16695f", color: "#fff" }}
               disabled={busy || pickedCount === 0}
               onClick={addSelected}
             >
@@ -2006,13 +2006,13 @@ function SalesAttending({
           </div>
         </div>
       )}
-      {attendees.length === 0 && <div style={{ fontSize: 12, color: "#9aa093" }}>None assigned.</div>}
+      {attendees.length === 0 && <div style={{ fontSize: 12, color: "var(--hz-c-ink-soft)" }}>None assigned.</div>}
       {attendees.length > 0 && (
-        <div style={{ border: "1px solid #e3e6e0", borderRadius: 10, overflow: "hidden" }}>
+        <div style={{ border: "1px solid var(--hz-c-border-subtle)", borderRadius: 10, overflow: "hidden" }}>
           {attendees.map((s, i) => (
             <div key={s.sales_rep_id} style={{ display: "flex", alignItems: "center", gap: 9, padding: "9px 11px", borderTop: i === 0 ? "none" : "1px solid #eceee9" }}>
-              <span className="money" style={{ fontSize: 10, color: "#9aa093" }}>{s.rep_code || "—"}</span>
-              <span style={{ fontSize: 12.5, fontWeight: 600, color: "#11140f", flex: 1, minWidth: 0 }}>{s.rep_name || s.user_name || "—"}</span>
+              <span className="money" style={{ fontSize: 10, color: "var(--hz-c-ink-soft)" }}>{s.rep_code || "—"}</span>
+              <span style={{ fontSize: 12.5, fontWeight: 600, color: "var(--hz-c-ink)", flex: 1, minWidth: 0 }}>{s.rep_name || s.user_name || "—"}</span>
               {(notOpenedByRep.get(s.sales_rep_id) ?? 0) > 0 && (
                 <span className="money" style={{ fontSize: 11, fontWeight: 700, color: "#b42318" }}>{fmtRmSen(notOpenedByRep.get(s.sales_rep_id))}</span>
               )}
@@ -2101,17 +2101,17 @@ function SalesPanel({
         {!posQ.data?.pos_enabled && <MobilePmsSalesBills query={bills} />}
         {!posQ.data?.pos_enabled && <MobilePmsSalesOrders projectId={projectId} finalTotalRm={finalTotalRm} />}
         <div style={{ display: "flex", alignItems: "center", margin: "0 0 6px" }}>
-          <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#9aa093" }}>Sales entries</span>
-          {canLogSale && <button className="tinybtn" style={{ marginLeft: "auto", color: "#16695f", borderColor: "#bcdcd7" }} disabled={busy} onClick={logSale}>+ Log sale</button>}
+          <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--hz-c-ink-soft)" }}>Sales entries</span>
+          {canLogSale && <button className="tinybtn" style={{ marginLeft: "auto", color: "var(--hz-c-primary)", borderColor: "#bcdcd7" }} disabled={busy} onClick={logSale}>+ Log sale</button>}
         </div>
         {income.length === 0 ? (
-          <div style={{ fontSize: 12, color: "#9aa093" }}>No sales recorded.</div>
+          <div style={{ fontSize: 12, color: "var(--hz-c-ink-soft)" }}>No sales recorded.</div>
         ) : (
-          <div style={{ border: "1px solid #eceee9", borderRadius: 10, overflow: "hidden" }}>
+          <div style={{ border: "1px solid var(--hz-dk-border-subtle, #eceee9)", borderRadius: 10, overflow: "hidden" }}>
             {income.map((line, i) => (
               <div key={`${line.source ?? "l"}-${line.id}`} style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", borderTop: i === 0 ? "none" : "1px solid #eceee9", flexWrap: "wrap" }}>
-                <span style={{ flex: 1, minWidth: 90, fontSize: 12, color: "#414539" }}>{line.description || ledgerCategoryLabel(line.category || "sales")}</span>
-                <span className="money" style={{ fontSize: 12, fontWeight: 700, color: "#2f8a5b" }}>{formatCurrency(line.amount)}</span>
+                <span style={{ flex: 1, minWidth: 90, fontSize: 12, color: "var(--hz-c-ink-secondary)" }}>{line.description || ledgerCategoryLabel(line.category || "sales")}</span>
+                <span className="money" style={{ fontSize: 12, fontWeight: 700, color: "var(--hz-c-synced)" }}>{formatCurrency(line.amount)}</span>
               </div>
             ))}
           </div>
@@ -2155,7 +2155,7 @@ function StagePipeline({ stage, sections }: { stage: string | null; sections?: S
       ? { background: "#2f8a5b", color: "#fff" }
       : state === "current"
         ? { background: "#cf9a2e", color: "#fff" }
-        : { background: "#fff", border: "2px solid #d6d9d2", color: "#9aa093" };
+        : { background: "var(--hz-c-surface)", border: "2px solid var(--hz-c-border)", color: "var(--hz-c-ink-soft)" };
 
   return (
     <div className="card"><div className="card-b">
@@ -2165,7 +2165,7 @@ function StagePipeline({ stage, sections }: { stage: string | null; sections?: S
         {([["#2f8a5b", "Done"], ["#cf9a2e", "Pending"], ["#b23a3a", "Overdue"]] as const).map(([c, t]) => (
           <div key={t} style={{ display: "flex", alignItems: "center", gap: 5 }}>
             <span style={{ width: 9, height: 9, borderRadius: "50%", background: c }} />
-            <span style={{ fontSize: 10, color: "#414539" }}>{t}</span>
+            <span style={{ fontSize: 10, color: "var(--hz-c-ink-secondary)" }}>{t}</span>
           </div>
         ))}
       </div>
@@ -2173,8 +2173,8 @@ function StagePipeline({ stage, sections }: { stage: string | null; sections?: S
         {steps.map((st, i) => (
           <div key={`${st.label}-${i}`} className="pstage">
             <span className="pdot" style={dotStyle(st.state)}>{i + 1}</span>
-            <span style={{ fontSize: 9, fontWeight: st.state === "todo" ? 400 : 700, color: st.state === "todo" ? "#767b6e" : "#11140f", lineHeight: 1.1 }}>{st.label}</span>
-            {st.sub && <span style={{ fontSize: 8, color: "#9aa093" }}>{st.sub}</span>}
+            <span style={{ fontSize: 9, fontWeight: st.state === "todo" ? 400 : 700, color: st.state === "todo" ? "var(--hz-c-ink-muted)" : "var(--hz-c-ink)", lineHeight: 1.1 }}>{st.label}</span>
+            {st.sub && <span style={{ fontSize: 8, color: "var(--hz-c-ink-soft)" }}>{st.sub}</span>}
           </div>
         ))}
       </div>
@@ -2258,7 +2258,7 @@ function TasklistSectionView({
       <div
         key={it.id}
         id={`pms-task-${it.id}`}
-        style={flashId === it.id ? { outline: "2px solid #16695f", outlineOffset: 2, borderRadius: 8 } : undefined}
+        style={flashId === it.id ? { outline: "2px solid var(--hz-c-primary)", outlineOffset: 2, borderRadius: 8 } : undefined}
       >
         <TaskRow
           item={it}
@@ -2280,7 +2280,7 @@ function TasklistSectionView({
     <details className="pacc" open>
       <summary>
         <span className="psec-t">{`Tasklist${totalTasks ? ` (${totalTasks})` : ""}`}</span>
-        <span style={{ marginLeft: "auto", fontSize: 10, color: "#9aa093" }}>{view === "gantt" ? "Timeline" : "List · Section"}</span>
+        <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--hz-c-ink-soft)" }}>{view === "gantt" ? "Timeline" : "List · Section"}</span>
         <svg className="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 6 6 6-6 6" /></svg>
       </summary>
       <div className="pbody">
@@ -2299,7 +2299,7 @@ function TasklistSectionView({
           />
         ) : (
           <>
-            {totalTasks === 0 && !orderedSecs.length && <div style={{ fontSize: 12, color: "#9aa093" }}>No tasks yet.</div>}
+            {totalTasks === 0 && !orderedSecs.length && <div style={{ fontSize: 12, color: "var(--hz-c-ink-soft)" }}>No tasks yet.</div>}
             {orderedSecs.map((sec) => {
               const rows = bySection.get(sec.id) ?? [];
               // Owner 2026-07-17: a section with NO visible tasks for this
@@ -2312,8 +2312,8 @@ function TasklistSectionView({
                 <div key={sec.id} style={{ marginTop: 10 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0 2px" }}>
                     {/* Owner 2026-07-15: drop the trailing "DOCUMENTS" word — display only, section name in data stays intact (backend gating matches it). */}
-                    <span style={{ fontSize: 11, fontWeight: 800, color: "#11140f" }}>{(sec.name || "").replace(/\s+documents$/i, "")}</span>
-                    {prog && <span style={{ marginLeft: "auto", fontSize: 10, fontWeight: 700, color: "#9aa093" }}>{prog.done}/{prog.total}</span>}
+                    <span style={{ fontSize: 11, fontWeight: 800, color: "var(--hz-c-ink)" }}>{(sec.name || "").replace(/\s+documents$/i, "")}</span>
+                    {prog && <span style={{ marginLeft: "auto", fontSize: 10, fontWeight: 700, color: "var(--hz-c-ink-soft)" }}>{prog.done}/{prog.total}</span>}
                   </div>
                   {renderRows(rows)}
                 </div>
@@ -2326,7 +2326,7 @@ function TasklistSectionView({
               return (
                 <div style={{ marginTop: 10 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0 2px" }}>
-                    <span style={{ fontSize: 11, fontWeight: 800, color: "#11140f" }}>Uncategorised</span>
+                    <span style={{ fontSize: 11, fontWeight: 800, color: "var(--hz-c-ink)" }}>Uncategorised</span>
                   </div>
                   {renderRows(rows)}
                 </div>
@@ -2342,7 +2342,7 @@ function TasklistSectionView({
 // Per-photo remark (owner 2026-07-16): each attachment carries its own caption,
 // edited inline under its file chip and saved via PATCH /checklist/attachments/:id.
 // Owns its state so a parent re-render doesn't clobber an in-progress edit.
-const REMARK_UNSAVED = { fontSize: 11, color: "#B8331F", paddingLeft: 2, paddingTop: 2 } as const;
+const REMARK_UNSAVED = { fontSize: 11, color: "var(--hz-dk-festive-b, #B8331F)", paddingLeft: 2, paddingTop: 2 } as const;
 
 export function AttachRemark({ att, canEdit }: { att: TaskAttachment; canEdit: boolean }) {
   const [cap, setCap] = useState(att.caption ?? "");
@@ -2669,7 +2669,7 @@ function TaskRow({
       <div className="docrow" style={{ flexWrap: "wrap", alignItems: "flex-start" }}>
         <span style={{ width: 15, height: 15, flex: "none" }} />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: "#11140f" }}>{it.title}</div>
+          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--hz-c-ink)" }}>{it.title}</div>
           {it.role_label && c && roleLabelParts(it.role_label).map((part) => (
             <span key={part} className="rbadge" style={{ background: `${roleColor(part)}1f`, color: roleColor(part), marginTop: 4, marginRight: 4, display: "inline-flex" }}>{formatRoleLabel(part)}</span>
           ))}
@@ -2681,7 +2681,7 @@ function TaskRow({
               key={v}
               className="tinybtn"
               disabled={!canTick || busy || on}
-              style={{ background: on ? (v === "none" ? "#f4f6f3" : v === "unpaid" ? "#f6efd9" : "#e2f0e9") : "#fff", color: v === "none" ? "#767b6e" : v === "unpaid" ? "#6e4d12" : "#2f8a5b", fontWeight: on ? 800 : 700 }}
+              style={{ background: on ? (v === "none" ? "var(--hz-c-surface-2)" : v === "unpaid" ? "var(--hz-c-warning-bg)" : "var(--hz-c-synced-bg)") : "var(--hz-c-surface)", color: v === "none" ? "var(--hz-c-ink-muted)" : v === "unpaid" ? "var(--hz-c-warning-text)" : "var(--hz-c-synced)", fontWeight: on ? 800 : 700 }}
               onClick={() => setPill(v)}
             >
               {label}
@@ -2691,7 +2691,7 @@ function TaskRow({
         {canAttach && (
           <>
             <input ref={fileRef} type="file" multiple style={{ display: "none" }} onChange={async (e) => { const files = Array.from(e.target.files || []); for (const f of files) await upload(f); if (fileRef.current) fileRef.current.value = ""; }} />
-            <button className="tinybtn" style={{ minWidth: 60, display: "inline-flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, lineHeight: 1, boxSizing: "border-box", border: "none", background: "transparent", color: "#767b6e", padding: "4px 6px" }} disabled={busy} onClick={() => fileRef.current?.click()} title={attachments.length ? `${attachments.length} file(s)` : "Attach"}>
+            <button className="tinybtn" style={{ minWidth: 60, display: "inline-flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, lineHeight: 1, boxSizing: "border-box", border: "none", background: "transparent", color: "var(--hz-c-ink-muted)", padding: "4px 6px" }} disabled={busy} onClick={() => fileRef.current?.click()} title={attachments.length ? `${attachments.length} file(s)` : "Attach"}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none" }}><path d="M13.2 6.5 7 12.7a4.4 4.4 0 1 0 6.2 6.2l6.5-6.5a2.9 2.9 0 1 0-4.1-4.1l-6.5 6.5a1.5 1.5 0 1 0 2.1 2.1l6.1-6.2" /></svg>
               <span style={{ fontSize: 9, fontWeight: 700 }}>{attachments.length ? `Attach (${attachments.length})` : "Attach"}</span>
             </button>
@@ -2720,22 +2720,22 @@ function TaskRow({
             <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
           </span>
         ) : na ? (
-          <span style={{ width: 15, height: 15, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", border: "2px solid #d6d9d2", fontSize: 8, fontWeight: 800, color: "#9aa093" }}>N</span>
+          <span style={{ width: 15, height: 15, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", border: "2px solid var(--hz-c-border)", fontSize: 8, fontWeight: 800, color: "var(--hz-c-ink-soft)" }}>N</span>
         ) : (
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9aa093" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /></svg>
         )}
       </span>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 12, fontWeight: 600, color: na ? "#9aa093" : "#11140f", textDecoration: na ? "line-through" : "none" }}>{it.title}</div>
+        <div style={{ fontSize: 12, fontWeight: 600, color: na ? "var(--hz-c-ink-soft)" : "var(--hz-c-ink)", textDecoration: na ? "line-through" : "none" }}>{it.title}</div>
         {it.role_label && c && roleLabelParts(it.role_label).map((part) => (
           <span key={part} className="rbadge" style={{ background: `${roleColor(part)}1f`, color: roleColor(part), marginTop: 4, marginRight: 4, display: "inline-flex" }}>{formatRoleLabel(part)}</span>
         ))}
       </div>
-      {it.due_date && <span style={{ fontSize: 9.5, color: "#9aa093", whiteSpace: "nowrap" }}>{dm(it.due_date)}</span>}
+      {it.due_date && <span style={{ fontSize: 9.5, color: "var(--hz-c-ink-soft)", whiteSpace: "nowrap" }}>{dm(it.due_date)}</span>}
       {canAttach && (
         <>
           <input ref={fileRef} type="file" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; const cap = pendingCaptionRef.current; pendingCaptionRef.current = undefined; if (f) void upload(f, cap); }} />
-          <button className="tinybtn" style={{ minWidth: 60, display: "inline-flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, lineHeight: 1, boxSizing: "border-box", border: "none", background: "transparent", color: "#767b6e", padding: "4px 6px" }} disabled={busy} onClick={() => void startAttach()} title={isDefectList ? "Write a remark, then upload" : attachments.length ? `${attachments.length} file(s)` : "Attach"}>
+          <button className="tinybtn" style={{ minWidth: 60, display: "inline-flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, lineHeight: 1, boxSizing: "border-box", border: "none", background: "transparent", color: "var(--hz-c-ink-muted)", padding: "4px 6px" }} disabled={busy} onClick={() => void startAttach()} title={isDefectList ? "Write a remark, then upload" : attachments.length ? `${attachments.length} file(s)` : "Attach"}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none" }}><path d="M13.2 6.5 7 12.7a4.4 4.4 0 1 0 6.2 6.2l6.5-6.5a2.9 2.9 0 1 0-4.1-4.1l-6.5 6.5a1.5 1.5 0 1 0 2.1 2.1l6.1-6.2" /></svg>
             <span style={{ fontSize: 9, fontWeight: 700 }}>{attachments.length ? `Attach (${attachments.length})` : isDefectList ? "Add photo" : "Attach"}</span>
           </button>
@@ -2752,10 +2752,10 @@ function TaskRow({
           {/* Toggle (owner 2026-08-10): show only the reversing action — Approve
               hidden once approved, Reject hidden once rejected. */}
           {reviewStatus !== "approved" && (
-            <button className="tinybtn" style={{ background: "#e2f0e9", borderColor: "#bcdcd7", color: "#2f8a5b" }} disabled={busy} onClick={() => review("approve")}>Approve</button>
+            <button className="tinybtn" style={{ background: "var(--hz-c-synced-bg)", borderColor: "#bcdcd7", color: "var(--hz-c-synced)" }} disabled={busy} onClick={() => review("approve")}>Approve</button>
           )}
           {reviewStatus !== "rejected" && (
-            <button className="tinybtn" style={{ background: "#f7e7e5", borderColor: "#e6c9c6", color: "#a13a34" }} disabled={busy} onClick={() => review("reject")}>Reject</button>
+            <button className="tinybtn" style={{ background: "var(--hz-dk-err-bg, #f7e7e5)", borderColor: "#e6c9c6", color: "#a13a34" }} disabled={busy} onClick={() => review("reject")}>Reject</button>
           )}
         </>
       )}
@@ -2769,7 +2769,7 @@ function TaskRow({
       <ItemRemark it={it} canEdit={canTick} />}
     {reviewStatus && reviewStatus !== "approved" && (
       <div style={{ padding: "0 0 6px 24px" }}>
-        <span className="rbadge" style={{ background: reviewStatus === "rejected" ? "#f7e7e5" : "#f6efd9", color: reviewStatus === "rejected" ? "#a13a34" : "#6e4d12" }}>{humanize(reviewStatus).toUpperCase()}</span>
+        <span className="rbadge" style={{ background: reviewStatus === "rejected" ? "#f7e7e5" : "var(--hz-c-warning-bg)", color: reviewStatus === "rejected" ? "#a13a34" : "var(--hz-c-warning-text)" }}>{humanize(reviewStatus).toUpperCase()}</span>
       </div>
     )}
     {fileViewer}
@@ -2838,8 +2838,8 @@ const crewIsEmpty = (c: PhaseCrew): boolean =>
 function CrewLine({ role, person }: { role: string; person: CrewPerson }) {
   return (
     <div style={{ display: "flex", gap: 7, fontSize: 10.5, lineHeight: 1.45, marginBottom: 3 }}>
-      <span style={{ flex: "none", width: 44, color: "#9aa093", fontWeight: 600 }}>{role}</span>
-      <span style={{ flex: 1, minWidth: 0, color: "#414539" }}>
+      <span style={{ flex: "none", width: 44, color: "var(--hz-c-ink-soft)", fontWeight: 600 }}>{role}</span>
+      <span style={{ flex: 1, minWidth: 0, color: "var(--hz-c-ink-secondary)" }}>
         {person.name}
         {person.phone ? <span style={{ color: "#8a8f82" }}> · {formatPhone(person.phone)}</span> : null}
       </span>
@@ -2996,20 +2996,20 @@ function SetupDismantle({
     <details className="pacc">
       <summary>
         <span className="psec-t">Setup &amp; dismantle</span>
-        <span className="rbadge" style={{ marginLeft: "auto", background: "#e2f0e9", color: "#2f8a5b" }}>LOGISTIC</span>
+        <span className="rbadge" style={{ marginLeft: "auto", background: "var(--hz-c-synced-bg)", color: "var(--hz-c-synced)" }}>LOGISTIC</span>
         <svg className="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 6 6 6-6 6" /></svg>
       </summary>
       <div className="pbody">
-        {!anyData && !canWrite && <div style={{ fontSize: 12, color: "#9aa093", marginBottom: 12 }}>No setup or dismantle logistics assigned yet.</div>}
+        {!anyData && !canWrite && <div style={{ fontSize: 12, color: "var(--hz-c-ink-soft)", marginBottom: 12 }}>No setup or dismantle logistics assigned yet.</div>}
 
         {/* Schedule reference (owner 2026-07-23, mobile port of the desktop
             block): the mall handbook's official schedule screenshot. Owner
             2026-07-29: hidden from everyone except logistic (view/download)
             and the BD/owner edit tier. */}
         {canScheduleView && (
-        <div style={{ border: "1px dashed #d6d9d2", borderRadius: 10, padding: "9px 11px", marginBottom: 14 }}>
-          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#767b6e", marginBottom: 6 }}>Schedule reference</div>
-          {scheduleShots.length === 0 && <div style={{ fontSize: 12, color: "#9aa093", marginBottom: canScheduleEdit ? 8 : 0 }}>No schedule screenshot uploaded yet.</div>}
+        <div style={{ border: "1px dashed var(--hz-c-border)", borderRadius: 10, padding: "9px 11px", marginBottom: 14 }}>
+          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--hz-c-ink-muted)", marginBottom: 6 }}>Schedule reference</div>
+          {scheduleShots.length === 0 && <div style={{ fontSize: 12, color: "var(--hz-c-ink-soft)", marginBottom: canScheduleEdit ? 8 : 0 }}>No schedule screenshot uploaded yet.</div>}
           {scheduleShots.length > 0 && (
             <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: canScheduleEdit ? 8 : 0 }}>
               {scheduleShots.map((ph, i) => (
@@ -3020,7 +3020,7 @@ function SetupDismantle({
                       items: scheduleShots.map((s): MediaItem => ({ r2_key: s.r2_key, content_type: mimeFromKey(s.r2_key), caption: s.caption ?? "Schedule reference" })),
                       idx: i,
                     })}
-                    style={{ borderRadius: 8, overflow: "hidden", border: "1px solid #e3e6e0", cursor: "pointer" }}
+                    style={{ borderRadius: 8, overflow: "hidden", border: "1px solid var(--hz-c-border-subtle)", cursor: "pointer" }}
                   >
                     <R2Thumb r2Key={ph.r2_key} style={{ width: 84, height: 64 }} />
                   </div>
@@ -3029,7 +3029,7 @@ function SetupDismantle({
                       aria-label="Remove schedule screenshot"
                       disabled={busy}
                       onClick={() => void removeSchedule(ph)}
-                      style={{ position: "absolute", top: -6, right: -6, width: 20, height: 20, borderRadius: "50%", border: "1px solid #d6d9d2", background: "#fff", color: "#a13a34", fontSize: 12, lineHeight: 1, cursor: "pointer" }}
+                      style={{ position: "absolute", top: -6, right: -6, width: 20, height: 20, borderRadius: "50%", border: "1px solid var(--hz-c-border)", background: "var(--hz-c-surface)", color: "#a13a34", fontSize: 12, lineHeight: 1, cursor: "pointer" }}
                     >
                       ×
                     </button>
@@ -3071,9 +3071,9 @@ function SetupDismantle({
 
         {/* Service / Exchange photos (owner 2026-07-29): mobile-only capture of
             the mid-fair service/exchange trip; desktop keeps a read-only gallery. */}
-        <div style={{ border: "1px dashed #d6d9d2", borderRadius: 10, padding: "9px 11px", marginBottom: 14 }}>
-          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#767b6e", marginBottom: 6 }}>Service / Exchange photos</div>
-          {serviceShots.length === 0 && <div style={{ fontSize: 12, color: "#9aa093", marginBottom: canScheduleEdit ? 8 : 0 }}>No service photo yet.</div>}
+        <div style={{ border: "1px dashed var(--hz-c-border)", borderRadius: 10, padding: "9px 11px", marginBottom: 14 }}>
+          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--hz-c-ink-muted)", marginBottom: 6 }}>Service / Exchange photos</div>
+          {serviceShots.length === 0 && <div style={{ fontSize: 12, color: "var(--hz-c-ink-soft)", marginBottom: canScheduleEdit ? 8 : 0 }}>No service photo yet.</div>}
           {serviceShots.length > 0 && (
             <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: canScheduleEdit ? 8 : 0 }}>
               {serviceShots.map((ph, i) => (
@@ -3084,7 +3084,7 @@ function SetupDismantle({
                       items: serviceShots.map((s): MediaItem => ({ r2_key: s.r2_key, content_type: mimeFromKey(s.r2_key), caption: s.caption ?? "Service photo" })),
                       idx: i,
                     })}
-                    style={{ borderRadius: 8, overflow: "hidden", border: "1px solid #e3e6e0", cursor: "pointer" }}
+                    style={{ borderRadius: 8, overflow: "hidden", border: "1px solid var(--hz-c-border-subtle)", cursor: "pointer" }}
                   >
                     <R2Thumb r2Key={ph.r2_key} style={{ width: 84, height: 64 }} />
                   </div>
@@ -3093,7 +3093,7 @@ function SetupDismantle({
                       aria-label="Remove service photo"
                       disabled={busy}
                       onClick={() => void removeService(ph)}
-                      style={{ position: "absolute", top: -6, right: -6, width: 20, height: 20, borderRadius: "50%", border: "1px solid #d6d9d2", background: "#fff", color: "#a13a34", fontSize: 12, lineHeight: 1, cursor: "pointer" }}
+                      style={{ position: "absolute", top: -6, right: -6, width: 20, height: 20, borderRadius: "50%", border: "1px solid var(--hz-c-border)", background: "var(--hz-c-surface)", color: "#a13a34", fontSize: 12, lineHeight: 1, cursor: "pointer" }}
                     >
                       ×
                     </button>
@@ -3138,7 +3138,7 @@ function SetupDismantle({
           reloadPhotos={reloadPhotos}
           confirm={confirm}
         />
-        <div style={{ height: 1, background: "#e3e6e0", margin: "14px 0" }} />
+        <div style={{ height: 1, background: "var(--hz-c-surface-dim)", margin: "14px 0" }} />
         <PhaseBlock
           kind="Dismantle"
           projectId={projectId}
@@ -3321,7 +3321,7 @@ function PhaseBlock({
           )}
           {!crewIsEmpty(crew) && (
             <div style={{ margin: "0 0 10px" }}>
-              <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: "#9aa093", marginBottom: 7 }}>Planned crew</div>
+              <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--hz-c-ink-soft)", marginBottom: 7 }}>Planned crew</div>
               {crew.lorryCrew.map((l, i) => (
                 <div key={i} style={{ marginBottom: 9, paddingLeft: 9, borderLeft: "2px solid #cfd4c9" }}>
                   <div style={{ fontSize: 11, fontWeight: 800, color: "#2f3329", marginBottom: 4 }}>{l.plate || `Lorry ${i + 1}`}</div>
@@ -3349,7 +3349,7 @@ function PhaseBlock({
               Driver / Helper rows, so the helper portal matches the owner's. */}
           {!crewIsEmpty(crew) && (
             <div style={{ gridColumn: "1 / -1", marginTop: 2 }}>
-              <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: "#9aa093", marginBottom: 7 }}>Planned crew</div>
+              <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--hz-c-ink-soft)", marginBottom: 7 }}>Planned crew</div>
               {crew.lorryCrew.map((l, i) => (
                 <div key={i} style={{ marginBottom: 9, paddingLeft: 9, borderLeft: "2px solid #cfd4c9" }}>
                   <div style={{ fontSize: 11, fontWeight: 800, color: "#2f3329", marginBottom: 4 }}>{l.plate || `Lorry ${i + 1}`}</div>
@@ -3375,7 +3375,7 @@ function PhaseBlock({
           type="button"
           disabled={busy || (!photoKey && !canPhoto)}
           onClick={() => { if (photoKey) setPhotoOpen(true); else if (canPhoto) fileRef.current?.click(); }}
-          style={{ width: "100%", border: "1px solid #d6d9d2", borderRadius: 11, background: "#fff", display: "flex", alignItems: "center", gap: 10, marginTop: 0, overflow: "hidden", cursor: photoKey || canPhoto ? "pointer" : "default", fontFamily: "inherit", padding: 0, textAlign: "left" }}
+          style={{ width: "100%", border: "1px solid var(--hz-c-border)", borderRadius: 11, background: "var(--hz-c-surface)", display: "flex", alignItems: "center", gap: 10, marginTop: 0, overflow: "hidden", cursor: photoKey || canPhoto ? "pointer" : "default", fontFamily: "inherit", padding: 0, textAlign: "left" }}
         >
           {photoKey ? (
             <R2Thumb r2Key={photoKey} style={{ width: 64, height: 54, flex: "none" }} />
@@ -3385,8 +3385,8 @@ function PhaseBlock({
             </div>
           )}
           <div style={{ padding: "7px 0", minWidth: 0 }}>
-            <div style={{ fontSize: 11.5, fontWeight: 700, color: "#11140f" }}>{kind} photo{photoKey ? " · tap to view" : canPhoto ? " · tap to upload" : ""}</div>
-            <div style={{ fontSize: 9.5, color: "#9aa093", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{uploaderCredit(photo)}</div>
+            <div style={{ fontSize: 11.5, fontWeight: 700, color: "var(--hz-c-ink)" }}>{kind} photo{photoKey ? " · tap to view" : canPhoto ? " · tap to upload" : ""}</div>
+            <div style={{ fontSize: 9.5, color: "var(--hz-c-ink-soft)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{uploaderCredit(photo)}</div>
           </div>
         </button>
         {photoKey && canPhoto && (
@@ -3406,7 +3406,7 @@ function PhaseBlock({
                 setBusy(false);
               }
             }}
-            style={{ position: "absolute", top: -6, right: -6, width: 20, height: 20, borderRadius: "50%", border: "1px solid #d6d9d2", background: "#fff", color: "#a13a34", fontSize: 12, lineHeight: 1, cursor: "pointer" }}
+            style={{ position: "absolute", top: -6, right: -6, width: 20, height: 20, borderRadius: "50%", border: "1px solid var(--hz-c-border)", background: "var(--hz-c-surface)", color: "#a13a34", fontSize: 12, lineHeight: 1, cursor: "pointer" }}
           >
             ×
           </button>
@@ -3632,7 +3632,7 @@ function FloorPlans({
     <details className="pacc">
       <summary>
         <span className="psec-t">Floor plans &amp; layout</span>
-        {transfers.length > 0 && <span style={{ marginLeft: "auto", fontSize: 10, color: "#9aa093" }}>{transfers.length} transfer{transfers.length === 1 ? "" : "s"}</span>}
+        {transfers.length > 0 && <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--hz-c-ink-soft)" }}>{transfers.length} transfer{transfers.length === 1 ? "" : "s"}</span>}
         <svg className="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 6 6 6-6 6" /></svg>
       </summary>
       <div className="pbody">
@@ -3661,11 +3661,11 @@ function FloorPlans({
             // have none, so they stay view-only, exactly as before.
             const removable = canDeleteFiles && t.atts.length === files.length;
             return (
-              <div key={t.key} style={{ border: "1px solid #d6d9d2", borderRadius: 12, background: "#fff", padding: "10px 11px", display: "flex", flexDirection: "column", gap: 8 }}>
+              <div key={t.key} style={{ border: "1px solid var(--hz-c-border)", borderRadius: 12, background: "var(--hz-c-surface)", padding: "10px 11px", display: "flex", flexDirection: "column", gap: 8 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 13, fontWeight: 800, color: "#11140f", marginRight: "auto" }}>{t.label}</span>
+                  <span style={{ fontSize: 13, fontWeight: 800, color: "var(--hz-c-ink)", marginRight: "auto" }}>{t.label}</span>
                   {tileItem && <ReviewBadge reviewStatus={tileItem.review_status} item={tileItem} hasFiles={files.length > 0} />}
-                  <span className="rbadge" style={{ background: files.length ? t.bg : "#f0f1ed", color: files.length ? t.col : "#9aa093" }}>
+                  <span className="rbadge" style={{ background: files.length ? t.bg : "var(--hz-dk-surface-2, #f0f1ed)", color: files.length ? t.col : "var(--hz-c-ink-soft)" }}>
                     {files.length ? `${t.badge}${files.length > 1 ? ` · ${files.length}` : ""}` : "NONE"}
                   </span>
                 </div>
@@ -3686,7 +3686,7 @@ function FloorPlans({
                     tabIndex={canWrite && t.task ? 0 : undefined}
                     onClick={() => { if (canWrite && t.task && !busy) startPlanUpload(t.task); }}
                     onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && canWrite && t.task && !busy) { e.preventDefault(); startPlanUpload(t.task); } }}
-                    style={{ border: "1px dashed #d6d9d2", borderRadius: 9, padding: "13px 10px", textAlign: "center", fontSize: 11, color: "#9aa093", ...(canWrite && t.task ? { cursor: "pointer" } : {}) }}
+                    style={{ border: "1px dashed var(--hz-c-border)", borderRadius: 9, padding: "13px 10px", textAlign: "center", fontSize: 11, color: "var(--hz-c-ink-soft)", ...(canWrite && t.task ? { cursor: "pointer" } : {}) }}
                   >
                     {canWrite && t.task ? "No file yet — tap to upload" : "No file yet"}
                   </div>
@@ -3714,10 +3714,10 @@ function FloorPlans({
         </div>
         <input ref={planUpRef} type="file" accept="image/*,.pdf" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadPlanFile(f); }} />
 
-        <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#9aa093", margin: "10px 0 6px" }}>Stock transfer record</div>
-        {stockOutAtts.length === 0 && <div style={{ fontSize: 12, color: "#9aa093", marginBottom: 8 }}>No stock transfer recorded yet.</div>}
+        <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--hz-c-ink-soft)", margin: "10px 0 6px" }}>Stock transfer record</div>
+        {stockOutAtts.length === 0 && <div style={{ fontSize: 12, color: "var(--hz-c-ink-soft)", marginBottom: 8 }}>No stock transfer recorded yet.</div>}
         {stockOutAtts.length > 0 && (
-          <div style={{ border: "1px solid #e3e6e0", borderRadius: 10, overflow: "hidden", marginBottom: 8 }}>
+          <div style={{ border: "1px solid var(--hz-c-border-subtle)", borderRadius: 10, overflow: "hidden", marginBottom: 8 }}>
             {stockOutAtts.map((a, i) => (
               <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 11px", borderTop: i === 0 ? "none" : "1px solid #eceee9", flexWrap: "wrap" }}>
                 {/* Owner 2026-07-31: show the record itself, not just its file
@@ -3726,16 +3726,16 @@ function FloorPlans({
                 <span
                   role="button"
                   onClick={() => setDocView({ r2_key: a.r2_key, content_type: a.mime_type ?? mimeFromKey(a.r2_key), caption: a.file_name ?? "Stock transfer record" })}
-                  style={{ flex: "none", width: 54, height: 44, borderRadius: 7, overflow: "hidden", border: "1px solid #e3e6e0", cursor: "pointer", display: "block" }}
+                  style={{ flex: "none", width: 54, height: 44, borderRadius: 7, overflow: "hidden", border: "1px solid var(--hz-c-border-subtle)", cursor: "pointer", display: "block" }}
                 >
                   {/^image\//.test(a.mime_type ?? mimeFromKey(a.r2_key) ?? "")
                     ? <R2Thumb r2Key={a.r2_key} style={{ width: 54, height: 44 }} />
                     : <span className="ph" style={{ display: "block", width: 54, height: 44 }} />}
                 </span>
                 <span className="rbadge" style={a.dir === "IN"
-                  ? { background: "#e2ecf5", color: "#2f5c8a" }
-                  : { background: "#e2f0e9", color: "#2f8a5b" }}>{a.dir}</span>
-                <span style={{ flex: 1, minWidth: 80, fontSize: 11, color: "#414539" }}>
+                  ? { background: "var(--hz-dk-surface-2, #e2ecf5)", color: "#2f5c8a" }
+                  : { background: "var(--hz-c-synced-bg)", color: "var(--hz-c-synced)" }}>{a.dir}</span>
+                <span style={{ flex: 1, minWidth: 80, fontSize: 11, color: "var(--hz-c-ink-secondary)" }}>
                   {[a.file_name || "Record", a.uploader_name || null, a.uploaded_at ? dm(a.uploaded_at) : null].filter(Boolean).join(" · ")}
                 </span>
                 <button
@@ -3870,7 +3870,7 @@ function QuickTotalSalesField({
   };
 
   return (
-    <label style={{ background: "#f4f6f3", borderRadius: 10, padding: 11, display: "block" }}>
+    <label style={{ background: "var(--hz-c-surface-2)", borderRadius: 10, padding: 11, display: "block" }}>
       <span className="pkv-l">Total sales (RM)</span>
       <input
         className="fld-i money"
@@ -3950,18 +3950,18 @@ function QuickRentalField({
 
   if (fromBooks.length > 0) {
     return (
-      <div style={{ background: "#f4f6f3", borderRadius: 10, padding: 11 }}>
+      <div style={{ background: "var(--hz-c-surface-2)", borderRadius: 10, padding: 11 }}>
         <span className="pkv-l">Rental (RM) · 入账</span>
-        <div className="money" style={{ fontSize: 15, fontWeight: 700, color: "#11140f", marginTop: 4 }}>
+        <div className="money" style={{ fontSize: 15, fontWeight: 700, color: "var(--hz-c-ink)", marginTop: 4 }}>
           {formatCurrency(fromBooks.reduce((s, l) => s + (l.amount || 0), 0))}
         </div>
-        <div style={{ fontSize: 10, color: "#9aa093", marginTop: 2 }}>{[...new Set(fromBooks.map((l) => l.doc_no).filter(Boolean))].join(", ")}</div>
+        <div style={{ fontSize: 10, color: "var(--hz-c-ink-soft)", marginTop: 2 }}>{[...new Set(fromBooks.map((l) => l.doc_no).filter(Boolean))].join(", ")}</div>
       </div>
     );
   }
 
   return (
-    <label style={{ background: "#f4f6f3", borderRadius: 10, padding: 11, display: "block" }}>
+    <label style={{ background: "var(--hz-c-surface-2)", borderRadius: 10, padding: 11, display: "block" }}>
       <span className="pkv-l">Rental (RM)</span>
       <input
         className="fld-i money"
@@ -4031,19 +4031,19 @@ function FinancialSnapshot({
       </summary>
       <div className="pbody">
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-          <div style={{ background: "#f4f6f3", borderRadius: 10, padding: 11 }}>
+          <div style={{ background: "var(--hz-c-surface-2)", borderRadius: 10, padding: 11 }}>
             <div className="pkv-l">Total sales</div>
-            <div className="money" style={{ fontSize: 16, fontWeight: 800, color: "#11140f", marginTop: 3 }}>{formatCurrency(sales)}</div>
+            <div className="money" style={{ fontSize: 16, fontWeight: 800, color: "var(--hz-c-ink)", marginTop: 3 }}>{formatCurrency(sales)}</div>
           </div>
-          <div style={{ background: "#f4f6f3", borderRadius: 10, padding: 11 }}>
+          <div style={{ background: "var(--hz-c-surface-2)", borderRadius: 10, padding: 11 }}>
             <div className="pkv-l">Total cost</div>
-            <div className="money" style={{ fontSize: 16, fontWeight: 800, color: "#11140f", marginTop: 3 }}>{formatCurrency(cost)}</div>
+            <div className="money" style={{ fontSize: 16, fontWeight: 800, color: "var(--hz-c-ink)", marginTop: 3 }}>{formatCurrency(cost)}</div>
           </div>
-          <div style={{ background: "#f4f6f3", borderRadius: 10, padding: 11 }}>
+          <div style={{ background: "var(--hz-c-surface-2)", borderRadius: 10, padding: 11 }}>
             <div className="pkv-l">Net profit</div>
             <div className="money" style={{ fontSize: 16, fontWeight: 800, color: netColor, marginTop: 3 }}>{formatCurrency(net)}</div>
           </div>
-          <div style={{ background: "#f4f6f3", borderRadius: 10, padding: 11 }}>
+          <div style={{ background: "var(--hz-c-surface-2)", borderRadius: 10, padding: 11 }}>
             <div className="pkv-l">Margin</div>
             <div className="money" style={{ fontSize: 16, fontWeight: 800, color: netColor, marginTop: 3 }}>{marginPct == null ? "—" : `${marginPct.toFixed(1)}%`}</div>
           </div>
@@ -4052,7 +4052,7 @@ function FinancialSnapshot({
         {pnl?.by_so && (
           <div style={{ fontSize: 11, color: "#6b7064", marginTop: 8 }}>
             By Sales Orders ({pnl.so_count}): sales {formatCurrency(pnl.by_so.sales)} · cost {formatCurrency(pnl.by_so.totalCost)} · net{" "}
-            <span style={{ fontWeight: 700, color: pnl.by_so.netProfit >= 0 ? "#2f8a5b" : "#b23a3a" }}>{formatCurrency(pnl.by_so.netProfit)}</span>
+            <span style={{ fontWeight: 700, color: pnl.by_so.netProfit >= 0 ? "var(--hz-c-synced)" : "var(--hz-c-err)" }}>{formatCurrency(pnl.by_so.netProfit)}</span>
           </div>
         )}
         {/* Quick edit (finance write) — Total Sales PATCHes
@@ -4063,7 +4063,7 @@ function FinancialSnapshot({
             so the control never 403s. */}
         {canWrite && (
           <>
-            <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#9aa093", margin: "12px 0 6px" }}>Quick edit</div>
+            <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--hz-c-ink-soft)", margin: "12px 0 6px" }}>Quick edit</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
               <QuickTotalSalesField projectId={projectId} current={finance.total_sales ?? null} busy={busy} setBusy={setBusy} notify={notify} reload={reload} />
               <QuickRentalField projectId={projectId} lines={allLines} busy={busy} setBusy={setBusy} notify={notify} reload={reload} />
@@ -4072,20 +4072,20 @@ function FinancialSnapshot({
         )}
 
         {/* Cost ledger — read-only snapshot. A stored receipt opens in the lightbox. */}
-        <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#9aa093", margin: "12px 0 6px" }}>Cost lines</div>
+        <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--hz-c-ink-soft)", margin: "12px 0 6px" }}>Cost lines</div>
         {costLines.length === 0 ? (
-          <div style={{ fontSize: 12, color: "#9aa093" }}>No cost lines yet.</div>
+          <div style={{ fontSize: 12, color: "var(--hz-c-ink-soft)" }}>No cost lines yet.</div>
         ) : (
-          <div style={{ border: "1px solid #eceee9", borderRadius: 10, overflow: "hidden" }}>
+          <div style={{ border: "1px solid var(--hz-dk-border-subtle, #eceee9)", borderRadius: 10, overflow: "hidden" }}>
             {costLines.map((line, i) => {
               const auto = !!pick(line.auto_source, line.autoSource);
               const fromBooks = line.source === "books";
               const receiptKey = pick(line.r2_key, line.r2Key);
               return (
                 <div key={line.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", borderTop: i === 0 ? "none" : "1px solid #eceee9", flexWrap: "wrap" }}>
-                  <span style={{ flex: 1, minWidth: 90, fontSize: 12, color: "#414539" }}>
+                  <span style={{ flex: 1, minWidth: 90, fontSize: 12, color: "var(--hz-c-ink-secondary)" }}>
                     {line.description || ledgerCategoryLabel(line.category)}
-                    {auto && <span style={{ marginLeft: 5, fontSize: 9, color: "#9aa093" }}>auto</span>}
+                    {auto && <span style={{ marginLeft: 5, fontSize: 9, color: "var(--hz-c-ink-soft)" }}>auto</span>}
                     {fromBooks && <span style={{ marginLeft: 5, fontSize: 9, color: "#8a4b12" }}>入账 {line.doc_no}</span>}
                   </span>
                   <span className="money" style={{ fontSize: 12, fontWeight: 700 }}>{formatCurrency(line.amount)}</span>
@@ -4093,7 +4093,7 @@ function FinancialSnapshot({
                 </div>
               );
             })}
-            <div style={{ display: "flex", justifyContent: "space-between", padding: "9px 12px", borderTop: "1px solid #eceee9", fontSize: 12, fontWeight: 700, color: "#11140f", background: "#f4f6f3" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", padding: "9px 12px", borderTop: "1px solid #eceee9", fontSize: 12, fontWeight: 700, color: "var(--hz-c-ink)", background: "var(--hz-c-surface-2)" }}>
               <span>Net profit{marginPct != null ? ` (${marginPct.toFixed(1)}%)` : ""}</span>
               <span className="money" style={{ color: netColor }}>{formatCurrency(net)}</span>
             </div>
@@ -4123,7 +4123,7 @@ function FinancialSnapshot({
 // List meta pill (spec project-list: branding / venue chips under the title).
 function ListChip({ children }: { children: ReactNode }) {
   return (
-    <span style={{ fontSize: 10, fontWeight: 700, color: "#5c6156", background: "#f0f1ed", border: "1px solid var(--line)", padding: "3px 8px", borderRadius: 7 }}>
+    <span style={{ fontSize: 10, fontWeight: 700, color: "#5c6156", background: "var(--hz-dk-surface-2, #f0f1ed)", border: "1px solid var(--line)", padding: "3px 8px", borderRadius: 7 }}>
       {children}
     </span>
   );

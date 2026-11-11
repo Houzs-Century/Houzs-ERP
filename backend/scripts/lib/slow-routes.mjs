@@ -4,7 +4,12 @@
 //
 // AE LAYOUT (fixed by middleware/requestLog.ts; a reader must match it):
 //   blob1='req', blob2=route (matched Hono pattern), blob3=status,
-//   blob4=request id, blob5=method; double1=duration ms (whole Worker chain).
+//   blob4=request id, blob5=method, blob6=company id ('' before login or
+//   before this column was written); double1=duration ms (whole Worker chain),
+//   double2=database ms (summed round trips, can exceed double1 when reads run
+//   in parallel), double3=database round trips.
+// Points written before double3 existed carry 0 there, so the database
+// columns average only points with double3 > 0 (db_pts says how many).
 // scan-timing.ts shares the dataset with blob1='scan', hence the filter.
 // AE samples under load: every aggregate weights by _sample_interval, so a
 // count is sum(_sample_interval), never count().
@@ -29,6 +34,12 @@ function where(days) {
 
 const q = (level) => `quantileExactWeighted(${level})(double1, _sample_interval)`;
 
+/** Database sums, weighted, over the points that recorded them (double3 > 0).
+ *  Divided in routeLines, so a route with none never divides by zero in SQL. */
+const DB_COLS = `sumIf(_sample_interval, double3 > 0) AS db_pts,
+  sumIf(double2 * _sample_interval, double3 > 0) AS db_ms_sum,
+  sumIf(double3 * _sample_interval, double3 > 0) AS db_n_sum`;
+
 /** Per route + method. Ordered by total Worker time, which ranks "slow AND used". */
 export function routeSql(days, limit) {
   return `SELECT blob5 AS method, blob2 AS route,
@@ -36,7 +47,8 @@ export function routeSql(days, limit) {
   ${q(0.5)} AS p50, ${q(0.95)} AS p95, ${q(0.99)} AS p99,
   max(double1) AS max_ms,
   sumIf(_sample_interval, double1 > ${SLOW_MS}) AS over_slow,
-  sum(double1 * _sample_interval) AS total_ms
+  sum(double1 * _sample_interval) AS total_ms,
+  ${DB_COLS}
 FROM ${DATASET}
 WHERE ${where(days)}
 GROUP BY method, route
@@ -45,9 +57,29 @@ LIMIT ${limit}
 FORMAT JSON`;
 }
 
-/** The slowest individual requests. Company is NOT in the AE point. */
+/**
+ * Per route + method + company, for the routes that write (POST/PATCH/PUT/
+ * DELETE): is one company's tree the slow one? Ordered by total Worker time.
+ */
+export function writeRouteCompanySql(days, limit) {
+  return `SELECT blob5 AS method, blob2 AS route, blob6 AS company,
+  sum(_sample_interval) AS n,
+  ${q(0.5)} AS p50, ${q(0.95)} AS p95, ${q(0.99)} AS p99,
+  max(double1) AS max_ms,
+  sumIf(_sample_interval, double1 > ${SLOW_MS}) AS over_slow,
+  sum(double1 * _sample_interval) AS total_ms,
+  ${DB_COLS}
+FROM ${DATASET}
+WHERE ${where(days)} AND (blob5 = 'POST' OR blob5 = 'PATCH' OR blob5 = 'PUT' OR blob5 = 'DELETE') AND blob6 != ''
+GROUP BY method, route, company
+ORDER BY total_ms DESC
+LIMIT ${limit}
+FORMAT JSON`;
+}
+
+/** The slowest individual requests, with their company and database work. */
 export function slowestSql(days, limit) {
-  return `SELECT timestamp, blob5 AS method, blob2 AS route, blob3 AS status, blob4 AS request_id, double1 AS ms
+  return `SELECT timestamp, blob5 AS method, blob2 AS route, blob3 AS status, blob4 AS request_id, blob6 AS company, double1 AS ms, double2 AS db_ms, double3 AS db_n
 FROM ${DATASET}
 WHERE ${where(days)}
 ORDER BY ms DESC
@@ -80,7 +112,7 @@ export function readAeAnswer(status, bodyText) {
     return { kind: 'error', message: `not JSON: ${bodyText.slice(0, 300)}` };
   }
   if (!Array.isArray(body?.data)) return { kind: 'error', message: `no data array: ${bodyText.slice(0, 300)}` };
-  const numeric = new Set(['n', 'points', 'p50', 'p95', 'p99', 'max_ms', 'over_slow', 'total_ms', 'ms']);
+  const numeric = new Set(['n', 'points', 'p50', 'p95', 'p99', 'max_ms', 'over_slow', 'total_ms', 'ms', 'db_pts', 'db_ms_sum', 'db_n_sum', 'db_ms', 'db_n']);
   const rows = body.data.map((r) => {
     const out = {};
     for (const [k, v] of Object.entries(r)) out[k] = numeric.has(k) ? Number(v) : v;
@@ -91,11 +123,14 @@ export function readAeAnswer(status, bodyText) {
 
 const ms = (v) => (Number.isFinite(v) ? `${Math.round(v)}` : '-');
 
-/** Route rows -> display rows (share over 3 s as a percent of that route's requests). */
+/** Route rows -> display rows (share over 3 s as a percent of that route's requests).
+ *  db_ms / db_n: average database ms and round trips per request, '-' when no
+ *  point of that route recorded them yet. A row with `company` keeps it. */
 export function routeLines(rows) {
   return rows.map((r) => ({
     method: r.method,
     route: r.route,
+    ...(r.company !== undefined ? { company: r.company } : {}),
     n: Math.round(r.n),
     p50: ms(r.p50),
     p95: ms(r.p95),
@@ -103,6 +138,23 @@ export function routeLines(rows) {
     max: ms(r.max_ms),
     'over3s%': r.n > 0 ? ((100 * r.over_slow) / r.n).toFixed(1) : '-',
     'total_s': (r.total_ms / 1000).toFixed(0),
+    db_ms: r.db_pts > 0 ? ms(r.db_ms_sum / r.db_pts) : '-',
+    db_n: r.db_pts > 0 ? (r.db_n_sum / r.db_pts).toFixed(1) : '-',
+  }));
+}
+
+/** Slowest-request rows -> display rows. db columns read '-' on a point written before they existed. */
+export function slowestLines(rows) {
+  return rows.map((r) => ({
+    at: r.timestamp,
+    method: r.method,
+    route: r.route,
+    status: r.status,
+    company: r.company || '-',
+    ms: ms(r.ms),
+    db_ms: r.db_n > 0 ? ms(r.db_ms) : '-',
+    db_n: r.db_n > 0 ? String(Math.round(r.db_n)) : '-',
+    request_id: r.request_id,
   }));
 }
 

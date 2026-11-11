@@ -111,7 +111,7 @@ const MatchBar = ({ lines, entries }: { lines: BankLine[]; entries: LedgerEntry[
       style={{
         position: 'sticky', bottom: 0, zIndex: 20, marginTop: 'var(--space-3)',
         display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap',
-        paddingTop: 'var(--space-2)', paddingBottom: 'var(--space-2)', paddingLeft: 'var(--space-4)', background: 'var(--c-paper, #fff)',
+        paddingTop: 'var(--space-2)', paddingBottom: 'var(--space-2)', paddingLeft: 'var(--space-4)', background: 'var(--c-paper, var(--hz-c-surface))',
         borderTop: '2px solid var(--c-ink, #221f20)', boxShadow: '0 -4px 12px rgba(0,0,0,0.08)', fontSize: 'var(--fs-13)',
       }}>
       <span>

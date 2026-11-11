@@ -234,8 +234,8 @@ export const ProductModels = () => {
                 className={styles.statusPill}
                 title="No SKUs under this Model — likely an orphan left behind after its SKUs were deleted from SKU Master."
                 style={{
-                  background: '#e1efed',
-                  color: '#0c3f39',
+                  background: 'var(--hz-c-primary-soft)',
+                  color: 'var(--hz-c-primary-ink)',
                   borderColor: '#16695f',
                   fontWeight: 600,
                 }}
@@ -244,7 +244,7 @@ export const ProductModels = () => {
               </span>
             );
           }
-          return <span style={{ color: '#767b6e' }}>{skuCountText(m)}</span>;
+          return <span style={{ color: 'var(--hz-c-ink-muted)' }}>{skuCountText(m)}</span>;
         },
         searchValue: (m) => String(m.sku_count ?? 0),
         filterValue: (m) => ((m.sku_count ?? 0) === 0 ? '0 SKUs' : String(m.sku_count ?? 0)),
@@ -255,7 +255,7 @@ export const ProductModels = () => {
         label: 'Description',
         width: 240,
         accessor: (m) => (
-          <span style={{ color: '#767b6e' }}>{m.description ?? '—'}</span>
+          <span style={{ color: 'var(--hz-c-ink-muted)' }}>{m.description ?? '—'}</span>
         ),
         searchValue: (m) => m.description ?? '',
         filterValue: (m) => m.description ?? '—',
@@ -278,7 +278,7 @@ export const ProductModels = () => {
               onClick={() => setEditModel(m)}
               style={{
                 background: 'transparent', border: 'none', padding: 4,
-                cursor: 'pointer', color: '#767b6e',
+                cursor: 'pointer', color: 'var(--hz-c-ink-muted)',
                 display: 'inline-flex', alignItems: 'center',
               }}
             >
@@ -626,14 +626,14 @@ function ModelPhotoCell({ model }: { model: ProductModelRow }) {
           width: 48,
           height: 48,
           borderRadius: 'var(--radius-sm)',
-          border: '1px solid #d6d9d2',
-          background: src ? `#f4f6f3 center/cover no-repeat url(${src})` : '#f4f6f3',
+          border: '1px solid var(--hz-c-border)',
+          background: src ? `var(--hz-c-surface-2) center/cover no-repeat url(${src})` : '#f4f6f3',
           padding: 0,
           cursor: busy ? 'wait' : 'pointer',
           display: 'inline-flex',
           alignItems: 'center',
           justifyContent: 'center',
-          color: '#767b6e',
+          color: 'var(--hz-c-ink-muted)',
           overflow: 'hidden',
         }}
       >
@@ -667,7 +667,7 @@ function ModelPhotoCell({ model }: { model: ProductModelRow }) {
       {err && (
         /* --c-danger was never defined anywhere, so this always painted its
            #c0392b fallback. Pinned to the err token. */
-        <span style={{ fontSize: 10, color: '#b23a3a', maxWidth: 96, lineHeight: 1.2 }}>
+        <span style={{ fontSize: 10, color: 'var(--hz-c-err)', maxWidth: 96, lineHeight: 1.2 }}>
           {err}
         </span>
       )}
@@ -1121,10 +1121,10 @@ export function NewModelDialog({
             width: '100%',
             padding: '10px 12px',
             marginTop: 4,
-            border: '1px dashed #16695f',
+            border: '1px dashed var(--hz-c-primary)',
             borderRadius: 'var(--radius-md)',
             background: 'transparent',
-            color: '#16695f',
+            color: 'var(--hz-c-primary)',
             fontFamily: 'var(--font-sans)',
             fontSize: 'var(--fs-13)',
             fontWeight: 600,
@@ -1177,16 +1177,16 @@ export function NewModelDialog({
         {/* (D) Live preview — what the system will actually create. */}
         {previewCodes.length > 0 && (
           <div style={{
-            fontSize: 'var(--fs-11)', color: '#767b6e',
+            fontSize: 'var(--fs-11)', color: 'var(--hz-c-ink-muted)',
             padding: '6px 2px', lineHeight: 1.5,
           }}>
             <span style={{
               fontFamily: 'var(--font-button)', fontSize: 'var(--fs-10)',
-              letterSpacing: '0.06em', textTransform: 'uppercase', color: '#0c3f39',
+              letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--hz-c-primary-ink)',
             }}>Will create → </span>
             {previewCodes.map((c, i) => (
               <span key={i}>
-                <code style={{ fontWeight: 700, color: '#11140f' }}>{c}</code>
+                <code style={{ fontWeight: 700, color: 'var(--hz-c-ink)' }}>{c}</code>
                 {i < previewCodes.length - 1 ? ', ' : ''}
               </span>
             ))}
@@ -1375,14 +1375,14 @@ function ModelRowCard({
           style={{
             display: 'inline-flex', alignItems: 'center', gap: 4,
             marginTop: 6, padding: 0, border: 'none', background: 'transparent',
-            color: '#16695f', fontFamily: 'var(--font-sans)',
+            color: 'var(--hz-c-primary)', fontFamily: 'var(--font-sans)',
             fontSize: 'var(--fs-12)', fontWeight: 600, cursor: 'pointer',
           }}
         >
           + Add supplier
         </button>
         {row.suppliers.some((s) => s.supplierId && s.supplierCode.trim()) && (
-          <div style={{ fontSize: 'var(--fs-10)', color: '#767b6e', marginTop: 4 }}>
+          <div style={{ fontSize: 'var(--fs-10)', color: 'var(--hz-c-ink-muted)', marginTop: 4 }}>
             Every generated SKU for this model will be bound to {
               row.suppliers.filter((s) => s.supplierId && s.supplierCode.trim()).length === 1
                 ? `this supplier with code “${row.suppliers.find((s) => s.supplierId && s.supplierCode.trim())!.supplierCode.trim()}”`
@@ -1424,7 +1424,7 @@ function InlineAllowedOptions({
     return (
       <div className={styles.field}>
         <span className="t-eyebrow">{label}</span>
-        <p style={{ fontSize: 'var(--fs-12)', color: '#767b6e', margin: 0 }}>
+        <p style={{ fontSize: 'var(--fs-12)', color: 'var(--hz-c-ink-muted)', margin: 0 }}>
           Maintenance pool is empty — add entries in Maintenance first.
         </p>
       </div>
@@ -1440,7 +1440,7 @@ function InlineAllowedOptions({
     <div className={styles.field} style={{ gap: 4 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
         <span className="t-eyebrow" style={{ marginRight: 4 }}>{label}</span>
-        <span style={{ fontSize: 'var(--fs-11)', color: '#767b6e' }}>· {hint}</span>
+        <span style={{ fontSize: 'var(--fs-11)', color: 'var(--hz-c-ink-muted)' }}>· {hint}</span>
         {onSetAll && (
           <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 4 }}>
             <button
@@ -1454,9 +1454,9 @@ function InlineAllowedOptions({
                 textTransform: 'uppercase',
                 padding: '1px 7px',
                 borderRadius: 999,
-                border: '1px solid #d6d9d2',
-                background: '#fff',
-                color: allOn ? '#767b6e' : '#11140f',
+                border: '1px solid var(--hz-c-border)',
+                background: 'var(--hz-c-surface)',
+                color: allOn ? 'var(--hz-c-ink-muted)' : 'var(--hz-c-ink)',
                 cursor: allOn ? 'default' : 'pointer',
                 opacity: allOn ? 0.5 : 1,
               }}
@@ -1475,9 +1475,9 @@ function InlineAllowedOptions({
                 textTransform: 'uppercase',
                 padding: '1px 7px',
                 borderRadius: 999,
-                border: '1px solid #d6d9d2',
-                background: '#fff',
-                color: allOff ? '#767b6e' : '#11140f',
+                border: '1px solid var(--hz-c-border)',
+                background: 'var(--hz-c-surface)',
+                color: allOff ? 'var(--hz-c-ink-muted)' : 'var(--hz-c-ink)',
                 cursor: allOff ? 'default' : 'pointer',
                 opacity: allOff ? 0.5 : 1,
               }}
@@ -1509,8 +1509,8 @@ function InlineAllowedOptions({
                 gap: 6,
                 padding: '4px 12px',
                 borderRadius: 999,
-                border: '1px solid ' + (isOn ? '#16695f' : '#c2c6bd'),
-                background: isOn ? '#16695f' : '#fff',
+                border: '1px solid ' + (isOn ? 'var(--hz-c-primary)' : 'var(--hz-c-border-strong)'),
+                background: isOn ? 'var(--hz-c-primary)' : 'var(--hz-c-surface)',
                 /* isOn = petrol fill, so --c-cream here was fg-on-petrol → #fff. */
                 color: isOn ? '#fff' : '#11140f',
                 cursor: 'pointer',
@@ -1672,7 +1672,7 @@ function EditModelDialog({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            style={{ background: 'transparent', border: 'none', color: '#767b6e', cursor: 'pointer', padding: 4, lineHeight: 0 }}
+            style={{ background: 'transparent', border: 'none', color: 'var(--hz-c-ink-muted)', cursor: 'pointer', padding: 4, lineHeight: 0 }}
           >
             <X size={18} strokeWidth={1.75} />
           </button>
@@ -1998,7 +1998,7 @@ export function ModularAssignSupplierDialog({
             style={{
               background: 'transparent',
               border: 'none',
-              color: '#767b6e',
+              color: 'var(--hz-c-ink-muted)',
               cursor: 'pointer',
               padding: 4,
               lineHeight: 0,
@@ -2017,9 +2017,9 @@ export function ModularAssignSupplierDialog({
         />
 
         <div style={{
-          border: '1px solid #d6d9d2',
+          border: '1px solid var(--hz-c-border)',
           borderRadius: 'var(--radius-md)',
-          background: '#fff',
+          background: 'var(--hz-c-surface)',
           // The table area takes the remaining modal height and scrolls on its
           // own, so the header + supplier picker + footer (Save) stay put no
           // matter how many (Model × Supplier) rows there are.
@@ -2029,7 +2029,7 @@ export function ModularAssignSupplierDialog({
         }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'var(--font-sans)' }}>
             <thead>
-              <tr style={{ background: '#e3e6e0', borderBottom: '2px solid #d6d9d2' }}>
+              <tr style={{ background: 'var(--hz-c-surface-dim)', borderBottom: '2px solid #d6d9d2' }}>
                 <th style={thStyle}>Model · Supplier</th>
                 <th style={thStyle}>Supplier Code</th>
                 <th style={thStyle}>Description</th>
@@ -2041,7 +2041,7 @@ export function ModularAssignSupplierDialog({
             </thead>
             <tbody>
               {draftRows.length === 0 && (
-                <tr><td colSpan={7} style={{ ...tdStyle, color: '#767b6e', textAlign: 'center' }}>
+                <tr><td colSpan={7} style={{ ...tdStyle, color: 'var(--hz-c-ink-muted)', textAlign: 'center' }}>
                   {loading
                     ? 'Loading…'
                     : supplierIds.length === 0
@@ -2058,19 +2058,19 @@ export function ModularAssignSupplierDialog({
                 const head = rowsForModel[0]!;
                 return (
                   <Fragment key={modelId}>
-                    <tr style={{ background: '#e3e6e0', borderBottom: '2px solid #d6d9d2' }}>
+                    <tr style={{ background: 'var(--hz-c-surface-dim)', borderBottom: '2px solid #d6d9d2' }}>
                       <td colSpan={7} style={{
                         padding: '6px 12px',
                         fontSize: 'var(--fs-12)',
-                        color: '#767b6e',
+                        color: 'var(--hz-c-ink-muted)',
                         textTransform: 'uppercase',
                         letterSpacing: '0.04em',
                       }}>
-                        <span style={{ fontFamily: 'var(--font-mono)', color: '#11140f', fontWeight: 600 }}>
+                        <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--hz-c-ink)', fontWeight: 600 }}>
                           {head.modelCode}
                         </span>
                         {' · '}
-                        <span style={{ color: '#11140f' }}>{head.modelName}</span>
+                        <span style={{ color: 'var(--hz-c-ink)' }}>{head.modelName}</span>
                         {' — '}
                         {rowsForModel.length} supplier{rowsForModel.length === 1 ? '' : 's'}
                         {' · '}
@@ -2084,7 +2084,7 @@ export function ModularAssignSupplierDialog({
                           <tr style={{ borderBottom: '1px solid #d6d9d2' }}>
                             <td style={tdStyle}>
                               <div style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{d.supplierCode_s}</div>
-                              <div style={{ color: '#767b6e', fontSize: 'var(--fs-12)' }}>{d.supplierName}</div>
+                              <div style={{ color: 'var(--hz-c-ink-muted)', fontSize: 'var(--fs-12)' }}>{d.supplierName}</div>
                               <button
                                 type="button"
                                 onClick={() => toggleExpanded(d.key)}
@@ -2096,7 +2096,7 @@ export function ModularAssignSupplierDialog({
                                   marginTop: 2,
                                   fontSize: 'var(--fs-12)',
                                   cursor: d.skus.length === 0 ? 'default' : 'pointer',
-                                  color: isOpen ? '#0c3f39' : '#767b6e',
+                                  color: isOpen ? 'var(--hz-c-primary-ink)' : 'var(--hz-c-ink-muted)',
                                   textDecoration: 'underline',
                                   textUnderlineOffset: 2,
                                 }}
@@ -2156,7 +2156,7 @@ export function ModularAssignSupplierDialog({
                             </td>
                           </tr>
                           {isOpen && d.skus.length > 0 && (
-                            <tr style={{ background: '#f4f6f3' }}>
+                            <tr style={{ background: 'var(--hz-c-surface-2)' }}>
                               <td colSpan={7} style={{
                                 padding: 'var(--space-2) var(--space-3)',
                                 borderBottom: '1px solid #d6d9d2',
@@ -2195,7 +2195,7 @@ export function ModularAssignSupplierDialog({
         )}
 
         <footer className={styles.modalFooter} style={{ justifyContent: 'space-between' }}>
-          <span style={{ color: '#767b6e', fontSize: 'var(--fs-12)' }}>
+          <span style={{ color: 'var(--hz-c-ink-muted)', fontSize: 'var(--fs-12)' }}>
             {totalSkus > 0
               ? `Will POST ${totalSkus} binding${totalSkus === 1 ? '' : 's'} across ` +
                 `${new Set(draftRows.filter((d) => d.supplierCode.trim()).map((d) => d.supplierId)).size} supplier${
@@ -2227,13 +2227,13 @@ const thStyle: React.CSSProperties = {
   fontWeight: 700,
   textAlign: 'left',
   padding: '8px 12px',
-  color: 'var(--c-ink, #11140f)',
+  color: 'var(--c-ink, var(--hz-c-ink))',
   textTransform: 'uppercase',
   letterSpacing: '0.18em',
   // Keep the column headers visible while the (Model × Supplier) rows scroll.
   position: 'sticky',
   top: 0,
-  background: '#e3e6e0',
+  background: 'var(--hz-c-surface-dim)',
   zIndex: 1,
 };
 const tdStyle: React.CSSProperties = {
@@ -2244,8 +2244,8 @@ const tdStyle: React.CSSProperties = {
 const inputStyle: React.CSSProperties = {
   fontFamily: 'var(--font-mono)',
   fontSize: 'var(--fs-13)',
-  background: '#f4f6f3',
-  border: '1px solid #d6d9d2',
+  background: 'var(--hz-c-surface-2)',
+  border: '1px solid var(--hz-c-border)',
   borderRadius: 'var(--radius-sm)',
   padding: '4px 8px',
   outline: 'none',

@@ -49,7 +49,7 @@ export function DoEarlierPodAttemptsList({ attempts, docNo, loadError }: {
               {a.signature_data && (
                 <div className="mt-2">
                   <div className="text-[12.5px] text-ink-muted">Customer signature</div>
-                  <img src={a.signature_data} alt={`Customer signature, earlier attempt ${a.attempt_no}`} className="max-h-24 rounded border border-border bg-white" />
+                  <img src={a.signature_data} alt={`Customer signature, earlier attempt ${a.attempt_no}`} className="max-h-24 rounded border border-border bg-surface" />
                 </div>
               )}
               {a.pod_lat != null && a.pod_lng != null && (

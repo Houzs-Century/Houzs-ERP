@@ -767,7 +767,7 @@ function NotConfiguredPanel({
 }) {
   return (
     <div className="rounded-lg border border-border bg-surface-2 px-5 py-8 text-center">
-      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-[10px] border border-amber-300 bg-warning-bg text-warning-text">
+      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-[10px] border border-amber-300 dark:border-amber-800 bg-warning-bg text-warning-text">
         <ImageUp size={20} />
       </div>
       <div className="mt-3 text-[14px] font-bold text-ink">

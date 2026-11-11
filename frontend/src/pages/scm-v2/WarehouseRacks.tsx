@@ -346,7 +346,7 @@ export const WarehouseRacks = () => {
                   type="button"
                   onClick={() => selectView(v)}
                   className="rounded-[6px] px-3 py-[5px] text-[11.5px] font-semibold transition-colors"
-                  style={view === v ? { background: '#16695f', color: '#ffffff' } : { color: '#767b6e' }}
+                  style={view === v ? { background: 'var(--hz-c-primary)', color: '#ffffff' } : { color: 'var(--hz-c-ink-muted)' }}
                 >
                   {v === 'plan' ? 'Floor plan' : 'List'}
                 </button>

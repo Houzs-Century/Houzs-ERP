@@ -2834,7 +2834,7 @@ function CreatePanel({
                   )}
                   {s.ref && <span className="rounded bg-bg px-1.5 py-0.5 font-mono text-[10px] text-ink-muted">ref: {s.ref}</span>}
                   {(s.case_count ?? 0) > 0 && (
-                    <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">
+                    <span className="rounded bg-amber-100 dark:bg-amber-900/40 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:text-amber-300">
                       {s.case_count} case{(s.case_count ?? 0) > 1 ? "s" : ""}
                     </span>
                   )}
@@ -3157,7 +3157,7 @@ function CreatePanel({
             #842): block Create until a category resolves — the disabled gate
             below mirrors submit()'s resolve logic, so "Other…" also requires
             the custom label. FE gate; server still accepts a null category. */}
-        {stillNeeded.length > 0 && <div role="status" className="mb-2 text-xs text-red-700">Still needed: {stillNeeded.join(", ")}</div>}
+        {stillNeeded.length > 0 && <div role="status" className="mb-2 text-xs text-red-700 dark:text-red-300">Still needed: {stillNeeded.join(", ")}</div>}
         <Button
           variant="primary"
           onClick={submit}
@@ -4730,7 +4730,7 @@ function DetailContent({
               placeholder="Unassigned — search to assign"
             />
             {c.assigned_to == null && (
-              <div className="mt-1.5 rounded-md border border-dashed border-amber-500/60 bg-amber-50/60 px-2 py-1 text-[11px] font-semibold text-amber-800">
+              <div className="mt-1.5 rounded-md border border-dashed border-amber-500/60 bg-amber-50/60 px-2 py-1 text-[11px] font-semibold text-amber-800 dark:text-amber-300">
                 Needs an assignee
               </div>
             )}
@@ -5229,7 +5229,7 @@ function DetailContent({
                           <span
                             className={cn(
                               "rounded px-1.5 py-[1px] text-[9px] font-bold uppercase tracking-wider",
-                              actorRole === "customer" && "bg-amber-100 text-amber-800",
+                              actorRole === "customer" && "bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300",
                               actorRole === "supplier" && "bg-primary/10 text-primary",
                               actorRole === "sales" && "bg-accent-soft text-accent",
                               actorRole === "service" && "bg-bg text-ink-secondary",
@@ -5605,7 +5605,7 @@ function StageRow({
       className={cn(
         "border-b border-border-subtle last:border-b-0",
         // Nico 2026-07-09 — CURRENT stage highlight swapped from amber
-        // (bg-amber-50 + accent shadow + accent text) to petrol; matches
+        // (bg-amber-50 dark:bg-amber-950/40 + accent shadow + accent text) to petrol; matches
         // the Stage funnel dot flip below and the "amber = SLA warning
         // only" convention.
         state === "current" && "bg-primary/5 shadow-[inset_3px_0_0_0_theme(colors.primary.DEFAULT)]",
@@ -5878,7 +5878,7 @@ function StatusSummaryBar({
         ? `${slaHours}h left`
         : "—",
       sub: c.deadline_at ? `Due ${formatDate(c.deadline_at)}` : `${priorityName || "Normal"} tier`,
-      valColor: slaBreached ? "text-err" : slaSoon ? "text-amber-700" : "text-ink",
+      valColor: slaBreached ? "text-err" : slaSoon ? "text-amber-700 dark:text-amber-300" : "text-ink",
       dotColor: slaBreached ? "bg-err" : slaSoon ? "bg-amber-500" : "bg-synced",
     },
     {
@@ -6752,7 +6752,7 @@ function LogisticsRow({
           "ml-auto rounded-full px-2 py-0.5 text-[10px] font-semibold",
           l.status === "completed" && "bg-synced/10 text-synced",
           l.status === "scheduled" && "bg-accent/10 text-accent",
-          l.status === "pending" && "bg-amber-500/10 text-amber-700",
+          l.status === "pending" && "bg-amber-500/10 text-amber-700 dark:text-amber-300",
           l.status === "cancelled" && "bg-ink-muted/10 text-ink-muted"
         )}>
           {l.status}
@@ -7156,7 +7156,7 @@ function LeadTimePill({
     pct >= 1
       ? "bg-err/10 text-err"
       : pct >= 0.5
-      ? "bg-amber-500/10 text-amber-700"
+      ? "bg-amber-500/10 text-amber-700 dark:text-amber-300"
       : "bg-synced/10 text-synced";
 
   const priorityName =
@@ -7870,7 +7870,7 @@ function ClosePrompt({
         <button
           key={n}
           onClick={() => onChange(value === n ? 0 : n)}
-          className="rounded p-0.5 transition-colors hover:bg-amber-100"
+          className="rounded p-0.5 transition-colors hover:bg-amber-100 dark:hover:bg-amber-900/40"
         >
           <Star
             size={20}

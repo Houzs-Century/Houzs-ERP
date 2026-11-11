@@ -381,7 +381,7 @@ export const PurchaseReturnNew = () => {
     <div className="space-y-4">
       <UnrecognisedScopeNotice unknown={scope.unknown} />
       {poPoolEmpty && (
-        <div className="rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+        <div className="rounded-md border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-4 py-3 text-sm text-amber-900 dark:text-amber-300">
           Nothing returnable on {po?.po_number ?? 'this Purchase Order'} — no posted Goods Receipt
           line still carries a remaining quantity. A return sends RECEIVED goods back: receive the
           delivery first, or open the Goods Receipt and use Transfer to Purchase Return.
@@ -577,7 +577,7 @@ export const PurchaseReturnNew = () => {
                           background: 'transparent',
                           border: 'none',
                           cursor: 'pointer',
-                          color: 'var(--c-festive-b, #B8331F)',
+                          color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))',
                           padding: 4,
                           display: 'inline-flex',
                         }}

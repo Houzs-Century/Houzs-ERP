@@ -22,8 +22,8 @@ import { announceProjectSalesChanged, useOnProjectSalesChanged } from "./project
 
 const TONE: Record<"red" | "green" | "amber" | "grey", string> = {
   red: "bg-err/10 text-err",
-  green: "bg-emerald-100 text-emerald-800",
-  amber: "bg-amber-100 text-amber-800",
+  green: "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-800 dark:text-emerald-300",
+  amber: "bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300",
   grey: "bg-bg text-ink-muted",
 };
 
@@ -124,7 +124,7 @@ export function ProjectSalesBillsBlock({
             <Tile label="Opened" value={`${totals.opened_count} · ${fmtRmSen(totals.opened_sen)}`} />
             <Tile label="Not opened" value={`${totals.not_opened_count} · ${fmtRmSen(totals.not_opened_sen)}`} tone={totals.not_opened_sen > 0 ? "red" : undefined} />
             {totals.other_event_count > 0 && (
-              <span className="rounded border border-amber-500/40 bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800" title="These orders exist but are linked to a different event; their salesperson has been asked to amend the fair">
+              <span className="rounded border border-amber-500/40 bg-amber-100 dark:bg-amber-900/40 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:text-amber-300" title="These orders exist but are linked to a different event; their salesperson has been asked to amend the fair">
                 {totals.other_event_count} under another event
               </span>
             )}
@@ -134,7 +134,7 @@ export function ProjectSalesBillsBlock({
           <button
             onClick={() => void setTotal(summary.total_sen)}
             disabled={settingTotal}
-            className="rounded-md border border-emerald-600/40 bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-800 hover:bg-emerald-200 disabled:opacity-50"
+            className="rounded-md border border-emerald-600/40 bg-emerald-100 dark:bg-emerald-900/40 px-2 py-0.5 text-[10px] font-semibold text-emerald-800 dark:text-emerald-300 hover:bg-emerald-200 dark:hover:bg-emerald-800/50 disabled:opacity-50"
             title="Type the latest summary's Total from the chat into this event's Total Sales"
           >
             {settingTotal ? "Saving…" : `Set Total Sales = ${fmtRmSen(summary.total_sen)}`}
@@ -161,7 +161,7 @@ export function ProjectSalesBillsBlock({
           (owner 2026-10-14: a third copy was a duplicate). */}
 
       {totals && totals.count > 0 && bills.length === 0 && (
-        <div className="rounded-md border border-emerald-600/30 bg-emerald-50 px-3 py-2 text-[11px] text-emerald-800">
+        <div className="rounded-md border border-emerald-600/30 bg-emerald-50 dark:bg-emerald-950/40 px-3 py-2 text-[11px] text-emerald-800 dark:text-emerald-300">
           All {totals.count} bill{totals.count === 1 ? "" : "s"} in the report are opened as Sales Orders under this event — listed below.
         </div>
       )}
@@ -174,7 +174,7 @@ export function ProjectSalesBillsBlock({
           <button
             onClick={() => moveHere(tickedDocs)}
             disabled={transfer.isPending || tickedDocs.length === 0}
-            className="rounded-md border border-amber-500/50 bg-amber-50 px-2 py-0.5 font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+            className="rounded-md border border-amber-500/50 bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 font-semibold text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40 disabled:opacity-50"
             title="Move the ticked orders to this event: their Fair, Venue and Fair Day change, and History records it"
           >
             Transfer ticked here ({tickedDocs.length})
@@ -182,7 +182,7 @@ export function ProjectSalesBillsBlock({
           <button
             onClick={() => moveHere(movable.map((b) => b.match.so_doc_no as string))}
             disabled={transfer.isPending}
-            className="rounded-md border border-amber-600/60 bg-amber-100 px-2 py-0.5 font-semibold text-amber-900 hover:bg-amber-200 disabled:opacity-50"
+            className="rounded-md border border-amber-600/60 bg-amber-100 dark:bg-amber-900/40 px-2 py-0.5 font-semibold text-amber-900 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-800/50 disabled:opacity-50"
             title="Move every order below that sits under another event or none to this event"
           >
             {transfer.isPending ? "Transferring…" : `Transfer all here (${movable.length})`}
@@ -250,7 +250,7 @@ export function ProjectSalesBillsBlock({
                         </Link>
                       )}
                       {b.other_event_name && (
-                        <span className="ml-1.5 text-[10px] text-amber-800">under {b.other_event_name}</span>
+                        <span className="ml-1.5 text-[10px] text-amber-800 dark:text-amber-300">under {b.other_event_name}</span>
                       )}
                     </td>
                     {movable.length > 0 && (

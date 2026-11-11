@@ -10,19 +10,19 @@
 
 .row td {
   border-bottom: 1px dashed var(--border-weak, #e3e1da);
-  background-color: var(--c-cream, #fff);
+  background-color: var(--c-cream, var(--hz-c-surface));
 }
 
 .total td {
-  background-color: var(--bg-subtle, #eceeea);
+  background-color: var(--bg-subtle, var(--hz-dk-surface-2, #eceeea));
 }
 
 .net td {
-  background-color: var(--c-beige, #e3e6e0);
+  background-color: var(--c-beige, var(--hz-c-surface-dim));
 }
 
 .lines td {
-  background-color: var(--c-paper, #f4f6f3);
+  background-color: var(--c-paper, var(--hz-c-surface-2));
 }
 
 .row:hover td {
@@ -32,7 +32,7 @@
 .name {
   position: sticky;
   left: 0;
-  background-color: var(--c-cream, #fff);
+  background-color: var(--c-cream, var(--hz-c-surface));
   white-space: nowrap;
 }
 

@@ -99,7 +99,7 @@ function LeaveCard({ kind, person, rows }: { kind: CrewKind; person: CrewPerson;
           <label className="text-[11px] text-ink-muted">From<DateField value={f.from} onChange={(v) => setF({ ...f, from: v })} fullWidth aria-label="Leave from" /></label>
           <label className="text-[11px] text-ink-muted">To<DateField value={f.to} onChange={(v) => setF({ ...f, to: v })} fullWidth aria-label="Leave to" /></label>
           <label className="col-span-2 text-[11px] text-ink-muted">Reason (optional)<input value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })} placeholder="MC, annual leave" className={inputCls} /></label>
-          {f.from > f.to && <p className="col-span-2 text-[12px] text-[#8a2c2c]">The start date must be on or before the end date.</p>}
+          {f.from > f.to && <p className="col-span-2 text-[12px] text-[color:var(--hz-dk-err,#8a2c2c)]">The start date must be on or before the end date.</p>}
           <div className="col-span-2 flex gap-2">
             <button type="button" disabled={!f.from || !f.to || f.from > f.to || create.isPending} onClick={save} className={primaryBtn}>{create.isPending ? "Saving…" : "Save leave"}</button>
             <button type="button" onClick={() => setAdding(false)} className="min-h-[40px] px-2 text-[12.5px] text-ink">Cancel</button>
@@ -192,7 +192,7 @@ function CrewEdit({ kind, person, warehouses, carriers, onDone }: {
         </Field>
       </div>
       <p className="text-[12px] text-ink-muted">{person ? "The usual lorry is set on the lorry, in the Lorries tab." : "The code is given automatically when you add them."}</p>
-      {problem && f.name !== "" && <p className="text-[12.5px] text-[#8a2c2c]">{problem}</p>}
+      {problem && f.name !== "" && <p className="text-[12.5px] text-[color:var(--hz-dk-err,#8a2c2c)]">{problem}</p>}
       <div className="flex gap-2">
         <button type="button" disabled={problem !== null || pending} onClick={save} className={primaryBtn}>{pending ? "Saving…" : person ? "Save changes" : `Add ${kind}`}</button>
         <button type="button" onClick={onDone} className={secondaryBtn}>Cancel</button>

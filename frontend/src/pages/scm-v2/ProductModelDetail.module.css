@@ -43,21 +43,21 @@
   font-size: var(--fs-12);
   padding: 2px 8px;
   border-radius: 999px;
-  border: 1px solid #d6d9d2;
-  background: #fff;
+  border: 1px solid var(--hz-c-border);
+  background: var(--hz-c-surface);
   letter-spacing: 0.04em;
 }
 /* ACTIVE — success tokens, matching Inventory's Active warehouse pill
    (was --c-evergreen #265F49, off-system). */
 .statusPill.active {
   background: rgba(47, 138, 91, 0.12);
-  color: #2f8a5b;
+  color: var(--hz-c-synced);
   border-color: rgba(47, 138, 91, 0.3);
 }
 /* INACTIVE — quiet surface-2 slab (was a raw rgba(150,150,150,.12) grey). */
 .statusPill.inactive {
-  background: #f4f6f3;
-  color: #767b6e;
+  background: var(--hz-c-surface-2);
+  color: var(--hz-c-ink-muted);
 }
 
 /* ── Section header + sub-copy ──────────────────────────────────────── */
@@ -75,7 +75,7 @@
   font-weight: 800;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  color: #0c3f39;
+  color: var(--hz-c-primary-ink);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -86,7 +86,7 @@
 }
 .cardSub {
   margin: 0;
-  color: #767b6e;
+  color: var(--hz-c-ink-muted);
   font-family: var(--font-sans);
   font-size: var(--fs-13);
 }
@@ -107,22 +107,22 @@
   font-family: var(--font-sans);
   font-size: var(--fs-14);
   padding: var(--space-3) var(--space-4);
-  border: 1px solid #d6d9d2;
+  border: 1px solid var(--hz-c-border);
   border-radius: var(--radius-sm);
-  background: #fff;
-  color: #11140f;
+  background: var(--hz-c-surface);
+  color: var(--hz-c-ink);
   resize: vertical;
 }
 /* Petrol border + soft ring — the same focus recipe the shared
    <SearchInput> uses (focus:border-primary focus:ring-2 ring-primary/20). */
 .field input:focus, .field textarea:focus {
   outline: none;
-  border-color: #16695f;
+  border-color: var(--hz-c-primary);
   box-shadow: 0 0 0 2px rgba(22, 105, 95, 0.2);
 }
 .readonly {
-  background: #f4f6f3 !important;
-  color: #767b6e !important;
+  background: var(--hz-c-surface-2) !important;
+  color: var(--hz-c-ink-muted) !important;
   cursor: not-allowed;
 }
 
@@ -138,8 +138,8 @@
   width: 220px;
   height: 220px;
   border-radius: var(--radius-md);
-  background: #f4f6f3;
-  border: 1px solid #d6d9d2;
+  background: var(--hz-c-surface-2);
+  border: 1px solid var(--hz-c-border);
   overflow: hidden;
   display: flex;
   align-items: center;
@@ -156,14 +156,14 @@
   width: 220px;
   height: 220px;
   border-radius: var(--radius-md);
-  border: 1px dashed #c2c6bd;
-  background: #f4f6f3;
+  border: 1px dashed var(--hz-c-border-strong);
+  background: var(--hz-c-surface-2);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
-  color: #767b6e;
+  color: var(--hz-c-ink-muted);
   font-family: var(--font-sans);
   font-size: var(--fs-13);
   cursor: pointer;
@@ -171,9 +171,9 @@
   flex-shrink: 0;
 }
 .photoEmpty:hover {
-  border-color: #16695f;
-  color: #16695f;
-  background: #e1efed;
+  border-color: var(--hz-c-primary);
+  color: var(--hz-c-primary);
+  background: var(--hz-c-primary-soft);
 }
 .photoSide {
   display: flex;
@@ -195,7 +195,7 @@
   justify-content: center;
   font-family: var(--font-sans);
   font-size: var(--fs-13);
-  color: #767b6e;
+  color: var(--hz-c-ink-muted);
 }
 .hiddenInput {
   position: absolute;
@@ -220,7 +220,7 @@
   gap: var(--space-3);
 }
 .optHint {
-  color: #767b6e;
+  color: var(--hz-c-ink-muted);
   font-family: var(--font-sans);
   font-size: var(--fs-12);
 }
@@ -241,15 +241,15 @@
   text-transform: uppercase;
   padding: 2px 8px;
   border-radius: 999px;
-  border: 1px solid #d6d9d2;
-  background: #fff;
-  color: #767b6e;
+  border: 1px solid var(--hz-c-border);
+  background: var(--hz-c-surface);
+  color: var(--hz-c-ink-muted);
   cursor: pointer;
   transition: all 120ms ease-out;
 }
 .optBulkBtn:hover {
-  border-color: #16695f;
-  color: #16695f;
+  border-color: var(--hz-c-primary);
+  color: var(--hz-c-primary);
 }
 .chipRow {
   display: flex;
@@ -261,20 +261,20 @@
   font-size: var(--fs-12);
   padding: 4px 12px;
   border-radius: 999px;
-  border: 1px solid #d6d9d2;
-  background: #fff;
-  color: #11140f;
+  border: 1px solid var(--hz-c-border);
+  background: var(--hz-c-surface);
+  color: var(--hz-c-ink);
   cursor: pointer;
   transition: all 120ms ease-out;
 }
 .chip:hover {
-  border-color: #16695f;
-  background: #e1efed;
+  border-color: var(--hz-c-primary);
+  background: var(--hz-c-primary-soft);
 }
 .chipOn {
-  background: #16695f;
+  background: var(--hz-c-primary);
   color: #fff;
-  border-color: #16695f;
+  border-color: var(--hz-c-primary);
 }
 /* Must out-specify .chip:hover (same 0,2,0 weight, declared later) or an
    already-on chip would flash primary-soft under the cursor. */
@@ -292,7 +292,7 @@
 }
 .skuTable th, .skuTable td {
   padding: var(--space-2) var(--space-3);
-  border-bottom: 1px solid #d6d9d2;
+  border-bottom: 1px solid var(--hz-c-border);
   text-align: left;
 }
 /* Batch 3 theme skin — head row takes the SO-sample DataTable header spec
@@ -303,19 +303,19 @@
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.18em;
-  color: var(--c-ink, #11140f);
-  background: #e3e6e0;
+  color: var(--c-ink, var(--hz-c-ink));
+  background: var(--hz-c-surface-dim);
   border-bottom-width: 2px;
 }
-.skuTable tbody tr:hover { background: #f4f6f3; }
+.skuTable tbody tr:hover { background: var(--hz-c-surface-2); }
 .skuTable tbody tr:last-child td { border-bottom: none; }
 .skuTable code {
   font-family: var(--font-mono);
   font-size: var(--fs-12);
-  background: #f4f6f3;
+  background: var(--hz-c-surface-2);
   /* Hairline keeps the chip readable once the row hover paints the same
      surface-2 behind it. */
-  border: 1px solid #d6d9d2;
+  border: 1px solid var(--hz-c-border);
   padding: 1px 6px;
   border-radius: 4px;
 }
@@ -325,15 +325,15 @@
   margin: 0;
   font-family: var(--font-sans);
   font-size: var(--fs-13);
-  color: #767b6e;
+  color: var(--hz-c-ink-muted);
 }
 .modalEmpty {
   padding: var(--space-5);
   text-align: center;
-  background: #f4f6f3;
-  border: 1px dashed #d6d9d2;
+  background: var(--hz-c-surface-2);
+  border: 1px dashed var(--hz-c-border);
   border-radius: var(--radius-md);
-  color: #767b6e;
+  color: var(--hz-c-ink-muted);
   font-family: var(--font-sans);
   font-size: var(--fs-13);
 }
@@ -351,51 +351,51 @@
   gap: var(--space-3);
   align-items: center;
   padding: var(--space-2) var(--space-3);
-  border: 1px solid #d6d9d2;
+  border: 1px solid var(--hz-c-border);
   border-radius: var(--radius-sm);
-  background: #fff;
+  background: var(--hz-c-surface);
   cursor: pointer;
 }
 .modalRow:hover {
-  border-color: #16695f;
-  background: #e1efed;
+  border-color: var(--hz-c-primary);
+  background: var(--hz-c-primary-soft);
 }
 .modalRowExisting {
   opacity: 0.55;
-  background: #f4f6f3;
+  background: var(--hz-c-surface-2);
   cursor: not-allowed;
 }
 /* Declared after .modalRow:hover so an already-existing row stays inert. */
 .modalRowExisting:hover {
-  border-color: #d6d9d2;
-  background: #f4f6f3;
+  border-color: var(--hz-c-border);
+  background: var(--hz-c-surface-2);
 }
 .modalCode {
   font-family: var(--font-mono);
   font-size: var(--fs-13);
-  background: #f4f6f3;
+  background: var(--hz-c-surface-2);
   padding: 2px 8px;
   border-radius: 999px;
-  border: 1px solid #d6d9d2;
+  border: 1px solid var(--hz-c-border);
 }
 .modalName {
   font-family: var(--font-sans);
   font-size: var(--fs-13);
-  color: #11140f;
+  color: var(--hz-c-ink);
 }
 .modalExistsPill {
   font-family: var(--font-mono);
   font-size: var(--fs-11);
   padding: 2px 8px;
   border-radius: 999px;
-  background: #f4f6f3;
-  color: #767b6e;
+  background: var(--hz-c-surface-2);
+  color: var(--hz-c-ink-muted);
   letter-spacing: 0.04em;
 }
 .modalCount {
   font-family: var(--font-sans);
   font-size: var(--fs-12);
-  color: #767b6e;
+  color: var(--hz-c-ink-muted);
 }
 
 /* Phone (Houzs 2026-06-24) — element-level overflow clamp. (The .page

@@ -19,9 +19,9 @@ import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import type { Invitation } from "../types";
 
 const SMALL_BTN: CSSProperties = {
-  border: "1px solid #bcdcd7",
-  background: "#e1efed",
-  color: "#16695f",
+  border: "1px solid var(--hz-dk-primary-line, #bcdcd7)",
+  background: "var(--hz-c-primary-soft)",
+  color: "var(--hz-c-primary)",
   fontSize: 11.5,
   fontWeight: 700,
   borderRadius: 8,
@@ -30,8 +30,8 @@ const SMALL_BTN: CSSProperties = {
 
 const DANGER_BTN: CSSProperties = {
   border: "1.5px solid #f0d4d4",
-  background: "#fff",
-  color: "#b23a3a",
+  background: "var(--hz-c-surface)",
+  color: "var(--hz-c-err)",
   fontSize: 11.5,
   fontWeight: 700,
   borderRadius: 8,
@@ -186,7 +186,7 @@ export function MobileInvitations() {
             style={{
               transform: open ? "rotate(90deg)" : "none",
               transition: "transform .15s",
-              color: "var(--ink3, #767b6e)",
+              color: "var(--ink3, var(--hz-c-ink-muted))",
             }}
           >
             ›
@@ -262,7 +262,7 @@ export function MobileInvitations() {
                   gap: 6,
                   marginTop: 4,
                   fontSize: 11.5,
-                  color: "var(--ink3, #767b6e)",
+                  color: "var(--ink3, var(--hz-c-ink-muted))",
                 }}
               >
                 {inv.role_name && <span className="badge b-brand">{inv.role_name}</span>}

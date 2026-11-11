@@ -447,8 +447,8 @@ function FormatHints({ note, align }: { note: string | null; align: "start" | "e
           className={cn(
             "max-w-[90%] rounded-md px-2 py-1 text-[11px] leading-snug ring-1",
             it.tone === "warn"
-              ? "bg-amber-50 text-amber-900 ring-amber-200"
-              : "bg-slate-50 text-slate-700 ring-slate-200",
+              ? "bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-300 ring-amber-200"
+              : "bg-slate-50 dark:bg-white/5 text-slate-700 dark:text-slate-200 ring-slate-200",
           )}
         >
           {it.message}

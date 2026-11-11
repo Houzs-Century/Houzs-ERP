@@ -49,7 +49,7 @@ function DocCard({ type, group, lorryId, onChanged }: {
         <Pill tone={chip.tone}>{chip.label}</Pill>
       </div>
 
-      <dl className="grid grid-cols-[110px_1fr] gap-y-1.5 rounded-xl bg-[#faf9f6] px-3.5 py-3 text-[13px]">
+      <dl className="grid grid-cols-[110px_1fr] gap-y-1.5 rounded-xl bg-[color:var(--hz-dk-surface-2,#faf9f6)] px-3.5 py-3 text-[13px]">
         <Row label="Expires">{expiry ? fmtDate(expiry) : current ? "No expiry" : null}</Row>
         <Row label="Issued">{current?.issueDate ? fmtDate(current.issueDate) : null}</Row>
         {type === "PUSPAKOM"
@@ -70,7 +70,7 @@ function DocCard({ type, group, lorryId, onChanged }: {
             Earlier renewals ({older.length})
           </button>
           {showOld && (
-            <ul className="mt-1 flex flex-col rounded-lg bg-[#faf9f6] px-3 py-1">
+            <ul className="mt-1 flex flex-col rounded-lg bg-[color:var(--hz-dk-surface-2,#faf9f6)] px-3 py-1">
               {older.map((d) => (
                 <li key={d.id ?? `${d.docType}-${d.expiryDate}`} className="flex flex-col gap-1.5 border-b border-[#efebe2] py-2 text-[12.5px] text-ink-secondary last:border-b-0">
                   <div className="flex justify-between gap-3">

@@ -1,6 +1,6 @@
 import type { MiddlewareHandler } from "hono";
 import type { Env } from "../types";
-import { stepTimingEntries, withStepTiming, type StepMark } from "../lib/step-timing";
+import { dbTotals, stepTimingEntries, withStepTiming, type StepMark } from "../lib/step-timing";
 
 // One structured access-log line per request + a request id echoed back in the
 // `X-Request-Id` header. Turns `wrangler tail` into a greppable log and lets a
@@ -38,6 +38,8 @@ export const requestLog: MiddlewareHandler<{ Bindings: Env }> = async (c, next) 
   const marks: StepMark[] = [];
   await withStepTiming(marks, () => next());
   const ms = Date.now() - t0;
+  // Snapshot now: work handed to waitUntil keeps adding marks after the response.
+  const db = dbTotals(marks);
   // Worker time vs. the browser's wait, plus each timed() step (lib/step-timing.ts).
   try {
     c.res.headers.set("Server-Timing", [`app;dur=${ms}`, ...stepTimingEntries(marks)].join(", "));
@@ -53,15 +55,18 @@ export const requestLog: MiddlewareHandler<{ Bindings: Env }> = async (c, next) 
   // a no-op when the binding is absent. Route uses the matched Hono pattern
   // (e.g. /api/users/:id) to keep AE index cardinality low; falls back to the
   // raw path. blob/double layout MUST match the read SQL in routes/systemHealth
-  // (blob1=kind, blob2=route, blob3=status, blob4=reqId, blob5=method;
-  // double1=dur_ms, double2=db_ms, double3=db_count).
+  // (blob1=kind, blob2=route, blob3=status, blob4=reqId, blob5=method,
+  // blob6=company id or ""; double1=dur_ms, double2=db_ms, double3=db_count).
+  // db_ms / db_count are this request's database round trips (dbTotals) up to
+  // the response; scripts/lib/slow-routes.mjs reads them.
   try {
     const route = c.req.routePath || path;
     const status = c.res.status;
+    const companyId = c.get("companyId");
     c.env.ERP_METRICS?.writeDataPoint?.({
       indexes: [`req|${route}|${status}`],
-      blobs: ["req", route, String(status), id, c.req.method, ""],
-      doubles: [ms, 0, 0],
+      blobs: ["req", route, String(status), id, c.req.method, companyId == null ? "" : String(companyId)],
+      doubles: [ms, db.ms, db.n],
     });
   } catch {
     /* never let observability break a request */

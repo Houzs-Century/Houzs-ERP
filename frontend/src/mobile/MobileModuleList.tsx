@@ -826,7 +826,7 @@ function ListCard({ config, row, onOpen }: { config: ModuleConfig; row: any; onO
   return (
     <div className="card" onClick={open} style={{ ...cardStyle, padding: "12px 13px", ...(cancelled ? { opacity: 0.6 } : null) }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start" }}>
-        <span style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 800, color: "#11140f", ...(cancelled ? { textDecoration: "line-through", textDecorationThickness: 1 } : null) }}>{name}</span>
+        <span style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 800, color: "var(--hz-c-ink)", ...(cancelled ? { textDecoration: "line-through", textDecorationThickness: 1 } : null) }}>{name}</span>
         {status ? <span style={{ flex: "none" }}><Badge label={status} tone={statusTone} /></span> : (() => {
           const rightRaw = config.right ? config.right(row) : "";
           const rightText = config.rightMoney ? `RM ${rm(rightRaw as unknown as number)}` : rightRaw;
@@ -837,8 +837,8 @@ function ListCard({ config, row, onOpen }: { config: ModuleConfig; row: any; onO
         <div className="so-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 12px", marginTop: 8 }}>
           {cardFields.map(([accessor, label]) => (
             <div key={label} style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".05em", textTransform: "uppercase", color: "#9aa093" }}>{label}</div>
-              <div className="money" style={{ fontSize: 12, fontWeight: 600, color: "#11140f" }}>{safe(accessor, row) || "—"}</div>
+              <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".05em", textTransform: "uppercase", color: "var(--hz-c-ink-soft)" }}>{label}</div>
+              <div className="money" style={{ fontSize: 12, fontWeight: 600, color: "var(--hz-c-ink)" }}>{safe(accessor, row) || "—"}</div>
             </div>
           ))}
         </div>

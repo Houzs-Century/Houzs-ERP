@@ -54,7 +54,7 @@ export function MobileMessageAcks({
   };
 
   return (
-    <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 10, background: "#f4f6f3", fontSize: 11.5, color: "#414539" }}>
+    <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 10, background: "var(--hz-c-surface-2)", fontSize: 11.5, color: "var(--hz-c-ink-secondary)" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span style={{ fontWeight: 700, flex: 1 }}>
           {list.length > 0 ? `Acknowledged ${done} of ${list.length}` : "The sender asked you to acknowledge this email."}
@@ -74,7 +74,7 @@ export function MobileMessageAcks({
                 padding: "2px 7px",
                 borderRadius: 6,
                 fontWeight: 600,
-                background: a.ackedAt ? "#e3f4e8" : a.overdue ? "#fbe9e7" : "#fdf3e1",
+                background: a.ackedAt ? "var(--hz-dk-synced-bg, #e3f4e8)" : a.overdue ? "#fbe9e7" : "#fdf3e1",
                 color: a.ackedAt ? "#1f6b3a" : a.overdue ? "#b42318" : "#b54708",
               }}
             >
@@ -90,7 +90,7 @@ export function MobileMessageAcks({
 
 export function MobileNeedsAck({ checked, onChange, disabled }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
   return (
-    <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12.5, color: "#414539" }}>
+    <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12.5, color: "var(--hz-c-ink-secondary)" }}>
       <input type="checkbox" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} style={{ marginTop: 2 }} />
       <span>
         <span style={{ fontWeight: 700 }}>Needs acknowledgement</span>
@@ -106,13 +106,13 @@ export function MobilePendingAcks({ onOpen }: { onOpen: (threadId: string) => vo
   const owed = data ?? [];
   if (owed.length === 0) return null;
   return (
-    <div style={{ marginBottom: 10, padding: "8px 10px", borderRadius: 11, background: "#fdf3e1", border: "1px solid #f1d9a8" }}>
+    <div style={{ marginBottom: 10, padding: "8px 10px", borderRadius: 11, background: "var(--hz-dk-warning-bg, #fdf3e1)", border: "1px solid #f1d9a8" }}>
       <div style={{ fontSize: 11, fontWeight: 800, color: "#8a5a00", marginBottom: 4 }}>To acknowledge ({owed.length})</div>
       {owed.slice(0, 5).map((o) => (
         <button
           key={o.messageId}
           onClick={() => onOpen(o.threadId)}
-          style={{ display: "flex", alignItems: "center", gap: 7, width: "100%", padding: "6px 0", background: "none", border: 0, textAlign: "left", fontSize: 12.5, color: "#11140f" }}
+          style={{ display: "flex", alignItems: "center", gap: 7, width: "100%", padding: "6px 0", background: "none", border: 0, textAlign: "left", fontSize: 12.5, color: "var(--hz-c-ink)" }}
         >
           <span style={{ width: 6, height: 6, borderRadius: 3, flex: "none", background: o.overdue ? "#d92d20" : "#f79009" }} />
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{o.subject}</span>

@@ -84,7 +84,7 @@ export function SetJobDateDrawer({ order, onClose }: { order: PlanningOrder; onC
         <div className={styles.drawerBody}>
           <div style={{ marginBottom: 'var(--space-3)', fontSize: 'var(--fs-12)', lineHeight: 1.6 }}>
             <div><strong>{order.ref ?? '—'}</strong> · {legLabel}</div>
-            <div style={{ color: 'var(--c-muted, #767b6e)' }}>{order.debtor_name ?? 'No customer name'}</div>
+            <div style={{ color: 'var(--c-muted, var(--hz-c-ink-muted))' }}>{order.debtor_name ?? 'No customer name'}</div>
           </div>
 
           <label style={{ display: 'block' }}>
@@ -98,7 +98,7 @@ export function SetJobDateDrawer({ order, onClose }: { order: PlanningOrder; onC
               onChange={(iso) => setDate(iso)}
             />
           </label>
-          <div style={{ marginTop: 'var(--space-1)', fontSize: 'var(--fs-11)', color: 'var(--c-muted, #767b6e)' }}>
+          <div style={{ marginTop: 'var(--space-1)', fontSize: 'var(--fs-11)', color: 'var(--c-muted, var(--hz-c-ink-muted))' }}>
             This is the date the fleet is booked for. Clearing it takes the job
             back to Pending Schedule.
           </div>

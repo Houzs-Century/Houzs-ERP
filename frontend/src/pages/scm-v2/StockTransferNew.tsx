@@ -171,7 +171,7 @@ function TransferLineRow({
           style={{
             textAlign: 'right',
             fontFamily: 'var(--font-mono)',
-            color: isOverdrawn ? 'var(--c-festive-b, #B8331F)' : 'var(--c-ink)',
+            color: isOverdrawn ? 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' : 'var(--c-ink)',
           }}
         />
       </td>
@@ -411,7 +411,7 @@ const StockTransferForm = ({ onStartNew }: { onStartNew: () => void }) => {
               border: '1px solid var(--c-festive-b, #B8331F)',
               borderRadius: 'var(--radius-md)',
               fontSize: 'var(--fs-13)',
-              color: 'var(--c-festive-b, #B8331F)',
+              color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))',
               display: 'flex', alignItems: 'center', gap: 'var(--space-2)',
             }}>
               <AlertTriangle size={16} strokeWidth={1.75} />
@@ -467,7 +467,7 @@ const StockTransferForm = ({ onStartNew }: { onStartNew: () => void }) => {
               border: '1px solid var(--c-festive-b, #B8331F)',
               borderRadius: 'var(--radius-md)',
               fontSize: 'var(--fs-13)',
-              color: 'var(--c-festive-b, #B8331F)',
+              color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))',
               display: 'flex', alignItems: 'flex-start', gap: 'var(--space-2)',
             }}>
               <AlertTriangle size={16} strokeWidth={1.75} style={{ flexShrink: 0, marginTop: 2 }} />

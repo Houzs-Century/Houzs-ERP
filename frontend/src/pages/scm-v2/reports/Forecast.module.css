@@ -81,7 +81,7 @@
   width: 108px; height: 26px; box-sizing: border-box; padding: 0 6px; border: 1px solid transparent; border-radius: 5px; background: transparent;
   text-align: right; font: 400 12.5px 'IBM Plex Sans', system-ui, sans-serif; font-variant-numeric: tabular-nums; color: var(--fin-ink);
 }
-.box::placeholder { color: #a9ada3; opacity: 1; }
+.box::placeholder { color: var(--hz-dk-ink-soft, #a9ada3); opacity: 1; }
 .box:hover, .box:focus { border-color: var(--fin-input); background: var(--fin-surface); outline: none; }
 .boxTyped { border-color: var(--fin-input); background: var(--fin-surface); font-weight: 600; }
 .pctBox { width: 58px; font-size: 11.5px; }

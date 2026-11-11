@@ -69,7 +69,7 @@ export function FieldPhotos({ api, disabled, title }: {
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(92px, 1fr))", gap: 8 }}>
         {photos.map((p, i) => (
-          <div key={p.id} data-status={p.status} style={{ position: "relative", borderRadius: 10, overflow: "hidden", border: `1px solid ${p.status === "failed" ? C.red : C.line}`, background: "#eceee9", aspectRatio: "1 / 1" }}>
+          <div key={p.id} data-status={p.status} style={{ position: "relative", borderRadius: 10, overflow: "hidden", border: `1px solid ${p.status === "failed" ? C.red : C.line}`, background: "var(--hz-dk-surface-2, #eceee9)", aspectRatio: "1 / 1" }}>
             {p.previewUrl
               ? <img src={p.previewUrl} alt={`Photo ${i + 1}`} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", opacity: p.status === "done" ? 1 : 0.6 }} />
               : <div style={{ display: "grid", placeItems: "center", height: "100%", fontSize: 11, color: C.mut }}>Photo {i + 1}</div>}
@@ -144,7 +144,7 @@ export function FieldPhotos({ api, disabled, title }: {
         <div role="dialog" aria-label="Add photos" onClick={() => setSheet(null)}
           style={{ position: "fixed", inset: 0, zIndex: 60, background: "rgba(17,20,15,.4)", display: "flex", alignItems: "flex-end" }}>
           <div onClick={(e) => e.stopPropagation()}
-            style={{ width: "100%", background: "#fff", borderRadius: "18px 18px 0 0", padding: "14px 16px calc(16px + env(safe-area-inset-bottom))", display: "flex", flexDirection: "column", gap: 8 }}>
+            style={{ width: "100%", background: "var(--hz-c-surface)", borderRadius: "18px 18px 0 0", padding: "14px 16px calc(16px + env(safe-area-inset-bottom))", display: "flex", flexDirection: "column", gap: 8 }}>
             {sheet === "added" && (
               <div style={{ fontSize: 12.5, color: C.ink, marginBottom: 4 }}>
                 Photo added. {photos.length} on this job so far. Uploads keep going while you take more.
@@ -158,13 +158,13 @@ export function FieldPhotos({ api, disabled, title }: {
             )}
             {sheet === "choose" && (
               <button type="button" onClick={() => libraryRef.current?.click()}
-                style={{ border: `1px solid ${C.brand}`, borderRadius: 11, background: "#fff", color: C.brand, fontFamily: "inherit", fontSize: 14, fontWeight: 700, padding: 13, cursor: "pointer" }}>
+                style={{ border: `1px solid ${C.brand}`, borderRadius: 11, background: "var(--hz-c-surface)", color: C.brand, fontFamily: "inherit", fontSize: 14, fontWeight: 700, padding: 13, cursor: "pointer" }}>
                 From photo library (pick several)
               </button>
             )}
             {full && <div style={{ fontSize: 12, color: C.mut }}>This job has the most photos it can take ({max}).</div>}
             <button type="button" onClick={() => setSheet(null)}
-              style={{ border: `1px solid ${C.line}`, borderRadius: 11, background: "#fff", color: C.ink, fontFamily: "inherit", fontSize: 14, fontWeight: 600, padding: 12, cursor: "pointer" }}>
+              style={{ border: `1px solid ${C.line}`, borderRadius: 11, background: "var(--hz-c-surface)", color: C.ink, fontFamily: "inherit", fontSize: 14, fontWeight: 600, padding: 12, cursor: "pointer" }}>
               {sheet === "added" ? "Done" : "Cancel"}
             </button>
           </div>

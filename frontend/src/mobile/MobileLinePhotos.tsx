@@ -69,9 +69,9 @@ function Thumb({ docNo, itemId, photoKey, onOpen }: {
         style={{
           width: 64, height: 64, borderRadius: 10,
           display: "inline-flex", alignItems: "center", justifyContent: "center",
-          border: "1px solid var(--line2, #e3e6e0)", background: "#f4f6f3",
+          border: "1px solid var(--line2, var(--hz-c-border-subtle))", background: "var(--hz-c-surface-2)",
           fontSize: 10, fontWeight: 700,
-          color: error ? "#b4443a" : "var(--mut2, #9aa093)",
+          color: error ? "#b4443a" : "var(--mut2, var(--hz-c-ink-soft))",
         }}
       >
         {error ? "err" : "…"}
@@ -86,7 +86,7 @@ function Thumb({ docNo, itemId, photoKey, onOpen }: {
       aria-label="View line photo"
       style={{
         width: 64, height: 64, padding: 0, borderRadius: 10, overflow: "hidden",
-        border: "1px solid var(--line2, #e3e6e0)", background: "#f4f6f3", cursor: "pointer",
+        border: "1px solid var(--line2, var(--hz-c-border-subtle))", background: "var(--hz-c-surface-2)", cursor: "pointer",
       }}
     >
       <img

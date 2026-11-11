@@ -96,7 +96,7 @@ export function CaseAccessAcc({
               return (
                 <span
                   key={uid}
-                  style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, color: TEAL_DK, background: "#e1efed", borderRadius: 7, padding: "4px 8px 4px 10px" }}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, color: TEAL_DK, background: "var(--hz-c-primary-soft)", borderRadius: 7, padding: "4px 8px 4px 10px" }}
                 >
                   {name}
                   <span

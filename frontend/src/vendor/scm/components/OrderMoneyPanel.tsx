@@ -42,7 +42,7 @@ const panel: React.CSSProperties = {
 };
 const btn: React.CSSProperties = {
   padding: '4px 12px', borderRadius: 6, border: '1px solid var(--c-line, rgba(34,31,32,0.2))',
-  background: 'var(--c-paper, #fff)', cursor: 'pointer', fontSize: 'var(--fs-12)', fontWeight: 600,
+  background: 'var(--c-paper, var(--hz-c-surface))', cursor: 'pointer', fontSize: 'var(--fs-12)', fontWeight: 600,
 };
 const primary: React.CSSProperties = { ...btn, background: 'var(--c-ink, #221f20)', color: 'var(--c-paper, #fff)', borderColor: 'var(--c-ink, #221f20)' };
 const muted: React.CSSProperties = { color: 'var(--fg-muted)' };

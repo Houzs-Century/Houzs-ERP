@@ -479,7 +479,7 @@ export const DeliveryPlanning = () => {
                          the viewport and scroll, so the bottom entries (Postage / Delivery
                          Completed) can't fall off-screen (owner 2026-10-23). */
                       maxHeight: '70vh', overflowY: 'auto',
-                      background: '#fff', border: '1px solid var(--line)', borderRadius: 'var(--radius-md, 10px)',
+                      background: 'var(--hz-c-surface)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md, 10px)',
                       boxShadow: '0 8px 28px rgba(34, 31, 32, 0.14)', padding: 4,
                     }}
                   >
@@ -511,7 +511,7 @@ export const DeliveryPlanning = () => {
                           <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--fs-13, 13px)', fontWeight: 600, color: 'var(--ink, #221f20)' }}>
                             <MessageSquare size={14} strokeWidth={1.75} /> {label}
                           </span>
-                          <span style={{ display: 'block', marginLeft: 22, fontSize: 'var(--fs-12, 11px)', color: 'var(--c-muted, #767b6e)' }}>{assrLeftOut(k) ? `${hint}. SO rows only: ${selectedAssrRows.length} ASSR not included` : hint}</span>
+                          <span style={{ display: 'block', marginLeft: 22, fontSize: 'var(--fs-12, 11px)', color: 'var(--c-muted, var(--hz-c-ink-muted))' }}>{assrLeftOut(k) ? `${hint}. SO rows only: ${selectedAssrRows.length} ASSR not included` : hint}</span>
                         </button>
                       );
                       return (
@@ -535,7 +535,7 @@ export const DeliveryPlanning = () => {
                             <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--fs-13, 13px)', fontWeight: 600, color: 'var(--ink, #221f20)' }}>
                               <RefreshCw size={14} strokeWidth={1.75} /> Sync to Connect
                             </span>
-                            <span style={{ display: 'block', marginLeft: 22, fontSize: 'var(--fs-12, 11px)', color: 'var(--c-muted, #767b6e)' }}>Fill the customer's Connect details from the order — no message sent</span>
+                            <span style={{ display: 'block', marginLeft: 22, fontSize: 'var(--fs-12, 11px)', color: 'var(--c-muted, var(--hz-c-ink-muted))' }}>Fill the customer's Connect details from the order — no message sent</span>
                           </button>
                           {/* One Time Send Now (owner 2026-10-21): the ad-hoc sends
                               fold under one entry, opened on demand. */}
@@ -552,7 +552,7 @@ export const DeliveryPlanning = () => {
                               <MessageSquare size={14} strokeWidth={1.75} /> One Time Send Now
                               <ChevronDown size={13} strokeWidth={1.75} style={{ marginLeft: 'auto', transform: oneTimeOpen ? 'rotate(180deg)' : 'none' }} />
                             </span>
-                            <span style={{ display: 'block', marginLeft: 22, fontSize: 'var(--fs-12, 11px)', color: 'var(--c-muted, #767b6e)' }}>Pick one: postpone, driver info, balance, reminders, postage, thanks</span>
+                            <span style={{ display: 'block', marginLeft: 22, fontSize: 'var(--fs-12, 11px)', color: 'var(--c-muted, var(--hz-c-ink-muted))' }}>Pick one: postpone, driver info, balance, reminders, postage, thanks</span>
                           </button>
                           {oneTimeOpen && ([
                             ['postpone', 'Postpone', 'Move the date - reads the order reason and new date'],
@@ -652,7 +652,7 @@ export const DeliveryPlanning = () => {
                     /* Short today, but cap + scroll so it can't fall off-screen either
                        if more bulk actions are added (twin of the Send Message menu). */
                     maxHeight: '70vh', overflowY: 'auto',
-                    background: '#fff', border: '1px solid var(--line)', borderRadius: 'var(--radius-md, 10px)',
+                    background: 'var(--hz-c-surface)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md, 10px)',
                     boxShadow: '0 8px 28px rgba(34, 31, 32, 0.14)', padding: 4,
                   }}
                 >

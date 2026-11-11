@@ -123,7 +123,7 @@ function RequesterRequests({ listQ }: { listQ: RequestListQuery }) {
         {/* 同一张单: the same bill number and date on another live document. */}
         {(r.billMatches?.length ?? 0) > 0 && (
           <span title={`Same bill: ${(r.billMatches ?? []).map(billMatchText).join(' | ')}`} aria-label="Same bill elsewhere"
-            style={{ marginLeft: 6, color: 'var(--c-festive-b, #B8331F)', fontWeight: 700 }}>⚠ same bill</span>
+            style={{ marginLeft: 6, color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))', fontWeight: 700 }}>⚠ same bill</span>
         )}
       </span>
     ), getValue: (r) => (isRefundRequest(r) ? `${r.request_no} Refund ${r.refund_source_doc_no ?? ''}` : r.request_no) },
@@ -212,7 +212,7 @@ function RequesterRequests({ listQ }: { listQ: RequestListQuery }) {
           )}
         >
           {detail.stage === 'RETURNED' && detail.finance_note && (
-            <div style={{ padding: 'var(--space-3)', borderRadius: 8, background: 'var(--c-cream, #faf8f3)', color: 'var(--c-festive-b, #B8331F)', fontSize: 'var(--fs-13)' }}>
+            <div style={{ padding: 'var(--space-3)', borderRadius: 8, background: 'var(--c-cream, #faf8f3)', color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))', fontSize: 'var(--fs-13)' }}>
               {isRefundRequest(detail) ? 'Rejected' : 'Returned'} by {detail.decided_by ?? 'Finance'}{detail.decided_at ? ` on ${fmtDateOrDash(detail.decided_at)}` : ''}: {detail.finance_note}
             </div>
           )}

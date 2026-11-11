@@ -3,6 +3,7 @@
 One line per open item: what — waiting on — since. Delete the line when it is done. Older items were dropped on 2026-09-15; they are in tag `archive/docs-2026-09-15`.
 
 ## Waiting on owner
+- Staging DB is shared by every `staging-preview/*` deploy, so a preview's migrations land in staging's tracker before review (5 service-case rows on 2026-11-10; 3 retired in fix/staging-rehearsal). Decide: previews deploy with `skip_migrate`, or keep it and retire each renamed cut — owner — 2026-11-11
 - Delivery Planning SQL board: after the PR merges, set `DP_BOARD_SOURCE = "shadow"` (wrangler.toml), let `scm.delivery_board_shadow_runs` collect a few days, explain every difference, then switch to `"sql"` — owner / dev — 2026-11-10
 - HC-SO-2609-299: is the Taman Akasig delivery address right? It geocodes oddly on the Last Mile map — owner — 2026-11-08
 - Fleet: which lorries are MSJ and which Penang; the cargo box size (L x W x H) of each lorry, for the capacity check — owner — 2026-11-08
@@ -37,15 +38,15 @@ One line per open item: what — waiting on — since. Delete the line when it i
 - Service case detail: `po_amount` is still visible and editable to anyone who can open a case (the export now hides it from non-cost viewers, #5628) — owner — 2026-11-11
 - Finance: HC-SO-2609-164 (pay 03c0c4b1 + a692fff5, 2.1 s apart) and HC-SO-008674 (112ad71a + 358dea27, 4.1 s apart) look double-recorded; check the bank and who recorded them before deleting either — finance — 2026-11-11
 ## Waiting on others
+- PR #5448 (service case Operation Dept): staging already ran its `20261110T1300` / `T1400` files; if they merge under new numbers, add the two old names to `backend/scripts/lib/migration-retirements.mjs` — Laphii1206 — 2026-11-11
 - Accountant: start date for the customer receipt (OR) write-back — 2026-09-14
 - Office: Remark 2 run in AutoCount for receipts after 2026-09-10 18:25 — 2026-09-15
-- Cloudflare account holder: staging Worker needs the staging service_role key (staging rehearsal red) — 2026-09-12
 - Warehouse: 239 SQUARE + 14 LONG custom pillows have no colour (stock-take by colour) — 2026-09-14
 - BUG-54 service case phone on the delivery sheet: paste `reference/ERPDeliverySync.gs` into the live "Delivery & Amend Updated" project and run `runErpAssrContactRefresh` once, then check Delivery Details R4124 col H — sheet trigger owner — 2026-10-05
 
 ## Dev
 - Receipt rebank: after one clean release of the atomic move, delete `RECEIPT_REBANK_MODE` and the two-step path (`moveOneTwoStep`, acc/receipt-rebank.ts); the payment-edit receipt re-issue (`followPaymentEdit` -> formaliseReceipt, `rebankTx: null`) still moves a transfer two-step until env reaches it — dev — 2026-11-10
-- All-or-nothing stock writes: GRN post (`GRN_POST_MODE`) and DO first ship (`DO_SHIP_MODE`) are atomic. Left: delivery returns and purchase returns; a create-as-confirmed DO still inserts LOADED before its ship transaction (a crash in between = LOADED, no OUT; `check-half-done-documents` finds it). Delete the `two-step` paths and switches after one clean release — 2026-11-10
+- All-or-nothing stock writes: GRN post (`GRN_POST_MODE`), DO first ship (`DO_SHIP_MODE`), delivery return create / cancel (`DELIVERY_RETURN_MODE`) and purchase return create / cancel (`PURCHASE_RETURN_MODE`) are atomic. A create-as-confirmed DO and a return create still insert the header before the stock transaction (a crash in between = LOADED / RECEIVED / POSTED with no stock; `check-half-done-documents` finds it); return line edits stay best-effort. Delete the `two-step` paths and switches after one clean release — 2026-11-11
 - Last Mile map: draw each lorry's road-shaped line from the kept polyline in scm.lorry_day_routes (today straight lines between stops) — 2026-11-08
 - Fleet Health "Off the road": add and end an out-of-service window from the lorry record (backend has the table; no screen) — 2026-11-08
 - Verify on production: System Health shows "Health report to IT Hub: Last sent" (#5398), and an HC SO with a live PO refuses a direct line edit and offers an amendment (#5444) — 2026-11-09
@@ -64,7 +65,7 @@ One line per open item: what — waiting on — since. Delete the line when it i
 - Photos over 2 MiB are dropped (4 documents) — 2026-09-14
 - Drop `public.project_sales_bills` (created by mig 20261014T1600, unused since the sales report is derived from the project chat; 38 saved rows are superseded by the chat they came from) — needs a migration with REVERSAL — 2026-10-14
 
-- Next, not started (handed off 2026-11-11, in this order): (1) staging migrations catch up with main; (2) AI scans (read-bill, credit-notes/scan, payment-vouchers/extract, scan-payment; p95 17-28 s) move to the scan queue with per-bill progress; (3) measure why GRN create/post and SO create/status/items are 5-10 s (Server-Timing on staging first; suspect inline `recomputeSoStockAllocation` at ~23 call sites); (4) swallowed reads (`swallowed-read-baseline.json`, ~850) in slices, reads in front of writes first; (5) grandfathered company-scope handlers (`company-scope-baseline.json`, e.g. lorry-service-records.ts:87) and raw-SQL master reads; (6) dark mode last (owner 2026-11-10: after speed/accuracy) — dev — 2026-11-11
+- Next, not started (handed off 2026-11-11, in this order): (1) staging migrations catch up with main — done, 0 pending (staging-migrate run 42861413878); (2) AI scans (read-bill, credit-notes/scan, payment-vouchers/extract, scan-payment; p95 17-28 s) move to the scan queue with per-bill progress; (3) measure why GRN create/post and SO create/status/items are 5-10 s — in progress: perf/measure-write-paths adds Server-Timing laps on those routes plus per-request DB ms / round trips / company in AE (check-slow-routes columns db_ms, db_n, part E); after merge, one day of data decides whether `recomputeSoStockAllocation` moves off the request path; (4) swallowed reads (`swallowed-read-baseline.json`, ~850) in slices, reads in front of writes first; (5) grandfathered company-scope handlers (`company-scope-baseline.json`, e.g. lorry-service-records.ts:87) and raw-SQL master reads; (6) dark mode last (owner 2026-11-10: after speed/accuracy) — dev — 2026-11-11
 - Integrity: `integrity-nightly` (00:05 MYT, #5620) first ran 2026-11-11; read its job_runs row in System Health and act on any finding — dev — 2026-11-11
 - Company split to keep in mind: company 1 (Houzs) picks/costs by hard binding SO line -> PO line, never by spec bucket; company 2 (2990) tracks stock by variant (`binding-mode.ts`) — dev — 2026-11-11
 
@@ -128,7 +129,6 @@ Measured on prod 2026-10-22, warm: Overview `procurement-overview` 5.5 s, Invent
 - PostgREST aggregates look OFF on prod (exact error code shows in Server-Timing `s-db-agg-*` once this ships; DO list search matching nothing = 12 round trips, 3 with them on), so every aggregate fast path (SO pills + money tiles, DO pills, Outstanding /summary) paid a refused request and then paged its fallback UNORDERED — the SO DELIVERED pill read 746 beside a list total of 747 in one response (2026-10-23). Fix: remember PGRST123 per isolate for 10 min (lib/postgrest-aggregate.ts, Server-Timing `s-db-agg-*`), order every fallback page, DO pills fall back to one ordered status read. Turning aggregates on (`pgrst.db_aggregates_enabled`) is Samuel's call — 2026-10-23
 
 - Delivery Planning, done 2026-10-26/27 (#4958 #4961 #4962 #4963): working tabs read `state=OPEN` (1.5 MB, ~2.3 s, was 5.4 MB / 5-12 s); an edit re-reads only its order (0.4-1.0 s); a trigger-fed change log refreshes others' changes every 30 s (poll 84 ms). Left: All / Delivered still read every row (3.8 s, 5.4 MB); scroll renders ~10 ms per new row (inline editors) — 2026-10-27
-- Staging migrations fail since 2026-10-26 02:31 (`Staging Migrations` workflow): staging holds 5 applied HR migrations not on main (`20261021T0300_hr_employees` … `20261022T1500_hr_trip_pay`), so pg-migrate stops on drift and staging gets no new migration. Production is unaffected (it applied #4963). Waiting on the owner of the HR branch: merge it, or retire those rows on staging — 2026-10-27
 - Hard-bound cost backfill (`backfill-hard-bound-cost.mjs`, company 1): run the PLAN after #5619 is merged and the cutover no-spec revert has been applied; APPLY waits on the owner (closed months 2026-09 / 2026-10 expected) — 2026-11-10
 
 ## Recurring

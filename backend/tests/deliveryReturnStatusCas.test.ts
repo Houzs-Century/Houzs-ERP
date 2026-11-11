@@ -76,7 +76,7 @@ const patch = (app: Hono, status: string) =>
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ status }),
-  });
+  }, { DELIVERY_RETURN_MODE: 'two-step' }); // no database behind these fakes; deliveryReturnAtomic.test.ts covers atomic
 
 const row = (status: string): Row => ({ id: 'dr-1', company_id: CO, return_number: 'DR-1', status, warehouse_id: 'wh-1' });
 
