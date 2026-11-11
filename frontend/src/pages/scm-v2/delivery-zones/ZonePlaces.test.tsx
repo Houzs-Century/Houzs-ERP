@@ -45,7 +45,7 @@ describe('places of a zone', () => {
     fetchMock.mockImplementation(api);
     mount('PERAK');
     const table = await screen.findByRole('table', { name: 'Places in Perak' });
-    const rows = within(table).getAllByRole('row').slice(1).map((r) => r.textContent ?? '');
+    const rows = within(table).getAllByRole('row').slice(1).map((r) => r.textContent);
     expect(rows[0]).toContain('Gerik');
     expect(rows[0]).toContain('No rate card yet');
     expect(rows[1]).toContain('Ipoh');
