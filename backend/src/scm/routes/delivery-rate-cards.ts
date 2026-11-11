@@ -213,11 +213,25 @@ deliveryRateCards.get('/meta', async (c) => {
     isInternal: r.is_internal !== false,
   }));
   // WS4b: 3PL companies — a card is now priced per company (its lorries inherit).
-  const { data: coData } = await paginateAll<Row>((lo, hi) =>
-    scopeToCompany(sb.from('threepl_companies').select('id, name, is_active'), c)
+  const { data: coData, error: coErr } = await paginateAll<Row>((lo, hi) =>
+    scopeToCompany(sb.from('threepl_companies').select('id, name, is_active, supplier_id'), c)
       .eq('is_active', true).order('name', { ascending: true }).range(lo, hi),
   );
-  const companies = (coData ?? []).map((r) => ({ id: String(r.id), name: String(r.name ?? '') }));
+  if (coErr) return c.json({ error: 'load_failed', reason: coErr.message }, 500);
+  /* The supplier each carrier bills as (owner 2026-11-11: a 3PL is one of the
+     company's suppliers), shown under its name in the carrier list. */
+  const supplierIds = [...new Set((coData ?? []).map((r) => s(r.supplier_id)).filter((x): x is string => !!x))];
+  const supplierById = new Map<string, { code: string | null; name: string }>();
+  if (supplierIds.length > 0) {
+    const { data: supData, error: supErr } = await scopeToCompany(sb.from('suppliers').select('id, code, name'), c).in('id', supplierIds);
+    if (supErr) return c.json({ error: 'load_failed', reason: supErr.message }, 500);
+    for (const r of (supData as Row[] | null) ?? []) supplierById.set(String(r.id), { code: s(r.code), name: String(r.name ?? '') });
+  }
+  const companies = (coData ?? []).map((r) => ({
+    id: String(r.id),
+    name: String(r.name ?? ''),
+    supplier: supplierById.get(String(r.supplier_id ?? '')) ?? null,
+  }));
   return c.json({ carriers, companies, ruleTypes: RULE_TYPES, zones: [...ZONE_SET] });
 });
 

@@ -111,7 +111,7 @@ export const PriceCheck = ({ card, rules, areas, areaRules, form, onForm }: {
           </Field>
         )}
       </div>
-      {UNIT_NOTE[unit] && <p className="text-[12.5px] text-ink-muted">{UNIT_NOTE[unit]}</p>}
+      {UNIT_NOTE[unit] && <p className="text-[12px] text-ink-muted">{UNIT_NOTE[unit]}</p>}
 
       <div className="flex flex-col gap-3 rounded-xl bg-surface-2 px-4 py-3.5">
         {!read.ok ? (
@@ -125,15 +125,15 @@ export const PriceCheck = ({ card, rules, areas, areaRules, form, onForm }: {
               <div key={g.id} className="flex flex-col gap-1">
                 <span className={EYEBROW}>{g.title}</span>
                 {g.lines.map((l) => (
-                  <div key={l.key} className={cn('flex justify-between gap-3 text-[13.5px]', l.amountSen < 0 ? 'text-ink-muted' : 'text-ink')}>
+                  <div key={l.key} className={cn('flex justify-between gap-3 text-[13px]', l.amountSen < 0 ? 'text-ink-muted' : 'text-ink')}>
                     <span className="min-w-0">{l.label}</span>
                     <span className="flex-none tabular-nums">{l.amountSen < 0 ? '−' : ''}{fmtSen(Math.abs(l.amountSen))}</span>
                   </div>
                 ))}
               </div>
             ))}
-            {result.area && <p className="text-[12.5px] text-ink-muted">Priced in the area {result.area.name}.</p>}
-            <div className="flex justify-between gap-3 border-t border-border pt-2.5 text-[16px] font-bold text-ink" aria-live="polite">
+            {result.area && <p className="text-[12px] text-ink-muted">Priced in the area {result.area.name}.</p>}
+            <div className="flex justify-between gap-3 border-t border-border pt-2.5 text-[15px] font-semibold text-ink" aria-live="polite">
               <span>This delivery should cost</span>
               <span className="tabular-nums">{fmtSen(result.totalSen)}</span>
             </div>

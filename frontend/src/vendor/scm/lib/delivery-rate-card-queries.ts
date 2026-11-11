@@ -68,7 +68,8 @@ export type RateArea = {
 
 export type RateCardMeta = {
   carriers: { id: string; plate: string; type: string | null; isInternal: boolean }[];
-  companies: { id: string; name: string }[];
+  /** The 3PL companies; `supplier` is the supplier each bills as (null = not linked). */
+  companies: { id: string; name: string; supplier?: { code: string | null; name: string } | null }[];
   ruleTypes: RateRuleType[];
   zones: string[];
 };

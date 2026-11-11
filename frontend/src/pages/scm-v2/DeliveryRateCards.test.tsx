@@ -1,5 +1,6 @@
-// Carriers & Rates (restyle + audit 2026-11-07; card redesign 2026-11-11): every
-// carrier is listed, a card whose 3PL company was deleted is not passed off as
+// Carriers & Rates (restyle + audit 2026-11-07; card redesign 2026-11-11; finance
+// tables 2026-11-11): every carrier is listed with the supplier it bills as (no
+// count of prices), a card whose 3PL company was deleted is not passed off as
 // own fleet, the card's settings read as one line and are edited in a drawer, a
 // price is changed from its tile, the categories are tabs with outstation towns
 // grouped by price, Price check prices a supplier pickup as you type, and
@@ -45,7 +46,11 @@ function api(path: string, init?: RequestInit) {
   if (init?.method && init.method !== 'GET') return Promise.resolve({ rule: RULE, card: CARDS[0] });
   if (path === '/delivery-rate-cards') return Promise.resolve({ cards: CARDS });
   if (path === '/delivery-rate-cards/meta') {
-    return Promise.resolve({ carriers: [], companies: [{ id: 'msj', name: 'MSJ TRANSPORT' }, { id: 'eu', name: 'EU LOGISTICS' }], ruleTypes: [], zones: ['KL', 'MELAKA'] });
+    return Promise.resolve({
+      carriers: [],
+      companies: [{ id: 'msj', name: 'MSJ TRANSPORT', supplier: { code: '405-T001', name: 'MSJ TRANSPORT SDN BHD' } }, { id: 'eu', name: 'EU LOGISTICS', supplier: null }],
+      ruleTypes: [], zones: ['KL', 'MELAKA'],
+    });
   }
   if (path.startsWith('/delivery-rate-cards/reconcile')) return Promise.resolve({ rows: [] });
   if (path.startsWith('/delivery-rate-cards/card-')) {
@@ -56,6 +61,13 @@ function api(path: string, init?: RequestInit) {
   return Promise.resolve({});
 }
 
+/** Opens MSJ's card from the carrier list. */
+const openMsj = async () => { fireEvent.click(await screen.findByText('MSJ TRANSPORT')); };
+
+/** The Areas table: the finance table whose head reads Town. */
+const areasTable = (panel: HTMLElement) => within(panel).getAllByRole('columnheader').find((h) => h.textContent === 'Town')?.closest('table') as HTMLElement;
+const townRow = (panel: HTMLElement, town: string) => within(areasTable(panel)).getByText(town).closest('tr') as HTMLElement;
+
 const mount = () => render(
   <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
     <ConfirmProvider><DeliveryRateCards /></ConfirmProvider>
@@ -63,14 +75,16 @@ const mount = () => render(
 );
 
 describe('Carriers & Rates', () => {
-  it('lists every carrier, and a card whose carrier was deleted under Needs a carrier, not Own fleet', async () => {
+  it('lists every carrier with the supplier it bills as, and a card whose carrier was deleted under Needs a carrier, not Own fleet', async () => {
     fetchMock.mockImplementation(api);
     mount();
     expect(screen.getByRole('heading', { name: 'Carriers & Rates' })).toBeTruthy();
-    expect(await screen.findByText('1 price')).toBeTruthy();
+    expect(await screen.findByText('405-T001 · MSJ TRANSPORT SDN BHD')).toBeTruthy();
+    expect(screen.getByText('No supplier linked')).toBeTruthy();
+    expect(screen.queryByText(/\d+ prices?$/)).toBeNull();
     expect(screen.getByText('No rate card yet')).toBeTruthy();
     expect(screen.getByText('Needs a carrier')).toBeTruthy();
-    expect(screen.getByText(/Carrier removed · 2 prices/)).toBeTruthy();
+    expect(screen.getByText('Carrier removed')).toBeTruthy();
     expect(screen.getByText('Own fleet cost')).toBeTruthy();
   });
 
@@ -79,7 +93,7 @@ describe('Carriers & Rates', () => {
     fetchMock.mockImplementation((path: string, init?: RequestInit) => (path === '/delivery-rate-cards/card-msj' && !init?.method
       ? Promise.resolve({ card: CARDS[0], rules }) : api(path, init)));
     mount();
-    fireEvent.click(await screen.findByText('1 price'));
+    await openMsj();
     expect(await screen.findByRole('heading', { name: 'MSJ TRANSPORT' })).toBeTruthy();
     expect(screen.getByText('Charged per set (frame + mattress) · Minimum RM 50.00 · No cap · No rounding')).toBeTruthy();
     expect(screen.queryByLabelText(/Minimum charge \(RM\)/)).toBeNull();
@@ -134,7 +148,7 @@ describe('Carriers & Rates', () => {
     expect(within(group).getByRole('button', { name: 'EU LOGISTICS' }).getAttribute('aria-pressed')).toBe('true');
   });
 
-  it('shows one category at a time: delivery prices in a ruled table, outstation towns by price with a per-trip price added, and service calls with Add rows', async () => {
+  it('shows one category at a time: delivery prices in a finance table, outstation towns by price with a per-trip price added, and service calls with Add rows', async () => {
     const rules = [
       RULE,
       { ...RULE, id: 'r2', tierPosition: 3, amountSen: 4000 },
@@ -146,8 +160,9 @@ describe('Carriers & Rates', () => {
     fetchMock.mockImplementation((path: string, init?: RequestInit) => (path === '/delivery-rate-cards/card-msj' && !init?.method
       ? Promise.resolve({ card: CARDS[0], rules }) : api(path, init)));
     mount();
-    fireEvent.click(await screen.findByText('1 price'));
+    await openMsj();
     const delivery = await screen.findByRole('tabpanel', { name: 'Delivery' });
+    expect(within(delivery).getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['Price', 'RM']);
     expect(within(delivery).getByText('1st set')).toBeTruthy();
     expect(within(delivery).getByText('3rd set and after')).toBeTruthy();
     expect(within(delivery).getByRole('button', { name: 'Add Dispose price' })).toBeTruthy();
@@ -177,7 +192,7 @@ describe('Carriers & Rates', () => {
     fireEvent.click(screen.getByRole('tab', { name: /^Service calls/ }));
     const svc = screen.getByRole('tabpanel', { name: 'Service calls' });
     expect(within(svc).getByText('This card has no service calls prices yet.')).toBeTruthy();
-    expect(within(svc).getAllByRole('button').map((b) => b.getAttribute('aria-label')))
+    expect(within(svc).getAllByRole('button').map((b) => b.getAttribute('aria-label')).filter((l) => l?.startsWith('Add ')))
       .toEqual(['Add Service price', 'Add Pickup price', 'Add Inspection price', 'Add Supplier pickup price', 'Add Transfer price']);
     fireEvent.click(within(svc).getByRole('button', { name: 'Add Pickup price' }));
     fireEvent.change(within(svc).getByLabelText('Amount for Pickup'), { target: { value: '25' } });
@@ -209,34 +224,45 @@ describe('Carriers & Rates', () => {
       return api(path, init);
     });
     mount();
-    fireEvent.click(await screen.findByText('1 price'));
+    await openMsj();
     const tab = await screen.findByRole('tab', { name: /^Outstation/ });
     expect(tab.textContent).toContain('2');
     fireEvent.click(tab);
     const out = screen.getByRole('tabpanel', { name: 'Outstation' });
-    /* One ruled table: the card's own prices first, then a row per town with the area's prices merged down. */
-    expect(within(out).getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['Area', 'Town', '1st set', '3rd set and after', 'Change the area']);
-    const own = within(out).getByRole('rowgroup', { name: 'Everywhere else' });
+    /* One finance table: the card's own prices first, then a shaded band per
+       area over a row per town, the area's prices on its first town. */
+    expect(within(areasTable(out)).getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['Town', '1st Set', '3rd Set and After', 'Change the area']);
+    const own = townRow(out, 'Towns not in an area below');
     expect(within(own).getByText('80.00')).toBeTruthy();
     expect(within(own).getByText('40.00')).toBeTruthy();
-    const far = within(out).getByRole('rowgroup', { name: 'Far towns' });
-    expect(within(far).getAllByRole('row')).toHaveLength(2);
-    expect(within(far).getByText('Bintulu')).toBeTruthy();
-    expect(within(far).getByText('Labuan')).toBeTruthy();
+    expect(within(areasTable(out)).getByText('Everywhere else · the card’s own prices')).toBeTruthy();
+    expect(within(areasTable(out)).getByText('Far towns')).toBeTruthy();
+    expect(within(townRow(out, 'Bintulu')).getByRole('button', { name: 'Edit 1st set for Far towns, RM 200.00' })).toBeTruthy();
+    expect(within(townRow(out, 'Labuan')).queryAllByRole('button')).toHaveLength(0);
+    /* Its other towns stay blank: a dash there would read as "no price". */
+    expect(townRow(out, 'Labuan').textContent).toBe('Labuan');
     expect(within(out).getByText(/its town price adds on top of the area’s price/).textContent).toContain('Labuan (Far towns)');
 
-    fireEvent.click(within(far).getByRole('button', { name: 'Edit 1st set for Far towns, RM 200.00' }));
-    fireEvent.change(within(far).getByLabelText('Amount for 1st set for Far towns'), { target: { value: '250' } });
-    fireEvent.click(within(far).getByRole('button', { name: 'Save 1st set for Far towns' }));
+    /* The pencil opens the area's name and towns under the table. */
+    fireEvent.click(within(townRow(out, 'Bintulu')).getByRole('button', { name: 'Change Far towns' }));
+    expect(within(out).getByText('Change Far towns')).toBeTruthy();
+    expect((within(out).getByLabelText(/^Towns, separated by commas/) as HTMLTextAreaElement).value).toBe('BINTULU, LABUAN');
+    fireEvent.click(within(out).getByRole('button', { name: 'Cancel' }));
+    expect(within(out).queryByText('Change Far towns')).toBeNull();
+
+    const far = () => townRow(out, 'Bintulu');
+    fireEvent.click(within(far()).getByRole('button', { name: 'Edit 1st set for Far towns, RM 200.00' }));
+    fireEvent.change(within(far()).getByLabelText('Amount for 1st set for Far towns'), { target: { value: '250' } });
+    fireEvent.click(within(far()).getByRole('button', { name: 'Save 1st set for Far towns' }));
     await waitFor(() => {
       const patch = fetchMock.mock.calls.find((c) => c[1]?.method === 'PATCH' && String(c[0]).includes('/rules/'));
       expect(patch?.[0]).toBe('/delivery-rate-cards/card-msj/rules/ra1');
       expect(JSON.parse(String(patch?.[1].body))).toEqual({ amountSen: 25000 });
     });
 
-    fireEvent.click(within(far).getByRole('button', { name: 'Add 3rd set and after price for Far towns' }));
-    fireEvent.change(within(far).getByLabelText('Amount for 3rd set and after for Far towns'), { target: { value: '50' } });
-    fireEvent.click(within(far).getByRole('button', { name: 'Save 3rd set and after price for Far towns' }));
+    fireEvent.click(within(far()).getByRole('button', { name: 'Add 3rd set and after price for Far towns' }));
+    fireEvent.change(within(far()).getByLabelText('Amount for 3rd set and after for Far towns'), { target: { value: '50' } });
+    fireEvent.click(within(far()).getByRole('button', { name: 'Save 3rd set and after price for Far towns' }));
     await waitFor(() => {
       const post = fetchMock.mock.calls.find((c) => c[1]?.method === 'POST' && c[0] === '/delivery-rate-cards/card-msj/rules');
       expect(JSON.parse(String(post?.[1].body))).toEqual({ ruleType: 'POSITIONAL_TIER', tierPosition: 3, areaId: 'area-far', amountSen: 5000 });
@@ -272,7 +298,7 @@ describe('Carriers & Rates', () => {
   it('an add form opened on one tab does not follow to the next', async () => {
     fetchMock.mockImplementation(api);
     mount();
-    fireEvent.click(await screen.findByText('1 price'));
+    await openMsj();
     fireEvent.click(await screen.findByRole('button', { name: 'Add a Delivery rule' }));
     expect(screen.getByLabelText('Rule type')).toBeTruthy();
     fireEvent.click(screen.getByRole('tab', { name: /^Setup & dismantle/ }));
@@ -283,7 +309,7 @@ describe('Carriers & Rates', () => {
   it('a card whose carrier was deleted can be moved to a carrier without a card', async () => {
     fetchMock.mockImplementation(api);
     mount();
-    fireEvent.click(await screen.findByText(/Carrier removed · 2 prices/));
+    fireEvent.click(await screen.findByText('Carrier removed'));
     const move = await screen.findByLabelText('Move to carrier');
     expect(within(move).queryByRole('option', { name: 'MSJ TRANSPORT' })).toBeNull();
     fireEvent.change(move, { target: { value: 'eu' } });

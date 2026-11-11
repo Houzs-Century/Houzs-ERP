@@ -4,17 +4,19 @@
 // is a tab, its prices a ruled table (a price clicked changes or removes it), outstation towns
 // sit together by price (OutstationPrices.tsx), and Price check is the fifth
 // tab (「做多一个categories按钮」, PriceCheck.tsx).
-import { useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { Calculator, Plus } from 'lucide-react';
 import type { RateArea, RateCard, RateRule } from '../../../vendor/scm/lib/delivery-rate-card-queries';
 import { cn } from '../../../lib/utils';
+import { DataTable, type Column } from '../../../components/DataTable';
+import { useSmallViewport } from '../../../hooks/useSmallViewport';
 import { CATEGORY_HINT, CATEGORY_LABEL, RULE_LABEL } from '../../../vendor/scm/lib/rate-rule-taxonomy';
 import { CATEGORY_ORDER, flatTitle, flatTypesOf, type FlatRuleType, type PriceCell, type RuleBlock, type RuleSection } from './rateCardLayout';
 import { AddPriceCell, AddRule, Panel, PriceButton, panelId, tabId, type RateSection } from './ruleEditors';
 import { OutstationPrices } from './OutstationPrices';
 import { PriceCheck } from './PriceCheck';
 import type { PriceCheckForm } from './priceCheckFacts';
-import { BTN_QUIET, Pill, T_CELL, T_HEAD, T_SECTION } from './ui';
+import { BTN_QUIET, Pill } from './ui';
 
 export type { RateSection } from './ruleEditors';
 const SECTIONS: readonly RateSection[] = [...CATEGORY_ORDER, 'PRICE_CHECK'];
@@ -44,8 +46,8 @@ export const SectionTabs = ({ sections, areaCount, value, onChange }: {
       <button key={s} type="button" role="tab" id={tabId(s)} aria-selected={on} aria-controls={on ? panelId(s) : undefined} tabIndex={on ? 0 : -1}
         ref={(el) => { if (el) refs.current.set(s, el); else refs.current.delete(s); }}
         onClick={() => onChange(s)} onKeyDown={(e) => onKey(e, s)}
-        className={cn('flex min-h-[44px] flex-none items-center gap-1.5 whitespace-nowrap border-b-2 px-3 text-[13.5px]',
-          on ? 'border-primary font-bold text-ink' : 'border-transparent font-medium text-ink-muted hover:text-ink')}>
+        className={cn('flex min-h-[44px] flex-none items-center gap-1.5 whitespace-nowrap border-b-2 px-3 text-[13px]',
+          on ? 'border-primary font-semibold text-ink' : 'border-transparent font-medium text-ink-muted hover:text-ink')}>
         {content}
       </button>
     );
@@ -71,10 +73,20 @@ export const SectionTabs = ({ sections, areaCount, value, onChange }: {
 type Ladder = Extract<RuleBlock, { kind: 'ladder' }>;
 interface PriceGroup { id: string; title: string; cells: PriceCell[]; missing: FlatRuleType[] }
 
-/** Delivery, Setup & dismantle and Service calls: their prices as one ruled
- *  two-column table (owner 2026-11-11: 「这个也整理一下」, like the transporters'
- *  own rate sheets), a shaded row per kind, and an Add row for each price the
- *  category could carry and the card does not. */
+/** One line of a category's price table: a price the card carries, or one it
+ *  could carry and does not (added from its RM cell). */
+interface PriceLine { key: string; group: string; label: string; cell: PriceCell | null; missing: FlatRuleType | null }
+
+const priceLines = (groups: readonly PriceGroup[]): PriceLine[] => groups.flatMap((g) => [
+  ...g.cells.map((c) => ({ key: c.rule.id, group: g.title, label: c.label, cell: c, missing: null })),
+  ...g.missing.map((t) => ({ key: `add-${t}`, group: g.title, label: RULE_LABEL[t], cell: null, missing: t })),
+]);
+
+/** Delivery, Setup & dismantle and Service calls: their prices as a finance
+ *  table (owner 2026-11-11: 「这个也整理一下」, then 「table 可以用 finance table」):
+ *  a shaded group row per kind, a line per price, an Add line for each price the
+ *  category could carry and the card does not; widths, columns, print and
+ *  export from the header menu, as on every Finance list. */
 const PricesPanel = ({ cardId, section, zones }: { cardId: string; section: RuleSection; zones: string[] }) => {
   const [adding, setAdding] = useState(false);
   const cat = section.category;
@@ -87,6 +99,26 @@ const PricesPanel = ({ cardId, section, zones }: { cardId: string; section: Rule
   /* Positions, cap overage and sofa brackets need more than an amount, so
      Delivery keeps the full form; the other two take amounts only. */
   const needsForm = cat === 'DELIVERY';
+  const lines = useMemo(() => priceLines(groups), [groups]);
+  /* A phone keeps the grid, not cards: cards drop the shaded kind rows. */
+  const small = useSmallViewport();
+  const columns = useMemo<Column<PriceLine>[]>(() => [
+    { key: 'kind', label: 'Kind', defaultHidden: true, disableSort: true, getValue: (r) => r.group, render: (r) => r.group },
+    {
+      key: 'price', label: 'Price', disableSort: true, getValue: (r) => r.label,
+      render: (r) => (r.cell
+        ? <span className="inline-flex items-center gap-1.5">{r.label}{r.cell.duplicate && <Pill tone="amber">Twice</Pill>}</span>
+        : <span className="text-ink-muted">{r.label}</span>),
+    },
+    {
+      key: 'rm', label: 'RM', align: 'right', width: '170px', disableSort: true,
+      getValue: (r) => (r.cell ? r.cell.rule.amountSen / 100 : null),
+      exportValue: (r) => (r.cell ? r.cell.rule.amountSen / 100 : ''),
+      render: (r) => (r.cell
+        ? <PriceButton cardId={cardId} rule={r.cell.rule} name={r.label} />
+        : r.missing && <AddPriceCell cardId={cardId} rule={{ ruleType: r.missing }} label={r.label} />),
+    },
+  ], [cardId]);
   return (
     <Panel section={cat} title={label} note={null} hint={CATEGORY_HINT[cat]}
       actions={needsForm && !adding
@@ -96,33 +128,14 @@ const PricesPanel = ({ cardId, section, zones }: { cardId: string; section: Rule
         : null}>
       {section.count === 0 && <p className="text-[13px] text-ink-muted">This card has no {label.toLowerCase()} prices yet.</p>}
       {groups.length > 0 && (
-        <table className="w-full max-w-[640px] border-collapse text-[13px] tabular-nums">
-          <thead>
-            <tr>
-              <th scope="col" className={cn(T_HEAD, 'text-left')}>Price</th>
-              <th scope="col" className={cn(T_HEAD, 'w-[150px] text-right')}>RM</th>
-            </tr>
-          </thead>
-          {groups.map((g) => (
-            <tbody key={g.id} aria-label={g.title}>
-              <tr><th scope="colgroup" colSpan={2} className={T_SECTION}>{g.title}</th></tr>
-              {g.cells.map((c) => (
-                <tr key={c.rule.id}>
-                  <td className={T_CELL}>
-                    <span className="inline-flex items-center gap-1.5">{c.label}{c.duplicate && <Pill tone="amber">Twice</Pill>}</span>
-                  </td>
-                  <td className={cn(T_CELL, 'text-right')}><PriceButton cardId={cardId} rule={c.rule} name={c.label} /></td>
-                </tr>
-              ))}
-              {g.missing.map((t) => (
-                <tr key={t}>
-                  <td className={cn(T_CELL, 'text-ink-muted')}>{RULE_LABEL[t]}</td>
-                  <td className={cn(T_CELL, 'text-right')}><AddPriceCell cardId={cardId} rule={{ ruleType: t }} label={RULE_LABEL[t]} /></td>
-                </tr>
-              ))}
-            </tbody>
-          ))}
-        </table>
+        <div className="max-w-[680px]">
+          <DataTable<PriceLine>
+            tableId="rate-card-prices" embedded={small} exportName={`rate-card-${label.toLowerCase().replace(/[^a-z]+/g, '-')}`} exportXlsx
+            columns={columns} rows={lines} getRowKey={(r) => r.key} groupBy={{ key: 'kind' }}
+            emptyLabel={`This card has no ${label.toLowerCase()} prices yet.`}
+            freezeHeight="off"
+          />
+        </div>
       )}
       {adding && <AddRule cardId={cardId} category={cat} zones={zones} initialType={null} onDone={() => setAdding(false)} />}
     </Panel>
