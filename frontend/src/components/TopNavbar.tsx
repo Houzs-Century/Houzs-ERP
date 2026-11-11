@@ -444,7 +444,7 @@ function ProfileMenu() {
                 Switch user
               </Link>
             )}
-            <LazySlot resetKey={open ? "open" : "closed"} fallback={null}>
+            <LazySlot resetKey="account-menu" fallback={null}>
               <ThemeChoice />
             </LazySlot>
             <button
