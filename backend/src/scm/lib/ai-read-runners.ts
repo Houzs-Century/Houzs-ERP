@@ -48,9 +48,10 @@ export async function runAiReadJob(env: Env, jobId: string, svc: Any): Promise<v
   const kind = aiReadKindOf(row.document_type);
   if (!kind || row.status !== 'queued') return; // a redelivery of a read already under way or finished
 
-  const { data: claimed } = await svc.from('scan_jobs')
+  const { data: claimed, error: claimErr } = await svc.from('scan_jobs')
     .update({ status: 'running', updated_at: new Date().toISOString() })
     .eq('id', jobId).eq('status', 'queued').select('id').maybeSingle();
+  if (claimErr) throw new Error(`scan_jobs claim failed for ${jobId}: ${claimErr.message}`); // nothing spent yet: let the queue retry
   if (!claimed) return; // another delivery claimed it first
 
   /* Only a read still 'running' takes its answer: one the poll already marked
