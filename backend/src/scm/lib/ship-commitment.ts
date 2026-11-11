@@ -26,6 +26,8 @@
 // deduction. Nothing has to be un-set.
 // ----------------------------------------------------------------------------
 
+import { sofaSetKey } from '../shared/sofa-set-identity';
+
 /* ── 1. SHIP TIME — does this line bind an incoming PO? ────────────────────── */
 
 export type ShipCommitmentReason =
@@ -155,9 +157,9 @@ export function planShipCommitments(lines: ShipLineFact[]): ShipCommitmentDecisi
  *  for it and the batch the allocator had already locked. */
 export type SofaSetModule = {
   lineRef: string;
-  /** mfg_sales_order_items.doc_no — the SET's identity. A sofa set is "all the
-   *  READY sofa lines of ONE Sales Order" (sofa-batch-guard.findIncompleteSofaSets),
-   *  and the DO's own sofa lines for that doc_no are the modules being shipped. */
+  /** mfg_sales_order_items.doc_no — with itemCode's model, the SET's identity
+   *  (sofaSetKey: one sofa model on one Sales Order). The DO's own sofa lines
+   *  for that doc_no and model are the modules being shipped. */
   soDocNo: string | null;
   itemCode: string;
   isSofa: boolean;
@@ -192,16 +194,17 @@ export type SofaSetPoConflict = {
  *  A module with no batch at all counts as its own participant: shipping it
  *  un-batched means plain FIFO picks its lot, which is a split by another name. */
 export function planSofaSetPoConflicts(modules: SofaSetModule[]): SofaSetPoConflict[] {
-  const bySet = new Map<string, SofaSetModule[]>();
+  const bySet = new Map<string, { soDocNo: string; set: SofaSetModule[] }>();
   for (const m of modules) {
     if (!m.isSofa || !m.soDocNo) continue;
-    const arr = bySet.get(m.soDocNo) ?? [];
-    arr.push(m);
-    bySet.set(m.soDocNo, arr);
+    const key = sofaSetKey(m.soDocNo, m.itemCode);
+    const entry = bySet.get(key) ?? { soDocNo: m.soDocNo, set: [] };
+    entry.set.push(m);
+    bySet.set(key, entry);
   }
 
   const out: SofaSetPoConflict[] = [];
-  for (const [soDocNo, set] of bySet) {
+  for (const { soDocNo, set } of bySet.values()) {
     if (!set.some((m) => m.boundBatchNo)) continue; // nothing being bound here
     const effective = set.map((m) => ({
       itemCode: m.itemCode,

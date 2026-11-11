@@ -265,24 +265,24 @@ describe('allocateExpectedBatches — the DO-time live pick (Decision 2026-08-06
 
   it('SOFA: the whole set gets ONE pick, needs pooled across modules', () => {
     const pool = [
-      line('PO-1', 'A', 'k1', 1, '2026-08-10'), // covers only module A
-      line('PO-2', 'A', 'k1', 1, '2026-08-20'),
-      line('PO-2', 'B', 'k2', 1, '2026-08-20'),
+      line('PO-1', 'M-A', 'k1', 1, '2026-08-10'), // covers only module A
+      line('PO-2', 'M-A', 'k1', 1, '2026-08-20'),
+      line('PO-2', 'M-B', 'k2', 1, '2026-08-20'),
     ];
     const picks = allocateExpectedBatches(pool, [
-      dLine({ lineRef: 'mA', itemCode: 'A', variantKey: 'k1', isSofa: true }),
-      dLine({ lineRef: 'mB', itemCode: 'B', variantKey: 'k2', isSofa: true }),
+      dLine({ lineRef: 'mA', itemCode: 'M-A', variantKey: 'k1', isSofa: true }),
+      dLine({ lineRef: 'mB', itemCode: 'M-B', variantKey: 'k2', isSofa: true }),
     ]);
     expect(picks.get('mA')?.poNumber).toBe('PO-2');
     expect(picks.get('mB')?.poNumber).toBe('PO-2');
   });
 
   it('SOFA: a module already holding a RECEIVED batch anchors the set\'s preference and takes no pick itself', () => {
-    const both = (po: string, eta: string) => [line(po, 'B', 'k2', 1, eta)];
+    const both = (po: string, eta: string) => [line(po, 'M-B', 'k2', 1, eta)];
     const pool = [...both('PO-3', '2026-08-10'), ...both('PO-9', '2026-08-25')];
     const picks = allocateExpectedBatches(pool, [
-      dLine({ lineRef: 'recv', itemCode: 'A', variantKey: 'k1', isSofa: true, allocatedBatchNo: 'PO-9' }),
-      dLine({ lineRef: 'open', itemCode: 'B', variantKey: 'k2', isSofa: true }),
+      dLine({ lineRef: 'recv', itemCode: 'M-A', variantKey: 'k1', isSofa: true, allocatedBatchNo: 'PO-9' }),
+      dLine({ lineRef: 'open', itemCode: 'M-B', variantKey: 'k2', isSofa: true }),
     ]);
     expect(picks.get('recv')).toBeUndefined();           // ships from received stock
     expect(picks.get('open')?.poNumber).toBe('PO-9');    // follows the anchor, not the earlier ETA
@@ -290,14 +290,27 @@ describe('allocateExpectedBatches — the DO-time live pick (Decision 2026-08-06
 
   it('SOFA: no single PO covers the set -> NO pick (the sofa guards take over; never a per-module split)', () => {
     const pool = [
-      line('PO-1', 'A', 'k1', 1, '2026-08-10'),
-      line('PO-2', 'B', 'k2', 1, '2026-08-10'),
+      line('PO-1', 'M-A', 'k1', 1, '2026-08-10'),
+      line('PO-2', 'M-B', 'k2', 1, '2026-08-10'),
     ];
     const picks = allocateExpectedBatches(pool, [
-      dLine({ lineRef: 'mA', itemCode: 'A', variantKey: 'k1', isSofa: true }),
-      dLine({ lineRef: 'mB', itemCode: 'B', variantKey: 'k2', isSofa: true }),
+      dLine({ lineRef: 'mA', itemCode: 'M-A', variantKey: 'k1', isSofa: true }),
+      dLine({ lineRef: 'mB', itemCode: 'M-B', variantKey: 'k2', isSofa: true }),
     ]);
     expect(picks.size).toBe(0);
+  });
+
+  it('SOFA: two models on one order are two sets, each takes its own PO (HC-SO-2610-104)', () => {
+    const pool = [
+      line('PO-HOOKKA', '8030-1A(LHF)', 'k1', 1, '2026-08-10'),
+      line('PO-DORSETT', '8069-1A(LHF)', 'k2', 1, '2026-08-10'),
+    ];
+    const picks = allocateExpectedBatches(pool, [
+      dLine({ lineRef: 'm8030', itemCode: '8030-1A(LHF)', variantKey: 'k1', isSofa: true }),
+      dLine({ lineRef: 'm8069', itemCode: '8069-1A(LHF)', variantKey: 'k2', isSofa: true }),
+    ]);
+    expect(picks.get('m8030')?.poNumber).toBe('PO-HOOKKA');
+    expect(picks.get('m8069')?.poNumber).toBe('PO-DORSETT');
   });
 
   it('the fold feeds the walk: an outstanding commitment shifts the whole-write allocation', () => {

@@ -59,6 +59,7 @@ import { bankMonths, bankMonthDetail, bankMonthClosing } from './accounting-bank
 import { bankLocks, bankMonthLock, bankMonthUnlock } from './accounting-bank-locks';
 import { paymentCorrections } from './accounting-payment-corrections';
 import { unmatchedBankLinesHandler, unmatchedPaymentsHandler } from './accounting-unmatched-payments';
+import { previousPaymentsList, previousPaymentsMark, previousPaymentsUndo } from './accounting-previous-payments';
 import { arAgingHandler, apAgingHandler } from './accounting-aging';
 import { productProfitHandler } from './accounting-product-profit';
 import { bankConfigList, bankConfigSave } from './accounting-bank-config';
@@ -163,6 +164,12 @@ accounting.get('/unmatched-payments', unmatchedPaymentsHandler);
 /* And the bank's money-in lines nothing in the books is matched to (owner
    2026-11-10: 如果银行那边的收款有，也没有对应的transaction 也可以显示). */
 accounting.get('/unmatched-bank-lines', unmatchedBankLinesHandler);
+/* A salesperson's payment record the owner marked as the previous system's — taken
+   in nowhere (owner 2026-11-11: 我检查确定后，就直接说这个是之前record). Rules in
+   acc/previous-payments. */
+accounting.get('/previous-payments', previousPaymentsList);
+accounting.post('/previous-payments', previousPaymentsMark);
+accounting.post('/previous-payments/undo', previousPaymentsUndo);
 /* The acquirer's own payment advice — Public Bank's IBG, which says which
    reports one bank credit pays (owner: 几份 excel 对一份 pdf). */
 accounting.post('/settlement/payouts', payoutUpload);

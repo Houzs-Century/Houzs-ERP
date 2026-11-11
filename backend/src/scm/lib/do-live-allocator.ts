@@ -28,6 +28,7 @@
 
 import { computeVariantKey, effectiveDelivery } from '../shared';
 import type { OutstandingCommitment } from './ship-commitment';
+import { sofaSetKey } from '../shared/sofa-set-identity';
 import { pgrestIn } from './pgrest-in-list';
 
 /** One open PO line's remaining supply, bucketed the way MRP pools it. */
@@ -174,8 +175,8 @@ export type AllocatorDemandLine = {
   shipQty: number;
   /** Sofa modules resolve as a whole SET (one dye lot); everything else per bucket. */
   isSofa: boolean;
-  /** mfg_sales_order_items.doc_no — the sofa SET's identity AND the demand
-   *  tiebreak (owner: "SO1 比 SO2 优先"). */
+  /** mfg_sales_order_items.doc_no — with itemCode's model, the sofa SET's
+   *  identity (sofaSetKey), AND the demand tiebreak (owner: "SO1 比 SO2 优先"). */
   soDocNo: string | null;
   /** A PHYSICALLY RECEIVED batch the stock allocator already locked. The line
    *  ships normally (it draws no incoming supply and gets NO pick here), but
@@ -255,9 +256,10 @@ export function allocateExpectedBatches(
     if (!(Number(d.shipQty) > 0)) continue;
 
     if (d.isSofa && d.soDocNo) {
-      if (setDone.has(d.soDocNo)) continue;
-      setDone.add(d.soDocNo);
-      const modules = ordered.filter((m) => m.isSofa && m.soDocNo === d.soDocNo);
+      const setKey = sofaSetKey(d.soDocNo, d.itemCode);
+      if (setDone.has(setKey)) continue;
+      setDone.add(setKey);
+      const modules = ordered.filter((m) => m.isSofa && m.soDocNo != null && sofaSetKey(m.soDocNo, m.itemCode) === setKey);
       const needs = new Map<string, number>();
       for (const m of modules) {
         if (m.allocatedBatchNo || !(Number(m.shipQty) > 0)) continue;

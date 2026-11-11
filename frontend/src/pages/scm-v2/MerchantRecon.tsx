@@ -58,6 +58,7 @@ import { useFinanceTodo } from './finance/finance-todo-queries';
 import { fmtDate } from '../../vendor/shared/format';
 import { markWorkspaceOpenIntent } from '../../lib/workspaceTabs';
 import { rememberReturnScroll, useReturnScroll } from '../../lib/returnScroll';
+import { MarkPreviousButton, PressNote, usePaymentTicks, type PressResult } from './previousRecords';
 
 /* ── The order behind a line, one click away ──────────────────────────────────
    Owner 2026-10-21: 点开那个 HC-SO-013512 这些 sales order 直接打开整张 sales
@@ -219,6 +220,10 @@ const ReconcileTab = ({ acq = null, landing = null, onLandingDone }: {
   const [showDone, setShowDone] = useState(false);
   const readBatches = useReadSettlementBatches();
   const [exportNote, setExportNote] = useState<ExportNote | null>(null);
+  /* Ticks on the card payments not reported yet: one checked to be the previous system's is
+     marked so and leaves every list (owner 2026-11-11: 之前record，我哪里都不会take-in). */
+  const cardTicks = usePaymentTicks((watchlist.data?.recordedNotArrived ?? []).map((p) => `${p.source}:${p.id}`));
+  const [cardMark, setCardMark] = useState<PressResult | null>(null);
 
   /* ONE THING AT A TIME. Working a statement replaces everything else. */
   if (batchId != null) return <BatchView batchId={batchId} onBack={() => setBatchId(null)} />;
@@ -365,11 +370,14 @@ const ReconcileTab = ({ acq = null, landing = null, onLandingDone }: {
           {untagged > 0 && ` ${untagged} keyed in without a bank (未标): shown once here, offered to each merchant's report, and named by the one that confirms it.`}
         </div>
         {exportNote?.list === 'cards' && <ExportStatus note={exportNote} />}
+        <PressNote result={cardMark} />
         <DataTable<WaitingCard>
           tableId="merchant-recon-waiting"
           exportName="card-payments-not-reported"
           exportXlsx
           onExportPdf={exportCardsPdf}
+          selection={{ ...cardTicks.selection, rowLabel: (p) => `Tick ${p.docNo}` }}
+          toolbarExtra={<MarkPreviousButton refs={cardTicks.refs} onDone={cardTicks.clear} onResult={setCardMark} />}
           columns={WAITING_COLUMNS}
           rows={watchlist.data ? waiting : null}
           loading={watchlist.isLoading}

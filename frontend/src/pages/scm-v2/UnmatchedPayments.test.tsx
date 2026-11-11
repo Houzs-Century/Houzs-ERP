@@ -14,7 +14,7 @@
        a part each, with the columns each table shows; one list's PDF prints it;
      • the lists ask for the last 180 days by default. */
 
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { SettlementBatch, SettlementRow } from './settlement-queries';
@@ -65,6 +65,14 @@ const BANK: UnmatchedBankLine[] = [
     note: 'One entry of this amount: 2990-SO-2609-031 · Chong Hui Wen, 20/09/2026 — match it on Bank statements.' },
 ];
 
+/* A payment already marked as the previous system's (owner 2026-11-11). */
+const PREVIOUS = [
+  { source: 'SOPAY' as const, id: 'old-1', docNo: '2990-SO-2605-001', customer: 'Previous Customer', paidOn: '2026-05-20', method: 'imported',
+    channel: null, amountSen: 50_000, reference: null, markedBy: 'Chew', markedAt: '2026-11-11T05:00:00Z' },
+];
+const markMutate = vi.fn();
+const undoMutate = vi.fn();
+
 const asked: Array<[string, string]> = [];
 vi.mock('./unmatched-payments-queries', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./unmatched-payments-queries')>()),
@@ -73,6 +81,9 @@ vi.mock('./unmatched-payments-queries', async (importOriginal) => ({
     return { data: { from, to, rows: ROWS }, isLoading: false, isError: false };
   },
   useUnmatchedBankLines: (from: string, to: string) => ({ data: { from, to, rows: BANK }, isLoading: false, isError: false }),
+  usePreviousPayments: () => ({ data: { rows: PREVIOUS }, isLoading: false, isError: false }),
+  useMarkPrevious: () => ({ mutate: (...args: unknown[]) => markMutate(...args), isPending: false }),
+  useUndoPrevious: () => ({ mutate: (...args: unknown[]) => undoMutate(...args), isPending: false }),
 }));
 const detailsAsked: number[][] = [];
 vi.mock('./settlement-queries', async (importOriginal) => ({
@@ -110,6 +121,8 @@ beforeEach(() => {
   writeBook.mockClear();
   writeFile.mockClear();
   printPdf.mockClear();
+  markMutate.mockClear();
+  undoMutate.mockClear();
 });
 afterEach(() => { vi.useRealTimers(); resetInVisitColFilters(); });
 
@@ -121,9 +134,9 @@ describe('three lists on one page', () => {
     expect(tab(/^Bank money in\s*3/).textContent).toContain('RM 3,210.00');
     fireEvent.click(tab(/^Bank money in/));
     expect(tab(/^Bank money in/).getAttribute('aria-selected')).toBe('true');
-    /* Owner 2026-11-11: Merchant Report Line -> Bank Money In -> Payment. */
-    expect(screen.getAllByRole('tab').map((t) => /^(Merchant report lines|Bank money in|Payments)/.exec(t.textContent)?.[1]))
-      .toEqual(['Merchant report lines', 'Bank money in', 'Payments']);
+    /* Owner 2026-11-11: Merchant Report Line -> Bank Money In -> Payment; the previous records after, apart. */
+    expect(screen.getAllByRole('tab').map((t) => /^(Merchant report lines|Bank money in|Payments|Previous records)/.exec(t.textContent)?.[1]))
+      .toEqual(['Merchant report lines', 'Bank money in', 'Payments', 'Previous records']);
   });
 
   test('only open reports overlapping the dates are read, as Merchant Recon reads them', () => {
@@ -366,5 +379,57 @@ describe('Export', () => {
     const [parts, opts] = printPdf.mock.calls[0]! as [Part[], { subtitle: string }];
     expect(parts.map((p) => [p.title, p.view.matrix.body.length, p.note])).toEqual([[PAY_TITLE, 2, 'Filter: Card · not on a report']]);
     expect(opts.subtitle).toMatch(/^Dated \S+ to \S+$/);
+  });
+});
+
+/* Owner 2026-11-11: 我检查确定后，就直接说这个是之前record，我哪里都不会take-in / 我说的是
+   sales man 的收款记录（包括imported from autocount) / Set aside 要分开，不然看不懂. */
+describe('Previous records', () => {
+  test('ticked payments are marked by one press; what came back is said, refusals in their own words', () => {
+    draw();
+    const press = () => screen.getByRole('button', { name: /^Previous record/ });
+    expect(press().hasAttribute('disabled')).toBe(true);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Tick 2990-SO-2609-045' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Tick 2990-SO-2609-031' }));
+    fireEvent.click(press());
+    expect(markMutate).toHaveBeenCalledTimes(1);
+    const [refs, handlers] = markMutate.mock.calls[0]! as [unknown, { onSuccess: (got: unknown) => void }];
+    expect(refs).toEqual([{ source: 'SOPAY', id: 'p1' }, { source: 'SOPAY', id: 'p2' }]);
+    act(() => handlers.onSuccess({
+      ok: true, marked: 1,
+      refused: [{ source: 'SOPAY', id: 'p2', docNo: '2990-SO-2609-031', reason: 'in_the_books', message: '2990-SO-2609-031: its entry JE-2609-0031 is in the books, so it is not only the previous system\'s.' }],
+    }));
+    expect(screen.getByText(/^1 payment marked as previous records/)).toBeTruthy();
+    expect(screen.getByText('2990-SO-2609-031: its entry JE-2609-0031 is in the books, so it is not only the previous system\'s.')).toBeTruthy();
+  });
+
+  test('a list of their own, after the three and apart from them, where Undo puts one back', () => {
+    draw();
+    expect(tab(/^Previous records\s*1/).getAttribute('aria-selected')).toBe('false');
+    fireEvent.click(tab(/^Previous records/));
+    expect(tab(/^Previous records/).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByText(/^Payment records you checked and marked as the previous system’s/)).toBeTruthy();
+    const row = within(rowOf('2990-SO-2605-001'));
+    expect(row.getByText('Previous Customer')).toBeTruthy();
+    expect(row.getByText('From AutoCount')).toBeTruthy();
+    expect(row.getByText('Chew')).toBeTruthy();
+    /* The three lists are put away while it is open. */
+    expect(screen.queryByRole('group', { name: /filter$/ })).toBeNull();
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Tick 2990-SO-2605-001' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Undo \(1\)/ }));
+    expect(undoMutate).toHaveBeenCalledTimes(1);
+    const [refs, handlers] = undoMutate.mock.calls[0]! as [unknown, { onSuccess: (got: unknown) => void }];
+    expect(refs).toEqual([{ source: 'SOPAY', id: 'old-1' }]);
+    act(() => handlers.onSuccess({ ok: true, undone: 1 }));
+    expect(screen.getByText(/^1 payment put back/)).toBeTruthy();
+  });
+
+  test('Export all stays the three lists', async () => {
+    draw();
+    fireEvent.click(screen.getByRole('button', { name: /Export all · Excel/ }));
+    await waitFor(() => expect(writeBook).toHaveBeenCalledTimes(1));
+    const [sheets] = writeBook.mock.calls[0]! as [Array<{ name: string }>];
+    expect(sheets.map((s) => s.name)).toEqual(['Merchant received', 'Bank received', 'Payment recorded']);
   });
 });

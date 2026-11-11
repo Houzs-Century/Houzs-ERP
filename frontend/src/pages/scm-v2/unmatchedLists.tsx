@@ -42,7 +42,7 @@ const dayGap = (from: string, to: string): number =>
 /* ── Shared cells ─────────────────────────────────────────────────────────── */
 
 /** Money in RM, totalled at the foot, exported in ringgit. */
-const moneyColumn = <T,>(key: string, label: string, sen: (r: T) => number, over: Partial<Column<T>> = {}): Column<T> => ({
+export const moneyColumn = <T,>(key: string, label: string, sen: (r: T) => number, over: Partial<Column<T>> = {}): Column<T> => ({
   key, label, align: 'right',
   render: (r) => fmt(sen(r)),
   getValue: sen, exportValue: (r) => sen(r) / 100, exportFormat: 'money',
@@ -61,7 +61,7 @@ const daysColumn = <T,>(key: string, age: (r: T) => number): Column<T> => ({
 });
 
 /** An order opens its own page; an invoice's number is shown as it is. */
-const docLink = (source: string | null | undefined, docNo: string) =>
+export const docLink = (source: string | null | undefined, docNo: string) =>
   (source === 'SOPAY' ? <Link to={`/scm/sales-orders/${encodeURIComponent(docNo)}`}>{docNo}</Link> : docNo);
 
 /* ── reports: merchant report lines nobody reconciled ─────────────────────── */

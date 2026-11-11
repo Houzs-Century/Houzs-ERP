@@ -1127,6 +1127,9 @@ export function useCreatePosFromSoItems() {
       /* computedAt of the MRP plan on screen; the server refuses with
          mrp_plan_stale when a PO was raised on these lines after it. */
       planAsOf?: string | null;
+      /* The operator confirmed different sofa models of one order on different
+         suppliers; the server refuses that split without it. */
+      allowSofaSupplierSplit?: boolean;
     }) =>
       authedFetch<{
         // Create-new-POs shape:
