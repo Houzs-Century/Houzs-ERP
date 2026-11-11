@@ -65,8 +65,7 @@ export function ZonePlaces({ zone }: { zone: string | null }) {
           <table aria-label={`Places in ${where}`} className="w-full border-collapse text-[13px]">
             <thead>
               <tr className="text-left text-[11.5px] font-semibold uppercase tracking-wide text-ink-muted">
-                <th scope="col" className="py-1.5 pr-3 font-semibold">Place</th>
-                <th scope="col" className="py-1.5 pr-3 font-semibold">Priced on</th>
+                <th scope="col" className="py-1.5 pr-3 font-semibold">Place · priced on</th>
                 <th scope="col" className="py-1.5 text-right font-semibold">Zone</th>
               </tr>
             </thead>
@@ -75,13 +74,15 @@ export function ZonePlaces({ zone }: { zone: string | null }) {
                 const label = townLabel(p.name);
                 return (
                   <tr key={p.id} className="border-t border-border-subtle align-top">
-                    <td className="py-2 pr-3 font-semibold text-ink">{label}</td>
-                    <td className="py-2 pr-3 text-ink-muted">{p.cards.length > 0 ? p.cards.join(', ') : 'No rate card yet'}</td>
+                    <td className="py-2 pr-3">
+                      <span className="block font-semibold text-ink">{label}</span>
+                      <span className="block text-[12px] text-ink-muted">{p.cards.length > 0 ? p.cards.join(', ') : 'No rate card yet'}</span>
+                    </td>
                     <td className="py-2">
-                      <div className="flex items-center justify-end gap-2">
+                      <div className="flex flex-col items-end gap-1">
                         <select aria-label={`Zone of ${label}`} value={p.zone ?? NO_ZONE}
                           onChange={(e) => move.mutate({ id: p.id, zone: e.target.value || null }, { onError: writeFailedAs('The place was not moved') })}
-                          className="h-8 max-w-[150px] rounded-md border border-border bg-surface px-1.5 text-[12.5px] text-ink">
+                          className="h-8 w-[140px] rounded-md border border-border bg-surface px-1.5 text-[12.5px] text-ink">
                           {ZONE_KEYS.map((z) => <option key={z} value={z}>{zoneName(z)}</option>)}
                           <option value={NO_ZONE}>No zone</option>
                         </select>
