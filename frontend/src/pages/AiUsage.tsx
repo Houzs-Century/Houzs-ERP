@@ -149,7 +149,7 @@ export function AiUsage() {
             </div>
 
             {selected.note && (
-              <div className="rounded-md border border-amber-300 bg-warning-bg p-3 text-[12px] text-warning-text">
+              <div className="rounded-md border border-amber-300 dark:border-amber-800 bg-warning-bg p-3 text-[12px] text-warning-text">
                 {monthLabel(selected.month)}: {selected.note}
               </div>
             )}

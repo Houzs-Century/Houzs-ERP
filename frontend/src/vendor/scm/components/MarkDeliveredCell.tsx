@@ -12,7 +12,7 @@ import type { PlanningOrder, useScheduleDelivery } from '../lib/delivery-plannin
 export type MarkDeliveredSchedule = ReturnType<typeof useScheduleDelivery>['mutate'];
 
 export function MarkDeliveredCell({ order, onSchedule }: { order: PlanningOrder; onSchedule: MarkDeliveredSchedule }) {
-  if (order.row_type !== 'assr') return <span style={{ color: '#767b6e' }}>—</span>;
+  if (order.row_type !== 'assr') return <span style={{ color: 'var(--hz-c-ink-muted)' }}>—</span>;
   // A cancelled leg is already off the board, so a visible row is only pending or delivered.
   const value: 'delivered' | 'pending' = order.delivery_state === 'DELIVERED' ? 'delivered' : 'pending';
   return (
@@ -25,7 +25,7 @@ export function MarkDeliveredCell({ order, onSchedule }: { order: PlanningOrder;
         type: 'assr', id: String(order.assr_id ?? ''), jobKind: order.job_kind,
         assrLegStatus: e.target.value as 'delivered' | 'cancelled' | 'pending',
       })}
-      style={{ width: '100%', fontSize: 12, padding: '3px 6px', border: '1px solid var(--line, #d1d5db)', borderRadius: 6, background: 'var(--c-paper, #fff)', color: 'var(--c-ink, #30332b)' }}
+      style={{ width: '100%', fontSize: 12, padding: '3px 6px', border: '1px solid var(--line, #d1d5db)', borderRadius: 6, background: 'var(--c-paper, var(--hz-c-surface))', color: 'var(--c-ink, #30332b)' }}
     >
       <option value="pending">—</option>
       <option value="delivered">Delivered</option>

@@ -1,26 +1,26 @@
 /* To do's Payment requests drawer — the owner's Claude Design (batch 4,
    step 10). Colours are the design's own, on the ERP's Theme C. */
 
-.req { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border: 1px solid #d6d9d2; border-radius: 10px; background: #ffffff; }
+.req { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border: 1px solid var(--hz-c-border); border-radius: 10px; background: var(--hz-c-surface); }
 .reqHead { display: flex; align-items: center; gap: 8px; }
 .grow { flex: 1; }
-.from { font-size: 12.5px; color: #5f6459; }
+.from { font-size: 12.5px; color: var(--hz-dk-ink-secondary, #5f6459); }
 .amount { font-weight: 600; font-variant-numeric: tabular-nums; }
-.payee { font-size: 14px; font-weight: 600; color: #11140f; }
-.why { font-size: 13px; color: #414539; }
-.facts { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: #767b6e; }
-.late { color: #7a5a1e; font-weight: 600; }
+.payee { font-size: 14px; font-weight: 600; color: var(--hz-c-ink); }
+.why { font-size: 13px; color: var(--hz-c-ink-secondary); }
+.facts { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--hz-c-ink-muted); }
+.late { color: var(--hz-dk-accent-ink, #7a5a1e); font-weight: 600; }
 .no { font-variant-numeric: tabular-nums; }
 .acts { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
 .askBox { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
-.link { padding: 0; border: 0; background: none; font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif; color: #a83434; cursor: pointer; }
+.link { padding: 0; border: 0; background: none; font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif; color: var(--hz-dk-err, #a83434); cursor: pointer; }
 .link:hover { text-decoration: underline; }
 
 /* Status tags: 20px, 4px radius, 11/600. */
 .tag { display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: 4px; font-size: 11px; font-weight: 600; line-height: 1; white-space: nowrap; }
-.toneCalm { background: #f0f2ee; color: #5b6055; }
-.toneWarn { background: #f7f1e3; color: #7a5a1e; }
+.toneCalm { background: var(--hz-dk-surface-2, #f0f2ee); color: var(--hz-dk-ink-secondary, #5b6055); }
+.toneWarn { background: var(--hz-dk-warning-bg, #f7f1e3); color: var(--hz-dk-accent-ink, #7a5a1e); }
 
 /* A decision made here, said in place of its card. */
 .done { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-radius: 8px; font-size: 12.5px; }
-.doneBack { background: #fbeeee; color: #7a2222; }
+.doneBack { background: var(--hz-dk-err-bg, #fbeeee); color: var(--hz-dk-expired-text, #7a2222); }

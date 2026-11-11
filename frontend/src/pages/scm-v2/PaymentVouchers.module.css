@@ -2,8 +2,8 @@
    the Money out pages). The design's secondary row button, white on the line
    colour: Remind approver on a checked voucher, for a viewer who cannot approve. */
 .actSecondary {
-  height: 26px; padding: 0 10px; border: 1px solid #d6d9d2; border-radius: 6px; background: #ffffff; color: #414539;
+  height: 26px; padding: 0 10px; border: 1px solid var(--hz-c-border); border-radius: 6px; background: var(--hz-c-surface); color: var(--hz-c-ink-secondary);
   font: 600 12px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer; white-space: nowrap;
 }
-.actSecondary:hover:not(:disabled) { background: #f4f6f3; }
+.actSecondary:hover:not(:disabled) { background: var(--hz-c-surface-2); }
 .actSecondary:disabled { opacity: 0.55; cursor: default; }

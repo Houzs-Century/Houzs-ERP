@@ -123,7 +123,7 @@ const DeleteCell = ({ row }: { row: FabricTrackingRow }) => {
         }
       }}
       title="Delete fabric"
-      style={{ color: 'var(--c-festive-b, #B8331F)' }}
+      style={{ color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' }}
       disabled={deleteFabric.isPending}
     >
       <Trash2 size={14} strokeWidth={1.75} />

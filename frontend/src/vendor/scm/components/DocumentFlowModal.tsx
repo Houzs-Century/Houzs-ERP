@@ -274,7 +274,7 @@ export function DocumentFlowModal({ type, id, open, onClose }: Props) {
                     style={{
                       position: 'absolute', left: p.x, top: p.y, width: NODE_W, height: NODE_H,
                       boxSizing: 'border-box', borderRadius: 8, padding: '10px 12px',
-                      background: n.isAnchor ? '#fff7d6' : m.bg,
+                      background: n.isAnchor ? 'var(--hz-dk-warning-bg, #fff7d6)' : m.bg,
                       border: n.isAnchor ? '2px solid #d4a017' : floating ? `1.5px dashed ${FLOATING_COLOR}` : '1px solid var(--c-line)',
                       cursor: clickable ? 'pointer' : 'default',
                       display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 2,

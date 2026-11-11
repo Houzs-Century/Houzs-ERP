@@ -18,7 +18,7 @@ const RANK: Record<ComplianceTone, number> = { expired: 4, critical: 3, warning:
 const docsTone = (l: LorryRow): ComplianceTone =>
   [l.road_tax_expiry, l.insurance_expiry, l.puspakom_expiry].map((d) => expiryStatus(d ?? null).tone).reduce((a, t) => (RANK[t] > RANK[a] ? t : a), "ok" as ComplianceTone);
 const DOC_NOTE: Partial<Record<ComplianceTone, [string, string]>> = {
-  expired: ["Document expired", "text-[#8a2c2c]"], critical: ["Document due soon", "text-[#8a2c2c]"], warning: ["Document due in 45 days", "text-[#80501c]"],
+  expired: ["Document expired", "text-[color:var(--hz-dk-err,#8a2c2c)]"], critical: ["Document due soon", "text-[color:var(--hz-dk-err,#8a2c2c)]"], warning: ["Document due in 45 days", "text-[#80501c]"],
 };
 
 export function LorriesBoard({ onNew }: { onNew: () => void }) {
@@ -62,7 +62,7 @@ export function LorriesBoard({ onNew }: { onNew: () => void }) {
         <button type="button" onClick={onNew} className="ml-auto min-h-[40px] rounded-md bg-primary px-4 text-[13px] font-semibold text-white">New lorry</button>
       </div>
       <p className="text-[12px] text-ink-muted">Showing {shown.length} of {all.length}</p>
-      {lorries.isError && <p className="text-[13px] text-[#8a2c2c]">Lorries could not be loaded.</p>}
+      {lorries.isError && <p className="text-[13px] text-[color:var(--hz-dk-err,#8a2c2c)]">Lorries could not be loaded.</p>}
       {lorries.isLoading && <p className="text-[13px] text-ink-muted">Loading lorries…</p>}
       {!lorries.isLoading && !lorries.isError && shown.length === 0 && (
         <div className="rounded-xl border border-dashed border-border p-6 text-center text-[13px] text-ink-muted">
@@ -83,7 +83,7 @@ export function LorriesBoard({ onNew }: { onNew: () => void }) {
                   className={cn("rounded-xl border border-border bg-surface p-3 text-left hover:border-primary", !l.active && "opacity-60")}>
                   <div className="flex items-center justify-between gap-2">
                     <span className="rounded-md bg-[#1d2420] px-2 py-0.5 font-mono text-[13px] tracking-wider text-white">{l.plate}</span>
-                    <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-semibold", gpsAt.has(l.id) ? "bg-[#dcebe3] text-[#1f5c43]" : "bg-surface-2 text-ink-muted")}>{gpsAt.has(l.id) ? "GPS live" : "No GPS"}</span>
+                    <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-semibold", gpsAt.has(l.id) ? "bg-[color:var(--hz-dk-synced-bg,#dcebe3)] text-[#1f5c43]" : "bg-surface-2 text-ink-muted")}>{gpsAt.has(l.id) ? "GPS live" : "No GPS"}</span>
                   </div>
                   <div className="mt-1 text-[12px] text-ink-muted">{own ? "Own fleet" : carrier ?? "3PL"} · {LORRY_TYPE_LABEL[l.type]}{l.model ? ` · ${l.model}` : ""}{l.active ? "" : " · Not in use"}</div>
                   <div className="my-1.5"><LorrySide box={box} /></div>

@@ -8,13 +8,13 @@ export const inputCls = "min-h-[40px] w-full rounded-md border border-border bg-
 export const labelCls = "block text-[11px] font-semibold uppercase tracking-wide text-ink-muted";
 export const primaryBtn = "min-h-[40px] rounded-md bg-primary px-4 text-[13px] font-semibold text-white disabled:opacity-50";
 export const secondaryBtn = "min-h-[40px] rounded-md border border-border bg-surface px-3 text-[12.5px] font-semibold text-ink disabled:opacity-50";
-export const dangerBtn = "min-h-[40px] rounded-md border border-[#e3b4b4] px-3 text-[12.5px] font-semibold text-[#8a2c2c] disabled:opacity-50";
+export const dangerBtn = "min-h-[40px] rounded-md border border-[#e3b4b4] px-3 text-[12.5px] font-semibold text-[color:var(--hz-dk-err,#8a2c2c)] disabled:opacity-50";
 
 const TONES = {
-  green: "bg-[#dcebe3] text-[#1f5c43]",
-  orange: "bg-[#f6e6d4] text-[#80501c]",
-  amber: "bg-[#f6ecd4] text-[#7a5000]",
-  blue: "bg-[#e7eef6] text-[#1f4f75]",
+  green: "bg-[color:var(--hz-dk-synced-bg,#dcebe3)] text-[#1f5c43]",
+  orange: "bg-[color:var(--hz-dk-warning-bg,#f6e6d4)] text-[#80501c]",
+  amber: "bg-[color:var(--hz-dk-warning-bg,#f6ecd4)] text-[#7a5000]",
+  blue: "bg-[color:var(--hz-dk-surface-2,#e7eef6)] text-[#1f4f75]",
   grey: "bg-surface-2 text-ink-muted",
 } as const;
 export type Tone = keyof typeof TONES;
@@ -28,7 +28,7 @@ export const Switch = ({ on, label, onClick, disabled }: { on: boolean; label: s
   <button type="button" role="switch" aria-checked={on} aria-label={label} disabled={disabled}
     onClick={(e) => { e.stopPropagation(); onClick(); }}
     className={cn("flex h-[30px] w-[52px] flex-none items-center rounded-full p-[3px] disabled:opacity-50", on ? "justify-end bg-primary" : "justify-start bg-[#c9c4b8]")}>
-    <span className="h-6 w-6 rounded-full bg-white shadow" />
+    <span className="h-6 w-6 rounded-full bg-surface shadow" />
   </button>
 );
 

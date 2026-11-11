@@ -215,7 +215,7 @@ const SupplierPopOut = ({ id, finance, onClose, onEdit }: {
       actions={s && finance ? <Button variant="secondary" size="sm" onClick={() => onEdit(s)}>Edit</Button> : undefined}
     >
       {q.isLoading && <div style={soft} role="status">Loading the supplier…</div>}
-      {q.isError && <div role="alert" style={{ color: 'var(--c-festive-b, #B8331F)' }}>The supplier could not be loaded — {q.error instanceof Error ? q.error.message : 'something went wrong.'}</div>}
+      {q.isError && <div role="alert" style={{ color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' }}>The supplier could not be loaded — {q.error instanceof Error ? q.error.message : 'something went wrong.'}</div>}
       {d && s && <SupplierDetailBody d={d} s={s} finance={finance} />}
     </Modal>
   );
@@ -500,7 +500,7 @@ const SupplierForm = ({ supplier, onDone, onCancel }: {
         {field('Notes', 'notes', { full: true })}
       </div>
 
-      {problem && <div role="alert" style={{ marginTop: 'var(--space-3)', color: 'var(--c-festive-b, #B8331F)', fontSize: 'var(--fs-13)' }}>{problem}</div>}
+      {problem && <div role="alert" style={{ marginTop: 'var(--space-3)', color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))', fontSize: 'var(--fs-13)' }}>{problem}</div>}
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-2)', marginTop: 'var(--space-4)' }}>
         <Button variant="ghost" onClick={onCancel} disabled={saving}>Cancel</Button>
         <Button variant="primary" onClick={() => void submit()} disabled={saving}>{saving ? 'Saving…' : supplier ? 'Save' : 'Create supplier'}</Button>

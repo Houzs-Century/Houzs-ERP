@@ -72,7 +72,7 @@ export const DeliveryPlanningRegions = ({ embedded = false }: { embedded?: boole
       )}
       <ListToolbar search={q} onSearch={setQ} placeholder="Search regions or areas" shown={shown.length} total={all.length}
         onExport={doExport} newLabel="New Region" onNew={() => setOpen({ mode: 'new' })} />
-      {regions.isError && <p className="text-[13px] text-[#8a2c2c]">The regions could not be loaded.</p>}
+      {regions.isError && <p className="text-[13px] text-[color:var(--hz-dk-err,#8a2c2c)]">The regions could not be loaded.</p>}
       {regions.isLoading && <p className="text-[13px] text-ink-muted">Loading regions…</p>}
       {!regions.isLoading && !regions.isError && shown.length === 0 && (
         <NoMatch text={all.length === 0 ? 'No regions came back. Add your delivery buckets (e.g. KL/SEL, Northern, Southern) to get started.' : 'No region matches this search.'}
@@ -159,7 +159,7 @@ function RegionForm({ region, nextSort, onDone }: { region: RegionMasterRow | nu
         <Field label="Name" wide><input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="e.g. Johor Bahru" className={inputCls} /></Field>
       </div>
       <p className="text-[12px] text-ink-muted">Code is changed to upper case and must be unique. A region with code SG gets the dashed style on the board.</p>
-      {problem && (f.code !== '' || f.name !== '') && <p className="text-[12.5px] text-[#8a2c2c]">{problem}</p>}
+      {problem && (f.code !== '' || f.name !== '') && <p className="text-[12.5px] text-[color:var(--hz-dk-err,#8a2c2c)]">{problem}</p>}
       <div className="flex gap-2">
         <button type="button" disabled={problem !== null || pending} onClick={save} className={primaryBtn}>{pending ? 'Saving…' : region ? 'Save changes' : 'Create Region'}</button>
         <button type="button" onClick={onDone} className={secondaryBtn}>Cancel</button>

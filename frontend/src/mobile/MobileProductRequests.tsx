@@ -283,7 +283,7 @@ function RequestDetailScreen({ id, onBack, onEdit }: { id: string; onBack: () =>
       {fileError && <div className="st-warn" role="alert">{fileError}</div>}
       {(files.data?.files ?? []).length === 0 && <Note>No file yet — a quotation, a photo or a drawing.</Note>}
       {(files.data?.files ?? []).map((f) => (
-        <div key={f.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: "#fff", borderRadius: 10, fontSize: 12.5 }}>
+        <div key={f.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: "var(--hz-c-surface)", borderRadius: 10, fontSize: 12.5 }}>
           <button type="button" onClick={() => void viewFile(f.id)} style={{ flex: 1, textAlign: "left", border: "none", background: "none", color: "var(--brand-d)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.file_name}</button>
           {mayRemoveFile && (
             <button type="button" onClick={() => removeFile.mutate({ id: r.id, fileId: f.id })} disabled={removeFile.isPending}
@@ -461,7 +461,7 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: ProductReques
         <>
           <div className="sc-sl"><span className="t">④ Files</span><span className="ln" /></div>
           {pendingFiles.map((f, i) => (
-            <div key={`${f.name}-${i}`} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: "#fff", borderRadius: 10, fontSize: 12.5 }}>
+            <div key={`${f.name}-${i}`} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: "var(--hz-c-surface)", borderRadius: 10, fontSize: 12.5 }}>
               <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
               <button type="button" aria-label={`Remove ${f.name}`} onClick={() => setPendingFiles((prev) => prev.filter((_, j) => j !== i))}
                 style={{ border: "none", background: "none", color: "#a33", fontSize: 12 }}>Remove</button>

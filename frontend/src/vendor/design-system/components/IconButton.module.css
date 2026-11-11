@@ -82,7 +82,7 @@
 .danger:hover:not(:disabled) {
   border-color: var(--c-error);
   color: var(--c-error);
-  background: color-mix(in srgb, var(--c-error) 8%, #fff);
+  background: color-mix(in srgb, var(--c-error) 8%, var(--hz-c-surface));
   box-shadow: 0 2px 8px rgba(183, 51, 31, 0.15);
 }
 

@@ -661,7 +661,7 @@ export const PurchaseConsignmentReceiveNew = () => {
                           background: 'transparent',
                           border: 'none',
                           cursor: 'pointer',
-                          color: 'var(--c-festive-b, #B8331F)',
+                          color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))',
                           padding: 4,
                           display: 'inline-flex',
                         }}

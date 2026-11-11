@@ -41,7 +41,7 @@
 .table thead th {
   position: sticky;
   top: 0;
-  background: #f4f6f3;
+  background: var(--hz-c-surface-2);
   text-align: right;
   padding: 8px 10px;
   font-family: var(--font-button);
@@ -49,8 +49,8 @@
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #767b6e;
-  border-bottom: 1px solid #d6d9d2;
+  color: var(--hz-c-ink-muted);
+  border-bottom: 1px solid var(--hz-c-border);
 }
 .table thead th.left { text-align: left; }
 .table thead th.center { text-align: center; }
@@ -58,23 +58,23 @@
 .table tbody td {
   padding: 7px 10px;
   text-align: right;
-  color: #11140f;
-  border-bottom: 1px solid #e3e6e0;
+  color: var(--hz-c-ink);
+  border-bottom: 1px solid var(--hz-c-border-subtle);
   font-variant-numeric: tabular-nums;
 }
 .table tbody td.left { text-align: left; }
 .table tbody td.center { text-align: center; }
 .table tbody tr:last-child td { border-bottom: none; }
-.table tbody tr:hover td { background: #f4f6f3; }
+.table tbody tr:hover td { background: var(--hz-c-surface-2); }
 
 .plate {
   font-family: var(--font-mark);
   font-weight: 700;
-  color: #0c3f39;
+  color: var(--hz-c-primary-ink);
 }
 .lorryType {
   font-size: 10px;
-  color: #767b6e;
+  color: var(--hz-c-ink-muted);
   margin-left: 6px;
 }
 
@@ -92,18 +92,18 @@
   height: 26px;
   padding: 0 6px;
   text-align: right;
-  border: 1px solid #d6d9d2;
+  border: 1px solid var(--hz-c-border);
   border-radius: var(--radius-sm, 6px);
-  background: #f4f6f3;
+  background: var(--hz-c-surface-2);
   font-family: var(--font-mark);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
-  color: #11140f;
+  color: var(--hz-c-ink);
 }
 .repairInput:focus {
   outline: none;
-  border-color: #16695f;
-  background: #ffffff;
+  border-color: var(--hz-c-primary);
+  background: var(--hz-c-surface);
 }
 
 /* Utilisation tint — low utilisation reads red-ish, healthy reads green-ish.
@@ -117,9 +117,9 @@
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
-.utilLow  { background: rgba(178, 58, 58, 0.12); color: #b23a3a; }
-.utilMid  { background: rgba(22, 105, 95, 0.12); color: #0c3f39; }
-.utilHigh { background: rgba(47, 138, 91, 0.12); color: #2f8a5b; }
+.utilLow  { background: rgba(178, 58, 58, 0.12); color: var(--hz-c-err); }
+.utilMid  { background: rgba(22, 105, 95, 0.12); color: var(--hz-c-primary-ink); }
+.utilHigh { background: rgba(47, 138, 91, 0.12); color: var(--hz-c-synced); }
 
 /* Money cells — mark face. */
 .money { font-family: var(--font-mark); font-weight: 600; }
@@ -128,18 +128,18 @@
 .table tfoot td {
   padding: 8px 10px;
   text-align: right;
-  border-top: 2px solid #d6d9d2;
+  border-top: 2px solid var(--hz-c-border);
   font-family: var(--font-mark);
   font-weight: 700;
-  color: #11140f;
+  color: var(--hz-c-ink);
   background: rgba(22, 105, 95, 0.04);
   font-variant-numeric: tabular-nums;
 }
-.table tfoot td.left { text-align: left; text-transform: uppercase; font-family: var(--font-button); font-size: var(--fs-9, 9px); letter-spacing: 0.06em; color: #767b6e; }
+.table tfoot td.left { text-align: left; text-transform: uppercase; font-family: var(--font-button); font-size: var(--fs-9, 9px); letter-spacing: 0.06em; color: var(--hz-c-ink-muted); }
 
 .emptyState {
   padding: var(--space-5) var(--space-4);
   text-align: center;
-  color: #767b6e;
+  color: var(--hz-c-ink-muted);
   font-size: var(--fs-12);
 }

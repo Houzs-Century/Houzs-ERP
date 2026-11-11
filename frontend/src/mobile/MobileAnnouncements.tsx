@@ -118,7 +118,7 @@ const APPROVAL_CHIP: Record<"DRAFT" | "PENDING_APPROVAL" | "REJECTED", { label: 
 /** The approval state before anything else: an unapproved notice has no
  *  audience yet, so Live / Hidden / Expired would be a claim about nothing. */
 function ApprovalChip({ ann }: { ann: Announcement }) {
-  if (ann.voidedAt) return <span className="spill" style={{ background: "#eceee9", color: "#767b6e", textDecoration: "line-through" }}>Voided</span>;
+  if (ann.voidedAt) return <span className="spill" style={{ background: "var(--hz-dk-surface-2, #eceee9)", color: "var(--hz-c-ink-muted)", textDecoration: "line-through" }}>Voided</span>;
   const s = ann.approvalStatus ?? "APPROVED";
   if (s === "APPROVED") return null;
   const c = APPROVAL_CHIP[s];
@@ -202,7 +202,7 @@ function StatusChip({ ann }: { ann: Announcement }) {
   const status = announcementStatus(ann);
   if (status === "live") return null;
   return (
-    <span className="spill" style={{ background: "#eceee9", color: "#767b6e" }}>
+    <span className="spill" style={{ background: "var(--hz-dk-surface-2, #eceee9)", color: "var(--hz-c-ink-muted)" }}>
       {ANNOUNCEMENT_STATUS_LABEL[status]}
     </span>
   );
@@ -223,7 +223,7 @@ function companyScopeLabel(ids: number[] | undefined, companies: Company[]): str
 function CompanyChip({ ann, companies }: { ann: Announcement; companies: Company[] }) {
   if (companies.length <= 1) return null;
   return (
-    <span className="spill" style={{ background: "#eef1ec", color: "#556052" }}>
+    <span className="spill" style={{ background: "var(--hz-dk-surface-2, #eef1ec)", color: "#556052" }}>
       {companyScopeLabel(ann.targetCompanyIds, companies)}
     </span>
   );
@@ -316,25 +316,25 @@ function Receipts({ ann }: { ann: Announcement }) {
 
   return (
     <div style={{ marginTop: 18 }}>
-      <div className="ey" style={{ color: "#767b6e", margin: "0 2px 8px" }}>Read receipts</div>
-      <div style={{ background: "#fff", border: "1px solid #e3e6e0", borderRadius: 12, padding: "12px 13px" }}>
+      <div className="ey" style={{ color: "var(--hz-c-ink-muted)", margin: "0 2px 8px" }}>Read receipts</div>
+      <div style={{ background: "var(--hz-c-surface)", border: "1px solid var(--hz-c-border-subtle)", borderRadius: 12, padding: "12px 13px" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 7 }}>
-          <span style={{ fontSize: 12.5, fontWeight: 700, color: "#11140f" }}>Read {read} / {total}</span>
-          <span style={{ fontSize: 11, color: "#9aa093" }}>{pct}%</span>
+          <span style={{ fontSize: 12.5, fontWeight: 700, color: "var(--hz-c-ink)" }}>Read {read} / {total}</span>
+          <span style={{ fontSize: 11, color: "var(--hz-c-ink-soft)" }}>{pct}%</span>
         </div>
-        <div style={{ height: 6, borderRadius: 6, background: "#e3e6e0", overflow: "hidden" }}>
+        <div style={{ height: 6, borderRadius: 6, background: "var(--hz-c-surface-dim)", overflow: "hidden" }}>
           <div style={{ width: `${pct}%`, height: "100%", background: "#2f8a5b", borderRadius: 6 }} />
         </div>
         {rows.map((p) => (
           <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 9, padding: "8px 0", borderTop: "1px solid #eceee9" }}>
-            <span style={{ flex: 1, fontSize: 12.5, color: "#11140f" }}>{p.name}</span>
+            <span style={{ flex: 1, fontSize: 12.5, color: "var(--hz-c-ink)" }}>{p.name}</span>
             {p.read ? (
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 600, color: "#2f8a5b" }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 600, color: "var(--hz-c-synced)" }}>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#2f8a5b" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
                 Read
               </span>
             ) : (
-              <span style={{ fontSize: 11, color: "#9aa093" }}>Not read</span>
+              <span style={{ fontSize: 11, color: "var(--hz-c-ink-soft)" }}>Not read</span>
             )}
           </div>
         ))}
@@ -606,7 +606,7 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
       <div className="hz-m" style={{ display: "flex", flexDirection: "column", height: "100%", background: "var(--app-bg)" }}>
         <header className="hdr">
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 9 }}>
-            <span onClick={() => setView("list")} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 700, color: "#16695f", cursor: "pointer" }}>
+            <span onClick={() => setView("list")} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 700, color: "var(--hz-c-primary)", cursor: "pointer" }}>
               <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#16695f" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6" /></svg>
               Announcements
             </span>
@@ -662,7 +662,7 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
       <header className="hdr">
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 9 }}>
           {onBack ? (
-            <span onClick={onBack} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 700, color: "#16695f", cursor: "pointer" }}>
+            <span onClick={onBack} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 700, color: "var(--hz-c-primary)", cursor: "pointer" }}>
               <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#16695f" strokeWidth="2" strokeLinecap="round"><path d="M3 6h18M3 12h18M3 18h18" /></svg>
               Menu
             </span>
@@ -674,7 +674,7 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
               onClick={() => setView("notifications")}
               aria-label={systemUnread > 0 ? `Notifications, ${systemUnread} unread` : "Notifications"}
               className="tinybtn"
-              style={{ position: "relative", background: "#fff", display: "flex", alignItems: "center", justifyContent: "center", padding: "6px 9px" }}
+              style={{ position: "relative", background: "var(--hz-c-surface)", display: "flex", alignItems: "center", justifyContent: "center", padding: "6px 9px" }}
             >
               <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#16695f" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.7 21a2 2 0 0 1-3.4 0" /></svg>
               {systemUnread > 0 && (
@@ -722,9 +722,9 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
                   whiteSpace: "nowrap",
                   fontFamily: "inherit",
                   cursor: "pointer",
-                  background: on ? "var(--brand)" : "#fff",
-                  color: on ? "#fff" : "#414539",
-                  border: on ? "1px solid var(--brand)" : "1px solid #d6d9d2",
+                  background: on ? "var(--brand)" : "var(--hz-c-surface)",
+                  color: on ? "#fff" : "var(--hz-c-ink-secondary)",
+                  border: on ? "1px solid var(--brand)" : "1px solid var(--hz-c-border)",
                 }}
               >
                 {label}
@@ -814,7 +814,7 @@ function NoticeCard({
   const col = catColor(a);
   return (
     <div
-      style={{ display: "flex", flexDirection: "column", gap: 10, background: "#fff", border: `1px solid ${unread ? "#bcdcd7" : "#e3e6e0"}`, borderLeft: inlineAck ? `3px solid ${col}` : undefined, borderRadius: 13, padding: "12px 13px", fontFamily: "inherit" }}
+      style={{ display: "flex", flexDirection: "column", gap: 10, background: "var(--hz-c-surface)", border: `1px solid ${unread ? "#bcdcd7" : "#e3e6e0"}`, borderLeft: inlineAck ? `3px solid ${col}` : undefined, borderRadius: 13, padding: "12px 13px", fontFamily: "inherit" }}
     >
     <button
       onClick={onOpen}
@@ -825,18 +825,18 @@ function NoticeCard({
       </span>
       <span style={{ flex: 1, minWidth: 0 }}>
         <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span className="ann-row-title" style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: unread ? 800 : 700, color: "#11140f", lineHeight: 1.25 }}>{localizeAnnouncement(a, lang).title}</span>
-          {unread && <span style={{ width: 8, height: 8, flex: "none", borderRadius: "50%", background: "#16695f" }} />}
+          <span className="ann-row-title" style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: unread ? 800 : 700, color: "var(--hz-c-ink)", lineHeight: 1.25 }}>{localizeAnnouncement(a, lang).title}</span>
+          {unread && <span style={{ width: 8, height: 8, flex: "none", borderRadius: "50%", background: "var(--hz-c-primary)" }} />}
         </span>
         <span style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 5, flexWrap: "wrap" }}>
           <CatChip ann={a} />
           {showStatus && <ApprovalChip ann={a} />}
           {showStatus && <StatusChip ann={a} />}
           <CompanyChip ann={a} companies={companies} />
-          <span style={{ fontSize: 11, color: "#767b6e" }}>{byLine(a)} · {dm(a.createdAt)}</span>
+          <span style={{ fontSize: 11, color: "var(--hz-c-ink-muted)" }}>{byLine(a)} · {dm(a.createdAt)}</span>
         </span>
         {na > 0 && (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, marginTop: 6, fontSize: 10.5, color: "#9aa093" }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, marginTop: 6, fontSize: 10.5, color: "var(--hz-c-ink-soft)" }}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#9aa093" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 8 12 17a4 4 0 0 1-6-6l9-9a3 3 0 0 1 4 4l-9 9" /></svg>
             {na} attachment{na > 1 ? "s" : ""}
           </span>
@@ -856,7 +856,7 @@ function NoticeCard({
         <button
           type="button"
           onClick={onOpen}
-          style={{ width: 104, height: 44, borderRadius: 10, border: "1px solid #d6d9d2", background: "#fff", color: "#414539", fontSize: 12.5, fontWeight: 650, fontFamily: "inherit", cursor: "pointer" }}
+          style={{ width: 104, height: 44, borderRadius: 10, border: "1px solid var(--hz-c-border)", background: "var(--hz-c-surface)", color: "var(--hz-c-ink-secondary)", fontSize: 12.5, fontWeight: 650, fontFamily: "inherit", cursor: "pointer" }}
         >
           Read full
         </button>
@@ -1075,27 +1075,27 @@ function Detail({
       <div className="scroll hz-scroll" style={{ padding: 14, paddingBottom: 40 }}>
         <div id="ann-d-meta" style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10, alignItems: "center" }}>
           <CatChip ann={ann} />
-          {ann.docType && ann.docType !== "ANN" && <span className="spill" style={{ background: "#eceee9", color: "#4b5046" }}>{ann.docType}</span>}
+          {ann.docType && ann.docType !== "ANN" && <span className="spill" style={{ background: "var(--hz-dk-surface-2, #eceee9)", color: "#4b5046" }}>{ann.docType}</span>}
           {(canManage || canApprove) && <ApprovalChip ann={ann} />}
           {canManage && approval === "APPROVED" && <StatusChip ann={ann} />}
           <CompanyChip ann={ann} companies={companies} />
-          <span style={{ fontSize: 11, color: "#9aa093", alignSelf: "center" }}>{dm(ann.createdAt)}</span>
+          <span style={{ fontSize: 11, color: "var(--hz-c-ink-soft)", alignSelf: "center" }}>{dm(ann.createdAt)}</span>
         </div>
-        <div id="ann-d-title" style={{ fontSize: 21, fontWeight: 800, color: "#11140f", lineHeight: 1.25 }}>{shown.title}</div>
-        <div id="ann-d-by" style={{ fontSize: 11.5, color: "#767b6e", marginTop: 6 }}>
+        <div id="ann-d-title" style={{ fontSize: 21, fontWeight: 800, color: "var(--hz-c-ink)", lineHeight: 1.25 }}>{shown.title}</div>
+        <div id="ann-d-by" style={{ fontSize: 11.5, color: "var(--hz-c-ink-muted)", marginTop: 6 }}>
           {ann.refNo ? `${ann.refNo} · ` : ""}Posted by {byLine(ann)}
         </div>
         {approval === "REJECTED" && ann.rejectReason && (canManage || canApprove) && (
           <div style={{ fontSize: 12, color: "#a3271b", marginTop: 6 }}>Sent back: {ann.rejectReason}</div>
         )}
         {ann.voidedAt && (canManage || canApprove) && (
-          <div style={{ fontSize: 12, color: "#767b6e", marginTop: 6 }}>Voided: {ann.voidReason ?? "no reason recorded"}</div>
+          <div style={{ fontSize: 12, color: "var(--hz-c-ink-muted)", marginTop: 6 }}>Voided: {ann.voidReason ?? "no reason recorded"}</div>
         )}
         {/* When it stops showing — stated on the phone as well as the desktop,
             because "why is this still up" is a question the publisher asks from
             wherever they happen to be. */}
         {canManage && ann.expiresAt && (
-          <div style={{ fontSize: 11, color: "#767b6e", marginTop: 3 }}>
+          <div style={{ fontSize: 11, color: "var(--hz-c-ink-muted)", marginTop: 3 }}>
             {status === "expired" ? "Hidden automatically on " : "Hides automatically on "}
             {dm(ann.expiresAt)}
           </div>
@@ -1112,7 +1112,7 @@ function Detail({
             leaving them to wonder whether they missed something. */}
         {loc.isTranslated && (
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10.5, fontWeight: 700, color: "#767b6e", background: "#f4f6f3", border: "1px solid #e3e6e0", borderRadius: 999, padding: "4px 9px", lineHeight: 1.5 }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10.5, fontWeight: 700, color: "var(--hz-c-ink-muted)", background: "var(--hz-c-surface-2)", border: "1px solid var(--hz-c-border-subtle)", borderRadius: 999, padding: "4px 9px", lineHeight: 1.5 }}>
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#767b6e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m5 8 6 6" /><path d="m4 14 6-6 2-3" /><path d="M2 5h12" /><path d="M7 2h1" /><path d="m22 22-5-10-5 10" /><path d="M14 18h6" /></svg>
               {t("ann.autoTranslated")}
             </span>
@@ -1126,18 +1126,18 @@ function Detail({
           </div>
         )}
         {!loc.isTranslated && lang !== "en" && (
-          <div style={{ fontSize: 10.5, color: "#9aa093", marginTop: 10, lineHeight: 1.6 }}>
+          <div style={{ fontSize: 10.5, color: "var(--hz-c-ink-soft)", marginTop: 10, lineHeight: 1.6 }}>
             {t("ann.noTranslation")}
           </div>
         )}
 
-        <AnnouncementRichBody id="ann-d-body" html={shown.bodyHtml} text={shown.body} annId={ann.id} style={{ fontSize: 13.5, lineHeight: 1.7, color: "#414539", marginTop: 14 }} />
+        <AnnouncementRichBody id="ann-d-body" html={shown.bodyHtml} text={shown.body} annId={ann.id} style={{ fontSize: 13.5, lineHeight: 1.7, color: "var(--hz-c-ink-secondary)", marginTop: 14 }} />
         <div id="ann-d-atts" style={{ marginTop: 16 }}>
           <Attachments ann={ann} />
         </div>
         {approval === "PENDING_APPROVAL" && canApprove && (
           <div id="ann-d-approval" style={{ marginTop: 18 }}>
-            <div className="ey" style={{ color: "#767b6e", margin: "0 2px 8px" }}>Approval</div>
+            <div className="ey" style={{ color: "var(--hz-c-ink-muted)", margin: "0 2px 8px" }}>Approval</div>
             <div style={{ display: "flex", gap: 8 }}>
               <button
                 onClick={() => void approve()}
@@ -1159,7 +1159,7 @@ function Detail({
           </div>
         )}
         {approval === "PENDING_APPROVAL" && !canApprove && canManage && (
-          <div style={{ fontSize: 12, color: "#767b6e", marginTop: 18 }}>
+          <div style={{ fontSize: 12, color: "var(--hz-c-ink-muted)", marginTop: 18 }}>
             Waiting for an approver. Nobody is served it until it is approved.
           </div>
         )}
@@ -1177,7 +1177,7 @@ function Detail({
         )}
         {canManage && (
           <div id="ann-d-manage" style={{ marginTop: 18 }}>
-            <div className="ey" style={{ color: "#767b6e", margin: "0 2px 8px" }}>Publisher</div>
+            <div className="ey" style={{ color: "var(--hz-c-ink-muted)", margin: "0 2px 8px" }}>Publisher</div>
             <div style={{ display: "flex", gap: 8 }}>
               <button
                 onClick={() => void setActive(!ann.isActive)}
@@ -1459,9 +1459,9 @@ function Compose({
       </header>
 
       <div className="scroll hz-scroll" style={{ padding: 14, paddingBottom: 40 }}>
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 9, background: "#f3ece0", border: "1px solid #e8dcc5", borderRadius: 11, padding: "10px 11px", marginBottom: 14 }}>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 9, background: "var(--hz-c-accent-soft)", border: "1px solid #e8dcc5", borderRadius: 11, padding: "10px 11px", marginBottom: 14 }}>
           <svg width="15" height="15" style={{ flex: "none", marginTop: 1 }} viewBox="0 0 24 24" fill="none" stroke="#a16a2e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6Z" /></svg>
-          <div style={{ fontSize: 11, color: "#5a3a14", lineHeight: 1.5 }}>
+          <div style={{ fontSize: 11, color: "var(--hz-c-accent-ink)", lineHeight: 1.5 }}>
             <b>Publishing rights:</b> Management, HR &amp; department leads. You're posting as <b>{poster}</b>. Every notice goes live only once an approver signs it off.
           </div>
         </div>
@@ -1516,7 +1516,7 @@ function Compose({
           </div>
         )}
         {missingAttachment && (
-          <div style={{ fontSize: 11.5, color: "#a16a2e", margin: "0 2px 12px", lineHeight: 1.45 }} data-testid="attachment-required-hint">
+          <div style={{ fontSize: 11.5, color: "var(--hz-c-accent)", margin: "0 2px 12px", lineHeight: 1.45 }} data-testid="attachment-required-hint">
             A {pickedType.label} must carry its file (Settings → Documents) — attach one below before submitting.
           </div>
         )}
@@ -1534,7 +1534,7 @@ function Compose({
                     key={String(key)}
                     onClick={() => setCompanyPick(key)}
                     className="tinybtn"
-                    style={{ padding: "7px 13px", background: on ? "var(--brand)" : "#fff", borderColor: on ? "var(--brand)" : "var(--line)", color: on ? "#fff" : "var(--ink)" }}
+                    style={{ padding: "7px 13px", background: on ? "var(--brand)" : "var(--hz-c-surface)", borderColor: on ? "var(--brand)" : "var(--line)", color: on ? "#fff" : "var(--ink)" }}
                   >
                     {label}
                   </button>
@@ -1554,7 +1554,7 @@ function Compose({
                 key={b.value}
                 onClick={() => setBucket(b.value)}
                 className="tinybtn"
-                style={{ padding: "7px 13px", background: on ? "var(--brand)" : "#fff", borderColor: on ? "var(--brand)" : "var(--line)", color: on ? "#fff" : "var(--ink)" }}
+                style={{ padding: "7px 13px", background: on ? "var(--brand)" : "var(--hz-c-surface)", borderColor: on ? "var(--brand)" : "var(--line)", color: on ? "#fff" : "var(--ink)" }}
               >
                 {b.label}
               </button>
@@ -1604,7 +1604,7 @@ function Compose({
             </PickerBox>
           </>
         )}
-        <div style={{ fontSize: 10.5, color: "#9aa093", margin: "8px 2px 12px" }}>
+        <div style={{ fontSize: 10.5, color: "var(--hz-c-ink-soft)", margin: "8px 2px 12px" }}>
           {bucket === "ALL"
             ? "Everyone sees this announcement."
             : "Only the people you pick see it — the audience isn't shown to recipients."}
@@ -1634,7 +1634,7 @@ function Compose({
             value={expiresAt}
             onChange={setExpiresAt}
           />
-          <span style={{ fontSize: 10.5, color: "#9aa093", marginTop: 5 }}>
+          <span style={{ fontSize: 10.5, color: "var(--hz-c-ink-soft)", marginTop: 5 }}>
             Leave empty and it stays up until you hide it.
           </span>
         </div>
@@ -1650,17 +1650,17 @@ function Compose({
             <input type="file" accept="application/pdf,.pdf" multiple style={{ display: "none" }} onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
           </label>
         </div>
-        <div style={{ fontSize: 10.5, color: "#9aa093", marginTop: 8 }}>
+        <div style={{ fontSize: 10.5, color: "var(--hz-c-ink-soft)", marginTop: 8 }}>
           Attach photos, video or PDF — recipients view them inline and tap to download.
         </div>
 
         {files.length > 0 && (
           <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 10 }}>
             {files.map((f, i) => (
-              <div key={`${f.name}-${i}`} style={{ display: "flex", alignItems: "center", gap: 8, border: "1px solid #e3e6e0", borderRadius: 9, padding: "7px 10px" }}>
-                <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: "#11140f", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
-                <span style={{ fontSize: 10.5, color: "#9aa093" }}>{fmtSize(f.size)}</span>
-                <span onClick={() => removeFile(i)} style={{ fontSize: 16, color: "#b23a3a", cursor: "pointer", lineHeight: 1 }}>×</span>
+              <div key={`${f.name}-${i}`} style={{ display: "flex", alignItems: "center", gap: 8, border: "1px solid var(--hz-c-border-subtle)", borderRadius: 9, padding: "7px 10px" }}>
+                <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: "var(--hz-c-ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
+                <span style={{ fontSize: 10.5, color: "var(--hz-c-ink-soft)" }}>{fmtSize(f.size)}</span>
+                <span onClick={() => removeFile(i)} style={{ fontSize: 16, color: "var(--hz-c-err)", cursor: "pointer", lineHeight: 1 }}>×</span>
               </div>
             ))}
           </div>
@@ -1669,7 +1669,7 @@ function Compose({
         {/* Layout hints — mirror the desktop composer. Only shown for the media
             actually attached. */}
         {(hasPhotos || hasVideos) && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 9, marginTop: 12, background: "#fff", border: "1px solid var(--line)", borderRadius: 11, padding: "11px 12px" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 9, marginTop: 12, background: "var(--hz-c-surface)", border: "1px solid var(--line)", borderRadius: 11, padding: "11px 12px" }}>
             {hasPhotos && (
               <div>
                 <div className="fld-l" style={{ marginBottom: 6 }}>Photo layout</div>
@@ -1677,7 +1677,7 @@ function Compose({
                   {(["", "1", "2", "3", "4"] as Array<PhotoLayout | "">).map((val) => {
                     const on = photoLayout === val;
                     return (
-                      <button key={val || "auto"} onClick={() => setPhotoLayout(val)} className="tinybtn" style={{ padding: "6px 12px", background: on ? "var(--brand)" : "#fff", borderColor: on ? "var(--brand)" : "var(--line)", color: on ? "#fff" : "var(--ink)" }}>
+                      <button key={val || "auto"} onClick={() => setPhotoLayout(val)} className="tinybtn" style={{ padding: "6px 12px", background: on ? "var(--brand)" : "var(--hz-c-surface)", borderColor: on ? "var(--brand)" : "var(--line)", color: on ? "#fff" : "var(--ink)" }}>
                         {val === "" ? "Auto" : val}
                       </button>
                     );
@@ -1692,7 +1692,7 @@ function Compose({
                   {(["1x1", "1x2"] as VideoLayout[]).map((val) => {
                     const on = videoLayout === val;
                     return (
-                      <button key={val} onClick={() => setVideoLayout(val)} className="tinybtn" style={{ padding: "6px 12px", background: on ? "var(--brand)" : "#fff", borderColor: on ? "var(--brand)" : "var(--line)", color: on ? "#fff" : "var(--ink)" }}>
+                      <button key={val} onClick={() => setVideoLayout(val)} className="tinybtn" style={{ padding: "6px 12px", background: on ? "var(--brand)" : "var(--hz-c-surface)", borderColor: on ? "var(--brand)" : "var(--line)", color: on ? "#fff" : "var(--ink)" }}>
                         {val === "1x1" ? "1 x 1 (square)" : "1 x 2 (portrait)"}
                       </button>
                     );
@@ -1703,7 +1703,7 @@ function Compose({
           </div>
         )}
 
-        {err && <div style={{ fontSize: 12, color: "#b23a3a", marginTop: 10 }}>{err}</div>}
+        {err && <div style={{ fontSize: 12, color: "var(--hz-c-err)", marginTop: 10 }}>{err}</div>}
       </div>
 
       <footer className="actbar">
@@ -1718,9 +1718,9 @@ function Compose({
 // A scrollable, bordered checkbox list used by every audience picker.
 function PickerBox({ empty, children }: { empty: string | null; children: React.ReactNode }) {
   return (
-    <div style={{ background: "#fff", border: "1px solid var(--line)", borderRadius: 12, maxHeight: 220, overflowY: "auto" }}>
+    <div style={{ background: "var(--hz-c-surface)", border: "1px solid var(--line)", borderRadius: 12, maxHeight: 220, overflowY: "auto" }}>
       {empty ? (
-        <div style={{ textAlign: "center", color: "#9aa093", fontSize: 12, padding: "18px 0" }}>{empty}</div>
+        <div style={{ textAlign: "center", color: "var(--hz-c-ink-soft)", fontSize: 12, padding: "18px 0" }}>{empty}</div>
       ) : (
         children
       )}
@@ -1734,7 +1734,7 @@ function CheckRow({ label, sub, checked, onToggle }: { label: string; sub?: stri
       <input type="checkbox" checked={checked} onChange={onToggle} style={{ width: 18, height: 18, accentColor: "var(--brand)", flex: "none" }} />
       <span style={{ flex: 1, minWidth: 0 }}>
         <span style={{ display: "block", fontSize: 13, fontWeight: 600, color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
-        {sub && <span style={{ display: "block", fontSize: 10.5, color: "#9aa093", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sub}</span>}
+        {sub && <span style={{ display: "block", fontSize: 10.5, color: "var(--hz-c-ink-soft)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sub}</span>}
       </span>
     </label>
   );

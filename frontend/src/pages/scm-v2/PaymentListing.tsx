@@ -177,7 +177,7 @@ export const PaymentListing = () => {
                 ? `${rows.length} voucher${rows.length === 1 ? '' : 's'} · RM ${fmtSenPlain(totalSen)}${byStage.length > 0 ? ` · ${byStage.map((s) => `${s.word} ${s.n}`).join(' · ')}` : ''}`
                 : ' '}
           </p>
-          {printError && <p role="alert" style={{ color: 'var(--c-festive-b, #B8331F)', fontSize: 'var(--fs-12)', margin: '0 0 var(--space-2)' }}>{printError}</p>}
+          {printError && <p role="alert" style={{ color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))', fontSize: 'var(--fs-12)', margin: '0 0 var(--space-2)' }}>{printError}</p>}
           <DataTable<PaymentListingRow>
             tableId="payment-listing"
             exportName="payment-listing"

@@ -289,7 +289,7 @@ const labelStyle: CSSProperties = {
   transform: 'translate(-50%, -50%)',
   padding: '2px 8px',
   borderRadius: 999,
-  background: '#fff',
+  background: 'var(--hz-c-surface)',
   border: '1px solid #9cc4ba',
   color: GREEN_DARK,
   font: '700 12px Inter, system-ui, sans-serif',
@@ -398,7 +398,7 @@ export function Lorry3D({ box, height }: { box: LorryBox | null; height: number 
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div
         ref={wrap}
-        style={{ position: 'relative', height, background: '#f2f6f4', border: '1px solid #e3ebe7', borderRadius: 12, overflow: 'hidden' }}
+        style={{ position: 'relative', height, background: 'var(--hz-dk-surface-2, #f2f6f4)', border: '1px solid #e3ebe7', borderRadius: 12, overflow: 'hidden' }}
       >
         <svg
           viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
@@ -464,7 +464,7 @@ export function LorrySide({ box }: { box: LorryBox | null }) {
      the middle of its box instead of against the right edge. */
   const dx = (260 - (cabR - (boxL - 1))) / 2 - (boxL - 1);
   return (
-    <svg viewBox="0 0 260 64" width="100%" role="img" aria-label={label} style={{ display: 'block', background: '#f6f8f7', borderRadius: 8 }}>
+    <svg viewBox="0 0 260 64" width="100%" role="img" aria-label={label} style={{ display: 'block', background: 'var(--hz-dk-surface-2, #f6f8f7)', borderRadius: 8 }}>
       <path d="M4 60.5 H256" style={{ fill: 'none', stroke: '#dfe5e2', strokeWidth: 1 }} />
       <g transform={`translate(${dx} 0)`}>
       <rect x={boxL - 1} y={bot} width={cabR - 2 - (boxL - 1)} height={2.5} style={{ fill: '#2f3433' }} />

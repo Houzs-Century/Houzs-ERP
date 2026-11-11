@@ -24,7 +24,7 @@ export function PoAmountCell({ summary }: { summary: PiPoPriceSummary | undefine
   return (
     <span className="whitespace-nowrap" title={summary.linesDiffering > 0 ? `Invoice is ${gap > 0 ? "above" : "below"} the purchase order by ${fmtSen(Math.abs(gap))}. For reference only.` : undefined}>
       {summary.comparableLines < summary.lines && <span className="mr-1.5 text-[11px] text-ink-muted">{summary.comparableLines} of {summary.lines} lines</span>}
-      <span className="font-money text-[13px] text-ink" style={summary.linesDiffering > 0 ? { color: "#a16a2e" } : undefined}>{fmtSen(summary.poAmountSen)}</span>
+      <span className="font-money text-[13px] text-ink" style={summary.linesDiffering > 0 ? { color: "var(--hz-c-accent)" } : undefined}>{fmtSen(summary.poAmountSen)}</span>
     </span>
   );
 }

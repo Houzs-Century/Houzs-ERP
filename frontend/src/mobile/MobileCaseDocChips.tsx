@@ -9,7 +9,7 @@ const INK = "#11140f";
 const TEAL_DK = "#0c3f39";
 const GREY = "#9aa093";
 const DIM = "#e3e6e0";
-const FIELD_BG = "#f4f6f3";
+const FIELD_BG = "var(--hz-dk-surface-2, #f4f6f3)";
 
 function Chip({ label, value, accent }: { label: string; value: string | null; accent?: boolean }) {
   return (

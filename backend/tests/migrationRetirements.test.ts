@@ -29,6 +29,10 @@ const EXPECTED_FILENAMES = [
   "0078_multicompany_views.sql",
   /* 2026-09-03: the chart relay first cut — staging-only, revert-removed; see the registry entry. */
   "0344_acc_autocount_code_migration.sql",
+  /* 2026-11-11: superseded service-case cuts, staging-only via preview deploys; see the registry entry. */
+  "20261109T1200_assr_supplier_return_eta.sql",
+  "20261109T1300_assr_return_dos_qc.sql",
+  "20261109T1700_assr_return_dos_and_qc_notes.sql",
 ];
 
 // Expanded by Vite before this suite enters workerd (node:fs is unavailable
@@ -36,9 +40,9 @@ const EXPECTED_FILENAMES = [
 const LIVE_MIGRATIONS = import.meta.glob("../src/db/migrations-pg/*", { eager: false });
 
 describe("reviewed migration retirements", () => {
-  it("pins the exact 20 filenames with immutable checksum + Git provenance", () => {
+  it("pins the exact 23 filenames with immutable checksum + Git provenance", () => {
     expect(RETIRED_MIGRATION_FILENAMES).toEqual(EXPECTED_FILENAMES);
-    expect(new Set(RETIRED_MIGRATION_FILENAMES).size).toBe(20);
+    expect(new Set(RETIRED_MIGRATION_FILENAMES).size).toBe(23);
     for (const entry of RETIRED_MIGRATIONS) {
       expect(entry.archivedChecksum).toMatch(/^sha256:[0-9a-f]{64}$/);
       expect(entry.gitBlob).toMatch(/^[0-9a-f]{40}$/);
@@ -54,7 +58,7 @@ describe("reviewed migration retirements", () => {
       .toEqual([]);
   });
 
-  it("accepts the exact 20 legacy tracker rows without deleting history", () => {
+  it("accepts the exact 23 legacy tracker rows without deleting history", () => {
     const trackerRows = RETIRED_MIGRATIONS.map((entry: { filename: string }) => ({
       filename: entry.filename,
       checksum: null,
@@ -78,13 +82,34 @@ describe("reviewed migration retirements", () => {
     const result = planMigrationChecksums([], trackerRows, {
       retiredMigrations: RETIRED_MIGRATIONS,
     });
-    expect(result.retired).toHaveLength(20);
+    expect(result.retired).toHaveLength(23);
     expect(result.drift).toEqual([
       expect.objectContaining({
         filename: "0099_unreviewed_deleted.sql",
         reason: "legacy_file_deleted_unverifiable",
       }),
     ]);
+  });
+
+  it("retires staging's superseded preview rows by their stored checksum and still reports the live ones", () => {
+    // Staging's tracker as run 42861413878 saw it: three retired cuts plus the
+    // two names PR #5448 still carries, which must stay visible as leftovers.
+    const stagingRows = [
+      { filename: "20261109T1200_assr_supplier_return_eta.sql", checksum: "sha256:2463fe0f8200c0404d0626ba420d178cf79c1b6795fd9a560dca12415b10bf35" },
+      { filename: "20261109T1300_assr_return_dos_qc.sql", checksum: "sha256:8cd225842a7df2c6449c765cb3fd1142279d38ce03f410479061dc131a072267" },
+      { filename: "20261109T1700_assr_return_dos_and_qc_notes.sql", checksum: "sha256:f90999aa84b631b718bc42132f577000e6b27f61de1d2d3cc0a053bab2ae6188" },
+      { filename: "20261110T1300_assr_supplier_return_eta.sql", checksum: "sha256:a6475615b9026e408e4d4e4ec00de7af90fa842477931b76ba55bda7ff73f787" },
+      { filename: "20261110T1400_assr_return_dos_and_qc_notes.sql", checksum: "sha256:c504896b40a01f0341675465506b02dbb9de34e6bb07541de1f7a482ca054692" },
+    ];
+    const result = planMigrationChecksums([], stagingRows, {
+      retiredMigrations: RETIRED_MIGRATIONS,
+      previewLeftoversTolerated: true,
+    });
+    expect(result.drift).toEqual([]);
+    expect(result.retired.map((entry: { filename: string }) => entry.filename))
+      .toEqual(stagingRows.slice(0, 3).map((row) => row.filename));
+    expect(result.previewLeftovers.map((entry: { filename: string }) => entry.filename))
+      .toEqual(stagingRows.slice(3).map((row) => row.filename));
   });
 
   it("does not require retired rows on a fresh database", () => {

@@ -84,7 +84,7 @@ const actionBtn: React.CSSProperties = {
   padding: '3px 8px', borderRadius: 'var(--radius-md)', cursor: 'pointer',
   border: '1px solid var(--line-strong)', background: 'var(--c-paper)', color: 'var(--c-ink)',
 };
-const dangerBtn: React.CSSProperties = { ...actionBtn, borderColor: 'var(--c-festive-b, #B8331F)', color: 'var(--c-festive-b, #B8331F)' };
+const dangerBtn: React.CSSProperties = { ...actionBtn, borderColor: 'var(--c-festive-b, #B8331F)', color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' };
 
 const badge = (tone: { bg: string; fg: string }): React.CSSProperties => ({
   display: 'inline-block', padding: '2px 8px', borderRadius: 999,

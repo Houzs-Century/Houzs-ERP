@@ -5,7 +5,7 @@
 .head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 14px 16px 10px; }
 .title { font-size: 15px; font-weight: 600; }
 .mid { text-align: center; }
-.warn { font-size: 12px; color: #a83434; line-height: 1.4; }
+.warn { font-size: 12px; color: var(--hz-dk-err, #a83434); line-height: 1.4; }
 .fullRow { flex: 0 0 100%; }
 .tick { width: 16px; height: 16px; margin: 0; vertical-align: middle; accent-color: #16695f; cursor: pointer; }
 
@@ -13,33 +13,33 @@
 .merchants { min-width: 1000px; }
 .merchants th:first-child { width: 150px; }
 .merchants th:nth-child(2) { min-width: 240px; }
-.coName { font-weight: 400; color: #767b6e; }
+.coName { font-weight: 400; color: var(--hz-c-ink-muted); }
 .topRow td { vertical-align: top; padding-top: 12px; padding-bottom: 12px; }
 .rowName { display: block; font-size: 13.5px; font-weight: 600; }
-.rowSub { display: block; font-size: 12px; color: #767b6e; }
+.rowSub { display: block; font-size: 12px; color: var(--hz-c-ink-muted); }
 .chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .editLink { display: inline-block; margin-top: 6px; font-size: 12px; }
 .coCell { min-width: 260px; }
 .used { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 600; cursor: pointer; user-select: none; }
 .pickers { display: flex; flex-direction: column; gap: 5px; margin-top: 6px; }
 .pickRow { display: grid; grid-template-columns: 66px minmax(0, 1fr); gap: 6px; align-items: center; }
-.pickLabel { font-size: 11.5px; color: #767b6e; }
+.pickLabel { font-size: 11.5px; color: var(--hz-c-ink-muted); }
 
 /* ── Banks beside the company's numbering and default bank ── */
 .pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; }
 @media (max-width: 900px) { .pair { grid-template-columns: minmax(0, 1fr); } }
 .stack { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .bankName { display: block; font-size: 13px; font-weight: 500; }
-.absent { font-size: 11px; color: #a9ada3; }
+.absent { font-size: 11px; color: var(--hz-dk-ink-soft, #a9ada3); }
 .users { display: flex; flex-wrap: wrap; justify-content: center; gap: 3px; margin-top: 4px; }
-.refusal { display: flex; align-items: center; gap: 6px; padding: 8px 16px; font-size: 12.5px; color: #a83434; border-top: 1px solid #eef0ec; }
+.refusal { display: flex; align-items: center; gap: 6px; padding: 8px 16px; font-size: 12.5px; color: var(--hz-dk-err, #a83434); border-top: 1px solid var(--hz-dk-border-subtle, #eef0ec); }
 
 .smallCard {
-  display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 14px 16px; background: #ffffff;
-  border: 1px solid #d6d9d2; border-radius: 10px;
+  display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 14px 16px; background: var(--hz-c-surface);
+  border: 1px solid var(--hz-c-border); border-radius: 10px;
 }
 .smallHead { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
-.digitsRow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12.5px; color: #414539; }
+.digitsRow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12.5px; color: var(--hz-c-ink-secondary); }
 .letters { display: flex; flex-direction: column; gap: 6px; }
 .letterRow { display: grid; grid-template-columns: 76px minmax(0, 1fr) 56px; gap: 8px; align-items: center; font-size: 12.5px; }
 .letterName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -50,8 +50,8 @@
 
 /* ── Bank statements and the recognition rules: a white card, head inside ── */
 .flatCard {
-  display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 14px 16px; background: #ffffff;
-  border: 1px solid #d6d9d2; border-radius: 10px;
+  display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 14px 16px; background: var(--hz-c-surface);
+  border: 1px solid var(--hz-c-border); border-radius: 10px;
 }
 .flatHead { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
 .bankCell { display: inline-flex; align-items: center; gap: 6px; }
@@ -67,9 +67,9 @@
 .order { width: 64px; }
 .ruleActs { width: 150px; white-space: nowrap; }
 .undo {
-  padding: 0; border: 0; background: none; font: 12px 'IBM Plex Sans', system-ui, sans-serif; color: #767b6e; cursor: pointer;
+  padding: 0; border: 0; background: none; font: 12px 'IBM Plex Sans', system-ui, sans-serif; color: var(--hz-c-ink-muted); cursor: pointer;
   text-decoration: underline; text-underline-offset: 2px;
 }
-.undo:hover { color: #414539; }
+.undo:hover { color: var(--hz-c-ink-secondary); }
 .addRule { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-top: 4px; }
 .newPattern { flex: 0 1 300px; min-width: 180px; }

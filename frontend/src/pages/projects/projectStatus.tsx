@@ -15,9 +15,9 @@ import type { ProjectStatus } from "./types";
 // the value->label contract is the part that must not drift (the same split
 // pms-status.ts uses for stages).
 const STATUS_TINT: Record<ProjectStatus, { hex: string; chip: string; ring: string }> = {
-  confirmed: { hex: "#3f6b53", chip: "bg-[#e8efe9] text-[#2f5341]", ring: "ring-[#3f6b53]/30" },
-  pending:   { hex: "#c2740f", chip: "bg-[#f7e8d2] text-[#8a4e0e]", ring: "ring-[#c2740f]/30" },
-  cancelled: { hex: "#b23b3b", chip: "bg-[#f4dede] text-[#8a2f2f]", ring: "ring-[#b23b3b]/30" },
+  confirmed: { hex: "#3f6b53", chip: "bg-[color:var(--hz-dk-surface-2,#e8efe9)] text-[#2f5341]", ring: "ring-[#3f6b53]/30" },
+  pending:   { hex: "#c2740f", chip: "bg-[color:var(--hz-dk-warning-bg,#f7e8d2)] text-[#8a4e0e]", ring: "ring-[#c2740f]/30" },
+  cancelled: { hex: "#b23b3b", chip: "bg-[color:var(--hz-dk-err-bg,#f4dede)] text-[#8a2f2f]", ring: "ring-[#b23b3b]/30" },
 };
 export const STATUS_OPTIONS = PROJECT_STATUS_OPTIONS.map((o) => ({ ...o, ...STATUS_TINT[o.value] }));
 

@@ -55,6 +55,7 @@ import {
   chipStyle,
 } from "./mail-labels";
 import { ComposeDialog } from "./Compose";
+import { PickedAttachmentChip } from "./PickedAttachmentChip";
 import { EMAIL_FRAME_SANDBOX_MEASURABLE, emailSrcDoc } from "./mail-email-frame";
 import {
   ArrowLeft,
@@ -487,7 +488,7 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
               title={starred ? "Unstar" : "Star"}
               className={cn(starred && "text-accent")}
             >
-              <Star className={cn("h-4 w-4", starred && "fill-amber-400 text-amber-500")} />
+              <Star className={cn("h-4 w-4", starred && "fill-amber-400 text-amber-500 dark:text-amber-400")} />
               {starred ? "Starred" : "Star"}
             </ToolbarButton>
             <ToolbarButton onClick={handleMarkUnread} disabled={mutating} title="Mark as unread">
@@ -519,7 +520,7 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
       </div>
 
       {error && (
-        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+        <div className="rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
           {error}
         </div>
       )}
@@ -555,14 +556,14 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
                 </span>
               )}
               {thread.status === "closed" && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-inset ring-emerald-200">
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300 ring-1 ring-inset ring-emerald-200">
                   <Check className="h-3 w-3" />
                   Archived
                 </span>
               )}
               {starred && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-inset ring-amber-200">
-                  <Star className="h-3 w-3 fill-amber-400 text-amber-500" />
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300 ring-1 ring-inset ring-amber-200">
+                  <Star className="h-3 w-3 fill-amber-400 text-amber-500 dark:text-amber-400" />
                   Starred
                 </span>
               )}
@@ -695,7 +696,7 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
                               <span
                                 className={cn(
                                   "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold",
-                                  m.deliveryStatus === "failed" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-800",
+                                  m.deliveryStatus === "failed" ? "bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300" : "bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300",
                                 )}
                               >
                                 {deliveryLabel(m.deliveryStatus)}
@@ -718,7 +719,7 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
                           title="Email"
                           sandbox={EMAIL_FRAME_SANDBOX_MEASURABLE}
                           srcDoc={emailSrcDoc(rawHtml, THREAD_EMAIL_HEAD)}
-                          className="mt-2 w-full border-t border-border/60 bg-white"
+                          className="mt-2 w-full border-t border-border/60 bg-surface"
                           style={{ minHeight: 80 }}
                           onLoad={(e) => {
                             try {
@@ -821,23 +822,12 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
                   </label>
                   <div className="flex flex-wrap gap-1.5">
                     {files.map((f, i) => (
-                      <span
+                      <PickedAttachmentChip
                         key={`${f.name}-${i}`}
-                        className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border bg-surface-dim py-1 pl-2 pr-1 text-xs text-ink"
-                      >
-                        <Paperclip className="h-3 w-3 shrink-0 text-ink-muted" />
-                        <span className="truncate">{f.name}</span>
-                        <span className="shrink-0 text-ink-muted">{humanSize(f.size)}</span>
-                        <button
-                          type="button"
-                          onClick={() => removeFile(i)}
-                          disabled={sending}
-                          aria-label={`Remove ${f.name}`}
-                          className="shrink-0 rounded p-0.5 text-ink-muted transition hover:bg-surface hover:text-ink disabled:opacity-50"
-                        >
-                          <X className="h-3 w-3" />
-                        </button>
-                      </span>
+                        file={f}
+                        isDisabled={sending}
+                        onRemove={() => removeFile(i)}
+                      />
                     ))}
                   </div>
                 </div>
@@ -1015,7 +1005,7 @@ function AttachmentChip({ att }: { att: MailAttachment }) {
         target="_blank"
         rel="noopener noreferrer"
         title={`${att.filename}${sizeHint}`}
-        className="group relative block overflow-hidden rounded-md border border-border bg-white"
+        className="group relative block overflow-hidden rounded-md border border-border bg-surface"
       >
         <img
           src={blobUrl}

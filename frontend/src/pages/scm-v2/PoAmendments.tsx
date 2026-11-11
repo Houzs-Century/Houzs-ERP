@@ -87,7 +87,7 @@ const buildColumns = (
         display: 'inline-block', padding: '2px 8px', borderRadius: 999,
         fontSize: 'var(--fs-11)', fontWeight: 600,
         background: a.kind === 'so' ? 'rgba(47, 93, 79, 0.12)' : 'var(--c-cream)',
-        color: a.kind === 'so' ? 'var(--c-secondary-a, #2F5D4F)' : 'var(--fg-muted)',
+        color: a.kind === 'so' ? 'var(--c-secondary-a, var(--hz-dk-secondary-a, #2F5D4F))' : 'var(--fg-muted)',
       }}>
         {SOURCE_LABEL[a.kind]}
       </span>

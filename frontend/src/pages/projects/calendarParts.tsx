@@ -329,7 +329,7 @@ export function CalendarDayModal({
         </div>
 
         {holidays.length > 0 && (
-          <div className="mb-3 rounded-md border border-[#c9cbe3] bg-[#ecedf6] px-3 py-2 text-[12px] text-[#474d79]">
+          <div className="mb-3 rounded-md border border-[#c9cbe3] bg-[color:var(--hz-dk-surface-2,#ecedf6)] px-3 py-2 text-[12px] text-[#474d79]">
             <div className="text-[10px] font-semibold uppercase tracking-wider">
               Holiday
             </div>

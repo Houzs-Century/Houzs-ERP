@@ -167,13 +167,13 @@ function StatCard({
   const valC = {
     neutral: "text-ink",
     accent: "text-accent",
-    warning: "text-amber-700",
+    warning: "text-amber-700 dark:text-amber-300",
     error: "text-err",
   }[tone];
   const icoC = {
     neutral: "text-ink-muted",
     accent: "text-accent",
-    warning: "text-amber-600",
+    warning: "text-amber-600 dark:text-amber-300",
     error: "text-err",
   }[tone];
   return (
@@ -199,7 +199,7 @@ function StatCard({
 function HealthBanner({ tone, label, detail }: { tone: Tone; label: string; detail: string }) {
   const cls: Record<Tone, string> = {
     green: "border-synced/40 bg-synced/10 text-synced",
-    amber: "border-amber-300 bg-amber-50 text-amber-800",
+    amber: "border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300",
     red: "border-err/40 bg-err/10 text-err",
     loading: "border-border bg-surface text-ink-muted",
   };
@@ -540,7 +540,7 @@ export function SystemHealth() {
                     className={cn(
                       "inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-[10.5px] font-semibold transition-colors",
                       sensitiveOnly
-                        ? "border-amber-400 bg-amber-50 text-amber-800"
+                        ? "border-amber-400 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300"
                         : "border-border bg-surface text-ink-secondary hover:border-accent/40 hover:text-accent"
                     )}
                     title="Show only security-sensitive actions (user disable/delete/reset, role changes, finance, TOTP)"
@@ -745,7 +745,7 @@ function PerformancePhase2({ onOpenSetup }: { onOpenSetup: () => void }) {
             Performance &amp; Slow Queries
           </h2>
         </div>
-        <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-warning-bg px-2.5 py-0.5 text-[10.5px] font-semibold text-warning-text">
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-300 dark:border-amber-800 bg-warning-bg px-2.5 py-0.5 text-[10.5px] font-semibold text-warning-text">
           <Clock size={11} /> AE not wired · Phase 2
         </span>
       </div>
@@ -805,7 +805,7 @@ function PerformancePhase2({ onOpenSetup }: { onOpenSetup: () => void }) {
         </div>
 
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-b from-surface/70 to-surface/95 px-6 text-center">
-          <div className="flex h-10 w-10 items-center justify-center rounded-[10px] border border-amber-300 bg-warning-bg text-warning-text">
+          <div className="flex h-10 w-10 items-center justify-center rounded-[10px] border border-amber-300 dark:border-amber-800 bg-warning-bg text-warning-text">
             <Timer size={18} />
           </div>
           <div className="mt-3 text-[14px] font-bold text-ink">

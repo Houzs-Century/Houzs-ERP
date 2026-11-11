@@ -68,7 +68,7 @@ function RemarksSection({ soDocNo }: { soDocNo: string }) {
 
 const STATUS_PILL: Record<string, { label: string; cls: string }> = {
   done: { label: 'Delivered', cls: 'bg-synced-bg text-synced' },
-  active: { label: 'On the way', cls: 'bg-[#e6eaf4] text-learning' },
+  active: { label: 'On the way', cls: 'bg-[color:var(--hz-dk-surface-2,#e6eaf4)] text-learning' },
   overdue: { label: 'Late', cls: 'bg-err-bg text-err' },
   scheduled: { label: 'Not started', cls: 'bg-surface-dim text-ink-muted' },
 };
@@ -191,7 +191,7 @@ export function OrderDrawer({
             <div className="min-w-0">
               <div className="flex items-center gap-1.5">
                 <span className="font-mono text-[11px] font-semibold text-accent">{doc.rowType === 'so' ? doc.soDocNo : (doc.codeLine || doc.soDocNo)}</span>
-                {doc.jobLabel && <span className="rounded bg-[#e6eaf4] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-brand text-learning">{doc.jobLabel}</span>}
+                {doc.jobLabel && <span className="rounded bg-[color:var(--hz-dk-surface-2,#e6eaf4)] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-brand text-learning">{doc.jobLabel}</span>}
               </div>
               <div className="mt-1 truncate text-[19px] font-bold text-ink">{doc.customer || '—'}</div>
               <div className="mt-1 flex items-center gap-2">

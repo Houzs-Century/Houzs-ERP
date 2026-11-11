@@ -17,17 +17,17 @@ type Tab = 'cost' | 'selling' | 'supplier';
 
 const H3: React.CSSProperties = {
   fontSize: 'var(--fs-12)', fontWeight: 700, textTransform: 'uppercase',
-  letterSpacing: '0.06em', color: '#767b6e', marginBottom: 'var(--space-2)',
+  letterSpacing: '0.06em', color: 'var(--hz-c-ink-muted)', marginBottom: 'var(--space-2)',
 };
-const muted: React.CSSProperties = { color: '#767b6e', fontSize: 'var(--fs-13)' };
-const dateStyle: React.CSSProperties = { fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-11)', color: '#767b6e' };
+const muted: React.CSSProperties = { color: 'var(--hz-c-ink-muted)', fontSize: 'var(--fs-13)' };
+const dateStyle: React.CSSProperties = { fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-11)', color: 'var(--hz-c-ink-muted)' };
 
 function tabButton(active: boolean): React.CSSProperties {
   return {
     fontSize: 'var(--fs-12)', fontWeight: 600, cursor: 'pointer',
     borderRadius: 'var(--radius-sm)', padding: '4px 10px',
     border: `1px solid ${active ? '#16695f' : '#c2c6bd'}`,
-    background: active ? '#16695f' : '#fff',
+    background: active ? 'var(--hz-c-primary)' : '#fff',
     color: active ? '#fff' : '#3a3f36',
   };
 }
@@ -37,17 +37,17 @@ function Row({ date, main, meta }: { date: string; main: ReactNode; meta?: React
     <div style={{ padding: '8px 0', borderBottom: '1px solid #e3e6e0' }}>
       <div style={dateStyle}>{date}</div>
       <div style={{ fontSize: 'var(--fs-13)', color: '#2b2f28', marginTop: 1 }}>{main}</div>
-      {meta != null && <div style={{ fontSize: 'var(--fs-12)', color: '#767b6e', marginTop: 1 }}>{meta}</div>}
+      {meta != null && <div style={{ fontSize: 'var(--fs-12)', color: 'var(--hz-c-ink-muted)', marginTop: 1 }}>{meta}</div>}
     </div>
   );
 }
 
 function DirChip({ direction }: { direction: 'up' | 'down' | null }) {
   if (direction === 'up') {
-    return <span style={{ marginLeft: 6, fontSize: 'var(--fs-11)', fontWeight: 700, color: 'var(--c-error, #b71c1c)' }}>↑ raised</span>;
+    return <span style={{ marginLeft: 6, fontSize: 'var(--fs-11)', fontWeight: 700, color: 'var(--c-error, var(--hz-dk-err, #b71c1c))' }}>↑ raised</span>;
   }
   if (direction === 'down') {
-    return <span style={{ marginLeft: 6, fontSize: 'var(--fs-11)', fontWeight: 700, color: 'var(--c-success, #2f5d4f)' }}>↓ lowered</span>;
+    return <span style={{ marginLeft: 6, fontSize: 'var(--fs-11)', fontWeight: 700, color: 'var(--c-success, var(--hz-dk-secondary-a, #2f5d4f))' }}>↓ lowered</span>;
   }
   return null;
 }

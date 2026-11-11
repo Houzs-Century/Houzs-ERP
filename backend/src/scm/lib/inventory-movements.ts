@@ -518,6 +518,31 @@ export async function reverseMovements(
   sourceDocId: string,
   performedBy: string | null,
 ): Promise<{ ok: boolean; reversed: number; skipped: number; failed: number; reason?: string }> {
+  const { openedLotRows, ...rev } = await reverseMovementsCore(sb, sourceDocType, sourceDocId, performedBy);
+  /* Oversell retro-cost (0154) — reversing an OUT writes an IN, which re-opens
+     a lot. A prior "ship anyway" DO whose short units went out at RM0 in that
+     warehouse can now be costed from it. Wired 2026-07-29: until then only the
+     GRN post reconciled, so a cancelled PR / stock transfer put stock back
+     without ever repairing the earlier shipment (COE §2). Runs ONCE for the
+     whole reversal, after every row is committed. Best-effort — never throws,
+     never rolls a reversal back. */
+  if (openedLotRows.length > 0) {
+    const { reconcileUncostedAfterIn } = await import('./oversell-retrocost');
+    await reconcileUncostedAfterIn(sb, openedLotRows, performedBy);
+  }
+  return rev;
+}
+
+/** reverseMovements without its retro-cost reconcile: the rows only. A caller
+ *  that runs the reversal inside a transaction (lib/purchase-return-stock.ts)
+ *  reconciles `openedLotRows` itself after commit. */
+export async function reverseMovementsCore(
+  sb: any,
+  sourceDocType: string,
+  sourceDocId: string,
+  performedBy: string | null,
+): Promise<{ ok: boolean; reversed: number; skipped: number; failed: number; reason?: string; openedLotRows: MovementInput[] }> {
+  const none: MovementInput[] = [];
   try {
     /* Select batch_no so a reversing row restores the EXACT dye-lot batch the
        original movement consumed/created (FIFO trigger reverses per-batch, not
@@ -536,7 +561,7 @@ export async function reverseMovements(
         .eq('source_doc_id', sourceDocId);
     }
     const { data, error } = movsRes;
-    if (error) return { ok: false, reversed: 0, skipped: 0, failed: 0, reason: error.message };
+    if (error) return { ok: false, reversed: 0, skipped: 0, failed: 0, reason: error.message, openedLotRows: none };
 
     type Row = {
       movement_type: 'IN' | 'OUT' | 'ADJUSTMENT' | string;
@@ -551,7 +576,7 @@ export async function reverseMovements(
       company_id: number | null;
     };
     const rows = (data ?? []) as Row[];
-    if (rows.length === 0) return { ok: true, reversed: 0, skipped: 0, failed: 0 };
+    if (rows.length === 0) return { ok: true, reversed: 0, skipped: 0, failed: 0, openedLotRows: none };
 
     // ── Idempotency: signed net per (product, variant, warehouse) bucket.
     // Buckets already at net 0 are fully reversed → we won't touch them.
@@ -561,7 +586,9 @@ export async function reverseMovements(
     const bucketKey = (r: Row) => `${r.warehouse_id}::${r.item_code}::${r.variant_key ?? ''}::${r.batch_no ?? ''}`;
     for (const r of rows) {
       if (r.movement_type !== 'IN' && r.movement_type !== 'OUT') continue;
-      const signed = r.movement_type === 'IN' ? r.qty : -r.qty;
+      /* Number(): through the transaction shim (postgres.js) a numeric qty reads
+         back as TEXT, and '1' + 1 concatenates. PostgREST answers a number. */
+      const signed = r.movement_type === 'IN' ? Number(r.qty) : -Number(r.qty);
       const k = bucketKey(r);
       netByBucket.set(k, (netByBucket.get(k) ?? 0) + signed);
     }
@@ -585,7 +612,7 @@ export async function reverseMovements(
         item_code: r.item_code,
         variant_key: r.variant_key ?? '',
         product_name: r.product_name,
-        qty: r.qty,
+        qty: Number(r.qty),
         // A reversing IN must carry the lot cost so stock re-enters at its
         // original basis; a reversing OUT lets the FIFO trigger compute COGS.
         ...(opposite === 'IN' ? { unit_cost_sen: Number(r.unit_cost_sen ?? 0) } : {}),
@@ -612,26 +639,15 @@ export async function reverseMovements(
         reversed += 1;
         if (opposite === 'IN') openedLotRows.push(row);
         // Walk the remaining net toward 0 by the reversed direction's signed qty.
-        remaining.set(k, net + (opposite === 'IN' ? r.qty : -r.qty));
+        remaining.set(k, net + (opposite === 'IN' ? Number(r.qty) : -Number(r.qty)));
       } else {
         failed += 1;
       }
     }
-    /* Oversell retro-cost (0154) — reversing an OUT writes an IN, which re-opens
-       a lot. A prior "ship anyway" DO whose short units went out at RM0 in that
-       warehouse can now be costed from it. Wired 2026-07-29: until then only the
-       GRN post reconciled, so a cancelled PR / stock transfer put stock back
-       without ever repairing the earlier shipment (COE §2). Runs ONCE for the
-       whole reversal, after every row is committed. Best-effort — never throws,
-       never rolls a reversal back. */
-    if (openedLotRows.length > 0) {
-      const { reconcileUncostedAfterIn } = await import('./oversell-retrocost');
-      await reconcileUncostedAfterIn(sb, openedLotRows, performedBy);
-    }
-    return { ok: failed === 0, reversed, skipped, failed };
+    return { ok: failed === 0, reversed, skipped, failed, openedLotRows };
   } catch (e) {
     // eslint-disable-next-line no-console
     console.error('[inventory] reverseMovements exception:', e);
-    return { ok: false, reversed: 0, skipped: 0, failed: 0, reason: e instanceof Error ? e.message : String(e) };
+    return { ok: false, reversed: 0, skipped: 0, failed: 0, reason: e instanceof Error ? e.message : String(e), openedLotRows: none };
   }
 }

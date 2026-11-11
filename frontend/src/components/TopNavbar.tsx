@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { lazy, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   Check,
@@ -17,6 +17,10 @@ import { RefreshButton } from "./RefreshButton";
 import { WorkspaceTabs } from "./WorkspaceTabs";
 import { Avatar } from "./Avatar";
 import { cn } from "../lib/utils";
+import { LazySlot } from "./LazySlot";
+
+// Loaded when the account menu opens: keeps it off the first-load budget.
+const ThemeChoice = lazy(() => import("./ThemeChoice"));
 import { api } from "../api/client";
 import { useQuery } from "../hooks/useQuery";
 import { useDialog } from "../hooks/useDialog";
@@ -440,6 +444,9 @@ function ProfileMenu() {
                 Switch user
               </Link>
             )}
+            <LazySlot resetKey="account-menu" fallback={null}>
+              <ThemeChoice />
+            </LazySlot>
             <button
               type="button"
               role="menuitem"

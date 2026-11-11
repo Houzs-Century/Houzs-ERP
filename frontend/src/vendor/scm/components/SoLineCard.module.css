@@ -241,7 +241,7 @@
   cursor: pointer;
   padding: 4px;
   border-radius: var(--radius-sm);
-  color: var(--c-festive-b, #B8331F);
+  color: var(--c-festive-b, var(--hz-dk-festive-b, #B8331F));
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -467,7 +467,7 @@
   padding: 0 10px;
   font-family: var(--font-sans);
   font-size: var(--fs-11);
-  color: var(--c-festive-b, #B8331F);
+  color: var(--c-festive-b, var(--hz-dk-festive-b, #B8331F));
   background: transparent;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
@@ -538,7 +538,7 @@
 }
 
 .photoError {
-  color: var(--c-festive-b, #B8331F);
+  color: var(--c-festive-b, var(--hz-dk-festive-b, #B8331F));
   font-size: 9px;
   text-align: center;
   padding: 2px;
@@ -554,7 +554,7 @@
   width: 28px;
   height: 28px;
   border-radius: 999px;
-  background: var(--c-festive-b, #B8331F);
+  background: var(--c-festive-b, var(--hz-dk-festive-b, #B8331F));
   color: var(--c-paper);
   border: 2px solid var(--c-paper);
   cursor: pointer;

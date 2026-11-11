@@ -159,7 +159,7 @@ export function MobileInbox({
             disabled={marking || totalUnread === 0}
             style={{
               display: "flex", alignItems: "center", gap: 5, height: 34, padding: "0 12px",
-              border: "1px solid #d6d9d2", borderRadius: 9, background: "#f4f6f3", color: "#414539",
+              border: "1px solid var(--hz-c-border)", borderRadius: 9, background: "var(--hz-c-surface-2)", color: "var(--hz-c-ink-secondary)",
               fontFamily: "inherit", fontSize: 12, fontWeight: 700,
               cursor: marking || totalUnread === 0 ? "default" : "pointer",
               opacity: totalUnread === 0 ? 0.5 : 1,
@@ -170,7 +170,7 @@ export function MobileInbox({
           </button>
         </div>
         {markError && (
-          <div style={{ marginTop: 8, fontSize: 11.5, lineHeight: 1.35, color: "var(--red, #b23a3a)" }}>
+          <div style={{ marginTop: 8, fontSize: 11.5, lineHeight: 1.35, color: "var(--red, var(--hz-c-err))" }}>
             {markError}
           </div>
         )}
@@ -195,7 +195,7 @@ export function MobileInbox({
           <>
             {today.length > 0 && (
               <div>
-                <div className="ey" style={{ color: "#767b6e", margin: "0 2px 9px" }}>Today</div>
+                <div className="ey" style={{ color: "var(--hz-c-ink-muted)", margin: "0 2px 9px" }}>Today</div>
                 <div className="card" style={{ overflow: "hidden", marginBottom: 14 }}>
                   {today.map((item, i) => (
                     <Row key={item.id} item={item} first={i === 0} unread={(unreadByProject[item.project_id] ?? 0) > 0} onOpen={onOpen} />
@@ -205,7 +205,7 @@ export function MobileInbox({
             )}
             {earlier.length > 0 && (
               <div>
-                <div className="ey" style={{ color: "#767b6e", margin: "0 2px 9px" }}>Earlier</div>
+                <div className="ey" style={{ color: "var(--hz-c-ink-muted)", margin: "0 2px 9px" }}>Earlier</div>
                 <div className="card" style={{ overflow: "hidden" }}>
                   {earlier.map((item, i) => (
                     <Row key={item.id} item={item} first={i === 0} unread={(unreadByProject[item.project_id] ?? 0) > 0} onOpen={onOpen} />
@@ -239,21 +239,21 @@ function Row({
       }}
     >
       <span style={{ width: 8, height: 8, flex: "none", borderRadius: "50%", background: "#b23a3a", visibility: unread ? "visible" : "hidden" }} />
-      <span style={{ width: 32, height: 32, flex: "none", borderRadius: 9, background: "#f4f6f3", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <span style={{ width: 32, height: 32, flex: "none", borderRadius: 9, background: "var(--hz-c-surface-2)", display: "flex", alignItems: "center", justifyContent: "center" }}>
         <ActivityIcon action={item.action} />
       </span>
       <span style={{ flex: 1, minWidth: 0 }}>
-        <span style={{ display: "block", fontSize: 13, fontWeight: unread ? 800 : 600, color: "#11140f", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+        <span style={{ display: "block", fontSize: 13, fontWeight: unread ? 800 : 600, color: "var(--hz-c-ink)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
           {title}
           {item.brand && (
-            <span className="money" style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 400, color: "#9aa093" }}>{item.brand}</span>
+            <span className="money" style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 400, color: "var(--hz-c-ink-soft)" }}>{item.brand}</span>
           )}
         </span>
-        <span style={{ display: "block", fontSize: 11.5, color: "#767b6e", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+        <span style={{ display: "block", fontSize: 11.5, color: "var(--hz-c-ink-muted)", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
           {activityLine(item)}
         </span>
       </span>
-      <span className="money" style={{ fontSize: 10, color: "#9aa093", flex: "none" }} title={item.created_at}>
+      <span className="money" style={{ fontSize: 10, color: "var(--hz-c-ink-soft)", flex: "none" }} title={item.created_at}>
         {relativeTime(item.created_at)}
       </span>
     </button>

@@ -591,7 +591,7 @@ export function ImportDialog({ lines, modulesByModel, sizes, supplierId, supplie
       />
       {plan && count === 0 && plan.refused.length === 0 && <p style={noteText}>This file changes nothing.</p>}
       {plan && plan.refused.length > 0 && (
-        <div style={{ marginTop: 12, padding: '10px 12px', background: 'var(--c-festive-b-bg, #f7e9e9)', color: 'var(--c-festive-b, #8f2c1a)', borderRadius: 'var(--radius-sm)' }}>
+        <div style={{ marginTop: 12, padding: '10px 12px', background: 'var(--c-festive-b-bg, var(--hz-dk-err-bg, #f7e9e9))', color: 'var(--c-festive-b, #8f2c1a)', borderRadius: 'var(--radius-sm)' }}>
           <div style={{ fontWeight: 600 }}>{plan.refused.length} refused. The rest can still go in.</div>
           {plan.refused.slice(0, 20).map((r) => <div key={r}>{r}</div>)}
           {plan.refused.length > 20 && <div>And {plan.refused.length - 20} more.</div>}

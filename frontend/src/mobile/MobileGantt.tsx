@@ -139,7 +139,7 @@ export function MobileGantt({
 
   if (tasks.length === 0) {
     return (
-      <div style={{ fontSize: 12, color: "#9aa093", padding: "20px 2px" }}>
+      <div style={{ fontSize: 12, color: "var(--hz-c-ink-soft)", padding: "20px 2px" }}>
         No tasks scheduled yet. Add tasks in the List view to populate the timeline.
       </div>
     );
@@ -222,7 +222,7 @@ export function MobileGantt({
         })}
       </div></div></div>
 
-      <div style={{ fontSize: 11.5, color: "#767b6e", lineHeight: 1.5, padding: "8px 2px 0" }}>
+      <div style={{ fontSize: 11.5, color: "var(--hz-c-ink-muted)", lineHeight: 1.5, padding: "8px 2px 0" }}>
         Diamonds sit on each task's due date, coloured by status; the lock badge marks a permission-gated task. Hatched columns are Malaysia holidays. Tap a diamond to open that task in the checklist.
       </div>
     </>

@@ -470,7 +470,7 @@ function AttainmentHero({
           className="h-full rounded-md"
           style={{
             width: `${fillPct}%`,
-            background: "linear-gradient(90deg, var(--tw-color-primary, #16695f), #2f8a5b)",
+            background: "linear-gradient(90deg, var(--tw-color-primary, var(--hz-c-primary)), #2f8a5b)",
             backgroundColor: "#2f8a5b",
           }}
         />
@@ -539,7 +539,7 @@ function DarkNotConfigured({
 }) {
   return (
     <div className="rounded-xl bg-sidebar p-5 text-sidebar-ink shadow-[0_8px_24px_-14px_rgba(17,24,16,.5)]">
-      <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-[10px] border border-amber-300 bg-warning-bg text-warning-text">
+      <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-[10px] border border-amber-300 dark:border-amber-800 bg-warning-bg text-warning-text">
         <TrendingUp size={18} />
       </div>
       <div className="mt-3 text-center font-display text-[14px] font-bold text-sidebar-ink">
@@ -598,7 +598,7 @@ function MonthlySalesCard({
           <div className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
             Monthly sales · last 6 mo
           </div>
-          <div className="mx-auto mt-3 flex h-10 w-10 items-center justify-center rounded-[10px] border border-amber-300 bg-warning-bg text-warning-text">
+          <div className="mx-auto mt-3 flex h-10 w-10 items-center justify-center rounded-[10px] border border-amber-300 dark:border-amber-800 bg-warning-bg text-warning-text">
             <TrendingUp size={18} />
           </div>
           <div className="mt-2 text-[13px] font-bold text-ink">Chart not yet wired</div>
@@ -721,7 +721,7 @@ function LeaderboardCard({
           <div className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
             Team leaderboard · MTD attainment
           </div>
-          <div className="mx-auto mt-3 flex h-10 w-10 items-center justify-center rounded-[10px] border border-amber-300 bg-warning-bg text-warning-text">
+          <div className="mx-auto mt-3 flex h-10 w-10 items-center justify-center rounded-[10px] border border-amber-300 dark:border-amber-800 bg-warning-bg text-warning-text">
             <Users size={18} />
           </div>
           <div className="mt-2 text-[13px] font-bold text-ink">

@@ -29,7 +29,7 @@ import type { AuthUser } from "../services/auth";
 import { hasPermission } from "../services/permissions";
 import { recipientList, sendEmail } from "../services/email";
 import { getBranding, getBrandingForCompany } from "../services/branding";
-import { validateMailAttachments } from "../lib/mail-attachments";
+import { toStoredMailAttachments, validateMailAttachments } from "../lib/mail-attachments";
 import { isSalesDirectorUser } from "../services/pmsAccess";
 import { activeCompanyCodePred, activeCompanyId, activeCompanySql } from "../scm/lib/companyScope";
 import { toArray, stripHtml, safeIso, base64ToBytes, safeFilename } from "../services/mail-parse";
@@ -438,6 +438,7 @@ type ThreadRow = {
   // Computed (not a column): EXISTS roll-up of any outbound message, so the
   // frontend's Sent folder is accurate instead of relying on last_direction.
   has_outbound?: number | boolean | null;
+  has_attachment?: number | boolean | null;
   my_unread?: number | string | null;
   last_inbound_at?: string | null;
 };
@@ -462,6 +463,7 @@ function rowToThread(r: ThreadRow) {
     labels: parseJsonArray(r.labels),
     trashedAt: r.trashed_at ?? null,
     hasOutbound: Number(r.has_outbound ?? 0) === 1,
+    hasAttachment: Number(r.has_attachment ?? 0) === 1,
     createdAt: r.created_at ?? "",
   };
 }
@@ -871,7 +873,11 @@ app.get("/threads", async (c) => {
        EXISTS (
          SELECT 1 FROM email_messages m
           WHERE m.thread_id = t.id AND m.direction = 'outbound'
-       ) AS has_outbound, ${MY_UNREAD_SQL} AS my_unread
+       ) AS has_outbound,
+       EXISTS (
+         SELECT 1 FROM email_attachments a JOIN email_messages m ON m.id = a.message_id
+          WHERE m.thread_id = t.id
+       ) AS has_attachment, ${MY_UNREAD_SQL} AS my_unread
        FROM email_threads t ${MY_READ_JOIN} ${whereSql}`;
   const selectBinds = [scope.userId ?? 0, ...binds];
   const orderSql = " ORDER BY t.last_message_at DESC NULLS LAST";
@@ -2011,6 +2017,7 @@ app.post("/threads/:id/reply", async (c) => {
     references: headers?.References ?? null,
     companyId: activeCompanyId(c) ?? null,
   });
+  await storeAttachments(c.env.DB, c.env, messageId, toStoredMailAttachments(attachments));
 
   await c.env.DB.prepare(
     `UPDATE email_threads
@@ -2172,6 +2179,7 @@ app.post("/compose", async (c) => {
     references: null,
     companyId: companyId ?? null,
   });
+  await storeAttachments(c.env.DB, c.env, messageId, toStoredMailAttachments(attachments));
 
   if (ackPeople.length) await requestAcks(c.env, messageId, ackPeople, { subject, senderName: fromName });
   return c.json({ ok: true, threadId, messageId, queued: result.status !== "sent" }, 201);

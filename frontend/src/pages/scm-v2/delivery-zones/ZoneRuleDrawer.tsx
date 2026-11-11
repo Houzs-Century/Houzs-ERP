@@ -87,7 +87,7 @@ export function ZoneRuleDrawer({ target, rules, defaultMap, knownZones, onClose 
       footer={
         <div className="flex flex-wrap items-center justify-between gap-2">
           {editing
-            ? <button type="button" onClick={() => void remove()} disabled={busy} className="min-h-[40px] rounded-md border border-[#e3b4b4] px-3 text-[12.5px] font-semibold text-[#8a2c2c] disabled:opacity-50">Delete rule</button>
+            ? <button type="button" onClick={() => void remove()} disabled={busy} className="min-h-[40px] rounded-md border border-[#e3b4b4] px-3 text-[12.5px] font-semibold text-[color:var(--hz-dk-err,#8a2c2c)] disabled:opacity-50">Delete rule</button>
             : <span />}
           <span className="flex gap-2">
             <button type="button" onClick={onClose} className="min-h-[40px] rounded-md border border-border px-3 text-[12.5px] font-semibold text-ink">Cancel</button>
@@ -113,7 +113,7 @@ export function ZoneRuleDrawer({ target, rules, defaultMap, knownZones, onClose 
               );
             })}
           </div>
-          {error?.field === 'zone' && <p className="text-[12px] text-[#8a2c2c]">{error.message}</p>}
+          {error?.field === 'zone' && <p className="text-[12px] text-[color:var(--hz-dk-err,#8a2c2c)]">{error.message}</p>}
         </fieldset>
 
         <div className="grid grid-cols-2 gap-3">
@@ -126,7 +126,7 @@ export function ZoneRuleDrawer({ target, rules, defaultMap, knownZones, onClose 
               className={cn(inputCls, error?.field === 'to' && 'border-[#c0392b]')} />
           </label>
         </div>
-        {(error?.field === 'from' || error?.field === 'to') && <p className="text-[12px] text-[#8a2c2c]">{error.message}</p>}
+        {(error?.field === 'from' || error?.field === 'to') && <p className="text-[12px] text-[color:var(--hz-dk-err,#8a2c2c)]">{error.message}</p>}
 
         <label className={labelCls}>Name
           <input value={form.label} onChange={(e) => set('label', e.target.value)} placeholder="e.g. Kajang / Semenyih" className={inputCls} maxLength={120} />
@@ -148,7 +148,7 @@ export function ZoneRuleDrawer({ target, rules, defaultMap, knownZones, onClose 
                 <div className="flex h-5 gap-px overflow-hidden rounded-md">
                   {preview.after.map((z, p) => {
                     const inRange = p >= preview.v.prefixStart && p <= preview.v.prefixEnd;
-                    return <span key={p} className="flex-1" style={{ background: inRange ? (active ? '#16695f' : '#9fb8b3') : z ? '#d6d9d2' : '#eef0ec' }} />;
+                    return <span key={p} className="flex-1" style={{ background: inRange ? (active ? 'var(--hz-c-primary)' : '#9fb8b3') : z ? 'var(--hz-c-border)' : 'var(--hz-c-bg)' }} />;
                   })}
                 </div>
                 <div className="mt-1 flex justify-between text-[11px] text-ink-muted"><span>00</span><span>25</span><span>50</span><span>75</span><span>99</span></div>
@@ -160,7 +160,7 @@ export function ZoneRuleDrawer({ target, rules, defaultMap, knownZones, onClose 
                     {preview.changes.slice(0, 8).map((c) => (
                       <li key={c.from} className="flex flex-wrap justify-between gap-2 border-t border-border-subtle pt-1 first:border-t-0 first:pt-0">
                         <span className="tabular-nums text-ink">{rangeText(c.from, c.to)}</span>
-                        <span className={c.after ? 'text-ink-secondary' : 'font-semibold text-[#8a2c2c]'}>
+                        <span className={c.after ? 'text-ink-secondary' : 'font-semibold text-[color:var(--hz-dk-err,#8a2c2c)]'}>
                           {c.before ? zoneName(c.before) : 'No zone'} to {c.after ? zoneName(c.after) : 'no zone'}
                         </span>
                       </li>
@@ -169,12 +169,12 @@ export function ZoneRuleDrawer({ target, rules, defaultMap, knownZones, onClose 
                   </ul>
                 )}
               {preview.switchesOffDefault && (
-                <p className="rounded-lg bg-[#f6ecd4] px-3 py-2 text-[12.5px] text-[#80501c]">
+                <p className="rounded-lg bg-[color:var(--hz-dk-warning-bg,#f6ecd4)] px-3 py-2 text-[12.5px] text-[#80501c]">
                   The built-in map only applies while no rule is in use, so saving this leaves the postcodes above with no zone. Load the default map as editable rules first to keep them.
                 </p>
               )}
               {preview.ties.length > 0 && (
-                <p className="rounded-lg bg-[#f6ecd4] px-3 py-2 text-[12.5px] text-[#80501c]">
+                <p className="rounded-lg bg-[color:var(--hz-dk-warning-bg,#f6ecd4)] px-3 py-2 text-[12.5px] text-[#80501c]">
                   {preview.ties.map(pad2).join(', ')} {preview.ties.length === 1 ? 'is' : 'are'} also covered by another zone's rule of the same width, so which zone wins is not certain. Make one of the two ranges narrower.
                 </p>
               )}

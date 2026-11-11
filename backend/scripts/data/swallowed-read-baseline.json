@@ -250,7 +250,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/delivery-returns.ts": {
-      "reads": 18,
+      "reads": 10,
       "catches": 0
     },
     "backend/src/scm/routes/delivery-zones.ts": {
@@ -362,7 +362,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/purchase-returns.ts": {
-      "reads": 21,
+      "reads": 17,
       "catches": 0
     },
     "backend/src/scm/routes/pwp-codes.ts": {

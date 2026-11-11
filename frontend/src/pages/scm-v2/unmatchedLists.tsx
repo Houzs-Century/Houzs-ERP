@@ -216,7 +216,8 @@ export function withSameMoney(
   const onBank = new Map<string, UnmatchedBankLine>();
   for (const b of bank) for (const e of b.entries) if (!onBank.has(e.jeNo)) onBank.set(e.jeNo, b);
   return payments.map((p): PaymentRow => {
-    const line = p.kind === 'card' ? onReport.get(p.paymentId) : undefined;
+    /* A card's line — or the QR line of a DuitNow QR sale, keyed as a transfer (owner 2026-11-11). */
+    const line = onReport.get(p.paymentId);
     if (line) return { ...p, same: { text: `Merchant report line · ${line.acquirerCode} · ${fmtDate(line.txnDate)} · line ${line.lineNo}`, to: line.to } };
     const credit = p.kind === 'transfer' && p.jeNo ? onBank.get(p.jeNo) : undefined;
     if (credit) return { ...p, same: { text: `Bank money in · ${fmtDate(credit.bookedOn)} · ${fmt(credit.amountSen)}`, to: bankLineLink(credit) } };

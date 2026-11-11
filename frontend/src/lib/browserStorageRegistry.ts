@@ -115,6 +115,7 @@ export const BROWSER_STORAGE_KEY_REGISTRY: readonly StorageKeyRegistration[] = [
   // widths, order, hidden and frozen columns, one key per table. No identity data.
   { id: "finance-grid-layout", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "fin-grid-v1:<table>", matches: prefix("fin-grid-v1:") },
   { id: "mobile-language", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "houzs.mobile.lang", matches: exact("houzs.mobile.lang") },
+  { id: "theme", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "houzs.theme (light / dark / system, read before first paint by index.html too)", matches: exact("houzs.theme") },
   // Floating Assistant panel size — a per-device layout preference (width/height
   // of the draggable chat card), no identity/company data, same class as the
   // ResizableDrawer panel widths.
@@ -232,6 +233,8 @@ export const PRODUCTION_STORAGE_CALLERS = [
   // the account's saved layout on the first paint. Column keys only — no
   // identity data, and the company comes from the request, never from storage.
   "lib/tableLayouts.ts",
+  // Light / dark / auto, per browser (owner 2026-11-11 dark mode).
+  "lib/theme.ts",
   "lib/workspaceTabs.ts",
   "mobile/mobileI18n.ts",
   "mobile/MobileSalesOrders.tsx",

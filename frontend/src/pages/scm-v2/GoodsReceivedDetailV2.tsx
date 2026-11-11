@@ -556,7 +556,7 @@ function GoodsReceivedDetailV2ReadOnly() {
         return (
           <div className="min-w-0">
             <div className="font-mono text-[12px] text-ink">{text}</div>
-            {unplaced > 0 && <div className="text-[11px] text-amber-700">{unplaced} not on a rack</div>}
+            {unplaced > 0 && <div className="text-[11px] text-amber-700 dark:text-amber-300">{unplaced} not on a rack</div>}
           </div>
         );
       },

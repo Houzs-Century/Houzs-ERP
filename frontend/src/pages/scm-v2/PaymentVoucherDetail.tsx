@@ -903,7 +903,7 @@ export const PaymentVoucherDetail = () => {
                       <span className={styles.previewPrice}>{fmtRm(l.amountSen, currency)}</span>
                       {editLines.length > 1 && (
                         <button type="button" onClick={() => dropLine(l.rid)} title="Remove line"
-                          style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--c-festive-b, #B8331F)', padding: 4, display: 'inline-flex' }}>
+                          style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))', padding: 4, display: 'inline-flex' }}>
                           <Trash2 {...SM_ICON} />
                         </button>
                       )}
@@ -951,7 +951,7 @@ export const PaymentVoucherDetail = () => {
           <div className={styles.cardHeader}>
             <h2 className={styles.cardTitle}>Applies to</h2>
             {isEditing && editApplyToPi ? (
-              <span style={{ fontSize: 'var(--fs-12)', color: editOverAllocated ? 'var(--c-festive-b, #B8331F)' : 'var(--fg-muted)' }}>
+              <span style={{ fontSize: 'var(--fs-12)', color: editOverAllocated ? 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' : 'var(--fg-muted)' }}>
                 {apEdit
                   ? `Applying ${fmtRm(editAllocatedSen)}${editAdvanceSen > 0 ? ` + prepay ${fmtRm(editAdvanceSen)}` : ''} = ${fmtRm(editTotalSen)}`
                   : `Allocated ${fmtRm(editAllocatedSen)} / PV total ${fmtRm(editTotalSen)}`}
@@ -971,7 +971,7 @@ export const PaymentVoucherDetail = () => {
               ) : (
                 <>
                   {editOverAllocated && (
-                    <div style={{ fontSize: 'var(--fs-12)', color: 'var(--c-festive-b, #B8331F)', marginBottom: 'var(--space-2)' }}>
+                    <div style={{ fontSize: 'var(--fs-12)', color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))', marginBottom: 'var(--space-2)' }}>
                       You've applied more than the voucher total — reduce the amounts below before saving.
                     </div>
                   )}

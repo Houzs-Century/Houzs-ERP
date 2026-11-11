@@ -297,7 +297,7 @@ export function FairPicker(props: FairPickerProps) {
         </select>
       )}
       {askBooth && booth == null && askBooth.message && (
-        <span role="note" style={{ display: 'block', fontSize: '11px', marginTop: '4px', color: 'var(--c-festive-b, #B8331F)' }}>{askBooth.message}</span>
+        <span role="note" style={{ display: 'block', fontSize: '11px', marginTop: '4px', color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' }}>{askBooth.message}</span>
       )}
 
       {hint}
@@ -396,7 +396,7 @@ export function useAutoFair(
         {d.how === 'ongoing' ? 'Filled in: your fair today.' : 'Filled in: your latest fair.'} Change it if this order is for another fair.
       </span>
     : !e && d.whyMessage && !value.organizer
-      ? <span role="note" style={{ ...line, color: 'var(--c-festive-b, #B8331F)' }}>{d.whyMessage}</span>
+      ? <span role="note" style={{ ...line, color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' }}>{d.whyMessage}</span>
       : null;
   return { why: d.why, hint };
 }

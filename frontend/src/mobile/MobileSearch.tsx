@@ -226,12 +226,12 @@ export function MobileSearch({
           <div role="status" aria-live="polite" style={{ padding: "30px 0", textAlign: "center", color: "var(--mut2)", fontSize: 12.5 }}>Searching for “{term}”…</div>
         )}
         {error && (
-          <div role="alert" style={{ margin: "8px 0", borderRadius: 10, border: "1px solid #e6c3c3", background: "#fbeded", padding: "10px 12px", fontSize: 12, color: "var(--red)" }}>
+          <div role="alert" style={{ margin: "8px 0", borderRadius: 10, border: "1px solid #e6c3c3", background: "var(--hz-dk-err-bg, #fbeded)", padding: "10px 12px", fontSize: 12, color: "var(--red)" }}>
             Couldn't search right now. Please try again.
           </div>
         )}
         {degradedNotice && !error && (
-          <div role="alert" style={{ margin: "8px 0", borderRadius: 10, border: "1px solid #e0cba8", background: "#fdf6e9", padding: "10px 12px", fontSize: 12, color: "var(--ink, #2b2b2b)" }}>
+          <div role="alert" style={{ margin: "8px 0", borderRadius: 10, border: "1px solid #e0cba8", background: "var(--hz-dk-warning-bg, #fdf6e9)", padding: "10px 12px", fontSize: 12, color: "var(--ink, #2b2b2b)" }}>
             {degradedNotice}
           </div>
         )}

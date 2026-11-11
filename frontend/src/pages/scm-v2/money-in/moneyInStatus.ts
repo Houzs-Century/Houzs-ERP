@@ -66,7 +66,7 @@ export function unbilledAgeTone(days: number): TagTone {
 
 /** The sand tint of a document still open (the design's OPEN_BG): open sales
  *  invoices and debtor bills, debtors with money outstanding. */
-export const OPEN_BG = '#fcf7ec';
+export const OPEN_BG = 'var(--hz-dk-warning-bg, #fcf7ec)';
 /** A row's style for DataTable's getRowStyle: sand while it is open. */
 export const openRowStyle = (open: boolean): { background: string } | undefined => (open ? { background: OPEN_BG } : undefined);
 

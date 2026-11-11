@@ -94,7 +94,7 @@ export function PosSstReceiptTab() {
           Live preview · {d.paper_width} mm
           <label className="ml-auto flex items-center gap-1 font-normal normal-case tracking-normal"><input type="checkbox" checked={previewSst} onChange={(e) => setPreviewSst(e.target.checked)} /> SST ticked</label>
         </div>
-        <pre className="overflow-x-auto rounded-md border border-border bg-white p-3 font-mono text-[10.5px] leading-[1.25] text-black shadow-stone" style={{ width: d.paper_width === 80 ? 330 : 240 }}>{lines.join("\n")}</pre>
+        <pre className="overflow-x-auto rounded-md border border-border bg-surface p-3 font-mono text-[10.5px] leading-[1.25] text-black shadow-stone" style={{ width: d.paper_width === 80 ? 330 : 240 }}>{lines.join("\n")}</pre>
         <div className="mt-1 text-[10px] text-ink-muted">Sample bill. "Test print" to a terminal arrives with the printer step; until then, print from the device's Device setup.</div>
       </div>
     </div>

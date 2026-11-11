@@ -97,7 +97,7 @@ const BROWN = "#a16a2e";
 const BROWN_SOFT = "#f6efd9";
 const BROWN_FG = "#8a6a2e";
 const GREEN = "#2f8a5b";
-const OK_BG = "#e2f0e9";
+const OK_BG = "var(--hz-dk-synced-bg, #e2f0e9)";
 const WARN = "#B76B00";
 const WARN_BG = "rgba(183,107,0,0.12)";
 const RED = "#b23a3a";
@@ -107,7 +107,7 @@ const BLUE = "#1F3A8A";
 const LINE = "#d6d9d2";
 const LINE_SOFT = "rgba(34,31,32,0.10)";
 const DIM = "#e3e6e0";
-const FIELD_BG = "#f4f6f3";
+const FIELD_BG = "var(--hz-dk-surface-2, #f4f6f3)";
 
 // Ordered stage pipeline + the resolution-routing rule now live in the SHARED
 // vendor/scm/lib/assr/stages module so desktop + mobile can't drift on them
@@ -169,7 +169,7 @@ const PRIORITY_META: Record<string, { label: string; color: string }> = {
   low: { label: "Low", color: GREY },
   normal: { label: "Normal", color: TEAL },
   high: { label: "High", color: WARN },
-  urgent: { label: "Urgent", color: "#B71C1C" },
+  urgent: { label: "Urgent", color: "var(--hz-dk-err, #B71C1C)" },
 };
 const issueOf = (r: Any) => get(r, "complaintIssue", "complaint_issue");
 const hoursToDeadline = (r: Any): number | null => {
@@ -532,7 +532,7 @@ function CaseList({
                   display: "inline-flex", alignItems: "center", gap: 6, flex: "none",
                   padding: "7px 13px", borderRadius: 999, cursor: "pointer",
                   border: `1px solid ${on ? TEAL : LINE_SOFT}`,
-                  background: on ? TEAL : "#fff", color: on ? "#fff" : INK_SEC,
+                  background: on ? TEAL : "var(--hz-c-surface)", color: on ? "#fff" : INK_SEC,
                   fontSize: 12.5, fontWeight: 600, fontFamily: "inherit",
                 }}
               >
@@ -591,7 +591,7 @@ function CaseList({
                   key={id}
                   onClick={() => onOpen(id)}
                   style={{
-                    background: "#fff", borderRadius: 16, border: `1px solid ${LINE_SOFT}`,
+                    background: "var(--hz-c-surface)", borderRadius: 16, border: `1px solid ${LINE_SOFT}`,
                     overflow: "hidden", cursor: "pointer", position: "relative",
                     boxShadow: "0 1px 2px rgba(17,20,15,0.03)", opacity: cancelled ? 0.55 : 1,
                   }}
@@ -1240,9 +1240,9 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
             {tab === "overview" && (
               <>
                 {/* SLA banner */}
-                <div style={{ background: sla?.overdue ? ERR_BG : "#fff", border: `1px solid ${sla?.overdue ? "rgba(178,58,58,0.25)" : LINE_SOFT}`, borderRadius: 13, padding: "12px 14px", marginBottom: 10 }}>
+                <div style={{ background: sla?.overdue ? ERR_BG : "var(--hz-c-surface)", border: `1px solid ${sla?.overdue ? "rgba(178,58,58,0.25)" : LINE_SOFT}`, borderRadius: 13, padding: "12px 14px", marginBottom: 10 }}>
                   <div style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: sla?.overdue ? RED : MUTED }}>SLA</div>
-                  <div style={{ fontSize: 12, color: sla?.overdue ? "#7a2222" : INK_SEC, marginTop: 5 }}>
+                  <div style={{ fontSize: 12, color: sla?.overdue ? "var(--hz-dk-expired-text, #7a2222)" : INK_SEC, marginTop: 5 }}>
                     Deadline {dm(get(c, "deadlineAt", "deadline_at"))} · {(PRIORITY_META[priorityOf(c)] ?? PRIORITY_META.normal).label}
                   </div>
                   <div style={{ fontSize: 15, fontWeight: 800, color: sla?.overdue ? RED : isCompleted ? GREY : GREEN, marginTop: 2 }}>
@@ -1336,7 +1336,7 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
                           onClick={() => removeItem(it)}
                           disabled={busy}
                           aria-label="Remove item"
-                          style={{ flex: "none", width: 26, height: 26, borderRadius: 8, border: `1px solid ${DIM}`, background: "#fff", color: RED, fontSize: 15, lineHeight: 1, cursor: busy ? "default" : "pointer", opacity: busy ? 0.5 : 1 }}
+                          style={{ flex: "none", width: 26, height: 26, borderRadius: 8, border: `1px solid ${DIM}`, background: "var(--hz-c-surface)", color: RED, fontSize: 15, lineHeight: 1, cursor: busy ? "default" : "pointer", opacity: busy ? 0.5 : 1 }}
                         >
                           ×
                         </button>
@@ -1373,7 +1373,7 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
 
             {/* ══ STAGE — grouped phases (Intake / Repair / Return) ══ */}
             {tab === "stage" && (
-              <div style={{ background: "#fff", borderRadius: 14, border: `1px solid ${LINE_SOFT}`, padding: 14 }}>
+              <div style={{ background: "var(--hz-c-surface)", borderRadius: 14, border: `1px solid ${LINE_SOFT}`, padding: 14 }}>
                 <div className="fld-l">Stage</div>
                 <div style={{ marginTop: 12 }}>
                   {/* progress bar + n/N (N = active-pipeline length) */}
@@ -1397,7 +1397,7 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
                     return (
                       <div key={p.name} style={{
                         border: `1px solid ${active ? BROWN : allDone ? "transparent" : LINE_SOFT}`,
-                        background: allDone ? OK_BG : active ? BROWN_SOFT : "#fff",
+                        background: allDone ? OK_BG : active ? BROWN_SOFT : "var(--hz-c-surface)",
                         borderRadius: 11, padding: "11px 12px", marginBottom: 8,
                       }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
@@ -1460,7 +1460,7 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
                   const open = openStageEffective === s.key;
                   const dot = st === "done" ? GREEN : st === "current" ? BROWN : DIM;
                   return (
-                    <div key={s.key} style={{ background: "#fff", borderRadius: 12, border: `1px solid ${open ? (st === "current" ? BROWN : "rgba(34,31,32,0.20)") : LINE_SOFT}`, marginBottom: 8, overflow: "hidden" }}>
+                    <div key={s.key} style={{ background: "var(--hz-c-surface)", borderRadius: 12, border: `1px solid ${open ? (st === "current" ? BROWN : "rgba(34,31,32,0.20)") : LINE_SOFT}`, marginBottom: 8, overflow: "hidden" }}>
                       <button
                         onClick={() => setOpenStage(open ? "" : s.key)}
                         style={{
@@ -1468,11 +1468,11 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
                           background: open && st === "current" ? BROWN_SOFT : "transparent", border: "none", cursor: "pointer", textAlign: "left", fontFamily: "inherit",
                         }}
                       >
-                        <span style={{ width: 20, height: 20, borderRadius: "50%", flex: "none", background: st === "future" ? "#fff" : dot, border: st === "future" ? `2px solid ${DIM}` : "none", display: "grid", placeItems: "center" }}>
+                        <span style={{ width: 20, height: 20, borderRadius: "50%", flex: "none", background: st === "future" ? "var(--hz-c-surface)" : dot, border: st === "future" ? `2px solid ${DIM}` : "none", display: "grid", placeItems: "center" }}>
                           {st === "done" && (
                             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12l5 5L20 6" /></svg>
                           )}
-                          {st === "current" && <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#fff" }} />}
+                          {st === "current" && <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--hz-c-surface)" }} />}
                         </span>
                         <span style={{ flex: 1, fontSize: 13, fontWeight: st === "future" ? 600 : 700, color: st === "future" ? GREY : INK }}>{s.long}</span>
                         {st === "done" && (
@@ -1540,7 +1540,7 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
                           <a
                             href={`tel:${String(get(c, "phone", "customerPhone", "customer_phone")).replace(/[^+\d]/g, "")}`}
                             aria-label="Call customer"
-                            style={{ width: 34, height: 34, flex: "none", borderRadius: 9, background: "#e1efed", color: TEAL_DK, display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none" }}
+                            style={{ width: 34, height: 34, flex: "none", borderRadius: 9, background: "var(--hz-c-primary-soft)", color: TEAL_DK, display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none" }}
                           >
                             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6.6 10.8a15 15 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.24 11 11 0 0 0 3.4.55 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1 11 11 0 0 0 .55 3.4 1 1 0 0 1-.24 1Z" /></svg>
                           </a>
@@ -1552,7 +1552,7 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
                           {[get(c, "addr1"), get(c, "addr2"), get(c, "addr3"), get(c, "addr4")].filter(Boolean).join(", ") || "—"}
                         </div>
                         {get(c, "location", "customerState", "customer_state") && (
-                          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 8, fontSize: 11, fontWeight: 600, color: TEAL_DK, background: "#e1efed", borderRadius: 7, padding: "4px 10px" }}>
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 8, fontSize: 11, fontWeight: 600, color: TEAL_DK, background: "var(--hz-c-primary-soft)", borderRadius: 7, padding: "4px 10px" }}>
                             {String(get(c, "location", "customerState", "customer_state"))}
                           </span>
                         )}
@@ -1723,7 +1723,7 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
                   const badge = catBadge(cat);
                   return (
                     <div key={get(a, "id") ?? i} style={{ display: "flex", gap: 10, padding: "10px 0", borderTop: `1px solid #eceee9` }}>
-                      <span style={{ width: 9, height: 9, flex: "none", borderRadius: "50%", border: "2px solid #c2c6bd", marginTop: 3 }} />
+                      <span style={{ width: 9, height: 9, flex: "none", borderRadius: "50%", border: "2px solid var(--hz-c-border-strong)", marginTop: 3 }} />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 10, color: GREY }}>{dtm(get(a, "createdAt", "created_at"))}</div>
                         <div style={{ fontSize: 12.5, fontWeight: 700, color: INK, marginTop: 1 }}>{String(label)}</div>
@@ -1857,7 +1857,7 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
 function SheetShell({ title, onClose, children }: { title?: string; onClose: () => void; children: React.ReactNode }) {
   return (
     <div className="hz-m" style={{ position: "fixed", inset: 0, zIndex: 40, background: "rgba(17,20,15,.4)", display: "flex", flexDirection: "column", justifyContent: "flex-end" }} onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: "10px 18px", paddingBottom: "calc(env(safe-area-inset-bottom) + 24px)", maxHeight: "80%", overflowY: "auto" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: "var(--hz-c-surface)", borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: "10px 18px", paddingBottom: "calc(env(safe-area-inset-bottom) + 24px)", maxHeight: "80%", overflowY: "auto" }}>
         <div style={{ width: 38, height: 4, borderRadius: 999, background: DIM, margin: "4px auto 14px" }} />
         {title && <div style={{ fontSize: 17, fontWeight: 700, color: INK, marginBottom: 14 }}>{title}</div>}
         {children}
@@ -2227,7 +2227,7 @@ function NewCaseSheet({ onClose, onOpen }: { onClose: () => void; onOpen: (id: n
                           <button
                             key={Number(get(ec, "id"))}
                             onClick={() => { onClose(); onOpen(Number(get(ec, "id"))); }}
-                            style={{ display: "block", width: "100%", textAlign: "left", border: `1px solid ${DIM}`, borderRadius: 8, background: "#fff", padding: "7px 9px", marginTop: 6, cursor: "pointer" }}
+                            style={{ display: "block", width: "100%", textAlign: "left", border: `1px solid ${DIM}`, borderRadius: 8, background: "var(--hz-c-surface)", padding: "7px 9px", marginTop: 6, cursor: "pointer" }}
                           >
                             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
                               <span className="money" style={{ fontSize: 11, fontWeight: 700, color: INK }}>{String(get(ec, "assrNo", "assr_no"))}</span>
@@ -2257,7 +2257,7 @@ function NewCaseSheet({ onClose, onOpen }: { onClose: () => void; onOpen: (id: n
                           <button
                             key={String(get(hit, "docNo", "doc_no")) + i}
                             onClick={() => pickSo(hit)}
-                            style={{ display: "block", width: "100%", textAlign: "left", border: "none", borderTop: i ? "1px solid #eceee9" : "none", background: "#fff", padding: "9px 11px", cursor: "pointer" }}
+                            style={{ display: "block", width: "100%", textAlign: "left", border: "none", borderTop: i ? "1px solid #eceee9" : "none", background: "var(--hz-c-surface)", padding: "9px 11px", cursor: "pointer" }}
                           >
                             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                               <span className="money" style={{ fontSize: 12, fontWeight: 700, color: INK }}>{String(get(hit, "docNo", "doc_no"))}</span>
@@ -2282,7 +2282,7 @@ function NewCaseSheet({ onClose, onOpen }: { onClose: () => void; onOpen: (id: n
               <div className="fld">
                 <span className="fld-l">Affected products * ({selItems.length})</span>
                 {selItems.map((it) => (
-                  <div key={it.item_code} style={{ display: "flex", alignItems: "center", gap: 8, border: `1px solid ${DIM}`, borderRadius: 10, padding: "8px 10px", marginBottom: 6, background: "#fff" }}>
+                  <div key={it.item_code} style={{ display: "flex", alignItems: "center", gap: 8, border: `1px solid ${DIM}`, borderRadius: 10, padding: "8px 10px", marginBottom: 6, background: "var(--hz-c-surface)" }}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div className="money" style={{ fontSize: 11, fontWeight: 700, color: BROWN, wordBreak: "break-word" }}>{it.item_code}</div>
                       {it.item_description && <div style={{ fontSize: 11, color: MUTED, marginTop: 1, ...cellEllipsis }}>{it.item_description}</div>}
@@ -2309,7 +2309,7 @@ function NewCaseSheet({ onClose, onOpen }: { onClose: () => void; onOpen: (id: n
                     <button
                       onClick={() => removeSelItem(it.item_code)}
                       aria-label="Remove product"
-                      style={{ flex: "none", width: 26, height: 26, borderRadius: 8, border: `1px solid ${DIM}`, background: "#fff", color: RED, fontSize: 15, lineHeight: 1, cursor: "pointer" }}
+                      style={{ flex: "none", width: 26, height: 26, borderRadius: 8, border: `1px solid ${DIM}`, background: "var(--hz-c-surface)", color: RED, fontSize: 15, lineHeight: 1, cursor: "pointer" }}
                     >
                       ×
                     </button>
@@ -2455,7 +2455,7 @@ function NewCaseSheet({ onClose, onOpen }: { onClose: () => void; onOpen: (id: n
                 </div>
               )}
               {files.length < 5 && (
-                <label style={{ width: "100%", display: "flex", flexDirection: "column", alignItems: "center", gap: 6, border: "1px dashed #c2c6bd", borderRadius: 11, padding: 18, background: FIELD_BG, cursor: "pointer" }}>
+                <label style={{ width: "100%", display: "flex", flexDirection: "column", alignItems: "center", gap: 6, border: "1px dashed var(--hz-c-border-strong)", borderRadius: 11, padding: 18, background: FIELD_BG, cursor: "pointer" }}>
                   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={TEAL} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 16V4M7 9l5-5 5 5" /><path d="M5 20h14" /></svg>
                   <span style={{ fontSize: 13, fontWeight: 700, color: TEAL }}>Add Photos / Videos</span>
                   <input type="file" accept={ATTACH_ACCEPT} multiple style={{ display: "none" }} onChange={onPickFiles} />

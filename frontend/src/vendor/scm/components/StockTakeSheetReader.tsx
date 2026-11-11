@@ -130,7 +130,7 @@ export function StockTakeSheetReader({
           </div>
 
           {pageNotes.map((n) => (
-            <div key={n} style={{ marginTop: 8, color: 'var(--c-festive-b, #B8331F)', fontSize: 'var(--fs-13)' }}>{n}</div>
+            <div key={n} style={{ marginTop: 8, color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))', fontSize: 'var(--fs-13)' }}>{n}</div>
           ))}
 
           {picked.length > 0 && (
@@ -158,7 +158,7 @@ export function StockTakeSheetReader({
                       <td>
                         <span style={{ fontFamily: 'var(--font-mono)' }}>{p.itemCode}</span>
                         {p.variantLabel && <div style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>{p.variantLabel}</div>}
-                        {p.unclear && <div style={{ fontSize: 'var(--fs-11)', color: 'var(--c-festive-b, #B8331F)' }}>Hard to read — check the paper</div>}
+                        {p.unclear && <div style={{ fontSize: 'var(--fs-11)', color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' }}>Hard to read — check the paper</div>}
                       </td>
                       <td className={styles.tableRight} style={{ fontFamily: 'var(--font-mono)' }}>
                         {now?.counted || '—'}{now?.rackId ? <div style={{ fontSize: 'var(--fs-11)' }}>{rackLabel(now.rackId)}</div> : null}
@@ -169,7 +169,7 @@ export function StockTakeSheetReader({
                       <td style={{ fontSize: 'var(--fs-12)' }}>
                         {p.rackText == null ? '—'
                           : p.rackId ? rackLabel(p.rackId)
-                          : <span style={{ color: 'var(--c-festive-b, #B8331F)' }}>"{p.rackText}" is not a rack here</span>}
+                          : <span style={{ color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' }}>"{p.rackText}" is not a rack here</span>}
                       </td>
                     </tr>
                   );

@@ -210,7 +210,7 @@ export const DiscountInput = ({
           overflow: 'hidden',
           textOverflow: 'ellipsis',
           color: live.kind === 'invalid' ? 'var(--c-danger, #b3321f)' : 'var(--c-muted, #6b7580)',
-          background: 'var(--c-surface, #fff)',
+          background: 'var(--c-surface, var(--hz-c-surface))',
           textAlign: align,
         }}
       >

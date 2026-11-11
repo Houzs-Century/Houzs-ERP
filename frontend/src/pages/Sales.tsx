@@ -151,7 +151,7 @@ interface ListResponse {
 
 export const STATUS_BADGE: Record<EntryStatus, { label: string; cls: string }> = {
   draft:     { label: "Draft",     cls: "bg-bg text-ink-muted border border-border" },
-  submitted: { label: "Submitted", cls: "bg-amber-100 text-amber-800" },
+  submitted: { label: "Submitted", cls: "bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300" },
   pushed:    { label: "Pushed",    cls: "bg-synced/15 text-synced" },
   void:      { label: "Void",      cls: "bg-err/10 text-err" },
 };
@@ -1936,7 +1936,7 @@ function ApprovalsView({
         >
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-[12.5px] font-semibold text-ink">
-              <Clock size={13} className="shrink-0 text-amber-500" />
+              <Clock size={13} className="shrink-0 text-amber-500 dark:text-amber-400" />
               <span className="truncate">
                 {req.doc_no || "—"} · {req.customer_name || "Unknown customer"}
               </span>

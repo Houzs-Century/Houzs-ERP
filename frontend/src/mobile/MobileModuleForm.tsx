@@ -314,21 +314,21 @@ export function MobileModuleForm({
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <span
             onClick={onBack}
-            style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 12.5, fontWeight: 600, color: "#16695f", cursor: "pointer" }}
+            style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 12.5, fontWeight: 600, color: "var(--hz-c-primary)", cursor: "pointer" }}
           >
             <span style={{ fontSize: 17, lineHeight: 1 }}>{"‹"}</span> {schema.title}
           </span>
           <span
             onClick={onBack}
-            style={{ fontSize: 13, fontWeight: 600, color: "#767b6e", cursor: "pointer" }}
+            style={{ fontSize: 13, fontWeight: 600, color: "var(--hz-c-ink-muted)", cursor: "pointer" }}
           >
             Cancel
           </span>
         </div>
         {schema.eyebrow && (
-          <div className="ey" style={{ color: "#a16a2e", marginTop: 6 }}>{schema.eyebrow}</div>
+          <div className="ey" style={{ color: "var(--hz-c-accent)", marginTop: 6 }}>{schema.eyebrow}</div>
         )}
-        <div style={{ fontSize: 19, fontWeight: 800, color: "#11140f", marginTop: 2 }}>{title}</div>
+        <div style={{ fontSize: 19, fontWeight: 800, color: "var(--hz-c-ink)", marginTop: 2 }}>{title}</div>
       </header>
 
       <div className="scroll" style={{ padding: 12, paddingBottom: 24 }}>
@@ -342,7 +342,7 @@ export function MobileModuleForm({
               const options = f.optionsSource ? remoteOptions[f.key] ?? [] : f.options ?? [];
               return (
                 <label key={f.key} className="fld">
-                  <span className="fld-l" style={err ? { color: "#b23a3a" } : undefined}>
+                  <span className="fld-l" style={err ? { color: "var(--hz-c-err)" } : undefined}>
                     {f.required ? `${f.label} *` : f.label}
                   </span>
                   {f.type === "select" ? (
@@ -372,7 +372,7 @@ export function MobileModuleForm({
         </div>
 
         {error && (
-          <div style={{ marginTop: 4, fontSize: 12, color: "#b23a3a", textAlign: "center", padding: "0 4px" }}>{error}</div>
+          <div style={{ marginTop: 4, fontSize: 12, color: "var(--hz-c-err)", textAlign: "center", padding: "0 4px" }}>{error}</div>
         )}
       </div>
 

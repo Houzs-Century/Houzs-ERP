@@ -68,7 +68,7 @@ export function MobileReopenControl({
               onClick={() => !busy && setOpen(false)}
             >
               <div
-                style={{ width: "100%", background: "#fff", borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, boxSizing: "border-box" }}
+                style={{ width: "100%", background: "var(--hz-c-surface)", borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, boxSizing: "border-box" }}
                 onClick={(e) => e.stopPropagation()}
               >
                 <div style={{ fontSize: 15, fontWeight: 800, color: INK }}>Reopen for a new complaint</div>

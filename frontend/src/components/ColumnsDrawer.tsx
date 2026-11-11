@@ -656,7 +656,7 @@ export function ColumnsDrawer({
               l.active ? "border-primary bg-primary" : "border-border-strong"
             )}
           >
-            {l.active && <span className="h-[5px] w-[5px] rounded-full bg-white" />}
+            {l.active && <span className="h-[5px] w-[5px] rounded-full bg-surface" />}
           </span>
           <span className="min-w-0 flex-1">
             <span className="flex items-center gap-1.5 text-[12.5px] font-semibold text-ink">

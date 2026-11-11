@@ -25,7 +25,7 @@ const panel: CSSProperties = {
 };
 const header: CSSProperties = {
   display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-3)',
-  padding: 'var(--space-3) var(--space-4)', borderBottom: '1px solid var(--line, rgba(34,31,32,0.2))', background: 'var(--c-paper, #fff)',
+  padding: 'var(--space-3) var(--space-4)', borderBottom: '1px solid var(--line, rgba(34,31,32,0.2))', background: 'var(--c-paper, var(--hz-c-surface))',
 };
 const titleStyle: CSSProperties = { fontFamily: 'var(--font-title)', fontWeight: 700, fontSize: 'var(--fs-15, 15px)', color: 'var(--c-ink)', margin: 0 };
 const body: CSSProperties = { padding: 'var(--space-4)', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' };

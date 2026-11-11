@@ -84,7 +84,7 @@ function CrewBoard({ kind, people, loading, failed, includeInactive, onIncludeIn
           <Segmented label="Who employs" value={who} onChange={setWho} options={[["all", "All"], ["in", "In-house"], ["out", "Outsource"]] as const} />
           <label className="flex items-center gap-1.5 text-[12.5px] text-ink"><input type="checkbox" checked={includeInactive} onChange={(e) => onIncludeInactive(e.target.checked)} />Show inactive</label>
         </>} />
-      {failed && <p className="text-[13px] text-[#8a2c2c]">The {noun} list could not be loaded.</p>}
+      {failed && <p className="text-[13px] text-[color:var(--hz-dk-err,#8a2c2c)]">The {noun} list could not be loaded.</p>}
       {loading && <p className="text-[13px] text-ink-muted">Loading {noun}s…</p>}
       {!loading && !failed && shown.length === 0 && (
         <NoMatch text={people.length === 0 ? `This list came back with no ${noun}s.` : `No ${noun} matches this search.`}

@@ -1080,11 +1080,11 @@ export const PaymentVoucherNew = () => {
               </label>
             </div>
             {refundQ.isLoading && refundDocNo && <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>Reading {refundDocNo}…</p>}
-            {refundError && <p style={{ color: 'var(--c-festive-b, #B8331F)', fontSize: 'var(--fs-13)' }}>{refundError}</p>}
+            {refundError && <p style={{ color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))', fontSize: 'var(--fs-13)' }}>{refundError}</p>}
             {refundSrc && (
               <>
                 {!refundSrc.eligible && (
-                  <p style={{ color: 'var(--c-festive-b, #B8331F)', fontSize: 'var(--fs-13)', fontWeight: 600 }}>{refundSrc.reason}</p>
+                  <p style={{ color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))', fontSize: 'var(--fs-13)', fontWeight: 600 }}>{refundSrc.reason}</p>
                 )}
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
                   <thead>
@@ -1200,7 +1200,7 @@ export const PaymentVoucherNew = () => {
                   <span className={styles.previewPrice}>{fmtRm(l.amountSen)}</span>
                   {lines.length > 1 && (
                     <button type="button" onClick={() => dropLine(l.rid)} title="Remove line"
-                      style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--c-festive-b, #B8331F)', padding: 4, display: 'inline-flex' }}>
+                      style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))', padding: 4, display: 'inline-flex' }}>
                       <Trash2 {...SM_ICON} />
                     </button>
                   )}

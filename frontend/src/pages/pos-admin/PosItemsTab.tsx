@@ -189,14 +189,14 @@ export function PosItemsTab() {
               <td className={cn(td, "font-mono text-[10.5px] font-semibold text-accent")}>{i.item_code}</td>
               <td className={td}>{i.name}{i.receipt_name && <span className="ml-1 text-[10px] text-ink-muted">({i.receipt_name})</span>}{i.category && <span className="ml-1 text-[10px] uppercase text-ink-muted">{mfgCategoryLabel(i.category)}</span>}</td>
               <td className={cn(td, "font-mono text-[10px]")}>
-                {i.barcodes.length === 0 ? <span className="text-amber-800">none</span> : i.barcodes.map((b) => <span key={b.barcode} className="mr-1 inline-block" title={b.kind}>{b.barcode}</span>)}
+                {i.barcodes.length === 0 ? <span className="text-amber-800 dark:text-amber-300">none</span> : i.barcodes.map((b) => <span key={b.barcode} className="mr-1 inline-block" title={b.kind}>{b.barcode}</span>)}
               </td>
               <td className={td}>{i.uom}</td>
               <td className={cn(td, "text-right font-mono font-semibold")}>{fmtSen(i.price_sen)}</td>
               <td className={cn(td, "text-[10.5px]")}>{i.event_prices.length === 0 ? <span className="text-ink-muted">--</span> : i.event_prices.map((p) => <div key={p.project_id}>{fmtSen(p.price_sen)} <span className="text-ink-muted">{eventName(p.project_id)}</span></div>)}</td>
               <td className={td}>{i.preset_discount_type ? <Pill tone="info">AUTO {discLabel(i)}</Pill> : <span className="text-ink-muted">--</span>}</td>
               <td className={td}>{i.foc_allowed ? <Pill tone="ok">FOC</Pill> : <span className="text-ink-muted">--</span>}</td>
-              <td className={cn(td, "text-right font-mono", i.stock_qty <= 0 && "text-amber-800")}>{i.stock_qty}</td>
+              <td className={cn(td, "text-right font-mono", i.stock_qty <= 0 && "text-amber-800 dark:text-amber-300")}>{i.stock_qty}</td>
               <td className={td}>{i.active ? <Pill tone="ok">ON</Pill> : <Pill tone="muted">OFF</Pill>}</td>
               <td className={td} onClick={(e) => e.stopPropagation()}>
                 {i.active && <button type="button" className={dangerBtn} onClick={() => void deactivate(i)} title="Remove from POS"><Trash2 size={11} /></button>}
@@ -279,7 +279,7 @@ function ItemDrawer({ item, warehouses, onClose, onSaved }: { item: PosItem; war
             {item.barcodes.map((b) => (
               <span key={b.barcode} className="inline-flex items-center gap-1 rounded border border-border bg-surface px-1.5 py-0.5 font-mono text-[10.5px]">
                 {b.barcode} <span className="text-[9px] text-ink-muted">{b.kind}</span>
-                {b.id != null && <button type="button" className="text-rose-700" title="Remove" onClick={() => void removeBarcode(b.id!)}>x</button>}
+                {b.id != null && <button type="button" className="text-rose-700 dark:text-rose-300" title="Remove" onClick={() => void removeBarcode(b.id!)}>x</button>}
               </span>
             ))}
           </div>
@@ -374,7 +374,7 @@ function AddFromInventory({ onClose, onAdded }: { onClose: () => void; onAdded: 
               <tr key={s.product_id} className="border-t border-border-subtle">
                 <td className={cn(td, "font-mono text-[10.5px]")}>{s.code}</td>
                 <td className={td}>{s.name}</td>
-                <td className={cn(td, "font-mono text-[10px]")}>{s.barcode ?? <span className="text-amber-800">none</span>}</td>
+                <td className={cn(td, "font-mono text-[10px]")}>{s.barcode ?? <span className="text-amber-800 dark:text-amber-300">none</span>}</td>
                 <td className={cn(td, "text-right font-mono")}>{s.sell_price_sen == null ? "--" : fmtSen(s.sell_price_sen)}</td>
                 <td className={cn(td, "text-right font-mono")}>{s.stock_qty}</td>
                 <td className={td}>

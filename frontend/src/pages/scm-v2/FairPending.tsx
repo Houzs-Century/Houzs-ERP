@@ -204,7 +204,7 @@ export function FairPending() {
         <h1 style={{ margin: 0, fontSize: 20 }}>Fair links to settle</h1>
         {/* A list that could not be read must not read as "nothing to settle". */}
         {rowsQ.isError ? (
-          <p role="alert" style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--c-festive-b, #B8331F)' }}>
+          <p role="alert" style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' }}>
             Couldn’t load the orders with no fair — try again.
           </p>
         ) : (
@@ -215,7 +215,7 @@ export function FairPending() {
           </p>
         )}
         {checksQ.isError && (
-          <p role="alert" style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--c-festive-b, #B8331F)' }}>
+          <p role="alert" style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' }}>
             Couldn’t load the linked orders to check — try again.
           </p>
         )}

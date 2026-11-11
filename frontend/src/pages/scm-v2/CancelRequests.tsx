@@ -183,7 +183,7 @@ export const CancelRequests = () => {
             >{approveButtonLabel(r)}</button>
           )}
           {r.status === 'APPROVED' && (
-            <button type="button" style={{ ...actionBtn, borderColor: 'var(--c-festive-b, #B8331F)', color: 'var(--c-festive-b, #B8331F)' }} disabled={actions.busy} onClick={() => void actions.executeNow(r)}>Cancel now</button>
+            <button type="button" style={{ ...actionBtn, borderColor: 'var(--c-festive-b, #B8331F)', color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' }} disabled={actions.busy} onClick={() => void actions.executeNow(r)}>Cancel now</button>
           )}
           {viewerCanReject(r, viewer) && <button type="button" style={actionBtn} disabled={actions.busy} onClick={() => void actions.reject(r)}>Reject</button>}
           {viewerCanWithdraw(r, viewer) && <button type="button" style={actionBtn} disabled={actions.busy} onClick={() => void actions.withdraw(r)}>Withdraw</button>}

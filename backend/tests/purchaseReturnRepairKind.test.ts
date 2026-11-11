@@ -15,6 +15,8 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const BE = readFileSync(resolve(__dirname, '../src/scm/routes/purchase-returns.ts'), 'utf8');
+/* The OUT writer moved to the lib (PURCHASE_RETURN_MODE, atomic returns). */
+const STOCK = readFileSync(resolve(__dirname, '../src/scm/lib/purchase-return-stock.ts'), 'utf8');
 const MIG = readFileSync(
   resolve(__dirname, '../src/db/migrations-pg/20260928T0800_scm_purchase_return_repair_kind.sql'),
   'utf8',
@@ -64,7 +66,7 @@ describe('a repair return keeps the goods on the books', () => {
   });
 
   it('pairs every OUT with an IN to that warehouse, and reports a failed IN', () => {
-    const writer = BE.slice(BE.indexOf('async function writePurchaseReturnMovements'));
+    const writer = STOCK.slice(STOCK.indexOf('async function prStockOutCore'));
     expect(writer).toContain("movement_type: 'IN' as const");
     expect(writer).toContain('warehouse_id: repairWarehouseId');
     /* Same line, same qty, same batch — one pair, so stock is never in two
@@ -74,7 +76,7 @@ describe('a repair return keeps the goods on the books', () => {
   });
 
   it('reads kind + repair warehouse off the header, never off the request', () => {
-    const writer = BE.slice(BE.indexOf('async function writePurchaseReturnMovements'));
+    const writer = STOCK.slice(STOCK.indexOf('async function prStockOutCore'));
     expect(writer).toContain(".select('company_id, kind, repair_warehouse_id')");
     expect(writer).toMatch(/prHead\?\.kind === 'REPAIR'/);
   });
