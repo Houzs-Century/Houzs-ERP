@@ -69,6 +69,12 @@ const APPLY = MODE === 'apply' || process.env.APPLY === '1';
 if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) { bad(`MODE=apply requires CONFIRM="${CONFIRM_PHRASE}"`); process.exit(2); }
 const CO = Number(process.env.COMPANY_ID || 1);
 if (!(Number.isInteger(CO) && CO > 0)) { bad('COMPANY_ID must be a positive integer'); process.exit(2); }
+/* DOC_NOS=a,b limits the run to those documents (the owner approved three and held
+   HC-DO-2610-419 back, 2026-11-11). Unset = all four. An unknown name refuses. */
+const ONLY = (process.env.DOC_NOS || '').split(',').map((s) => s.trim()).filter(Boolean);
+const unknownDoc = ONLY.find((d) => !TARGETS.some((t) => t.docNo === d));
+if (unknownDoc) { bad(`DOC_NOS: ${unknownDoc} is not one of ${TARGETS.map((t) => t.docNo).join(', ')}`); process.exit(2); }
+const RUN_TARGETS = ONLY.length ? TARGETS.filter((t) => ONLY.includes(t.docNo)) : TARGETS;
 
 const short = (id) => String(id ?? '').slice(0, 8);
 const vkOf = (v) => v || '-';
@@ -273,7 +279,7 @@ async function cancelledFacts(c, t) {
 
 async function gather(c) {
   const out = [];
-  for (const t of TARGETS) {
+  for (const t of RUN_TARGETS) {
     if (t.kind === KIND.GRN_IN_MISSING_SHIP_UNCOSTED || t.kind === KIND.GRN_IN_LOST_ON_REPOST) out.push(await grnFacts(c, t));
     else if (t.kind === KIND.DO_OUT_MISSING) out.push(await doMissingOutFacts(c, t));
     else out.push(await cancelledFacts(c, t));
