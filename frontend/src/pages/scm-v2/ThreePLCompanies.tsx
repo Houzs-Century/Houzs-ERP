@@ -14,11 +14,11 @@
 // Maintenance. Backed by scm.threepl_companies (migs 0210 + 0237).
 // ----------------------------------------------------------------------------
 
-import { useState, type ReactNode, type CSSProperties } from 'react';
+import { useMemo, useState, type ReactNode, type CSSProperties } from 'react';
 import { Button } from '@2990s/design-system';
 import { Building2, Plus, Trash2, Pencil, Check, X, ChevronRight, ChevronDown } from 'lucide-react';
 import { PageHeader } from '../../components/Layout';
-import { FormCard, FormGrid, FormField, FormInput } from '../../vendor/scm/components/FormCard';
+import { FormCard, FormGrid, FormField, FormInput, FormSearchSelect } from '../../vendor/scm/components/FormCard';
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
 import { formatPhone } from '@2990s/shared/phone';
 import styles from './Suppliers.module.css';
@@ -29,7 +29,9 @@ import {
   useUpdateThreePLCompany,
   useDeleteThreePLCompany,
   type ThreePLCompanyRow,
+  type ThreePLSupplierLink,
 } from '../../vendor/scm/lib/threepl-companies-queries';
+import { useSuppliers } from '../../vendor/scm/lib/suppliers-queries';
 import { useCreateDriver } from '../../vendor/scm/lib/drivers-queries';
 import { useCreateHelper } from '../../vendor/scm/lib/helpers-queries';
 import { useCreateLorry, LORRY_TYPES, LORRY_TYPE_LABEL, type LorryType } from '../../vendor/scm/lib/lorries-queries';
@@ -47,14 +49,30 @@ const BLANK = {
 };
 type Particulars = typeof BLANK;
 
+const particularsOf = (row: ThreePLCompanyRow): Particulars => ({
+  name: row.name,
+  registrationNo: row.registrationNo ?? '',
+  contactName: row.contactName ?? '',
+  contactPhone: row.contactPhone ?? '',
+  officePhone: row.officePhone ?? '',
+  email: row.email ?? '',
+  address: row.address ?? '',
+});
+
 export const ThreePLCompanies = ({ embedded = false }: { embedded?: boolean } = {}) => {
   const companies = useThreePLCompanies();
   const createCo = useCreateThreePLCompany();
   const notify = useNotify();
 
   const [form, setForm] = useState<Particulars>(BLANK);
+  const [supplier, setSupplier] = useState<ThreePLSupplierLink | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const set = (k: keyof Particulars) => (v: string) => setForm((p) => ({ ...p, [k]: v }));
+  /* A carrier registered from its supplier takes the supplier's name, unless a name was typed first. */
+  const pickSupplier = (s: ThreePLSupplierLink | null) => {
+    setSupplier(s);
+    if (s) setForm((p) => (p.name.trim() ? p : { ...p, name: s.name }));
+  };
 
   const submit = () => {
     if (!form.name.trim()) { void notify({ title: 'Name required', body: 'Give the 3PL company a name.', tone: 'error' }); return; }
@@ -68,10 +86,12 @@ export const ThreePLCompanies = ({ embedded = false }: { embedded?: boolean } = 
         officePhone: trimmed(form.officePhone),
         email: trimmed(form.email),
         address: trimmed(form.address),
+        supplierId: supplier?.id ?? null,
       },
       {
         onSuccess: () => {
           setForm(BLANK);
+          setSupplier(null);
           void notify({ title: 'Company added', body: 'Open it to register its lorries, drivers and helpers.', tone: 'info' });
         },
         onError: writeFailedAs('The company was not added'),
@@ -113,6 +133,9 @@ export const ThreePLCompanies = ({ embedded = false }: { embedded?: boolean } = 
         <FormGrid>
           <FormField label="Company name" required span={2}>
             <FormInput value={form.name} onChange={(e) => set('name')(e.target.value)} placeholder="e.g. ABC Logistics Sdn Bhd" />
+          </FormField>
+          <FormField label="Supplier" span={2} hint="Its entry in Supplier maintenance. Picking one fills an empty company name.">
+            <SupplierPicker value={supplier} onChange={pickSupplier} />
           </FormField>
           <FormField label="SSM / registration no" hint="Unique when given — two carriers cannot share one.">
             <FormInput value={form.registrationNo} onChange={(e) => set('registrationNo')(e.target.value)} placeholder="e.g. 202301012345" />
@@ -189,26 +212,25 @@ const CompanyRow = ({ row, open, onToggleOpen }: { row: ThreePLCompanyRow; open:
   const askConfirm = useConfirm();
 
   const [editing, setEditing] = useState(false);
-  const [form, setForm] = useState<Particulars>({
-    name: row.name,
-    registrationNo: row.registrationNo ?? '',
-    contactName: row.contactName ?? '',
-    contactPhone: row.contactPhone ?? '',
-    officePhone: row.officePhone ?? '',
-    email: row.email ?? '',
-    address: row.address ?? '',
-  });
+  const [form, setForm] = useState<Particulars>(() => particularsOf(row));
+  const [supplier, setSupplier] = useState<ThreePLSupplierLink | null>(row.supplier);
   const set = (k: keyof Particulars) => (v: string) => setForm((p) => ({ ...p, [k]: v }));
+  /* Seeded from the row as it is NOW: a link refused last time, or changed since
+     on the 3PL invoices tab, must not ride along on the next save. */
+  const startEdit = () => { setForm(particularsOf(row)); setSupplier(row.supplier); setEditing(true); };
 
   const save = () => {
     if (!form.name.trim()) { void notify({ title: 'Name required', tone: 'error' }); return; }
     const trimmed = (v: string) => v.trim() || null;
+    const supplierId = supplier?.id ?? null;
     update.mutate(
       {
         id: row.id, name: form.name.trim(),
         registrationNo: trimmed(form.registrationNo), contactName: trimmed(form.contactName),
         contactPhone: trimmed(form.contactPhone), officePhone: trimmed(form.officePhone),
         email: trimmed(form.email), address: trimmed(form.address),
+        /* Only when it changed, so a phone edit is never refused over a link it did not touch. */
+        ...(supplierId !== (row.supplier?.id ?? null) ? { supplierId } : {}),
       },
       { onSuccess: () => setEditing(false), onError: writeFailedAs('The company was not saved') },
     );
@@ -236,6 +258,9 @@ const CompanyRow = ({ row, open, onToggleOpen }: { row: ThreePLCompanyRow; open:
           <FormGrid>
             <FormField label="Company name" required span={2}>
               <FormInput value={form.name} onChange={(e) => set('name')(e.target.value)} />
+            </FormField>
+            <FormField label="Supplier" span={2} hint="Its entry in Supplier maintenance.">
+              <SupplierPicker value={supplier} onChange={setSupplier} />
             </FormField>
             <FormField label="SSM / registration no">
               <FormInput value={form.registrationNo} onChange={(e) => set('registrationNo')(e.target.value)} />
@@ -295,6 +320,7 @@ const CompanyRow = ({ row, open, onToggleOpen }: { row: ThreePLCompanyRow; open:
           </div>
         </div>
 
+        <SupplierFact supplier={row.supplier} />
         <Fact label="Contact" value={row.contactName} sub={row.contactPhone ? formatPhone(row.contactPhone) : null} />
         <Fact label="Office" value={row.officePhone ? formatPhone(row.officePhone) : null} sub={row.email} />
 
@@ -307,7 +333,7 @@ const CompanyRow = ({ row, open, onToggleOpen }: { row: ThreePLCompanyRow; open:
         </label>
 
         <div className="inline-flex flex-none gap-1">
-          <Button variant="ghost" size="sm" onClick={() => setEditing(true)}><Pencil {...ICON} /><span>Edit</span></Button>
+          <Button variant="ghost" size="sm" onClick={startEdit}><Pencil {...ICON} /><span>Edit</span></Button>
           <Button variant="ghost" size="sm" onClick={() => void remove()} disabled={del.isPending} aria-label={`Delete ${row.name}`}><Trash2 {...ICON} /></Button>
         </div>
       </div>
@@ -331,6 +357,57 @@ const Fact = ({ label, value, sub }: { label: string; value?: string | null; sub
     {sub && <div className="truncate text-[12px] text-ink-muted">{sub}</div>}
   </div>
 );
+
+/* The supplier the carrier bills as: code on one line, name below. */
+const SupplierFact = ({ supplier }: { supplier: ThreePLSupplierLink | null }) => (
+  <div className="min-w-0 flex-[1_1_170px]">
+    <div className="text-[11.5px] font-semibold text-ink-muted">Supplier</div>
+    {supplier ? (
+      <>
+        <div className="truncate font-mono text-[12px] font-semibold text-ink-secondary">{supplier.code}</div>
+        <div className="truncate text-[13px] text-ink" title={supplier.name}>{supplier.name}</div>
+      </>
+    ) : (
+      <div className="text-[13px] text-ink-muted">No supplier linked</div>
+    )}
+  </div>
+);
+
+/* Pick the carrier's supplier from this company's supplier master, by code or
+   name. The saved link stays an option when the list leaves it out (an inactive
+   supplier, or one only Finance sees), so opening the form never blanks it. */
+const SupplierPicker = ({ value, onChange }: {
+  value: ThreePLSupplierLink | null;
+  onChange: (supplier: ThreePLSupplierLink | null) => void;
+}) => {
+  const suppliers = useSuppliers({ status: 'ACTIVE' });
+  const choices = useMemo(() => {
+    const listed: ThreePLSupplierLink[] = (suppliers.data ?? []).map((s) => ({ id: s.id, code: s.code, name: s.name }));
+    return value && !listed.some((s) => s.id === value.id) ? [value, ...listed] : listed;
+  }, [suppliers.data, value]);
+  const options = useMemo(() => choices.map((s) => {
+    const label = `${s.code} · ${s.name}`;
+    /* `search` keeps the match to code and name: the value is a uuid, and digits
+       typed for a code would hit it too. */
+    return { value: s.id, label, search: label };
+  }), [choices]);
+  return (
+    <div className="flex items-center gap-1.5">
+      <div className="min-w-0 flex-1">
+        <FormSearchSelect
+          ariaLabel="Supplier"
+          value={value?.id ?? ''}
+          onChange={(id) => onChange(choices.find((s) => s.id === id) ?? null)}
+          options={options}
+          placeholder={suppliers.isError ? 'The supplier list did not load' : suppliers.isLoading ? 'Loading suppliers…' : 'Search by code or name'}
+        />
+      </div>
+      {value && (
+        <Button variant="ghost" size="sm" onClick={() => onChange(null)} aria-label="Clear supplier"><X {...ICON} /></Button>
+      )}
+    </div>
+  );
+};
 
 /* The carrier's own fleet. Everything created here posts threeplCompanyId, so
    the row lands OUTSOURCE — the routes refuse to let it be in-house. */

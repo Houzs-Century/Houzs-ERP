@@ -10,10 +10,17 @@
 // on INSERT. The natural key is (company_id, name) (migration 0210).
 //
 // Endpoints:
-//   GET    /      — list this tenant's 3PL companies (+ lorry counts), sorted
+//   GET    /      — list this tenant's 3PL companies (+ lorry counts and the
+//                   linked supplier), sorted
 //   POST   /      — create a 3PL company
-//   PATCH  /:id   — patch a company (name, contact, active, notes)
+//   PATCH  /:id   — patch a company (name, contact, active, notes, supplier)
 //   DELETE /:id   — delete a company (its lorries are DETACHED, not deleted)
+//
+// A carrier is linked to the supplier it bills as in this company's supplier
+// master (supplier_id, mig 20261024T1000; owner 2026-11-11: 「这里的 3pl
+// supplier 其实是要 link with 我的 other supplier 的」). One supplier, at most one
+// carrier: the AP-invoice reader (lib/threepl-bill-import.ts carrierFor) picks
+// the carrier a supplier's bill belongs to by this link.
 //
 // Mounted at '/threepl-companies' in scm/index.ts, gated by
 // scmAreaGuard('scm.transportation.drivers') — same area as the rest of TMS.
@@ -23,7 +30,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
-import { paginateAll } from '../lib/paginate-all';
+import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { normalizePhone } from '../shared/phone';
 import { nextCode, CODE_PREFIX } from '../lib/fleet-code-mint';
 import {
@@ -36,7 +43,7 @@ import {
 export const threeplCompanies = new Hono<{ Bindings: Env; Variables: Variables }>();
 threeplCompanies.use('*', supabaseAuth);
 
-const COLS = 'id, code, name, registration_no, contact_name, contact_phone, office_phone, email, address, is_active, notes, created_at, updated_at';
+const COLS = 'id, code, name, registration_no, contact_name, contact_phone, office_phone, email, address, is_active, notes, supplier_id, created_at, updated_at';
 
 type Row = {
   id: string;
@@ -50,6 +57,7 @@ type Row = {
   address?: string | null;
   is_active?: boolean | null;     isActive?: boolean | null;
   notes?: string | null;
+  supplier_id?: string | null;    supplierId?: string | null;
   created_at?: string | null;     createdAt?: string | null;
   updated_at?: string | null;     updatedAt?: string | null;
   lorry_count?: number | null;
@@ -58,7 +66,20 @@ type Row = {
 type FleetCounts = { lorryCount: number; driverCount: number; helperCount: number };
 const NO_FLEET: FleetCounts = { lorryCount: 0, driverCount: 0, helperCount: 0 };
 
-function rowOut(r: Row, counts: FleetCounts = NO_FLEET) {
+/** The supplier-master entry a carrier bills as, as the drawer shows it. */
+type SupplierRef = { id: string; code: string; name: string };
+const SUPPLIER_COLS = 'id, code, name';
+
+const supplierIdOf = (r: Row): string | null => {
+  const v = r.supplierId ?? r.supplier_id;
+  return v ? String(v) : null;
+};
+
+const supplierRefOf = (s: Record<string, unknown>): SupplierRef => ({
+  id: String(s.id), code: String(s.code ?? ''), name: String(s.name ?? ''),
+});
+
+function rowOut(r: Row, counts: FleetCounts, supplier: SupplierRef | null) {
   return {
     id:             r.id,
     code:           r.code ?? null,
@@ -71,6 +92,7 @@ function rowOut(r: Row, counts: FleetCounts = NO_FLEET) {
     address:        r.address ?? null,
     isActive:       (r.isActive ?? r.is_active ?? true) !== false,
     notes:          r.notes ?? null,
+    supplier,
     ...counts,
     createdAt:      r.createdAt ?? r.created_at ?? null,
     updatedAt:      r.updatedAt ?? r.updated_at ?? null,
@@ -80,6 +102,51 @@ function rowOut(r: Row, counts: FleetCounts = NO_FLEET) {
 /* The carrier-link column, whichever casing the pg driver hands back. */
 const carrierIdOf = (r: Record<string, unknown>): string =>
   String((r.threeplCompanyId ?? r.threepl_company_id) ?? '');
+
+type Sb = Variables['supabase'];
+type LinkRefusal = { ok: false; status: 400 | 409 | 500; body: { error: string; reason: string } };
+
+/** The supplier a carrier may be linked to: one in THIS company's supplier
+ *  master that no other 3PL company of this company already bills as — two
+ *  carriers on one supplier leave carrierFor() picking whichever it meets first.
+ *  `carrierId` is the carrier being edited, null for one being created. */
+async function supplierToLink(
+  sb: Sb, companyId: number, supplierId: string, carrierId: string | null,
+): Promise<{ ok: true; supplier: SupplierRef } | LinkRefusal> {
+  const { data: sup, error: supErr } = await scopeToCompanyId(sb.from('suppliers').select(SUPPLIER_COLS), companyId)
+    .eq('id', supplierId).maybeSingle();
+  if (supErr) return { ok: false, status: 500, body: { error: 'load_failed', reason: supErr.message } };
+  if (!sup) {
+    return { ok: false, status: 400, body: { error: 'supplier_not_found', reason: 'That supplier is not in the supplier list of the company you are working in.' } };
+  }
+  let holders = scopeToCompanyId(sb.from('threepl_companies').select('id, name'), companyId).eq('supplier_id', supplierId);
+  if (carrierId) holders = holders.neq('id', carrierId);
+  const { data: held, error: heldErr } = await holders.limit(1);
+  if (heldErr) return { ok: false, status: 500, body: { error: 'load_failed', reason: heldErr.message } };
+  const holder = (held as Array<{ name?: string | null }>).at(0);
+  if (holder) {
+    const name = String(holder.name || 'another 3PL company').slice(0, 120);
+    return { ok: false, status: 409, body: { error: 'supplier_linked_elsewhere', reason: `This supplier is already linked to ${name}. Unlink it there first.` } };
+  }
+  return { ok: true, supplier: supplierRefOf(sup as Record<string, unknown>) };
+}
+
+/** The supplier this carrier is linked to now, or null — read before a patch
+ *  that leaves the link alone, so the reply can carry it without a read after
+ *  the write (a failure there would report a saved change as not saved). */
+async function currentSupplier(
+  sb: Sb, companyId: number, carrierId: string,
+): Promise<{ ok: true; supplier: SupplierRef | null } | { ok: false; reason: string }> {
+  const { data: carrier, error: carrierErr } = await scopeToCompanyId(sb.from('threepl_companies').select('id, supplier_id'), companyId)
+    .eq('id', carrierId).maybeSingle();
+  if (carrierErr) return { ok: false, reason: carrierErr.message };
+  const supplierId = carrier ? supplierIdOf(carrier as Row) : null;
+  if (!supplierId) return { ok: true, supplier: null };
+  const { data: sup, error: supErr } = await scopeToCompanyId(sb.from('suppliers').select(SUPPLIER_COLS), companyId)
+    .eq('id', supplierId).maybeSingle();
+  if (supErr) return { ok: false, reason: supErr.message };
+  return { ok: true, supplier: sup ? supplierRefOf(sup as Record<string, unknown>) : null };
+}
 
 // ── GET / — list this tenant's 3PL companies, with a per-company lorry count.
 threeplCompanies.get('/', async (c) => {
@@ -114,7 +181,19 @@ threeplCompanies.get('/', async (c) => {
     for (const d of (driverRows.data ?? []) as Array<Record<string, unknown>>) bump(carrierIdOf(d), 'driverCount');
     for (const h of (helperRows.data ?? []) as Array<Record<string, unknown>>) bump(carrierIdOf(h), 'helperCount');
   }
-  return c.json({ companies: companies.map((r) => rowOut(r, counts.get(r.id) ?? NO_FLEET)) });
+
+  // The supplier each carrier bills as, from this company's supplier master.
+  const supplierIds = [...new Set(companies.map(supplierIdOf).filter((v): v is string => v !== null))];
+  const suppliers = new Map<string, SupplierRef>();
+  if (supplierIds.length > 0) {
+    const sups = await chunkIn<Record<string, unknown>>(supplierIds, (batch, from, to) =>
+      scopeToCompany(sb.from('suppliers').select(SUPPLIER_COLS), c).in('id', batch).order('id').range(from, to));
+    if (sups.error) return c.json({ error: 'fetch_failed', reason: sups.error.message }, 500);
+    for (const s of sups.data) suppliers.set(String(s.id), supplierRefOf(s));
+  }
+  return c.json({
+    companies: companies.map((r) => rowOut(r, counts.get(r.id) ?? NO_FLEET, suppliers.get(supplierIdOf(r) ?? '') ?? null)),
+  });
 });
 
 // ── GET /:id/fleet — the carrier's own crew and lorries, for the company drawer.
@@ -173,6 +252,8 @@ const companyFields = {
   address:      z.string().trim().max(500).nullable().optional(),
   notes:        z.string().trim().max(2000).nullable().optional(),
   isActive:     z.boolean().optional(),
+  /* The supplier this carrier bills as; null unlinks. */
+  supplierId:   z.string().uuid().nullable().optional(),
 };
 
 const createSchema = z.object(companyFields);
@@ -192,6 +273,12 @@ threeplCompanies.post('/', async (c) => {
   const user = c.get('user') as { id?: string } | null;
 
   const sb = c.get('supabase');
+  let supplier: SupplierRef | null = null;
+  if (p.supplierId) {
+    const link = await supplierToLink(sb, co.companyId, p.supplierId, null);
+    if (!link.ok) return c.json(link.body, link.status);
+    supplier = link.supplier;
+  }
   const row = {
     company_id:    co.companyId,
     name:          p.name,
@@ -203,6 +290,7 @@ threeplCompanies.post('/', async (c) => {
     address:       p.address ?? null,
     notes:         p.notes ?? null,
     is_active:     p.isActive ?? true,
+    supplier_id:   supplier?.id ?? null,
     created_by:    user?.id ?? null,
     updated_by:    user?.id ?? null,
   };
@@ -240,7 +328,7 @@ threeplCompanies.post('/', async (c) => {
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
     return c.json({ error: 'insert_failed', reason: error.message }, 500);
   }
-  return c.json({ company: rowOut(data as Row) }, 201);
+  return c.json({ company: rowOut(data as Row, NO_FLEET, supplier) }, 201);
 });
 
 /* The SAME rules as create, with the name optional. Sharing the field map is
@@ -272,11 +360,23 @@ threeplCompanies.patch('/:id', async (c) => {
   if (p.address !== undefined)      updates.address = p.address;
   if (p.notes !== undefined)        updates.notes = p.notes;
   if (p.isActive !== undefined)     updates.is_active = p.isActive;
-  if (Object.keys(updates).length === 0) return c.json({ error: 'no_changes' }, 400);
+  if (Object.keys(updates).length === 0 && p.supplierId === undefined) return c.json({ error: 'no_changes' }, 400);
+
+  const sb = c.get('supabase');
+  let supplier: SupplierRef | null = null;
+  if (p.supplierId === undefined) {
+    const now = await currentSupplier(sb, co.companyId, id);
+    if (!now.ok) return c.json({ error: 'fetch_failed', reason: now.reason }, 500);
+    supplier = now.supplier;
+  } else if (p.supplierId !== null) {
+    const link = await supplierToLink(sb, co.companyId, p.supplierId, id);
+    if (!link.ok) return c.json(link.body, link.status);
+    supplier = link.supplier;
+  }
+  if (p.supplierId !== undefined) updates.supplier_id = supplier?.id ?? null;
   updates.updated_by = user?.id ?? null;
   updates.updated_at = new Date().toISOString();
 
-  const sb = c.get('supabase');
   const { data, error } = await scopeToCompanyId(
     sb.from('threepl_companies').update(updates).eq('id', id),
     co.companyId,
@@ -292,7 +392,7 @@ threeplCompanies.patch('/:id', async (c) => {
     return c.json({ error: 'update_failed', reason: error.message }, 500);
   }
   if (!data) return c.json(NOT_THIS_COMPANY, 404);
-  return c.json({ company: rowOut(data as Row) });
+  return c.json({ company: rowOut(data as Row, NO_FLEET, supplier) });
 });
 
 // ── DELETE /:id — STRICT company scope. Its lorries are DETACHED (the FK is ON
