@@ -22,6 +22,9 @@ export function doFacts(lines: readonly SetLine[], zone: string | null, address:
     destinationZone: zone,
     destinationZones: zone ? [zone] : [],
     addressText: address,
+    /* The one address, with its postcode zone: a town on the card counts only
+       inside its own zone (Delivery Zones places). */
+    stops: [{ zone, addressText: address }],
   };
 }
 

@@ -1,15 +1,17 @@
 // The zone map: outstation zones laid out as the peninsula sits, the Klang
-// Valley zones grouped, East Malaysia and the postcodes no rule covers, plus a
-// side panel listing the selected zone's postcode ranges. Finding a postcode
-// selects its zone.
+// Valley zones grouped, the East Malaysia zones (3PL only) and the postcodes no
+// rule covers, plus a side panel listing the selected zone's postcode ranges and
+// its places (the towns 3PL rate cards price there). Finding a postcode selects
+// its zone.
 import { useState, type CSSProperties } from 'react';
 import { Search } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import type { ZoneRuleRow } from '../../../vendor/scm/lib/delivery-zones-queries';
 import {
-  EAST_MALAYSIA, KLANG_VALLEY, OUTSTATION_TILES, isKlangValley, postcodePrefix, rangeForPrefix, rangeText, runs,
+  EAST_MALAYSIA_ZONES, KLANG_VALLEY, OUTSTATION_TILES, isKlangValley, isThreePlOnly, postcodePrefix, rangeForPrefix, rangeText, runs,
   zoneColour, zoneName, zoneSummary, type RuleForm, type ZoneRange,
 } from './zoneModel';
+import { ZonePlaces } from './ZonePlaces';
 
 export const NO_ZONE = 'NONE';
 
@@ -37,30 +39,24 @@ export function ZoneMapCard({ rows, map, usingDefault, byPrefix, selected, onSel
     setPostcode(v);
     const p = postcodePrefix(v);
     if (p === null) return;
-    const east = EAST_MALAYSIA.find((e) => p >= e.from && p <= e.to);
-    const zone = byPrefix[p];
-    onSelect(zone ?? (east ? east.key : NO_ZONE));
+    onSelect(byPrefix[p] ?? NO_ZONE);
   };
   const prefix = postcodePrefix(postcode);
   const hit = prefix === null ? null : rangeForPrefix(prefix, rows.filter((r) => r.isActive));
   const foundZone = prefix === null ? null : byPrefix[prefix];
 
   const uncovered = runs(byPrefix, (z) => z === null);
-  const east = EAST_MALAYSIA.find((e) => e.key === selected) ?? null;
   const isNone = selected === NO_ZONE;
-  const zone = !east && !isNone ? selected : null;
+  const zone = isNone ? null : selected;
 
   /* Side panel content for the selection. */
-  const mine = (p: number) => (east ? p >= east.from && p <= east.to : isNone ? byPrefix[p] === null : byPrefix[p] === zone);
-  const panelRows = (east
-    ? rows.filter((r) => !(r.prefixEnd < east.from || r.prefixStart > east.to))
-    : zone ? rows.filter((r) => r.zone === zone) : []).slice().sort((a, b) => a.prefixStart - b.prefixStart);
+  const mine = (p: number) => (isNone ? byPrefix[p] === null : byPrefix[p] === zone);
+  const panelRows = (zone ? rows.filter((r) => r.zone === zone) : []).slice().sort((a, b) => a.prefixStart - b.prefixStart);
   const builtIn = usingDefault && zone ? map.filter((m) => m.zone === zone) : [];
-  const group = east
-    ? (panelRows.some((r) => r.isActive) ? `Covered by ${[...new Set(panelRows.filter((r) => r.isActive).map((r) => zoneName(r.zone)))].join(', ')}` : 'Not in any zone')
-    : isNone ? 'Postcodes no rule covers'
-      : isKlangValley(zone ?? '') ? 'Klang Valley · shares trips' : 'Outstation · own trip';
-  const title = east ? east.name : isNone ? 'No zone' : zoneName(zone ?? '');
+  const group = isNone ? 'Postcodes no rule covers'
+    : isKlangValley(zone ?? '') ? 'Klang Valley · shares trips'
+      : isThreePlOnly(zone ?? '') ? 'East Malaysia · carried by a 3PL' : 'Outstation · own trip';
+  const title = isNone ? 'No zone' : zoneName(zone ?? '');
   const dot = zone ? zoneColour(zone)[1] : '#c2c6bd';
 
   const tile = (z: string, extra: CSSProperties, compact: boolean, placed = '') => {
@@ -107,18 +103,10 @@ export function ZoneMapCard({ rows, map, usingDefault, byPrefix, selected, onSel
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <span className="mr-1 text-[12px] text-ink-muted">East Malaysia</span>
-            {EAST_MALAYSIA.map((e) => {
-              const z = byPrefix[e.from];
-              return (
-                <button key={e.key} type="button" aria-pressed={selected === e.key} onClick={() => onSelect(e.key)}
-                  className={cn('h-[34px] rounded-full px-3.5 text-[12.5px] font-semibold',
-                    z ? 'bg-primary-soft text-primary-ink' : 'border-[1.5px] border-dashed border-border-strong text-ink-muted',
-                    selected === e.key && 'ring-2 ring-primary')}>
-                  {e.name} · {z ? zoneName(z) : 'No zone'}
-                </button>
-              );
-            })}
+            <span className="mr-1 text-[12px] text-ink-muted">East Malaysia · 3PL only</span>
+            <div role="group" aria-label="East Malaysia zones" className="grid min-w-0 flex-[1_1_300px] grid-cols-3 gap-1.5">
+              {EAST_MALAYSIA_ZONES.map((z) => tile(z, {}, true))}
+            </div>
             <span className="ml-auto" />
             <button type="button" aria-pressed={isNone} onClick={() => onSelect(NO_ZONE)}
               className={cn('h-[34px] rounded-full border-[1.5px] border-dashed border-border-strong px-3.5 text-[12.5px] font-semibold text-ink-muted', isNone && 'ring-2 ring-primary')}>
@@ -159,7 +147,7 @@ export function ZoneMapCard({ rows, map, usingDefault, byPrefix, selected, onSel
               <div key={r.id} className="flex items-center gap-3 border-t border-border-subtle py-3">
                 <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                   <span className={cn('text-[16px] font-bold tabular-nums', r.isActive && !usingDefault ? 'text-ink' : 'text-ink-muted')}>{rangeText(r.prefixStart, r.prefixEnd)}</span>
-                  <span className="text-[12.5px] text-ink-muted">{[east ? zoneName(r.zone) : null, r.label || null, r.isActive ? null : 'turned off'].filter(Boolean).join(' · ') || 'No name'}</span>
+                  <span className="text-[12.5px] text-ink-muted">{[r.label || null, r.isActive ? null : 'turned off'].filter(Boolean).join(' · ') || 'No name'}</span>
                 </span>
                 <button type="button" onClick={() => onEdit(r)} className="text-[12.5px] font-semibold text-primary hover:underline">Edit</button>
               </div>
@@ -173,10 +161,11 @@ export function ZoneMapCard({ rows, map, usingDefault, byPrefix, selected, onSel
           </div>
           {!isNone && (
             <button type="button" className="min-h-[40px] self-start rounded-md border border-border bg-surface px-3 text-[12.5px] font-semibold text-ink"
-              onClick={() => onAdd(east ? { zone: '', from: String(east.from), to: String(east.to), label: east.name } : { zone: zone ?? '', from: '', to: '', label: '' })}>
-              {east ? `Add a rule for ${east.name}` : 'Add postcodes'}
+              onClick={() => onAdd({ zone: zone ?? '', from: '', to: '', label: '' })}>
+              Add postcodes
             </button>
           )}
+          <ZonePlaces zone={zone} />
         </aside>
       </div>
     </section>

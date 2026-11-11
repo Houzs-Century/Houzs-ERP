@@ -139,6 +139,7 @@ import { threeplCompanies } from "./routes/threepl-companies";
 import { savedLocations } from "./routes/saved-locations";
 import { deliveryZones } from "./routes/delivery-zones";
 import { deliveryRateCards } from "./routes/delivery-rate-cards";
+import { deliveryPlaces } from "./routes/delivery-places";
 import { threeplDoCharges } from "./routes/threepl-do-charges";
 import { driverLeave } from "./routes/driver-leave";
 import { trips } from "./routes/trips";
@@ -947,6 +948,9 @@ scm.route("/delivery-zones", deliveryZones);
 // and it does NOT touch the FIFO money-path.
 scm.use("/delivery-rate-cards/*", scmAreaGuard("scm.transportation.drivers"));
 scm.route("/delivery-rate-cards", deliveryRateCards);
+// Towns under the delivery zones (mig 20261111T1100): the places a rate card prices.
+scm.use("/delivery-places/*", scmAreaGuard("scm.transportation.drivers"));
+scm.route("/delivery-places", deliveryPlaces);
 // HC-0031 - the 3PL invoice keyed in after delivery, tallied per DO against the
 // rate cards above. Same Transportation area gate.
 scm.use("/threepl-do-charges/*", scmAreaGuard("scm.transportation.drivers"));

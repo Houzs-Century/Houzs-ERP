@@ -34,6 +34,11 @@ function harness() {
     delivery_rate_areas: [
       { id: OTHER_AREA, company_id: CO, card_id: OTHER_CARD, name: 'Elsewhere', towns: ['ELSEWHERE'], sort_order: 0 },
     ],
+    /* A card prices a zone or a town with a zone (Delivery Zones places, mig 20261111T1100). */
+    delivery_places: [
+      { id: 'p-bintulu', company_id: CO, name: 'BINTULU', zone: 'SARAWAK' },
+      { id: 'p-tatau', company_id: CO, name: 'TATAU', zone: 'SARAWAK' },
+    ],
   });
   const app = new Hono();
   app.use('*', async (c, next) => {
