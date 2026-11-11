@@ -2253,7 +2253,7 @@ export const SalesOrderNew = () => {
           })}
 
           <AddLineButton variant="block" onClick={addLine} />
-          <TransportFeeField companyCode={branding.companyCode ?? null} state={state} country={country} lines={lines} setLines={setLines} read={(l) => ({ itemCode: l.itemCode, description: l.description, itemGroup: l.itemGroup, amountSen: l.unitPriceSen })} priced={(l, sen) => ({ ...l, unitPriceSen: sen, priceAuthored: true })} make={(sen) => ({ ...newLine(deliveryDate || null), description: 'TRANSPORTATION CHARGES', qty: 1, unitPriceSen: sen, priceAuthored: true })} classes={{ field: styles.field, label: `${styles.fieldLabel} ${styles.fieldLabelReq}`, input: styles.fieldInput }} style={{ maxWidth: 260, marginTop: 'var(--space-3)' }} />
+          <TransportFeeField companyCode={branding.companyCode} state={state} country={country} lines={lines} setLines={setLines} read={(l) => ({ itemCode: l.itemCode, description: l.description, itemGroup: l.itemGroup, amountSen: l.unitPriceSen })} priced={(l, sen) => ({ ...l, unitPriceSen: sen, priceAuthored: true })} make={(sen) => ({ ...newLine(deliveryDate || null), description: 'TRANSPORTATION CHARGES', qty: 1, unitPriceSen: sen, priceAuthored: true })} classes={{ field: styles.field, label: `${styles.fieldLabel} ${styles.fieldLabelReq}`, input: styles.fieldInput }} style={{ maxWidth: 260, marginTop: 'var(--space-3)' }} />
 
           <div style={{
             display: 'flex',

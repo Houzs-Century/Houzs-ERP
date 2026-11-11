@@ -9,6 +9,7 @@ const makeSb = (rows: Row[], broken: string[] = []) => ({
     const eqs: Array<[string, unknown]> = [];
     const err = broken.includes(table) ? { message: `connection reset (${table})` } : null;
     const run = () => rows.filter((r) => r._table === table).filter((r) => eqs.every(([c, v]) => r[c] === v));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a chainable supabase stub
     const b: any = {
       select: () => b,
       eq: (c: string, v: unknown) => { eqs.push([c, v]); return b; },

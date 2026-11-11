@@ -30,6 +30,7 @@ type LineRow = {
 };
 
 export async function soTransportFeeEditProblem(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the untyped supabase client every SO lib takes (so-confirm-gate.ts)
   sb: any,
   args: { docNo: string; companyId: number; companyCode: string | null; change: SoTransportFeeChange },
 ): Promise<SaveProblem | null> {
