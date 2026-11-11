@@ -51,7 +51,7 @@ export const SectionTabs = ({ sections, areaCount, value, onChange }: {
     );
   };
   return (
-    <div role="tablist" aria-label="Rate card sections" className="no-scrollbar -mx-5 flex items-center overflow-x-auto overflow-y-hidden border-t border-border px-3">
+    <div role="tablist" aria-label="Rate card sections" className="no-scrollbar relative -mx-5 flex items-center overflow-x-auto overflow-y-hidden border-t border-border px-3">
       {CATEGORY_ORDER.map((cat) => {
         const count = (sections.find((s) => s.category === cat)?.count ?? 0) + (cat === 'OUTSTATION' ? areaCount : 0);
         return tab(cat, (

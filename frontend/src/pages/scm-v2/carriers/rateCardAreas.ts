@@ -6,7 +6,8 @@
 // ladder, so the areas of one card read alike), read a typed town list, and
 // say which towns need a second look. Pure.
 import type { NewRateRule, RateArea, RateRule } from '../../../vendor/scm/lib/delivery-rate-card-queries';
-import { ladderTitle, layoutRateCard, ordinal, sofaLabel, type PriceCell, type RuleBlock } from './rateCardLayout';
+import { RULE_LABEL } from '../../../vendor/scm/lib/rate-rule-taxonomy';
+import { FLAT_ORDER, ladderTitle, layoutRateCard, ordinal, sofaLabel, type PriceCell, type RuleBlock } from './rateCardLayout';
 
 type Ladder = Extract<RuleBlock, { kind: 'ladder' }>;
 
@@ -52,6 +53,69 @@ export function areaTemplate(cardRules: readonly RateRule[], unit: string): Pric
   }
   if (own.some((r) => r.ruleType === 'DISPOSE')) boxes.push({ key: 'dispose', label: 'Dispose', tile: 'Dispose', rule: { ruleType: 'DISPOSE' } });
   return boxes;
+}
+
+/* ── The areas TABLE (owner 2026-11-11: 「做」 on a ruled table, one town per row,
+   the area's name and prices merged down across its towns, prices at the top). */
+
+const RULE_ORDER: readonly string[] = ['POSITIONAL_TIER', 'OVERAGE', 'SOFA_BRACKET', ...FLAT_ORDER];
+
+/** The box a price nobody templated stands for — an area priced for a 4th set
+ *  the card's own ladder stops short of still gets a column. */
+const boxOf = (r: RateRule, unit: string): PriceBox => {
+  if (r.ruleType === 'POSITIONAL_TIER') {
+    const label = `${ordinal(r.tierPosition ?? 1)} ${unit}`;
+    return { key: keyOf(r), label, tile: label, rule: { ruleType: 'POSITIONAL_TIER', tierPosition: r.tierPosition ?? 1 } };
+  }
+  if (r.ruleType === 'SOFA_BRACKET') {
+    const tile = sofaLabel(r.bracketMin ?? 0, r.bracketMax);
+    return { key: keyOf(r), label: `Sofa, ${tile.toLowerCase()}`, tile, rule: { ruleType: 'SOFA_BRACKET', bracketMin: r.bracketMin ?? 0, bracketMax: r.bracketMax } };
+  }
+  const label = (RULE_LABEL as Partial<Record<string, string>>)[r.ruleType] ?? r.ruleType;
+  return { key: keyOf(r), label, tile: label, rule: { ruleType: r.ruleType } };
+};
+const sortKey = (b: PriceBox): [number, number] => {
+  const at = RULE_ORDER.indexOf(b.rule.ruleType);
+  return [at < 0 ? RULE_ORDER.length : at, b.rule.ruleType === 'SOFA_BRACKET' ? b.rule.bracketMin ?? 0 : b.rule.tierPosition ?? 0];
+};
+
+/** The table's price columns: the card's own ladder (the template), then any
+ *  price an area carries that the ladder has no box for, in ladder order. */
+export function areaColumns(template: readonly PriceBox[], areaRules: readonly RateRule[], unit: string): PriceBox[] {
+  const cols = new Map(template.map((b) => [b.key, b]));
+  for (const r of areaRules) {
+    if (r.areaId == null || cols.has(keyOf(r))) continue;
+    cols.set(keyOf(r), boxOf(r, unit));
+  }
+  return [...cols.values()].sort((a, b) => {
+    const [ra, pa] = sortKey(a); const [rb, pb] = sortKey(b);
+    return ra - rb || pa - pb;
+  });
+}
+
+/** A column's heading, short enough for a table: "1st set", "Sofa 1–3", "Sofa 4+". */
+export function columnHead(b: PriceBox): string {
+  if (b.rule.ruleType !== 'SOFA_BRACKET') return b.tile;
+  const min = b.rule.bracketMin ?? 0;
+  const max = b.rule.bracketMax ?? null;
+  if (max == null) return min <= 1 ? 'Sofa, any' : `Sofa ${min}+`;
+  return max === min ? `Sofa ${min}` : `Sofa ${min}–${max}`;
+}
+
+/** The price an area (or, with null, the card itself) has for a column. */
+export function ruleAt(rules: readonly RateRule[], areaId: string | null, key: string): RateRule | null {
+  return rules.find((r) => (r.areaId ?? null) === areaId && keyOf(r) === key) ?? null;
+}
+
+/** An area's towns A to Z, numbers in number order: Batu 7, Batu 8 … Batu 11, Batu Kawah. */
+export function sortTowns(towns: readonly string[]): string[] {
+  return [...towns].sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+}
+
+/** A town as people write it — "BATU KAWAH" reads "Batu Kawah" — while a short
+ *  word stays capitals, so "KK CITY" reads "KK City". The stored name is unchanged. */
+export function townLabel(town: string): string {
+  return town.toLowerCase().replace(/[a-z]+/g, (w) => (w.length <= 2 ? w.toUpperCase() : `${w.charAt(0).toUpperCase()}${w.slice(1)}`));
 }
 
 /** The template's boxes this area has no price for yet. */

@@ -4,7 +4,8 @@
 import { describe, expect, it } from 'vitest';
 import type { RateArea, RateRule } from '../../../vendor/scm/lib/delivery-rate-card-queries';
 import {
-  areaBlocks, areaOfTown, areaTemplate, missingBoxes, parseTowns, surchargesInAreas, townsInTwoAreas,
+  areaBlocks, areaColumns, areaOfTown, areaTemplate, columnHead, missingBoxes, parseTowns, ruleAt, sortTowns, surchargesInAreas,
+  townLabel, townsInTwoAreas,
 } from './rateCardAreas';
 
 const rule = (over: Partial<RateRule>): RateRule => ({
@@ -88,5 +89,31 @@ describe('towns', () => {
       area({ id: 'a3', name: 'Zone 5', towns: ['LABUAN'] })];
     expect(townsInTwoAreas(areas)).toEqual([{ town: 'SERIAN', areas: ['Zone 3', 'Zone 4'] }]);
     expect(surchargesInAreas(areas, LADDER_CARD)).toEqual([{ town: 'LABUAN', areas: ['Zone 5'] }]);
+  });
+});
+
+describe('the areas table', () => {
+  it('takes its columns from the card’s ladder, then any price an area has beyond it', () => {
+    const template = areaTemplate(LADDER_CARD, 'set');
+    const areaRules = [
+      rule({ id: 'x1', tierPosition: 1, amountSen: 18_500, areaId: 'a1' }),
+      rule({ id: 'x4', tierPosition: 4, amountSen: 2_000, areaId: 'a1' }),
+      rule({ id: 'xd', ruleType: 'DISPOSE', amountSen: 4_000, areaId: 'a1' }),
+    ];
+    const cols = areaColumns(template, areaRules, 'set');
+    expect(cols.map((c) => c.key)).toEqual(['tier-1', 'tier-2', 'tier-3', 'tier-4', 'sofa-1-3', 'sofa-4-', 'dispose']);
+    expect(cols.map(columnHead)).toEqual(['1st set', '2nd set', '3rd set and after', '4th set', 'Sofa 1–3', 'Sofa 4+', 'Dispose']);
+  });
+
+  it('finds an area’s price, or the card’s own with no area', () => {
+    const rules = [...LADDER_CARD, rule({ id: 'x1', tierPosition: 1, amountSen: 18_500, areaId: 'a1' })];
+    expect(ruleAt(rules, 'a1', 'tier-1')?.id).toBe('x1');
+    expect(ruleAt(rules, null, 'tier-1')?.id).toBe('t1');
+    expect(ruleAt(rules, 'a1', 'tier-2')).toBeNull();
+  });
+
+  it('lists towns A to Z with numbers in order, and writes them as people do', () => {
+    expect(sortTowns(['PADAWAN', 'BATU 10', 'BATU KAWAH', 'BATU 7', 'BATU 11', 'BATU 8'])).toEqual(['BATU 7', 'BATU 8', 'BATU 10', 'BATU 11', 'BATU KAWAH', 'PADAWAN']);
+    expect(['BATU KAWAH', 'KOTA SAMARAHAN', 'KK CITY', 'BATU 7', 'SRI AMAN'].map(townLabel)).toEqual(['Batu Kawah', 'Kota Samarahan', 'KK City', 'Batu 7', 'Sri Aman']);
   });
 });

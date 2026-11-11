@@ -160,8 +160,8 @@ describe('Carriers & Rates', () => {
     expect(screen.getByRole('tab', { name: /^Outstation/ }).getAttribute('aria-selected')).toBe('true');
     const out = screen.getByRole('tabpanel', { name: 'Outstation' });
     expect(within(out).getByText('RM 300.00')).toBeTruthy();
-    expect(within(out).getByRole('button', { name: 'Edit BAU per order, RM 300.00' })).toBeTruthy();
-    expect(within(out).getByRole('button', { name: 'Edit KUCHING per order, RM 300.00' })).toBeTruthy();
+    expect(within(out).getByRole('button', { name: 'Edit Bau per order, RM 300.00' })).toBeTruthy();
+    expect(within(out).getByRole('button', { name: 'Edit Kuching per order, RM 300.00' })).toBeTruthy();
 
     fireEvent.click(within(out).getByRole('button', { name: 'Add a per-trip price' }));
     expect((within(out).getByLabelText('Rule type') as HTMLSelectElement).value).toBe('OUTSTATION_TRIP');
@@ -214,9 +214,16 @@ describe('Carriers & Rates', () => {
     expect(tab.textContent).toContain('2');
     fireEvent.click(tab);
     const out = screen.getByRole('tabpanel', { name: 'Outstation' });
-    const far = within(out).getByRole('region', { name: 'Far towns' });
-    expect(within(far).getByText('BINTULU · LABUAN')).toBeTruthy();
-    expect(within(out).getByText(/its town price adds on top of the area’s price/).textContent).toContain('LABUAN (Far towns)');
+    /* One ruled table: the card's own prices first, then a row per town with the area's prices merged down. */
+    expect(within(out).getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['Area', 'Town', '1st set', '3rd set and after', 'Change the area']);
+    const own = within(out).getByRole('rowgroup', { name: 'Everywhere else' });
+    expect(within(own).getByText('80.00')).toBeTruthy();
+    expect(within(own).getByText('40.00')).toBeTruthy();
+    const far = within(out).getByRole('rowgroup', { name: 'Far towns' });
+    expect(within(far).getAllByRole('row')).toHaveLength(2);
+    expect(within(far).getByText('Bintulu')).toBeTruthy();
+    expect(within(far).getByText('Labuan')).toBeTruthy();
+    expect(within(out).getByText(/its town price adds on top of the area’s price/).textContent).toContain('Labuan (Far towns)');
 
     fireEvent.click(within(far).getByRole('button', { name: 'Edit 1st set for Far towns, RM 200.00' }));
     fireEvent.change(within(far).getByLabelText('Amount for 1st set for Far towns'), { target: { value: '250' } });
