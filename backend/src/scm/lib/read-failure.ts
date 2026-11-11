@@ -104,6 +104,7 @@ const STAGE_LABEL: Record<string, string | undefined> = {
   po_line_receipts: 'what each line has received',
   po_picker_suppliers: 'the main supplier of each item',
   document_flow: 'the document flow',
+  bank_open_lines: 'how much of each statement is still open',
 };
 
 /**

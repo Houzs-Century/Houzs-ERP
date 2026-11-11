@@ -37,6 +37,8 @@ import {
   loadLiveMonthLock, loadLineMonth, loadClaimedElsewhere, claimedSetFor, jeNosOf, loadLinesForRepeats, loadLineMatches,
   loadQrReports } from '../../acc/bank';
 import { paginateAll } from '../lib/paginate-all';
+import { readFailure } from '../lib/read-failure';
+import { loadOpenTallies, openTallySql } from '../../acc/bank-statement-open';
 import { lockedRefusal, lockMonthOf } from '../../acc/bank-lock';
 import { undoBatchReceipt } from '../../acc/settlement';
 import { postBankCredit } from '../../acc/bank-receive';
@@ -825,22 +827,14 @@ export const bankStatements = guard(async (c) => {
   const statements = (stmtRaw ?? []) as Array<Record<string, any>>;
   if (statements.length === 0) return c.json({ statements: [] });
 
-  const { data: lineRaw, error: lErr } = await sb.from('acc_bank_statement_lines')
-    .select('statement_id, state, kind, amount_sen').eq('company_id', co.companyId);
-  if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
-
   /* Derived, never stored: how much of each statement is still undecided is a
-     live question, and a column would answer yesterday's. */
-  const openBy = new Map<number, { count: number; sen: number; payouts: number }>();
-  for (const l of (lineRaw ?? []) as Array<Record<string, any>>) {
-    if (String(l.state) !== 'OPEN') continue;
-    const id = Number(l.statement_id);
-    const at = openBy.get(id) ?? { count: 0, sen: 0, payouts: 0 };
-    at.count += 1;
-    at.sen += Number(l.amount_sen ?? 0);
-    if (String(l.kind).startsWith('PAYOUT')) at.payouts += 1;
-    openBy.set(id, at);
-  }
+     live question, and a column would answer yesterday's. Read in full — the
+     unpaged read this replaced stopped at PostgREST's 1,000 rows and showed
+     too few open lines once a company passed that — and a failed read is an
+     error on the screen, never 0 open. */
+  const tallies = await loadOpenTallies(sb, co.companyId, () => openTallySql(c.env, co.companyId));
+  if (!tallies.ok) return c.json(readFailure('bank_open_lines', tallies.error, { companyId: co.companyId }), 500);
+  const openBy = tallies.byStatement;
 
   return c.json({
     statements: statements.map((s) => {
