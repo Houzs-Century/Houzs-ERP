@@ -65,7 +65,10 @@ const UploadAndList = ({ onOpen, onUpload }: { onOpen: (id: number) => void; onU
           <span style={{ flex: 1 }} />
           {onUpload && <button type="button" style={btn(true)} onClick={onUpload}><Upload {...ICON} /> Upload statement</button>}
         </div>
-        {rows.length === 0 && !statements.isLoading && (
+        {statements.isError && (
+          <div role="alert" style={{ color: danger }}><AlertTriangle {...ICON} /> {refusalText(statements.error, 'The bank statements did not load.')}</div>
+        )}
+        {rows.length === 0 && !statements.isLoading && !statements.isError && (
           <div style={softText}>None yet. Upload one and it will be matched against the books.</div>
         )}
         <BankAccountTabs codes={codes} value={current} onChange={setAccount} ariaLabel="Bank account of the files listed" />
