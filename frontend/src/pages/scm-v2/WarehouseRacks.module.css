@@ -86,8 +86,8 @@
   border-radius: 3px;
 }
 .swatchOccupied { background: #7a5b3a; }
-.swatchEmpty    { background: #e7efe6; border: 1px solid #bcd6bf; }
-.swatchReserved { background: #f6e6bf; border: 1px solid #e2c98a; }
+.swatchEmpty    { background: var(--hz-dk-surface-2, #e7efe6); border: 1px solid #bcd6bf; }
+.swatchReserved { background: var(--hz-dk-warning-bg, #f6e6bf); border: 1px solid #e2c98a; }
 
 .searchBox {
   position: relative;
@@ -154,12 +154,12 @@
   border-color: #6a4e30;
 }
 .rackEmpty {
-  background: #e7efe6;
+  background: var(--hz-dk-surface-2, #e7efe6);
   color: #3c6b45;
   border-color: #bcd6bf;
 }
 .rackReserved {
-  background: #f6e6bf;
+  background: var(--hz-dk-warning-bg, #f6e6bf);
   color: #8a6a1e;
   border-color: #e2c98a;
 }

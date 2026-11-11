@@ -5,7 +5,7 @@
 
 .page { --ink: var(--hz-c-ink); --text: var(--hz-c-ink-secondary); --detail: #5f6459; --muted: var(--hz-c-ink-muted); --faint: #a9ada3; --line: var(--hz-c-border); --petrol: var(--hz-c-primary);
   /* The sand tint of a document still open (the design's OPEN_BG). */
-  --open-bg: #fcf7ec;
+  --open-bg: var(--hz-dk-warning-bg, #fcf7ec);
   display: flex; flex-direction: column; gap: 12px; color: var(--ink); font-variant-numeric: tabular-nums; }
 
 /* ── Cards: one figure each; the selected one petrol-ringed. Two across on a

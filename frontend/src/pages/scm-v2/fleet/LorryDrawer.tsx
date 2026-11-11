@@ -28,8 +28,8 @@ import { todayMyt } from "../../../vendor/scm/lib/dates";
 import { OffRoadPanel } from "../../fleet/OffRoadPanel";
 
 const TONE_CLASS: Record<ComplianceTone, string> = {
-  expired: "bg-[#f6dcdc] text-[color:var(--hz-dk-err,#8a2c2c)]", critical: "bg-[#f6dcdc] text-[color:var(--hz-dk-err,#8a2c2c)]",
-  warning: "bg-[#f6ecd4] text-[#80501c]", ok: "bg-[#dcebe3] text-[#1f5c43]", none: "bg-surface-2 text-ink-muted",
+  expired: "bg-[color:var(--hz-dk-err-bg,#f6dcdc)] text-[color:var(--hz-dk-err,#8a2c2c)]", critical: "bg-[color:var(--hz-dk-err-bg,#f6dcdc)] text-[color:var(--hz-dk-err,#8a2c2c)]",
+  warning: "bg-[color:var(--hz-dk-warning-bg,#f6ecd4)] text-[#80501c]", ok: "bg-[color:var(--hz-dk-synced-bg,#dcebe3)] text-[#1f5c43]", none: "bg-surface-2 text-ink-muted",
 };
 const DOCS = [
   { type: "ROAD_TAX", label: "Road tax", col: "road_tax_expiry" },
@@ -69,8 +69,8 @@ export function LorryDrawer({ lorry, warehouses, drivers, helpers, carriers, gps
   return (
     <ResizableDrawer onClose={onClose} storageKey="fleet-lorry-drawer" defaultWidth={620} ariaLabel={`Lorry ${lorry.plate}`}
       title={<span className="flex items-center gap-2"><span className="rounded-md bg-[#1d2420] px-2 py-0.5 font-mono text-[14px] tracking-wider text-white">{lorry.plate}</span>
-        <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-semibold", own ? "bg-[#dcebe3] text-[#1f5c43]" : "bg-[#f6e6d4] text-[#80501c]")}>{own ? "Own fleet" : carrier?.name ?? "3PL"}</span>
-        <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-semibold", gpsAt ? "bg-[#dcebe3] text-[#1f5c43]" : "bg-surface-2 text-ink-muted")}>{gpsAt ? "GPS live" : "No GPS signal"}</span></span>}
+        <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-semibold", own ? "bg-[color:var(--hz-dk-synced-bg,#dcebe3)] text-[#1f5c43]" : "bg-[color:var(--hz-dk-warning-bg,#f6e6d4)] text-[#80501c]")}>{own ? "Own fleet" : carrier?.name ?? "3PL"}</span>
+        <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-semibold", gpsAt ? "bg-[color:var(--hz-dk-synced-bg,#dcebe3)] text-[#1f5c43]" : "bg-surface-2 text-ink-muted")}>{gpsAt ? "GPS live" : "No GPS signal"}</span></span>}
       subtitle={[LORRY_TYPE_LABEL[lorry.type], lorry.model, lorry.active ? null : "Not in use"].filter(Boolean).join(" · ")}
       headerActions={!editing ? <span className="flex gap-2"><button type="button" onClick={() => setEditing(true)} className="rounded-md bg-primary px-3 py-1.5 text-[12.5px] font-semibold text-white">Edit</button>
         <Link to="/scm/delivery-maintenance?tab=live-map" className="rounded-md border border-white/40 px-3 py-1.5 text-[12.5px] font-semibold text-white">See on map</Link></span> : null}>

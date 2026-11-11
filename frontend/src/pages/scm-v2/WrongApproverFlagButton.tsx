@@ -119,7 +119,7 @@ function FlagButton({ amendment, canSign, variant }: FlagProps) {
         type="button"
         onClick={() => void handleFlag()}
         disabled={flagLane.isPending}
-        style={{ border: "1px solid #e6d3a8", background: "#fbf3df", color: "#8a5a00", fontFamily: "inherit", fontSize: 12, fontWeight: 700, borderRadius: 9, padding: "9px 11px", cursor: "pointer", opacity: flagLane.isPending ? 0.5 : 1 }}
+        style={{ border: "1px solid #e6d3a8", background: "var(--hz-dk-warning-bg, #fbf3df)", color: "#8a5a00", fontFamily: "inherit", fontSize: 12, fontWeight: 700, borderRadius: 9, padding: "9px 11px", cursor: "pointer", opacity: flagLane.isPending ? 0.5 : 1 }}
       >
         {label}
       </button>

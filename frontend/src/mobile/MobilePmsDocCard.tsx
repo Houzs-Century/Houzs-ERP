@@ -223,7 +223,7 @@ export function UploadGlyph() {
 // The mockup's "Reason:" strip — a per-photo remark under its preview.
 export function RemarkStrip({ label = "Remark", text }: { label?: string; text: string }) {
   return (
-    <div style={{ background: "#faf9f5", borderLeft: "3px solid #d8a85a", borderRadius: 7, padding: "7px 10px", fontSize: 11.5, lineHeight: 1.45, color: "var(--hz-c-ink-secondary)", marginTop: 6, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+    <div style={{ background: "var(--hz-dk-surface-2, #faf9f5)", borderLeft: "3px solid #d8a85a", borderRadius: 7, padding: "7px 10px", fontSize: 11.5, lineHeight: 1.45, color: "var(--hz-c-ink-secondary)", marginTop: 6, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
       <b style={{ color: "var(--hz-c-accent)" }}>{label}:</b> {text}
     </div>
   );
@@ -381,7 +381,7 @@ export function ReviewButtons({
         <button className="tinybtn" style={{ flex: 1, background: "var(--hz-c-synced-bg)", borderColor: "#bcdcd7", color: "var(--hz-c-synced)" }} disabled={busy} onClick={(e) => { e.stopPropagation(); void review("approve"); }}>Approve</button>
       )}
       {rs !== "rejected" && (
-        <button className="tinybtn" style={{ flex: 1, background: "#f7e7e5", borderColor: "#e6c9c6", color: "#a13a34" }} disabled={busy} onClick={(e) => { e.stopPropagation(); void review("reject"); }}>Reject</button>
+        <button className="tinybtn" style={{ flex: 1, background: "var(--hz-dk-err-bg, #f7e7e5)", borderColor: "#e6c9c6", color: "#a13a34" }} disabled={busy} onClick={(e) => { e.stopPropagation(); void review("reject"); }}>Reject</button>
       )}
     </div>
   );
@@ -613,7 +613,7 @@ export function SalesDocsCard({
                   tabIndex={0}
                   onClick={() => { if (!busy) void openRemark(t); }}
                   onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); if (!busy) void openRemark(t); } }}
-                  style={{ background: "#faf9f5", border: "1px solid var(--hz-dk-border-subtle, #eceee9)", borderRadius: 9, padding: "8px 10px", fontSize: 11.5, lineHeight: 1.45, color: remarkText ? "var(--hz-c-ink-secondary)" : "var(--hz-c-ink-soft)", cursor: "pointer", whiteSpace: "pre-wrap", wordBreak: "break-word" }}
+                  style={{ background: "var(--hz-dk-surface-2, #faf9f5)", border: "1px solid var(--hz-dk-border-subtle, #eceee9)", borderRadius: 9, padding: "8px 10px", fontSize: 11.5, lineHeight: 1.45, color: remarkText ? "var(--hz-c-ink-secondary)" : "var(--hz-c-ink-soft)", cursor: "pointer", whiteSpace: "pre-wrap", wordBreak: "break-word" }}
                 >
                   {remarkText || (editable && t.remarkTile ? "Tap to write the remark…" : "No remark yet.")}
                 </div>

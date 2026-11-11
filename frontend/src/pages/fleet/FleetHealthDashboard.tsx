@@ -177,7 +177,7 @@ export function FleetHealth() {
           <p className="text-[13px] text-ink-muted">Which lorries can go out today, and what needs renewing or repairing.</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={() => dash.reload()} className="inline-flex h-10 items-center gap-2 rounded-lg bg-[#ebe7dd] px-4 text-[14px] font-semibold text-ink hover:bg-[#e0dbcf]">
+          <button type="button" onClick={() => dash.reload()} className="inline-flex h-10 items-center gap-2 rounded-lg bg-[color:var(--hz-dk-warning-bg,#ebe7dd)] px-4 text-[14px] font-semibold text-ink hover:bg-[color:var(--hz-dk-warning-bg,#e0dbcf)]">
             <RefreshCw size={14} className={dash.loading ? "animate-spin" : undefined} /> Refresh
           </button>
           <button type="button" onClick={() => setAddingLorry(true)} className="inline-flex h-10 items-center rounded-lg bg-primary px-4 text-[14px] font-semibold text-white hover:bg-primary/90">New lorry</button>

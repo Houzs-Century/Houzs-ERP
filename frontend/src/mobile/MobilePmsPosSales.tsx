@@ -25,9 +25,9 @@ const MUTED: React.CSSProperties = { fontSize: 12, color: "var(--hz-c-ink-soft)"
 /* The pill's tint per status word; a function, not a map, so the desktop's
    Tailwind map stays the only literal of the vocabulary's presentation. */
 function pillStyle(status: PosReceiptStatus): React.CSSProperties {
-  if (status === "VOID") return { background: "#f9dede", color: "#9b2c2c" };
-  if (status === "RETURN") return { background: "#dbeefb", color: "#0b6b8f" };
-  return { background: "#d9f0e4", color: "#16695f" };
+  if (status === "VOID") return { background: "var(--hz-dk-err-bg, #f9dede)", color: "#9b2c2c" };
+  if (status === "RETURN") return { background: "var(--hz-dk-surface-2, #dbeefb)", color: "#0b6b8f" };
+  return { background: "var(--hz-dk-synced-bg, #d9f0e4)", color: "var(--hz-c-primary)" };
 }
 
 export function useMobileProjectPosSales(projectId: number, enabled: boolean) {

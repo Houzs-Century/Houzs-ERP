@@ -201,7 +201,7 @@ export function MobileSkuPicker({
                   style={{
                     textAlign: "left", width: "100%", boxSizing: "border-box",
                     border: `1px solid ${isOn ? "#0c3f39" : "rgba(34,31,32,.12)"}`, borderRadius: 11,
-                    background: isOn ? "#f0f6f2" : "var(--hz-c-surface)",
+                    background: isOn ? "var(--hz-dk-surface-2, #f0f6f2)" : "var(--hz-c-surface)",
                     padding: "10px 12px", cursor: "pointer", fontFamily: "inherit",
                     display: "flex", alignItems: "center", gap: 10,
                   }}

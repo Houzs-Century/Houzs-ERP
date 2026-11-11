@@ -128,7 +128,7 @@ export const DeliveryZones = () => {
         }
       />
 
-      {zoneMap.isError && <p className="rounded-xl bg-[#f6dcdc] px-4 py-3 text-[13px] text-[color:var(--hz-dk-err,#8a2c2c)]">The zone map could not be loaded. {zoneMap.error instanceof Error ? zoneMap.error.message : ''}</p>}
+      {zoneMap.isError && <p className="rounded-xl bg-[color:var(--hz-dk-err-bg,#f6dcdc)] px-4 py-3 text-[13px] text-[color:var(--hz-dk-err,#8a2c2c)]">The zone map could not be loaded. {zoneMap.error instanceof Error ? zoneMap.error.message : ''}</p>}
 
       {!zoneMap.isError && <ZoneMapCard rows={rows} map={eff.map} usingDefault={eff.usingDefault} byPrefix={byPrefix}
         selected={selected} onSelect={(k) => setParam('zone', k, 'KL')}

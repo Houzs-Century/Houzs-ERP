@@ -2272,7 +2272,7 @@ export function MobileNewSO({
         ) : (
           <>
             {fromScan && (
-              <div style={{ display: "flex", alignItems: "flex-start", gap: 9, marginBottom: 11, padding: "10px 12px", background: "#eaf2f0", border: "1px solid #cfe1dc", borderRadius: 12 }}>
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 9, marginBottom: 11, padding: "10px 12px", background: "var(--hz-dk-surface-2, #eaf2f0)", border: "1px solid #cfe1dc", borderRadius: 12 }}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#16695f" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none", marginTop: 1 }}><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z" /><circle cx="12" cy="13" r="3" /></svg>
                 <div style={{ fontSize: 11.5, color: "var(--hz-c-primary)", lineHeight: 1.5 }}>
                   Prefilled from your scan. Review every field marked <b>Scanned</b>, correct anything the reader missed, then create the order.
@@ -2289,7 +2289,7 @@ export function MobileNewSO({
             <MigratedReadonlyBanner header={migHeader} rounded={12} />
             {isEdit && !migratedLocked && <MobileSoLockBanner status={soStatus} overridden={unlockOverride} overridePending={overrideLock.isPending} onOverride={(reason) => overrideLock.mutate({ docNo: docNo ?? "", status: soStatus, reason }, { onSuccess: () => setUnlockOverride(true) })} onRelock={() => setUnlockOverride(false)} afterDo={afterDo} afterDoTargetId={afterDoTargetId} onPickTarget={setAfterDoTargetId} />}
             {!migratedLocked && procLocked && !amendmentMode && (
-              <div style={{ display: "flex", alignItems: "flex-start", gap: 9, marginBottom: 11, padding: "10px 12px", background: "#fbf3e6", border: "1px solid #ecd9b6", borderRadius: 12 }}>
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 9, marginBottom: 11, padding: "10px 12px", background: "var(--hz-dk-warning-bg, #fbf3e6)", border: "1px solid #ecd9b6", borderRadius: 12 }}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a16a2e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none", marginTop: 1 }}><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
                 <div style={{ fontSize: 11.5, color: "#8a5a22", lineHeight: 1.5 }}>
                   This order&apos;s processing date has passed, so it is now on order to the supplier. Line items and the delivery <b>State / City / Postcode</b> are locked. You can still update the rest of the customer details, address lines and note.

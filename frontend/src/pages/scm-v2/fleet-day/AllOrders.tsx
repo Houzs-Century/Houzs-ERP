@@ -61,7 +61,7 @@ export function AllOrdersTab({ rows, onOpen }: { rows: AllOrderRow[]; onOpen: (d
                 <td className={cn(td, 'font-mono')}>{doc.rowType === 'so' ? (doc.ref || '—') : '—'}</td>
                 <td className={td}>
                   <span className="inline-flex items-center gap-1.5">
-                    {doc.jobLabel && <span className="rounded bg-[#e6eaf4] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-brand text-learning">{doc.jobLabel}</span>}
+                    {doc.jobLabel && <span className="rounded bg-[color:var(--hz-dk-surface-2,#e6eaf4)] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-brand text-learning">{doc.jobLabel}</span>}
                     {doc.customer || '—'}
                   </span>
                 </td>

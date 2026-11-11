@@ -169,12 +169,12 @@ export function ZoneRuleDrawer({ target, rules, defaultMap, knownZones, onClose 
                   </ul>
                 )}
               {preview.switchesOffDefault && (
-                <p className="rounded-lg bg-[#f6ecd4] px-3 py-2 text-[12.5px] text-[#80501c]">
+                <p className="rounded-lg bg-[color:var(--hz-dk-warning-bg,#f6ecd4)] px-3 py-2 text-[12.5px] text-[#80501c]">
                   The built-in map only applies while no rule is in use, so saving this leaves the postcodes above with no zone. Load the default map as editable rules first to keep them.
                 </p>
               )}
               {preview.ties.length > 0 && (
-                <p className="rounded-lg bg-[#f6ecd4] px-3 py-2 text-[12.5px] text-[#80501c]">
+                <p className="rounded-lg bg-[color:var(--hz-dk-warning-bg,#f6ecd4)] px-3 py-2 text-[12.5px] text-[#80501c]">
                   {preview.ties.map(pad2).join(', ')} {preview.ties.length === 1 ? 'is' : 'are'} also covered by another zone's rule of the same width, so which zone wins is not certain. Make one of the two ranges narrower.
                 </p>
               )}

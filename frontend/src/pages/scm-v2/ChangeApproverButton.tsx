@@ -83,7 +83,7 @@ export function ChangeApproverButton({ amendment, variant }: {
 
   const busy = changeLane.isPending;
   if (variant === "mobile") {
-    const btn = { border: "1px solid #d6d3cc", background: "#f4f2ee", color: "#3d3a33", fontFamily: "inherit", fontSize: 12, fontWeight: 700, borderRadius: 9, padding: "9px 11px", cursor: "pointer", opacity: busy ? 0.5 : 1 } as const;
+    const btn = { border: "1px solid #d6d3cc", background: "var(--hz-dk-surface-2, #f4f2ee)", color: "#3d3a33", fontFamily: "inherit", fontSize: 12, fontWeight: 700, borderRadius: 9, padding: "9px 11px", cursor: "pointer", opacity: busy ? 0.5 : 1 } as const;
     return (
       <>
         <button type="button" style={btn} disabled={busy} onClick={() => setOpen((o) => !o)}>Change approver (admin)</button>

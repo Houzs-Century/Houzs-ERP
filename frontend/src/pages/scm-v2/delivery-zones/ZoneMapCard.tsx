@@ -88,17 +88,17 @@ export function ZoneMapCard({ rows, map, usingDefault, byPrefix, selected, onSel
           </div>
           {postcode !== '' && (
             prefix === null
-              ? <div className="self-start rounded-full bg-[#f6ecd4] px-3.5 py-1.5 text-[13px] font-semibold text-[#80501c]">A postcode has 5 digits</div>
+              ? <div className="self-start rounded-full bg-[color:var(--hz-dk-warning-bg,#f6ecd4)] px-3.5 py-1.5 text-[13px] font-semibold text-[#80501c]">A postcode has 5 digits</div>
               : foundZone
                 ? <div className="self-start rounded-full bg-primary-soft px-3.5 py-1.5 text-[13px] font-semibold text-primary-ink">
                     {postcode} is in {zoneName(foundZone)}{hit?.label && hit.label !== zoneName(foundZone) ? ` · ${hit.label}` : ''}{usingDefault ? ' (built-in map)' : ''}
                   </div>
-                : <div className="self-start rounded-full bg-[#f6dcdc] px-3.5 py-1.5 text-[13px] font-semibold text-[color:var(--hz-dk-err,#8a2c2c)]">{postcode} is not in any zone</div>
+                : <div className="self-start rounded-full bg-[color:var(--hz-dk-err-bg,#f6dcdc)] px-3.5 py-1.5 text-[13px] font-semibold text-[color:var(--hz-dk-err,#8a2c2c)]">{postcode} is not in any zone</div>
           )}
 
           <div role="group" aria-label="Zones" className="grid auto-rows-[minmax(58px,auto)] grid-cols-2 gap-2 md:auto-rows-[66px] md:grid-cols-6">
             {OUTSTATION_TILES.map((t) => tile(t.zone, { '--col': t.col, '--row': t.row } as CSSProperties, false, 'md:[grid-column:var(--col)] md:[grid-row:var(--row)]'))}
-            <div className="order-first col-span-2 flex flex-col gap-1 rounded-2xl bg-[#f1f7f5] p-2 md:order-none md:[grid-column:1/4] md:[grid-row:4/6]">
+            <div className="order-first col-span-2 flex flex-col gap-1 rounded-2xl bg-[color:var(--hz-dk-surface-2,#f1f7f5)] p-2 md:order-none md:[grid-column:1/4] md:[grid-row:4/6]">
               <span className="px-0.5 text-[11px] font-bold uppercase tracking-wider text-[#3f6f66]">Klang Valley</span>
               <div className="grid flex-1 grid-cols-3 gap-1.5">
                 {KLANG_VALLEY.map((z) => tile(z, {}, true))}
@@ -127,7 +127,7 @@ export function ZoneMapCard({ rows, map, usingDefault, byPrefix, selected, onSel
           </div>
         </div>
 
-        <aside className="flex min-w-0 flex-[1_1_300px] flex-col gap-4 bg-[#fafaf8] p-4 md:p-6" aria-label="Selected zone">
+        <aside className="flex min-w-0 flex-[1_1_300px] flex-col gap-4 bg-[color:var(--hz-dk-surface-2,#fafaf8)] p-4 md:p-6" aria-label="Selected zone">
           <div className="flex items-center gap-2.5">
             <span className="h-3 w-3 rounded-full" style={{ background: dot }} />
             <span className="text-[12px] font-bold uppercase tracking-wider text-ink-muted">{group}</span>

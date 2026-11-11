@@ -303,7 +303,7 @@ const CompanyRow = ({ row, open, onToggleOpen }: { row: ThreePLCompanyRow; open:
             onChange={() => update.mutate({ id: row.id, isActive: !row.isActive }, {
               onError: writeFailedAs('The company was not updated'),
             })} />
-          <span className={cn('rounded-full px-2 py-0.5 text-[11.5px] font-semibold', row.isActive ? 'bg-[#dcebe3] text-[#1f5c43]' : 'bg-surface-2 text-ink-muted')}>{row.isActive ? 'Active' : 'Inactive'}</span>
+          <span className={cn('rounded-full px-2 py-0.5 text-[11.5px] font-semibold', row.isActive ? 'bg-[color:var(--hz-dk-synced-bg,#dcebe3)] text-[#1f5c43]' : 'bg-surface-2 text-ink-muted')}>{row.isActive ? 'Active' : 'Inactive'}</span>
         </label>
 
         <div className="inline-flex flex-none gap-1">

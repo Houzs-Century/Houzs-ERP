@@ -54,7 +54,7 @@ const cardStatus = (c: MobileMapCard): string => {
 /* Chip dress — lockstep with ./source-chips.tsx. */
 const chipBase: React.CSSProperties = {
   fontFamily: "monospace", fontSize: 11, fontWeight: 700, color: "var(--hz-c-primary-ink)",
-  background: "#eef3f1", border: "1px solid #d7e2de", borderRadius: 5, padding: "1px 6px",
+  background: "var(--hz-dk-surface-2, #eef3f1)", border: "1px solid #d7e2de", borderRadius: 5, padding: "1px 6px",
 };
 const mutedChip: React.CSSProperties = {
   ...chipBase, color: "#5c6357", background: "var(--hz-c-surface-2)", border: "1px solid #d9ded4",
@@ -80,7 +80,7 @@ function MapCard({ card, nav, onClose }: { card: MobileMapCard; nav?: FlowNav; o
       role={open ? "button" : undefined}
       title={card.floating ? FLOATING_TITLE : open ? "Open document" : undefined}
       style={{
-        background: card.isAnchor ? "#fff7d6" : "var(--hz-c-surface)",
+        background: card.isAnchor ? "var(--hz-dk-warning-bg, #fff7d6)" : "var(--hz-c-surface)",
         border: card.isAnchor ? "2px solid #d4a017" : card.floating ? "1.5px dashed #b6c6c0" : "1px solid var(--hz-c-border-subtle)",
         borderRadius: 12, padding: "9px 12px",
         opacity: card.cancelled ? 0.55 : 1,

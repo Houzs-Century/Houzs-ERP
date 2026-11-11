@@ -171,7 +171,7 @@ export function NewProjectSheet({
           </div>
           {dateInvalid && <div style={{ fontSize: 11.5, color: "var(--hz-c-err)" }}>End date must be on or after the start date.</div>}
           {/* The name is composed, never typed — show what will be saved. */}
-          <div style={{ border: "1px dashed var(--hz-c-border)", borderRadius: 10, padding: "9px 11px", background: "#faf9f5" }}>
+          <div style={{ border: "1px dashed var(--hz-c-border)", borderRadius: 10, padding: "9px 11px", background: "var(--hz-dk-surface-2, #faf9f5)" }}>
             <div style={labelStyle}>Event name</div>
             <div style={{ fontSize: 12.5, fontWeight: 700, color: derivedName ? "var(--ink)" : "var(--hz-c-ink-soft)", lineHeight: 1.35 }}>
               {derivedName || "Pick brand + venue to compose the name"}

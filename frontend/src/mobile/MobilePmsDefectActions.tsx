@@ -123,7 +123,7 @@ export function DefectFileActions({
     <div style={{ paddingLeft: wide ? 0 : 2 }}>
       {wide ? (
         (model || reason) && (
-          <div style={{ background: "#faf9f5", borderLeft: "3px solid #d8a85a", borderRadius: 7, padding: "7px 10px", fontSize: 11.5, lineHeight: 1.45, color: "var(--hz-c-ink-secondary)", marginTop: 6, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+          <div style={{ background: "var(--hz-dk-surface-2, #faf9f5)", borderLeft: "3px solid #d8a85a", borderRadius: 7, padding: "7px 10px", fontSize: 11.5, lineHeight: 1.45, color: "var(--hz-c-ink-secondary)", marginTop: 6, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
             {model && <div><b style={{ color: "var(--hz-c-accent)" }}>Model:</b> {model}</div>}
             {reason && <div><b style={{ color: "var(--hz-c-accent)" }}>Reason:</b> {reason}</div>}
           </div>

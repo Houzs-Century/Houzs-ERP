@@ -208,7 +208,7 @@ export function BillsFromAp({ bills }: { bills: BillSummary[] }) {
       <TableCard label={null} title={`To check ${waiting.length ? `(${waiting.length} line${waiting.length === 1 ? '' : 's'} · ${fmtSen(waitingSen)})` : ''}`.trim()}
         count={null} actions={waiting.length ? <Pill tone="amber">Needs you</Pill> : <Pill tone="green">All placed</Pill>}
         hint="Lines read off a bill that are not on a DO yet. Say where each goes: a DO (its number), Service (an ASSR number if there is one), Setup / Dismantle (the fair) or Not counted (storage, handling, dispose).">
-        {said && <p role="status" className="border-b border-border bg-[#e7eef6] px-5 py-2 text-[12.5px] text-[#1f4f75]">{said}</p>}
+        {said && <p role="status" className="border-b border-border bg-[color:var(--hz-dk-surface-2,#e7eef6)] px-5 py-2 text-[12.5px] text-[#1f4f75]">{said}</p>}
         <DataTable<BillLine>
           tableId="threepl-bill-lines-open" columns={lineColumns(fairList, onSaved, true)} rows={open.data ?? null} loading={open.isLoading}
           error={open.isError ? errText(open.error) : null} emptyLabel="Nothing to check — every line read off a bill has a place."

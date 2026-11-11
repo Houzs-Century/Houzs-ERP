@@ -83,7 +83,7 @@ export function LorriesBoard({ onNew }: { onNew: () => void }) {
                   className={cn("rounded-xl border border-border bg-surface p-3 text-left hover:border-primary", !l.active && "opacity-60")}>
                   <div className="flex items-center justify-between gap-2">
                     <span className="rounded-md bg-[#1d2420] px-2 py-0.5 font-mono text-[13px] tracking-wider text-white">{l.plate}</span>
-                    <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-semibold", gpsAt.has(l.id) ? "bg-[#dcebe3] text-[#1f5c43]" : "bg-surface-2 text-ink-muted")}>{gpsAt.has(l.id) ? "GPS live" : "No GPS"}</span>
+                    <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-semibold", gpsAt.has(l.id) ? "bg-[color:var(--hz-dk-synced-bg,#dcebe3)] text-[#1f5c43]" : "bg-surface-2 text-ink-muted")}>{gpsAt.has(l.id) ? "GPS live" : "No GPS"}</span>
                   </div>
                   <div className="mt-1 text-[12px] text-ink-muted">{own ? "Own fleet" : carrier ?? "3PL"} · {LORRY_TYPE_LABEL[l.type]}{l.model ? ` · ${l.model}` : ""}{l.active ? "" : " · Not in use"}</div>
                   <div className="my-1.5"><LorrySide box={box} /></div>

@@ -82,7 +82,7 @@
 }
 .result:first-child { border-top: 0; }
 .result:hover { background: var(--fin-paper); }
-.linkCard { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--hz-dk-primary-line, #b9d6d1); border-radius: 8px; background: #f3f8f7; }
+.linkCard { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--hz-dk-primary-line, #b9d6d1); border-radius: 8px; background: var(--hz-dk-surface-2, #f3f8f7); }
 .linkCard > svg { flex: none; color: var(--fin-petrol); }
 .linkText { flex: 1; min-width: 0; }
 .linkType { flex: none; font-size: 9.5px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--fin-brass); }
@@ -102,7 +102,7 @@
 .btnSecondary:hover:not(:disabled) { background: var(--fin-paper); }
 /* A task's delete, once asked (the same reds as .problem). */
 .btnDanger { border: 1px solid var(--hz-dk-err-line, #e7c9c9); background: var(--hz-dk-err-bg, #fbeeee); color: var(--hz-dk-expired-text, #7a2222); }
-.btnDanger:hover:not(:disabled) { background: #f6e0e0; }
+.btnDanger:hover:not(:disabled) { background: var(--hz-dk-err-bg, #f6e0e0); }
 .btnPrimary:disabled, .btnSecondary:disabled, .btnDanger:disabled { opacity: 0.55; cursor: default; }
 /* Pushes Edit task / Delete to the left of the foot, Close and Mark done to the right. */
 .footGap { flex: 1; }
@@ -173,13 +173,13 @@
 
 /* Setup › To do rules › New rule (batch 2c). */
 .headButton { margin-left: auto; height: 28px; }
-.newRule { display: flex; flex-direction: column; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--hz-c-border-subtle); background: #fbfcfa; }
+.newRule { display: flex; flex-direction: column; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--hz-c-border-subtle); background: var(--hz-dk-surface-2, #fbfcfa); }
 .templateList { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
 .template {
   display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border: 1px solid var(--hz-c-border); border-radius: 8px;
   background: var(--hz-c-surface); text-align: left; cursor: pointer; font: 13px 'IBM Plex Sans', system-ui, sans-serif; color: var(--hz-c-ink);
 }
 .template:hover { background: var(--hz-c-surface-2); }
-.templateOn, .templateOn:hover { border-color: var(--hz-c-primary); box-shadow: inset 0 0 0 1px var(--hz-c-primary); background: #f3f8f7; }
+.templateOn, .templateOn:hover { border-color: var(--hz-c-primary); box-shadow: inset 0 0 0 1px var(--hz-c-primary); background: var(--hz-dk-surface-2, #f3f8f7); }
 .newRuleRow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .yours { margin-left: 8px; height: 18px; display: inline-flex; align-items: center; padding: 0 6px; border-radius: 4px; background: var(--hz-dk-primary-soft, #eaf3f1); color: var(--hz-dk-primary-ink, #1d5c54); font-size: 10.5px; font-weight: 600; vertical-align: middle; }

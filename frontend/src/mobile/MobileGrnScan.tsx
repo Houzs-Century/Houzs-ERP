@@ -90,7 +90,7 @@ export function MobileGrnScan({ onBack, onOpenGrn }: { onBack: () => void; onOpe
   const btn = (primary: boolean): React.CSSProperties => ({
     height: 48, padding: "0 22px", borderRadius: 12,
     border: primary ? "none" : "1px solid #16695f",
-    background: primary ? "#16695f" : "#fff", color: primary ? "#fff" : "#16695f",
+    background: primary ? "var(--hz-c-primary)" : "var(--hz-c-surface)", color: primary ? "#fff" : "var(--hz-c-primary)",
     fontFamily: "inherit", fontSize: 14, fontWeight: 700, cursor: "pointer",
   });
 
@@ -110,7 +110,7 @@ export function MobileGrnScan({ onBack, onOpenGrn }: { onBack: () => void; onOpe
 
       <div className="scroll" style={{ padding: 14, paddingBottom: 120 }}>
         {error && (
-          <div style={{ background: "#fdecec", color: "#a33", borderRadius: 10, padding: "10px 12px", fontSize: 12.5, marginBottom: 12 }}>{error}</div>
+          <div style={{ background: "var(--hz-dk-err-bg, #fdecec)", color: "#a33", borderRadius: 10, padding: "10px 12px", fontSize: 12.5, marginBottom: 12 }}>{error}</div>
         )}
 
         <input ref={camInputRef} type="file" accept={ACCEPT} capture="environment" style={{ display: "none" }}

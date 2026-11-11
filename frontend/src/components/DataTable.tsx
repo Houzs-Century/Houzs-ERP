@@ -2739,7 +2739,7 @@ function DataTableInner<T, L>({
                   // Odd-row value = `surface-dim` (#ecebe2) at 35% over the
                   // white surface, pre-blended so there's no visible seam.
                   const stickyBg =
-                    rowIdx % 2 === 0 ? "#ffffff" : "#f8f8f5";
+                    rowIdx % 2 === 0 ? "var(--hz-c-surface)" : "var(--hz-dk-row-alt, #f8f8f5)";
                   // A falsy key means this row has nothing to drill into: no chevron.
                   const expId = expandable ? expansionId(row) || null : null;
                   const isExpanded = expId != null && expandedRowsEffective.has(expId);

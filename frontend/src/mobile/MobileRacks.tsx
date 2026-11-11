@@ -79,7 +79,7 @@ const STATUS_LABEL: Record<SlotStatus, string> = {
    the mobile palette variables. */
 function pillStyle(st: SlotStatus): { background: string; color: string } {
   if (st === "occupied") return { background: "var(--brand-bg)", color: "var(--brand-d)" };
-  if (st === "reserved") return { background: "#fdf2df", color: "#8a5a12" };
+  if (st === "reserved") return { background: "var(--hz-dk-warning-bg, #fdf2df)", color: "#8a5a12" };
   return { background: "var(--bg)", color: "var(--mut)" };
 }
 

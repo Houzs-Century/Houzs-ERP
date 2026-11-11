@@ -850,7 +850,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                   : "On order to the supplier. Tap Edit to request a line-item amendment — the coordinator and supplier confirm it before the order is revised."}
               </div>
             ) : (
-              <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#eef1ec", border: "1px solid var(--hz-c-border-subtle)", borderRadius: 10, padding: "9px 11px", marginBottom: 12, fontSize: 11, color: "#5c6156" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, background: "var(--hz-dk-surface-2, #eef1ec)", border: "1px solid var(--hz-c-border-subtle)", borderRadius: 10, padding: "9px 11px", marginBottom: 12, fontSize: 11, color: "#5c6156" }}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#767b6e" strokeWidth="2" strokeLinecap="round"><rect x="4" y="10" width="16" height="10" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg>
                 Locked view — tap Edit to change. Same form as New SO.
               </div>
@@ -1144,7 +1144,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                         full-price one. */}
                     <div className="money" style={{ fontSize: 11, color: "var(--mut)" }}>RM {rm(it.unit_price_sen ?? 0)} {"×"}{it.qty ?? 0}</div>
                     {isFoc ? (
-                      <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: ".3px", color: "var(--hz-c-accent)", background: "#f6ecd9", border: "1px solid #e6d3ad", borderRadius: 5, padding: "1px 5px" }}>FOC</span>
+                      <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: ".3px", color: "var(--hz-c-accent)", background: "var(--hz-dk-warning-bg, #f6ecd9)", border: "1px solid #e6d3ad", borderRadius: 5, padding: "1px 5px" }}>FOC</span>
                     ) : discountSen > 0 ? (
                       <div className="money" style={{ fontSize: 10.5, color: "var(--hz-c-err)" }}>Disc RM {rm(discountSen)}</div>
                     ) : null}
@@ -1197,7 +1197,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                   <button
                     type="button"
                     onClick={() => setPayEditing((v) => !v)}
-                    style={{ border: "1px solid var(--line2)", background: payEditing ? "#eef1ec" : "var(--hz-c-surface)", color: "var(--mut)", fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, borderRadius: 8, padding: "4px 10px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}
+                    style={{ border: "1px solid var(--line2)", background: payEditing ? "var(--hz-dk-surface-2, #eef1ec)" : "var(--hz-c-surface)", color: "var(--mut)", fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, borderRadius: 8, padding: "4px 10px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}
                   >
                     {payEditing ? "Done" : "Edit"}
                   </button>
@@ -1846,7 +1846,7 @@ function AmTypeBadges({ kinds }: { kinds: AmendmentFieldKind[] }) {
         </span>
       )}
       {types.map((t) => (
-        <span key={t} style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", padding: "1px 6px", borderRadius: 4, background: "#e7efe9", color: "var(--brand, #2b6a4a)" }}>
+        <span key={t} style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", padding: "1px 6px", borderRadius: 4, background: "var(--hz-dk-surface-2, #e7efe9)", color: "var(--brand, #2b6a4a)" }}>
           {TYPE_LABEL[t]}
         </span>
       ))}

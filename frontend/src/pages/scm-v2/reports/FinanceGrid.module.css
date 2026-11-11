@@ -76,7 +76,7 @@
 .rowCheck > * { color: var(--fin-detail); font-size: 12.5px; }
 .rowCheck .name { font-style: italic; }
 .rowBad > * { color: var(--fin-red); font-weight: 700; }
-.detailRow > td { padding: 0; background: #f7fbfa; border-bottom: 1px solid var(--hz-dk-primary-line, #d3e7e3); }
+.detailRow > td { padding: 0; background: var(--hz-dk-surface-2, #f7fbfa); border-bottom: 1px solid var(--hz-dk-primary-line, #d3e7e3); }
 .detail { padding: 10px 16px 12px 40px; }
 
 /* ── Under the table ── */

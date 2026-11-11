@@ -141,6 +141,19 @@
   --hz-dk-secondary-a: #6fb59f;
   --hz-dk-festive-b: #e8836f;
 
+  /* DataTable frozen columns on odd rows (pre-blended surface-dim over surface). */
+  --hz-dk-row-alt: color-mix(in srgb, rgb(var(--hz-surface-dim)) 35%, rgb(var(--hz-surface)));
+
+  /* Delivery Planning row marks (vendor/scm/lib/delivery-row-mark.ts). */
+  --hz-dk-mark-red: color-mix(in srgb, #e34b3f 26%, rgb(var(--hz-surface)));
+  --hz-dk-mark-orange: color-mix(in srgb, #ef8a2b 26%, rgb(var(--hz-surface)));
+  --hz-dk-mark-yellow: color-mix(in srgb, #eccb2a 26%, rgb(var(--hz-surface)));
+  --hz-dk-mark-green: color-mix(in srgb, #3ea05a 26%, rgb(var(--hz-surface)));
+  --hz-dk-mark-cyan: color-mix(in srgb, #3bb3c0 26%, rgb(var(--hz-surface)));
+  --hz-dk-mark-blue: color-mix(in srgb, #5b8fd6 26%, rgb(var(--hz-surface)));
+  --hz-dk-mark-purple: color-mix(in srgb, #8f74c4 26%, rgb(var(--hz-surface)));
+  --hz-dk-mark-grey: color-mix(in srgb, #9aa0a8 26%, rgb(var(--hz-surface)));
+
   /* vendor/design-system/tokens.css — the CSS-module pages read these. */
   --c-cream: rgb(var(--hz-surface));
   --c-beige: rgb(var(--hz-surface-dim));

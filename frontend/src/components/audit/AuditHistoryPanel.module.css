@@ -190,7 +190,7 @@
    shown for both. */
 .historyError {
   color: #8a2b2b;
-  background: #fdf3f3;
+  background: var(--hz-dk-err-bg, #fdf3f3);
   border: 1px solid #f0d5d5;
   border-radius: var(--radius-2, 6px);
   padding: var(--space-3);

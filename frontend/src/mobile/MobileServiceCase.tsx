@@ -97,7 +97,7 @@ const BROWN = "#a16a2e";
 const BROWN_SOFT = "#f6efd9";
 const BROWN_FG = "#8a6a2e";
 const GREEN = "#2f8a5b";
-const OK_BG = "#e2f0e9";
+const OK_BG = "var(--hz-dk-synced-bg, #e2f0e9)";
 const WARN = "#B76B00";
 const WARN_BG = "rgba(183,107,0,0.12)";
 const RED = "#b23a3a";
@@ -107,7 +107,7 @@ const BLUE = "#1F3A8A";
 const LINE = "#d6d9d2";
 const LINE_SOFT = "rgba(34,31,32,0.10)";
 const DIM = "#e3e6e0";
-const FIELD_BG = "#f4f6f3";
+const FIELD_BG = "var(--hz-dk-surface-2, #f4f6f3)";
 
 // Ordered stage pipeline + the resolution-routing rule now live in the SHARED
 // vendor/scm/lib/assr/stages module so desktop + mobile can't drift on them
@@ -169,7 +169,7 @@ const PRIORITY_META: Record<string, { label: string; color: string }> = {
   low: { label: "Low", color: GREY },
   normal: { label: "Normal", color: TEAL },
   high: { label: "High", color: WARN },
-  urgent: { label: "Urgent", color: "#B71C1C" },
+  urgent: { label: "Urgent", color: "var(--hz-dk-err, #B71C1C)" },
 };
 const issueOf = (r: Any) => get(r, "complaintIssue", "complaint_issue");
 const hoursToDeadline = (r: Any): number | null => {

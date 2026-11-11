@@ -3483,10 +3483,10 @@ const CodeFormatPanel = ({
     fontFamily: 'var(--font-mono)',
     fontSize: 'var(--fs-13)',
     padding: 'var(--space-3) var(--space-4)',
-    border: '1px solid #c2c6bd',
+    border: '1px solid var(--hz-c-border-strong)',
     borderRadius: 'var(--radius-sm)',
-    background: editMode ? '#fff' : '#f4f6f3',
-    color: '#11140f',
+    background: editMode ? 'var(--hz-c-surface)' : 'var(--hz-c-surface-2)',
+    color: 'var(--hz-c-ink)',
     width: '100%',
     outline: 'none',
   } as const;

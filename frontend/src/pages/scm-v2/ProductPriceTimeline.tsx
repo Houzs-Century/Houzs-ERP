@@ -54,14 +54,14 @@ export const ProductPriceTimeline = ({ row }: { row: MfgProductRow }) => {
 
   const h3 = {
     fontSize: 'var(--fs-12)', fontWeight: 700, textTransform: 'uppercase' as const,
-    letterSpacing: '0.06em', color: '#767b6e', marginBottom: 'var(--space-2)',
+    letterSpacing: '0.06em', color: 'var(--hz-c-ink-muted)', marginBottom: 'var(--space-2)',
   };
   const fieldLabel = {
     fontSize: 'var(--fs-11)', fontWeight: 700, textTransform: 'uppercase' as const,
-    letterSpacing: '0.04em', color: '#767b6e', marginBottom: 4, display: 'block',
+    letterSpacing: '0.04em', color: 'var(--hz-c-ink-muted)', marginBottom: 4, display: 'block',
   };
   const inputBox = {
-    background: '#fff', border: '1px solid #c2c6bd', borderRadius: 'var(--radius-sm)',
+    background: 'var(--hz-c-surface)', border: '1px solid var(--hz-c-border-strong)', borderRadius: 'var(--radius-sm)',
     padding: '4px 8px', fontSize: 'var(--fs-13)', outline: 'none',
   };
 

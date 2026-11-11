@@ -69,7 +69,7 @@
   background: transparent; text-align: left; cursor: pointer; font: 13px 'IBM Plex Sans', system-ui, sans-serif; color: var(--ink);
 }
 .popRow:hover { background: var(--hz-c-surface-2); }
-.popRowOn { font-weight: 600; background: #f2f8f7; }
+.popRowOn { font-weight: 600; background: var(--hz-dk-surface-2, #f2f8f7); }
 .popSub { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--muted); }
 
 /* ── One month ── */
@@ -125,8 +125,8 @@
 .figure + .figure { border-left: 1px solid var(--hz-c-border-subtle); }
 .figure:first-child { border-radius: 9px 0 0 9px; }
 .figure:last-child { border-radius: 0 9px 9px 0; }
-.figOk { background: #eef6f1; }
-.figWarn { background: #fbf6ea; }
+.figOk { background: var(--hz-dk-surface-2, #eef6f1); }
+.figWarn { background: var(--hz-dk-warning-bg, #fbf6ea); }
 .op {
   position: absolute; left: -11px; top: 50%; transform: translateY(-50%); width: 20px; height: 20px; box-sizing: border-box; display: grid; place-items: center;
   border: 1px solid var(--hz-c-border); border-radius: 999px; background: var(--hz-c-surface); font-size: 13px; font-weight: 600; line-height: 1; color: var(--hz-c-ink-muted);
@@ -192,15 +192,15 @@
 .textBtn:hover { text-decoration: underline; }
 .primary { border-color: var(--hz-dk-primary-line, #b9d6d1); background: var(--hz-c-primary-soft); color: var(--hz-c-primary-ink); }
 .primary:hover { background: var(--hz-dk-primary-soft, #d3e7e3); }
-.picked { background: #faf7f0; }
+.picked { background: var(--hz-dk-warning-bg, #faf7f0); }
 
 /* ── The Bank Reconciliation Statement on A4 (BankReconPrint) ── */
 .sheetMeta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 12px 0 8px; font-size: 11.5px; }
 .sheetMeta > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
 .sheetMeta i { font-style: normal; font-size: 9.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--hz-dk-ink-secondary, #5f6459); }
 .sheetDraft, .sheetFinal { margin: 6px 0 12px; padding: 8px 12px; border-radius: 4px; font-size: 11.5px; font-weight: 600; }
-.sheetDraft { background: #fbf6ea; color: var(--hz-dk-accent-ink, #7a5a1e); border: 1px solid #ecdcb8; }
-.sheetFinal { background: #eef6f1; color: #1f7a4f; border: 1px solid #bfdccb; }
+.sheetDraft { background: var(--hz-dk-warning-bg, #fbf6ea); color: var(--hz-dk-accent-ink, #7a5a1e); border: 1px solid #ecdcb8; }
+.sheetFinal { background: var(--hz-dk-surface-2, #eef6f1); color: #1f7a4f; border: 1px solid #bfdccb; }
 .sheetStrong td { font-weight: 700; border-top: 1px solid #11140f; }
 .sheetBad { color: var(--hz-dk-err, #a83434); font-weight: 700; }
 .sheetSection { margin-top: 14px; }

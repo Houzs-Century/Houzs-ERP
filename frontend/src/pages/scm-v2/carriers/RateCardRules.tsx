@@ -170,7 +170,7 @@ const ZoneTable = ({ cardId, rows, hidden }: { cardId: string; rows: ZoneRow[]; 
         </table>
       </div>
       {hidden.length > 0 && (
-        <div className="rounded-xl bg-[#f6ecd4] px-3 py-2.5 text-[12.5px] text-accent-ink">
+        <div className="rounded-xl bg-[color:var(--hz-dk-warning-bg,#f6ecd4)] px-3 py-2.5 text-[12.5px] text-accent-ink">
           <p className="mb-1.5 font-semibold">A zone priced twice: the card uses one of these, so delete the one that is wrong.</p>
           {hidden.map((r) => (
             <div key={r.id} className="flex items-center justify-between gap-3 py-0.5">

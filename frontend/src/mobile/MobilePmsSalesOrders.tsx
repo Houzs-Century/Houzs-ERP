@@ -39,7 +39,7 @@ export function MobilePmsSalesOrders({
     const pct = s.notOpenedPct != null ? ` (${Math.abs(s.notOpenedPct)}%)` : "";
     if (s.notOpenedRm > 0) gap = { text: `Not yet opened ${formatCurrency(s.notOpenedRm)}${pct}`, color: "#8a4e0e" };
     else if (s.notOpenedRm < 0) gap = { text: `Orders exceed final total by ${formatCurrency(-s.notOpenedRm)}${pct}`, color: "#0b6b8f" };
-    else gap = { text: "Opened orders match the final total", color: "#16695f" };
+    else gap = { text: "Opened orders match the final total", color: "var(--hz-c-primary)" };
   }
 
   return (

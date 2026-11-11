@@ -44,8 +44,8 @@ function RackCell({ grnId, header, line, onSaved }: { grnId: string; header: Hea
     : <RackRow grnId={grnId} header={header} line={line} onSaved={onSaved} />;
 }
 
-const LABEL_STYLE = { fontSize: 9.5, fontWeight: 700, letterSpacing: ".14em", textTransform: "uppercase", color: "#9aa093" } as const;
-const SMALL_BTN = { height: 32, padding: "0 10px", borderRadius: 8, border: "1px solid #e3e6e0", background: "#fff", fontFamily: "inherit", fontSize: 12.5 } as const;
+const LABEL_STYLE = { fontSize: 9.5, fontWeight: 700, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--hz-c-ink-soft)" } as const;
+const SMALL_BTN = { height: 32, padding: "0 10px", borderRadius: 8, border: "1px solid var(--hz-c-border-subtle)", background: "var(--hz-c-surface)", fontFamily: "inherit", fontSize: 12.5 } as const;
 
 function SplitRow({ grnId, header, line, onSaved }: { grnId: string; header: Header; line: Line; onSaved: () => void }) {
   const warehouseId = str(header?.warehouse_id);
@@ -76,7 +76,7 @@ function SplitRow({ grnId, header, line, onSaved }: { grnId: string; header: Hea
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
         <span style={LABEL_STYLE}>Racks</span>
         {split.splits.map((s) => (
-          <span key={s.rackId} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 4px 3px 9px", borderRadius: 999, background: "#e8f1ef", color: "var(--hz-c-ink)", fontSize: 12.5 }}>
+          <span key={s.rackId} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 4px 3px 9px", borderRadius: 999, background: "var(--hz-dk-surface-2, #e8f1ef)", color: "var(--hz-c-ink)", fontSize: 12.5 }}>
             {labelOf(s.rackId)} &times; {s.qty}
             <button type="button" aria-label={`Remove ${labelOf(s.rackId)}`} disabled={busy}
               onClick={() => split.remove(s.rackId, onSaved)}

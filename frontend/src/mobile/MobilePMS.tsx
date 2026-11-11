@@ -624,7 +624,7 @@ function ProjectListView({
             <button
               onClick={() => { if (tickOnly) setAssignedOnly(!showAssigned); }}
               className={myEventsOn ? "chip on" : "chip"}
-              style={myEventsOn ? undefined : { borderColor: "#bcdcd7", color: "#16695f" }}
+              style={myEventsOn ? undefined : { borderColor: "#bcdcd7", color: "var(--hz-c-primary)" }}
             >
               My events
             </button>
@@ -698,7 +698,7 @@ function ProjectListView({
                     {!!(r as any).my_pending_titles && (
                       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
                         {String((r as any).my_pending_titles).split("|").map((t: string) => (
-                          <span key={t} className="rbadge" style={{ background: "#fdf1e3", color: "var(--hz-c-accent)" }}>
+                          <span key={t} className="rbadge" style={{ background: "var(--hz-dk-warning-bg, #fdf1e3)", color: "var(--hz-c-accent)" }}>
                             ⏳ {t}
                           </span>
                         ))}
@@ -1978,7 +1978,7 @@ function SalesAttending({
                 {it.kind === "rep" && <span className="money" style={{ fontSize: 10, color: "var(--hz-c-ink-soft)" }}>{it.code || "—"}</span>}
                 <span style={{ fontSize: 13, flex: 1, minWidth: 0 }}>{it.name}</span>
                 {it.kind === "staff" && (
-                  <span style={{ fontSize: 8.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".05em", color: "#b4791a", background: "#fdf1dc", borderRadius: 10, padding: "1px 6px" }} title="Not in the Sales Team yet — adding puts them in it">+ team</span>
+                  <span style={{ fontSize: 8.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".05em", color: "#b4791a", background: "var(--hz-dk-warning-bg, #fdf1dc)", borderRadius: 10, padding: "1px 6px" }} title="Not in the Sales Team yet — adding puts them in it">+ team</span>
                 )}
               </label>
             ))}
@@ -2151,7 +2151,7 @@ function StagePipeline({ stage, sections }: { stage: string | null; sections?: S
       ? { background: "#2f8a5b", color: "#fff" }
       : state === "current"
         ? { background: "#cf9a2e", color: "#fff" }
-        : { background: "#fff", border: "2px solid #d6d9d2", color: "#9aa093" };
+        : { background: "var(--hz-c-surface)", border: "2px solid var(--hz-c-border)", color: "var(--hz-c-ink-soft)" };
 
   return (
     <div className="card"><div className="card-b">
@@ -2254,7 +2254,7 @@ function TasklistSectionView({
       <div
         key={it.id}
         id={`pms-task-${it.id}`}
-        style={flashId === it.id ? { outline: "2px solid #16695f", outlineOffset: 2, borderRadius: 8 } : undefined}
+        style={flashId === it.id ? { outline: "2px solid var(--hz-c-primary)", outlineOffset: 2, borderRadius: 8 } : undefined}
       >
         <TaskRow
           item={it}
@@ -2338,7 +2338,7 @@ function TasklistSectionView({
 // Per-photo remark (owner 2026-07-16): each attachment carries its own caption,
 // edited inline under its file chip and saved via PATCH /checklist/attachments/:id.
 // Owns its state so a parent re-render doesn't clobber an in-progress edit.
-const REMARK_UNSAVED = { fontSize: 11, color: "#B8331F", paddingLeft: 2, paddingTop: 2 } as const;
+const REMARK_UNSAVED = { fontSize: 11, color: "var(--hz-dk-festive-b, #B8331F)", paddingLeft: 2, paddingTop: 2 } as const;
 
 export function AttachRemark({ att, canEdit }: { att: TaskAttachment; canEdit: boolean }) {
   const [cap, setCap] = useState(att.caption ?? "");
@@ -2751,7 +2751,7 @@ function TaskRow({
             <button className="tinybtn" style={{ background: "var(--hz-c-synced-bg)", borderColor: "#bcdcd7", color: "var(--hz-c-synced)" }} disabled={busy} onClick={() => review("approve")}>Approve</button>
           )}
           {reviewStatus !== "rejected" && (
-            <button className="tinybtn" style={{ background: "#f7e7e5", borderColor: "#e6c9c6", color: "#a13a34" }} disabled={busy} onClick={() => review("reject")}>Reject</button>
+            <button className="tinybtn" style={{ background: "var(--hz-dk-err-bg, #f7e7e5)", borderColor: "#e6c9c6", color: "#a13a34" }} disabled={busy} onClick={() => review("reject")}>Reject</button>
           )}
         </>
       )}
@@ -3661,7 +3661,7 @@ function FloorPlans({
                 <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
                   <span style={{ fontSize: 13, fontWeight: 800, color: "var(--hz-c-ink)", marginRight: "auto" }}>{t.label}</span>
                   {tileItem && <ReviewBadge reviewStatus={tileItem.review_status} item={tileItem} hasFiles={files.length > 0} />}
-                  <span className="rbadge" style={{ background: files.length ? t.bg : "#f0f1ed", color: files.length ? t.col : "var(--hz-c-ink-soft)" }}>
+                  <span className="rbadge" style={{ background: files.length ? t.bg : "var(--hz-dk-surface-2, #f0f1ed)", color: files.length ? t.col : "var(--hz-c-ink-soft)" }}>
                     {files.length ? `${t.badge}${files.length > 1 ? ` · ${files.length}` : ""}` : "NONE"}
                   </span>
                 </div>
@@ -3729,8 +3729,8 @@ function FloorPlans({
                     : <span className="ph" style={{ display: "block", width: 54, height: 44 }} />}
                 </span>
                 <span className="rbadge" style={a.dir === "IN"
-                  ? { background: "#e2ecf5", color: "#2f5c8a" }
-                  : { background: "#e2f0e9", color: "#2f8a5b" }}>{a.dir}</span>
+                  ? { background: "var(--hz-dk-surface-2, #e2ecf5)", color: "#2f5c8a" }
+                  : { background: "var(--hz-c-synced-bg)", color: "var(--hz-c-synced)" }}>{a.dir}</span>
                 <span style={{ flex: 1, minWidth: 80, fontSize: 11, color: "var(--hz-c-ink-secondary)" }}>
                   {[a.file_name || "Record", a.uploader_name || null, a.uploaded_at ? dm(a.uploaded_at) : null].filter(Boolean).join(" · ")}
                 </span>
@@ -4119,7 +4119,7 @@ function FinancialSnapshot({
 // List meta pill (spec project-list: branding / venue chips under the title).
 function ListChip({ children }: { children: ReactNode }) {
   return (
-    <span style={{ fontSize: 10, fontWeight: 700, color: "#5c6156", background: "#f0f1ed", border: "1px solid var(--line)", padding: "3px 8px", borderRadius: 7 }}>
+    <span style={{ fontSize: 10, fontWeight: 700, color: "#5c6156", background: "var(--hz-dk-surface-2, #f0f1ed)", border: "1px solid var(--line)", padding: "3px 8px", borderRadius: 7 }}>
       {children}
     </span>
   );

@@ -4011,7 +4011,7 @@ const changeTypeLabel = (t: string): string =>
 const strikeIf = (changed: boolean): CSSProperties | undefined =>
   changed ? { textDecoration: 'line-through', opacity: 0.7 } : undefined;
 const emphasiseIf = (changed: boolean): CSSProperties | undefined =>
-  changed ? { fontWeight: 700, color: '#0c3f39' } : undefined;
+  changed ? { fontWeight: 700, color: 'var(--hz-c-primary-ink)' } : undefined;
 
 /* The responsible department(s) for a row's changed atoms — de-duplicated, for
    the amendment diff modal's Dept column (accountability routing). */

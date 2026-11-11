@@ -157,10 +157,10 @@ describe('the debtors', () => {
     expect(within(ahmad).getAllByRole('cell').map((c) => c.textContent)).toContain('2');
     expect(within(ahmad).getByText('RM 450.00')).toBeTruthy();
     expect(within(ahmad).getByText('Active')).toBeTruthy();
-    expect(ahmad.getAttribute('style') ?? '').toContain('252, 247, 236');
+    expect(ahmad.getAttribute('style') ?? '').toMatch(/#fcf7ec|252, 247, 236/);
     const old = row('OLD DEBTOR');
     expect(within(old).getByText('Inactive')).toBeTruthy();
-    expect(old.getAttribute('style') ?? '').not.toContain('252, 247, 236');
+    expect(old.getAttribute('style') ?? '').not.toMatch(/#fcf7ec|252, 247, 236/);
     /* No code, no registration, no phone: a dash each. */
     expect(within(old).getAllByText('—')).toHaveLength(3);
   });

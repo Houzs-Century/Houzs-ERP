@@ -56,7 +56,7 @@ export function BreakdownFiles({ caseId, refs, onChanged }: { caseId: string; re
       {refs.length > 0 && (
         <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[12.5px]">
           {refs.map((k) => (
-            <span key={k} className="inline-flex h-8 items-center gap-1.5 rounded-md bg-[#ece8df] pl-2.5 pr-1">
+            <span key={k} className="inline-flex h-8 items-center gap-1.5 rounded-md bg-[color:var(--hz-dk-warning-bg,#ece8df)] pl-2.5 pr-1">
               <button type="button" onClick={() => void open(k)} className="font-medium text-primary-ink underline">{mediaLabel(k)}</button>
               <button type="button" disabled={busy} onClick={() => void remove(k)} className="rounded p-1 text-ink-muted hover:text-err" aria-label={`Remove ${mediaLabel(k)}`}>
                 <X size={13} />

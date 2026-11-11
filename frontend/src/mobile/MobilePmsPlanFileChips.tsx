@@ -73,7 +73,7 @@ export function PlanFileChips({
           style={{
             display: "inline-flex", alignItems: "center", gap: 4, maxWidth: "100%",
             border: "1px solid var(--hz-c-border-subtle)", borderRadius: 7, padding: "2px 4px 2px 6px",
-            fontSize: 10, color: "var(--hz-c-ink-secondary)", background: "#fbfcfa",
+            fontSize: 10, color: "var(--hz-c-ink-secondary)", background: "var(--hz-dk-surface-2, #fbfcfa)",
           }}
         >
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 128 }}>
