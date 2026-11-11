@@ -454,7 +454,7 @@ export function PaymentRequestsFinance({ listQ, mineOnly, onMineOnly }: { listQ:
         getRowKey={(r) => r.id}
         getRowStyle={(r) => {
           /* A withdrawn request fades; the one open in the drawer is marked. */
-          const style = { ...(r.stage === 'WITHDRAWN' ? { opacity: 0.55 } : {}), ...(r.id === openId ? { background: '#f3f8f7' } : {}) };
+          const style = { ...(r.stage === 'WITHDRAWN' ? { opacity: 0.55 } : {}), ...(r.id === openId ? { background: 'var(--hz-dk-surface-2, #f3f8f7)' } : {}) };
           return Object.keys(style).length > 0 ? style : undefined;
         }}
         contextMenu={(r) => menuOf(r)}

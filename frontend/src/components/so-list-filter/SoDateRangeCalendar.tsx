@@ -102,8 +102,8 @@ export function SoDateRangeCalendar({
 }
 
 const navBtn = {
-  border: "1px solid #d6d9d2",
-  background: "#fff",
+  border: "1px solid var(--hz-c-border)",
+  background: "var(--hz-c-surface)",
   borderRadius: 7,
   width: 28,
   height: 26,

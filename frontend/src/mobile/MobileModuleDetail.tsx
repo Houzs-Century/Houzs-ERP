@@ -1158,9 +1158,9 @@ const SI_METHODS: Array<{ value: string; label: string }> = PAYMENT_METHOD_CODES
 // variant, mirroring the SO-detail actbar (Edit / Cancel = white outline).
 function actSkin(variant: ActVariant, disabled: boolean): React.CSSProperties {
   const skin: React.CSSProperties =
-    variant === "solid" ? { background: "#16695f", color: "#fff", border: "none" }
-    : variant === "danger" ? { background: "#fff", color: "#b23a3a", border: "1.5px solid #f0d4d4" }
-    : { background: "#fff", color: "#16695f", border: "1.5px solid #16695f" };
+    variant === "solid" ? { background: "var(--hz-c-primary)", color: "#fff", border: "none" }
+    : variant === "danger" ? { background: "var(--hz-c-surface)", color: "var(--hz-c-err)", border: "1.5px solid #f0d4d4" }
+    : { background: "var(--hz-c-surface)", color: "var(--hz-c-primary)", border: "1.5px solid var(--hz-c-primary)" };
   // white-space:nowrap per spec — labels never wrap; the row lets buttons flex.
   return { flex: 1, padding: 12, borderRadius: 11, fontSize: 13.5, whiteSpace: "nowrap", ...skin, opacity: disabled ? 0.55 : 1 };
 }

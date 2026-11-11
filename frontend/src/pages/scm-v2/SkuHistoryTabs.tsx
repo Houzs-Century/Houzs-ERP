@@ -27,7 +27,7 @@ function tabButton(active: boolean): React.CSSProperties {
     fontSize: 'var(--fs-12)', fontWeight: 600, cursor: 'pointer',
     borderRadius: 'var(--radius-sm)', padding: '4px 10px',
     border: `1px solid ${active ? '#16695f' : '#c2c6bd'}`,
-    background: active ? '#16695f' : '#fff',
+    background: active ? 'var(--hz-c-primary)' : '#fff',
     color: active ? '#fff' : '#3a3f36',
   };
 }

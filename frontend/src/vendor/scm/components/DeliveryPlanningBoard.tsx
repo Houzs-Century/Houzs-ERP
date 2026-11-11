@@ -315,7 +315,7 @@ const fieldNotSaved = (err: unknown) => serviceNotify({
 });
 
 /* An option inherits the select's chip colour unless it sets its own. */
-const plainOption = { backgroundColor: '#fff', color: '#11140f' };
+const plainOption = { backgroundColor: 'var(--hz-c-surface)', color: 'var(--hz-c-ink)' };
 
 /* The "Delivery Status" column's inline editor — the customer-message follow-up
    workflow status (owner 2026-09-22), one of the 23 MESSAGE_STATUSES or blank.

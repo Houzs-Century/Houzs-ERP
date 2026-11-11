@@ -74,7 +74,7 @@ export function MobileMessageAcks({
                 padding: "2px 7px",
                 borderRadius: 6,
                 fontWeight: 600,
-                background: a.ackedAt ? "#e3f4e8" : a.overdue ? "#fbe9e7" : "#fdf3e1",
+                background: a.ackedAt ? "var(--hz-dk-synced-bg, #e3f4e8)" : a.overdue ? "#fbe9e7" : "#fdf3e1",
                 color: a.ackedAt ? "#1f6b3a" : a.overdue ? "#b42318" : "#b54708",
               }}
             >
@@ -106,7 +106,7 @@ export function MobilePendingAcks({ onOpen }: { onOpen: (threadId: string) => vo
   const owed = data ?? [];
   if (owed.length === 0) return null;
   return (
-    <div style={{ marginBottom: 10, padding: "8px 10px", borderRadius: 11, background: "#fdf3e1", border: "1px solid #f1d9a8" }}>
+    <div style={{ marginBottom: 10, padding: "8px 10px", borderRadius: 11, background: "var(--hz-dk-warning-bg, #fdf3e1)", border: "1px solid #f1d9a8" }}>
       <div style={{ fontSize: 11, fontWeight: 800, color: "#8a5a00", marginBottom: 4 }}>To acknowledge ({owed.length})</div>
       {owed.slice(0, 5).map((o) => (
         <button

@@ -49,7 +49,7 @@ type Props = {
 const KIND_TABS: BillKindTab[] = ['ALL', 'API', 'PI', 'SCN'];
 const TONE: Record<BillTone, string> = { calm: mo.toneCalm, warn: mo.toneWarn, info: mo.toneInfo, late: mo.toneLate };
 /* The design's sand: a posted bill still owed, a credit note not used yet. */
-const OPEN_BG = '#fcf7ec';
+const OPEN_BG = 'var(--hz-dk-warning-bg, #fcf7ec)';
 
 type MenuItem = { label: string; onClick: () => void; danger?: boolean; divider?: boolean };
 

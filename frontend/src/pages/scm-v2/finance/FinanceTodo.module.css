@@ -8,7 +8,7 @@
   --fin-muted: var(--hz-c-ink-muted);
   --fin-line: var(--hz-c-border);
   --fin-rule: var(--hz-c-border-subtle);
-  --fin-head: #f9faf8;
+  --fin-head: var(--hz-dk-surface-2, #f9faf8);
   --fin-petrol: var(--hz-c-primary);
   --fin-brass: var(--hz-c-accent);
   display: grid;

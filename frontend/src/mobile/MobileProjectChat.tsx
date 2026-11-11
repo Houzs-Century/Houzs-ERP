@@ -113,7 +113,7 @@ export function MobileProjectChat({
             overflow: "hidden",
             maxHeight: "60vh",
             overflowY: "auto",
-            background: "#fafbf8",
+            background: "var(--hz-dk-surface-2, #fafbf8)",
           }}
         >
           {isLoading ? (
@@ -143,7 +143,7 @@ export function MobileProjectChat({
                     style={{
                       fontSize: 13,
                       color: "var(--hz-c-ink)",
-                      background: mine ? "#e5f4ec" : "var(--hz-c-surface)",
+                      background: mine ? "var(--hz-dk-synced-bg, #e5f4ec)" : "var(--hz-c-surface)",
                       border: "1px solid var(--hz-dk-border-subtle, #eceee9)",
                       borderRadius: 10,
                       padding: "8px 11px",

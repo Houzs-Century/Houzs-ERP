@@ -228,7 +228,7 @@ const CardList = ({ cards, companies, isLoading, loadFailed, sel, onSelect, onCr
   const row = (key: string, on: boolean, name: string, sub: string, subTone: string, badge: ReactNode, onClick: () => void) => (
     <button key={key} type="button" onClick={onClick} aria-current={on ? 'true' : undefined}
       className={cn('flex w-full items-center gap-3 border-l-[3px] px-[15px] py-[10px] text-left',
-        on ? 'border-primary bg-[#eef6f3]' : 'border-transparent hover:bg-surface-2')}>
+        on ? 'border-primary bg-[color:var(--hz-dk-surface-2,#eef6f3)]' : 'border-transparent hover:bg-surface-2')}>
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="truncate text-[14px] font-bold text-ink">{name}</span>
         <span className={cn('text-[12.5px]', subTone)}>{sub}</span>
@@ -369,7 +369,7 @@ const CardEditor = ({ cardId, onDeleted }: { cardId: string; onDeleted: () => vo
       <section aria-label="Card settings" className={cn(CARD, 'flex flex-col gap-3.5 px-5 py-[18px]')}>
         <h3 className="text-[16px] font-bold text-ink">Card settings</h3>
         {(kind === 'removed' || kind === 'inactive') && (
-          <div className="flex flex-wrap items-end gap-3 rounded-xl bg-[#f6ecd4] px-4 py-3 text-[13px] text-accent-ink">
+          <div className="flex flex-wrap items-end gap-3 rounded-xl bg-[color:var(--hz-dk-warning-bg,#f6ecd4)] px-4 py-3 text-[13px] text-accent-ink">
             <p className="min-w-[220px] flex-[1_1_260px]">
               {kind === 'removed'
                 ? 'This card’s 3PL company was deleted, so the card belongs to no carrier. Move it to a carrier, or delete it.'
@@ -546,7 +546,7 @@ const CalculatorPanel = ({ cardId, basis, zones, rules }: { cardId: string; basi
         <button type="button" className={BTN_PRI} onClick={run} disabled={compute.isPending}>{compute.isPending ? 'Computing…' : 'Compute cost'}</button>
       </div>
       {breakdown && (
-        <div className="flex flex-col gap-1.5 rounded-[14px] bg-[#f4f8f6] px-[18px] py-3.5">
+        <div className="flex flex-col gap-1.5 rounded-[14px] bg-[color:var(--hz-dk-surface-2,#f4f8f6)] px-[18px] py-3.5">
           {breakdown.lines.map((l, i) => (
             <div key={i} className={cn('flex justify-between gap-3 text-[13.5px]', l.amountSen < 0 ? 'text-ink-muted' : 'text-ink')}>
               <span>{l.label}</span>

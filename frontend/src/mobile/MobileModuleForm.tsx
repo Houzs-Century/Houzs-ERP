@@ -342,7 +342,7 @@ export function MobileModuleForm({
               const options = f.optionsSource ? remoteOptions[f.key] ?? [] : f.options ?? [];
               return (
                 <label key={f.key} className="fld">
-                  <span className="fld-l" style={err ? { color: "#b23a3a" } : undefined}>
+                  <span className="fld-l" style={err ? { color: "var(--hz-c-err)" } : undefined}>
                     {f.required ? `${f.label} *` : f.label}
                   </span>
                   {f.type === "select" ? (

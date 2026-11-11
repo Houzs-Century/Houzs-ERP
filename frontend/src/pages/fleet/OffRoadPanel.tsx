@@ -72,7 +72,7 @@ export function OffRoadPanel({ lorryId, plate, onChanged }: { lorryId: string; p
           </div>
         </div>
       )}
-      {err && <p role="alert" className="rounded-md bg-[#f6dcdc] px-3 py-2 text-[12.5px] font-semibold text-[color:var(--hz-dk-err,#8a2c2c)]">{err}</p>}
+      {err && <p role="alert" className="rounded-md bg-[color:var(--hz-dk-err-bg,#f6dcdc)] px-3 py-2 text-[12.5px] font-semibold text-[color:var(--hz-dk-err,#8a2c2c)]">{err}</p>}
       {asking && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg bg-surface-2 p-3 text-[12.5px] text-ink">
           <span className="flex-1">{asking.state === "planned" ? `Cancel this off-the-road plan for ${plate}?` : `Put ${plate} back on the road? It can be planned for deliveries from today.`}</span>

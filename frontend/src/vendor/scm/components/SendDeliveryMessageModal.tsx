@@ -138,7 +138,7 @@ const DRIVER_BLOCK_HINT: Record<NonNullable<DriverGroupPlan['block']>, string> =
 };
 
 const fieldStyle = { display: 'grid', gap: 4, fontSize: 'var(--fs-12)' } as const;
-const inputStyle = { padding: '6px 8px', border: '1px solid var(--line)', borderRadius: 8, fontSize: 'var(--fs-13)', background: '#fff' } as const;
+const inputStyle = { padding: '6px 8px', border: '1px solid var(--line)', borderRadius: 8, fontSize: 'var(--fs-13)', background: 'var(--hz-c-surface)' } as const;
 const noteStyle = { marginBottom: 'var(--space-3)', padding: 'var(--space-3)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md)', fontSize: 'var(--fs-12)', color: 'var(--c-muted, #767b6e)' } as const;
 
 export const SendDeliveryMessageModal = ({ rows, onClose, onSent, kind = 'delivery' }: {

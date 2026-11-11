@@ -54,7 +54,7 @@ const cell: React.CSSProperties = {
 
 export function PrivacyPolicy() {
   return (
-    <div style={{ background: "#fafaf7", minHeight: "100vh", color: "#23281f" }}>
+    <div style={{ background: "var(--hz-dk-surface-2, #fafaf7)", minHeight: "100vh", color: "#23281f" }}>
       <main style={{ maxWidth: 720, margin: "0 auto", padding: "32px 20px 64px" }}>
         <h1 style={{ fontSize: 26, margin: "18px 0 4px" }}>Privacy Policy</h1>
         <p style={meta}>

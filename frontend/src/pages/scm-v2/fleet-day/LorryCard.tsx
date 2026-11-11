@@ -16,7 +16,7 @@ const STATUS_META: Record<StopStatus, { label: string; dot: string; text: string
 function RunStatusPill({ run }: { run: LorryRunVM }) {
   const cls =
     run.status === 'COMPLETED' ? 'bg-synced-bg text-synced'
-      : run.status === 'ON_THE_WAY' ? 'bg-[#e6eaf4] text-learning'
+      : run.status === 'ON_THE_WAY' ? 'bg-[color:var(--hz-dk-surface-2,#e6eaf4)] text-learning'
         : 'bg-surface-dim text-ink-muted';
   return <span className={cn('rounded-full px-2 py-0.5 text-[10.5px] font-bold', cls)}>{RUN_STATUS_LABEL[run.status]}</span>;
 }
@@ -32,7 +32,7 @@ function SlotTag({ label }: { label: string }) {
  *  stand out on their lorry's card. */
 function JobTag({ label }: { label: string | null }) {
   if (!label) return null;
-  return <span className="shrink-0 rounded bg-[#e6eaf4] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-brand text-learning">{label}</span>;
+  return <span className="shrink-0 rounded bg-[color:var(--hz-dk-surface-2,#e6eaf4)] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-brand text-learning">{label}</span>;
 }
 
 function CardBtn({ icon, label, onClick }: { icon: React.ReactNode; label: string; onClick: () => void }) {

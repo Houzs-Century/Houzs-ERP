@@ -102,7 +102,7 @@
   border-radius: 999px;
   font-size: 12px;
   color: var(--c-ink);
-  background: #faf8f6;
+  background: var(--hz-dk-surface-2, #faf8f6);
 }
 
 /* ── Multi-order + labeled slots ─────────────────────────────────────────── */
@@ -212,7 +212,7 @@
   align-items: center;
   justify-content: center;
   gap: 8px;
-  background: #faf8f6;
+  background: var(--hz-dk-surface-2, #faf8f6);
   position: relative;
 }
 .slotFileName {
@@ -398,7 +398,7 @@
 .rawText {
   font-size: 13px;
   color: var(--c-ink);
-  background: #faf8f6;
+  background: var(--hz-dk-surface-2, #faf8f6);
   border-radius: 6px;
   padding: 6px 10px;
   font-style: italic;

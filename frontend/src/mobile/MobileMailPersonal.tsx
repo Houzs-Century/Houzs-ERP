@@ -4,7 +4,7 @@ import { useMailVisibility } from "../pages/MailCenter/mail-sidebar";
 import { LEVEL_LABEL, REACH_LABEL } from "../pages/MailCenter/mail-personal";
 import { useMailClaim } from "../pages/MailCenter/mail-claim";
 
-const field = { width: "100%", boxSizing: "border-box", padding: "8px 10px", borderRadius: 10, border: "1px solid #d9ddd5", fontSize: 13, background: "#fff" } as const;
+const field = { width: "100%", boxSizing: "border-box", padding: "8px 10px", borderRadius: 10, border: "1px solid #d9ddd5", fontSize: 13, background: "var(--hz-c-surface)" } as const;
 
 /** HC-0157 A, phone side of ClaimMyAddress in pages/MailCenter/mail-sidebar.tsx. */
 function MobileClaimAddress() {

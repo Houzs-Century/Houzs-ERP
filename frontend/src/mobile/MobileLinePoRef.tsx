@@ -26,7 +26,7 @@ const rowStyle: CSSProperties = { flexBasis: "100%", display: "flex", alignItems
 const eyebrowStyle: CSSProperties = { fontSize: 9.5, fontWeight: 700, letterSpacing: ".3px", textTransform: "uppercase", color: "var(--hz-c-ink-soft)" };
 const chipStyle: CSSProperties = {
   fontFamily: "monospace", fontSize: 11, fontWeight: 700, color: "var(--hz-c-primary-ink)",
-  background: "#eef3f1", border: "1px solid #d7e2de", borderRadius: 5, padding: "1px 6px",
+  background: "var(--hz-dk-surface-2, #eef3f1)", border: "1px solid #d7e2de", borderRadius: 5, padding: "1px 6px",
 };
 
 export function MobileLinePoRef({ poRef, nav }: { poRef: LinePoLink | null | undefined; nav?: FlowNav }) {

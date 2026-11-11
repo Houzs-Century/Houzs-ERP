@@ -220,7 +220,7 @@ export function LorryRecord() {
               <ul className="-mx-1 flex flex-col">
                 {attention.map((a) => (
                   <li key={a.text} className="border-b border-[#efebe2] last:border-b-0">
-                    <button type="button" onClick={() => openTab(a.tab)} className="flex min-h-12 w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-lg px-1 py-2.5 text-left hover:bg-[#faf9f6]">
+                    <button type="button" onClick={() => openTab(a.tab)} className="flex min-h-12 w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-lg px-1 py-2.5 text-left hover:bg-[color:var(--hz-dk-surface-2,#faf9f6)]">
                       <span className={cn("h-2.5 w-2.5 flex-none rounded-full", TONE_DOT[a.tone])} />
                       <span className="min-w-0 flex-1 text-[14px] font-semibold text-ink">{a.text}</span>
                       <Pill tone={a.tone}>{a.tag}</Pill>

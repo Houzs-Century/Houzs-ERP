@@ -46,8 +46,8 @@ type StatePal = {
 };
 const PAL: Record<SlotStatus, StatePal> = {
   occupied: { bg: '#e1efed', border: '#b9d4ce', fg: '#0c3f39', levelBg: '#16695f', levelFg: '#ffffff', tick: '#16695f', tickBd: '#0c3f39', label: 'Occupied', badgeBg: '#e1efed', badgeFg: '#0c3f39', swatch: '#16695f', swatchBd: '#0c3f39' },
-  empty: { bg: '#ffffff', border: '#e3e6e0', fg: '#414539', levelBg: '#f4f6f3', levelFg: '#414539', tick: '#ffffff', tickBd: '#d3d8cf', label: 'Empty', badgeBg: '#f4f6f3', badgeFg: '#414539', swatch: '#ffffff', swatchBd: '#d3d8cf' },
-  reserved: { bg: '#f6efd9', border: '#d6d9d2', fg: '#6e4d12', levelBg: '#6e4d12', levelFg: '#ffffff', tick: '#b76b00', tickBd: '#6e4d12', label: 'Reserved', badgeBg: '#f6efd9', badgeFg: '#6e4d12', swatch: '#b76b00', swatchBd: '#6e4d12' },
+  empty: { bg: '#ffffff', border: 'var(--hz-c-border-subtle)', fg: '#414539', levelBg: '#f4f6f3', levelFg: '#414539', tick: '#ffffff', tickBd: '#d3d8cf', label: 'Empty', badgeBg: '#f4f6f3', badgeFg: '#414539', swatch: '#ffffff', swatchBd: '#d3d8cf' },
+  reserved: { bg: '#f6efd9', border: 'var(--hz-c-border)', fg: '#6e4d12', levelBg: '#6e4d12', levelFg: '#ffffff', tick: '#b76b00', tickBd: '#6e4d12', label: 'Reserved', badgeBg: '#f6efd9', badgeFg: '#6e4d12', swatch: '#b76b00', swatchBd: '#6e4d12' },
 };
 /* Legend / chip order, derived from PAL's key order so the status vocabulary
    lives in ONE place (occupied, empty, reserved). */

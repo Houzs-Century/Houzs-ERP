@@ -901,7 +901,7 @@ function MailThread({
               onClick={trash}
               disabled={busy}
               className="tinybtn"
-              style={{ height: 22, padding: "0 9px", background: "#fbf1f0", borderColor: "#e3c4c1", color: "var(--hz-c-err)" }}
+              style={{ height: 22, padding: "0 9px", background: "var(--hz-dk-err-bg, #fbf1f0)", borderColor: "#e3c4c1", color: "var(--hz-c-err)" }}
             >
               {trashed ? "Restore" : "Trash"}
             </button>
@@ -1779,7 +1779,7 @@ function OutboxSheet({ id, onClose }: { id: string; onClose: () => void }) {
               )}
             </div>
             {data.status === "FAILED" && data.lastError && (
-              <div style={{ background: "#fbf1f0", border: "1px solid #e3c4c1", borderRadius: 11, padding: "9px 11px", fontSize: 11.5, color: "var(--hz-c-err)", marginBottom: 10, wordBreak: "break-word" }}>
+              <div style={{ background: "var(--hz-dk-err-bg, #fbf1f0)", border: "1px solid #e3c4c1", borderRadius: 11, padding: "9px 11px", fontSize: 11.5, color: "var(--hz-c-err)", marginBottom: 10, wordBreak: "break-word" }}>
                 Error: {data.lastError}
               </div>
             )}

@@ -735,7 +735,7 @@ function FlowStep({ node, label, no, sub, done }: { node: string; label: string;
   return (
     <div style={{ display: "flex", gap: 12, alignItems: "stretch" }}>
       <div style={{ flex: "none", width: 28, height: 28, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 800, background: done ? "var(--green-bg)" : "var(--hz-c-surface)", color: done ? "var(--green)" : "var(--mut2)", border: done ? "2px solid var(--green)" : "2px dashed var(--mut2)" }}>{node}</div>
-      <div style={{ flex: 1, background: done ? "#f2f8f6" : "var(--hz-c-surface)", border: done ? "1px solid #cfe4e0" : "1px dashed var(--line-card)", borderRadius: 11, padding: "9px 12px" }}>
+      <div style={{ flex: 1, background: done ? "var(--hz-dk-surface-2, #f2f8f6)" : "var(--hz-c-surface)", border: done ? "1px solid #cfe4e0" : "1px dashed var(--line-card)", borderRadius: 11, padding: "9px 12px" }}>
         <div style={{ fontSize: 9, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".05em", color: "var(--mut)" }}>{label}</div>
         <div className="money" style={{ fontSize: 13, fontWeight: 700, color: done ? "var(--brand-d)" : "var(--mut2)", marginTop: 2 }}>{no}</div>
         <div style={{ fontSize: 11, color: "var(--mut)", marginTop: 1 }}>{sub}</div>

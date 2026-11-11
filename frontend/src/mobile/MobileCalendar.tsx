@@ -843,7 +843,7 @@ function DaySheet({ year, month, day, events, onClose, onOpen }: {
         </div>
         <div className="sheet-scroll" style={{ gap: 9 }}>
           {holidays.length > 0 && (
-            <div style={{ borderRadius: 10, border: "1px solid #c9cbe3", background: "#ecedf6", padding: "9px 12px" }}>
+            <div style={{ borderRadius: 10, border: "1px solid #c9cbe3", background: "var(--hz-dk-surface-2, #ecedf6)", padding: "9px 12px" }}>
               <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", color: "#474d79" }}>Public holiday</div>
               <div style={{ fontSize: 12.5, color: "#474d79", marginTop: 2 }}>{holidays.map((h) => h.label).join(", ")}</div>
             </div>

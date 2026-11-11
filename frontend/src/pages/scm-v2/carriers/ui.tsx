@@ -14,10 +14,10 @@ export const BTN_QUIET = 'inline-flex min-h-[40px] items-center gap-1.5 rounded-
 export const ICON_BTN = 'grid h-9 w-9 flex-none place-items-center rounded-lg bg-surface-2 text-ink-secondary hover:text-[color:var(--hz-dk-err,#8a2c2c)] disabled:opacity-50';
 
 const TONE = {
-  green: 'bg-[#dcebe3] text-[#1f5c43]',
-  red: 'bg-[#f6dcdc] text-[color:var(--hz-dk-err,#8a2c2c)]',
-  amber: 'bg-[#f6ecd4] text-[#7a5000]',
-  blue: 'bg-[#e7eef6] text-[#1f4f75]',
+  green: 'bg-[color:var(--hz-dk-synced-bg,#dcebe3)] text-[#1f5c43]',
+  red: 'bg-[color:var(--hz-dk-err-bg,#f6dcdc)] text-[color:var(--hz-dk-err,#8a2c2c)]',
+  amber: 'bg-[color:var(--hz-dk-warning-bg,#f6ecd4)] text-[#7a5000]',
+  blue: 'bg-[color:var(--hz-dk-surface-2,#e7eef6)] text-[#1f4f75]',
   grey: 'bg-surface-2 text-ink-muted',
 } as const;
 export type Tone = keyof typeof TONE;

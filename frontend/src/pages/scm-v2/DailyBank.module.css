@@ -124,8 +124,8 @@
 .acctTable tbody tr:first-child td { border-top: 0; }
 .num { text-align: right !important; white-space: nowrap; }
 .docCell { font-weight: 600; white-space: nowrap; }
-.subtotal td { background: #eef2f0; font-weight: 600; border-top: 1px solid var(--fin-rule); }
-.closingStrip { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 10px 16px; background: #e6f2ec; color: #1f7a4f; font-size: 13px; font-weight: 600; }
+.subtotal td { background: var(--hz-dk-surface-2, #eef2f0); font-weight: 600; border-top: 1px solid var(--fin-rule); }
+.closingStrip { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 10px 16px; background: var(--hz-dk-synced-bg, #e6f2ec); color: #1f7a4f; font-size: 13px; font-weight: 600; }
 .closingSum { margin-left: 8px; font-weight: 400; color: #2f6b4f; }
 .afterStrip { display: flex; flex-direction: column; padding: 6px 16px 10px; border-top: 1px solid var(--fin-rule); font-size: 12.5px; }
 .afterRow { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; }

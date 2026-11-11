@@ -16,16 +16,18 @@ export type RowMarkColour = 'red' | 'orange' | 'yellow' | 'green' | 'cyan' | 'bl
  *  categories the HC Delivery sheet already uses (owner 2026-09-26): red = Fell
  *  Delivery, orange = Supplier Pickup, yellow = Lorry Service, green = SERVICE
  *  Delivery, cyan = Fair Setup/Dismantle, blue = SERVICE Inspection, purple =
- *  Transfer PG/SG + SERVICE Pickup, grey = No Outstation Delivery. */
+ *  Transfer PG/SG + SERVICE Pickup, grey = No Outstation Delivery.
+ *  A tint is its light hex behind a dark-only variable (theme.css), so a
+ *  marked row stays readable in dark mode. */
 export const ROW_MARK_PALETTE: { token: RowMarkColour; label: string; tint: string; swatch: string }[] = [
-  { token: 'red',    label: 'Red',    tint: '#fdeae8', swatch: '#e34b3f' },
-  { token: 'orange', label: 'Orange', tint: '#fdefda', swatch: '#ef8a2b' },
-  { token: 'yellow', label: 'Yellow', tint: '#fcf7d3', swatch: '#eccb2a' },
-  { token: 'green',  label: 'Green',  tint: '#e7f4ea', swatch: '#3ea05a' },
-  { token: 'cyan',   label: 'Cyan',   tint: '#e1f3f5', swatch: '#3bb3c0' },
-  { token: 'blue',   label: 'Blue',   tint: '#e8effa', swatch: '#5b8fd6' },
-  { token: 'purple', label: 'Purple', tint: '#efeafa', swatch: '#8f74c4' },
-  { token: 'grey',   label: 'Grey',   tint: '#edeef0', swatch: '#9aa0a8' },
+  { token: 'red',    label: 'Red',    tint: 'var(--hz-dk-mark-red, #fdeae8)', swatch: '#e34b3f' },
+  { token: 'orange', label: 'Orange', tint: 'var(--hz-dk-mark-orange, #fdefda)', swatch: '#ef8a2b' },
+  { token: 'yellow', label: 'Yellow', tint: 'var(--hz-dk-mark-yellow, #fcf7d3)', swatch: '#eccb2a' },
+  { token: 'green',  label: 'Green',  tint: 'var(--hz-dk-mark-green, #e7f4ea)', swatch: '#3ea05a' },
+  { token: 'cyan',   label: 'Cyan',   tint: 'var(--hz-dk-mark-cyan, #e1f3f5)', swatch: '#3bb3c0' },
+  { token: 'blue',   label: 'Blue',   tint: 'var(--hz-dk-mark-blue, #e8effa)', swatch: '#5b8fd6' },
+  { token: 'purple', label: 'Purple', tint: 'var(--hz-dk-mark-purple, #efeafa)', swatch: '#8f74c4' },
+  { token: 'grey',   label: 'Grey',   tint: 'var(--hz-dk-mark-grey, #edeef0)', swatch: '#9aa0a8' },
 ];
 
 const TINT = new Map(ROW_MARK_PALETTE.map((p) => [p.token, p.tint]));

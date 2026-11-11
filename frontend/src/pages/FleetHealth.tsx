@@ -724,7 +724,7 @@ function PlanRow({ p, currentKm, onEdit, onServiced }: { p: PlanView; currentKm:
     p.nextDueDate ? fmtDate(p.nextDueDate) : null,
   ].filter(Boolean).join(" · ");
   return (
-    <div className={cn("flex flex-col gap-2 rounded-[14px] p-4", p.active ? "bg-[#faf9f6]" : "bg-[#faf9f6]/60 opacity-70")}>
+    <div className={cn("flex flex-col gap-2 rounded-[14px] p-4", p.active ? "bg-[color:var(--hz-dk-surface-2,#faf9f6)]" : "bg-[color:var(--hz-dk-surface-2,#faf9f6)]/60 opacity-70")}>
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
         <span className="flex min-w-0 items-center gap-2">
           <span className="text-[14px] font-semibold text-ink">{p.componentLabel}</span>
@@ -745,7 +745,7 @@ function PlanRow({ p, currentKm, onEdit, onServiced }: { p: PlanView; currentKm:
           )}
         </span>
       </div>
-      <div className="h-1.5 w-full overflow-hidden rounded-full bg-[#ece8df]">
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-[color:var(--hz-dk-warning-bg,#ece8df)]">
         <div className={cn("h-full rounded-full", barColor)} style={{ width: `${pct}%` }} />
       </div>
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 text-[12.5px] text-ink-muted">
@@ -914,7 +914,7 @@ export function RecordCard({ code, badge, title, when, subtitle, tone, defaultOp
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div className={cn("rounded-[14px]", tone === "crit" ? "bg-err-bg/60 ring-1 ring-err/25" : "bg-[#faf9f6]")}>
+    <div className={cn("rounded-[14px]", tone === "crit" ? "bg-err-bg/60 ring-1 ring-err/25" : "bg-[color:var(--hz-dk-surface-2,#faf9f6)]")}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -923,7 +923,7 @@ export function RecordCard({ code, badge, title, when, subtitle, tone, defaultOp
       >
         <ChevronRight size={16} className={cn("shrink-0 text-ink-muted transition-transform", open && "rotate-90")} />
         {code && (
-          <span className="shrink-0 rounded-md bg-[#ece8df] px-2 py-0.5 font-mono text-[12px] font-semibold tracking-wide text-ink">
+          <span className="shrink-0 rounded-md bg-[color:var(--hz-dk-warning-bg,#ece8df)] px-2 py-0.5 font-mono text-[12px] font-semibold tracking-wide text-ink">
             {code}
           </span>
         )}
@@ -1712,7 +1712,7 @@ export function AttachmentStrip({ docId, files, onChanged }: {
   return (
     <div className="flex flex-wrap gap-1.5">
       {files.map((f) => (
-        <span key={f.id} className="inline-flex h-8 items-center gap-1.5 rounded-md bg-[#ece8df] pl-2.5 pr-1 text-[12.5px]">
+        <span key={f.id} className="inline-flex h-8 items-center gap-1.5 rounded-md bg-[color:var(--hz-dk-warning-bg,#ece8df)] pl-2.5 pr-1 text-[12.5px]">
           <button type="button" onClick={() => void open(f)} className="font-medium text-primary-ink underline">
             {f.fileName || "document"}
           </button>

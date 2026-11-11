@@ -75,13 +75,13 @@ export function PayCard({ pay, staff, convertSources, onChange, onRemove }: { pa
   };
   return (
     /* Owner 2026-07-04 — hairline borders, matching the LineCard. */
-    <div style={{ border: "1px solid #eceee9", borderRadius: 11, overflow: "hidden" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: "#f4f6f3", borderBottom: "1px solid #eceee9" }}>
-        <span style={{ fontSize: 9, fontWeight: 700, color: "#767b6e", textTransform: "uppercase", letterSpacing: ".06em" }}>Method</span>
+    <div style={{ border: "1px solid var(--hz-dk-border-subtle, #eceee9)", borderRadius: 11, overflow: "hidden" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: "var(--hz-c-surface-2)", borderBottom: "1px solid #eceee9" }}>
+        <span style={{ fontSize: 9, fontWeight: 700, color: "var(--hz-c-ink-muted)", textTransform: "uppercase", letterSpacing: ".06em" }}>Method</span>
         <select className="fld-i" style={{ flex: 1, fontWeight: 600 }} value={pay.method} onChange={(e) => onChange({ method: e.target.value })}>
           {methodOpts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
-        <span onClick={onRemove} style={{ fontSize: 14, color: "#9aa093", cursor: "pointer", padding: "0 2px" }}>{"✕"}</span>
+        <span onClick={onRemove} style={{ fontSize: 14, color: "var(--hz-c-ink-soft)", cursor: "pointer", padding: "0 2px" }}>{"✕"}</span>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 7, padding: 10 }}>
         <div style={{ display: "flex", gap: 9, alignItems: "flex-end" }}>
@@ -143,7 +143,7 @@ export function PayCard({ pay, staff, convertSources, onChange, onRemove }: { pa
             </select>
           </Field>
           <div style={{ flex: 1 }}>
-            <div className="fld-l" style={{ color: "#9aa093" }}>{pay.method === CONVERT_LABEL ? "Slip" : "Slip (required)"}</div>
+            <div className="fld-l" style={{ color: "var(--hz-c-ink-soft)" }}>{pay.method === CONVERT_LABEL ? "Slip" : "Slip (required)"}</div>
             <input ref={fileRef} type="file" accept="image/*,application/pdf" style={{ display: "none" }} onChange={(e) => { void onPickSlip(e.target.files?.[0] ?? null); e.target.value = ""; }} />
             <button
               type="button"

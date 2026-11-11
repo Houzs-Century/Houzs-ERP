@@ -11,10 +11,10 @@ export const secondaryBtn = "min-h-[40px] rounded-md border border-border bg-sur
 export const dangerBtn = "min-h-[40px] rounded-md border border-[#e3b4b4] px-3 text-[12.5px] font-semibold text-[color:var(--hz-dk-err,#8a2c2c)] disabled:opacity-50";
 
 const TONES = {
-  green: "bg-[#dcebe3] text-[#1f5c43]",
-  orange: "bg-[#f6e6d4] text-[#80501c]",
-  amber: "bg-[#f6ecd4] text-[#7a5000]",
-  blue: "bg-[#e7eef6] text-[#1f4f75]",
+  green: "bg-[color:var(--hz-dk-synced-bg,#dcebe3)] text-[#1f5c43]",
+  orange: "bg-[color:var(--hz-dk-warning-bg,#f6e6d4)] text-[#80501c]",
+  amber: "bg-[color:var(--hz-dk-warning-bg,#f6ecd4)] text-[#7a5000]",
+  blue: "bg-[color:var(--hz-dk-surface-2,#e7eef6)] text-[#1f4f75]",
   grey: "bg-surface-2 text-ink-muted",
 } as const;
 export type Tone = keyof typeof TONES;

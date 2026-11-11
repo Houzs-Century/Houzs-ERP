@@ -31,7 +31,7 @@
 .toneWarn { background: var(--hz-dk-warning-bg, #f7f1e3); color: var(--hz-dk-accent-ink, #7a5a1e); }
 .toneInfo { background: var(--hz-dk-primary-soft, #eaf3f1); color: var(--hz-dk-primary-ink, #1d5c54); }
 .toneLate { background: var(--hz-dk-err-bg, #fbeeee); color: var(--hz-dk-err, #a83434); }
-.toneAdvance { background: #e8eefc; color: #1d4ed8; }
+.toneAdvance { background: var(--hz-dk-surface-2, #e8eefc); color: #1d4ed8; }
 .tags { display: inline-flex; align-items: center; gap: 6px; }
 
 /* A clickable document number: 13/600, dotted underline. */

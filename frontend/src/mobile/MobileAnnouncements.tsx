@@ -223,7 +223,7 @@ function companyScopeLabel(ids: number[] | undefined, companies: Company[]): str
 function CompanyChip({ ann, companies }: { ann: Announcement; companies: Company[] }) {
   if (companies.length <= 1) return null;
   return (
-    <span className="spill" style={{ background: "#eef1ec", color: "#556052" }}>
+    <span className="spill" style={{ background: "var(--hz-dk-surface-2, #eef1ec)", color: "#556052" }}>
       {companyScopeLabel(ann.targetCompanyIds, companies)}
     </span>
   );

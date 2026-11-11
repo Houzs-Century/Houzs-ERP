@@ -93,7 +93,7 @@ export function MobileScanInvoice({
 
       <div className="scroll" style={{ padding: 14, paddingBottom: 120 }}>
         {error && (
-          <div style={{ background: "#fbe9e7", color: "#b23c17", borderRadius: 10, padding: "9px 12px", fontSize: 12.5, marginBottom: 12 }}>{error}</div>
+          <div style={{ background: "var(--hz-dk-err-bg, #fbe9e7)", color: "#b23c17", borderRadius: 10, padding: "9px 12px", fontSize: 12.5, marginBottom: 12 }}>{error}</div>
         )}
 
         <input ref={cameraRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }}

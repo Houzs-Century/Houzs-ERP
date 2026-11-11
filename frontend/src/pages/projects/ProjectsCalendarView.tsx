@@ -741,7 +741,7 @@ export function ProjectsCalendarView() {
                           ? "px-1.5 py-1"
                           : "flex flex-col overflow-hidden px-1.5 py-1",
                       !inMonth && "bg-bg/40 text-ink-muted",
-                      isHolidayCell && inMonth && "bg-[#e7e8f5]",
+                      isHolidayCell && inMonth && "bg-[color:var(--hz-dk-surface-2,#e7e8f5)]",
                       // Today highlight only on month view; week view
                       // moves the highlight onto the header pill so
                       // the cell body stays neutral. A brass inset ring +

@@ -253,7 +253,7 @@ export function ThreePLFromAp({ onClose, onSaved }: { onClose: () => void; onSav
               {t.service_case ? ` · service cases ${fmtSen(t.service_case)}` : ''} · not a delivery {fmtSen(t.not_delivery)}.
             </p>
           )}
-          <p className="rounded-lg bg-[#f6ecd4] px-3 py-2 text-[12.5px] text-accent-ink">
+          <p className="rounded-lg bg-[color:var(--hz-dk-warning-bg,#f6ecd4)] px-3 py-2 text-[12.5px] text-accent-ink">
             A handwritten bill can be misread (an “SO” read as “80”). Check each DO and its amount before saving.
           </p>
           <h4 className="mt-1 text-[14px] font-bold text-ink">Matched to a delivery order ({result.dos.length})</h4>

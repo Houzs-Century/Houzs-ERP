@@ -372,7 +372,7 @@ function RemoveButton({ label, onClick, style }: { label: string; onClick: () =>
 function ShotPreview({ shot, alt }: { shot: Shot; alt: string }) {
   if (isPdfShot(shot)) {
     return (
-      <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 5, background: "#eef1ec", padding: 8, boxSizing: "border-box" }}>
+      <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 5, background: "var(--hz-dk-surface-2, #eef1ec)", padding: 8, boxSizing: "border-box" }}>
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#5c6156" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></svg>
         <span style={{ fontSize: 10, fontWeight: 700, color: "#5c6156", textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" }}>{shot.file.name}</span>
         <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: ".1em", color: "var(--hz-c-ink-soft)" }}>PDF</span>
@@ -394,7 +394,7 @@ function JobPill({ status }: { status: string }) {
   };
   if (status === "running") {
     return (
-      <span style={{ ...base, background: "#e3efed", color: "var(--hz-c-primary)" }}>
+      <span style={{ ...base, background: "var(--hz-dk-primary-soft, #e3efed)", color: "var(--hz-c-primary)" }}>
         <span style={{ width: 10, height: 10, borderRadius: "50%", border: "2px solid rgba(22,105,95,.3)", borderTopColor: "#16695f", animation: "hzSpin .8s linear infinite" }} />
         Reading…
       </span>
@@ -1111,7 +1111,7 @@ export function MobileScan({
       <div className="scroll" style={{ padding: 14, paddingBottom: 120 }}>
         {unavailable ? (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", padding: "34px 12px 8px" }}>
-            <div style={{ width: 64, height: 64, borderRadius: "50%", background: "#f4ecdf", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 16 }}>
+            <div style={{ width: 64, height: 64, borderRadius: "50%", background: "var(--hz-dk-warning-bg, #f4ecdf)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 16 }}>
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#a16a2e" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 8v4M12 16h.01" /></svg>
             </div>
             <div style={{ fontSize: 17, fontWeight: 800, color: "var(--hz-c-ink)", marginBottom: 8 }}>Scan isn't available yet</div>
@@ -1368,7 +1368,7 @@ export function MobileScan({
                     <button
                       onClick={() => void createAnyway(order.id)}
                       disabled={forcingId === order.id}
-                      style={{ marginTop: 9, height: 34, width: "100%", border: "1px solid #a16a2e", borderRadius: 9, background: forcingId === order.id ? "#efe6d6" : "#a16a2e", color: forcingId === order.id ? "var(--hz-c-accent)" : "#fff", fontSize: 12, fontWeight: 700, fontFamily: "inherit", cursor: forcingId === order.id ? "default" : "pointer" }}
+                      style={{ marginTop: 9, height: 34, width: "100%", border: "1px solid #a16a2e", borderRadius: 9, background: forcingId === order.id ? "var(--hz-dk-warning-bg, #efe6d6)" : "#a16a2e", color: forcingId === order.id ? "var(--hz-c-accent)" : "#fff", fontSize: 12, fontWeight: 700, fontFamily: "inherit", cursor: forcingId === order.id ? "default" : "pointer" }}
                     >
                       {forcingId === order.id ? "Creating…" : "Create anyway"}
                     </button>

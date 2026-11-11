@@ -17,7 +17,7 @@ const eyebrowStyle: CSSProperties = {
 };
 const solidChip: CSSProperties = {
   fontFamily: "monospace", fontSize: 11, fontWeight: 700, color: "var(--hz-c-primary-ink)",
-  background: "#eef3f1", border: "1px solid #d7e2de", borderRadius: 5, padding: "1px 6px",
+  background: "var(--hz-dk-surface-2, #eef3f1)", border: "1px solid #d7e2de", borderRadius: 5, padding: "1px 6px",
 };
 const mutedChip: CSSProperties = {
   fontFamily: "monospace", fontSize: 11, fontWeight: 700, color: "#5c6357",
@@ -224,7 +224,7 @@ export function CommittedBatchRowMobile({ poNo }: { poNo?: string | null }) {
    docs/modules/delivery-order.md, docs/bugs/0674-*. */
 const substitutedChip: CSSProperties = {
   fontSize: 10, fontWeight: 700, color: "#8a5a00",
-  background: "#fff4d6", border: "1px solid #f0d79a", borderRadius: 5, padding: "1px 6px",
+  background: "var(--hz-dk-warning-bg, #fff4d6)", border: "1px solid #f0d79a", borderRadius: 5, padding: "1px 6px",
 };
 export function SubstitutedRowMobile({ on }: { on?: boolean }) {
   if (!on) return null;

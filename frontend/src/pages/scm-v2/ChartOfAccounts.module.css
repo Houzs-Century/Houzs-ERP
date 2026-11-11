@@ -43,7 +43,7 @@
 .accRow:hover > td { background: var(--hz-c-row-hover); }
 .parentRow > td { background: var(--hz-c-row-hover); }
 .dragging { opacity: 0.45; }
-.secRow.dropOn > td, .accRow.dropOn > td { background: #e3efec; box-shadow: inset 0 2px 0 var(--hz-c-primary), inset 0 -2px 0 var(--hz-c-primary); }
+.secRow.dropOn > td, .accRow.dropOn > td { background: var(--hz-dk-primary-soft, #e3efec); box-shadow: inset 0 2px 0 var(--hz-c-primary), inset 0 -2px 0 var(--hz-c-primary); }
 .accRow > .foldCell { width: 22px; padding: 0 0 0 10px; }
 .fold {
   width: 18px; height: 18px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 4px; background: transparent;

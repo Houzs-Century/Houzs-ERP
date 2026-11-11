@@ -9,7 +9,7 @@
 /* ── The groups ── */
 .grid { min-width: 1060px; }
 .grid td { height: 44px; }
-.unsavedRow td { background: #fffdf8; }
+.unsavedRow td { background: var(--hz-dk-surface-2, #fffdf8); }
 .offRow td { opacity: 0.55; }
 .offRow td:last-child { opacity: 1; }
 .groupCell { min-width: 150px; }
@@ -18,7 +18,7 @@
 .slotCell { min-width: 170px; }
 /* Two classes deep so the tint wins over the shared input's own border. */
 .slot { width: 100%; font-size: 12px; }
-.slot.slotSuggested { border-color: #e5d6b3; background-color: #fbf6ea; }
+.slot.slotSuggested { border-color: #e5d6b3; background-color: var(--hz-dk-warning-bg, #fbf6ea); }
 .slot.slotEmpty { border-color: #e5bcbc; }
 .slot.slotEmpty::placeholder { color: var(--hz-dk-err, #a83434); }
 .actCell { width: 150px; white-space: nowrap; }
