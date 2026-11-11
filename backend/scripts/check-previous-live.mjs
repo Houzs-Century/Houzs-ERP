@@ -45,9 +45,14 @@ try {
       app.get('/w', settlementWatchlist);
       const prev = await app.request('/prev');
       const u = await app.request('/u');
+      const TO = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
+      const FROM = new Date(Date.parse(`${TO}T00:00:00Z`) - 180 * 86_400_000).toISOString().slice(0, 10);
+      const u2 = await app.request(`/u?from=${FROM}&to=${TO}`);
+      const u2b = await u2.json();
+      row('WINDOW', `co${CO}`, `default window rows ${'?'}`, `explicit ${FROM}..${TO} ${u2.status} rows ${(u2b.rows ?? []).length}`, `keys ${Object.keys(u2b).join(',')}`);
       const w = await app.request('/w');
       const pb = await prev.json(); const ub = await u.json(); const wb = await w.json();
-      row('LISTS', `co${CO}`, `previous records ${prev.status} rows ${(pb.rows ?? []).length}`,
+      row('LISTS', `co${CO}`, `previous records ${prev.status} rows ${(pb.rows ?? []).length}`, `default keys ${Object.keys(ub).join(',')} ${JSON.stringify(ub).slice(0, 120).replace(/[0-9]/g, '#')}`,
         `payments not matched ${u.status} rows ${(ub.rows ?? []).length}`, `watch list ${w.status} rows ${(wb.recordedNotArrived ?? []).length}`);
     }
   });
