@@ -44,11 +44,10 @@ const CHARGED_PER: Record<ChargingUnit, string> = {
   customer: 'Charged per customer (same address, same day)',
   trip: 'Charged per trip (flat, whatever it carries)',
 };
-const ROUNDING_WORDS: Partial<Record<string, string>> = {
-  NONE: 'No rounding',
-  NEAREST_10C: 'Rounded to the nearest 10 sen',
-  NEAREST_RM: 'Rounded to the nearest RM',
-};
+/* The two roundings in words; anything else (NONE, or a value this build does
+   not know) reads as none — the server's list of roundings stays the one list. */
+const roundingWords = (r: string) =>
+  r === 'NEAREST_RM' ? 'Rounded to the nearest RM' : r === 'NEAREST_10C' ? 'Rounded to the nearest 10 sen' : 'No rounding';
 
 /** The card's settings as one line under its name:
  *  "Charged per set (frame + mattress) · No minimum · No cap · No rounding". */
@@ -57,7 +56,7 @@ export function settingsSentence(card: Pick<RateCard, 'basis' | 'aggregation' | 
     CHARGED_PER[chargingUnit(card)],
     card.minChargeSen == null ? 'No minimum' : `Minimum ${fmtSen(card.minChargeSen)}`,
     card.capSen == null ? 'No cap' : `Cap ${fmtSen(card.capSen)}`,
-    ROUNDING_WORDS[card.rounding] ?? 'No rounding',
+    roundingWords(card.rounding),
   ].join(' · ');
 }
 

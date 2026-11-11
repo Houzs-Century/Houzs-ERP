@@ -34,10 +34,15 @@ export type RuleBlock =
   | { kind: 'zones'; id: 'zones'; title: string; rows: ZoneRow[] };
 export interface RuleSection { category: RateRuleCategory; count: number; blocks: RuleBlock[] }
 
-/** The order of the card's tabs, and of Price check's answer: the two
- *  categories a 3PL card mostly carries first (the approved mockup, 2026-11-11:
- *  Delivery · Outstation · Setup & dismantle · Service calls). */
-export const CATEGORY_ORDER: readonly RateRuleCategory[] = ['DELIVERY', 'OUTSTATION', 'SITE_WORK', 'SERVICE_CALL'];
+/** The order of the card's tabs, and of Price check's answer: the taxonomy's
+ *  order with the two categories a 3PL card mostly carries first (the approved
+ *  mockup, 2026-11-11: Delivery · Outstation · Setup & dismantle · Service
+ *  calls). Derived, not written out, so the taxonomy stays the one list. */
+const leads = (c: RateRuleCategory) => c === 'DELIVERY' || c === 'OUTSTATION';
+export const CATEGORY_ORDER: readonly RateRuleCategory[] = [
+  ...RATE_RULE_CATEGORIES.filter(leads),
+  ...RATE_RULE_CATEGORIES.filter((c) => !leads(c)),
+];
 
 /** 1st, 2nd, 3rd, 4th … 11th, 12th, 13th … 21st. */
 export const ordinal = (n: number) => {

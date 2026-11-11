@@ -4,6 +4,7 @@ import { chargingUnit, settingsSentence } from './cardSettings';
 import {
   COUNT_ERROR, EMPTY_FORM, SOFA_ERROR, groupBreakdown, lineLabel, outstationTowns, pricedTypes, readFacts,
 } from './priceCheckFacts';
+import { FLAT_ORDER } from './rateCardLayout';
 
 let n = 0;
 const rule = (over: Partial<RateRule>): RateRule => ({
@@ -44,6 +45,16 @@ describe('readFacts', () => {
   it('counts items on a per-item card, nothing on a per-trip card, and in town is no zone', () => {
     expect(readFacts(EMPTY_FORM, { basis: 'ITEM', aggregation: 'UNIT' }, new Set())).toEqual({ ok: true, facts: { itemCount: 1, destinationZone: null } });
     expect(readFacts(EMPTY_FORM, { basis: 'SET', aggregation: 'TRIP' }, new Set())).toEqual({ ok: true, facts: { destinationZone: null } });
+  });
+
+  it('fills the server’s own fact name for each flat price the card carries', () => {
+    const counts = Object.fromEntries(FLAT_ORDER.map((t) => [t, '2']));
+    const r = readFacts({ ...EMPTY_FORM, counts }, { basis: 'SET', aggregation: 'TRIP' }, new Set(FLAT_ORDER));
+    expect(r.ok && Object.keys(r.facts).sort()).toEqual([
+      'destinationZone', 'dismantleCount', 'disposeCount', 'inspectionCount', 'pickupCount', 'serviceCount', 'setupCount',
+      'supplierPickupCount', 'transferCount',
+    ]);
+    expect(r.ok && r.facts.supplierPickupCount).toBe(2);
   });
 
   it('refuses a count that is not a whole number from 0 to 99, and sofas that are not numbers', () => {

@@ -13,17 +13,11 @@ import { CATEGORY_ORDER, FLAT_ORDER, ordinal, type FlatRuleType } from './rateCa
 type CountFact =
   | 'disposeCount' | 'setupCount' | 'dismantleCount' | 'serviceCount'
   | 'pickupCount' | 'inspectionCount' | 'supplierPickupCount' | 'transferCount';
-/** The count box behind each flat rule type, and the /compute fact it fills. */
-export const COUNT_FACT: Record<FlatRuleType, CountFact> = {
-  DISPOSE: 'disposeCount',
-  SETUP: 'setupCount',
-  DISMANTLE: 'dismantleCount',
-  SERVICE: 'serviceCount',
-  PICKUP: 'pickupCount',
-  INSPECTION: 'inspectionCount',
-  SUPPLIER_PICKUP: 'supplierPickupCount',
-  TRANSFER: 'transferCount',
-};
+/** The /compute fact a flat rule type's count box fills, by the server's naming
+ *  (DISPOSE → disposeCount, SUPPLIER_PICKUP → supplierPickupCount). Derived from
+ *  the type, so the list of flat types stays FLAT_ORDER alone. */
+export const countFact = (t: FlatRuleType): CountFact =>
+  `${t.toLowerCase().replace(/_([a-z])/g, (_m, c: string) => c.toUpperCase())}Count` as CountFact;
 
 export interface PriceCheckForm {
   /** Sets or items — what a per-unit card counts. */
@@ -73,7 +67,7 @@ export function readFacts(form: PriceCheckForm, card: Pick<RateCard, 'basis' | '
     else facts.sofaCompartments = parts.length ? parts.map(Number) : null;
   }
   for (const t of FLAT_ORDER) {
-    if (priced.has(t)) facts[COUNT_FACT[t]] = whole(t, form.counts[t] ?? '');
+    if (priced.has(t)) facts[countFact(t)] = whole(t, form.counts[t] ?? '');
   }
   facts.destinationZone = form.town.trim() || null;
   return Object.keys(errors).length ? { ok: false, errors } : { ok: true, facts };
