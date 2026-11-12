@@ -45,14 +45,22 @@ export const adminApi = {
   logout: (token: string) => call<unknown>("/api/auth/logout", { method: "POST", headers: { Authorization: `Bearer ${token}` } }).catch(() => null),
 };
 
+/** A displaced device asking for its terminal back, as a supervisor on another device sees it. */
+export type ReconnectRequest = { terminal_id: number; code: string; asking_device: string | null; requested_at: string; holder_device: string | null; holder_last_seen_at: string | null; is_this_device: boolean };
+
 export const deviceApi = {
   ping: () => call<{ ok: boolean; at: string }>("/api/pos-device/ping", { method: "GET" }, 5000),
   prepare: <T>(token: string) => call<{ bundle: T }>("/api/pos-device/prepare", { method: "GET", headers: { "X-POS-Device": token } }, 60_000),
-  heartbeat: (token: string, body: unknown) => call<{ ok: boolean; at: string; catalog_version: number | null }>("/api/pos-device/heartbeat", { method: "POST", body: JSON.stringify(body), headers: { "X-POS-Device": token } }, 10_000),
+  heartbeat: (token: string, body: unknown) => call<{ ok: boolean; at: string; catalog_version: number | null; reconnect_requests?: number }>("/api/pos-device/heartbeat", { method: "POST", body: JSON.stringify(body), headers: { "X-POS-Device": token } }, 10_000),
   salesBatch: (token: string, body: unknown) =>
     call<{ results: { uuid: string; status: "accepted" | "duplicate" | "updated" | "rejected"; reason?: string; stock_warning?: string | null }[]; at: string; accepted: number; duplicates: number; rejected: number }>(
       "/api/pos-device/sales/batch", { method: "POST", body: JSON.stringify(body), headers: { "X-POS-Device": token } }, 60_000),
   pair: <T>(code: string, device_name: string | null, platform: string) => call<T>("/api/pos-device/pair", { method: "POST", body: JSON.stringify({ code, device_name, platform }) }, 60_000),
+  /* Reconnect by approval: the first two carry the DEAD token of a displaced device, the last two a live one. */
+  reconnectRequest: (token: string, device_name: string) => call<{ status: "waiting" | "approved"; terminal: string }>("/api/pos-device/reconnect/request", { method: "POST", body: JSON.stringify({ device_name }), headers: { "X-POS-Device": token } }),
+  reconnectClaim: <T>(token: string) => call<{ status: "none" | "waiting" | "approved"; token?: string; bundle?: T }>("/api/pos-device/reconnect/claim", { method: "POST", body: "{}", headers: { "X-POS-Device": token } }, 60_000),
+  reconnectRequests: (token: string) => call<{ data: ReconnectRequest[] }>("/api/pos-device/reconnect/requests", { method: "GET", headers: { "X-POS-Device": token } }),
+  reconnectApprove: (token: string, terminal_id: number, pin: string) => call<{ ok: boolean; terminal: string }>("/api/pos-device/reconnect/approve", { method: "POST", body: JSON.stringify({ terminal_id, pin }), headers: { "X-POS-Device": token } }),
   report: <T>(token: string, from: string, to: string) => call<{ sales: T[] }>(`/api/pos-device/report?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, { method: "GET", headers: { "X-POS-Device": token } }, 60_000),
 };
 

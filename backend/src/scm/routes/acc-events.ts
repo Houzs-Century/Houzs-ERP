@@ -9,6 +9,8 @@
 //                                 order's commission (acc-event-commission.ts)
 //   POST /commission/close        close a month of it: { month: 'YYYY-MM' }
 //   POST /commission/reopen       reopen the latest closed month
+//   POST /commission/marks        Finance's two buttons on an order: not counted, or next month
+//   POST /commission/marks/undo   take a mark away
 //   POST /pv-lines/:lineId/event  change the event on one voucher line — posted
 //                                 or not — and on its journal leg
 //   GET  /logistics               the Logistics cost report: ?from..?to, by region,
@@ -34,7 +36,9 @@ import { dateOrNull } from '../lib/date-coerce';
 import { assertAuditWritable, auditUnavailableBody, fieldChange, recordEntityAudit } from '../lib/entity-audit';
 import { listEventOptions, loadEventsByIds, parseEventId, pvLineEventRefusal, toEventRow, type EventRow } from '../lib/event-tags';
 import { buildEventCosts, type ChartRow, type LegEntry, type TaggedLeg } from '../lib/event-costs';
-import { closeCommissionMonthHandler, eventCommissionHandler, reopenCommissionMonthHandler } from './acc-event-commission';
+import {
+  closeCommissionMonthHandler, eventCommissionHandler, markCommissionOrderHandler, reopenCommissionMonthHandler, unmarkCommissionOrderHandler,
+} from './acc-event-commission';
 import { logisticsCostHandler } from './acc-logistics';
 import {
   logisticsPnlHandler, saveAreaRateHandler, saveFairIncomeRateHandler, saveIncomeRateHandler, saveSpreadHandler, saveTripMarkHandler,
@@ -127,6 +131,8 @@ accEvents.get('/costs', eventCostsHandler);
 accEvents.get('/commission', eventCommissionHandler);
 accEvents.post('/commission/close', closeCommissionMonthHandler);
 accEvents.post('/commission/reopen', reopenCommissionMonthHandler);
+accEvents.post('/commission/marks', markCommissionOrderHandler);
+accEvents.post('/commission/marks/undo', unmarkCommissionOrderHandler);
 accEvents.get('/logistics', logisticsCostHandler);
 accEvents.get('/logistics/pnl', logisticsPnlHandler);
 accEvents.put('/logistics/income-rate', saveIncomeRateHandler);

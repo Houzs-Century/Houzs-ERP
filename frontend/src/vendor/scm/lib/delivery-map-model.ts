@@ -82,6 +82,8 @@ const ZONE_COLOR_INDEX: Record<string, number> = {
   KL: 0, PJ: 1, KLANG: 2, KAJANG: 3, RAWANG: 4, PUCHONG: 5,
   NS: 6, MELAKA: 7, JOHOR: 8, PENANG: 9, KEDAH: 0, PERAK: 3,
   PAHANG: 6, EAST: 8,
+  /* East Malaysia: zones for the 3PL rate cards (owner 2026-11-11). */
+  SABAH: 1, SARAWAK: 4, LABUAN: 7,
 };
 const FALLBACK_PIN_COLOR = '#64748b'; // slate — no zone AND no region resolved
 

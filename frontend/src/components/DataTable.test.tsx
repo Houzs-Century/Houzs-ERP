@@ -1188,7 +1188,7 @@ describe("DataTable header filter + sort menu", () => {
     expect(firstName()).toBe("Order 6");
   });
 
-  it("stays open while its own checklist scrolls, closes on a page scroll", () => {
+  it("stays open while its own checklist scrolls, and while the page scrolls", () => {
     setViewport(1280);
     render(
       <DataTable tableId="filter-scroll" rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} />,
@@ -1200,10 +1200,10 @@ describe("DataTable header filter + sort menu", () => {
     // bug: the capture-phase window listener heard the inner scroll too.
     fireEvent.scroll(menu.querySelector(".overflow-y-auto")!);
     expect(screen.queryByPlaceholderText("Search values…")).toBeTruthy();
-    // A scroll anywhere else (page/table) still closes it: the menu is
-    // fixed-positioned and would detach from its anchor.
+    // A scroll anywhere else (page/table) no longer closes it either: the
+    // popover moves with its funnel (DataTableFilterStaysOpen.test.tsx).
     fireEvent.scroll(document);
-    expect(screen.queryByPlaceholderText("Search values…")).toBeNull();
+    expect(screen.queryByPlaceholderText("Search values…")).toBeTruthy();
   });
 
   /* Owner 2026-09-16 ("进入那个东西都是不要 filter 先的"): a funnel set this visit
@@ -1294,7 +1294,7 @@ describe("DataTable header filter + sort menu", () => {
 
     openFunnel("Status");
     fireEvent.click(screen.getByRole("checkbox", { name: /Open/ }));
-    fireEvent.scroll(document); // dismiss the funnel popover
+    fireEvent.keyDown(window, { key: "Escape" }); // dismiss the funnel popover
     expect(rowCount(container)).toBe(3);
 
     const reset = screen.getByTitle("Clear all filters and search");
@@ -1337,7 +1337,7 @@ describe("DataTable header filter + sort menu", () => {
     );
     openFunnel("Status");
     fireEvent.click(screen.getByRole("checkbox", { name: /Open/ }));
-    fireEvent.scroll(document);
+    fireEvent.keyDown(window, { key: "Escape" });
 
     // The page says "no filters"; the table knows better and still offers the
     // button — under the page's own label, clearing both sides at once.

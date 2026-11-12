@@ -79,7 +79,36 @@ describe('status route', () => {
     // bottom of the file; the old route-mount anchor slices nothing.
     const block = between(routeSource, 'export const patchMfgSalesOrderStatusHandler', 'const commitStatusChange');
     expect(block).toContain("fromNorm === 'DRAFT' && toStatus === 'CONFIRMED'");
-    expect(block).toContain('soConfirmProblemsForDoc(sb, docNo)');
+    expect(block).toContain("soConfirmProblemsForDoc(sb, docNo, c.get('companyCode') ?? null)");
     expect(block).toContain('validationFailedBody(confirmProblems)');
+  });
+});
+
+/* Owner 2026-11-11: Sabah / Sarawak / Labuan / Kelantan / Terengganu / Perlis /
+   Singapore need a transport fee above RM 0. Logic: src/scm/shared/so-transport-fee.test.ts. */
+describe('transport fee gate', () => {
+  test('the confirmed create checks it before the PWP claim loop', () => {
+    const feeAt = routeSource.indexOf("const feeProblem = transportFeeProblem(c.get('companyCode') ?? null, createState");
+    expect(feeAt).toBeGreaterThan(routeSource.indexOf('collectSoConfirmProblems({'));
+    expect(feeAt).toBeLessThan(routeSource.indexOf('const claimedPwpCodes: Array'));
+  });
+
+  test('the live check asks it on a create and on a scanned draft being confirmed', () => {
+    const validate = between(routeSource, "mfgSalesOrders.post('/validate'", 'return c.json({ problems }, 200);');
+    expect(validate).toContain('transportFeeProblem(');
+    expect(validate).toContain("body.confirmingDraft === true");
+    expect(validate).toContain('stateMoved');
+  });
+
+  test('header State change, line PATCH, line DELETE and amendment submit all ask it (owner: 改单也要 lock)', () => {
+    expect(routeSource.match(/await transportFeeEditRefusal\(/g)?.length).toBe(4);
+    const header = between(routeSource, 'export const patchMfgSalesOrderHeaderHandler', "if (body['salesLocation'] === undefined)");
+    expect(header).toContain("kind: 'header'");
+    const del = between(routeSource, "mfgSalesOrders.delete('/:docNo/items/:itemId'", "sb.from('mfg_sales_order_items').delete()");
+    expect(del).toContain("kind: 'line', itemId, after: null");
+    const patch = between(routeSource, "mfgSalesOrders.patch('/:docNo/items/:itemId'", "sb.from('mfg_sales_order_items').update(updates)");
+    expect(patch).toContain("kind: 'line', itemId, after:");
+    const amend = between(routeSource, "mfgSalesOrders.post('/:docNo/amendments'", 'Two-lane split');
+    expect(amend).toContain("kind: 'amendment'");
   });
 });

@@ -47,3 +47,19 @@
 .notes { margin: 0; font-size: 12px; line-height: 1.5; color: var(--fin-muted); }
 .skeleton { display: grid; gap: 10px; padding: 14px; background: var(--fin-surface); border: 1px solid var(--fin-line); border-radius: 10px; }
 .skeletonBar { height: 14px; border-radius: 4px; }
+
+/* An order number is a link (owner 2026-11-12: right-click opens a new tab). */
+a.docLink { display: inline-block; }
+
+/* Finance's two buttons on an order (owner 2026-11-12), and its mark once set. */
+.markBtns { display: inline-flex; gap: 4px; white-space: nowrap; }
+.markBtn {
+  height: 24px; padding: 0 6px; border: 1px solid var(--fin-line); border-radius: 5px; background: var(--fin-surface);
+  font: 600 11px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-ink); cursor: pointer; white-space: nowrap;
+}
+.markBtn:hover:not(:disabled) { border-color: var(--fin-petrol-line); color: var(--fin-petrol-ink); background: var(--fin-petrol-pale); }
+.markBtn:disabled { opacity: 0.55; cursor: default; }
+.markTag {
+  display: inline-flex; align-items: center; gap: 8px; padding: 2px 4px 2px 8px; border-radius: 5px; background: var(--fin-paper);
+  font: 600 11.5px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-detail); white-space: nowrap;
+}

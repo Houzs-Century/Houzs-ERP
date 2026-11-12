@@ -195,14 +195,14 @@ page, and the POS Admin menu. This guide carries only what is built.
   localStorage so the front offers "Continue as <name>" (one tap) and a
   Logout keeps it; "Not you? Sign out" or an ended ERP session clears it. The
   password is never stored.
-- Pairing code (for a device with no ERP login on it): POS Admin > Terminals >
-  Pair device (`POST /api/pos-admin/terminals/:id/pairing`, event must be
-  set and linked) issues a one-time 8-character code, stored as a hash with
-  a 15-minute expiry (`scm/shared/pos-pairing.ts`, vendored). The device
-  (Settings, or the `?pair=` link, which also re-pairs a set-up device) redeems
-  it at `POST /api/pos-device/pair` (pre-auth, no token yet): a fresh device
-  token is minted, the code is spent, the bundle comes back. Pair again from
-  Device setup (gear, supervisor PIN) moves a device; the old token dies.
+- Pairing code (a NEW device): POS Admin > Terminals > Pair device
+  (`POST /api/pos-admin/terminals/:id/pairing`, event set and linked) issues a
+  one-time 8-character code, hashed, 15 minutes (`scm/shared/pos-pairing.ts`).
+  Settings or the `?pair=` link redeems it at `POST /api/pos-device/pair`.
+- Reconnect by approval (a device that LOST its terminal to another): a token
+  swap keeps the old hash in `prev_token_hash`; that device asks by itself
+  (`/reconnect/request`, `/claim`) and a supervisor approves with a PIN in another
+  device's Settings or in POS Admin > Terminals (`routes/lib/pos-reconnect.ts`).
 - Shared, vendored byte-identical to `frontend/src/vendor/shared/`:
   `scm/shared/pos-vocabulary.ts` (payment methods, receipt status word,
   `pos-backup-crypto.ts` (the backup file cipher and shape), `pos-report.ts`

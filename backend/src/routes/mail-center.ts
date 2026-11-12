@@ -30,6 +30,7 @@ import { hasPermission } from "../services/permissions";
 import { recipientList, sendEmail } from "../services/email";
 import { getBranding, getBrandingForCompany } from "../services/branding";
 import { toStoredMailAttachments, validateMailAttachments } from "../lib/mail-attachments";
+import { withThreadAttachments } from "../lib/mail-thread-attachments";
 import { isSalesDirectorUser } from "../services/pmsAccess";
 import { activeCompanyCodePred, activeCompanyId, activeCompanySql } from "../scm/lib/companyScope";
 import { toArray, stripHtml, safeIso, base64ToBytes, safeFilename } from "../services/mail-parse";
@@ -440,7 +441,6 @@ type ThreadRow = {
   // Computed (not a column): EXISTS roll-up of any outbound message, so the
   // frontend's Sent folder is accurate instead of relying on last_direction.
   has_outbound?: number | boolean | null;
-  has_attachment?: number | boolean | null;
   my_unread?: number | string | null;
   last_inbound_at?: string | null;
 };
@@ -465,7 +465,6 @@ function rowToThread(r: ThreadRow) {
     labels: parseJsonArray(r.labels),
     trashedAt: r.trashed_at ?? null,
     hasOutbound: Number(r.has_outbound ?? 0) === 1,
-    hasAttachment: Number(r.has_attachment ?? 0) === 1,
     createdAt: r.created_at ?? "",
   };
 }
@@ -875,11 +874,7 @@ app.get("/threads", async (c) => {
        EXISTS (
          SELECT 1 FROM email_messages m
           WHERE m.thread_id = t.id AND m.direction = 'outbound'
-       ) AS has_outbound,
-       EXISTS (
-         SELECT 1 FROM email_attachments a JOIN email_messages m ON m.id = a.message_id
-          WHERE m.thread_id = t.id
-       ) AS has_attachment, ${MY_UNREAD_SQL} AS my_unread
+       ) AS has_outbound, ${MY_UNREAD_SQL} AS my_unread
        FROM email_threads t ${MY_READ_JOIN} ${whereSql}`;
   const selectBinds = [scope.userId ?? 0, ...binds];
   const orderSql = " ORDER BY t.last_message_at DESC NULLS LAST";
@@ -906,7 +901,7 @@ app.get("/threads", async (c) => {
     )
       .bind(...selectBinds, pageSize, offset)
       .all<ThreadRow>();
-    const threadsPage = (res.results ?? []).map(rowToThread);
+    const threadsPage = await withThreadAttachments(c.env.DB, (res.results ?? []).map(rowToThread), activeCompanySql(c, "m.company_id"));
     return c.json({
       threads: threadsPage,
       total,
@@ -919,7 +914,7 @@ app.get("/threads", async (c) => {
   const res = await c.env.DB.prepare(selectSql + orderSql + " LIMIT 300")
     .bind(...selectBinds)
     .all<ThreadRow>();
-  return c.json((res.results ?? []).map(rowToThread));
+  return c.json(await withThreadAttachments(c.env.DB, (res.results ?? []).map(rowToThread), activeCompanySql(c, "m.company_id")));
 });
 
 // GET /api/mail-center/threads/:id — thread + its messages (marks read).

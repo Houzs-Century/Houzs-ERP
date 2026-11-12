@@ -60,7 +60,7 @@ describe("PosAdmin", () => {
     events = [{ project_id: 9, code: "HC-0099", name: "AEON C&C", start_date: "2026-10-10", end_date: "2026-10-20", venue: "AEON Tebrau", event_type_slug: "cash_carry", event_type_name: "Cash & Carry", type_label: "Cash & Carry", status: "ON GOING", linked: true,
       link: { id: 1, catalog_scope: "ALL", stock_source_warehouse_id: null, sst_default: false, receipt_header: null, catalog_version: 2, pushed_at: null, cashiers: [{ id: 1, name: "Aina", code: "C01" }], item_ids: [], price_overrides: [{ pos_item_id: 1, price_sen: 4990 }] },
       terminals: [{ id: 1, code: "T01", device_name: "Tab A9", prepared_at: null, last_sync_at: null, active: true }] }];
-    terminals = [{ id: 1, code: "T01", device_name: "Tab A9", platform: "Android tablet", project_id: 9, project_name: "AEON C&C", printer: null, prepared_at: null, last_seen_at: null, last_sync_at: null, pending_count: 3, pending_amount_sen: 12345, receipt_counter: 7, app_version: null, status: "NEW", active: true }];
+    terminals = [{ id: 1, code: "T01", device_name: "Tab A9", platform: "Android tablet", project_id: 9, project_name: "AEON C&C", printer: null, prepared_at: null, last_seen_at: null, last_sync_at: null, pending_count: 3, pending_amount_sen: 12345, receipt_counter: 7, app_version: null, status: "NEW", active: true, reconnect: { device_name: "POS Laptop", requested_at: "2026-11-12T03:00:00Z" } }];
 
     const a = mount("items");
     expect(screen.getByText("PL-01")).toBeTruthy();
@@ -83,8 +83,11 @@ describe("PosAdmin", () => {
     c.unmount();
 
     const d = mount("terminals");
-    expect(screen.getByText("T01")).toBeTruthy();
+    expect(screen.getAllByText("T01").length).toBeGreaterThan(0);
     expect(screen.getByText("RM 123.45")).toBeTruthy();
+    /* a device that lost T01 asks for it back: the request and its Approve button show above the list */
+    expect(screen.getByText(/"POS Laptop" lost this terminal and asks to be reconnected/)).toBeTruthy();
+    expect(screen.getByText("Approve")).toBeTruthy();
     d.unmount();
 
     const e = mount("labels");

@@ -45,6 +45,7 @@ import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
 import { DataTable, type Column } from "../../components/DataTable";
 import { poDisplayNumber } from "../../vendor/scm/lib/po-status";
+import { diningLineRemark } from "../../vendor/scm/lib/po-dining-remark";
 import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
 import {
   DocumentLinesExpansion,
@@ -416,7 +417,9 @@ function CardsGrid({ rows, onOpen }: { rows: PoHeaderRow[]; onOpen: (r: PoHeader
 
 // ─── Detail drawer ─────────────────────────────────────────────────────────
 
-function DetailDrawer({
+// Exported for the dining-remark drawer test (PurchaseOrdersListV2.dining-remark
+// .test.tsx) — rendered in isolation with a faked usePurchaseOrderDetail.
+export function DetailDrawer({
   row,
   onClose,
   onOpenFull,
@@ -568,6 +571,10 @@ function DetailDrawer({
                   const ordered = Number(l.qty ?? 0);
                   const balance = Math.max(0, ordered - received);
                   const fullyReceived = ordered > 0 && received >= ordered;
+                  // Owner 2026-11-10 — a DINING line's own remark, carried to the
+                  // supplier. Gated on the group (notes exist on non-dining lines
+                  // too); same rule as the printed "Remark:" (po-dining-remark.ts).
+                  const diningRemark = diningLineRemark(l.item_group, l.notes);
                   return (
                     <div
                       key={l.id}
@@ -580,6 +587,14 @@ function DetailDrawer({
                         {secondary && (
                           <div className="mt-0.5 text-[11.5px] leading-snug text-ink-secondary">
                             {secondary}
+                          </div>
+                        )}
+                        {diningRemark && (
+                          <div className="mt-1 text-[11.5px] leading-snug text-ink-secondary">
+                            <span className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
+                              Remark
+                            </span>{" "}
+                            {diningRemark}
                           </div>
                         )}
                         {showDrift && l.so_drift && (

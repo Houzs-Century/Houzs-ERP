@@ -1688,10 +1688,16 @@ export function DeliveryPlanningBoard({
     },
     {
       key: 'do', label: 'DO No.', width: 130, groupable: true,
-      accessor: (o) => (o.delivery_orders.length > 0
-        ? <span style={DOCNO_STYLE}>{o.delivery_orders.map((d) => d.do_number).join(', ')}</span>
-        : '—'),
-      searchValue: (o) => o.delivery_orders.map((d) => d.do_number).join(' '),
+      // A Service Case has no DO of its own; it shows the ORIGINAL order's DO numbers
+      // (related_do_nos, back-filled on the server) so logistics can trace the first
+      // delivery. An SO/DP/project row always uses its own delivery_orders.
+      accessor: (o) => {
+        const nums = o.delivery_orders.length > 0
+          ? o.delivery_orders.map((d) => d.do_number)
+          : (o.related_do_nos ?? []);
+        return nums.length > 0 ? <span style={DOCNO_STYLE}>{nums.join(', ')}</span> : '—';
+      },
+      searchValue: (o) => [...o.delivery_orders.map((d) => d.do_number), ...(o.related_do_nos ?? [])].join(' '),
     },
     {
       /* PO No. — the purchase orders RAISED from this SO, the SO list's muted

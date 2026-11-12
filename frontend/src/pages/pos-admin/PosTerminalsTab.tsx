@@ -53,6 +53,17 @@ export function PosTerminalsTab() {
       toast.error(errText(e, "Could not issue a pairing code."));
     }
   }
+  async function approveReconnect(t: PosTerminal) {
+    const who = t.reconnect?.device_name ? `"${t.reconnect.device_name}"` : "The device that asked";
+    if (!(await dialog.confirm({ title: `Give ${t.code} back to ${t.reconnect?.device_name ? `"${t.reconnect.device_name}"` : "the device that asked"}?`, message: `${who} lost ${t.code} when another device was set up on it. Approving reconnects it by itself within a minute and its bills come through. The device holding ${t.code} now${t.device_name ? ` ("${t.device_name}")` : ""} is disconnected.`, confirmLabel: "Approve" }))) return;
+    try {
+      await api.post(`${POS_ADMIN}/terminals/${t.id}/reconnect-approve`, {});
+      toast.success(`${t.code} approved. The device reconnects by itself within a minute.`);
+      terminals.reload();
+    } catch (e) {
+      toast.error(errText(e, "Could not approve the request."));
+    }
+  }
   async function deactivate(t: PosTerminal) {
     if (t.pending_count > 0 && !(await dialog.confirm({ title: `${t.code} still has ${t.pending_count} unsynced bill(s)`, message: "Deactivating does not delete them from the device, but the ERP stops expecting them. Sync the device first if you can.", confirmLabel: "Deactivate anyway", danger: true }))) return;
     await patch(t, { active: false }, `${t.code} deactivated`);
@@ -99,6 +110,12 @@ export function PosTerminalsTab() {
           </div>
         </div>
       )}
+      {rows.filter((t) => t.active && t.reconnect).map((t) => (
+        <div key={t.id} className="flex flex-wrap items-center gap-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] text-ink dark:border-amber-700 dark:bg-amber-950">
+          <span className="grow"><b>{t.code}</b>: {t.reconnect?.device_name ? `"${t.reconnect.device_name}"` : "a device"} lost this terminal and asks to be reconnected (asked {t.reconnect ? formatDateTime(t.reconnect.requested_at) : ""}). Its bills stay on it until then.</span>
+          <button type="button" className={primaryBtn} onClick={() => void approveReconnect(t)}>Approve</button>
+        </div>
+      ))}
       {rows.length > 0 && (
         <Table minWidth={1040} head={<>
           <th className={th}>ID</th><th className={th}>Device</th><th className={th}>Platform</th><th className={th}>Event</th><th className={th}>Printer</th><th className={th}>Prepared</th><th className={th}>Last seen</th><th className={th}>Last sync</th><th className={cn(th, "text-right")}>Pending</th><th className={th}>App</th><th className={th}>Status</th><th className={th} />

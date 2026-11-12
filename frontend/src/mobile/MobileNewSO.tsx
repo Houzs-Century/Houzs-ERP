@@ -64,7 +64,7 @@ import {
   cityPlaceholder,
   postcodePlaceholder,
 } from "../vendor/scm/lib/address-cascade";
-import { StatePicker } from "../vendor/scm/components/StatePicker";
+import { StatePicker } from "../vendor/scm/components/StatePicker"; import { TransportFeeField } from "../vendor/scm/components/TransportFeeField";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { createLineBody, deferLineDateToHeader, lineDatePinned, withoutLineDate } from "../vendor/scm/lib/so-line-date-defer";
 import { useConfirm, usePrompt } from "../vendor/scm/components/ConfirmDialog";
@@ -1397,7 +1397,7 @@ export function MobileNewSO({
   const buildSoValidateDraft = useCallback((asDraftFlag: boolean) => ({
     debtorName: name,
     phone,
-    items: namedLines.map((l) => ({ itemCode: l.itemCode, itemGroup: l.itemGroup, variants: l.variants, qty: l.qty })),
+    items: namedLines.map((l) => ({ itemCode: l.itemCode, itemGroup: l.itemGroup, variants: l.variants, qty: l.qty, description: l.name.trim(), unitPriceSen: toSen(l.price) })),
     asDraft: asDraftFlag,
     isEdit,
     hasVenue: isEdit || !!outgoingVenueName || !!outgoingVenueId,
@@ -1406,7 +1406,7 @@ export function MobileNewSO({
     hasSalesperson: isEdit || !canChangeSalesperson || !!outgoingSalespersonId || !!selfStaffMatch,
     companyCode: branding.companyCode,
     salesLocation,
-    customerState: state,
+    customerState: state, customerCountry: country, confirmingDraft: mode === "edit-draft", ...(mode === "edit" ? { origCustomerState: origState } : {}),
     processingDate: asDraftFlag ? "" : procDate,
     customerDeliveryDate: asDraftFlag ? "" : delivDate,
     fillAddressLater: false,
@@ -1424,7 +1424,7 @@ export function MobileNewSO({
       convertedFromDocNo: p.convertedFromDocNo ?? "",
       amountSen: toSen(p.amount),
     })),
-  }), [name, phone, namedLines, isEdit, outgoingVenueName, outgoingVenueId, fairPick, noFair, autoFair.why, resolvedVenueName, linkedFair, linkedDay, canChangeSalesperson, outgoingSalespersonId, selfStaffMatch, branding.companyCode, salesLocation, state, procDate, delivDate, addr1, postcode, origProcDate, origDelivDate, origPhone, origItems, pays]);
+  }), [name, phone, namedLines, isEdit, outgoingVenueName, outgoingVenueId, fairPick, noFair, autoFair.why, resolvedVenueName, linkedFair, linkedDay, canChangeSalesperson, outgoingSalespersonId, selfStaffMatch, branding.companyCode, salesLocation, state, country, mode, origState, procDate, delivDate, addr1, postcode, origProcDate, origDelivDate, origPhone, origItems, pays]);
 
   /* A slip date outside the window blocks the save (the payments post AFTER the
      create) — except a too-old row, which becomes an admin request (isBackdateRow). */
@@ -2646,7 +2646,7 @@ export function MobileNewSO({
                     <button className="addline" onClick={() => setLines((p) => [...p, newLine()])}>+ {ADD_LINE_LABEL}</button>
                   </>
                 )}
-                <div className="so-sub-row"><span style={{ fontSize: 11, color: "var(--mut)" }}>Subtotal</span><span className="money" style={{ fontSize: 17, fontWeight: 800, color: "var(--brand-d)" }}>RM {fmt(subtotal / 100)}</span></div>
+                <TransportFeeField companyCode={branding.companyCode} state={state} country={country} lines={lines} setLines={setLines} read={(l) => ({ itemCode: l.itemCode, description: l.name, itemGroup: l.itemGroup, amountSen: toSen(l.price) })} priced={(l, _sen, price) => ({ ...l, price, priceAuthored: true })} make={(_sen, price) => ({ ...newLine(), name: "TRANSPORTATION CHARGES", price, priceAuthored: true })} classes={{ input: "fld-i" }} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 9, fontSize: 12, fontWeight: 700 }} /><div className="so-sub-row"><span style={{ fontSize: 11, color: "var(--mut)" }}>Subtotal</span><span className="money" style={{ fontSize: 17, fontWeight: 800, color: "var(--brand-d)" }}>RM {fmt(subtotal / 100)}</span></div>
                 <div style={{ fontSize: 10, color: "var(--hz-c-ink-soft)" }}>Prices are recomputed by the system when you save.</div>
               </div>
             </div>

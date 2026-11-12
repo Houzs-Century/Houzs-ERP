@@ -571,6 +571,9 @@ export function purchaseInvoiceRowMenu<R extends StatusRow & PiChainRow>(h: {
   cancel: (r: R) => void;
   canConfirm: (r: R) => boolean;
   canCancel: (r: R) => boolean;
+  /* HC-0227 (Sim, AutoCount: right click → Transfer to new Purchase Return). */
+  transferToPr: (r: R) => void;
+  canReturn: (r: R) => boolean;
 }): (r: R) => RowMenuItem[] {
   /* HOLD ARRIVED LATE, and the note that stood here is why it is worth saying so:
      it read "Hold follows: ON_HOLD is being converted from a status into a flag."
@@ -587,6 +590,7 @@ export function purchaseInvoiceRowMenu<R extends StatusRow & PiChainRow>(h: {
       { label: "Copy as new", onClick: () => h.copyAsNew(r) },
       ...printEntries(purchaseInvoicePrintChain(r), { print: h.print, open: () => h.open(r) }),
     ],
+    [h.canReturn(r) && { label: transferToLabel("pr"), onClick: () => h.transferToPr(r) }],
     [h.canConfirm(r) && { label: "Confirm", onClick: () => h.confirm(r) }],
     holdEntries(r, h.setHold),
     [h.canCancel(r) && dangerItem("Cancel Purchase Invoice", () => h.cancel(r))],

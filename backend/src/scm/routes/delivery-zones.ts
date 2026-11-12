@@ -39,6 +39,7 @@ import {
   ZONE_SET,
   DEFAULT_ZONE_PREFIX_MAP,
   KLANG_VALLEY_ZONES,
+  isThreePlOnlyZone,
   zoneForAddress,
   patchedPrefixRange,
   type ZonePrefixRule,
@@ -410,6 +411,12 @@ async function loadAndPack(
     const revenueSen = Number((row.localTotalSen ?? row.local_total_sen) ?? 0) || 0;
     if (!zr.zone) {
       unzoned.push({ ref: docNo, debtorName, reason: zr.method === 'none' ? 'no postcode on the address' : `postcode ${zr.postcode} maps to no zone` });
+      continue;
+    }
+    /* East Malaysia has zones for the 3PL rate cards only (owner 2026-11-11);
+       the own lorries are never planned there, as before it had a zone. */
+    if (isThreePlOnlyZone(zr.zone)) {
+      unzoned.push({ ref: docNo, debtorName, reason: `${zr.zone}: carried by a 3PL, not planned on own lorries` });
       continue;
     }
     orders.push({ ref: docNo, zone: zr.zone, sets: sc.sets, revenueSen, hasFurniture: sc.hasFurniture });
