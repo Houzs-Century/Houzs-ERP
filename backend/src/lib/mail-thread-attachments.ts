@@ -34,13 +34,13 @@ async function loadThreadAttachmentSummaries(
     .prepare(
       `SELECT thread_id, id, filename, content_type, attachment_count FROM (
          SELECT m.thread_id, a.id, a.filename, a.content_type,
-                ROW_NUMBER() OVER (PARTITION BY m.thread_id ORDER BY a.created_at, a.id) AS position,
+                ROW_NUMBER() OVER (PARTITION BY m.thread_id ORDER BY a.created_at, a.id) AS file_position,
                 COUNT(*) OVER (PARTITION BY m.thread_id) AS attachment_count
            FROM email_attachments a JOIN email_messages m ON m.id = a.message_id
           WHERE m.thread_id IN (${placeholders})${messageCompanySql}
        ) ranked
-       WHERE position <= ?
-       ORDER BY thread_id, position`,
+       WHERE file_position <= ?
+       ORDER BY thread_id, file_position`,
     )
     .bind(...threadIds, THREAD_ATTACHMENT_PREVIEW_LIMIT)
     .all<RankedAttachmentRow>();
