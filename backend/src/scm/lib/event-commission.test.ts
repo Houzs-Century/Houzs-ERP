@@ -334,6 +334,75 @@ describe('by SO date, an order with no fair — 「没有展会的标 No fair，
   });
 });
 
+/* Owner 2026-11-13: 「旧的单upsale？ 应该要算吧」 … 做 — an old order with no fair
+   (opened before October 2026) never earns on its own amount, but its upsales and
+   drop sales do, in the month they happen, at its brand's rate, paid or not. */
+describe('by SO date, an old order with no fair — its upsales and drop sales count', () => {
+  const old = (o: Partial<CommissionSo> = {}) => so({
+    docNo: 'HC-SO-013238', projectId: null, brand: 'AKEMI', soDate: '2026-08-13', createdAt: '2026-08-28T03:00:00Z', goodsSen: 12_000_00, totalSen: 12_000_00, ...o,
+  });
+  const priced = (docNo: string, at: string, before: number, after: number) =>
+    change({ docNo, changedAt: at, beforeGoodsSen: before, afterGoodsSen: after, beforeTotalSen: before, afterTotalSen: after });
+
+  it('an upsale earns at its brand\'s rate and a drop takes off, whatever was paid — no 30% line, and not an order opened in the range', () => {
+    const r = buildEventCommission({
+      ...OCT, basis: 'so_date', fairs: [], ratePctByBrand: RATES,
+      sos: [
+        old(),
+        /* Bed frames alone: the VP brand's rate, as for an order opened in the range. */
+        old({ docNo: 'HC-SO-012776', brand: 'BEDFRAME', vpBrand: 'zanotti', soDate: '2026-07-14', goodsSen: 5_000_00, totalSen: 5_000_00 }),
+      ],
+      /* Paid in full in October: still no "reached 30%" line — its own amount never earns. */
+      payments: [{ docNo: 'HC-SO-013238', paidAt: '2026-10-08', amountSen: 12_000_00 }],
+      changes: [
+        priced('HC-SO-013238', '2026-10-10T03:00:00Z', 10_000_00, 12_000_00),
+        priced('HC-SO-012776', '2026-10-12T03:00:00Z', 6_000_00, 5_000_00),
+      ],
+      cancels: [],
+    });
+    expect(r.fairs).toEqual([]);
+    expect(r.adjustments.map((a) => [a.docNo, a.fairName, a.kind, a.goodsSen, a.commissionSen, a.beforeReach])).toEqual([
+      ['HC-SO-013238', 'No fair', 'upsale', 2_000_00, 280_00, false],
+      ['HC-SO-012776', 'No fair', 'drop', -1_000_00, -130_00, false],
+    ]);
+    expect(r.changedOrders.map((x) => [x.docNo, x.part, x.brand, x.originalSen, x.latestSen, x.effectSen, x.oldOrder])).toEqual([
+      ['HC-SO-013238', 'earlier', 'AKEMI', 10_000_00, 12_000_00, 280_00, true],
+      ['HC-SO-012776', 'earlier', 'ZANOTTI', 6_000_00, 5_000_00, -130_00, true],
+    ]);
+    expect(r.totals.totalSen).toBe(150_00);
+    /* By fair it has no fair: nothing. */
+    expect(buildEventCommission({ ...OCT, fairs: [], ratePctByBrand: RATES, sos: [old()], payments: [], changes: [priced('HC-SO-013238', '2026-10-10T03:00:00Z', 10_000_00, 12_000_00)], cancels: [] }).adjustments).toEqual([]);
+  });
+
+  it('one opened in September 2026: nothing in September (no fair before October), its October changes count in October', () => {
+    const input = {
+      fairs: [], ratePctByBrand: RATES, basis: 'so_date' as const,
+      sos: [old({ docNo: 'HC-SO-013473', brand: 'ZANOTTI', soDate: '2026-09-04', createdAt: '2026-09-07T03:00:00Z', goodsSen: 7_044_00, totalSen: 7_044_00 })],
+      payments: [{ docNo: 'HC-SO-013473', paidAt: '2026-09-07', amountSen: 7_044_00 }],
+      changes: [
+        priced('HC-SO-013473', '2026-09-20T03:00:00Z', 5_000_00, 7_000_00),
+        priced('HC-SO-013473', '2026-10-15T03:00:00Z', 7_000_00, 7_044_00),
+      ],
+      cancels: [],
+    };
+    const sep = buildEventCommission({ from: '2026-09-01', to: '2026-09-30', ...input });
+    expect([sep.fairs, sep.adjustments, sep.changedOrders]).toEqual([[], [], []]);
+    const oct = buildEventCommission({ ...OCT, ...input });
+    expect(oct.adjustments.map((a) => [a.docNo, a.kind, a.commissionSen])).toEqual([['HC-SO-013473', 'upsale', 5_72]]);
+  });
+
+  it('cancelled in the range: the month\'s changes go with it, and nothing is taken back', () => {
+    const r = buildEventCommission({
+      ...OCT, basis: 'so_date', fairs: [], ratePctByBrand: RATES,
+      sos: [old({ status: 'CANCELLED' })],
+      payments: [{ docNo: 'HC-SO-013238', paidAt: '2026-08-28', amountSen: 12_000_00 }],
+      changes: [priced('HC-SO-013238', '2026-10-03T03:00:00Z', 10_000_00, 12_000_00)],
+      cancels: [{ docNo: 'HC-SO-013238', at: '2026-10-18T02:00:00Z' }],
+    });
+    expect([r.adjustments, r.earlierOrders, r.changedOrders]).toEqual([[], [], []]);
+  });
+});
+
 /* Owner 2026-11-13 (his September sheet): a price the system wiped and put back,
    or the first price of an order keyed with none, set after the month — the order
    earns on it in its own month; it is not an upsale and not walked back. */

@@ -254,8 +254,11 @@ export type ChangedOrderRow = OrderPlace & {
   /** The goods of the range's changes Finance left out: in Amended, not in the effect. Absent when none. */
   uncountedGoodsSen?: number;
   reachedOn: string | null;
-  /** (Amended less the goods left out) × the brand rate once the order has reached 30% by `to`, else 0. */
+  /** (Amended less the goods left out) × the brand rate once the order has reached 30% by `to`, else 0;
+      an old order with no fair (`oldOrder`): always. */
   effectSen: number;
+  /** An order with no fair opened before NO_FAIR_FROM: only its price changes count. */
+  oldOrder?: true;
   fromHistory: boolean;
 };
 
@@ -649,7 +652,15 @@ export function buildEventCommission(input: {
   const brandOf = (so: CommissionSo): string =>
     cardKey(so.brand) ?? cardKey(so.vpBrand) ?? ((so.brand ?? '').trim() || (so.vpBrand ?? '').trim());
   const noFair = (so: CommissionSo): boolean => basis === 'so_date' && so.projectId == null && so.soDate != null && so.soDate >= NO_FAIR_FROM;
-  const noFairBrands = [...new Set(input.sos.filter(noFair).map(brandOf))].sort();
+  /* An OLD order with no fair (opened before NO_FAIR_FROM) never earns on its own
+     amount here, but its upsales and drop sales do, in the month they happen, at
+     its brand's rate, whatever it has been paid (owner 2026-11-13: 「旧的单upsale？
+     应该要算吧」 … 做 — his September sheet paid them and took off their drop
+     sales). Its price changes only: no 30% line, no cancellation, and never an
+     order opened in the range. Under "No fair" like the others. */
+  const oldNoFair = (so: CommissionSo): boolean => basis === 'so_date' && so.projectId == null && so.soDate != null && so.soDate < NO_FAIR_FROM;
+  const changesOnly = new Set(input.sos.filter(oldNoFair).map((so) => so.docNo));
+  const noFairBrands = [...new Set(input.sos.filter((so) => noFair(so) || oldNoFair(so)).map(brandOf))].sort();
   const noFairId = new Map(noFairBrands.map((b, i) => [b, -(i + 1)]));
   for (const [b, id] of noFairId) {
     fairById.set(id, {
@@ -657,7 +668,7 @@ export function buildEventCommission(input: {
       organizer: null, venue: null, state: null,
     });
   }
-  const sosIn: CommissionSo[] = input.sos.map((so) => (noFair(so) ? { ...so, projectId: noFairId.get(brandOf(so))! } : so));
+  const sosIn: CommissionSo[] = input.sos.map((so) => (noFair(so) || oldNoFair(so) ? { ...so, projectId: noFairId.get(brandOf(so))! } : so));
   const placeOf = (so: CommissionSo, f: CommissionFair): OrderPlace => ({
     docNo: so.docNo, fairId: f.id, fairName: f.name,
     brand: f.brand, organizer: f.organizer ?? null, venue: f.id < 0 ? (so.venue ?? null) : (f.venue ?? null), state: f.state ?? null,
@@ -719,8 +730,9 @@ export function buildEventCommission(input: {
       lastChange: counted.reduce((m, v) => (v.date > m ? v.date : m), counted[0]!.date),
       originalSen: latest - amended, latestSen: latest, amendedSen: amended, reachedOn: reached,
       ...(off !== 0 ? { uncountedGoodsSen: off } : {}),
-      effectSen: reached ? commissionOf(amended - off, place.ratePct) : 0,
+      effectSen: reached || changesOnly.has(so.docNo) ? commissionOf(amended - off, place.ratePct) : 0,
       fromHistory: counted.some((v) => v.fromHistory),
+      ...(changesOnly.has(so.docNo) ? { oldOrder: true as const } : {}),
     });
   };
 
@@ -780,7 +792,7 @@ export function buildEventCommission(input: {
   } else {
     const opened = new Map<number, CommissionSo[]>();
     for (const so of sosIn) {
-      if (so.projectId == null || !inRange(so.soDate) || !fairById.has(so.projectId)) continue;
+      if (so.projectId == null || changesOnly.has(so.docNo) || !inRange(so.soDate) || !fairById.has(so.projectId)) continue;
       const list = opened.get(so.projectId);
       if (list) list.push(so); else opened.set(so.projectId, [so]);
     }
@@ -806,10 +818,14 @@ export function buildEventCommission(input: {
        since is live again. */
     const cancelled = so.status === 'CANCELLED' ? cancelOf.get(so.docNo) ?? null : null;
     if (so.status === 'CANCELLED' && cancelled == null) continue; // cancelled, day unknown: never earned here
+    /* An old order with no fair: its changes only — and none once it is
+       cancelled in the range, the month's changes go with it. */
+    const only = changesOnly.has(so.docNo);
+    if (only && cancelled != null && cancelled <= to) continue;
     const reached = reachedOn(so.totalSen, pays);
     const earned = reached != null && (cancelled == null || reached < cancelled);
     const base = { docNo: so.docNo, fairId: f.id, fairName: f.name, salesperson: so.salesperson };
-    if (earned && reached! >= from && reached! <= to) {
+    if (!only && earned && reached! >= from && reached! <= to) {
       const goods = goodsOn(so, chs, reached!);
       adjustments.push({ ...base, date: reached!, kind: 'reached', goodsSen: goods, ...earnedOn(goods, uncountedGoods(so, chs, reached!), rate), beforeReach: false });
     }
@@ -817,8 +833,8 @@ export function buildEventCommission(input: {
       const v = changeView(ch, so);
       if (!v || v.notCounted || v.date < from || v.date > to) continue;
       if (cancelled != null && v.date >= cancelled) continue;
-      if (reached != null && v.date === reached) continue; // folded into the amount earned that day
-      const after = earned && reached! < v.date;
+      if (!only && reached != null && v.date === reached) continue; // folded into the amount earned that day
+      const after = only || (earned && reached! < v.date);
       const moves = after ? commissionOf(v.deltaGoodsSen, rate) : 0;
       adjustments.push({
         ...base, date: v.date, kind: v.kind, goodsSen: v.deltaGoodsSen,
@@ -827,7 +843,7 @@ export function buildEventCommission(input: {
         ...(v.uncounted ? { uncounted: true as const, ...(moves !== 0 ? { uncountedSen: moves } : {}) } : {}),
       });
     }
-    if (earned && cancelled != null && cancelled >= from && cancelled <= to) {
+    if (!only && earned && cancelled != null && cancelled >= from && cancelled <= to) {
       /* Taken back: what it earned — its goods less the changes left out. */
       const goods = goodsOn(so, chs, cancelled);
       const had = earnedOn(goods, uncountedGoods(so, chs, cancelled), rate);

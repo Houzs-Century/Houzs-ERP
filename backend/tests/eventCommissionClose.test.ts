@@ -239,3 +239,41 @@ describe('「这次改价不算」 — a price change left out, the order still 
     expect((await report(sb)).body.totals.totalSen).toBe(168_00);
   });
 });
+
+/* Owner 2026-11-13: 「旧的单upsale？ 应该要算吧」 … 做 — by SO date an old order with
+   no fair (opened before October 2026) is read when its price changed in the
+   range, and its upsale counts at its brand's rate; one only paid in the range
+   stays out (its own amount never earns). */
+describe('an old order with no fair — its upsales and drop sales count', () => {
+  const order = (doc: string, soDate: string): Row => ({
+    doc_no: doc, company_id: CO, project_id: null, salesperson_id: null, debtor_name: 'Lim', status: 'CONFIRMED', on_hold: false,
+    mattress_sofa_sen: 12_000_00, bedframe_sen: 0, accessories_sen: 0, others_sen: 0, local_total_sen: 12_000_00, total_revenue_sen: 12_000_00,
+    created_at: '2026-08-28T03:00:00Z', so_date: soDate, customer_so_no: null, branding: 'Akemi', vp_brand: null, venue: 'MID VALLEY',
+  });
+  const tables = () => ({
+    event_commission_closes: [] as Row[],
+    event_commission_marks: [] as Row[],
+    mfg_sales_orders: [order('HC-SO-013238', '2026-08-13'), order('HC-SO-011153', '2026-04-07')],
+    mfg_sales_order_payments: [{ so_doc_no: 'HC-SO-011153', company_id: CO, paid_at: '2026-10-05', amount_sen: 5_000_00 }],
+    so_total_changes: [{
+      so_doc_no: 'HC-SO-013238', company_id: CO, changed_at: '2026-10-10T04:00:00Z', before_goods_sen: 10_000_00, after_goods_sen: 12_000_00,
+      before_total_sen: 10_000_00, after_total_sen: 12_000_00, source: 'edit', changed_by: 'Shawn',
+    }],
+    mfg_so_status_changes: [] as Row[],
+    staff: [] as Row[],
+  });
+  const AKEMI_CARD = { brand: 'AKEMI' };
+
+  test('the changed one is read and its upsale earns, under "No fair" at its brand\'s rate; the one only paid stays out', async () => {
+    const res = await run(eventCommissionHandler, {
+      ...ctx(fakeSb(tables()), { query: { from: '2026-10-01', to: '2026-10-31', basis: 'so_date' } }),
+      env: { DB: { prepare: () => ({ bind: () => ({ all: async () => ({ results: [AKEMI_CARD] }) }) }) } },
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.fairs).toEqual([]);
+    expect(res.body.adjustments).toMatchObject([{ docNo: 'HC-SO-013238', fairName: 'No fair', kind: 'upsale', goodsSen: 2_000_00, commissionSen: 280_00 }]);
+    expect(res.body.changedOrders).toMatchObject([{ docNo: 'HC-SO-013238', brand: 'AKEMI', venue: 'MID VALLEY', part: 'earlier', effectSen: 280_00, oldOrder: true }]);
+    expect(JSON.stringify(res.body)).not.toContain('HC-SO-011153');
+    expect(res.body.totals.totalSen).toBe(280_00);
+  });
+});

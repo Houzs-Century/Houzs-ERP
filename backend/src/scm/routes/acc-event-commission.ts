@@ -145,8 +145,11 @@ async function liveReport(c: any, companyId: number, from: string, to: string, b
     return (basis === 'fair' ? q.not('project_id', 'is', null) : q).order('doc_no').range(lo, hi);
   });
   if (partTwoRead.error) return fail(c, 'orders', partTwoRead.error.message);
+  /* …and an older order with no fair whose price changed in the range: its
+     upsales and drop sales count (owner 2026-11-13). */
+  const changedInRange = new Set((chIn.data ?? []).map((r) => r.so_doc_no));
   const twoRows = basis === 'so_date'
-    ? partTwoRead.data.filter((s) => s.project_id != null || (dayOf(s.so_date) ?? '') >= NO_FAIR_FROM)
+    ? partTwoRead.data.filter((s) => s.project_id != null || (dayOf(s.so_date) ?? '') >= NO_FAIR_FROM || changedInRange.has(s.doc_no))
     : partTwoRead.data;
 
   /* The fairs the rest needs: by fair, the earlier fairs of those orders (started
