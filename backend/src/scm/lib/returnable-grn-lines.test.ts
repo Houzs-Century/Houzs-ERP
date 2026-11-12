@@ -10,7 +10,7 @@
    Each case below is one way that read could be wrong again. */
 
 import { describe, expect, it } from 'vitest';
-import { buildReturnablePool, type GrnLineRow } from './returnable-grn-lines';
+import { buildPiReturnablePool, buildReturnablePool, type GrnLineRow } from './returnable-grn-lines';
 
 const line = (over: Partial<GrnLineRow> = {}): GrnLineRow => ({
   id: 'gi-1',
@@ -83,5 +83,35 @@ describe('buildReturnablePool', () => {
       unitPriceSen: 0,
       rejectionReason: 'Broken leg',
     });
+  });
+});
+
+/* HC-0227 (Sim: "why Purchase invoice no purchase return function") — the pool a
+   return raised FROM A PURCHASE INVOICE draws from: the receipt lines the
+   invoice bills, capped at what THIS invoice bills for each. */
+describe('buildPiReturnablePool', () => {
+  const billed = (entries: Array<[string, number]>) => new Map(entries);
+
+  it('offers only the receipt lines this invoice bills', () => {
+    const out = buildPiReturnablePool(
+      [line({ id: 'gi-billed' }), line({ id: 'gi-other-invoice' })], posted, billed([['gi-billed', 1]]));
+    expect(out.map((l) => l.grnItemId)).toEqual(['gi-billed']);
+  });
+
+  it('caps a receipt line split across invoices at this invoice\'s share', () => {
+    const [l] = buildPiReturnablePool([line({ id: 'gi-split', qty_accepted: 10 })], posted, billed([['gi-split', 6]]));
+    expect(l).toMatchObject({ grnItemId: 'gi-split', remaining: 6 });
+  });
+
+  it('never offers more than is still on the receipt, whatever the invoice billed', () => {
+    const [l] = buildPiReturnablePool(
+      [line({ id: 'gi-part', qty_accepted: 5, returned_qty: 4 })], posted, billed([['gi-part', 5]]));
+    expect(l).toMatchObject({ remaining: 1 });
+    expect(buildPiReturnablePool(
+      [line({ id: 'gi-gone', qty_accepted: 2, returned_qty: 2 })], posted, billed([['gi-gone', 2]]))).toEqual([]);
+  });
+
+  it('ignores a receipt that is not POSTED', () => {
+    expect(buildPiReturnablePool([line({ id: 'gi-d', grn_id: 'grn-draft' })], posted, billed([['gi-d', 1]]))).toEqual([]);
   });
 });

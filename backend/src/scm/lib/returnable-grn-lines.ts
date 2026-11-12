@@ -76,6 +76,35 @@ export function buildReturnablePool(
   poItemIds: ReadonlySet<string>,
   headerGrnIds: ReadonlySet<string>,
 ): ReturnableLine[] {
+  return poolOf(rows, postedGrnNumberById, (r) => {
+    const byLine = r.purchase_order_item_id != null && poItemIds.has(r.purchase_order_item_id);
+    const byHeaderLegacy = r.purchase_order_item_id == null && headerGrnIds.has(r.grn_id);
+    return byLine || byHeaderLegacy ? Infinity : 0;
+  });
+}
+
+/**
+ * HC-0227 — the pool a return raised FROM A PURCHASE INVOICE draws from: the
+ * receipt lines this invoice's lines bill (`purchase_invoice_items.grn_item_id`),
+ * each capped at the quantity THIS invoice bills for it — one receipt line can be
+ * split across invoices. `invoicedQtyByGrnItem` holds this invoice's qty per
+ * receipt line; a row it does not name is not this invoice's.
+ */
+export function buildPiReturnablePool(
+  rows: readonly GrnLineRow[],
+  postedGrnNumberById: ReadonlyMap<string, string>,
+  invoicedQtyByGrnItem: ReadonlyMap<string, number>,
+): ReturnableLine[] {
+  return poolOf(rows, postedGrnNumberById, (r) => invoicedQtyByGrnItem.get(r.id) ?? 0);
+}
+
+/* `capOf` answers how much of a row this source may return (0 = not this
+   source's row); the receipt's own remaining is always the outer cap. */
+function poolOf(
+  rows: readonly GrnLineRow[],
+  postedGrnNumberById: ReadonlyMap<string, string>,
+  capOf: (r: GrnLineRow) => number,
+): ReturnableLine[] {
   const seen = new Set<string>();
   const out: ReturnableLine[] = [];
   for (const r of rows) {
@@ -83,10 +112,7 @@ export function buildReturnablePool(
     // Only POSTED receipts: a draft receipt's stock has not moved in yet.
     const grnNumber = postedGrnNumberById.get(r.grn_id);
     if (grnNumber === undefined) continue;
-    const byLine = r.purchase_order_item_id != null && poItemIds.has(r.purchase_order_item_id);
-    const byHeaderLegacy = r.purchase_order_item_id == null && headerGrnIds.has(r.grn_id);
-    if (!byLine && !byHeaderLegacy) continue;
-    const remaining = Math.max(0, (r.qty_accepted ?? 0) - (r.returned_qty ?? 0));
+    const remaining = Math.min(capOf(r), Math.max(0, (r.qty_accepted ?? 0) - (r.returned_qty ?? 0)));
     if (remaining <= 0) continue;
     seen.add(r.id);
     out.push({

@@ -25,7 +25,7 @@ import {
 import { fetchPiExportRows, PI_DEFAULT_COLUMN_KEYS, PI_LABELS, senToRinggit, type PiListLine } from "../../vendor/scm/lib/pi-list-export";
 import type { PiPoPriceSummary } from "../../vendor/scm/lib/pi-list-po-price";
 import { PoAmountCell, piLineColumns } from "./pi-list-line-columns";
-import { transferFromLabel } from '../../lib/convertScope';
+import { convertToLink, transferFromLabel } from '../../lib/convertScope';
 import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { PageHeader } from "../../components/Layout";
@@ -614,6 +614,7 @@ export function PurchaseInvoicesListV2() {
   const notify = useNotify();
   const askChoice = useChoice();
   const askConfirm = useConfirm();
+  const { pageAccess: listPageAccess } = useHouzsAuth();
 
   const status = (params.get("status") ?? "all") as StatusTab;
   const view = (params.get("view") ?? "table") as "table" | "cards";
@@ -935,6 +936,10 @@ export function PurchaseInvoicesListV2() {
       const st = (r.status || "").toUpperCase();
       return st !== "CANCELLED" && st !== "PAID" && paidOf(r) === 0;
     },
+    /* HC-0227. The return form says plainly when nothing on the invoice is
+       returnable (no receipt behind it, or all of it already back). */
+    transferToPr: (r) => navigate(convertToLink("piToPr", r.id)),
+    canReturn: (r) => (r.status || "").toUpperCase() !== "CANCELLED" && listPageAccess("scm.procurement.pr") !== "none",
   });
 
   /* Default view = AutoCount's Purchase Invoice Detail Listing, layout "SS", in
