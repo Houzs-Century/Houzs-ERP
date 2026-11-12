@@ -318,11 +318,11 @@ describe('by SO date, an order with no fair — 「没有展会的标 No fair，
     ]);
   });
 
-  it('not by fair, and not an order opened before September 2026 — the old showroom orders stay out', () => {
+  it('not by fair, and not an order opened before October 2026 — the September ones were old orders keyed again (owner 2026-11-13)', () => {
     const input = {
       ...OCT, fairs: [], ratePctByBrand: RATES,
-      sos: [noFair(), noFair({ docNo: 'HC-SO-009915', soDate: '2026-08-20' })],
-      payments: [pays('HC-SO-2610-058', '2026-10-05', 28_000_00), pays('HC-SO-009915', '2026-10-09', 1_000_00)],
+      sos: [noFair(), noFair({ docNo: 'HC-SO-2609-286', soDate: '2026-09-28' })],
+      payments: [pays('HC-SO-2610-058', '2026-10-05', 28_000_00), pays('HC-SO-2609-286', '2026-10-09', 1_000_00)],
       changes: [], cancels: [],
     };
     expect(buildEventCommission(input).fairs).toEqual([]);
@@ -330,7 +330,46 @@ describe('by SO date, an order with no fair — 「没有展会的标 No fair，
     const bySo = buildEventCommission({ ...input, basis: 'so_date' });
     expect(bySo.fairs.flatMap((f) => f.sos.map((x) => x.docNo))).toEqual(['HC-SO-2610-058']);
     expect(bySo.adjustments).toEqual([]);
-    expect(NO_FAIR_FROM).toBe('2026-09-01');
+    expect(NO_FAIR_FROM).toBe('2026-10-01');
+  });
+});
+
+/* Owner 2026-11-13 (his September sheet): a price the system wiped and put back,
+   or the first price of an order keyed with none, set after the month — the order
+   earns on it in its own month; it is not an upsale and not walked back. */
+describe('a price put back, or first set, after the month — the order earns on it', () => {
+  const SEP = fair({ id: 2, name: 'SELANGOR [ZANOTTI] BIGHOME @ SUNWAY PYRAMID', brand: 'ZANOTTI', startDate: '2026-09-04', endDate: '2026-09-06' });
+  const SEPT = { from: '2026-09-01', to: '2026-09-30' };
+
+  it('a price the system wiped in September and put back in October (HC-SO-013496)', () => {
+    const r = buildEventCommission({
+      ...SEPT, basis: 'so_date', fairs: [SEP], ratePctByBrand: RATES,
+      sos: [so({ docNo: 'HC-SO-013496', projectId: 2, createdAt: '2026-09-05T03:00:00Z', soDate: '2026-09-05', goodsSen: 4_490_00, totalSen: 4_490_00 })],
+      payments: [{ docNo: 'HC-SO-013496', paidAt: '2026-09-07', amountSen: 4_490_00 }],
+      changes: [
+        change({ docNo: 'HC-SO-013496', changedAt: '2026-09-10T03:00:00Z', beforeGoodsSen: 4_490_00, afterGoodsSen: 0, beforeTotalSen: 4_490_00, afterTotalSen: 0, source: 'history-ignored' }),
+        change({ docNo: 'HC-SO-013496', changedAt: '2026-10-08T03:00:00Z', beforeGoodsSen: 0, afterGoodsSen: 4_490_00, beforeTotalSen: 0, afterTotalSen: 4_490_00, source: 'history-ignored' }),
+      ],
+      cancels: [],
+    });
+    expect(r.fairs[0]!.sos[0]).toMatchObject({ docNo: 'HC-SO-013496', goodsSen: 4_490_00, commissionSen: 583_70 });
+    expect(r.changedOrders).toEqual([]);
+  });
+
+  it('an order keyed with no price and priced the month after (HC-SO-2609-254)', () => {
+    const input = {
+      fairs: [SEP], ratePctByBrand: RATES, basis: 'so_date' as const,
+      sos: [so({ docNo: 'HC-SO-2609-254', projectId: 2, createdAt: '2026-09-20T03:00:00Z', soDate: '2026-09-20', goodsSen: 6_000_00, totalSen: 6_000_00 })],
+      payments: [{ docNo: 'HC-SO-2609-254', paidAt: '2026-09-21', amountSen: 2_000_00 }],
+      changes: [change({ docNo: 'HC-SO-2609-254', changedAt: '2026-10-01T03:00:00Z', beforeGoodsSen: 0, afterGoodsSen: 6_000_00, beforeTotalSen: 0, afterTotalSen: 6_000_00, source: 'history' })],
+      cancels: [],
+    };
+    const sep = buildEventCommission({ ...SEPT, ...input });
+    expect(sep.fairs[0]!.sos[0]).toMatchObject({ goodsSen: 6_000_00, reachedOn: '2026-09-21', commissionSen: 780_00 });
+    /* October pays nothing more for it: the pricing is not an upsale. */
+    const oct = buildEventCommission({ ...OCT, ...input });
+    expect(oct.adjustments).toEqual([]);
+    expect(oct.changedOrders).toEqual([]);
   });
 });
 
