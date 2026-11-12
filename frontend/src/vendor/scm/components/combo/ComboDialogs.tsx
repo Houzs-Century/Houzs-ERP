@@ -11,13 +11,14 @@ import { SearchableSelect } from '../SearchableSelect';
 import styles from './ComboScreen.module.css';
 import { errText } from './comboErrors';
 import {
-  COMBO_PRESETS, comboKey, costAt, familyMatches, fitSlots, hasPrice, MODULE_GROUPS, moduleFamilies, modulesBrief, presetSlots, tierLabel,
+  comboKey, costAt, familyMatches, fitSlots, hasPrice, MODULE_GROUPS, moduleFamilies, modulesBrief, presetPieces, presetSlots, tierLabel,
   type ComboLine,
 } from './comboBook';
 import { combosFileName, comboSheets, downloadComboWorkbook, planComboImport, readComboFile, type ComboImportPlan } from './comboExcel';
 import {
   useApplyCombos, useComboAssignTargets, useRecomposeCombos, useRetireCombos, type ApplyComboItem,
 } from '../../lib/sofa-combos-queries';
+import { useComboPresets } from '../../lib/combo-presets-queries';
 
 export const fieldStyle: CSSProperties = {
   width: '100%', boxSizing: 'border-box', minHeight: 40, padding: '0 11px', fontFamily: 'var(--font-sans)',
@@ -28,8 +29,8 @@ const tickRow: CSSProperties = {
   display: 'flex', alignItems: 'center', gap: 10, minHeight: 46, padding: '4px 12px', marginBottom: 6,
   border: '1px solid var(--line)', borderRadius: 'var(--radius-sm)', cursor: 'pointer',
 };
-const noteText: CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-soft)' };
-const fieldLabel: CSSProperties = { fontSize: 'var(--fs-12)', fontWeight: 600, color: 'var(--fg-soft)', marginBottom: 4 };
+export const noteText: CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-soft)' };
+export const fieldLabel: CSSProperties = { fontSize: 'var(--fs-12)', fontWeight: 600, color: 'var(--fg-soft)', marginBottom: 4 };
 
 export function Dialog({ title, subtitle, width, onClose, footer, children }: {
   title: string; subtitle: string | null; width: number; onClose: () => void; footer: ReactNode; children: ReactNode;
@@ -76,6 +77,8 @@ export function NewComboDialog({ model, lines, sourceBook, ownModules, supplierI
   const [source, setSource] = useState(PRESET);
   const [query, setQuery] = useState('');
   const [ticked, setTicked] = useState<Record<string, boolean>>({});
+  // The presets come from Products > Combo Pricing > Presets; only active ones are offered.
+  const presetsQ = useComboPresets();
 
   const have = useMemo(() => new Set(lines.map((l) => comboSlotsKey(l.modules))), [lines]);
   const fit = (name: string, note: string, slots: readonly (readonly string[])[]): Candidate => {
@@ -86,7 +89,7 @@ export function NewComboDialog({ model, lines, sourceBook, ownModules, supplierI
     return { key: name, name, note, modules, blocked };
   };
   const candidates = source === PRESET
-    ? COMBO_PRESETS.map((p) => fit(p.name, p.pieces, presetSlots(p.pieces, ownModules)))
+    ? (presetsQ.data ?? []).filter((p) => p.active).map((p) => fit(p.name, presetPieces(p.slots), presetSlots(p.slots, ownModules)))
     : (sourceBook.get(source) ?? []).map((l) => ({ ...fit(l.name, modulesBrief(l.modules), l.modules), label: l.label }));
   const shown = candidates.filter((c) => c.name.toLowerCase().includes(query.trim().toLowerCase()));
   const chosen = candidates.filter((c) => !c.blocked && ticked[c.key]);
@@ -159,7 +162,11 @@ export function NewComboDialog({ model, lines, sourceBook, ownModules, supplierI
             <span style={noteText}>{c.blocked ?? c.note}</span>
           </label>
         ))}
-        {shown.length === 0 && <p style={noteText}>This model has no combos to copy.</p>}
+        {source === PRESET && presetsQ.isPending && <p style={noteText}>Loading the presets...</p>}
+        {source === PRESET && presetsQ.isError && <p style={{ ...noteText, color: 'var(--c-festive-b, #8f2c1a)' }}>Couldn't load the presets. {errText(presetsQ.error)}</p>}
+        {shown.length === 0 && !(source === PRESET && (presetsQ.isPending || presetsQ.isError)) && (
+          <p style={noteText}>{source === PRESET ? 'No active preset. Add one under Presets.' : 'This model has no combos to copy.'}</p>
+        )}
       </div>
     </Dialog>
   );
@@ -167,8 +174,11 @@ export function NewComboDialog({ model, lines, sourceBook, ownModules, supplierI
 
 // ─── Compartments ──────────────────────────────────────────────────────
 
-function ModulePicker({ codes, names, picked, onToggle }: {
-  codes: readonly string[]; names: Readonly<Record<string, string>>; picked: readonly string[]; onToggle: (code: string) => void;
+export function ModulePicker({ codes, names, picked, plainLabel, onToggle }: {
+  codes: readonly string[]; names: Readonly<Record<string, string>>; picked: readonly string[];
+  /** The button for a module with no side: "Add" on a combo, "Either side" on a preset. */
+  plainLabel: string;
+  onToggle: (code: string) => void;
 }) {
   const [query, setQuery] = useState('');
   const [group, setGroup] = useState('All');
@@ -201,7 +211,7 @@ function ModulePicker({ codes, names, picked, onToggle }: {
               const on = picked.includes(v.code);
               return (
                 <button key={v.code} type="button" aria-pressed={on} aria-label={v.code} onClick={() => onToggle(v.code)} style={{ minHeight: 36, minWidth: 54, padding: '0 10px', borderRadius: 'var(--radius-sm)', fontSize: 'var(--fs-12)', fontWeight: 600, cursor: 'pointer', border: `1px solid ${on ? 'var(--c-primary, #0f6b5c)' : 'var(--line-strong)'}`, background: on ? 'var(--c-primary, #0f6b5c)' : 'var(--c-cream)', color: on ? '#fff' : 'var(--c-ink)' }}>
-                  {v.label}
+                  {v.label === 'Add' ? plainLabel : v.label}
                 </button>
               );
             })}
@@ -291,7 +301,7 @@ export function CompartmentDialog({ model, editing, codes, names, supplierId, to
               Remove
             </button>
           </div>
-          {i === active && <ModulePicker codes={codes} names={names} picked={slot} onToggle={(code) => toggle(i, code)} />}
+          {i === active && <ModulePicker codes={codes} names={names} picked={slot} plainLabel="Add" onToggle={(code) => toggle(i, code)} />}
         </div>
       ))}
       <button

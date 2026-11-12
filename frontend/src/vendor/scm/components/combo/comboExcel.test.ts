@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { read, utils } from 'xlsx';
 import { buildStyledXlsx } from '../../lib/styled-xlsx';
 import type { SofaComboRule } from '../../lib/sofa-combos-queries';
-import { comboBook, familyMatches, fitSlots, listedModels, offeredSizes, historyLines, itemsFromEdits, moduleFamilies, presetSlots, type ComboLine } from './comboBook';
+import { comboBook, familyMatches, fitSlots, listedModels, offeredSizes, historyLines, itemsFromEdits, moduleFamilies, presetPieces, presetSlots, type ComboLine } from './comboBook';
 import { comboSheets, planComboImport, type ComboGrids } from './comboExcel';
 
 const rule = (over: Partial<SofaComboRule>): SofaComboRule => ({
@@ -50,8 +50,17 @@ describe('copying a combo to another model', () => {
   it('names the piece it cannot make', () => {
     expect(fitSlots([['3S'], ['CNR']], OWN).missing).toEqual(['3S']);
   });
-  it('reads a preset piece as both sides', () => {
-    expect(presetSlots('2A + CNR', OWN)).toEqual([['2A(LHF)', '2A(RHF)'], ['CNR']]);
+  it('reads a preset piece with no side as both sides', () => {
+    expect(presetSlots([['2A'], ['CNR']], OWN)).toEqual([['2A(LHF)', '2A(RHF)'], ['CNR']]);
+  });
+  it('keeps a preset piece with a side as that side only', () => {
+    expect(presetSlots([['2A(RHF)'], ['CNR']], OWN)).toEqual([['2A(RHF)'], ['CNR']]);
+  });
+  it('a preset piece the model does not make is named missing', () => {
+    expect(fitSlots(presetSlots([['2A'], ['3S']], OWN), OWN).missing).toEqual(['3S']);
+  });
+  it('writes a preset on one line', () => {
+    expect(presetPieces([['2A'], ['CNR'], ['1A', '1B']])).toBe('2A + CNR + 1A or 1B');
   });
 });
 
