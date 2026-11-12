@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  NO_FAIR_FROM, buildEventCommission, changeView, deferredInFrom, goodsAt, monthAdjustmentsOf, mytDay, paidByOrder, reachedOn, withMarks, withMonthAdjustments,
+  NO_FAIR_FROM, buildEventCommission, changeView, deferredInFrom, goodsAt, monthAdjustmentsOf, mytDay, paidByOrder, reachedOn, settledChanges, withMarks, withMonthAdjustments,
   withUncountedChanges,
   type CommissionChange, type CommissionFair, type CommissionMark, type CommissionPayment, type CommissionSo,
 } from './event-commission';
@@ -804,5 +804,112 @@ describe('a price change not counted — 「这次改价不算」 (owner 2026-11
     expect(monthAdjustmentsOf(closed, new Map([['2026-10', now]]))).toMatchObject([
       { month: '2026-10', docNo: 'HC-SO-2610-001', wasSen: 168_00, nowSen: 140_00, adjustmentSen: -28_00 },
     ]);
+  });
+});
+
+/* Owner 2026-11-13 (「要」): a price wiped to 0 and put back was a drop sale, the
+   putting back nothing; one save recorded twice read double. The order's changes
+   are settled first: a row written twice is read once, a wipe and its re-pricing
+   are one change of the difference on the day it was priced again, and a wipe not
+   priced again yet is not a drop sale. */
+describe('a price wiped to 0 and put back, and a change recorded twice', () => {
+  const ZAN = fair({ id: 3, name: 'SELANGOR [ZANOTTI] BIGHOME @ SUNWAY PYRAMID', brand: 'ZANOTTI', startDate: '2026-09-10', endDate: '2026-09-13' });
+  const NOV = { from: '2026-11-01', to: '2026-11-30' };
+  const wipe = (docNo: string, at: string, was: number) => change({ docNo, changedAt: at, beforeGoodsSen: was, afterGoodsSen: 0, beforeTotalSen: was, afterTotalSen: 0 });
+  const priced = (docNo: string, at: string, to: number) => change({ docNo, changedAt: at, beforeGoodsSen: 0, afterGoodsSen: to, beforeTotalSen: 0, afterTotalSen: to });
+  const old = (o: Partial<CommissionSo> = {}) => so({
+    docNo: 'HC-SO-007822', projectId: null, brand: 'ZANOTTI', soDate: '2025-08-19', createdAt: '2026-08-28T03:00:00Z', goodsSen: 3_688_00, totalSen: 3_688_00, ...o,
+  });
+
+  it('the same price put back: no drop sale, no upsale — an earlier order of a fair (HC-SO-011043, wiped 10/10, back 12/10)', () => {
+    const r = buildEventCommission({
+      ...OCT, fairs: [ZAN], ratePctByBrand: RATES,
+      sos: [so({ docNo: 'HC-SO-011043', projectId: 3, goodsSen: 3_990_00, totalSen: 3_990_00, createdAt: '2026-09-11T03:00:00Z', soDate: '2026-09-11' })],
+      payments: [{ docNo: 'HC-SO-011043', paidAt: '2026-09-11', amountSen: 3_990_00 }],
+      changes: [wipe('HC-SO-011043', '2026-10-10T08:08:00Z', 3_990_00), priced('HC-SO-011043', '2026-10-12T09:15:00Z', 3_990_00)],
+      cancels: [],
+    });
+    expect([r.adjustments, r.earlierOrders, r.changedOrders]).toEqual([[], [], []]);
+  });
+
+  it('wiped in October, put back in November: the October order earns on its price, and neither month lists a change', () => {
+    const input = {
+      fairs: [fair()], ratePctByBrand: RATES,
+      sos: [so()],
+      payments: [{ docNo: 'HC-SO-2610-001', paidAt: '2026-10-02', amountSen: 400_00 }],
+      changes: [
+        change({ changedAt: '2026-10-28T03:00:00Z', beforeGoodsSen: 1_000_00, afterGoodsSen: 0, beforeTotalSen: 1_100_00, afterTotalSen: 0 }),
+        change({ changedAt: '2026-11-03T03:00:00Z', beforeGoodsSen: 0, afterGoodsSen: 1_000_00, beforeTotalSen: 0, afterTotalSen: 1_100_00 }),
+      ],
+      cancels: [],
+    };
+    const oct = buildEventCommission({ ...OCT, ...input });
+    expect(oct.fairs[0]!.sos[0]).toMatchObject({ goodsSen: 1_000_00, commissionSen: 140_00 });
+    expect(oct.changedOrders).toEqual([]);
+    const nov = buildEventCommission({ ...NOV, ...input });
+    expect([nov.adjustments, nov.changedOrders]).toEqual([[], []]);
+  });
+
+  it('priced again at another figure: one change of the difference, on the day it was priced again (HC-SO-007822: 6,388 to 0 to 3,688)', () => {
+    const r = buildEventCommission({
+      ...NOV, basis: 'so_date', fairs: [], ratePctByBrand: RATES,
+      sos: [old()], payments: [],
+      changes: [wipe('HC-SO-007822', '2026-11-11T08:08:27.904Z', 6_388_00), priced('HC-SO-007822', '2026-11-11T08:08:29.555Z', 3_688_00)],
+      cancels: [],
+    });
+    expect(r.adjustments.map((a) => [a.docNo, a.kind, a.goodsSen, a.commissionSen])).toEqual([['HC-SO-007822', 'drop', -2_700_00, -351_00]]);
+    expect(r.changedOrders).toMatchObject([{ docNo: 'HC-SO-007822', originalSen: 6_388_00, latestSen: 3_688_00, amendedSen: -2_700_00, effectSen: -351_00 }]);
+  });
+
+  it('wiped and not priced again yet: not a drop sale; the order is what the wipe left', () => {
+    const r = buildEventCommission({
+      ...OCT, basis: 'so_date', fairs: [], ratePctByBrand: RATES,
+      sos: [old({ docNo: 'HC-SO-011451', soDate: '2026-04-21', goodsSen: 0, totalSen: 0 })], payments: [],
+      changes: [wipe('HC-SO-011451', '2026-10-28T12:43:00Z', 2_900_00)],
+      cancels: [],
+    });
+    expect([r.adjustments, r.changedOrders]).toEqual([[], []]);
+    expect(changeView({ ...wipe('HC-SO-011451', '2026-10-28T12:43:00Z', 2_900_00), wiped: true }, old())).toMatchObject({ kind: 'drop', notCounted: 'price_wiped' });
+  });
+
+  it('a row the recorder wrote twice is read once: a wipe (HC-SO-010722) and a real drop (HC-SO-2610-284)', () => {
+    const twice = buildEventCommission({
+      ...NOV, basis: 'so_date', fairs: [], ratePctByBrand: RATES,
+      sos: [old({ docNo: 'HC-SO-010722', soDate: '2026-03-10', goodsSen: 4_888_00, totalSen: 4_888_00 })], payments: [],
+      changes: [
+        wipe('HC-SO-010722', '2026-11-04T09:37:44.172Z', 4_888_00), wipe('HC-SO-010722', '2026-11-04T09:37:44.191Z', 4_888_00),
+        priced('HC-SO-010722', '2026-11-04T09:41:36.273Z', 4_888_00),
+      ],
+      cancels: [],
+    });
+    expect([twice.adjustments, twice.changedOrders]).toEqual([[], []]);
+
+    const halved = (at: string) => change({ changedAt: at, beforeGoodsSen: 11_776_00, afterGoodsSen: 5_888_00, beforeTotalSen: 11_776_00, afterTotalSen: 5_888_00 });
+    const r = buildEventCommission({
+      ...OCT, fairs: [fair()], ratePctByBrand: RATES,
+      sos: [so({ goodsSen: 5_888_00, totalSen: 5_888_00 })],
+      payments: [{ docNo: 'HC-SO-2610-001', paidAt: '2026-10-02', amountSen: 5_888_00 }],
+      changes: [halved('2026-10-26T07:47:33.138Z'), halved('2026-10-26T07:47:33.185Z')],
+      cancels: [],
+    });
+    expect(r.changedOrders).toMatchObject([{ part: 'range', originalSen: 11_776_00, latestSen: 5_888_00, amendedSen: -5_888_00, effectSen: -824_32 }]);
+    expect(r.fairs[0]!.sos[0]).toMatchObject({ goodsSen: 5_888_00, commissionSen: 824_32 });
+  });
+
+  it('the settled list itself; a wipe the system made, or one on the opening day, keeps its own rule', () => {
+    const order = old({ docNo: 'HC-SO-010722', goodsSen: 4_888_00, totalSen: 4_888_00 });
+    const w1 = wipe('HC-SO-010722', '2026-11-04T09:37:44.172Z', 4_888_00);
+    const w2 = wipe('HC-SO-010722', '2026-11-04T09:37:44.191Z', 4_888_00);
+    const back = priced('HC-SO-010722', '2026-11-04T09:41:36.273Z', 5_000_00);
+    /* Out of order on purpose: read by time. */
+    expect(settledChanges([back, w2, w1], order)).toEqual([{ ...back, beforeGoodsSen: 4_888_00, beforeTotalSen: 4_888_00 }]);
+    expect(settledChanges([w1], order)).toEqual([{ ...w1, wiped: true }]);
+    /* The same figures a minute apart are two changes, not one written twice. */
+    const again = change({ changedAt: '2026-10-20T04:01:10Z' });
+    expect(settledChanges([change(), again], so())).toEqual([change(), again]);
+    const bySystem = [{ ...w1, source: 'history-ignored' }, { ...back, source: 'history-ignored' }];
+    expect(settledChanges(bySystem, order)).toEqual(bySystem);
+    const openingDay = [wipe('HC-SO-010722', '2026-08-28T05:00:00Z', 4_888_00), back];
+    expect(settledChanges(openingDay, order)).toEqual(openingDay);
   });
 });

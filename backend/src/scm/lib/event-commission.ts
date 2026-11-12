@@ -119,6 +119,8 @@ export type CommissionChange = {
   source: string; changedBy: string | null;
   /** Finance left the order's price changes of this month out (「这次改价不算」) — set by withUncountedChanges. */
   uncounted: boolean;
+  /** The order's price wiped to 0 and not put back yet — set by settledChanges; not a drop sale. */
+  wiped?: true;
 };
 export type CommissionCancel = { docNo: string; at: string };
 
@@ -127,7 +129,7 @@ export type ChangeView = {
   deltaGoodsSen: number;
   kind: 'upsale' | 'drop';
   /** Why it is not an upsale / drop; null when it is one. */
-  notCounted: 'opening_day' | 'first_price' | 'system_fix' | null;
+  notCounted: 'opening_day' | 'first_price' | 'system_fix' | 'price_wiped' | null;
   /** An upsale / drop Finance left out (「这次改价不算」): listed, and moves no commission. */
   uncounted: boolean;
   source: string;
@@ -599,6 +601,7 @@ export function changeView(ch: CommissionChange, so: Pick<CommissionSo, 'created
   const notCounted = ch.source === HISTORY_IGNORED ? 'system_fix'
     : date === mytDay(so.createdAt) ? 'opening_day'
     : ch.beforeTotalSen <= FIRST_PRICE_MAX_SEN ? 'first_price'
+    : ch.wiped ? 'price_wiped'
     : null;
   return {
     date, deltaGoodsSen: delta, kind: delta > 0 ? 'upsale' : 'drop', notCounted,
@@ -607,6 +610,51 @@ export function changeView(ch: CommissionChange, so: Pick<CommissionSo, 'created
     source: ch.source, changedBy: ch.changedBy,
     fromHistory: ch.source === HISTORY || ch.source === HISTORY_IGNORED,
   };
+}
+
+/* One order's recorded changes as they really were (owner 2026-11-13, 「要」:
+   a price wiped to 0 and put back was showing as a drop sale, the putting back
+   as nothing — HC-SO-002189 read RM 10,140 less for a price that moved between
+   two lines in two minutes — and one save recorded twice read double).
+     · A row the recorder wrote twice — the same figures as the row just before
+       it, seconds apart, when two saves rolled the order up at once — is read
+       once (HC-SO-010070, 21/10: 3,990 → 0 twice).
+     · A change that takes the whole order to 0 and the later one that prices it
+       again are ONE change, on the day it was priced again, from what it was
+       to what it became: nothing when the same price went back (most of them:
+       an item code changed, the price lost, typed again), an upsale / drop of
+       the difference when it did not (HC-SO-007822: 6,388 → 0 → 3,688 is a
+       drop of 2,700).
+     · Wiped and not priced again yet: not a drop sale (`wiped`); the order is
+       what the wipe left until someone prices it.
+   Only a wipe that would otherwise count is paired — one the system made
+   ('history-ignored') or one on the opening day keeps its own rule. */
+const DOUBLE_WRITE_MS = 5000;
+export function settledChanges(changes: readonly CommissionChange[], so: Pick<CommissionSo, 'createdAt'>): CommissionChange[] {
+  const at = (ch: CommissionChange): number => { const t = Date.parse(ch.changedAt); return Number.isFinite(t) ? t : 0; };
+  const sorted = changes.map((ch, i) => ({ ch, i })).sort((a, b) => at(a.ch) - at(b.ch) || a.i - b.i).map((x) => x.ch);
+  const once: CommissionChange[] = [];
+  for (const ch of sorted) {
+    const prev = once[once.length - 1];
+    const twice = prev != null && prev.beforeGoodsSen === ch.beforeGoodsSen && prev.afterGoodsSen === ch.afterGoodsSen
+      && prev.beforeTotalSen === ch.beforeTotalSen && prev.afterTotalSen === ch.afterTotalSen
+      && (ch.beforeGoodsSen !== ch.afterGoodsSen || ch.beforeTotalSen !== ch.afterTotalSen)
+      && at(ch) - at(prev) <= DOUBLE_WRITE_MS;
+    if (!twice) once.push(ch);
+  }
+  const out: CommissionChange[] = [];
+  for (let i = 0; i < once.length; i += 1) {
+    const ch = once[i]!;
+    const wipe = ch.afterTotalSen <= FIRST_PRICE_MAX_SEN && changeView(ch, so)?.notCounted === null;
+    if (!wipe) { out.push(ch); continue; }
+    const back = once.findIndex((r, j) => j > i && r.beforeTotalSen <= FIRST_PRICE_MAX_SEN && r.afterTotalSen > FIRST_PRICE_MAX_SEN);
+    if (back < 0) { out.push({ ...ch, wiped: true }); continue; }
+    const priced = once[back]!;
+    out.push(...once.slice(i + 1, back));
+    out.push({ ...priced, beforeGoodsSen: ch.beforeGoodsSen, beforeTotalSen: ch.beforeTotalSen });
+    i = back;
+  }
+  return out;
 }
 
 export function buildEventCommission(input: {
@@ -628,7 +676,9 @@ export function buildEventCommission(input: {
     return m;
   };
   const paymentsOf = byDoc(input.payments);
-  const changesOf = byDoc(input.changes);
+  const createdOf = new Map(input.sos.map((so) => [so.docNo, so.createdAt]));
+  const changesOf = new Map([...byDoc(input.changes)].map(([docNo, chs]) =>
+    [docNo, createdOf.has(docNo) ? settledChanges(chs, { createdAt: createdOf.get(docNo)! }) : chs]));
   const cancelOf = new Map<string, string>();
   for (const c of input.cancels) {
     const day = mytDay(c.at);
