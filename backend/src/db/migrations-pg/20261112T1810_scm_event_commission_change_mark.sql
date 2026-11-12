@@ -19,7 +19,7 @@
 -- not exist yet. No row is read or written; the first-of-month check on `month`
 -- is left as it is.
 -- Verified against: production, in a rolled-back transaction (run-script.yml
--- run __TRIAL_RUN__, try-commission-change-mark.mjs on acc/ec-change-check): the
+-- run 43202007904, try-commission-change-mark.mjs on acc/ec-change-check): the
 -- constraints and the index, and the app's own mark / refuse / read / undo of a
 -- price change on October 2026 with it — nothing kept.
 --
