@@ -435,8 +435,13 @@ const changedColumns = (ctl: MarkCtl): Column<CommissionChangedOrder>[] => [
 const MONTH_ADJ_COLUMNS: Column<CommissionMonthAdjustment>[] = [
   { key: 'month', label: 'Month', width: '85px', description: 'The closed month this belongs to.', render: (a) => <span className="whitespace-nowrap">{monthLabel(a.month)}</span>, getValue: (a) => a.month },
   { key: 'order', label: 'Order', width: '140px', render: (a) => <OrderLink docNo={a.docNo} />, getValue: (a) => a.docNo },
+  /* Ref No. here too, as on every other order table (owner 2026-11-12: 「这个没有reference no. 吗？」). */
+  refColumn<CommissionMonthAdjustment>(),
+  soDateColumn<CommissionMonthAdjustment>(true),
   ...hideState(placeColumns<CommissionMonthAdjustment>((a) => fairPlace({ name: a.fairName, brand: a.brand }), { brand: '85px', organizer: '115px', venue: '150px', state: '100px' })),
   { key: 'salesperson', label: 'Salesperson', width: '100px', render: (a) => a.salesperson ?? '—', getValue: (a) => a.salesperson },
+  customerColumn<CommissionMonthAdjustment>(),
+  statusColumn<CommissionMonthAdjustment>(),
   {
     key: 'was', label: 'Paid', align: 'right', width: '95px', description: 'What that month paid for the order: as it was closed, plus adjustments paid since.',
     render: (a) => num(amt(a.wasSen)), getValue: (a) => a.wasSen, exportValue: (a) => a.wasSen / 100,

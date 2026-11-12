@@ -347,6 +347,7 @@ describe('the Event Commission layout', () => {
 describe('closing a month — 关月 (owner 2026-10-26)', () => {
   const MONTH_ADJ = [{
     month: '2026-09', docNo: 'HC-SO-2609-051', fairId: 2214, fairName: ZAN_PLACE.fairName, brand: 'ZANOTTI', salesperson: 'Wei Pin', customer: 'Lim',
+    ref: 'ZNT0480', soDate: '2026-09-05', status: 'CONFIRMED',
     wasSen: 0, nowSen: 130_00, adjustmentSen: 130_00,
   }];
 
@@ -388,7 +389,8 @@ describe('closing a month — 关月 (owner 2026-10-26)', () => {
     expect(tile('Total commission')).toContain('283.00');
     expect(tile('Closed months — adjustments')).toContain('1 order · 2026/09');
     const cells = cellsOf(rowOf(tables()[2]!, 'HC-SO-2609-051'));
-    for (const t of ['2026/09', 'ZANOTTI', 'Wei Pin', '+130.00']) expect(cells).toContain(t);
+    /* Its Ref No. too, as on every order table (「这个没有reference no. 吗？」). */
+    for (const t of ['2026/09', 'ZNT0480', 'ZANOTTI', 'Wei Pin', '+130.00']) expect(cells).toContain(t);
     const csv = eventCommissionCsv(current);
     expect(csv).toContain('"Closed months — adjustments","130.00"');
     expect(csv).toContain('"Total","283.00"');

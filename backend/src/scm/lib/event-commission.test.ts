@@ -342,7 +342,7 @@ describe('closing a month — 关月 (owner 2026-10-26)', () => {
   const sep = (o: Partial<CommissionSo> = {}) => so({ docNo: 'HC-SO-2609-050', projectId: 2, createdAt: '2026-09-05T03:00:00Z', soDate: '2026-09-05', ...o });
   const september = (payments: CommissionPayment[]) => buildEventCommission({
     from: '2026-09-01', to: '2026-09-30', fairs: [SEPF], ratePctByBrand: RATES,
-    sos: [sep(), sep({ docNo: 'HC-SO-2609-051', salesperson: 'Wei Pin' })], payments, changes: [], cancels: [],
+    sos: [sep(), sep({ docNo: 'HC-SO-2609-051', salesperson: 'Wei Pin', ref: 'ZNT0480' })], payments, changes: [], cancels: [],
   });
   const october = () => buildEventCommission({ ...OCT, fairs: [], ratePctByBrand: RATES, sos: [], payments: [], changes: [], cancels: [] });
   const PAID_050 = { docNo: 'HC-SO-2609-050', paidAt: '2026-09-05', amountSen: 400_00 };
@@ -357,6 +357,7 @@ describe('closing a month — 关月 (owner 2026-10-26)', () => {
     const rows = monthAdjustmentsOf([closedSep()], new Map([['2026-09', now]]));
     expect(rows).toEqual([{
       month: '2026-09', docNo: 'HC-SO-2609-051', fairId: 2, fairName: SEPF.name, brand: 'ZANOTTI', salesperson: 'Wei Pin', customer: 'Tan',
+      ref: 'ZNT0480', soDate: '2026-09-05', status: 'CONFIRMED',
       wasSen: 0, nowSen: 130_00, adjustmentSen: 130_00,
     }]);
   });

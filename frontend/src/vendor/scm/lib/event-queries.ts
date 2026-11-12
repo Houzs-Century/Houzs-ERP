@@ -211,6 +211,8 @@ export type CommissionMonthAdjustment = {
   brand: string | null;
   salesperson: string | null;
   customer: string | null;
+  /** Ref No., SO date and status — absent on rows made before 2026-11-12. */
+  ref?: string | null; soDate?: string | null; status?: string;
   /** What that month paid for the order: as closed, plus adjustments paid since. */
   wasSen: number;
   /** That month recalculated today. */

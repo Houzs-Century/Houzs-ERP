@@ -301,6 +301,11 @@ export type MonthAdjustmentRow = {
   brand: string | null;
   salesperson: string | null;
   customer: string | null;
+  /** Ref No. (the booklet number), SO date and status, as on the order tables
+      (owner 2026-11-12: 「这个没有reference no. 吗？」). Absent on rows made before. */
+  ref?: string | null;
+  soDate?: string | null;
+  status?: string;
   /** What that month paid for the order: as closed, plus the adjustments paid since. */
   wasSen: number;
   /** That month recalculated today. */
@@ -348,16 +353,16 @@ export function monthAdjustmentsOf(closed: readonly ClosedMonthPaid[], live: Rea
     const nowPaid = paidByOrder(now);
     const where = new Map<string, Omit<MonthAdjustmentRow, 'month' | 'docNo' | 'wasSen' | 'nowSen' | 'adjustmentSen'>>();
     for (const f of now.fairs) for (const so of f.sos) {
-      where.set(so.docNo, { fairId: f.id, fairName: f.name, brand: f.brand, salesperson: so.salesperson, customer: so.customer });
+      where.set(so.docNo, { fairId: f.id, fairName: f.name, brand: f.brand, salesperson: so.salesperson, customer: so.customer, ref: so.ref, soDate: so.soDate, status: so.status });
     }
     for (const o of now.earlierOrders) {
-      if (!where.has(o.docNo)) where.set(o.docNo, { fairId: o.fairId, fairName: o.fairName, brand: o.brand, salesperson: o.salesperson, customer: o.customer });
+      if (!where.has(o.docNo)) where.set(o.docNo, { fairId: o.fairId, fairName: o.fairName, brand: o.brand, salesperson: o.salesperson, customer: o.customer, ref: o.ref, soDate: o.soDate, status: o.status });
     }
     for (const doc of new Set([...Object.keys(was), ...Object.keys(nowPaid)])) {
       const w = was[doc] ?? 0;
       const n = nowPaid[doc] ?? 0;
       if (w === n) continue;
-      const at = where.get(doc) ?? { fairId: null, fairName: '', brand: null, salesperson: null, customer: null };
+      const at = where.get(doc) ?? { fairId: null, fairName: '', brand: null, salesperson: null, customer: null, ref: null, soDate: null };
       rows.push({ month: k.month, docNo: doc, ...at, wasSen: w, nowSen: n, adjustmentSen: n - w });
     }
   }
