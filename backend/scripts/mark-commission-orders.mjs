@@ -27,6 +27,8 @@
 // RE-RUN: an order already carrying the mark is left alone, so a second run
 // writes nothing. Don't count change skips an order that is Don't count as a
 // whole — it earns nothing either way.
+// REASON and ACTOR are stored and shown (the page's Reason and Marked by, the
+// order's History): write them in English (owner 2026-11-13, 「这个要英文哦」).
 // Env: DATABASE_URL, DOCS (comma list), REASON, KIND, MONTH, ACTOR, COMPANY_ID (default 1).
 import './lib/public-log-guard.mjs';
 import postgres from 'postgres';
