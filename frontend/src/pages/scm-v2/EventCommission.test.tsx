@@ -9,7 +9,9 @@
    2026-11-12 (round 3): the tiles are the summary lines and add up to the total,
    a fair's Total Sales is its orders' goods, By SO date one row per order, the
    orders under 30% apart, order numbers are links, the view kept for Back, and
-   Finance's two buttons — don't count / next month — each undoable. */
+   Finance's two buttons — don't count / next month — each undoable. Later that
+   day: a price change left out on the Upsales / Drop sales table (「只是改价不算」),
+   and the SO list with the fair's full name and the order's Sales. */
 
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
@@ -99,7 +101,7 @@ afterEach(() => { current = null; vi.useRealTimers(); sessionStorage.clear(); vi
 
 import { MemoryRouter } from 'react-router-dom';
 import { EventCommissionTab } from './EventCommission';
-import { basisOf, brandsOf, eventCommissionCsv, eventCommissionSheet, fairLines, fairPlace, forBrand, orderLines, summaryOf } from './eventCommissionModel';
+import { basisOf, brandsOf, eventCommissionCsv, eventCommissionSheet, fairLines, fairPlace, forBrand, orderLines, summaryOf, whatOf } from './eventCommissionModel';
 
 /* The report reads the shared range (the report shell's): no dates in the address → This month. */
 const renderTab = (ui: React.ReactElement) => render(<MemoryRouter initialEntries={['/scm/accounting?tab=commission']}>{ui}</MemoryRouter>);
@@ -433,5 +435,104 @@ describe('round 3 (owner 2026-11-12)', () => {
     first.unmount();
     renderTab(<EventCommissionTab />);
     expect(within(tables()[0]!).getByText('HC-SO-2610-001')).toBeTruthy();
+  });
+});
+
+/* Owner 2026-11-12, later: on the Upsales / Drop sales table 「这边不能按不count
+   吗？」 → 「做 B：只是改价不算」; on the SO list 「要有 fair full name」 and 「我也要
+   看到 sales, 然后 goods」. */
+describe('a price change left out, and the SO list\'s columns (owner 2026-11-12)', () => {
+  const october = () => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-10-26T04:00:00Z')); };
+  const changeMark = { id: '7a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d', kind: 'exclude_change' as const, month: '2026-10', reason: 'typing fix', markedBy: 'Finance Chew', markedAt: '2026-11-12T03:00:00Z' };
+  /* HC-SO-2610-001's upsale of 150.00 left out: it earns on 850.00 (119.00), not on 1,000.00 (140.00). */
+  const LEFT_OUT: EventCommission = {
+    ...REPORT,
+    fairs: REPORT.fairs.map((f) => (f.id !== 363 ? f : {
+      ...f, payableSen: 119_00,
+      sos: f.sos.map((s) => (s.docNo !== 'HC-SO-2610-001' ? s : {
+        ...s, commissionSen: 119_00, uncountedSen: 21_00, changes: s.changes.map((ch) => (ch.notCounted ? ch : { ...ch, uncounted: true })),
+      })),
+    })),
+    changedOrders: REPORT.changedOrders!.map((o) => (o.docNo === 'HC-SO-2610-001' ? { ...o, effectSen: 0, uncountedGoodsSen: 150_00, changeMark } : o)),
+    marked: [{
+      docNo: 'HC-SO-2610-001', fairId: 363, fairName: 'Kuala Lumpur [AKEMI] BIGHOME @ MID VALLEY', brand: 'AKEMI', organizer: 'BIGHOME', venue: 'MID VALLEY', state: 'Kuala Lumpur',
+      salesperson: 'Ethan', customer: 'Tan', ratePct: 14, mark: changeMark, commissionSen: 21_00,
+    }],
+    totals: { payableSen: 119_00, adjustmentsSen: 13_00, totalSen: 132_00 },
+  };
+
+  test('each changed order has "Don\'t count change" on an open month: it asks for a reason and names the month', async () => {
+    october();
+    renderTab(<EventCommissionTab />);
+    const card = screen.getByRole('region', { name: 'Upsales / Drop sales' });
+    const up = within(card).getByText('HC-SO-2610-001').closest('tr')!;
+    fireEvent.click(within(up).getByRole('button', { name: "Don't count change" }));
+    await waitFor(() => expect(markOrder).toHaveBeenCalledWith({ docNo: 'HC-SO-2610-001', kind: 'exclude_change', month: '2026-10', reason: 'checking the price' }));
+    expect(promptAsk).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Don't count the price change of HC-SO-2610-001?", body: expect.stringContaining('original amount still counts'),
+    }));
+  });
+
+  test('a closed month shows no such button', () => {
+    october();
+    current = { ...REPORT, from: '2026-09-01', to: '2026-09-30', closed: { month: '2026-09', closedAt: '2026-10-26T09:00:00Z', closedBy: 'Finance' }, closes: { months: ['2026-09'], openFrom: '2026-10' } };
+    renderTab(<EventCommissionTab />);
+    expect(screen.queryByRole('button', { name: "Don't count change" })).toBeNull();
+  });
+
+  test('a price change left out: its row says so with Undo, the order still earns on the rest, and the mark is listed apart', async () => {
+    october();
+    current = LEFT_OUT;
+    renderTab(<EventCommissionTab />);
+    expect(tile('Total commission')).toContain('132.00');
+    expect(tile('Fair commission')).toContain('119.00');
+    expect(tile('Upsales / drop sales')).toContain('0.00');
+    const card = screen.getByRole('region', { name: 'Upsales / Drop sales' });
+    const row = within(card).getByText('HC-SO-2610-001').closest('tr')!;
+    /* Its amounts stay; the effect reads "not counted", and the button is now Undo. */
+    expect(cellsOf(row)).toEqual(expect.arrayContaining(['850.00', '1,000.00', '+150.00', 'not counted']));
+    expect(within(row).queryByRole('button', { name: "Don't count change" })).toBeNull();
+    expect(within(row).getByRole('button', { name: 'Undo' }).getAttribute('title')).toBe('Price change not counted · typing fix · by Finance Chew');
+    const listed = screen.getByRole('region', { name: 'Marked — not paid here' });
+    expect(cellsOf(within(listed).getByText('HC-SO-2610-001').closest('tr')!))
+      .toEqual(expect.arrayContaining(['Price change not counted', 'typing fix', 'Finance Chew', '21.00']));
+    fireEvent.click(within(row).getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(unmarkOrder).toHaveBeenCalledWith(changeMark.id));
+    expect(confirmAsk).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Take away "Price change not counted"?', body: expect.stringContaining('price change counts again'),
+    }));
+    /* The order itself still counts: its own two buttons stay, and its upsale reads as left out. */
+    fireEvent.click(within(tables()[0]!).getByText('MID VALLEY'));
+    const order = within(tables()[0]!).getByText('HC-SO-2610-001').closest('tr')!;
+    expect(within(order).getByRole('button', { name: "Don't count" })).toBeTruthy();
+    expect(order.textContent).toContain('left out by Finance');
+    expect(within(order).getByText('119.00').getAttribute('title')).toBe('A price change is left out: RM 21.00 not counted');
+  });
+
+  test('the export says which mark: a price change left out reads apart from an order not counted, and both when both', () => {
+    expect(summaryOf(LEFT_OUT)).toEqual({ fair: 119_00, changes: 0, late: 0, earlier: 13_00, monthAdj: 0, deferredIn: 0, totalSen: 132_00 });
+    expect(eventCommissionCsv(LEFT_OUT)).toContain(
+      '"HC-SO-2610-001","","Kuala Lumpur [AKEMI] BIGHOME @ MID VALLEY","AKEMI","Ethan","2026-10-02","1,000.00","36.4%","2026-10-02","119.00","0.00","0.00","0.00","0.00","0.00","119.00","Price change not counted","21.00"',
+    );
+    const exclude = { ...changeMark, id: 'x1', kind: 'exclude' as const, month: null, reason: null };
+    const both = { ...LEFT_OUT, marked: [{ ...LEFT_OUT.marked![0]!, mark: exclude, commissionSen: 119_00 }, ...LEFT_OUT.marked!] };
+    const line = orderLines(both).find((l) => l.docNo === 'HC-SO-2610-001')!;
+    expect(line.marks.map((m) => m.kind)).toEqual(['exclude', 'exclude_change']);
+    expect(line.markedSen).toBe(140_00);
+    expect(eventCommissionCsv(both)).toContain('"Not counted; Price change not counted","140.00"');
+    expect(whatOf({ ...REPORT.earlierOrders![0]!, events: [{ date: '2026-10-03', kind: 'upsale', beforeReach: false, uncounted: true }] })).toBe('Upsale (left out)');
+  });
+
+  test("By SO date: the fair's full name beside its brand, and the order's Sales before its Goods", () => {
+    renderTab(<EventCommissionTab />);
+    fireEvent.click(screen.getByRole('button', { name: 'By SO date' }));
+    const list = tables()[0]!;
+    const heads = within(list).getAllByRole('columnheader').map((h) => h.textContent);
+    expect(heads.indexOf('Fair (Full Name)')).toBe(heads.indexOf('Brand') + 1);
+    expect(heads.indexOf('Sales')).toBeGreaterThan(-1);
+    expect(heads.indexOf('Sales')).toBe(heads.indexOf('Goods') - 1);
+    const row = cellsOf(rowOf(list, 'HC-SO-2610-010'));
+    expect(row).toEqual(expect.arrayContaining(['SELANGOR [ZANOTTI] BIGHOME @ SUNWAY PYRAMID', '1,100.00', '1,000.00']));
+    expect(list.querySelector('tfoot')!.textContent).toContain('1,100.00');
   });
 });

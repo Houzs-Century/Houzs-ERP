@@ -7,9 +7,17 @@
    The rules that turn a closed month into the next month's adjustments are the
    lib's (scm/lib/event-commission.test.ts, "closing a month").
    Finance's two buttons (owner 2026-11-12): marking an order "not counted" or
-   "next month", and taking the mark away — each written to the order's History. */
+   "next month", and taking the mark away — each written to the order's History.
+   「这次改价不算」 (the same day): marking an order's price change of one month
+   not counted, and the report read through the handler leaving it out. */
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+
+/* The live report's rate card and event-page figures come from Hyperdrive; the
+   test supplies them (AKEMI 14%). */
+vi.mock('../src/services/eventPnlBatch', () => ({ pnlForProjects: async () => new Map() }));
+vi.mock('../src/services/eventPnlInputs', () => ({ loadCostRates: async () => new Map([['AKEMI', { commission_normal_pct: 14 }]]) }));
+
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
 import {
   closeCommissionMonthHandler, eventCommissionHandler, markCommissionOrderHandler, reopenCommissionMonthHandler, unmarkCommissionOrderHandler,
@@ -155,5 +163,79 @@ describe("Finance's two buttons — 这张单不要算 / 这个算下个月 (own
     expect([gone.status, gone.body.error]).toEqual([404, 'not_found']);
     const bad = await run(unmarkCommissionOrderHandler, ctx(sb, { body: { id: 'row-1' } }));
     expect([bad.status, bad.body.error]).toEqual([400, 'bad_id']);
+  });
+});
+
+describe('「这次改价不算」 — a price change left out, the order still counted (owner 2026-11-12)', () => {
+  const MARK_ID = '7a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d';
+  const changeMark: Row = {
+    id: MARK_ID, company_id: CO, so_doc_no: 'HC-SO-2610-001', kind: 'exclude_change', month: '2026-10-01', reason: 'typing fix', marked_by: 'Finance', marked_at: '2026-11-12T03:00:00Z',
+  };
+  /* One October order at an AKEMI fair: goods 1,000.00, upsold + 200.00 on 20 October, 500.00 paid. */
+  const tables = (marks: Row[] = [], closes: Row[] = []) => ({
+    event_commission_closes: closes,
+    event_commission_marks: marks,
+    mfg_sales_orders: [{
+      doc_no: 'HC-SO-2610-001', company_id: CO, project_id: 1, salesperson_id: null, debtor_name: 'Tan', status: 'CONFIRMED', on_hold: false,
+      mattress_sofa_sen: 1_200_00, bedframe_sen: 0, accessories_sen: 0, others_sen: 0, local_total_sen: 1_300_00, total_revenue_sen: 1_300_00,
+      created_at: '2026-10-02T03:00:00Z', so_date: '2026-10-02', customer_so_no: 'HC11617',
+    }],
+    mfg_sales_order_payments: [{ so_doc_no: 'HC-SO-2610-001', company_id: CO, paid_at: '2026-10-02', amount_sen: 500_00 }],
+    so_total_changes: [{
+      so_doc_no: 'HC-SO-2610-001', company_id: CO, changed_at: '2026-10-20T04:00:00Z', before_goods_sen: 1_000_00, after_goods_sen: 1_200_00,
+      before_total_sen: 1_100_00, after_total_sen: 1_300_00, source: 'edit', changed_by: 'Ethan',
+    }],
+    mfg_so_status_changes: [] as Row[],
+    staff: [] as Row[],
+    mfg_so_audit_log: [] as Row[],
+    entity_audit_log: [] as Row[],
+  });
+  const FAIR = { id: 1, name: 'KL [AKEMI] BIGHOME @ MID VALLEY', brand: 'AKEMI', start_date: '2026-10-02', end_date: '2026-10-05', archived_at: null, status: 'active', total_sales: null, organizer: 'BIGHOME', venue: 'MID VALLEY', state: 'Kuala Lumpur' };
+  const report = (sb: unknown) => run(eventCommissionHandler, {
+    ...ctx(sb, { query: { from: '2026-10-01', to: '2026-10-31', basis: 'so_date' } }),
+    env: { DB: { prepare: () => ({ bind: () => ({ all: async () => ({ results: [FAIR] }) }) }) } },
+  });
+  const changeOnce = [{ table: 'event_commission_marks', column: 'so_doc_no', covers: (r: Row) => r.kind === 'exclude_change', name: 'event_commission_marks_change_uq' }];
+
+  test('the mark names the month whose price change is left out; a closed month and a second time are refused', async () => {
+    const noMonth = await run(markCommissionOrderHandler, ctx(fakeSb(tables()), { body: { docNo: 'HC-SO-2610-001', kind: 'exclude_change' } }));
+    expect([noMonth.status, noMonth.body.error]).toEqual([400, 'bad_month']);
+    const closedMonth = await run(markCommissionOrderHandler, ctx(fakeSb(tables([], [closed('2026-09')])), { body: { docNo: 'HC-SO-2610-001', kind: 'exclude_change', month: '2026-09' } }));
+    expect([closedMonth.status, closedMonth.body.error, closedMonth.body.message])
+      .toEqual([409, 'month_closed', "2026/09 is closed — only an open month's price change can be left out."]);
+
+    const t = tables();
+    const sb = fakeSb(t, {}, changeOnce);
+    const ok = await run(markCommissionOrderHandler, ctx(sb, { body: { docNo: 'HC-SO-2610-001', kind: 'exclude_change', month: '2026-10', reason: 'typing fix' } }));
+    expect(ok.body.mark).toMatchObject({ docNo: 'HC-SO-2610-001', kind: 'exclude_change', month: '2026-10', reason: 'typing fix', markedBy: 'Finance Chew' });
+    expect(t.event_commission_marks).toMatchObject([{ so_doc_no: 'HC-SO-2610-001', kind: 'exclude_change', month: '2026-10-01' }]);
+    expect(t.mfg_so_audit_log).toEqual([expect.objectContaining({
+      so_doc_no: 'HC-SO-2610-001', action: 'COMMISSION_MARK', note: 'typing fix',
+      field_changes: [{ field: 'eventCommission', from: 'Counted', to: 'Price change of 2026/10 not counted' }],
+    })]);
+    const again = await run(markCommissionOrderHandler, ctx(sb, { body: { docNo: 'HC-SO-2610-001', kind: 'exclude_change', month: '2026-10' } }));
+    expect([again.status, again.body.error]).toEqual([409, 'already_marked']);
+  });
+
+  test('the report leaves the change out — the order earns on its goods less it — and Undo counts it again', async () => {
+    const counted = await report(fakeSb(tables()));
+    expect(counted.status).toBe(200);
+    expect(counted.body.fairs[0].sos[0]).toMatchObject({ docNo: 'HC-SO-2610-001', goodsSen: 1_200_00, commissionSen: 168_00 });
+    expect(counted.body.changedOrders).toMatchObject([{ amendedSen: 200_00, effectSen: 28_00 }]);
+
+    const t = tables([changeMark]);
+    const sb = fakeSb(t);
+    const res = await report(sb);
+    expect(res.body.fairs[0].sos[0]).toMatchObject({ goodsSen: 1_200_00, commissionSen: 140_00, uncountedSen: 28_00 });
+    expect(res.body.changedOrders).toMatchObject([{ amendedSen: 200_00, effectSen: 0, changeMark: { id: MARK_ID, kind: 'exclude_change', month: '2026-10' } }]);
+    expect(res.body.marked).toMatchObject([{ docNo: 'HC-SO-2610-001', commissionSen: 28_00, mark: { kind: 'exclude_change' } }]);
+    expect(res.body.totals.totalSen).toBe(140_00);
+
+    const undo = await run(unmarkCommissionOrderHandler, ctx(sb, { body: { id: MARK_ID } }));
+    expect(undo.body).toMatchObject({ ok: true, mark: { kind: 'exclude_change', month: '2026-10' } });
+    expect(t.mfg_so_audit_log).toEqual([expect.objectContaining({
+      action: 'COMMISSION_UNMARK', field_changes: [{ field: 'eventCommission', from: 'Price change of 2026/10 not counted', to: 'Counted' }],
+    })]);
+    expect((await report(sb)).body.totals.totalSen).toBe(168_00);
   });
 });
