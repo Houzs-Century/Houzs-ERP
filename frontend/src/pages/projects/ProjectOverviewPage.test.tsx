@@ -107,6 +107,36 @@ describe("Project Overview — the project table", () => {
     expect(titles()).toEqual(["[AKEMI] MYHOME", "[AKEMI] HOMELOVE", "[ZANOTTI] HOMELOVE"]);
   });
 
+  /* Owner 2026-11-12: 「这些其他不可以filter?」 — only Project, Event type, Venue and
+     State had the header's filter and sort; Dates and the figures had neither. */
+  it("Dates and the figures filter and sort from their headers too: a range for the dates, a minimum and maximum for a figure", () => {
+    show(PERIOD);
+    const table = projectsTable();
+    for (const c of [
+      "Project", "Event type", "Venue", "State", "Dates", "Sales", "Service", "COGS", "GP", "GP %", "Rental", "Setup", "Transport",
+      "Commission", "Merchandise", "Others", "Net profit", "NP %", "Collected", "Collected %",
+    ]) {
+      expect(within(table).getByRole("button", { name: `Filter & sort ${c}` })).toBeTruthy();
+    }
+
+    /* A click on a figure's header sorts by it. */
+    fireEvent.click(within(table).getByText("Sales"));
+    expect(titles()).toEqual(["[ZANOTTI] HOMELOVE", "[AKEMI] MYHOME", "[AKEMI] HOMELOVE"]);
+
+    /* Its funnel lists the figures as the table shows them, and a minimum narrows the rows and the Total. */
+    fireEvent.click(within(table).getByRole("button", { name: "Filter & sort Sales" }));
+    expect(screen.getAllByText("138,358.00").length).toBe(2);
+    fireEvent.change(screen.getByLabelText("Minimum"), { target: { value: "100000" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    expect(titles()).toEqual(["[AKEMI] MYHOME", "[AKEMI] HOMELOVE"]);
+    expect(within(projectsTable()).getByText("Total · 2 projects")).toBeTruthy();
+
+    /* The dates' funnel has the presets and a From / To range. */
+    fireEvent.click(within(projectsTable()).getByRole("button", { name: "Filter & sort Dates" }));
+    expect(screen.getByLabelText("From date")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "This Month" })).toBeTruthy();
+  });
+
   it("a filter lives in the URL too; the plain menu link has none", () => {
     show(`${PERIOD}&ao_brand=ZANOTTI`);
     expect((screen.getByLabelText("Brand") as HTMLSelectElement).value).toBe("ZANOTTI");

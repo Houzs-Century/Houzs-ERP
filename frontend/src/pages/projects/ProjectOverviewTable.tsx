@@ -5,9 +5,14 @@
 // chooser, Excel export, and a Total row at the foot. Project, Event type, Venue,
 // State and Dates are columns of their own so a name never wraps; the money reads
 // 1,234.56 / (1,234.56) with a dash for nothing.
+//
+// Every column carries `getValue` (owner 2026-11-12: 「这些其他不可以filter?」):
+// DataTable gives a header its sort and its funnel only then — `sortValue` and
+// `numberValue` alone left Dates and the figures with neither. The dates filter
+// by a range, the figures by a minimum and maximum.
 
 import { DataTable, type Column } from "../../components/DataTable";
-import { fmtDayMonthRange } from "../../vendor/shared/format";
+import { fmtDateOrDash, fmtDayMonthRange } from "../../vendor/shared/format";
 import { fmtSenPlain } from "../../vendor/shared/format";
 import { figuresOf, pctOf, type OvProject } from "./projectOverviewModel";
 import { projectLines } from "./projectOverviewView";
@@ -25,7 +30,9 @@ const amountCol = (key: string, label: string, pick: (r: OverviewRow) => number,
     const v = pick(r);
     return <span className={opts.strong ? (v < 0 ? "font-semibold text-err" : "font-semibold") : v < 0 ? "text-err" : Math.abs(v) < 0.005 ? "text-ink-muted" : ""}>{money(v)}</span>;
   },
-  sortValue: pick, numberValue: pick, exportValue: (r) => pick(r),
+  /* To the sen, so two rows that read the same share one line in the funnel. */
+  getValue: (r) => Math.round(pick(r) * 100) / 100, filterLabel: (v) => money(Number(v)),
+  filterType: "number", sortValue: pick, numberValue: pick, exportValue: (r) => pick(r),
   total: (rows) => <span className={opts.strong && sum(rows, pick) < 0 ? "text-err" : ""}>{money(sum(rows, pick))}</span>,
 });
 
@@ -33,7 +40,10 @@ const amountCol = (key: string, label: string, pick: (r: OverviewRow) => number,
 const pctCol = (key: string, label: string, top: (r: OverviewRow) => number, base: (r: OverviewRow) => number, group: string): Column<OverviewRow> => ({
   key, label, align: "right", group,
   render: (r) => { const x = pctOf(top(r), base(r)); return <span className={x != null && x < 0 ? "text-err" : "text-ink-secondary"}>{pct(x)}</span>; },
-  sortValue: (r) => pctOf(top(r), base(r)) ?? -1e9, numberValue: (r) => pctOf(top(r), base(r)),
+  /* To the one decimal the cell shows. */
+  getValue: (r) => { const x = pctOf(top(r), base(r)); return x == null ? null : Math.round(x * 10) / 10; },
+  filterLabel: (v) => pct(Number(v)),
+  filterType: "number", sortValue: (r) => pctOf(top(r), base(r)) ?? -1e9, numberValue: (r) => pctOf(top(r), base(r)),
   exportValue: (r) => pctOf(top(r), base(r)),
   total: (rows) => pct(pctOf(sum(rows, top), sum(rows, base))),
 });
@@ -57,7 +67,9 @@ export const PROJECT_COLUMNS: Column<OverviewRow>[] = [
   {
     key: "dates", label: "Dates", group: "Project", newestFirst: true,
     render: (r) => <span className="whitespace-nowrap tabular-nums">{r.p.startDate ? fmtDayMonthRange(r.p.startDate, r.p.endDate) : "-"}</span>,
-    sortValue: (r) => r.p.startDate ?? "", dateValue: (r) => r.p.startDate, exportValue: (r) => r.p.startDate ?? "",
+    /* By the day it starts: the funnel's presets and From / To range read it, and its list shows each start day. */
+    getValue: (r) => r.p.startDate ?? "", filterLabel: (v) => fmtDateOrDash(v),
+    filterType: "date", sortValue: (r) => r.p.startDate ?? "", dateValue: (r) => r.p.startDate, exportValue: (r) => r.p.startDate ?? "",
   },
   amountCol("sales", "Sales", (r) => r.f.sales, "Sales"),
   amountCol("service", "Service", (r) => r.f.serviceRevenue, "Sales"),
