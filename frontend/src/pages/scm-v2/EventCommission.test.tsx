@@ -207,6 +207,25 @@ describe('the Event Commission tab', () => {
     expect(down.textContent).toContain('not yet 30%');
   });
 
+  /* Owner 2026-11-13: 「旧的单upsale？ 应该要算吧」 — an old order with no fair counts
+     its upsales / drop sales, paid or not. */
+  test('an old order with no fair: its upsale shows its effect, not "not yet 30%", on the Upsales / drop sales line', () => {
+    const place = { fairId: -1, fairName: 'No fair', brand: 'AKEMI', organizer: null, venue: 'MID VALLEY', state: null, salesperson: 'Shawn', customer: 'Lim', ratePct: 14 };
+    current = {
+      ...BY_SO_DATE,
+      adjustments: [{ date: '2026-10-10', kind: 'upsale', docNo: 'HC-SO-013238', fairId: -1, fairName: 'No fair', salesperson: 'Shawn', goodsSen: 2_000_00, commissionSen: 280_00, beforeReach: false }],
+      earlierOrders: [{ ...place, docNo: 'HC-SO-013238', events: [{ date: '2026-10-10', kind: 'upsale', beforeReach: false }], lastDate: '2026-10-10', originalSen: 10_000_00, latestSen: 12_000_00, amendedSen: 2_000_00, commissionSen: 280_00, fromHistory: false }],
+      changedOrders: [{ ...place, docNo: 'HC-SO-013238', part: 'earlier', lastChange: '2026-10-10', originalSen: 10_000_00, latestSen: 12_000_00, amendedSen: 2_000_00, reachedOn: null, effectSen: 280_00, fromHistory: false, oldOrder: true }],
+      totals: { payableSen: 130_00, adjustmentsSen: 280_00, totalSen: 410_00 },
+    };
+    renderTab(<EventCommissionTab />);
+    const row = screen.getAllByText('HC-SO-013238').map((el) => el.closest('tr')!).find((tr) => tr?.textContent?.includes('+2,000.00'))!;
+    expect(cellsOf(row)).toEqual(expect.arrayContaining(['10,000.00', '12,000.00', '+2,000.00', '14%', '280.00']));
+    expect(row.textContent).not.toContain('not yet 30%');
+    expect(tile('Upsales / drop sales')).toContain('280.00');
+    expect(summaryOf(current)).toMatchObject({ changes: 280_00, earlier: 0, totalSen: 410_00 });
+  });
+
   test('the CSV: the summary lines, then every order once with its commission split over them; both add up to the total', () => {
     const csv = eventCommissionCsv(REPORT);
     expect(csv).toContain('"Fair commission","119.00"');

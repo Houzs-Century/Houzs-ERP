@@ -201,6 +201,9 @@ export type CommissionChangedOrder = CommissionOrderPlace & {
   reachedOn: string | null;
   effectSen: number;
   fromHistory: boolean;
+  /** An old order with no fair (opened before October 2026): only its upsales and
+      drop sales count, paid or not (owner 2026-11-13). */
+  oldOrder?: true;
 };
 /** A closed month's commission for one order, then and now — paid in the first
  *  open month as that month's adjustment (owner 2026-10-26, 关月). */

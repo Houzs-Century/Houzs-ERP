@@ -424,10 +424,10 @@ const changedColumns = (ctl: MarkCtl): Column<CommissionChangedOrder>[] => [
   { key: 'rate', label: 'Rate', align: 'right', width: '60px', render: (o) => (o.ratePct == null ? <span className="text-ink-muted">–</span> : num(`${o.ratePct}%`)), getValue: (o) => o.ratePct },
   {
     key: 'effect', label: 'Commission effect', align: 'right', width: '120px',
-    description: 'Amended × the fair\'s brand rate, once the order has 30% paid. Already inside the commission above — not added again.',
+    description: 'Amended × the fair\'s brand rate, once the order has 30% paid; an old order with no fair (opened before October 2026): always. An order opened in the range: already inside its commission above, not added again.',
     render: (o) => (o.mark
       ? <span className="text-ink-muted">{markWords(o.mark)}</span>
-      : o.reachedOn == null
+      : o.reachedOn == null && !o.oldOrder
         ? <span className="text-ink-muted">not yet 30%</span>
         : o.changeMark && o.effectSen === 0
           ? <span className="text-ink-muted">not counted</span>
