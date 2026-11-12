@@ -83,6 +83,16 @@ export const useReturnableGrnLines = (poId: string | null) => useQuery({
   enabled: Boolean(poId), staleTime: 15_000, retry: retryUnlessClientError,
 });
 
+/* HC-0227: the same pool, raised from a Purchase Invoice — the receipt lines the
+   invoice bills, capped at the invoice's own qty per line. */
+export const useReturnablePiLines = (piId: string | null) => useQuery({
+  queryKey: ['pr-returnable-pi-lines', piId],
+  queryFn: () => authedFetch<{ lines: ReturnableGrnLine[]; invoiceNumber: string; supplierId: string | null; purchaseOrderId: string | null }>(
+    `/purchase-returns/returnable-pi-lines?piId=${encodeURIComponent(piId as string)}`,
+  ),
+  enabled: Boolean(piId), staleTime: 15_000, retry: retryUnlessClientError,
+});
+
 /* `idempotencyKey` is OPTIONAL and must be destructured OUT of the body — the
    rest-spread would otherwise post it as a return field. Pass one per return
    intent (see lib/idempotency.ts): the middleware replays the first response —

@@ -11,7 +11,7 @@ Every conversion is a picker page owned by the DESTINATION document; source-side
   - SO -> PO: `/scm/purchase-orders/from-so` (PO editor appends with `?poId=`); MRP page "Proceed PO". No transfer button on the SO list or SO detail.
   - DO -> SI: `/scm/sales-invoices/from-do`. DO -> Delivery Return: `/scm/delivery-returns/from-do`.
   - PO -> GRN: `/scm/grns/from-po` (GRN appends with `?appendToGrn=`); PO detail, PO list row, PO list bulk bar.
-  - GRN -> PI: `/scm/purchase-invoices/from-grn`. GRN -> PR and PO -> PR: `/scm/purchase-returns/new` with `grnId` / `poId` (no from-grn picker page).
+  - GRN -> PI: `/scm/purchase-invoices/from-grn`. GRN -> PR, PO -> PR and PI -> PR: `/scm/purchase-returns/new` with `grnId` / `poId` / `piId` (no from-grn picker page). PI -> PR draws the receipt lines the invoice bills (`GET /purchase-returns/returnable-pi-lines`).
   - Consignment Order -> Consignment Note: `/scm/consignment-notes/from-order`; CO list/detail "Create Consignment Note" prefills the WHOLE order via `?fromConsignmentOrder=`.
   - Consignment Note -> Consignment Return: `/scm/consignment-returns/from-note`; CN detail "Create Consignment Return" (`?fromConsignmentNote=`).
   - PC Order -> PC Receive: `/scm/purchase-consignment-receives/from-pc-order`; PC Receive -> PC Return: `/scm/purchase-consignment-returns/from-receive` (no source-side button on either).
@@ -19,7 +19,7 @@ Every conversion is a picker page owned by the DESTINATION document; source-side
 - All ten pickers multi-select at LINE level; most also across several source documents. Picking creates nothing — Continue carries picks to the New-document form.
 - Source eligibility: an SO feeds DO / PO only when `soCanRaiseDo(status, on_hold)` (`shared/so-deliverable-states.ts`; PO's `SO_UNORDERABLE_STATUSES` pinned equal). A DO feeds an SI only in `SI_TRANSFERABLE_DO_STATES` = LOADED, DISPATCHED, IN_TRANSIT, SIGNED, DELIVERED (`shared/do-shipped-states.ts`, mirrored backend/frontend).
 - `DO_SHIPPED_STATES` (LOADED ... INVOICED) = first entry writes the inventory OUT; Confirm (DRAFT -> LOADED) is where stock leaves.
-- Documents at the end of a chain (PI, PR, DR, Stock Transfer, Stock Take) have no transfer out.
+- Documents at the end of a chain (PR, DR, Stock Transfer, Stock Take) have no transfer out; a PI's only one is Raise Return (HC-0227).
 
 ## Permissions
 
@@ -30,7 +30,7 @@ Every conversion is a picker page owned by the DESTINATION document; source-side
 ## Rules that must not break
 
 Link contract (`frontend/src/lib/convertScope.tsx`)
-- `CONVERT_LINKS` names each scope parameter ONCE: `poToGrn`->`poId`, `grnToPi`->`grnId`, `grnToPr`->`grnId`, `poToPr`->`poId`, `doToSi`->`doId`, `doToDr`->`doId`, `soToDo`->`soDocNo`.
+- `CONVERT_LINKS` names each scope parameter ONCE: `poToGrn`->`poId`, `grnToPi`->`grnId`, `grnToPr`->`grnId`, `poToPr`->`poId`, `piToPr`->`piId`, `doToSi`->`doId`, `doToDr`->`doId`, `soToDo`->`soDocNo`.
 - Source buttons build URLs only with `convertToLink(pair, keys)`; destinations read with `readConvertScope(pair, searchParams, alsoKnown)` and render `<UnrecognisedScopeNotice>`. Never hand-write a query onto a convert path (tree scan in `convertScope.test.tsx` fails).
 - A parameter is named for what it carries (`soDocNo`, because the SO picker rows carry doc numbers, not ids).
 - Value is a comma-separated list, so one and many use the same parameter; no parameter = full, unscoped picker (legitimate).

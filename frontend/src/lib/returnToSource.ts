@@ -14,6 +14,7 @@ export const sourceDocPath = {
   deliveryOrder: detail('/scm/delivery-orders'),
   purchaseOrder: detail('/scm/purchase-orders'),
   goodsReceipt: detail('/scm/grns'),
+  purchaseInvoice: detail('/scm/purchase-invoices'),
   consignmentOrder: detail('/scm/consignment-orders'), // keyed by doc no
   consignmentNote: detail('/scm/consignment-notes'),
   purchaseConsignmentOrder: detail('/scm/purchase-consignment-orders'),
