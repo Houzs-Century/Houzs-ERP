@@ -24,6 +24,7 @@ import {
 import { errText } from './combo/comboErrors';
 import styles from './combo/ComboScreen.module.css';
 import { AdjustDialog, AssignDialog, CompartmentDialog, DeleteDialog, ExportDialog, fieldStyle, ImportDialog, NewComboDialog } from './combo/ComboDialogs';
+import { PresetsDialog } from './combo/PresetsDialog';
 
 // Seat-height columns follow the Maintenance Sizes pool; this shows only if that
 // config fails to load.
@@ -39,7 +40,7 @@ type ComboTabProps = {
 
 type Dialog =
   | { kind: 'new' } | { kind: 'hand' } | { kind: 'edit'; line: ComboLine }
-  | { kind: 'assign' } | { kind: 'delete' } | { kind: 'adjust' } | { kind: 'export' } | { kind: 'import' };
+  | { kind: 'assign' } | { kind: 'delete' } | { kind: 'adjust' } | { kind: 'export' } | { kind: 'import' } | { kind: 'presets' };
 
 const card: CSSProperties = { background: 'var(--c-cream)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md)' };
 const soft: CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-soft)' };
@@ -247,6 +248,7 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
           <Button variant="secondary" onClick={() => setDialog({ kind: 'export' })}>Export</Button>
           <Button variant="secondary" onClick={() => setDialog({ kind: 'import' })}>Import</Button>
+          {!supplierId && <Button variant="secondary" onClick={() => setDialog({ kind: 'presets' })}>Presets</Button>}
           <Button variant="primary" onClick={() => setDialog({ kind: 'new' })} disabled={!model}>New combo</Button>
         </div>
       </div>
@@ -463,6 +465,7 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
       {dialog?.kind === 'import' && (
         <ImportDialog lines={allLines} modulesByModel={modulesByModel} sizes={allSizesEver} supplierId={supplierId ?? null} supplierName={supplierName} today={today} onDone={closeDone} onClose={() => setDialog(null)} />
       )}
+      {dialog?.kind === 'presets' && <PresetsDialog onClose={() => setDialog(null)} />}
     </div>
   );
 };
