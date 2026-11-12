@@ -270,7 +270,7 @@ describe('by SO date, an order with no fair — 「没有展会的标 No fair，
   const noFair = (o: Partial<CommissionSo> = {}) => so({ docNo: 'HC-SO-2610-058', projectId: null, brand: 'ERGOTEX', venue: 'THE STARLING MALL', soDate: '2026-10-05', ...o });
   const pays = (doc: string, day: string, sen: number): CommissionPayment => ({ docNo: doc, paidAt: day, amountSen: sen });
 
-  it('is listed under "No fair" of its own brand (as the rate card spells it, any case) with its venue, earning at the rate of that brand', () => {
+  it('is listed under "No fair" of its own brand (as the rate card spells it, any case) with its venue, earning at the rate of that brand — a bed-frame bill at its VP brand', () => {
     const r = buildEventCommission({
       ...OCT, basis: 'so_date', fairs: [fair()], ratePctByBrand: new Map([...RATES, ['Carres Mattress', 14]]),
       sos: [
@@ -278,20 +278,22 @@ describe('by SO date, an order with no fair — 「没有展会的标 No fair，
         noFair({ docNo: 'HC-SO-2610-427', brand: 'AKEMI', venue: 'MID VALLEY' }),
         noFair({ docNo: 'HC-SO-2610-410', brand: 'zanotti', venue: 'SUNWAY CARNIVAL' }),
         noFair({ docNo: 'HC-SO-2610-500', brand: 'CARRES MATTRESS', venue: null }),
-        noFair({ docNo: 'HC-SO-2610-320', brand: 'BEDFRAME', venue: 'AEON RAWANG' }),
+        /* Bed frames alone: BEDFRAME has no rate card, the VP brand the seller gave it does (owner 2026-11-13). */
+        noFair({ docNo: 'HC-SO-2610-320', brand: 'BEDFRAME', vpBrand: 'AKEMI', venue: 'AEON RAWANG' }),
+        noFair({ docNo: 'HC-SO-2610-341', brand: 'BEDFRAME', vpBrand: null, venue: 'KUALA LUMPUR CONVENTION CENTRE' }),
       ],
-      payments: ['HC-SO-2610-001', 'HC-SO-2610-427', 'HC-SO-2610-410', 'HC-SO-2610-500', 'HC-SO-2610-320'].map((d) => pays(d, '2026-10-06', 1_000_00)),
+      payments: ['HC-SO-2610-001', 'HC-SO-2610-427', 'HC-SO-2610-410', 'HC-SO-2610-500', 'HC-SO-2610-320', 'HC-SO-2610-341'].map((d) => pays(d, '2026-10-06', 1_000_00)),
       changes: [], cancels: [],
     });
     const rows = r.fairs.map((f) => [f.id, f.name, f.brand, f.ratePct, f.sos.map((x) => [x.docNo, x.venue ?? '-', x.commissionSen])]);
     expect(rows).toEqual([
-      [-1, 'No fair', 'AKEMI', 14, [['HC-SO-2610-427', 'MID VALLEY', 140_00]]],
-      [-2, 'No fair', 'BEDFRAME', null, [['HC-SO-2610-320', 'AEON RAWANG', 0]]],
+      [-1, 'No fair', 'AKEMI', 14, [['HC-SO-2610-320', 'AEON RAWANG', 140_00], ['HC-SO-2610-427', 'MID VALLEY', 140_00]]],
+      [-2, 'No fair', 'BEDFRAME', null, [['HC-SO-2610-341', 'KUALA LUMPUR CONVENTION CENTRE', 0]]],
       [-3, 'No fair', 'Carres Mattress', 14, [['HC-SO-2610-500', '-', 140_00]]],
       [-4, 'No fair', 'ZANOTTI', 13, [['HC-SO-2610-410', 'SUNWAY CARNIVAL', 130_00]]],
       [1, 'KL [AKEMI] BIGHOME @ MID VALLEY', 'AKEMI', 14, [['HC-SO-2610-001', '-', 140_00]]],
     ]);
-    expect(r.totals.payableSen).toBe(550_00);
+    expect(r.totals.payableSen).toBe(690_00);
   });
 
   it('under 30% it waits like any order, and reaching 30% the month after counts there; a cancellation takes it back', () => {

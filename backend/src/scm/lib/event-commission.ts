@@ -102,9 +102,12 @@ export type CommissionSo = {
   soDate: string | null;
   /** Ref No. — the booklet number typed on the order (customer_so_no). */
   ref?: string | null;
-  /** The order's own brand (its branding, else its VP brand): the rate of an
-      order with no fair. */
+  /** The order's own brand (its branding): the rate of an order with no fair. */
   brand?: string | null;
+  /** The brand a person said the bill is for (the order form asks it of a bill
+      whose goods name none, e.g. bed frames alone) — the rate of an order with
+      no fair when its branding has no rate card (owner 2026-11-13, 做). */
+  vpBrand?: string | null;
   /** The venue typed on the order: shown for an order with no fair. */
   venue?: string | null;
 };
@@ -629,17 +632,21 @@ export function buildEventCommission(input: {
   const rateOf = (f: CommissionFair): number | null => input.ratePctByBrand.get((f.brand ?? '').trim()) ?? null;
   const fairById = new Map(input.fairs.map((f) => [f.id, f]));
   /* By SO date, an order with no fair opened from NO_FAIR_FROM goes under a
-     "No fair" row of its own brand (the rate card's spelling of it, any case),
-     at that brand's rate. Rows numbered -1, -2 … by brand, so a report reads the
-     same each time. */
-  const cardOf = (brand: string | null | undefined): string | null => {
+     "No fair" row of its brand, at that brand's rate: its branding when that has
+     a rate card (the card's own spelling, any case), else the VP brand a person
+     gave it (owner 2026-11-13: a bed-frame bill, BEDFRAME, VP brand AKEMI, earns
+     AKEMI's rate), else its branding as a label with no rate. Rows numbered
+     -1, -2 … by brand, so a report reads the same each time. */
+  const cardKey = (brand: string | null | undefined): string | null => {
     const b = (brand ?? '').trim();
     if (!b) return null;
     if (input.ratePctByBrand.has(b)) return b;
-    return [...input.ratePctByBrand.keys()].find((k) => k.trim().toUpperCase() === b.toUpperCase()) ?? b;
+    return [...input.ratePctByBrand.keys()].find((k) => k.trim().toUpperCase() === b.toUpperCase()) ?? null;
   };
+  const brandOf = (so: CommissionSo): string =>
+    cardKey(so.brand) ?? cardKey(so.vpBrand) ?? ((so.brand ?? '').trim() || (so.vpBrand ?? '').trim());
   const noFair = (so: CommissionSo): boolean => basis === 'so_date' && so.projectId == null && so.soDate != null && so.soDate >= NO_FAIR_FROM;
-  const noFairBrands = [...new Set(input.sos.filter(noFair).map((so) => cardOf(so.brand) ?? ''))].sort();
+  const noFairBrands = [...new Set(input.sos.filter(noFair).map(brandOf))].sort();
   const noFairId = new Map(noFairBrands.map((b, i) => [b, -(i + 1)]));
   for (const [b, id] of noFairId) {
     fairById.set(id, {
@@ -647,7 +654,7 @@ export function buildEventCommission(input: {
       organizer: null, venue: null, state: null,
     });
   }
-  const sosIn: CommissionSo[] = input.sos.map((so) => (noFair(so) ? { ...so, projectId: noFairId.get(cardOf(so.brand) ?? '')! } : so));
+  const sosIn: CommissionSo[] = input.sos.map((so) => (noFair(so) ? { ...so, projectId: noFairId.get(brandOf(so))! } : so));
   const placeOf = (so: CommissionSo, f: CommissionFair): OrderPlace => ({
     docNo: so.docNo, fairId: f.id, fairName: f.name,
     brand: f.brand, organizer: f.organizer ?? null, venue: f.id < 0 ? (so.venue ?? null) : (f.venue ?? null), state: f.state ?? null,

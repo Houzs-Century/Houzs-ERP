@@ -214,7 +214,7 @@ export const SUMMARY_LABEL: Record<SummaryKey, string> = {
 };
 export const SUMMARY_HINT: Record<SummaryKey, string> = {
   fair: 'what the orders earned, before their upsales / drop sales',
-  noFair: 'orders opened in the range with no fair, at the rate of their own brand',
+  noFair: 'orders opened in the range with no fair, at the rate of their own brand (bed frames alone: the VP brand)',
   changes: 'the effect of the upsales and drop sales, at the brand rate',
   late: 'sold at a fair that had ended before the range, keyed in it',
   earlier: 'earlier orders that reached 30% here, or were cancelled',
