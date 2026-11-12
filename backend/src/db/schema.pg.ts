@@ -855,6 +855,13 @@ export const pos_terminals = pgTable(
     // Mig 20261022T0533: the one-time pairing code (hash) and when it dies.
     pairing_code_hash: text("pairing_code_hash"),
     pairing_expires_at: timestamp("pairing_expires_at", { withTimezone: true, mode: "string" }),
+    // Mig 20261112T0330: the token the terminal held just before the last swap,
+    // and that device's open request to have the terminal back (routes/lib/pos-reconnect.ts).
+    prev_token_hash: text("prev_token_hash"),
+    reconnect_requested_at: timestamp("reconnect_requested_at", { withTimezone: true, mode: "string" }),
+    reconnect_device_name: text("reconnect_device_name"),
+    reconnect_approved_at: timestamp("reconnect_approved_at", { withTimezone: true, mode: "string" }),
+    reconnect_approved_by: text("reconnect_approved_by"),
     // Mig 20261014T1445: the last heartbeat that still reported pending bills,
     // so an empty device reconnecting is recognised as DATA LOST.
     last_known_pending_count: integer("last_known_pending_count").notNull().default(0),

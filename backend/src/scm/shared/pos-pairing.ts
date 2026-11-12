@@ -42,12 +42,18 @@ export async function pairingCodeHash(raw: string): Promise<string> {
  *  comparison called every code expired (no device ever paired by code in
  *  production until 2026-11-09). */
 export function pairingCodeLive(expiresAt: string | null, nowMs: number): boolean {
-  if (!expiresAt) return false;
-  /* "2026-11-09 02:14:45.665+00" -> "2026-11-09T02:14:45.665+00:00": the
-     space and the hour-only offset are Postgres spellings Date.parse rejects. */
-  const iso = expiresAt.trim().replace(" ", "T").replace(/([+-]\d{2})$/, "$1:00");
-  const t = Date.parse(iso);
-  return Number.isFinite(t) && t > nowMs;
+  const t = momentMs(expiresAt);
+  return t != null && t > nowMs;
+}
+
+/** A stored timestamp as a moment, in either spelling; null when there is
+ *  none or it does not parse. "2026-11-09 02:14:45.665+00" becomes
+ *  "2026-11-09T02:14:45.665+00:00": the space and the hour-only offset are
+ *  Postgres spellings Date.parse rejects. */
+export function momentMs(stored: string | null): number | null {
+  if (!stored) return null;
+  const t = Date.parse(stored.trim().replace(" ", "T").replace(/([+-]\d{2})$/, "$1:00"));
+  return Number.isFinite(t) ? t : null;
 }
 
 /** The ?pair= code in a POS app link, if any. */
