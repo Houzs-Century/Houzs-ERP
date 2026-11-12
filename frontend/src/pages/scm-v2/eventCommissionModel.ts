@@ -16,6 +16,9 @@
 //   Earlier orders        an earlier order reaching 30% here, or cancelled;
 //   Closed months         what changed for a closed month's orders;
 //   Moved from last month what the month before moved here (「这个算下个月」).
+// The page's earlier-orders table follows the Earlier line (owner 2026-11-12):
+// only orders that reached 30% or were cancelled, their price changes left to
+// the Upsales / Drop sales table (earlierShownOf).
 // An order Finance marked (「这张单不要算」 / 「这个算下个月」) earns nothing here;
 // what the mark took out is listed apart, not in the total. A price change
 // Finance left out (「这次改价不算」) is not on the Upsales / drop sales line and
@@ -78,12 +81,12 @@ export const LEFT_OUT_NOTE = 'left out by Finance, not counted';
 export const BASIS_WORDS: Record<CommissionBasis, { toggle: string; part1: string; part1Empty: string; part2: string; part2Empty: string; inRange: string; earlier: string }> = {
   fair: {
     toggle: 'By fair', part1: 'Fairs starting in the range', part1Empty: 'No fair starts in this range.',
-    part2: 'Earlier fairs — each order, what happened in the range', part2Empty: 'Nothing on earlier fairs in this range.',
+    part2: 'Earlier fairs — reached 30% or cancelled in the range', part2Empty: 'No order of an earlier fair reached 30% or was cancelled in this range.',
     inRange: 'Fairs in the range', earlier: 'Earlier fairs',
   },
   so_date: {
     toggle: 'By SO date', part1: 'Orders opened in the range (SO date)', part1Empty: 'No order with a fair was opened in this range.',
-    part2: 'Earlier orders — each order, what happened in the range', part2Empty: 'Nothing on earlier orders in this range.',
+    part2: 'Earlier orders — reached 30% or cancelled in the range', part2Empty: 'No earlier order reached 30% or was cancelled in this range.',
     inRange: 'Orders opened in the range', earlier: 'Earlier orders',
   },
 };
@@ -99,6 +102,28 @@ export const monthAdjOf = (r: EventCommission): CommissionMonthAdjustment[] => r
 export const lateOf = (r: EventCommission): Set<string> => new Set(r.lateBills ?? []);
 export const markedOf = (r: EventCommission): CommissionMarkedOrder[] => r.marked ?? [];
 export const deferredInOf = (r: EventCommission): CommissionDeferredIn[] => r.deferredIn ?? [];
+/** The earlier orders as the page lists them (owner 2026-11-12: 「earlier order 我只
+    想显示reached 30% 和cancelled」, 「这样drop up sales 就不需要算cancelled 了」): only
+    an order that reached 30% or was cancelled in the range, with those events
+    alone. Its upsales and drop sales are the Upsales / Drop sales table's, so
+    what it shows is its commission less the effect listed there — the summary's
+    Earlier line: reaching 30% earns on the order before the range's changes, a
+    cancellation takes back what it had earned. An order only priced up or down
+    is not listed; the money is unchanged. */
+export const earlierShownOf = (r: EventCommission): CommissionEarlierOrder[] => {
+  const effect = new Map(changedOf(r).filter((o) => o.part === 'earlier').map((o) => [o.docNo, o.effectSen]));
+  return earlierOf(r).flatMap((o) => {
+    const events = o.events.filter((e) => e.kind === 'reached' || e.kind === 'cancelled');
+    if (events.length === 0) return [];
+    return [{
+      ...o,
+      events,
+      lastDate: events.reduce((m, e) => (e.date > m ? e.date : m), events[0]!.date),
+      commissionSen: o.commissionSen - (effect.get(o.docNo) ?? 0),
+      fromHistory: false,
+    }];
+  });
+};
 /** What happened to an earlier order in the range, in a few words. */
 export const whatOf = (o: CommissionEarlierOrder): string =>
   o.events.map((e) => `${KIND_LABEL[e.kind]}${e.uncounted ? ' (left out)' : e.beforeReach ? ' (before 30%)' : ''}`)
@@ -305,7 +330,7 @@ export const eventCommissionCsv = (r: EventCommission): string => {
   return `${lines.join('\n')}\n`;
 };
 
-export const RULE_NOTE = 'An order earns its goods (no delivery or service) × the fair\'s brand rate once 30% of the order is paid. Upsales and drop sales count from 1/10/2026 (1–19 October read from each order\'s modification history), each in the month it happened, at the fair\'s brand rate; one Finance left out (Don\'t count change) moves no commission and the order earns on the rest. A late bill (补开单) is an order keyed in the range for a fair that had ended before it.';
+export const RULE_NOTE = 'An order earns its goods (no delivery or service) × the fair\'s brand rate once 30% of the order is paid. Upsales and drop sales count from 1/9/2026 (1 September – 19 October read from each order\'s modification history), each in the month it happened, at the fair\'s brand rate; one Finance left out (Don\'t count change) moves no commission and the order earns on the rest. A late bill (补开单) is an order keyed in the range for a fair that had ended before it.';
 
 /** The report as the owner asked to export it: the summary, the fairs (by fair),
     then every order once with its commission split over the summary lines. */
