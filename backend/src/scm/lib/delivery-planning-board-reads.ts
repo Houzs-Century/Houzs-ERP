@@ -159,7 +159,7 @@ export function kickOffSubBoardReads(
   const assrRowsP = (async () => {
     try {
       return { ok: await c.env.DB.prepare(assrBoardUnionSql(c, recentClosedSince)).all<{
-        id: number | null; assr_no: string | null; company_id: number | null; status: string | null; stage: string | null;
+        id: number | null; assr_no: string | null; company_id: number | null; doc_no: string | null; status: string | null; stage: string | null;
         customer_name: string | null; phone: string | null; location: string | null;
         customer_pickup_at: string | null; inspection_visit_at: string | null;
         inspection_by: string | null; do_date: string | null;
@@ -173,7 +173,11 @@ export function kickOffSubBoardReads(
         delivery_message_status: string | null; pickup_message_status: string | null; inspection_message_status: string | null;
         addr1: string | null; addr2: string | null; addr3: string | null; addr4: string | null;
         so_state: string | null; so_postcode: string | null; so_country: string | null;
-        so_ref_src: string | null; so_custso_src: string | null; related_do_nos: string | null;
+        so_ref_src: string | null; so_custso_src: string | null;
+        ref_no: string | null; delivery_order: string | null;
+        // Attached in JS by the row builder (not SELECTed): company_code for the DO
+        // resolver, do_numbers the resolver writes back.
+        company_code?: string | null; do_numbers?: string | null;
       }>() } as const;
     } catch (e) { return { err: e } as const; }
   })();
