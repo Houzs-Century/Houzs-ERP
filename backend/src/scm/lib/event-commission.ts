@@ -542,10 +542,13 @@ export const COMMISSION_PAID_SHARE = 0.3;
 /* By SO date, every order opened in the range is listed (owner 2026-11-12:
    「全部列出来，没有展会的标 No fair，要算佣金，然后我检查了不要算的我才自己按
    don't count」): one with no fair sits under a "No fair" row of its own brand,
-   at that brand's rate, from the first month the system works out (September
-   2026) — the old orders before it, many of them showroom sales, stay out. */
+   at that brand's rate, from October 2026 — the first month every confirmed
+   order had to name a fair or "No fair" (2026-10-19). September's orders with no
+   fair were old orders keyed again (补旧单) the owner did not pay (owner
+   2026-11-13, his September sheet: "No fair 改成从 10 月才开始算 … 可以").
+   The old orders before it, many of them showroom sales, stay out. */
 export const NO_FAIR_NAME = 'No fair';
-export const NO_FAIR_FROM = '2026-09-01';
+export const NO_FAIR_FROM = '2026-10-01';
 /** so_total_changes.source of the rows back-filled from the modification history. */
 export const HISTORY = 'history';
 export const HISTORY_IGNORED = 'history-ignored';
@@ -666,9 +669,20 @@ export function buildEventCommission(input: {
      was keyed on 3/11 at RM 4,000 and put right to RM 800 the same day, against
      payments of 14–16/10), at the end of the day it was keyed: that day's own
      corrections are the order as it was sold, not a change to walk back. */
+  /* …and a price the system wiped and put back (BUG-63, 'history-ignored'), or
+     the first price of an order keyed with none, is the order's own amount on
+     every day — it was never a change to walk back (owner 2026-11-13: 11 orders
+     paid in September earned nothing because their price was put back, or first
+     set, in October — HC-SO-013496 4,490 put back on 8/10, HC-SO-2609-254 priced
+     6,000 on 1/10). Neither is an upsale either (changeView), so before this the
+     amount never earned at all. */
   const goodsOn = (so: CommissionSo, chs: readonly CommissionChange[], day: string): number => {
     const keyed = mytDay(so.createdAt);
-    return goodsAt(so.goodsSen, chs, day < keyed ? keyed : day);
+    const real = chs.filter((ch) => {
+      const v = changeView(ch, so);
+      return v == null || (v.notCounted !== 'system_fix' && v.notCounted !== 'first_price');
+    });
+    return goodsAt(so.goodsSen, real, day < keyed ? keyed : day);
   };
   /* The range's counted changes of an order (before `until`, when it was cancelled). */
   const countedIn = (so: CommissionSo, chs: readonly CommissionChange[], until: string | null = null): ChangeView[] =>
