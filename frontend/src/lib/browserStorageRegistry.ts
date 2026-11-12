@@ -262,6 +262,9 @@ export const PRODUCTION_STORAGE_CALLERS = [
   "pages/scm-v2/finance/useColumnWidths.ts",
   // The report opened last (finance-report-last), for the sidebar's Reports entry.
   "pages/scm-v2/reports/lastReport.ts",
+  // Event Commission's view, brand and open fairs (event-commission-view), kept
+  // for Back: reads and writes its own sessionStorage key only, no identity data.
+  "pages/scm-v2/EventCommission.tsx",
   "pages/scm-v2/ProductModels.tsx",
   "pages/scm-v2/SoFromProducts.tsx",
   "pages/scm-v2/SupplierDetail.tsx",

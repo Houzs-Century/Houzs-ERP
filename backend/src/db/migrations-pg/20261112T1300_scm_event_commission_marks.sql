@@ -7,7 +7,10 @@
 --
 -- WHAT THIS CHANGES, and why it is safe to run against production: one new
 -- empty table; nothing existing is altered.
--- Verified against: PENDING — a rolled-back production trial is run before merge.
+-- Verified against: production, in a rolled-back transaction (run-script.yml
+-- run 43155514552, try-commission-marks.mjs on acc/ec-round3-check): the table,
+-- its grants and indexes, and the app's own mark / refuse / read / close / undo
+-- on October and November 2026 with it — nothing kept.
 --
 -- WHY (owner 2026-11-12, Event Commission: 「然后我要有两个按钮 1个这张单不要算，
 -- 1个是这个算下个月」): Finance marks an order, from the report, in one of two ways:
