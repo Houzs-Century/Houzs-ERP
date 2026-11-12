@@ -45,6 +45,16 @@ const TO = '2026-10-31';
 const say = (s) => console.log(s);
 const dayOf = (v) => (v == null ? null : (v instanceof Date ? v.toISOString() : String(v)).slice(0, 10) || null);
 const norm = (s) => String(s ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+/* A report line is this order's only when its salesperson is the order's: the
+   chat writes names short ("WeiPin", "CH", "Luis" for Wei Pin, Chea Huan, Luis
+   Teo). A booklet number another person reported is a typo somewhere, not proof. */
+export function sameSeller(reported, staffName) {
+  const r = String(reported ?? '').toUpperCase().replace(/[^A-Z]/g, '');
+  const words = String(staffName ?? '').toUpperCase().split(/[^A-Z]+/).filter(Boolean);
+  if (!r || words.length === 0) return false;
+  const full = words.join('');
+  return r === full || r === words.map((w) => w[0]).join('') || full.startsWith(r) || r.startsWith(words[0]);
+}
 
 async function main() {
   if (!process.env.DATABASE_URL) { console.error('DATABASE_URL is not set.'); process.exit(2); }
@@ -76,16 +86,23 @@ async function main() {
     const fairById = new Map(fairs.map((f) => [Number(f.id), f]));
     const ids = [...fairById.keys()];
     const orders = ids.length ? await sql`
-      SELECT doc_no, project_id, fair_match, venue, venue_source, fair_date, customer_so_no, ref, status
+      SELECT doc_no, project_id, fair_match, venue, venue_source, fair_date, customer_so_no, ref, status, salesperson_id
         FROM scm.mfg_sales_orders
        WHERE company_id = ${CO} AND project_id IN ${sql(ids)} AND status <> 'CANCELLED'
        ORDER BY doc_no` : [];
+    const sellerIds = [...new Set(orders.map((o) => o.salesperson_id).filter((x) => x != null).map(String))];
+    const sellers = new Map((sellerIds.length ? await sql`SELECT id::text AS id, name FROM scm.staff WHERE id::text IN ${sql(sellerIds)}` : []).map((s) => [s.id, s.name]));
     const evidence = await loadReportEvidence(db, companySql, { projectIds: ids });
-    let planned = 0; let written = 0;
+    let planned = 0; let written = 0; let otherSeller = 0;
     for (const o of orders) {
       if (LINKS.some((l) => l.docNo === o.doc_no)) continue;
       const fair = fairById.get(Number(o.project_id));
-      const seen = sightingsOf(o, evidence).filter((s) => s.projectId === Number(o.project_id));
+      const atFair = sightingsOf(o, evidence).filter((s) => s.projectId === Number(o.project_id));
+      const seen = atFair.filter((s) => sameSeller(s.salesperson, sellers.get(String(o.salesperson_id))));
+      if (atFair.length > 0 && seen.length === 0) {
+        otherSeller += 1;
+        say(`   skip ${o.doc_no} fair #${o.project_id}: its booklet is in another salesperson's report line`);
+      }
       if (!fair || seen.length === 0) continue;
       const period = { startDate: dayOf(fair.start_date), endDate: dayOf(fair.end_date) };
       const reportDay = seen.map((s) => s.reportDate).filter(Boolean).sort()[0] ?? null;
@@ -117,7 +134,7 @@ async function main() {
       });
       written += 1;
     }
-    say(`\n   ${planned} order(s) to fill${APPLY ? `, ${written} written` : ''}`);
+    say(`\n   ${planned} order(s) to fill${APPLY ? `, ${written} written` : ''}; ${otherSeller} skipped (another salesperson's report line)`);
     if (!APPLY) say(`\nNothing written. To write: MODE=apply CONFIRM="${CONFIRM_PHRASE}"`);
   } finally { await sql.end(); }
 }
