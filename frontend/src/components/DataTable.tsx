@@ -445,12 +445,11 @@ function DataTableInner<T, L>({
       // storage unavailable: nothing was persisted to erase
     }
   }, [idKey, legacyFilterKey]);
-  // The filter BUTTON's rect, not a click point: the positioner needs both edges.
-  const [filterMenu, setFilterMenu] = useState<{ left: number; top: number; bottom: number; colKey: string } | null>(null);
+  // The filter BUTTON's rect, not a click point: the positioner needs both
+  // edges. `anchor` is the button itself, measured again on every scroll.
+  const [filterMenu, setFilterMenu] = useState<{ left: number; top: number; bottom: number; colKey: string; anchor: HTMLElement } | null>(null);
   const [filterQuery, setFilterQuery] = useState("");
-  // Menu DOM nodes, for viewport clamping and (filter popover only) telling
-  // an inside-the-menu scroll apart from a page scroll in the close handler.
-  const filterMenuRef = useRef<HTMLDivElement | null>(null);
+  // Menu DOM nodes, for viewport clamping.
   const headerMenuRef = useRef<HTMLDivElement | null>(null);
   const rowMenuRef = useRef<HTMLDivElement | null>(null);
   /* Opens on whichever side of the button has more room, never taller than that
@@ -1743,32 +1742,35 @@ function DataTableInner<T, L>({
     };
   }, [headerMenu]);
 
-  // Close the filter popover on outside click, Escape, or scroll — same
-  // pattern as the header menu. Clicks inside stop propagation so ticking
-  // checkboxes doesn't dismiss it. Scrolls are heard in the CAPTURE phase
-  // (scroll doesn't bubble), which also catches the popover's own value
-  // checklist — but scrolling INSIDE the popover must not dismiss it (owner
-  // 2026-07-29: the list past ~240px was unreachable, any wheel closed the
-  // menu), so scrolls originating within the menu are let through.
+  // Close the filter popover on outside click or Escape, like the header menu;
+  // clicks inside stop propagation so ticking checkboxes doesn't dismiss it.
+  // A scroll (heard in the CAPTURE phase: scroll doesn't bubble) never closes
+  // it, it measures the funnel again and the popover moves with it. Closing on
+  // scroll shut it after ONE tick (owner 2026-11-12, "filter 点一个会自动关"): a
+  // tick shortens the table, the browser pulls a scrolled table box or page
+  // back inside the shorter rows and fires `scroll` for that, exactly as if a
+  // person had scrolled. Its own value list scrolls freely too (2026-07-29).
+  const filterAnchor = filterMenu?.anchor ?? null;
   useEffect(() => {
-    if (!filterMenu) return;
+    if (!filterAnchor) return;
     const close = () => setFilterMenu(null);
-    const onScroll = (e: Event) => {
-      if (e.target instanceof Node && filterMenuRef.current?.contains(e.target)) return;
-      close();
+    const follow = () => {
+      if (!filterAnchor.isConnected) return close();
+      const { left, top, bottom } = filterAnchor.getBoundingClientRect();
+      setFilterMenu((cur) => (cur && (cur.left !== left || cur.top !== top || cur.bottom !== bottom) ? { ...cur, left, top, bottom } : cur));
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") close();
     };
     window.addEventListener("click", close);
-    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("scroll", follow, true);
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("click", close);
-      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("scroll", follow, true);
       window.removeEventListener("keydown", onKey);
     };
-  }, [filterMenu]);
+  }, [filterAnchor]);
 
   // Close the row context menu on outside click, Escape, or scroll — same
   // detach-from-anchor reasoning as the header menu (it's fixed-positioned).
@@ -2592,12 +2594,13 @@ function DataTableInner<T, L>({
                                 aria-label={`Filter & sort ${c.label}`}
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                                  const anchor = e.currentTarget;
+                                  const rect = anchor.getBoundingClientRect();
                                   setFilterQuery("");
                                   setFilterMenu((cur) =>
                                     cur?.colKey === c.key
                                       ? null
-                                      : { left: rect.left, top: rect.top, bottom: rect.bottom, colKey: c.key }
+                                      : { left: rect.left, top: rect.top, bottom: rect.bottom, colKey: c.key, anchor }
                                   );
                                 }}
                                 className={cn(
@@ -3190,7 +3193,6 @@ function DataTableInner<T, L>({
           if (!filterMenuPos) return null;
           return createPortal(
             <div
-              ref={filterMenuRef}
               className="fixed z-[120] flex w-[236px] flex-col overflow-y-auto overscroll-contain rounded-md border border-border bg-surface shadow-slab"
               style={{ top: filterMenuPos.top, bottom: filterMenuPos.bottom, left: filterMenuPos.left, maxHeight: filterMenuPos.maxHeight }}
               onClick={(e) => e.stopPropagation()}
