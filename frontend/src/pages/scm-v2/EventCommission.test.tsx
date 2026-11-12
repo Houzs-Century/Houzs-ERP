@@ -219,7 +219,7 @@ describe('the Event Commission tab', () => {
       totals: { payableSen: 130_00, adjustmentsSen: 280_00, totalSen: 410_00 },
     };
     renderTab(<EventCommissionTab />);
-    const row = screen.getAllByText('HC-SO-013238').map((el) => el.closest('tr')!).find((tr) => tr?.textContent?.includes('+2,000.00'))!;
+    const row = screen.getAllByText('HC-SO-013238').map((el) => el.closest('tr')!).find((tr) => tr.textContent.includes('+2,000.00'))!;
     expect(cellsOf(row)).toEqual(expect.arrayContaining(['10,000.00', '12,000.00', '+2,000.00', '14%', '280.00']));
     expect(row.textContent).not.toContain('not yet 30%');
     expect(tile('Upsales / drop sales')).toContain('280.00');
