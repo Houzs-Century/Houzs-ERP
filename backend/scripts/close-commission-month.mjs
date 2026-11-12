@@ -9,7 +9,9 @@
 // Owner 2026-11-13: 「9月的如果你确定就帮我lock 起来吧」.
 //
 // MODE=plan (default) says whether the month can be closed (not closed yet, in
-// order, ended) and how many orders its two reports carry; nothing is written.
+// order, ended) and how many orders its two reports carry, then REHEARSES the
+// close inside a transaction that is always rolled back — so a refusal or a
+// wrong stored shape shows before the real run; nothing is written.
 // MODE=apply with CONFIRM="CLOSE COMMISSION MONTH" calls the handler INSIDE ONE
 // TRANSACTION and reads the stored row back before committing: both reports and
 // both paid lists must be JSON objects with their totals — else the transaction
@@ -40,8 +42,35 @@ const ACTOR = String(process.env.ACTOR ?? '').trim() || 'Finance (by script)';
 const say = (s) => console.log(s);
 
 const lastDay = (ym) => { const [y, m] = ym.split('-').map(Number); return `${ym}-${String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, '0')}`; };
-const ctxOf = (db, { body = {}, query = {} } = {}) => {
-  const sb = pgrestShim(db, 'scm');
+/* Inside the one transaction a statement that fails aborts everything after it.
+   The handler's audit pre-flight (entity-audit.ts assertAuditWritable) calls the
+   probe function scm.entity_audit_writable and, when it is not there, falls back
+   to a plain read of the audit log — a failure it expects. The first apply
+   (2026-11-13) ran the probe on the transaction itself: the probe failed, the
+   transaction was aborted, the fallback read was refused and the close answered
+   409 audit_trail_unavailable (nothing was written). So an rpc() runs in a
+   SAVEPOINT here: when it fails only the savepoint is rolled back, the error is
+   handed back PostgREST-style, and the pre-flight goes on as it does in the app. */
+const rpcInSavepoint = (tx) => async (name, args) => {
+  try {
+    return await tx.savepoint(async (sp) => {
+      const r = await pgrestShim(sp, 'scm').rpc(name, args);
+      if (r.error) throw new Error(r.error.message);
+      return r;
+    });
+  } catch (e) {
+    return { data: null, error: { message: String(e?.message ?? e) } };
+  }
+};
+const ctxOf = (db, { body = {}, query = {}, inTransaction = false } = {}) => {
+  const shim = pgrestShim(db, 'scm');
+  const sb = !inTransaction ? shim : new Proxy(shim, {
+    get(target, prop) {
+      if (prop === 'rpc') return rpcInSavepoint(db);
+      const v = target[prop];
+      return typeof v === 'function' ? v.bind(target) : v;
+    },
+  });
   return {
     env: { DB: d1Compat(() => db) },
     req: { json: async () => body, query: (k) => query[k], path: '/api/scm/acc-events/commission/close' },
@@ -89,10 +118,34 @@ async function main() {
         say(`   ${basis}: ${r.fairs.reduce((n, f) => n + f.sos.length, 0)} order(s) in the range, ${(r.earlierOrders ?? []).length} earlier order line(s), ${(r.changedOrders ?? []).length} upsale / drop row(s), ${(r.marked ?? []).length} marked`);
       }
     });
-    if (!APPLY) { say(`\nNothing written. To write: MODE=apply CONFIRM="${PHRASE}"`); return; }
+    if (!APPLY) {
+      /* The close itself, rehearsed: run inside a transaction that is ALWAYS
+         rolled back, so a refusal (the audit pre-flight, the order of months) or
+         a wrong stored shape shows here, before the real run, and nothing stays. */
+      const UNDO = Symbol('rehearsal');
+      let rehearsal = 'not run';
+      try {
+        await sql.begin(async (tx) => {
+          const res = await closeCommissionMonthHandler(ctxOf(tx, { body: { month: MONTH }, inTransaction: true }));
+          if (res.status !== 200) { rehearsal = `would be REFUSED (${res.status} ${res.body?.error ?? ''})`; throw UNDO; }
+          const shape = await shapeOf(tx);
+          rehearsal = shape.ok
+            ? `would go through — stored in full, ${shape.row.paid_fair_orders} order(s) paid by fair and ${shape.row.paid_so_orders} by SO date`
+            : `would be stored in the WRONG shape (${shape.why})`;
+          throw UNDO;
+        });
+      } catch (e) {
+        if (e !== UNDO) rehearsal = `failed (${String(e?.message ?? e).slice(0, 160)})`;
+      }
+      const still = await closesOf(sql);
+      say(`   rehearsal, rolled back: ${rehearsal}`);
+      say(`   closed months after the rehearsal: ${still.map((k) => k.ym).join(', ') || 'none'}`);
+      say(`\nNothing written. To write: MODE=apply CONFIRM="${PHRASE}"`);
+      return;
+    }
 
     await sql.begin(async (tx) => {
-      const res = await closeCommissionMonthHandler(ctxOf(tx, { body: { month: MONTH } }));
+      const res = await closeCommissionMonthHandler(ctxOf(tx, { body: { month: MONTH }, inTransaction: true }));
       if (res.status !== 200) throw new Error(`the close was refused (${res.status} ${res.body?.error ?? ''}) — nothing was written`);
       const shape = await shapeOf(tx);
       if (!shape.ok) throw new Error(`${shape.why} — rolled back, nothing was written`);
