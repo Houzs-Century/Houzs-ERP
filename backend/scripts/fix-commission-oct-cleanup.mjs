@@ -15,8 +15,13 @@
 //      THEIR OWN FAIR; no order is moved.
 //
 // MODE=plan (default) lists every change and writes nothing. MODE=apply needs
-// CONFIRM="CLEAN OCTOBER FAIRS". Prints doc numbers, fair ids, venues and dates
-// only — no money (the Actions log is public).
+// CONFIRM="CLEAN OCTOBER FAIRS", then re-reads every written order on a fresh
+// connection and exits 1 if one is not as written. Prints doc numbers, fair ids,
+// venues and dates only — no money (the Actions log is public).
+//
+// RE-RUN: a second run finds the two orders already on project 363 (the
+// transfer answers "already_there" and writes nothing) and every filled fair day
+// and venue already equal to its report, so it plans nothing and writes nothing.
 // Env: DATABASE_URL, COMPANY_ID (default 1).
 import './lib/public-log-guard.mjs';
 import postgres from 'postgres';
@@ -73,9 +78,14 @@ async function main() {
       const o = links.find((r) => r.doc_no === l.docNo);
       say(`   ${l.docNo}: now ${o ? `${o.fair_match ?? '-'} #${o.project_id ?? '-'} ${o.status}` : 'NOT FOUND'} → #${l.projectId}`);
     }
+    /* What every write should leave behind, checked on a fresh connection at the end. */
+    const expected = [];
     if (APPLY) {
       const res = await transferOrdersToFairs({ sb, db, companySql, companyId: CO, items: LINKS, actorId: null, actorName: ACTOR });
-      for (const r of res) say(`   ${r.docNo}: ${r.ok ? `linked to #${r.projectId}, venue ${r.venue}, fair day ${r.fairDate ?? '-'}` : `NOT linked (${r.reason})`}`);
+      for (const r of res) {
+        say(`   ${r.docNo}: ${r.ok ? `linked to #${r.projectId}, venue ${r.venue}, fair day ${r.fairDate ?? '-'}` : `NOT linked (${r.reason})`}`);
+        if (r.ok) expected.push({ docNo: r.docNo, projectId: r.projectId, fairMatch: 'PICKED' });
+      }
     }
 
     /* 2. Fill a blank fair day / a wrong venue that the order's own report proves. */
@@ -125,6 +135,7 @@ async function main() {
       }
       const { error } = await sb.from('mfg_sales_orders').update(patch).eq('doc_no', o.doc_no).eq('company_id', CO);
       if (error) { say(`      NOT written (${error.message ?? 'update failed'})`); continue; }
+      expected.push({ docNo: o.doc_no, ...('venue' in patch ? { venue: patch.venue } : {}), ...('fair_date' in patch ? { fairDate: patch.fair_date } : {}) });
       const state = fairStateOf(o);
       await recordFairChange({
         sb, db, companySql, docNo: o.doc_no, before: state, after: state, how: 'settle',
@@ -136,6 +147,29 @@ async function main() {
     }
     say(`\n   ${planned} order(s) to fill${APPLY ? `, ${written} written` : ''}; ${otherSeller} skipped (another salesperson's report line)`);
     if (!APPLY) say(`\nNothing written. To write: MODE=apply CONFIRM="${CONFIRM_PHRASE}"`);
+
+    if (APPLY && expected.length > 0) {
+      /* VERIFY on a fresh connection — the session that wrote is the worst
+         witness — that each order now holds exactly what was written. */
+      const check = postgres(process.env.DATABASE_URL, { max: 1, prepare: false });
+      try {
+        const rows = await check`
+          SELECT doc_no, project_id, fair_match, venue, fair_date FROM scm.mfg_sales_orders
+           WHERE company_id = ${CO} AND doc_no IN ${check(expected.map((e) => e.docNo))}`;
+        const now = new Map(rows.map((r) => [r.doc_no, r]));
+        const wrong = expected.filter((e) => {
+          const r = now.get(e.docNo);
+          if (!r) return true;
+          if (e.projectId !== undefined && Number(r.project_id) !== e.projectId) return true;
+          if (e.fairMatch !== undefined && r.fair_match !== e.fairMatch) return true;
+          if (e.venue !== undefined && r.venue !== e.venue) return true;
+          return e.fairDate !== undefined && dayOf(r.fair_date) !== e.fairDate;
+        });
+        say(`\nVerified on a fresh connection: ${expected.length - wrong.length} of ${expected.length} as written`);
+        for (const e of wrong) say(`   NOT AS WRITTEN: ${e.docNo}`);
+        if (wrong.length > 0) process.exitCode = 1;
+      } finally { await check.end(); }
+    }
   } finally { await sql.end(); }
 }
 main().catch((e) => { console.error(String(e?.message ?? e).slice(0, 300)); process.exit(1); });
