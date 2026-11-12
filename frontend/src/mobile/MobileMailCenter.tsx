@@ -46,6 +46,9 @@ import "./mobile.css";
 import { fmtDate, fmtDateTime, fmtTime as fmtClock } from "../vendor/shared/format";
 import { mytDayOf, todayMyt } from "../vendor/scm/lib/dates";
 import { openLoadedTab } from "../lib/openLoadedTab";
+import { Paperclip } from "lucide-react";
+import { isImageAttachment, useAttachmentPreviewUrl } from "../pages/MailCenter/mail-attach-preview";
+import type { ThreadFilePreview } from "../pages/MailCenter/ThreadFileChips";
 
 // Mobile Mail Center — the email client, wired to /api/mail-center. Kept at
 // desktop feature parity (MailCenter/Inbox.tsx + Thread.tsx) minus the desktop-
@@ -93,6 +96,9 @@ type Thread = {
   starred: boolean;
   labels: string[];
   hasOutbound: boolean;
+  hasAttachment: boolean;
+  attachmentCount: number;
+  attachments: ThreadFilePreview[];
   createdAt: string;
   trashedAt?: string | null;
 };
@@ -614,6 +620,19 @@ export function MobileMailCenter({ onBack }: { onBack?: () => void }) {
 // subject (bold when unread) with the thread message count, a one-line snippet,
 // label chips, and a TRAILING teal unread dot. The unread border tint + weight
 // come from the live thread.unread. Star + reply direction stay from the wiring.
+function ThreadFileNames({ firstFile, fileCount }: { firstFile: ThreadFilePreview; fileCount: number }) {
+  const otherFileCount = fileCount - 1;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, minWidth: 0 }}>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 5, minWidth: 0, maxWidth: "75%", border: "1px solid var(--hz-c-border-subtle)", borderRadius: 999, padding: "3px 9px", fontSize: 11.5, color: "var(--hz-c-ink)" }}>
+        <Paperclip aria-hidden="true" size={12} style={{ flex: "none", color: "var(--hz-c-ink-muted)" }} />
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{firstFile.filename}</span>
+      </span>
+      {otherFileCount > 0 && <span style={{ flex: "none", fontSize: 11.5, color: "var(--hz-c-ink-muted)" }}>+{otherFileCount}</span>}
+    </div>
+  );
+}
+
 function ThreadRow({ t, colorMap, onOpen }: { t: Thread; colorMap: Map<string, string>; onOpen: () => void }) {
   const who = t.counterpartyName || t.counterpartyEmail || "(unknown)";
   return (
@@ -632,6 +651,7 @@ function ThreadRow({ t, colorMap, onOpen }: { t: Thread; colorMap: Map<string, s
               <path d="M12 2l3 6 6 .9-4.5 4.3 1 6-5.5-3-5.5 3 1-6L3 8.9 9 8Z" />
             </svg>
           )}
+          {t.hasAttachment && <Paperclip role="img" aria-label="Has attachment" size={12} style={{ flex: "none", color: "var(--hz-c-ink-muted)" }} />}
           <span className="money" style={{ fontSize: 10, color: "var(--hz-c-ink-soft)", flex: "none", whiteSpace: "nowrap" }}>{fmtTime(t.lastMessageAt)}</span>
         </div>
         <div style={{ fontSize: 12.5, fontWeight: t.unread ? 700 : 500, color: "var(--hz-c-ink)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -640,6 +660,7 @@ function ThreadRow({ t, colorMap, onOpen }: { t: Thread; colorMap: Map<string, s
           {t.messageCount > 1 && <span style={{ color: "var(--hz-c-ink-soft)", fontWeight: 600 }}> ({t.messageCount})</span>}
         </div>
         <div style={{ fontSize: 11.5, color: "var(--hz-c-ink-muted)", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.lastSnippet}</div>
+        {t.attachments.length > 0 && <ThreadFileNames firstFile={t.attachments[0]} fileCount={t.attachmentCount} />}
         {t.labels.length > 0 && (
           <div style={{ display: "flex", gap: 5, marginTop: 6, flexWrap: "wrap" }}>
             {t.labels.map((l) => {
@@ -1266,6 +1287,43 @@ function MailReply({
   );
 }
 
+function MobilePickedAttachment({ file, onRemove }: { file: OutboundAttachment; onRemove: () => void }) {
+  const previewUrl = useAttachmentPreviewUrl(file);
+  const label = (
+    <>
+      {previewUrl && isImageAttachment(file) && (
+        <img src={previewUrl} alt="" style={{ width: 22, height: 22, borderRadius: 4, objectFit: "cover", flex: "none" }} />
+      )}
+      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{file.name}</span>
+    </>
+  );
+  return (
+    <span className="spill" style={{ display: "inline-flex", alignItems: "center", gap: 5, maxWidth: "100%", minHeight: 32 }}>
+      {previewUrl ? (
+        <a
+          href={previewUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ display: "inline-flex", alignItems: "center", gap: 5, minWidth: 0, color: "inherit", textDecoration: "underline" }}
+        >
+          {label}
+        </a>
+      ) : (
+        label
+      )}
+      <span style={{ opacity: 0.7, flex: "none" }}>{humanSize(file.size)}</span>
+      <span
+        role="button"
+        aria-label={`Remove ${file.name}`}
+        onClick={onRemove}
+        style={{ cursor: "pointer", opacity: 0.75, fontSize: 16, lineHeight: 1, padding: "4px 6px", flex: "none" }}
+      >
+        &times;
+      </span>
+    </span>
+  );
+}
+
 /** Attach images / PDFs to an outbound mail. Used by BOTH the reply box and the
  *  composer, and the rule it enforces — 10 files, 5 MB decoded, images + PDF —
  *  is the SHARED one (`mail-attach-files.ts` over `mail-attachments.ts`), so the
@@ -1319,25 +1377,14 @@ function AttachRow({
       {files.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 7 }}>
           {files.map((f, i) => (
-            <span
+            <MobilePickedAttachment
               key={`${f.name}-${i}`}
-              className="spill"
-              style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
-            >
-              {f.name}
-              <span style={{ opacity: 0.7 }}>{humanSize(f.size)}</span>
-              <span
-                role="button"
-                aria-label={`Remove ${f.name}`}
-                onClick={() => {
-                  onFiles(files.filter((_, index) => index !== i));
-                  onError(null);
-                }}
-                style={{ cursor: "pointer", opacity: 0.75, fontSize: 12, lineHeight: 1 }}
-              >
-                &times;
-              </span>
-            </span>
+              file={f}
+              onRemove={() => {
+                onFiles(files.filter((_, index) => index !== i));
+                onError(null);
+              }}
+            />
           ))}
         </div>
       )}

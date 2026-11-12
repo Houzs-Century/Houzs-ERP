@@ -48,7 +48,7 @@ import {
   parsePoIdScope, loadOutstandingPoLines, toOutstandingPoItems,
 } from '../lib/outstanding-po-lines';
 import { checkReceiptCosts, refuseZeroCostReceipt, zeroCostAckColumns, ZERO_COST_RECEIPT_ERROR, type ReceiptCostLine } from '../lib/zero-cost-receipt-guard';
-import { refuseWithoutWriting } from '../lib/no-write-refusal'; import { LINES_UNREADABLE, linesUnreadableBody } from '../lib/failed-read-refusal'; import { grnReceiptBooked } from '../lib/grn-receipt-booked';
+import { refuseWithoutWriting } from '../lib/no-write-refusal'; import { LINES_UNREADABLE, linesUnreadableBody } from '../lib/failed-read-refusal'; import { readFailure } from '../lib/read-failure'; import { grnReceiptBooked } from '../lib/grn-receipt-booked';
 import { grnPostRefusal } from '../lib/grn-post-capability';
 import { getGrnItemRacksHandler, grnRackSplitPostRefusal, putGrnItemRacksHandler } from '../lib/grn-line-racks';
 import { grnInheritedFieldChanges, grnInheritedLockedRefusal, grnHeaderInheritedChanges, grnHeaderInheritedRefusal, type GrnLinePrev, type GrnLinePatch } from '../lib/grn-inherited-lock';
@@ -1206,9 +1206,11 @@ grns.get('/:id', async (c) => {
   ]);
   if (h.error) return c.json({ error: 'load_failed', reason: h.error.message }, 500);
   if (!h.data) return c.json({ error: 'not_found' }, 404);
+  // A failed line read is not a GRN with no lines.
+  if (i.error) return c.json(readFailure('grn_lines', i.error), 500);
   // Migration 0106 — surface the convert-eligibility / lock flags on the grn
   // object so the detail page can lock once a PI/PR draws from it.
-  const itemRows = (i.data ?? []) as Array<{ qty_accepted?: number | null; invoiced_qty?: number | null; returned_qty?: number | null }>;
+  const itemRows = i.data as Array<{ qty_accepted?: number | null; invoiced_qty?: number | null; returned_qty?: number | null }>;
   // The detail page and phone show warehouse_code; only warehouse_id is a column
   // (Sim, 2026-10-19: "the GRN also did not capture the warehouse").
   // warehouse_name is what the printed GRN names (Conts-ERP #717).
@@ -1234,7 +1236,7 @@ grns.get('/:id', async (c) => {
   type GrnLineRow = Record<string, unknown> & { id: string; purchase_order_item_id: string | null; item_code: string };
   const lineItems = orderSofaModuleRowsWithinBuilds(
     sortSoLinesByGroupRank(
-      ((i.data ?? []) as unknown as Array<Record<string, unknown> & { id: string; purchase_order_item_id: string | null; item_code: string }>)
+      (i.data as unknown as Array<Record<string, unknown> & { id: string; purchase_order_item_id: string | null; item_code: string }>)
         .map((it): GrnLineRow => ({ ...it, item_code: it.item_code })),
       (r) => r.item_group as string | null | undefined,
     ),
@@ -1250,10 +1252,12 @@ grns.get('/:id', async (c) => {
   const poQtyByItemId = new Map<string, number>();
   const downstreamMap = await grnLineDownstream(sb, lineItems.map((it) => it.id));
   if (poItemIds.length > 0) {
-    const { data: poiRows } = await sb.from('purchase_order_items')
+    const { data: poiRows, error: poiErr } = await sb.from('purchase_order_items')
       .select('id, qty, unit_price_sen, purchase_order_id, po:purchase_orders ( po_number )')
       .in('id', poItemIds);
-    const rows = (poiRows ?? []) as Array<{ id: string; qty: number | null; purchase_order_id: string | null; po: { po_number: string } | Array<{ po_number: string }> | null }>;
+    // A failed read would show every line's Ordered qty and source PO as blank.
+    if (poiErr) return c.json(readFailure('grn_po_lines', poiErr), 500);
+    const rows = poiRows as Array<{ id: string; qty: number | null; purchase_order_id: string | null; po: { po_number: string } | Array<{ po_number: string }> | null }>;
     // #26 — the PO each LINE came from (id + number, so the screens can link it).
     poRefs = poRefByPoItemId(rows); poPrices = poPriceByPoItemId(rows as Array<{ id: string; unit_price_sen?: number | null }>);
     for (const r of rows) if (r.qty != null) poQtyByItemId.set(r.id, Number(r.qty));
@@ -1313,21 +1317,25 @@ grns.get('/:id/linked', async (c) => {
      notes, and only ONE of them is the header's primary grn_id. Union the
      header match above with the LINE-level path (this note's grn_items →
      purchase_invoice_items) so a note billed on another note's PI still lists
-     its invoice here. Fail-soft: a hiccup leaves the header-matched set. */
+     its invoice here. A failed read answers 500: the header-matched set alone
+     would tell the operator a billed note has no invoice yet. */
   let invoices = (piRes.data ?? []) as Array<{ id: string; invoice_number: string; status: string; invoice_date: string }>;
   try {
-    const { data: myLines } = await sb.from('grn_items').select('id').eq('grn_id', id);
-    const grnItemIds = ((myLines ?? []) as Array<{ id: string }>).map((r) => r.id);
+    const { data: myLines, error: myLinesErr } = await sb.from('grn_items').select('id').eq('grn_id', id);
+    if (myLinesErr) return c.json(readFailure('grn_linked_invoices', myLinesErr), 500);
+    const grnItemIds = (myLines as Array<{ id: string }>).map((r) => r.id);
     if (grnItemIds.length) {
-      const { data: piLines } = await sb.from('purchase_invoice_items')
+      const { data: piLines, error: piLinesErr } = await sb.from('purchase_invoice_items')
         .select('purchase_invoice_id').in('grn_item_id', grnItemIds);
-      const piIds = [...new Set(((piLines ?? []) as Array<{ purchase_invoice_id: string | null }>)
+      if (piLinesErr) return c.json(readFailure('grn_linked_invoices', piLinesErr), 500);
+      const piIds = [...new Set((piLines as Array<{ purchase_invoice_id: string | null }>)
         .map((r) => r.purchase_invoice_id).filter((x): x is string => Boolean(x)))];
       const missing = piIds.filter((pid) => !invoices.some((v) => v.id === pid));
       if (missing.length) {
-        const { data: extra } = await sb.from('purchase_invoices')
+        const { data: extra, error: extraErr } = await sb.from('purchase_invoices')
           .select('id, invoice_number, status, invoice_date').in('id', missing);
-        invoices = [...invoices, ...((extra ?? []) as typeof invoices)]
+        if (extraErr) return c.json(readFailure('grn_linked_invoices', extraErr), 500);
+        invoices = [...invoices, ...(extra as typeof invoices)]
           .sort((a, b) => String(b.invoice_date).localeCompare(String(a.invoice_date)));
       }
     }

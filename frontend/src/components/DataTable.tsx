@@ -163,7 +163,7 @@ function DataTableInner<T, L>({
   exportLabel = "Export",
   onExport,
   exportLines,
-  exportXlsx,
+  exportXlsx, exportSheet,
   onExportPdf, onShownColumnsChange,
   toolbarExtra,
   onColFiltersChange,
@@ -1628,7 +1628,8 @@ function DataTableInner<T, L>({
     if (exportXlsx) {
       // No lines: one sheet row per list row, keeping each column's exportFormat.
       const matrix = buildLineExportMatrix(outRows, () => [], exportableColumns(visibleColumns as Column<T, L>[]));
-      void writeLineExportFile(matrix, "Sheet1", `${exportName || tableId || "export"}-${date}.xlsx`);
+      const sheet = exportSheet?.(outRows);
+      void writeLineExportFile(matrix, sheet?.name ?? "Sheet1", `${exportName || tableId || "export"}-${date}.xlsx`, sheet?.heading);
       return;
     }
     downloadCSV(`${exportName || tableId || "export"}-${date}.csv`, toCSV(outRows, csvCols));

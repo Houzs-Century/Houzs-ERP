@@ -45,6 +45,7 @@
 
 import { sofaStockKey, type SofaBatchStock } from './sofa-set-coverage';
 import { WH_NONE } from './committed-shipments';
+import { sofaSetKey } from '../shared/sofa-set-identity';
 
 /** One pooled sofa demand line, as the engine bucketed it. */
 export type SofaSetLine = {
@@ -103,9 +104,9 @@ export function planSofaSets(
   poRaisedFor: SofaPoRaisedFor,
 ): Map<string, SofaPlan> {
   const planByLine = new Map<string, SofaPlan>();
-  const setsByKey = new Map<string, SofaSetLine[]>(); // `${wh}|${doc_no}` — the allocator's set key
+  const setsByKey = new Map<string, SofaSetLine[]>(); // `${wh}|${doc_no}|${model}` — the allocator's set key
   for (const l of lines) {
-    const key = `${l.whId ?? WH_NONE}|${l.docNo}`;
+    const key = `${l.whId ?? WH_NONE}|${sofaSetKey(l.docNo, l.code)}`;
     const arr = setsByKey.get(key) ?? [];
     arr.push(l);
     setsByKey.set(key, arr);

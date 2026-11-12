@@ -89,6 +89,22 @@ const STAGE_LABEL: Record<string, string | undefined> = {
   warehouses: 'the warehouse list',
   sales_orders: 'the sales orders',
   delivered_sum: 'delivery progress',
+  so_lines: 'the order lines',
+  so_payments: 'the payments',
+  so_amendments: 'the amendment requests',
+  so_line_deliveries: 'what each line has delivered',
+  so_lifecycle: 'the order status',
+  do_lines: 'the delivery order lines',
+  do_crew: 'the delivery crew',
+  do_line_consumed: 'what this line has invoiced or returned',
+  grn_lines: 'the receipt lines',
+  grn_po_lines: 'the purchase order lines',
+  grn_linked_invoices: 'the invoices for this receipt',
+  po_lines: 'the purchase order lines',
+  po_line_receipts: 'what each line has received',
+  po_picker_suppliers: 'the main supplier of each item',
+  document_flow: 'the document flow',
+  bank_open_lines: 'how much of each statement is still open',
 };
 
 /**

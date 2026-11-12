@@ -1,6 +1,8 @@
-/** A SCAN_QUEUE message: a scan job to run, or a confirmed correction to learn from. */
+/** A SCAN_QUEUE message: a scan job to run, an AI read to run (scm/lib/ai-read-jobs.ts),
+ *  or a confirmed correction to learn from. */
 export type ScanQueueMessage =
   | { jobId: string }
+  | { aiRead: string }
   | { distill: { rep: string | null; companyId: number | null; userId: number | null } };
 
 export type Env = {

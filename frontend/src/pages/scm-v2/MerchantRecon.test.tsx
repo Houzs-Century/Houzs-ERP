@@ -8,7 +8,7 @@
 //   • the money side is NOT here — it is BankRecon.test.tsx, and the setup is
 //     SettlementSetup.test.tsx: three jobs, three screens, as the owner asked.
 
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { describe, expect, test, vi } from 'vitest';
 import type { AcquirerSetup, SettlementRow } from './settlement-queries';
@@ -168,6 +168,12 @@ vi.mock('../../components/dataTableLineExport', async (importOriginal) => ({
 vi.mock('../../vendor/scm/lib/merchant-recon-pdf', () => ({
   generateReportLinesPdf: (...args: unknown[]) => reportLinesPdf(...args),
   generateWaitingCardsPdf: (...args: unknown[]) => waitingCardsPdf(...args),
+}));
+/* "Previous record" leaves through this door (owner 2026-11-11: 之前record，我哪里都不会take-in). */
+const markPrevious = vi.fn();
+vi.mock('./unmatched-payments-queries', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./unmatched-payments-queries')>()),
+  useMarkPrevious: () => ({ mutate: (...args: unknown[]) => markPrevious(...args), isPending: false }),
 }));
 
 import { MerchantRecon } from './MerchantRecon';
@@ -1084,4 +1090,21 @@ describe('a DuitNow QR line', () => {
     openTab('No sale');
     expect(screen.getByText(/No Online payment explains this QR money/)).toBeTruthy();
   }));
+});
+
+/* Owner 2026-11-11: 我检查确定后，就直接说这个是之前record，我哪里都不会take-in. */
+describe('a card payment checked to be the previous system\'s', () => {
+  test('is ticked and marked a previous record from the list; what came back is said', () => {
+    markPrevious.mockClear();
+    draw();
+    const press = () => screen.getByRole('button', { name: /^Previous record/ });
+    expect(press().hasAttribute('disabled')).toBe(true);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Tick SO-2606-013' }));
+    fireEvent.click(press());
+    expect(markPrevious).toHaveBeenCalledTimes(1);
+    const [refs, handlers] = markPrevious.mock.calls[0]! as [unknown, { onSuccess: (got: unknown) => void }];
+    expect(refs).toEqual([{ source: 'SOPAY', id: 'w2' }]);
+    act(() => handlers.onSuccess({ ok: true, marked: 1, refused: [] }));
+    expect(screen.getByText(/^1 payment marked as previous records/)).toBeTruthy();
+  });
 });

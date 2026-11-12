@@ -8,6 +8,8 @@ Sending goes through one durable queue: `sendEmail()` enqueues to `email_outbox`
 
 A reply / compose whose immediate send failed but will be retried answers `{ ok: true, queued: true }` and is recorded on the thread with `outbox_id`; the thread shows it as "Queued, retrying" or "Not delivered" from the outbox status. Only a send that cannot be retried answers 502.
 
+Files sent from compose / reply are stored like received ones (R2 `mail/<messageId>/`, `email_attachments`), so the thread shows and opens them; the thread list carries `hasAttachment` for the paperclip, plus `attachmentCount` and the first 3 files (`attachments`, loaded in one query per page) for the row's file chips. Desktop chips open the file; phone rows show one file name and `+N` and open the thread on tap. Before sending, a picked image or PDF opens from its chip; SVG, HEIC and BMP do not (same safe list as the attachment stream).
+
 Threading: a reply carries `In-Reply-To` / `References` built from the thread's Message-IDs. Resend assigns the Message-ID of what we send, so the outbound row gets it afterwards from `GET /emails/:id` (`backfillOutboundMessageIds`, run by the `*/5` cron and by inbound ingest when a reference does not match).
 
 A message with several recipients is always ONE provider call carrying arrays — never one call per recipient — so a mid-loop failure and its retry cannot deliver a second copy to whoever already received it.

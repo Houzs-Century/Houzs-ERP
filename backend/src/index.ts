@@ -181,6 +181,7 @@ import { runPosAlerts } from "./services/posAlerts";
 // slot gated to Sundays — no new cron trigger. getSupabaseService is the same
 // service client scan-so.ts uses internally (serviceClient(env)).
 import { distillAllSalespersonRules, warmCatalogCacheForCron, processScanQueueMessage, processDistillQueueMessage } from "./scm/routes/scan-so";
+import { processAiReadQueueMessage } from "./scm/lib/ai-read-runners";
 import { CLAUDE_MODEL } from "./scm/lib/scan-ocr";
 import { runAgentHeartbeat } from "./services/agent-scheduler";
 import { getSupabaseService } from "./db/supabase";
@@ -1466,6 +1467,19 @@ export default {
           console.error("[scan-queue distill]", e);
         }
         msg.ack();
+        continue;
+      }
+      // An AI read (bill / credit note / receipt, scm/lib/ai-read-jobs.ts).
+      // The runner writes every failure to its row, so it is acked; only a
+      // failed row read (nothing spent yet) is retried.
+      if ("aiRead" in body) {
+        try {
+          await processAiReadQueueMessage(env, body.aiRead);
+          msg.ack();
+        } catch (e) {
+          console.error("[scan-queue ai-read]", body.aiRead, e);
+          msg.retry();
+        }
         continue;
       }
       try {

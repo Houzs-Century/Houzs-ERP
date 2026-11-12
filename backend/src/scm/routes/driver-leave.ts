@@ -88,6 +88,7 @@ const createSchema = z.object({
 
 // POST /driver-leave — record an absence.
 driverLeave.post('/', async (c) => {
+  // company-scope: the driver/helper lookups read the UNIFIED roster (drivers.ts / helpers.ts "every company's TMS page shows the same drivers"); the leave row itself is stamped with the active company and its list/delete are company-scoped.
   let body: unknown;
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
   const parsed = createSchema.safeParse(body);

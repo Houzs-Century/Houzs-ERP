@@ -20,6 +20,7 @@ import {
 import { idempotentInit } from '../../../lib/idempotency';
 import type { EventSuggestion } from './event-queries';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
+import { runAiRead, runOneAiRead, type AiReadStage } from './ai-read-job';
 
 // baseQuery is a custom-hook factory — only ever called from use* hooks below.
 // eslint-disable-next-line react-hooks/rules-of-hooks
@@ -358,21 +359,34 @@ export const fileToBase64 = (f: File): Promise<string> => new Promise((resolve, 
   r.readAsDataURL(f);
 });
 
-export const useExtractBills = () => useMutation({
-  mutationFn: (bills: Array<{ files: Array<{ name: string; mime: string; dataBase64: string }> }>) =>
-    authedFetch<{ bills: ExtractedBill[] }>(`/payment-vouchers/extract`, {
-      method: 'POST', body: JSON.stringify({ bills }),
+/* On the scan queue (2026-11-11): one job per bill, polled, so the page can
+   show each bill waiting, being read, read or failed. A bill whose read failed
+   is that bill's answer (ok: false), never the batch's. */
+type BillsToRead = Array<{ files: Array<{ name: string; mime: string; dataBase64: string }> }>;
+export async function extractBills(
+  bills: BillsToRead, onStage: ((index: number, stage: AiReadStage) => void) | null,
+): Promise<{ bills: ExtractedBill[] }> {
+  const read = await runAiRead<{ bills: ExtractedBill[] }>('/payment-vouchers/extract', { bills }, onStage);
+  return {
+    bills: read.map((r, index): ExtractedBill => {
+      if (!r.ok) return { index, ok: false, reason: r.error.message };
+      const got = r.body.bills.at(0);
+      return got ? { ...got, index } : { index, ok: false, reason: 'The reader sent nothing back — read it again.' };
     }),
+  };
+}
+
+export const useExtractBills = () => useMutation({
+  mutationFn: (input: BillsToRead | { bills: BillsToRead; onStage: (index: number, stage: AiReadStage) => void }) =>
+    Array.isArray(input) ? extractBills(input, null) : extractBills(input.bills, input.onStage),
 });
 
 /* The bill a payment request carries, read when Finance opens the voucher or
    AP invoice that answers it (owner 2026-09-30, 6.2): the server reads the
    request's own files, so nothing is uploaded twice. No bill → `bills: []`. */
-export const useExtractRequestBill = () => useMutation({
+export const useExtractRequestBill = (onStage: ((stage: AiReadStage) => void) | null = null) => useMutation({
   mutationFn: (requestId: string) =>
-    authedFetch<{ bills: ExtractedBill[] }>(`/payment-vouchers/extract`, {
-      method: 'POST', body: JSON.stringify({ fromRequest: requestId }),
-    }),
+    runOneAiRead<{ bills: ExtractedBill[] }>('/payment-vouchers/extract', { fromRequest: requestId }, onStage),
 });
 
 /* ── PV attachments (2026-09-03) — the bill LIVES with its voucher. Before

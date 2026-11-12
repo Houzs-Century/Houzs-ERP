@@ -23,6 +23,8 @@ const row = (lastMessageAt: string) =>
     labels: [],
     status: "open",
     hasOutbound: false,
+    attachmentCount: 0,
+    attachments: [],
     lastDirection: "inbound",
     createdAt: lastMessageAt,
   }) as unknown as ThreadListProps["threads"][number];

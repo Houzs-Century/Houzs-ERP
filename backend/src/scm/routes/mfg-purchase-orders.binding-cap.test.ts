@@ -246,3 +246,70 @@ describe('SO -> PO convert: a bound SKU past the response cap is still bound', (
     ).toEqual(MODULES.map((c) => `${c} ordered from ALT-${c}`).sort());
   });
 });
+
+describe('SO -> PO convert: a sofa set is one model on one order (HC-SO-2610-104)', () => {
+  const SET_DOC = 'HC-SO-2610-104';
+  const SET_MODULES = ['8030-1A(LHF)', '8030-1A(RHF)', '8069-1A(LHF)', '8069-2A(RHF)'] as const;
+
+  async function convertSet(supplierByCode: Record<string, string>, allowSofaSupplierSplit: boolean) {
+    const captured: Row[] = [];
+    const soLines = SET_MODULES.map((code, i) => soLine(`si-set-${i}`, code, SET_DOC));
+    const sb = fakeSb({
+      mfg_sales_order_items: soLines,
+      mfg_sales_orders: [{ doc_no: SET_DOC, status: 'CONFIRMED' }],
+      warehouses: [{ id: 'wh-kl', code: 'KL', name: 'KL' }],
+      suppliers: [
+        { id: SUPPLIER_ID, code: '400-H004', name: 'HOOKKA INDUSTRIES' },
+        ...ALTERNATES.map((id, i) => ({ id, code: `400-A00${i}`, name: `ALT ${i}` })),
+      ],
+      supplier_material_bindings: SET_MODULES.flatMap(bindingsFor),
+      fabric_trackings: [],
+      mrp_category_lead_times: [],
+      sofa_combo_pricing: [],
+      purchase_orders: [],
+      purchase_order_items: [],
+    }, captured);
+    const ctx = {
+      req: {
+        json: async () => ({
+          allowSofaSupplierSplit,
+          picks: soLines.map((l) => ({ soItemId: l.id, qty: 1, supplierId: supplierByCode[l.item_code as string] })),
+        }),
+      },
+      get: (key: string) => {
+        if (key === 'supabase') return sb;
+        if (key === 'user') return { id: 'user-1' };
+        return undefined;
+      },
+      env: { DB: { prepare: () => { throw new Error('no D1 in this harness'); } } },
+      json: (body: unknown, status = 200) => ({ status, body: body as Record<string, unknown> }),
+    } as unknown as PoConvertContext;
+    return { out: await convertSosToPosCore(ctx), captured };
+  }
+
+  const perModel = { '8030-1A(LHF)': SUPPLIER_ID, '8030-1A(RHF)': SUPPLIER_ID, '8069-1A(LHF)': 'sup-2', '8069-2A(RHF)': 'sup-2' };
+
+  test('two models on two suppliers without the confirm are refused before any write', async () => {
+    const { out, captured } = await convertSet(perModel, false);
+    expect(out.status).toBe(409);
+    expect(out.body.error).toBe('sofa_set_suppliers_unconfirmed');
+    expect(captured).toHaveLength(0);
+  });
+
+  test('the same picks with the confirm raise one PO per supplier', async () => {
+    const { out, captured } = await convertSet(perModel, true);
+    expect(out.status, JSON.stringify(out.body)).toBe(201);
+    expect(out.body.total).toBe(2);
+    expect(captured.map((r) => `${r.item_code} ${r.supplier_sku}`).sort()).toEqual([
+      '8030-1A(LHF) AC-8030-1A(LHF)', '8030-1A(RHF) AC-8030-1A(RHF)',
+      '8069-1A(LHF) ALT-8069-1A(LHF)', '8069-2A(RHF) ALT-8069-2A(RHF)',
+    ]);
+  });
+
+  test('one model on two suppliers is refused even with the confirm', async () => {
+    const { out, captured } = await convertSet({ ...perModel, '8030-1A(RHF)': 'sup-2' }, true);
+    expect(out.status).toBe(409);
+    expect(out.body.error).toBe('sofa_set_supplier_split');
+    expect(captured).toHaveLength(0);
+  });
+});

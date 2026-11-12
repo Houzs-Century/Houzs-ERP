@@ -6,6 +6,11 @@
       "why": "The same shared file on both sides: the page recomputes a region's lorry figures in the browser. Pinned by tests/logisticPeriod.test.ts, the region rule."
     },
     {
+      "check": "D1",
+      "key": "KELANTAN,LABUAN,PERLIS,SABAH,SARAWAK,SINGAPORE,TERENGGANU,TRENGGANU|backend/src/scm/shared/so-transport-fee.ts frontend/src/vendor/shared/so-transport-fee.ts",
+      "why": "The same shared file on both sides: the server refuses an order with no transport fee and the New SO forms show the Transport fee box from it. Pinned byte-identical by frontend/src/vendor/shared/so-transport-fee.canonical.test.ts."
+    },
+    {
       "check": "D2",
       "key": "ASSR_CASE,CREDIT_NOTE,CUSTOMER,DELIVERY_ORDER,DELIVERY_RETURN,GRN,PAYMENT_VOUCHER,PRODUCT,PROJECT,PURCHASE_INVOICE,PURCHASE_ORDER,RECEIPT,SALES_INVOICE,SALES_ORDER,SUPPLIER,USER ~ CREDIT_NOTE,CUSTOMER,DELIVERY_ORDER,DELIVERY_RETURN,GRN,PAYMENT_VOUCHER,PRODUCT,PURCHASE_INVOICE,PURCHASE_ORDER,RECEIPT,SALES_INVOICE,SALES_ORDER,SUPPLIER",
       "why": "TWO DIFFERENT QUESTIONS about the global-search hit types, differing by ASSR_CASE / PROJECT / USER on purpose: routes/search.ts SCM_SOURCE_TYPES is the subset read through the SCM PostgREST client (marked degraded together when that client cannot be built); the three public-schema sources run through env.DB and fail the request instead. The frontend maps are the PRESENTATION of every hit type. Divergence costs a missing name in the degraded notice, never a wrong result."
@@ -217,7 +222,7 @@
     },
     {
       "check": "D1",
-      "key": "CUSTOMER,DROP,TRIP,UNIT|backend/src/scm/lib/delivery-rate-card.ts backend/src/scm/routes/delivery-rate-cards.ts frontend/src/pages/scm-v2/DeliveryRateCards.tsx",
+      "key": "CUSTOMER,DROP,TRIP,UNIT|backend/src/scm/lib/delivery-rate-card.ts backend/src/scm/routes/delivery-rate-cards.ts frontend/src/pages/scm-v2/carriers/cardSettings.ts",
       "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 3 homes: AGGREGATION_UNITS, AGGREGATION_HINT. Cost of divergence is a blank chip, not a wrong number."
     },
     {
@@ -382,8 +387,8 @@
     },
     {
       "check": "D1",
-      "key": "APPLICATION/PDF,IMAGE/GIF,IMAGE/JPEG,IMAGE/PNG,IMAGE/WEBP|backend/src/routes/announcements.ts backend/src/routes/mail-center.ts",
-      "why": "AN UPLOAD WHITELIST, per endpoint, and deliberately not one list: each surface decides what IT accepts (portal vs staff vs mail vs OCR). 2 homes: INLINE_SAFE. Divergence costs a refused upload, never money or stock."
+      "key": "APPLICATION/PDF,IMAGE/GIF,IMAGE/JPEG,IMAGE/PNG,IMAGE/WEBP|backend/src/routes/announcements.ts backend/src/routes/mail-center.ts frontend/src/pages/MailCenter/mail-attach-preview.ts",
+      "why": "THE INLINE-SAFE PREVIEW LIST: types that may open in a browser tab without running script (no SVG/HTML). 3 homes: INLINE_SAFE on the two attachment streams, and PREVIEWABLE_CONTENT_TYPES in the Mail Center picker, which previews a file in the browser BEFORE it is uploaded, so it cannot import the server list. Divergence costs a missing preview link, never money or stock."
     },
     {
       "check": "D1",
@@ -567,8 +572,18 @@
     },
     {
       "check": "D1",
-      "key": "EAST,JOHOR,KAJANG,KEDAH,KL,KLANG,MELAKA,NS,PAHANG,PENANG,PERAK,PJ,PUCHONG,RAWANG|backend/src/scm/lib/zone-classify.ts frontend/src/pages/scm-v2/delivery-zones/zoneModel.ts frontend/src/vendor/scm/lib/delivery-map-model.ts",
+      "key": "EAST,JOHOR,KAJANG,KEDAH,KL,KLANG,LABUAN,MELAKA,NS,PAHANG,PENANG,PERAK,PJ,PUCHONG,RAWANG,SABAH,SARAWAK|backend/src/scm/lib/zone-classify.ts frontend/src/pages/scm-v2/delivery-zones/zoneModel.ts frontend/src/vendor/scm/lib/delivery-map-model.ts",
       "why": "THE DELIVERY ZONE NAMES. zone-classify.ts assigns a stop to a zone; delivery-map-model.ts colours it on the map; the Delivery Zones page names and colours it (zoneModel.ts, pinned to zone-classify.ts by backend/tests/zoneModelPin.test.ts). Same vocabulary, two jobs — but a zone added to one and not the other renders an uncoloured stop, so it is recorded rather than waved through."
+    },
+    {
+      "check": "D1",
+      "key": "LABUAN,SABAH,SARAWAK|backend/src/scm/lib/zone-classify.ts frontend/src/pages/scm-v2/delivery-zones/zoneModel.ts",
+      "why": "THE EAST MALAYSIA ZONES (owner 2026-11-11: the 3PL rate cards use the Delivery Zones areas). zone-classify.ts THREEPL_ONLY_ZONES keeps them off the own-lorry auto-propose; the Delivery Zones page groups them as 3PL only (EAST_MALAYSIA_ZONES). Same three zones, two jobs, pinned by backend/tests/zoneModelPin.test.ts; a zone missing on the page only mislabels its tile."
+    },
+    {
+      "check": "D2",
+      "key": "LABUAN,SABAH,SARAWAK ~ LABUAN,SABAH,SARAWAK,WPLABUAN",
+      "why": "TWO DIFFERENT QUESTIONS. logistics-cost.ts EM_STATES reads STATE NAMES as an address spells them (WP LABUAN included) to put a cost in the East Malaysia region; THREEPL_ONLY_ZONES / EAST_MALAYSIA_ZONES are the ZONE CODES a postcode maps to. WPLABUAN is a spelling, not a zone."
     },
     {
       "check": "D1",

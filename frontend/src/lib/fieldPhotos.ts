@@ -36,6 +36,26 @@ import {
 } from "../vendor/scm/lib/crew-stop-photos";
 import { api as apiClient } from "../api/client";
 
+/* A photo must never sit on "Uploading" for ever (HC-DO-2611-151, 2026-11-11: an
+   iPhone photo stuck while the driver could not complete). Stamping decodes the
+   photo on a canvas, which iOS can leave pending with no error on a large image;
+   the upload itself has a fetch timeout but the compression inside it does not.
+   So: the clock read and the stamp fall back (phone time / the unstamped photo)
+   after a short wait, and the whole upload gives up after UPLOAD_WATCHDOG_MS and
+   shows the photo as failed with Retry. */
+export const CLOCK_TIMEOUT_MS = 5_000;
+export const STAMP_TIMEOUT_MS = 20_000;
+export const UPLOAD_WATCHDOG_MS = 90_000;
+const UPLOAD_STALLED = new Error("The upload stalled. Check the signal and tap Retry, or Remove the photo.");
+
+/** `p`, or after `ms` the fallback: a value resolves, an Error rejects. */
+export function withTimeout<T>(p: Promise<T>, ms: number, fallback: T | Error): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => (fallback instanceof Error ? reject(fallback) : resolve(fallback)), ms);
+    p.then((v) => { clearTimeout(t); resolve(v); }, (e: unknown) => { clearTimeout(t); reject(e); });
+  });
+}
+
 export type FieldPhotoStatus = "queued" | "uploading" | "done" | "failed";
 
 export type FieldPhoto = {
@@ -355,11 +375,11 @@ export function useFieldPhotos({ stampLabel, max, upload, restore }: {
         let toSend: File = file;
         const label = latest.current.stampLabel;
         if (!stamped && label !== null) {
-          const lines = stampLines(label, await stampNow());
-          toSend = await stampPhoto(toSend, lines);
+          const clock = await withTimeout(stampNow(), CLOCK_TIMEOUT_MS, { at: new Date(), source: "device" as const });
+          toSend = await withTimeout(stampPhoto(toSend, stampLines(label, clock)), STAMP_TIMEOUT_MS, toSend);
           dispatch({ type: "stamped", id, file: toSend });
         }
-        const { r2Key, uploadSessionId } = await latest.current.upload(toSend);
+        const { r2Key, uploadSessionId } = await withTimeout(latest.current.upload(toSend), UPLOAD_WATCHDOG_MS, UPLOAD_STALLED);
         dispatch({ type: "done", id, key: r2Key, sessionId: uploadSessionId ?? null });
       } catch (e) {
         dispatch({ type: "failed", id, error: (e as Error).message || "Upload failed. Check the signal and tap Retry." });

@@ -367,6 +367,13 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       // A closed / archived case's legs are DONE → they belong on Delivered.
       const caseClosed = assrCaseClosed(a);
 
+      // The ORIGINAL order's Ref No. + DO No., back-filled onto the Service-Case row
+      // (owner 2026-11-11). Ref follows the SO row's rule (the order's ref, else its
+      // customer_so_no); DO numbers come pre-aggregated from the union. Both are blank
+      // when the case's order predates the ERP (no match) — blank, not wrong.
+      const soRefBackfill = (String(a.so_ref_src ?? '').trim() || String(a.so_custso_src ?? '').trim()) || null;
+      const relatedDoNos = a.related_do_nos ? String(a.related_do_nos).split(' | ').filter(Boolean) : null;
+
       // Own-team legs: Service's date = request, Logistics' = confirmed (assrBoardLegs).
       for (const leg of assrBoardLegs(a, caseClosed, today)) {
         const legDate = leg.confirmed ?? leg.requested;
@@ -378,7 +385,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         const rowKey = `${assrNo}#${leg.jobKind}`;
         assrOrders.push({
           row_type: 'assr',
-          ref: assrNo, so_ref: null,
+          ref: assrNo, so_ref: soRefBackfill, related_do_nos: relatedDoNos,
           job_kind: leg.jobKind,
           dp_job_type: null,
           dp_no: null,
@@ -523,7 +530,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       dpTripIdByKey.set(`DP:${String(d.id)}`, ((d.trip_id ?? (d as { tripId?: string | null }).tripId) as string | null) ?? null);
       dpBoardRows.push({
         row_type: 'dp',
-        ref: (d.dp_no as string | null) ?? null, so_ref: null,
+        ref: (d.dp_no as string | null) ?? null, so_ref: null, related_do_nos: null,
         job_kind: null,
         dp_job_type: (d.job_type as string | null) ?? null,
         dp_no: (d.dp_no as string | null) ?? null,
@@ -660,7 +667,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         const crewHelper2 = fc.helpers[1] ?? null;
         projectOrders.push({
           row_type: 'project',
-          ref: p.code ?? null, so_ref: null,
+          ref: p.code ?? null, so_ref: null, related_do_nos: null,
           job_kind: null,
           dp_job_type: leg.jobType,
           dp_no: null,

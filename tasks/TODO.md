@@ -3,6 +3,13 @@
 One line per open item: what — waiting on — since. Delete the line when it is done. Older items were dropped on 2026-09-15; they are in tag `archive/docs-2026-09-15`.
 
 ## Waiting on owner
+- STOCK WORK ON HOLD (owner 2026-11-11: "don't touch stock; someone else checks"). Nothing below may be applied until that person signs off:
+  - Half-done documents, `repair-half-done-documents-2026-11.mjs` (PLAN run 42965040246, refusals 0): HC-GRN-2609-118 (IN +1 8030-2A(LHF), linked to HC-DO-2610-329's uncosted OUT), HC-GRN-2610-045 (IN +1 each 8030-1A(LHF) / 8030-2A(RHF), lots closed at once; the cancel-then-repost bug, fixed for the future by #5645), HC-DO-2610-319 (5 units OUT, LOADED since 2026-10-22 with no OUT; confirm the goods really left). `DOC_NOS=` limits a run (#5654)
+  - HC-DO-2610-419 ELEPHANE-(K) @ BALAKONG: repair ends movements -1 / open lots 0 because the 2026-08-29 AutoCount opening row was -1; finance confirms that opening before applying
+  - HC-GRN-2610-045 went CANCELLED -> DRAFT and two source-less lots appeared on 2026-10-07 with no audit row: a direct database edit; find who and why
+  - DO source-PO / rack stamp backfill (`stamp-do-shipped-from.mjs`): never applied for either company; nightly retry covers new DOs only
+  - Company 1 uncosted hard-bound lines (#5614 check, run 42832277079): ~301 uncosted, 15 on no-PO lots, 13 another-PO at a different price; new shipments cost from the bound PO since #5619
+  - Company 2 spec drift left after #5617: JAGER-(K), MAKOTO RC(S)-FVI OLIVE, TRION-(K) at KL (`check-variant-key-drift.mjs`)
 - Staging DB is shared by every `staging-preview/*` deploy, so a preview's migrations land in staging's tracker before review (5 service-case rows on 2026-11-10; 3 retired in fix/staging-rehearsal). Decide: previews deploy with `skip_migrate`, or keep it and retire each renamed cut — owner — 2026-11-11
 - Delivery Planning SQL board: after the PR merges, set `DP_BOARD_SOURCE = "shadow"` (wrangler.toml), let `scm.delivery_board_shadow_runs` collect a few days, explain every difference, then switch to `"sql"` — owner / dev — 2026-11-10
 - HC-SO-2609-299: is the Taman Akasig delivery address right? It geocodes oddly on the Last Mile map — owner — 2026-11-08
@@ -65,7 +72,14 @@ One line per open item: what — waiting on — since. Delete the line when it i
 - Photos over 2 MiB are dropped (4 documents) — 2026-09-14
 - Drop `public.project_sales_bills` (created by mig 20261014T1600, unused since the sales report is derived from the project chat; 38 saved rows are superseded by the chat they came from) — needs a migration with REVERSAL — 2026-10-14
 
-- Next, not started (handed off 2026-11-11, in this order): (1) staging migrations catch up with main — done, 0 pending (staging-migrate run 42861413878); (2) AI scans (read-bill, credit-notes/scan, payment-vouchers/extract, scan-payment; p95 17-28 s) move to the scan queue with per-bill progress; (3) measure why GRN create/post and SO create/status/items are 5-10 s — in progress: perf/measure-write-paths adds Server-Timing laps on those routes plus per-request DB ms / round trips / company in AE (check-slow-routes columns db_ms, db_n, part E); after merge, one day of data decides whether `recomputeSoStockAllocation` moves off the request path; (4) swallowed reads (`swallowed-read-baseline.json`, ~850) in slices, reads in front of writes first; (5) grandfathered company-scope handlers (`company-scope-baseline.json`, e.g. lorry-service-records.ts:87) and raw-SQL master reads; (6) dark mode last (owner 2026-11-10: after speed/accuracy) — dev — 2026-11-11
+- HANDED OFF 2026-11-11 (owner: "someone else handles these"), each with its evidence:
+  - Heavy-page loading — plan in "Heavy-data pages loading plan" (owner's copy, 2026-11-11): DP flip DP_BOARD_SOURCE rest -> shadow -> sql and trim the 5-min full re-read; SO list lazy funnel-values + in-memory parsed MRP snapshot; MRP one snapshot per category; inventory products as one SQL GROUP BY with a shadow diff; Logistic Overview and settlement list as SQL aggregates. Re-measure with check-slow-routes around 2026-11-17 first (most 7-day numbers predate #5585/#5594/#5599/#5602/#5605/#5612/#5631/#5638/#5640)
+  - Slow GRN / SO writes: #5644 records Server-Timing laps and db_ms / db_n / company in AE; after a day of data decide whether `recomputeSoStockAllocation` (still inline in SO create/status, GRN post tail, DO ship tail) moves off the request path
+  - Swallowed reads: 723 left in `swallowed-read-baseline.json` after #5656 (slice 1); next slices by user-visible risk
+  - Company scope: 31 raw-SQL reads left in `master-read-scope-baseline.json` after #5657 (portal, survey, supplier-portal, sales, finance, delivery-planning, users, venues); owner chose option A, deeper options B/C not started
+  - Supplier detail page crash `[route-crash] l is not a function` (/scm/suppliers/:id, 11x, 1 user) and PATCH /api/projects/:id 5xx (3x): need the full message/stack/user agent and the Worker `[onError]` line
+  - Review `integrity-nightly` (job_runs, System Health) daily and act on findings
+  - Ask a driver to confirm POD photo upload speed after #5655/#5659 — dev — 2026-11-11
 - Integrity: `integrity-nightly` (00:05 MYT, #5620) first ran 2026-11-11; read its job_runs row in System Health and act on any finding — dev — 2026-11-11
 - Company split to keep in mind: company 1 (Houzs) picks/costs by hard binding SO line -> PO line, never by spec bucket; company 2 (2990) tracks stock by variant (`binding-mode.ts`) — dev — 2026-11-11
 
@@ -129,6 +143,7 @@ Measured on prod 2026-10-22, warm: Overview `procurement-overview` 5.5 s, Invent
 - PostgREST aggregates look OFF on prod (exact error code shows in Server-Timing `s-db-agg-*` once this ships; DO list search matching nothing = 12 round trips, 3 with them on), so every aggregate fast path (SO pills + money tiles, DO pills, Outstanding /summary) paid a refused request and then paged its fallback UNORDERED — the SO DELIVERED pill read 746 beside a list total of 747 in one response (2026-10-23). Fix: remember PGRST123 per isolate for 10 min (lib/postgrest-aggregate.ts, Server-Timing `s-db-agg-*`), order every fallback page, DO pills fall back to one ordered status read. Turning aggregates on (`pgrst.db_aggregates_enabled`) is Samuel's call — 2026-10-23
 
 - Delivery Planning, done 2026-10-26/27 (#4958 #4961 #4962 #4963): working tabs read `state=OPEN` (1.5 MB, ~2.3 s, was 5.4 MB / 5-12 s); an edit re-reads only its order (0.4-1.0 s); a trigger-fed change log refreshes others' changes every 30 s (poll 84 ms). Left: All / Delivered still read every row (3.8 s, 5.4 MB); scroll renders ~10 ms per new row (inline editors) — 2026-10-27
+- AI reads on the scan queue (bill reader, request bill, supplier CN, receipt): after the deploy, compare `scan_timing` and p95 of the four `/enqueue` doors with the old synchronous ones; remove the synchronous doors (`/payment-vouchers/extract`, `/credit-notes/scan`, `/payment-requests/read-bill`, `/scan-payment/extract`) once no request reaches them for a week — dev — 2026-11-11
 - Hard-bound cost backfill (`backfill-hard-bound-cost.mjs`, company 1): run the PLAN after #5619 is merged and the cutover no-spec revert has been applied; APPLY waits on the owner (closed months 2026-09 / 2026-10 expected) — 2026-11-10
 
 ## Recurring

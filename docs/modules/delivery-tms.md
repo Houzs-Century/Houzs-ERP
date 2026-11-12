@@ -100,7 +100,7 @@ Crew leave and 3PL
 - `scm.driver_leave` rows name exactly one of driver/helper; an external/3PL driver is refused 422 `external_driver`.
 - Only the AUTO assigner refuses on-leave crew; every manual picker MARKS (`NAME · on leave — reason`) and still allows the pick. Use the one predicate `frontend/src/vendor/shared/crew-leave.ts`; `GET /drivers` / `/helpers` take no date.
 - A carrier's lorries/drivers/helpers live in the shared masters with `threepl_company_id`. Link rule in `lib/threepl-link.ts` (used by drivers/helpers/lorries routes): attaching forces outsource; explicit null detaches and keeps the flag unless one is sent; absent touches neither.
-- 3PL company: unique name and SSM per company (409 `duplicate_name` / `duplicate_registration`); DELETE detaches its fleet, never deletes it. One rate card per carrier (409 `duplicate_carrier`).
+- 3PL company: unique name and SSM per company (409 `duplicate_name` / `duplicate_registration`); DELETE detaches its fleet, never deletes it. One rate card per carrier (409 `duplicate_carrier`). Linked to the supplier it bills as (`supplier_id`, set in the 3PL Companies drawer or learned from an AP invoice's bill): a supplier of this company only (400 `supplier_not_found`), held by one carrier at most (409 `supplier_linked_elsewhere`); `supplierId: null` unlinks.
 - Lorry `lengthFt/widthFt/heightFt` all supplied -> `capacity_m3` re-derived.
 
 HC delivery fields (`PATCH /delivery-planning/:type/:id/fields`)

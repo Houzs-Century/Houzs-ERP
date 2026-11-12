@@ -30,6 +30,7 @@ import {
   splitSofaCode, sofaHeightKey, effectiveSoDelivery,
   type SofaComboRow, type SofaPriceTier,
 } from '../shared';
+import { findSofaSetSupplierSplits } from '../shared/sofa-set-identity';
 import { computeMfgPoUnitCost, type MfgFabricTier, type MaintenanceConfig, type PoPriceMatrix } from '../shared/mfg-pricing';
 import { orderSofaModuleRowsWithinBuilds, sortLinesByStoredLineNo, sortSoLinesByGroupRank } from '../shared/so-line-display';
 import { inPoLineOrder, nextPoLineNo, sortBySourceSoLine, stampPoLineNos } from '../lib/po-line-order';
@@ -41,7 +42,7 @@ import { poVariantGaps, poVariantCheckFailedBody, poVariantConfirmRefusal, poWar
 import { VALID_CURRENCIES, VALID_KINDS } from '../lib/purchase-doc-vocab';
 import { resolveMaintenanceConfigForSupplier, poVariantPricingInput } from '../lib/po-pricing';
 import { readMfgProductBindings } from '../lib/supplier-bindings';
-import { loadOutstandingSoLines } from '../lib/outstanding-so-lines';
+import { loadOutstandingSoLines } from '../lib/outstanding-so-lines'; import { readFailure, readFailureError } from '../lib/read-failure';
 import { poHasDownstream } from '../lib/downstream-lock';
 import { claimPoVersion, poVersionRaced, poVersionRefusal } from '../lib/po-version';
 import { readPoLinkedGrns } from '../lib/po-grn-links';
@@ -551,11 +552,11 @@ mfgPurchaseOrders.get('/outstanding-so-items', async (c) => {
     /* CHUNKED + PAGED — lib/supplier-bindings.ts. Un-chunked over every code in the
        picker, a binding past the 1,000-row cap showed "— none —" for a bound SKU. */
     type PickerBind = { item_code: string; supplier: { code: string; name: string } | Array<{ code: string; name: string }> | null };
-    const { data: binds } = await readMfgProductBindings<PickerBind>(supabase, {
+    const { data: binds, error: bindsErr } = await readMfgProductBindings<PickerBind>(supabase, {
       codes: skuCodes, companyId: activeCompanyId(c),
       select: 'item_code, is_main_supplier, supplier:suppliers(code, name)',
-    });
-    for (const b of binds) {
+    }); // A failed read must not show every SKU as "— none —" (unbound, not convertible).
+    if (bindsErr) return c.json(readFailure('po_picker_suppliers', bindsErr), 500); for (const b of binds) {
       if (mainSupplierByCode.has(b.item_code)) continue;
       const s = Array.isArray(b.supplier) ? b.supplier[0] : b.supplier;
       if (s) mainSupplierByCode.set(b.item_code, { code: s.code, name: s.name });
@@ -755,15 +756,15 @@ async function poLineReceipts(
 ): Promise<Map<string, PoLineReceipt[]>> {
   const out = new Map<string, PoLineReceipt[]>();
   if (poItemIds.length === 0) return out;
-  const { data: grnLines } = await sb
-    .from('grn_items')
+  const { data: grnLines, error: grnLinesErr } = await sb
+    .from('grn_items') // a failed read throws: an empty map shows every line as not received
     .select('purchase_order_item_id, qty_accepted, returned_qty, returned_closed_qty, grn_id')
-    .in('purchase_order_item_id', poItemIds);
+    .in('purchase_order_item_id', poItemIds); if (grnLinesErr) throw readFailureError('po_line_receipts', grnLinesErr);
   const rows = (grnLines ?? []) as Array<{ purchase_order_item_id: string | null; qty_accepted: number; returned_qty: number; returned_closed_qty: number; grn_id: string }>;
   const grnIds = [...new Set(rows.map((r) => r.grn_id).filter(Boolean))];
   if (grnIds.length === 0) return out;
-  const { data: grns } = await sb.from('grns').select('id, grn_number, status').in('id', grnIds);
-  const grnMeta = new Map<string, { grnNumber: string; status: string }>();
+  const { data: grns, error: grnsErr } = await sb.from('grns').select('id, grn_number, status').in('id', grnIds);
+  if (grnsErr) throw readFailureError('po_line_receipts', grnsErr); const grnMeta = new Map<string, { grnNumber: string; status: string }>();
   for (const g of (grns ?? []) as Array<{ id: string; grn_number: string | null; status: string | null }>) {
     if ((g.status ?? '').toUpperCase() === 'CANCELLED') continue;
     grnMeta.set(g.id, { grnNumber: g.grn_number ?? '—', status: (g.status ?? '').toUpperCase() });
@@ -801,7 +802,7 @@ mfgPurchaseOrders.get('/:id', async (c) => {
 
   if (headerRes.error) return c.json({ error: 'load_failed', reason: headerRes.error.message }, 500);
   if (!headerRes.data) return c.json({ error: 'not_found' }, 404);
-
+  if (itemsRes.error) return c.json(readFailure('po_lines', itemsRes.error), 500); // not a PO with no lines
   /* Tier 2 downstream-lock — stamp has_children on the detail header so the
      PO Detail page can lock once any non-cancelled GRN exists. */
   const purchaseOrder = {
@@ -824,7 +825,7 @@ mfgPurchaseOrders.get('/:id', async (c) => {
   const itemRows = orderSofaModuleRowsWithinBuilds(
     sortSoLinesByGroupRank(
       sortLinesByStoredLineNo(
-        ((itemsRes.data ?? []) as unknown as Array<Record<string, unknown> & { id: string; item_code: string }>)
+        (itemsRes.data as unknown as Array<Record<string, unknown> & { id: string; item_code: string }>)
           .map((it): PoItemRow => ({ ...it, item_code: it.item_code })),
       ),
       (r) => r.item_group as string | null | undefined,
@@ -899,19 +900,19 @@ mfgPurchaseOrders.get('/:id', async (c) => {
      only be raised from ONE SO in this flow, so the distinct doc_no set is size 1;
      if a stray multi-SO PO ever appears we key off the first resolved doc_no.
      scopeToCompany: the so_amendments table carries company_id (mig 0080); no-op
-     pre-activation. Best-effort: any failure leaves open_amendment null, never
-     blocks the detail. */
+     pre-activation. A failed read answers 500 rather than hide an open
+     amendment; an unexpected throw still leaves open_amendment null. */
   try {
     const soDocNos = [...new Set([...soDocByItem.values()].filter(Boolean))];
     if (soDocNos.length > 0) {
-      const { data: amRows } = await scopeToCompany(supabase
+      const { data: amRows, error: amErr } = await scopeToCompany(supabase
         .from('so_amendments')
         .select('id, status, amendment_no')
         .in('so_doc_no', soDocNos), c)
         .not('status', 'in', '("SENT","REJECTED")')
         .order('created_at', { ascending: false })
-        .limit(1);
-      const am = ((amRows ?? []) as Array<Record<string, unknown>>)[0];
+        .limit(1); // A failed read would hide the "Revision ready" banner and its gate.
+      if (amErr) return c.json(readFailure('so_amendments', amErr), 500); const am = (amRows as Array<Record<string, unknown>>)[0];
       if (am) {
         purchaseOrder.open_amendment = {
           // Postgres.js/PostgREST may surface columns camelCased; dual-read to be safe.
@@ -1442,6 +1443,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
        raise a PO for review — see the header insert below for why a DRAFT is the
        right fuse rather than a new parallel mechanism. */
     asDraft?: boolean;
+    allowSofaSupplierSplit?: boolean; // operator confirmed two sofa models on two suppliers
   };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const poMode: 'combined' | 'per-so' = body.mode === 'per-so' ? 'per-so' : 'combined';
@@ -2072,24 +2074,21 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       .filter((it) => (it.itemGroup ?? '').trim().toLowerCase() === 'sofa')
       .map((it) => it.soDocNo),
   );
-  /* 1 PO = 1 batch (owner 2026-10-05, 「不能跨批次 1PO = 1batch 不能分开」): one
-     order's sofa set must land in ONE purchase order. The grouping below keys
-     on supplier, so modules resolved to two suppliers would become two POs —
-     two dye lots that can never ship as one set. Refused before any write. */
-  const sofaSupplierBySo = new Map<string, Set<string>>();
-  for (const it of soItems) {
-    if ((it.itemGroup ?? '').trim().toLowerCase() !== 'sofa') continue;
-    const set = sofaSupplierBySo.get(it.soDocNo) ?? new Set<string>();
-    set.add(effectiveBindingFor(it)!.supplier_id);
-    sofaSupplierBySo.set(it.soDocNo, set);
-  }
-  const splitSofaSets = [...sofaSupplierBySo.entries()].filter(([, s]) => s.size > 1).map(([d]) => d);
-  if (splitSofaSets.length > 0) {
+  /* 1 PO = 1 batch (owner 2026-10-05): a sofa set (one model on one order) is
+     one dye lot, so it must land in ONE purchase order. Two models on two
+     suppliers are two sets, allowed once the operator confirms. */
+  const sofaSplits = findSofaSetSupplierSplits(soItems.filter((it) => (it.itemGroup ?? '').trim().toLowerCase() === 'sofa')
+    .map((it) => ({ soDocNo: it.soDocNo, itemCode: it.itemCode, supplierId: effectiveBindingFor(it)!.supplier_id })));
+  if (sofaSplits.sameModel.length > 0) {
     return c.json({
       error: 'sofa_set_supplier_split',
-      reason: `A sofa set ships from one batch, so every module of one order goes on ONE purchase order. Pick one supplier for all modules of: ${splitSofaSets.join(', ')}.`,
-      soDocNos: splitSofaSets,
+      reason: `A sofa model ships from one batch, so every module of one model on one order goes on ONE purchase order. Pick one supplier for each model of: ${sofaSplits.sameModel.join(', ')}.`,
+      soDocNos: sofaSplits.sameModel,
     }, 409);
+  }
+  if (sofaSplits.crossModel.length > 0 && body.allowSofaSupplierSplit !== true) {
+    const reason = `These orders put different sofa models on different suppliers, which raises one PO per supplier. Confirm to proceed: ${sofaSplits.crossModel.join(', ')}.`;
+    return c.json({ error: 'sofa_set_suppliers_unconfirmed', reason, soDocNos: sofaSplits.crossModel }, 409);
   }
   for (const it of soItems) {
     const b = effectiveBindingFor(it)!;

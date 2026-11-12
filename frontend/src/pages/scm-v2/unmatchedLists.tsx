@@ -23,11 +23,17 @@ import type { BankLineWhat, UnmatchedBankLine, UnmatchedPayment, UnmatchedState 
 
 export type ListKey = 'reports' | 'payments' | 'bank';
 
-/** The three lists, in the owner's order: the merchant's side, the books', the bank's. */
-export const LISTS: ReadonlyArray<{ key: ListKey; label: string; sub: string }> = [
-  { key: 'reports', label: 'Merchant report lines', sub: 'on a merchant report, no sale reconciled' },
-  { key: 'payments', label: 'Payments', sub: 'money recorded, not matched' },
-  { key: 'bank', label: 'Bank money in', sub: 'in the bank, no entry matched' },
+/** The three lists, in the owner's order (2026-11-11: Merchant Report Line -> Bank Money
+    In -> Payment), each with what its export is called — the owner's own words (export
+    出来时注明是 …) — and the short name its Excel sheet takes (a sheet name holds 31
+    characters). The screen keeps `label`. */
+export const LISTS: ReadonlyArray<{ key: ListKey; label: string; sub: string; exportTitle: string; sheet: string; file: string }> = [
+  { key: 'reports', label: 'Merchant report lines', sub: 'on a merchant report, no sale reconciled',
+    exportTitle: 'Merchant RECEIVED, CANNOT MATCHED Which Sales Order', sheet: 'Merchant received', file: 'merchant-received' },
+  { key: 'bank', label: 'Bank money in', sub: 'in the bank, no entry matched',
+    exportTitle: 'Bank Received, CANNOT MATCHED Which Sales Order', sheet: 'Bank received', file: 'bank-received' },
+  { key: 'payments', label: 'Payments', sub: 'money recorded, not matched',
+    exportTitle: 'Record Payment Received, Bank CANNOT Found', sheet: 'Payment recorded', file: 'payment-recorded' },
 ];
 
 const dayGap = (from: string, to: string): number =>
@@ -36,7 +42,7 @@ const dayGap = (from: string, to: string): number =>
 /* ── Shared cells ─────────────────────────────────────────────────────────── */
 
 /** Money in RM, totalled at the foot, exported in ringgit. */
-const moneyColumn = <T,>(key: string, label: string, sen: (r: T) => number, over: Partial<Column<T>> = {}): Column<T> => ({
+export const moneyColumn = <T,>(key: string, label: string, sen: (r: T) => number, over: Partial<Column<T>> = {}): Column<T> => ({
   key, label, align: 'right',
   render: (r) => fmt(sen(r)),
   getValue: sen, exportValue: (r) => sen(r) / 100, exportFormat: 'money',
@@ -55,7 +61,7 @@ const daysColumn = <T,>(key: string, age: (r: T) => number): Column<T> => ({
 });
 
 /** An order opens its own page; an invoice's number is shown as it is. */
-const docLink = (source: string | null | undefined, docNo: string) =>
+export const docLink = (source: string | null | undefined, docNo: string) =>
   (source === 'SOPAY' ? <Link to={`/scm/sales-orders/${encodeURIComponent(docNo)}`}>{docNo}</Link> : docNo);
 
 /* ── reports: merchant report lines nobody reconciled ─────────────────────── */

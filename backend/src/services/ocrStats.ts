@@ -225,6 +225,7 @@ export async function loadOcrReport(env: Env, companyId: number, month: string):
       FROM scm.scan_jobs j
       LEFT JOIN scm.so_scan_samples s ON s.id = j.sample_id
      WHERE j.company_id = ${companyId}
+       AND j.document_type NOT LIKE 'AI_%' -- AI reads (scm/lib/ai-read-jobs.ts) share the table; they are not scans
        AND j.created_at >= ${startIso}::timestamptz AND j.created_at < ${endIso}::timestamptz
      ORDER BY j.created_at DESC`);
   return buildOcrReport(month, [...rows]);

@@ -151,13 +151,16 @@ export function fittedColumnWidths(matrix: LineExportMatrix): number[] {
 
 type Xlsx = typeof import("../lib/xlsx-runtime");
 
-/** One sheet: the header and rows, each column's Excel format, each column fitted. */
-function sheetOf(XLSX: Xlsx, matrix: LineExportMatrix): Record<string, unknown> {
-  const ws = XLSX.utils.aoa_to_sheet([matrix.header, ...matrix.body]) as Record<string, unknown>;
+/** One sheet: the lines above its table, if any (a title, a note — then a blank row),
+ *  the header and rows, each column's Excel format, each column fitted. */
+function sheetOf(XLSX: Xlsx, matrix: LineExportMatrix, heading: readonly string[] = []): Record<string, unknown> {
+  const above = heading.length > 0 ? [...heading.map((line) => [line]), []] : [];
+  const ws = XLSX.utils.aoa_to_sheet([...above, matrix.header, ...matrix.body]) as Record<string, unknown>;
+  const first = above.length + 1;
   matrix.formats.forEach((fmt, c) => {
     const z = NUMBER_FORMAT[fmt];
     if (!z) return;
-    for (let r = 1; r <= matrix.body.length; r += 1) {
+    for (let r = first; r < first + matrix.body.length; r += 1) {
       const addr = XLSX.utils.encode_cell({ r, c });
       const cell = ws[addr] as { t?: string; v?: unknown; z?: string } | undefined;
       if (!cell) continue;
@@ -174,17 +177,21 @@ function sheetOf(XLSX: Xlsx, matrix: LineExportMatrix): Record<string, unknown> 
   return ws;
 }
 
-export async function writeLineExportFile(matrix: LineExportMatrix, sheetName: string, fileName: string): Promise<void> {
-  await writeLineExportBook([{ name: sheetName, matrix }], fileName);
+export async function writeLineExportFile(
+  matrix: LineExportMatrix, sheetName: string, fileName: string, heading?: readonly string[],
+): Promise<void> {
+  await writeLineExportBook([{ name: sheetName, matrix, heading }], fileName);
 }
 
 /** Several tables in ONE workbook, a sheet each, in the order given — Payments not
- *  matched yet's "Export all" (owner 2026-11-10: 一个 Excel，分三张表). */
+ *  matched yet's "Export all" (owner 2026-11-10: 一个 Excel，分三张表). A sheet's
+ *  `heading` is printed above its table, a line a row: what the list is and what
+ *  narrowed it (owner 2026-11-11: export 出来时注明是 …). */
 export async function writeLineExportBook(
-  sheets: ReadonlyArray<{ name: string; matrix: LineExportMatrix }>, fileName: string,
+  sheets: ReadonlyArray<{ name: string; matrix: LineExportMatrix; heading?: readonly string[] }>, fileName: string,
 ): Promise<void> {
   const XLSX = await import("../lib/xlsx-runtime");
   const wb = XLSX.utils.book_new();
-  for (const s of sheets) XLSX.utils.book_append_sheet(wb, sheetOf(XLSX, s.matrix), s.name);
+  for (const s of sheets) XLSX.utils.book_append_sheet(wb, sheetOf(XLSX, s.matrix, s.heading), s.name);
   XLSX.writeFileXLSX(wb, fileName);
 }

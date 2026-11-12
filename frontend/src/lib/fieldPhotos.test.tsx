@@ -6,7 +6,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { type ListedFieldPhoto,
-  admit, completionGate, fieldPhotosReducer, nextToUpload, useFieldPhotos, type FieldPhoto, type FieldPhotoRestore, type RestoreState,
+  admit, completionGate, fieldPhotosReducer, nextToUpload, useFieldPhotos, withTimeout, UPLOAD_WATCHDOG_MS, STAMP_TIMEOUT_MS, type FieldPhoto, type FieldPhotoRestore, type RestoreState,
 } from "./fieldPhotos";
 
 const OFF: RestoreState = { phase: "off" };
@@ -294,3 +294,51 @@ describe("useFieldPhotos after a page reload", () => {
     expect(result.current.gate("none")).toEqual({ ok: false, reason: "none" });
   });
 });
+
+/* HC-DO-2611-151 (2026-11-11): an iPhone photo sat on "Uploading..." for ever, so
+   Complete stayed refused. Nothing may hang without ending in done or failed. */
+describe("a photo never hangs on Uploading", () => {
+  it("withTimeout resolves the fallback value, or rejects the fallback Error, after the wait", async () => {
+    vi.useFakeTimers();
+    try {
+      const never = new Promise<string>(() => {});
+      const v = withTimeout(never, 1000, "fallback");
+      const e = withTimeout(never, 1000, new Error("stalled"));
+      vi.advanceTimersByTime(1000);
+      await expect(v).resolves.toBe("fallback");
+      await expect(e).rejects.toThrow("stalled");
+      await expect(withTimeout(Promise.resolve("fast"), 1000, "fallback")).resolves.toBe("fast");
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("an upload that never answers ends as failed with Retry, and Complete names it", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const upload = vi.fn(() => new Promise<{ r2Key: string }>(() => {}));
+      const { result } = renderHook(() => useFieldPhotos({ stampLabel: null, max: 10, upload, restore: null }));
+      act(() => { result.current.add([jpg("a.jpg")]); });
+      await waitFor(() => expect(result.current.photos[0]?.status).toBe("uploading"));
+      await act(async () => { vi.advanceTimersByTime(UPLOAD_WATCHDOG_MS + 1); });
+      await waitFor(() => expect(result.current.photos[0]?.status).toBe("failed"));
+      expect(result.current.photos[0]?.error).toMatch(/stalled/i);
+      expect(result.current.gate("none").ok).toBe(false);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("a stamp that never finishes falls back to the unstamped photo and still uploads", async () => {
+    const stamp = await import("./photoStamp");
+    vi.mocked(stamp.stampPhoto).mockImplementationOnce(() => new Promise<File>(() => {}));
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const upload = vi.fn(async (f: File) => ({ r2Key: `k/${f.name}` }));
+      const { result } = renderHook(() => useFieldPhotos({ stampLabel: "DO-2611-151", max: 10, upload, restore: null }));
+      act(() => { result.current.add([jpg("b.jpg")]); });
+      await waitFor(() => expect(result.current.photos[0]?.status).toBe("uploading"));
+      await waitFor(() => expect(stamp.stampPhoto).toHaveBeenCalled());
+      await act(async () => { vi.advanceTimersByTime(STAMP_TIMEOUT_MS + 1); });
+      await waitFor(() => expect(result.current.photos[0]?.status).toBe("done"));
+      expect(upload).toHaveBeenCalledWith(expect.objectContaining({ name: "b.jpg" }));
+    } finally { vi.useRealTimers(); }
+  });
+});
+

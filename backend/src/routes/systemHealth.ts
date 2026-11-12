@@ -710,6 +710,7 @@ app.get("/ledger", requirePermission("*"), async (c) => {
 // No "--" comments inside the SQL: d1-compat splits statements and a line
 // comment swallows what follows it.
 app.get("/autocount/reconcile", requirePermission("*"), async (c) => {
+  // company-scope: owner-only (`*`) whole-system reconciliation. It returns COUNTs only, no row and no id, and compares the AutoCount snapshot against every mirror; a company predicate would make the diff wrong, not safer.
   try {
     const row = await c.env.DB.prepare(
       `SELECT

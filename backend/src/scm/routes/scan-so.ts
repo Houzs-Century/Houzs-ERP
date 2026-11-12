@@ -44,7 +44,7 @@ import { recordAi, requestAiTag, type AiUsageTag } from '../../services/aiUsage'
 // factored insert+audit core the interactive POST /:docNo/payments route uses.
 import { createDraftSalesOrder, recordSoPaymentRow } from './mfg-sales-orders';
 import { todayMyt } from '../lib/my-time';
-import { activeCompanyId, scopeToCompanyIdOrOpen } from '../lib/companyScope';
+import { activeCompanyId, scopeToCompany, scopeToCompanyIdOrOpen } from '../lib/companyScope';
 import { type ScanDocumentType, DEFAULT_SCAN_DOCUMENT_TYPE, coerceScanDocumentType } from '../lib/scan-document-type';
 import { jobToJson } from './scan-so-serialize';
 import { normalizePhone, fmtSen } from '../shared';
@@ -4428,6 +4428,9 @@ export async function processScanQueueMessage(env: Env, jobId: string): Promise<
   const houzsUserId = huRaw != null && Number.isFinite(Number(huRaw)) ? Number(huRaw) : null;
   const coRaw = r.companyId ?? r.company_id;
   const companyId = coRaw != null && Number.isFinite(Number(coRaw)) ? Number(coRaw) : null;
+  // An AI read (ai-read-jobs.ts) rides { aiRead }, never { jobId }; coercing
+  // its type would mis-run it as an SO scan.
+  if (String(r.documentType ?? r.document_type ?? '').startsWith('AI_')) return;
   // Legacy rows predating the column read back null -> coerce to 'SO'.
   const documentType = coerceScanDocumentType(r.documentType ?? r.document_type);
 
@@ -4602,6 +4605,7 @@ scanSo.get('/jobs', async (c) => {
     .from('scan_jobs')
     .select('id, status, salesperson, so_doc_no, linked_doc_no, document_type, error, sample_id, duplicate_of, image_keys, created_at, updated_at')
     .eq('company_id', activeCompanyId(c))
+    .not('document_type', 'like', 'AI_%') // AI reads share the table; they are not scans
     .order('created_at', { ascending: false })
     .limit(20);
   if (rep) q = q.ilike('salesperson', ilikeExact(rep));
@@ -4628,10 +4632,11 @@ scanSo.get('/jobs/:id', async (c) => {
       /* non-Workers runtime (tests) — let the floating promise run */
     }
   });
-  const { data, error } = await svc
+  // Same company as the /jobs list: another company's job id answers 404.
+  const { data, error } = await scopeToCompany(svc
     .from('scan_jobs')
     .select('id, status, salesperson, so_doc_no, linked_doc_no, document_type, error, sample_id, duplicate_of, image_keys, created_at, updated_at')
-    .eq('id', id)
+    .eq('id', id), c)
     .limit(1)
     .maybeSingle();
   if (error) {

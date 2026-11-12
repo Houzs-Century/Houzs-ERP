@@ -13,23 +13,28 @@ import { useCallback, useRef, useState } from 'react';
 import { useReadRequestBill, type PaymentRequestInput, type ReadBillResult } from './payment-request-queries';
 import { fileToBase64 } from './payment-voucher-queries';
 import { docFileMime } from './doc-file-mime';
+import type { AiReadStage } from './ai-read-job';
 
 export type BillRead = Extract<ReadBillResult, { ok: true }>;
 export type BillReadState =
   | { status: 'idle' }
-  | { status: 'reading' }
+  /* stage: where the read is on the scan queue (ai-read-job.ts); null while
+     the files are still being sent. */
+  | { status: 'reading'; stage: AiReadStage | null }
   | { status: 'failed'; reason: string }
   | { status: 'done'; result: BillRead };
 
 export function useRequestBillRead() {
-  const read = useReadRequestBill();
   const [state, setState] = useState<BillReadState>({ status: 'idle' });
   const seq = useRef(0);
+  const read = useReadRequestBill((stage) => {
+    setState((s) => (s.status === 'reading' ? { status: 'reading', stage } : s));
+  });
   const run = useCallback(async (files: File[]): Promise<BillRead | null> => {
     seq.current += 1;
     const mine = seq.current;
     if (files.length === 0) { setState({ status: 'idle' }); return null; }
-    setState({ status: 'reading' });
+    setState({ status: 'reading', stage: null });
     try {
       const payload = await Promise.all(files.map(async (f) => ({ name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) })));
       const res = await read.mutateAsync({ files: payload });

@@ -32,10 +32,11 @@ import { DOC_FILE_MIMES, MAX_DOC_FILE_BYTES, decodeBase64, type DocFilesSpec } f
 import { compareOfficial, officialActor } from '../lib/official-doc';
 import { PV_FILES } from './pv-files';
 import { AP_INVOICE_FILES } from './ap-invoice-files';
+import { aiReadEnqueue, aiReadPoll, oneJsonBody, type AiReadGate } from '../lib/ai-read-jobs';
 
 type Row = Record<string, any>;
 const NO_PERM = { error: "You don't have permission to do that." };
-const mayOpen = (c: any): boolean => hasHouzsPerm(c, PAYMENT_REQUEST_KEY) || isRequestFinance(c);
+const mayOpen: AiReadGate = (c) => hasHouzsPerm(c, PAYMENT_REQUEST_KEY) || isRequestFinance(c);
 
 const shiftDay = (ymd: string, days: number): string => {
   const d = new Date(`${ymd}T00:00:00Z`);
@@ -145,6 +146,11 @@ export const readRequestBillHandler = async (c: any): Promise<Response> => {
     matches: found.matches.get('bill') ?? [],
   });
 };
+
+/* The same read on the scan queue (lib/ai-read-jobs.ts): the request answers
+   at once and the form polls; the job runs readRequestBillHandler unchanged. */
+export const enqueueRequestBillReadHandler = aiReadEnqueue('pr_read_bill', mayOpen, oneJsonBody);
+export const pollRequestBillReadHandler = aiReadPoll('pr_read_bill', mayOpen);
 
 /* ── GET /bill-matches ─────────────────────────────────────────────────────── */
 export const billMatchesHandler = async (c: any): Promise<Response> => {

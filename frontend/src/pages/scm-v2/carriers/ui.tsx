@@ -5,19 +5,19 @@ import { fmtSen } from '@2990s/shared';
 import { cn } from '../../../lib/utils';
 
 export const CARD = 'rounded-2xl border border-border bg-surface';
-export const LABEL = 'text-[12.5px] font-semibold text-ink-secondary';
+export const LABEL = 'text-[12px] font-semibold text-ink-secondary';
 export const HINT = 'text-[12px] leading-snug text-ink-muted';
-export const INPUT = 'min-h-[40px] w-full rounded-lg border border-border bg-surface px-3 text-[14px] text-ink';
-export const EYEBROW = 'text-[12px] font-bold uppercase tracking-[0.06em] text-ink-muted';
-export const BTN_PRI = 'inline-flex min-h-[40px] items-center gap-1.5 rounded-lg bg-primary px-4 text-[13.5px] font-semibold text-white disabled:opacity-60';
-export const BTN_QUIET = 'inline-flex min-h-[40px] items-center gap-1.5 rounded-lg bg-surface-2 px-4 text-[13.5px] font-semibold text-ink disabled:opacity-60';
+export const INPUT = 'min-h-[40px] w-full rounded-lg border border-border bg-surface px-3 text-[13px] text-ink';
+export const EYEBROW = 'text-[11.5px] font-semibold uppercase tracking-[0.06em] text-ink-muted';
+export const BTN_PRI = 'inline-flex min-h-[40px] items-center gap-1.5 rounded-lg bg-primary px-4 text-[13px] font-semibold text-white disabled:opacity-60';
+export const BTN_QUIET = 'inline-flex min-h-[40px] items-center gap-1.5 rounded-lg bg-surface-2 px-4 text-[13px] font-semibold text-ink disabled:opacity-60';
 export const ICON_BTN = 'grid h-9 w-9 flex-none place-items-center rounded-lg bg-surface-2 text-ink-secondary hover:text-[color:var(--hz-dk-err,#8a2c2c)] disabled:opacity-50';
 
 const TONE = {
-  green: 'bg-[color:var(--hz-dk-synced-bg,#dcebe3)] text-[#1f5c43]',
+  green: 'bg-[color:var(--hz-dk-synced-bg,#dcebe3)] text-[#1f5c43] dark:text-[color:var(--hz-dk-synced)]',
   red: 'bg-[color:var(--hz-dk-err-bg,#f6dcdc)] text-[color:var(--hz-dk-err,#8a2c2c)]',
-  amber: 'bg-[color:var(--hz-dk-warning-bg,#f6ecd4)] text-[#7a5000]',
-  blue: 'bg-[color:var(--hz-dk-surface-2,#e7eef6)] text-[#1f4f75]',
+  amber: 'bg-[color:var(--hz-dk-warning-bg,#f6ecd4)] text-[#7a5000] dark:text-[color:var(--hz-dk-warning-text)]',
+  blue: 'bg-[color:var(--hz-dk-surface-2,#e7eef6)] text-[#1f4f75] dark:text-[#9cc3e6]',
   grey: 'bg-surface-2 text-ink-muted',
 } as const;
 export type Tone = keyof typeof TONE;
@@ -38,7 +38,7 @@ export const Kpi = ({ label, value, sub, tone }: { label: string; value: ReactNo
   <div className={cn(CARD, 'flex min-w-0 flex-col gap-1 px-4 py-3.5')}>
     <span className={EYEBROW}>{label}</span>
     <span className={cn('text-[22px] font-bold tabular-nums leading-tight',
-      tone === 'red' ? 'text-[color:var(--hz-dk-err,#8a2c2c)]' : tone === 'amber' ? 'text-[#7a5000]' : tone === 'green' ? 'text-[#1f5c43]' : 'text-ink')}>{value}</span>
+      tone === 'red' ? 'text-[color:var(--hz-dk-err,#8a2c2c)]' : tone === 'amber' ? 'text-[#7a5000] dark:text-[color:var(--hz-dk-warning-text)]' : tone === 'green' ? 'text-[#1f5c43] dark:text-[color:var(--hz-dk-synced)]' : 'text-ink')}>{value}</span>
     {sub != null && <span className={HINT}>{sub}</span>}
   </div>
 );
@@ -54,7 +54,7 @@ export const TableCard = ({ title, count, hint, actions, children, label }: {
   <section aria-label={label ?? undefined} className={cn(CARD, 'overflow-hidden')}>
     <div className="flex flex-wrap items-start justify-between gap-3 px-5 pb-3 pt-4">
       <div className="flex min-w-0 flex-col gap-1">
-        <h3 className="text-[16px] font-bold text-ink">
+        <h3 className="text-[15px] font-semibold text-ink">
           {title}{count != null && <span className="ml-1.5 font-medium text-ink-muted">{count}</span>}
         </h3>
         {hint && <p className={cn(HINT, 'max-w-[820px]')}>{hint}</p>}
@@ -63,6 +63,15 @@ export const TableCard = ({ title, count, hint, actions, children, label }: {
     </div>
     <div className="min-w-0 border-t border-border px-3 pb-3 pt-2">{children}</div>
   </section>
+);
+
+/** A labelled box: label over the control, an optional hint under it. */
+export const Field = ({ label, hint, className, children }: { label: string; hint?: string; className?: string; children: ReactNode }) => (
+  <label className={cn('flex min-w-0 flex-col gap-1.5', className)}>
+    <span className={LABEL}>{label}</span>
+    {children}
+    {hint && <span className={HINT}>{hint}</span>}
+  </label>
 );
 
 /** The filters over a tab: one quiet bar. */

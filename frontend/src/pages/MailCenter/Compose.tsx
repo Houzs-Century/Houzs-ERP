@@ -23,6 +23,7 @@ import { NEEDS_ACK_HINT } from "./mail-acks";
 // To / Cc / Bcc parsing + validation, shared with the phone's composer.
 import { parseRecipients, firstInvalid, addRecipients } from "./mail-recipients";
 import { RecipientPicker } from "./RecipientPicker";
+import { PickedAttachmentChip } from "./PickedAttachmentChip";
 import {
   MAIL_ATTACH_MAX_COUNT,
   MAIL_ATTACH_MAX_TOTAL_BYTES,
@@ -470,25 +471,12 @@ export function ComposeDialog({
                   </label>
                   <div className="flex flex-wrap gap-1.5">
                     {files.map((f, i) => (
-                      <span
+                      <PickedAttachmentChip
                         key={`${f.name}-${i}`}
-                        className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border bg-surface-dim py-1 pl-2 pr-1 text-xs text-ink"
-                      >
-                        <Paperclip className="h-3 w-3 shrink-0 text-ink-muted" />
-                        <span className="truncate">{f.name}</span>
-                        <span className="shrink-0 text-ink-muted">
-                          {humanSize(f.size)}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => removeFile(i)}
-                          disabled={sending}
-                          aria-label={`Remove ${f.name}`}
-                          className="shrink-0 rounded p-0.5 text-ink-muted transition hover:bg-surface hover:text-ink disabled:opacity-50"
-                        >
-                          <X className="h-3 w-3" />
-                        </button>
-                      </span>
+                        file={f}
+                        isDisabled={sending}
+                        onRemove={() => removeFile(i)}
+                      />
                     ))}
                   </div>
                 </div>

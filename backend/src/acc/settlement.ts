@@ -40,6 +40,7 @@ import { fmtSen } from '../scm/shared/format';
 import { checkReceiptCharge, postReceiptCharge, undoReceiptCharge, type ReceiptChargeInput } from './charge-account';
 import { chunkIn, paginateAll } from '../scm/lib/paginate-all';
 import { keyedAs, merchantNamesOf } from './merchant-names';
+import { loadPreviousKeys, notPrevious } from './previous-payments';
 
 export type AcquirerRow = {
   company_id: number;
@@ -273,7 +274,7 @@ export async function loadPaymentCandidates(
      card payment was simply absent (owner 2026-10-21: 为什么看没有10月的
      payment). Every read below pages (paginateAll) or chunks (chunkIn). */
   /* Run together; each failure is still reported, in the order it always was. */
-  const [soAll, soByRef, siAll, siByRef] = await Promise.all([
+  const [soAll, soByRef, siAll, siByRef, previous] = await Promise.all([
     paginateAll<Record<string, any>>((f, t) => sb
       .from('mfg_sales_order_payments').select(PAYMENT_COLUMNS_SO)
       .eq('company_id', companyId).gte('paid_at', lo).lte('paid_at', hi)
@@ -294,16 +295,17 @@ export async function loadPaymentCandidates(
       .from('sales_invoice_payments').select(PAYMENT_COLUMNS_SI)
       .eq('company_id', companyId).in('approval_code', batch)
       .order('id').range(f, t)),
+    loadPreviousKeys(sb, companyId), // a payment the owner marked a previous record is nobody's candidate
   ]);
+  if (!previous.ok) return previous;
   if (soAll.error) return { ok: false, reason: `SO payments: ${soAll.error.message}` };
   if (soByRef.error) return { ok: false, reason: `SO payments by reference: ${soByRef.error.message}` };
-  let soRaw = dedupeById([...(soAll.data ?? []), ...soByRef.data]).filter(belongs);
+  let soRaw = dedupeById([...(soAll.data ?? []), ...soByRef.data]).filter(belongs).filter(notPrevious(previous.keys, 'SOPAY'));
   if (siAll.error) return { ok: false, reason: `SI payments: ${siAll.error.message}` };
   if (siByRef.error) return { ok: false, reason: `SI payments by reference: ${siByRef.error.message}` };
-  let siRaw = dedupeById([...(siAll.data ?? []), ...siByRef.data]).filter(belongs);
+  let siRaw = dedupeById([...(siAll.data ?? []), ...siByRef.data]).filter(belongs).filter(notPrevious(previous.keys, 'SIPAY'));
 
-  /* An Online payment already on the bank statement is that customer's own
-     money there, never a QR's (owner 2026-11-09: 已经match 的就不应该出现). */
+  /* An Online payment already on the bank statement is that customer's own money there, never a QR's (owner 2026-11-09: 已经match 的就不应该出现). */
   if (opts.online) {
     const held = await bankHeldPayments(sb, companyId, [
       ...soRaw.map((r) => ({ source: 'SOPAY', id: String(r.id) })),
@@ -516,8 +518,9 @@ export async function findPaymentsForRow(
      searched in its own kind and never the other (owner 2026-11-09). */
   const methods = (rowRaw as { channel?: string | null }).channel === QR_CHANNEL ? [...ONLINE_METHODS] : [...CARD_METHODS];
 
-  const settled = await loadSettledKeys(sb, companyId);
+  const [settled, previous] = await Promise.all([loadSettledKeys(sb, companyId), loadPreviousKeys(sb, companyId)]);
   if (!settled.ok) return { ok: false, status: 'load_failed', reason: settled.reason };
+  if (!previous.ok) return { ok: false, status: 'load_failed', reason: previous.reason };
 
   /* EVERY payment of the kind, paged: `.limit(3000)` asked for more than
      PostgREST's 1000-row ceiling, which answers with the newest 1000 and no
@@ -532,10 +535,9 @@ export async function findPaymentsForRow(
     .eq('company_id', companyId).in('method', methods)
     .order('paid_at', { ascending: false }).order('id').range(f, t));
   if (siRes.error) return { ok: false, status: 'load_failed', reason: `SI payments: ${siRes.error.message}` };
-  let soRows = (soRes.data ?? []).filter((r) => !settled.keys.has(`SOPAY:${String(r.id)}`));
-  let siRows = (siRes.data ?? []).filter((r) => !settled.keys.has(`SIPAY:${String(r.id)}`));
-  /* A QR line: an Online payment already matched on the bank statement is not
-     offered (owner 2026-11-09: 已经match 的就不应该出现). */
+  let soRows = (soRes.data ?? []).filter((r) => !settled.keys.has(`SOPAY:${String(r.id)}`)).filter(notPrevious(previous.keys, 'SOPAY'));
+  let siRows = (siRes.data ?? []).filter((r) => !settled.keys.has(`SIPAY:${String(r.id)}`)).filter(notPrevious(previous.keys, 'SIPAY'));
+  /* A QR line: an Online payment already matched on the bank statement is not offered (owner 2026-11-09: 已经match 的就不应该出现). */
   if ((rowRaw as { channel?: string | null }).channel === QR_CHANNEL) {
     const held = await bankHeldPayments(sb, companyId, [
       ...soRows.map((r) => ({ source: 'SOPAY', id: String(r.id) })),

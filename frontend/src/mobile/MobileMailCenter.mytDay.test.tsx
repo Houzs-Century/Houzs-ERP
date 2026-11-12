@@ -21,7 +21,7 @@ import { MobileMailCenter } from "./MobileMailCenter";
 const thread = (at: string) => ({
   id: "t1", mailboxAddress: "sales@example.com", subject: "Quote request", counterpartyEmail: "c@example.com",
   counterpartyName: "Customer", status: "open", lastMessageAt: at, lastDirection: "inbound", lastSnippet: "snippet",
-  messageCount: 1, unread: false, starred: false, labels: [], hasOutbound: false, createdAt: at,
+  messageCount: 1, unread: false, starred: false, labels: [], hasOutbound: false, attachmentCount: 0, attachments: [], createdAt: at,
 });
 
 beforeEach(() => {

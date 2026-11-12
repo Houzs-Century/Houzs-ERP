@@ -39,6 +39,7 @@ import {
 } from './mrp-model-pipeline';
 import { exportMrpWorkbook } from './mrp-export-workbook';
 import { isSofaAccessory } from './mrp-sofa-accessory';
+import { checkSofaSetsBeforePo } from './mrp-sofa-set-gate';
 import { fmtDate, fmtDateTime, fmtQty } from '../../vendor/shared/format';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
@@ -266,7 +267,8 @@ export const Mrp = () => {
   const [dialog, setDialog] = useState<
     | { kind: 'info'; title: string; body: string }
     | { kind: 'created'; title: string; body: string }
-    | { kind: 'confirm'; picks: Array<{ soItemId: string; qty: number; supplierId: string | null }>; orderedCodes: Set<string>; count: number; units: number }
+    | { kind: 'confirm'; picks: Array<{ soItemId: string; qty: number; supplierId: string | null }>; orderedCodes: Set<string>; count: number; units: number; allowSofaSupplierSplit: boolean }
+    | { kind: 'suppliers'; body: string; picks: Array<{ soItemId: string; qty: number; supplierId: string | null }>; orderedCodes: Set<string>; count: number; units: number }
     | null
   >(null);
   /* The Expected Delivery date the operator typed into the confirm dialog
@@ -442,7 +444,8 @@ export const Mrp = () => {
   const runCreatePos = (
     picks: Array<{ soItemId: string; qty: number; supplierId: string | null }>,
     _orderedCodes: Set<string>,
-    expectedAt?: string,
+    expectedAt: string | undefined,
+    allowSofaSupplierSplit: boolean,
   ) => {
     if (picks.length === 0) {
       setDialog({ kind: 'info', title: 'Nothing to order', body: 'No uncovered (shortage) lines in the current selection / window.' });
@@ -457,7 +460,7 @@ export const Mrp = () => {
     /* planAsOf: the server refuses (mrp_plan_stale) when a PO was raised on these
        SO lines after the plan on screen was calculated, so a stale plan cannot
        order the same goods twice (backend lib/mrp-plan-freshness.ts). */
-    const body = { picks, mode: poMode, fromMrp: true, planAsOf: data?.computedAt ?? null, ...(expectedAt ? { expectedAt } : {}) };
+    const body = { picks, mode: poMode, fromMrp: true, planAsOf: data?.computedAt ?? null, allowSofaSupplierSplit, ...(expectedAt ? { expectedAt } : {}) };
     const runKey = runKeyRef.current ?? newIdempotencyKey();
     runKeyRef.current = runKey;
     createPos.mutate({ ...body, idempotencyKey: runKey }, {
@@ -498,6 +501,10 @@ export const Mrp = () => {
             const j = JSON.parse(m[0]);
             errCode = typeof j.error === 'string' ? j.error : '';
             if (j.error === 'missing_bindings' && Array.isArray(j.itemCodes)) codes = j.itemCodes;
+            if ((j.error === 'sofa_set_supplier_split' || j.error === 'sofa_set_suppliers_unconfirmed') && typeof j.reason === 'string') {
+              setDialog({ kind: 'info', title: 'Sofa set suppliers', body: j.reason });
+              return;
+            }
           }
         } catch { /* generic */ }
         // A stale view can still try to order a line that was already PO'd in
@@ -549,50 +556,28 @@ export const Mrp = () => {
     const orderedCodes = new Set(base.orderedCodes);
     let units = base.units;
 
-    /* 1 PO = 1 batch (owner 2026-10-05): a sofa set ships from ONE dye lot, so
-       every module of one SO must leave in ONE purchase order. Two refusals
-       before anything is sent:
-         · the set's modules were given different suppliers — the server would
-           split them into two POs (po-grouping keys on supplier), i.e. two
-           batches that can never ship together;
-         · the set already has units ON ORDER (the plan names its PO) — a
-           second PO for the missing module is a second batch. Complete THAT PO
-           instead (PO amendment), which is what the chip is pointing at.
-       Both refusals look at the sofa MODULES only (HC-0203, Sim 2026-11-02): a
+    /* The set checks look at the sofa MODULES only (HC-0203, Sim 2026-11-02): a
        Sofa Accessory (stool, pillow) is not part of the dye lot the allocator
        binds, and po-grouping already splits a different-supplier accessory onto
-       its own PO — STOOL 1 is made by Dorsettloft only, the set by Hookka. */
-    const lineByItem = new Map<string, { line: MrpLine; accessory: boolean }>();
-    for (const s of skus) for (const l of s.lines) lineByItem.set(l.soItemId, { line: l, accessory: isSofaAccessory(s.category) });
-    const supplierBySo = new Map<string, Set<string>>();
-    const onOrderBySo = new Map<string, string>();
-    for (const p of picks) {
-      const hit = lineByItem.get(p.soItemId);
-      if (!hit || hit.accessory) continue;
-      const sup = supplierBySo.get(hit.line.soDocNo) ?? new Set<string>();
-      sup.add(p.supplierId ?? '');
-      supplierBySo.set(hit.line.soDocNo, sup);
-      if (hit.line.poNumber) onOrderBySo.set(hit.line.soDocNo, hit.line.poNumber);
+       its own PO. */
+    const lineByItem = new Map<string, { line: MrpLine; itemCode: string; accessory: boolean }>();
+    const supplierNames = new Map<string, string>();
+    for (const s of skus) {
+      for (const l of s.lines) lineByItem.set(l.soItemId, { line: l, itemCode: s.itemCode, accessory: isSofaAccessory(s.category) });
+      for (const sup of s.suppliers) supplierNames.set(sup.supplierId, sup.name);
     }
-    const splitDocs = [...supplierBySo.entries()].filter(([, s]) => s.size > 1).map(([d]) => d);
-    if (splitDocs.length > 0) {
-      return {
-        picks: [], orderedCodes, units: 0,
-        blocked: {
-          title: 'One supplier per sofa set',
-          body: `A sofa set is one dye lot, so every sofa module of an order goes on ONE purchase order (pillows and stools may use their own supplier). Pick the same supplier for all sofa modules of:\n${splitDocs.map((d) => `• ${d}`).join('\n')}`,
-        },
-      };
+    const gate = checkSofaSetsBeforePo(
+      picks.flatMap((p) => {
+        const hit = lineByItem.get(p.soItemId);
+        if (!hit || hit.accessory) return [];
+        return [{ soDocNo: hit.line.soDocNo, itemCode: hit.itemCode, supplierId: p.supplierId, poNumber: hit.line.poNumber }];
+      }),
+      (supplierId) => supplierNames.get(supplierId) ?? 'no supplier',
+    );
+    if (gate.kind === 'blocked') {
+      return { picks: [], orderedCodes, units: 0, blocked: { title: gate.title, body: gate.body }, confirmSuppliers: undefined };
     }
-    if (onOrderBySo.size > 0) {
-      return {
-        picks: [], orderedCodes, units: 0,
-        blocked: {
-          title: 'Set already on a purchase order',
-          body: `These orders already have part of their sofa set on order. A second PO would be a second batch, and the set must ship from one. Amend the named PO to add the missing module instead:\n${[...onOrderBySo.entries()].map(([d, po]) => `• ${d} → ${po}`).join('\n')}`,
-        },
-      };
-    }
+    const confirmSuppliers = gate.kind === 'confirmSuppliers' ? gate.body : undefined;
 
     /* Commander 2026-05-29 — "pillow 开在 sofa 里面就要跟 sofa 的 PO 一起". For
        every SO we're proceeding a sofa set on, ALSO pull that SO's accessory
@@ -627,7 +612,7 @@ export const Mrp = () => {
       orderedCodes.add(itemCode);
       units += line.shortageQty;
     }
-    return { picks, orderedCodes, units, blocked: undefined };
+    return { picks, orderedCodes, units, blocked: undefined, confirmSuppliers };
   };
 
   /* Commander 2026-05-31 — selection is now per SO ORDER-LINE (soItemId). Every
@@ -729,9 +714,9 @@ export const Mrp = () => {
      OPTIONALLY pick one Expected Delivery date for the whole batch. */
   const onProceed = () => {
     const onlySelected = selectedShortCount > 0;
-    const { picks, orderedCodes, units, blocked } = view === 'sofa'
+    const { picks, orderedCodes, units, blocked, confirmSuppliers } = view === 'sofa'
       ? gatherSofa(shortageSkus, onlySelected)
-      : { ...gatherShortages(shortageSkus, onlySelected), blocked: undefined };
+      : { ...gatherShortages(shortageSkus, onlySelected), blocked: undefined, confirmSuppliers: undefined };
     if (blocked) {
       setDialog({ kind: 'info', title: blocked.title, body: blocked.body });
       return;
@@ -741,7 +726,11 @@ export const Mrp = () => {
       return;
     }
     setProceedExpectedAt('');
-    setDialog({ kind: 'confirm', picks, orderedCodes, count: picks.length, units });
+    if (confirmSuppliers) {
+      setDialog({ kind: 'suppliers', body: confirmSuppliers, picks, orderedCodes, count: picks.length, units });
+      return;
+    }
+    setDialog({ kind: 'confirm', picks, orderedCodes, count: picks.length, units, allowSofaSupplierSplit: false });
   };
 
   const basisLabel = dateBasis === 'processing' ? 'Processing Date' : dateBasis === 'soDate' ? 'SO Date' : dateBasis === 'orderBy' ? 'Order-by' : 'Delivery';
@@ -1179,9 +1168,9 @@ export const Mrp = () => {
                 variant="primary"
                 disabled={createPos.isPending}
                 onClick={() => {
-                  const { picks, orderedCodes } = dialog;
+                  const { picks, orderedCodes, allowSofaSupplierSplit } = dialog;
                   setDialog(null);
-                  runCreatePos(picks, orderedCodes, proceedExpectedAt || undefined);
+                  runCreatePos(picks, orderedCodes, proceedExpectedAt || undefined, allowSofaSupplierSplit);
                 }}
               >
                 {createPos.isPending ? 'Processing…' : 'Confirm'}
@@ -1190,7 +1179,28 @@ export const Mrp = () => {
           </div>
         </div>
       )}
-      {dialog && dialog.kind !== 'confirm' && (
+      {dialog && dialog.kind === 'suppliers' && (
+        <div className={styles.dialogBackdrop} onClick={() => setDialog(null)}>
+          <div className={styles.dialog} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+            <h2 className={styles.dialogTitle}>Use more than one supplier?</h2>
+            <p className={styles.dialogBody}>{dialog.body}</p>
+            <div className={styles.dialogActions}>
+              <Button type="button" variant="secondary" onClick={() => setDialog(null)}>Cancel</Button>
+              <Button
+                type="button"
+                variant="primary"
+                onClick={() => {
+                  const { picks, orderedCodes, count, units } = dialog;
+                  setDialog({ kind: 'confirm', picks, orderedCodes, count, units, allowSofaSupplierSplit: true });
+                }}
+              >
+                Yes, proceed
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+      {dialog && (dialog.kind === 'info' || dialog.kind === 'created') && (
         <div className={styles.dialogBackdrop} onClick={() => setDialog(null)}>
           <div className={styles.dialog} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
             <h2 className={styles.dialogTitle}>{dialog.title}</h2>

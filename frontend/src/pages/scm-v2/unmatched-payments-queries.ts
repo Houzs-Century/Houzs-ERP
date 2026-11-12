@@ -4,7 +4,7 @@
 // acc/unmatched-bank-lines); this is transport only. The merchant report lines
 // are Merchant Recon's own reports (settlement-queries).
 
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { retryUnlessClientError } from '../../lib/retryPolicy';
 
@@ -104,3 +104,63 @@ export const useUnmatchedBankLines = (from: string, to: string, enabled = true) 
   retry: retryUnlessClientError,
   retryDelay: 800,
 });
+
+/* ── Previous records (owner 2026-11-11: 我检查确定后，就直接说这个是之前record，
+   我哪里都不会take-in) — a salesperson's payment record marked as the previous
+   system's, shown on no list and offered to no merchant or bank line. The rule
+   is the server's (backend acc/previous-payments). */
+
+/** A payment, as the server names it. */
+export type PaymentRef = { source: 'SOPAY' | 'SIPAY'; id: string };
+
+/** One marked payment, as the Previous records list shows it. */
+export type PreviousPayment = PaymentRef & {
+  docNo: string | null;
+  customer: string | null;
+  paidOn: string;
+  method: string;
+  /** card: the bank it was keyed with; transfer: its sub-type. */
+  channel: string | null;
+  amountSen: number;
+  reference: string | null;
+  markedBy: string | null;
+  markedAt: string;
+};
+
+/** One the server would not mark, and why — its sentence is the screen's. */
+export type PreviousRefusal = PaymentRef & { docNo: string | null; reason: 'not_found' | 'merchant_line' | 'in_the_books'; message: string };
+
+export const usePreviousPayments = (enabled = true) => useQuery({
+  queryKey: ['previous-payments'],
+  queryFn: () => authedFetch<{ rows: PreviousPayment[] }>('/accounting/previous-payments'),
+  enabled,
+  staleTime: 30_000,
+  retry: retryUnlessClientError,
+  retryDelay: 800,
+});
+
+/** Every list a mark changes: the two unmatched lists, Merchant Recon's watch list, the Cash Flow. */
+const refreshAfterMark = (qc: QueryClient) => {
+  for (const key of ['previous-payments', 'unmatched-payments', 'settlement-watchlist']) void qc.invalidateQueries({ queryKey: [key] });
+  void qc.invalidateQueries({ predicate: (q) => String(q.queryKey[0]).startsWith('report-rp') });
+};
+
+export const useMarkPrevious = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (payments: PaymentRef[]) => authedFetch<{ ok: boolean; marked: number; refused: PreviousRefusal[] }>(
+      '/accounting/previous-payments', { method: 'POST', body: JSON.stringify({ payments }) },
+    ),
+    onSuccess: () => refreshAfterMark(qc),
+  });
+};
+
+export const useUndoPrevious = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (payments: PaymentRef[]) => authedFetch<{ ok: boolean; undone: number }>(
+      '/accounting/previous-payments/undo', { method: 'POST', body: JSON.stringify({ payments }) },
+    ),
+    onSuccess: () => refreshAfterMark(qc),
+  });
+};

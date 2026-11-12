@@ -33,7 +33,7 @@ describe('every writer of a live status asks liveStatusForProcessingDate', () =>
     expect(SO).toContain("const isConfirm = fromNorm === 'DRAFT' && toStatus === 'CONFIRMED';");
     expect(SO).toContain('toStatus = liveStatusForProcessingDate(');
     /* The confirm gate still judges the CONFIRM itself. */
-    expect(SO).toContain('if (isConfirm) {\n    const confirmProblems = await soConfirmProblemsForDoc(sb, docNo);');
+    expect(SO).toContain("if (isConfirm) {\n    const confirmProblems = await soConfirmProblemsForDoc(sb, docNo, c.get('companyCode') ?? null);");
   });
 
   test('HC-0113: a DRAFT confirm moves a past Processing Date to the confirm day, and logs it', () => {
