@@ -11,7 +11,7 @@ import { afterWrongPin, findCashierById, fmtDateRange, fmtMyt, freshLock, locked
 import { currentManager, forgetManager, lastEmail, managerLogin, resumeManager, type Manager, type ManagerContext } from "../manager";
 import { verifyPin } from "../pin";
 import { APP_VERSION, applyUpdate, isStandalone, onInstallAvailable, promptInstall } from "../pwa";
-import { SyncPanel } from "../sell/SyncPanel";
+import { ReconnectBanner, SyncPanel } from "../sell/SyncPanel";
 import type { BundleCashier, DeviceState } from "../types";
 
 export function Login({ state, online, updateWaiting, onLogin, onManager, onOpenSetup, onStateChanged }: {
@@ -145,6 +145,7 @@ export function Login({ state, online, updateWaiting, onLogin, onManager, onOpen
       {canInstall && !installLater && !isStandalone() && (
         <div className="banner update"><span className="grow">Install Houzs POS on this device: it opens in its own window from the Start menu and works offline.</span><button type="button" className="btn primary" onClick={() => void promptInstall()}>Install</button><button type="button" className="btn" onClick={() => setInstallLater(true)}>Later</button></div>
       )}
+      {setUp && b && <ReconnectBanner terminal={b.terminal.code} />}
       {online === false && <div className="banner offline">{setUp ? "Offline. Login and selling work; sales will sync when the connection returns." : "Offline. The first sign-in on a new device needs internet."}</div>}
 
       <div className="screen">

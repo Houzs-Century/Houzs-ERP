@@ -10,7 +10,7 @@ import {
   addItem, cartTotals, discLabel, emptyCart, findByBarcode, formatReceiptNo, lineAmountSen, overridePrice, removeLine,
   setBillDiscount, setLineDiscount, setQty, toggleFoc, type Cart, type CartLine, type Discount, type HeldBill,
 } from "../cart";
-import { SyncPanel, syncIndicator, useSyncStatus } from "../sell/SyncPanel";
+import { ReconnectBanner, SyncPanel, syncIndicator, useSyncStatus } from "../sell/SyncPanel";
 import { afterSale, heartbeat, syncNow } from "../sync";
 import { discardHold, holdCart, listHolds } from "../holdsStore";
 import { fmtMyt } from "../loginRules";
@@ -278,6 +278,7 @@ export function Sell({ state, session, online, onLogout, onOpenSetup, onStateCha
         <button type="button" className="btn" style={{ minHeight: 34, padding: "4px 10px" }} onClick={actions.syncNow}>Sync now</button>
       </header>
       {state.provisional && <div className="banner update"><span className="grow">This device is not set up yet: no terminal, no fair, no items. Pick the terminal and the fair in Settings.</span><button type="button" className="btn primary" onClick={onOpenSetup}>Open Settings</button></div>}
+      {!state.provisional && <ReconnectBanner terminal={state.bundle.terminal.code} />}
       {state.test_mode && <div className="banner test">TEST MODE: every sale is a TEST sale (numbered {nextNo}), never synced, no stock deduction.</div>}
 
       <div className="sell">
