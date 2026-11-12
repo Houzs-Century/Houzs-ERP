@@ -79,6 +79,10 @@ Lives in the `scm` Postgres schema, reached under `/api/scm/scan-so/*`.
   body.
 - A geocoded postcode/state (when the Maps key is set) is preferred over the
   model's own address parse; postcode is the driver.
+- A scan DRAFT carries no venue, no fair and no Fair Day: the slip's place and
+  date are read (duplicate check, learning) but never written to the order, and
+  no default fills them. A person picks all three; Confirm refuses until then
+  (`sales-order.md`, Scanned orders).
 - The header deposit is stamped on the DRAFT **only** when a classified
   payment receipt exists in the same scan — never book money off an
   unclassified photo.

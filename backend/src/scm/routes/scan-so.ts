@@ -3742,19 +3742,9 @@ function buildDraftSoBodyFromSlip(
     // BUG-114: phones[1] is already E.164 like phones[0]; "+60" in front of it
     // stored the emergency contact as "+6060...".
     emergencyContactPhone: normalizePhone(parsed.phones[1] ?? '') ?? null,
-    /* Validated venue only — free-text slip location would bypass the venue
-       master. validateSlip has already snapped this to an ACTIVE
-       public.project_venues NAME (the master SO Maintenance shows and the
-       New-SO Venue dropdown renders, per the owner ruling 2026-07-16) or
-       cleared it. When null the create core's venue-by-active-project autofill
-       resolves it from the salesperson's current exhibition project — which is
-       why a no-match must stay null rather than be coerced. */
-    venue: parsed.locationMatch?.value ?? null,
-    /* The slip's own written date. With the venue above it is where the order's
-       FAIR is looked up first (owner 2026-10-19 — fair-binding.ts::
-       resolveScanFair), and a fair found that way takes it as the Fair Day. Read
-       only for a scan; checked there (a misread or future date counts as none). */
-    slipDate: parsed.slipDate ?? null,
+    /* No venue, no fair, no fair day (owner 2026-11-12): the slip's place and
+       date are not carried onto the draft, and the create core fills none of
+       them for a scan. A person picks all three before Confirm. */
     // Payment header fields (validated matches; the operator reviews the
     // draft before it becomes a real order). No payments[] in the create
     // body — the ledger rows are booked AFTER the create by

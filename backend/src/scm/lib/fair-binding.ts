@@ -17,7 +17,6 @@ import {
   fairBoothAskMessage,
   fairBoothOf,
   fairEditUnlinkedMessage,
-  fairEventKey,
   fairKeyPart,
   fairMissingMessage,
   fairPickedPeriod,
@@ -497,37 +496,6 @@ export async function fairRequiredProblem(args: {
   return { code: 'fair_required', message: fairMissingMessage(why), field: 'Fair' };
 }
 
-// ── SCANNED orders (owner 2026-10-19) ────────────────────────────────────────
-//
-// 「先优先匹配上地点和日期和他站的场。如果没有就地点和日期，没有就他今天站的场，
-// 再没有就他最近站的场」 — the slip's own PLACE and DATE first, the keyer's fair
-// after. Never creates a fair; a scan that matches nothing waits for a person.
-
-/** Which rule placed a scanned order. */
-export type ScanFairStep =
-  /** 1. A fair at the slip's place, running on the slip's date, that the keyer stands at. */
-  | 'slip_mine'
-  /** 2. A fair at the slip's place on the slip's date the keyer is NOT on —
-   *  linked, but the draft cannot be confirmed until PMS adds them. */
-  | 'slip_place'
-  /** 3. The keyer's fair running on the day the scan was keyed. */
-  | 'today'
-  /** 4. The keyer's latest fair within the dropdown window. */
-  | 'latest'
-  /** 5. Nothing: the keyer picks. */
-  | 'none';
-
-export type ScanFairResult = FairResolution & {
-  step: ScanFairStep;
-  /** The Fair Day the order takes: the slip's date on steps 1-2, which by
-   *  construction is a day of that fair. Null on 3-5 — a person picks it. */
-  fairDate: string | null;
-  /** The venue of the event it was placed at (steps 1-4), else null. */
-  venue: string | null;
-};
-
-const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
-
 /** Projects by id, in this company — whatever their state, since a link made
  *  before a fair was cancelled or archived still names it. Throws on a failed
  *  read. */
@@ -571,151 +539,52 @@ export async function loadLiveFairsByIds(
   return out;
 }
 
-/** Every live fair at one place whose period contains one day. */
-export async function loadFairsAtVenueOn(
-  db: FairDb,
-  companySql: string,
-  venue: string,
-  day: string,
-): Promise<FairProjectRow[]> {
-  const rows = await db
-    .prepare(
-      `SELECT ${FAIR_COLUMNS}
-         FROM projects p
-        WHERE ${LIVE_FAIR}
-          AND lower(trim(p.venue)) = lower(trim(?))
-          AND p.start_date <= ?
-          AND coalesce(p.end_date, p.start_date) >= ?${companySql}`,
-    )
-    .bind(venue, day, day)
-    .all<Record<string, unknown>>();
-  return ((rows.results ?? []) as Array<Record<string, unknown>>)
-    .map(toFairRow)
-    .filter((r) => Number.isFinite(r.projectId));
-}
-
-/**
- * Where a SCANNED order goes. The booth inside the event is always the brand's
- * (then the keyer's own — `resolveFairWithKeyer`).
- *
- * @param slipVenue The venue-master name the scan read off the slip, or null.
- * @param slipDate  The date written on the slip, or null. A date after the day
- *   it was keyed is a misread (a slip is not written in the future) and is
- *   treated as unread.
- * @param keyedDate The day the scan was keyed, `YYYY-MM-DD` MYT.
- *
- * Best-effort: any failed read is "nothing found" (PENDING), never a guess and
- * never a blocked scan — the draft still lands and a person settles it.
- */
-export async function resolveScanFair(args: {
-  db: FairDb;
-  companySql: string;
-  keyerId: number;
-  slipVenue: string | null;
-  slipDate: string | null;
-  keyedDate: string;
-  brand: string | null;
-}): Promise<ScanFairResult> {
-  const nothing: ScanFairResult = { projectId: null, match: 'PENDING', candidateIds: [], step: 'none', fairDate: null, venue: null };
-  try {
-    const place = (args.slipVenue ?? '').trim();
-    const raw = (args.slipDate ?? '').trim().slice(0, 10);
-    const day = ISO_DAY.test(raw) && raw <= args.keyedDate.slice(0, 10) ? raw : null;
-    if (place && day) {
-      const atPlace = await loadFairsAtVenueOn(args.db, args.companySql, place, day);
-      if (atPlace.length > 0) {
-        const mine = await keyerProjectIdsAmong(args.db, args.companySql, args.keyerId, atPlace);
-        /* Step 1 keeps to the events the keyer stands at, so a brand booth at
-           ANOTHER organizer's event the same day does not pull the order away
-           from the event the keyer was at. */
-        const keyerEvents = new Set(atPlace.filter((r) => mine.has(r.projectId)).map(fairEventKey));
-        const candidates = keyerEvents.size > 0 ? atPlace.filter((r) => keyerEvents.has(fairEventKey(r))) : atPlace;
-        const fair = resolveFairWithKeyer({ candidates, brand: args.brand, organizer: null, keyerProjectIds: mine });
-        return { ...fair, step: keyerEvents.size > 0 ? 'slip_mine' : 'slip_place', fairDate: day, venue: place };
-      }
-    }
-    const keyerFairs = await loadKeyerFairs(args.db, args.companySql, args.keyerId, args.keyedDate);
-    const found = keyerFairDefault(keyerFairs, args.keyedDate);
-    if (!found.event) return nothing;
-    const booths = await loadFairsForEvent(args.db, args.companySql, found.event);
-    const fair = resolveFairWithKeyer({
-      candidates: booths, brand: args.brand, organizer: found.event.organizer,
-      keyerProjectIds: new Set(keyerFairs.map((r) => r.projectId)),
-    });
-    return { ...fair, step: found.how === 'ongoing' ? 'today' : 'latest', fairDate: null, venue: found.event.venue };
-  } catch {
-    return nothing;
-  }
-}
-
 /** The fair columns a new order is written with. */
 export type FairLinkColumns = {
   project_id: number | null;
   fair_match: FairMatch | 'NO_FAIR';
-  fair_date?: string;
-  venue?: string;
-  venue_source?: 'PMS';
 };
 
-/** Why a SCAN was placed where it was, for its History row (fair-audit.ts). */
-export const SCAN_STEP_NOTE: Record<ScanFairStep, string> = {
-  slip_mine: 'Placed by the slip’s place and date, at a fair the scanner stands at.',
-  slip_place: 'Placed by the slip’s place and date. The scanner is not on its Sales Attending yet.',
-  today: 'No fair at the slip’s place and date — placed at the scanner’s fair today.',
-  latest: 'No fair at the slip’s place and date — placed at the scanner’s latest fair.',
-  none: 'No fair found for the slip or the scanner — a person picks it.',
-};
+/** History note on a SCANNED order's create: nothing was placed for it. */
+export const SCAN_FAIR_NOTE = 'Scanned — the venue, the fair and the fair day are picked by a person.';
 
 /**
  * The fair columns a NEW order is written with, after its lines are in (the
- * brand comes from them), and — for a scan — which rule placed it. One
- * decision for every create path:
+ * brand comes from them). One decision for every create path:
  *
  *   - No fair ticked: NO_FAIR, no project — a decided state (owner 2026-09-26).
- *   - A SCAN, on the keyer rule: `resolveScanFair`; steps 1-2 also take the
- *     slip's date as the Fair Day, and a slip with no place takes the place of
- *     the fair it was put at, so the draft names one.
+ *   - A SCAN, in every company: nothing. The scan places no order at a fair
+ *     (owner 2026-11-12: 「OCR 本身不会去自动填 venue, fair & fair date ... 强制性
+ *     自己必须手动去填」); a person picks it on the draft, and Confirm refuses
+ *     until they have (`fairConfirmProblems`).
  *   - Anything else: the picked event or place (`resolveFairForCreate`).
  *
  * Never a fair at ANOTHER place on the keyer rule. The PMS venue binding's
  * project (`bindingProjectId` — the keyer's running fair, wherever it is) used
  * to stand in when the pick resolved nothing, and linked KLCC orders to a
  * Sunway Carnival booth; it is kept only for companies off the rule (2990).
+ *
+ * `note` is the History line for a scan's create, else null.
  */
 export async function fairLinkOnCreate(args: {
   db: FairDb;
   companySql: string;
   companyCode: unknown;
-  /** Created by the background slip scan (the create core's auditSource). */
+  /** Created from a slip scan (`isScanCreate`). */
   scanned: boolean;
   keyerId: number;
   body: Record<string, unknown>;
-  /** The venue the order was written with — a pick, the slip's, or the binding's. */
+  /** The venue the order was written with — a pick or the binding's. */
   venue: string | null;
   soDate: string;
   brand: string | null;
   bindingProjectId: number | null;
-}): Promise<{ columns: FairLinkColumns; step: ScanFairStep | null }> {
+}): Promise<{ columns: FairLinkColumns; note: string | null }> {
   const { body } = args;
-  if (body.noFair === true) return { columns: { project_id: null, fair_match: 'NO_FAIR' }, step: null };
+  if (body.noFair === true) return { columns: { project_id: null, fair_match: 'NO_FAIR' }, note: null };
+  if (args.scanned) return { columns: { project_id: null, fair_match: 'PENDING' }, note: SCAN_FAIR_NOTE };
   const keyerRule = companyUsesKeyerFair(args.companyCode);
   const text = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
-  if (keyerRule && args.scanned) {
-    const slipVenue = text(body.venue);
-    const scan = await resolveScanFair({
-      db: args.db, companySql: args.companySql, keyerId: args.keyerId,
-      slipVenue, slipDate: text(body.slipDate), keyedDate: args.soDate, brand: args.brand,
-    });
-    if (scan.projectId == null) return { columns: { project_id: null, fair_match: scan.match }, step: scan.step };
-    return {
-      step: scan.step,
-      columns: {
-        project_id: scan.projectId, fair_match: 'PICKED',
-        ...(scan.fairDate ? { fair_date: scan.fairDate } : {}),
-        ...(!slipVenue && scan.venue ? { venue: scan.venue, venue_source: 'PMS' as const } : {}),
-      },
-    };
-  }
   const fair = await resolveFairForCreate({
     keyerId: args.keyerId, db: args.db, companySql: args.companySql, venue: args.venue,
     organizer: text(body.fairOrganizer),
@@ -725,7 +594,18 @@ export async function fairLinkOnCreate(args: {
     soDate: args.soDate, brand: args.brand, booth: fairBoothOf(body),
   });
   const linkedId = fair.projectId ?? (keyerRule ? null : args.bindingProjectId);
-  return { columns: { project_id: linkedId, fair_match: linkedId != null ? 'PICKED' : fair.match }, step: null };
+  return { columns: { project_id: linkedId, fair_match: linkedId != null ? 'PICKED' : fair.match }, note: null };
+}
+
+/**
+ * Is this create a slip SCAN? The background job says so itself; the phone's
+ * old fallback (a draft posted with the slip photo it was read from) is the
+ * same thing by another road. A scan is written with no venue, no fair and no
+ * fair day — `fairLinkOnCreate`.
+ */
+export function isScanCreate(auditSource: string | undefined, body: Record<string, unknown>): boolean {
+  if (auditSource === 'scan') return true;
+  return body.asDraft === true && typeof body.slipImageKey === 'string' && body.slipImageKey.trim() !== '';
 }
 
 /** The scan_jobs columns the confirm rules read. */
@@ -753,19 +633,20 @@ const checkFailed = (what: string): SaveProblem => ({
 export const VENUE_DIFFERS_BLOCKS_KEY = 'fair_venue_differs_blocks';
 
 /**
- * The fair half of the DRAFT -> CONFIRMED gate (owner 2026-10-19), for
- * companies on the keyer rule. [] = nothing to refuse.
+ * The fair half of the DRAFT -> CONFIRMED gate (owner 2026-10-19).
+ * [] = nothing to refuse.
  *
- *   - Every order: a fair, or No fair. Worded by why the keyer got none.
- *   - A SCANNED order whose venue is not the booth's venue: refused only while
- *     the Fair rules switch (`VENUE_DIFFERS_BLOCKS_KEY`) is on.
+ *   - Every order of a company on the keyer rule, and every SCANNED order of any
+ *     company: a fair, or No fair. Worded by why the keyer got none.
+ *   - A SCANNED order linked to a fair: its Fair Day too. The scan fills none of
+ *     the three (owner 2026-11-12), so a person must have picked them.
+ *   - A SCANNED order whose venue is not the booth's venue (keyer rule): refused
+ *     only while the Fair rules switch (`VENUE_DIFFERS_BLOCKS_KEY`) is on.
  *
  * NOT ON SALES ATTENDING NO LONGER STOPS CONFIRM (owner 2026-10-22: 「之前的如果
  * 那个sales attending他不在那场就不能开单的帮我remove 掉这个rule先。但扫描单还是
- * 能认」). A scan is still placed at its fair as before (the scan chain reads
- * Sales Attending to find the scanner's fair), and Fair Links still lists the
- * scanner PMS has not added ("Waiting for Sales Attending") — only the refusal
- * at Confirm is gone.
+ * 能认」). Fair Links still lists the scanner PMS has not added ("Waiting for
+ * Sales Attending") — only the refusal at Confirm is gone.
  *
  * A failed read refuses with "could not check" — a gate that could not look
  * must not say all clear (so-confirm-gate.ts).
@@ -784,28 +665,38 @@ export async function fairConfirmProblems(args: {
   confirmerId: number;
   todayMyt: string;
 }): Promise<SaveProblem[]> {
-  if (!companyUsesKeyerFair(args.companyCode)) return [];
+  const keyerRule = companyUsesKeyerFair(args.companyCode);
   const head = await args.scope(
-    args.sb.from('mfg_sales_orders').select('project_id, fair_match, venue').eq('doc_no', args.docNo),
+    args.sb.from('mfg_sales_orders').select('project_id, fair_match, venue, fair_date, slip_image_key').eq('doc_no', args.docNo),
   ).maybeSingle();
   if (head.error) return [checkFailed(`order: ${head.error.message}`)];
-  const order = (head.data ?? {}) as { project_id?: number | string | null; fair_match?: string | null; venue?: string | null };
+  const order = (head.data ?? {}) as {
+    project_id?: number | string | null; fair_match?: string | null; venue?: string | null;
+    fair_date?: string | null; slip_image_key?: string | null;
+  };
   const scan = await loadScanKeyer(args);
   if ('error' in scan) return [checkFailed(`scan: ${scan.error}`)];
-  const { scanned } = scan;
-  const keyerId = scanned && Number.isFinite(scan.scannerId) ? scan.scannerId : args.confirmerId;
+  /* The slip photo marks the phone's old fallback scan, which has no job row. */
+  const scanned = scan.scanned || (order.slip_image_key ?? '').trim() !== '';
+  if (!keyerRule && !scanned) return [];
+  const keyerId = scan.scanned && Number.isFinite(scan.scannerId) ? scan.scannerId : args.confirmerId;
 
   const projectId = order.project_id != null ? Number(order.project_id) : null;
   if (projectId == null || !Number.isInteger(projectId)) {
     if (order.fair_match === 'NO_FAIR') return [];
     /* A fair was found but the booth is a person's call: the standing sentence.
-       Nothing found: why, for the keyer. */
-    const why = order.fair_match === 'AMBIGUOUS' || order.fair_match === 'UNMATCHED'
+       Nothing found: why, for the keyer (companies on the keyer rule only). */
+    const why = !keyerRule || order.fair_match === 'AMBIGUOUS' || order.fair_match === 'UNMATCHED'
       ? null
       : (await keyerFairDefaultFor({ db: args.db, companySql: args.companySql, userId: keyerId, orderDate: args.todayMyt })).why;
     return [{ code: 'fair_required', message: fairMissingMessage(why), field: 'Fair' }];
   }
   if (!scanned) return [];
+  /* A scan fills no Fair Day, so a linked scan without one was never given it. */
+  const noDay: SaveProblem[] = (order.fair_date ?? '').trim() === ''
+    ? [{ code: 'required_field', message: 'Fair day is required.', field: 'Fair day' }]
+    : [];
+  if (!keyerRule) return noDay;
 
   try {
     const rows = await args.db
@@ -813,9 +704,9 @@ export async function fairConfirmProblems(args: {
       .bind(projectId)
       .all<Record<string, unknown>>();
     const raw = rows.results?.[0];
-    if (!raw) return [];
+    if (!raw) return noDay;
     const booth = toFairRow(raw);
-    const out: SaveProblem[] = [];
+    const out: SaveProblem[] = [...noDay];
     const venue = (order.venue ?? '').trim();
     if (venue && booth.venue && !sameVenue(venue, booth.venue) && await venueDiffersBlocks(args)) {
       out.push({ code: 'fair_venue_differs', message: venueDiffersMessage(venue, booth), field: 'Fair' });

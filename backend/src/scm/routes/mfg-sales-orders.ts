@@ -175,7 +175,7 @@ import {
   type VenueSource,
   type VenueBindingSb,
 } from '../lib/venue-binding';
-import { bindVenueOnCreate, editFairKeyerId, fairConfirmProblems, fairLinkForEdit, fairLinkOnCreate, fairRequiredProblem, loadLinkedFair, resolveFairForSave, SCAN_STEP_NOTE, type FairDb } from '../lib/fair-binding';
+import { bindVenueOnCreate, editFairKeyerId, fairConfirmProblems, fairLinkForEdit, fairLinkOnCreate, fairRequiredProblem, isScanCreate, loadLinkedFair, resolveFairForSave, type FairDb } from '../lib/fair-binding';
 import { companyUsesKeyerFair, fairDayMissing, fairDayOnSave, fairWhyOf } from '../lib/fair-options';
 import { loadVpBrandAsk, type VpBrandDb } from '../lib/vp-brand-ask';
 import { recordSoAudit, diffFields, type FieldChange } from '../lib/so-audit';
@@ -2506,13 +2506,17 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
        3. the caller's own staff.venue_id when they're a POS-side role
      A venue-less salesperson (admin testing under their own name) stays
      NULL — admins oversee every venue by design. */
-  let venueIdToStamp: string | null = (body.venueId as string | null | undefined) ?? null;
-  if (!venueIdToStamp && salespersonIdToStamp) {
+  /* A SCAN is written with no venue, no fair and no fair day (owner 2026-11-12):
+     none of the defaults below run for it, and a person picks all three on the
+     draft before Confirm (fair-binding.ts::fairConfirmProblems). */
+  const scanCreate = isScanCreate(c.auditSource, body);
+  let venueIdToStamp: string | null = scanCreate ? null : ((body.venueId as string | null | undefined) ?? null);
+  if (!scanCreate && !venueIdToStamp && salespersonIdToStamp) {
     venueIdToStamp = salespersonIdToStamp === callerStaffId
       ? ((callerStaff?.venue_id as string | null) ?? null)
       : (stampStaff?.venueId ?? null);
   }
-  if (!venueIdToStamp) {
+  if (!scanCreate && !venueIdToStamp) {
     if (callerStaff && callerStaff.venue_id &&
         ['sales', 'sales_executive', 'outlet_manager'].includes(callerStaff.role)) {
       venueIdToStamp = callerStaff.venue_id as string;
@@ -2525,7 +2529,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      body.venue still wins (the Backend form types it); lines inherit via the
      report flatten. */
   let resolvedVenueName: string | null =
-    typeof body.venue === 'string' && body.venue.trim() ? body.venue.trim() : null;
+    !scanCreate && typeof body.venue === 'string' && body.venue.trim() ? body.venue.trim() : null;
   /* A venue the CLIENT sent is a human's pick — the operator either accepted the
      pre-filled default or typed over it, and either way they are the person who
      knows where they are standing. Marking it MANUAL is what stops any later
@@ -2593,8 +2597,8 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     staffId: salespersonIdToStamp ?? callerStaffId,
     soDate: soDateForVenue,
   });
-  let projectIdToStamp: number | null = autoBind.projectId;
-  if (!resolvedVenueName && autoBind.venueName) {
+  let projectIdToStamp: number | null = scanCreate ? null : autoBind.projectId;
+  if (!scanCreate && !resolvedVenueName && autoBind.venueName) {
     resolvedVenueName = autoBind.venueName;
     venueSource = autoBind.source;
   }
@@ -4630,23 +4634,23 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      leaving a blank that reads the same as "nobody has looked".
 
      Non-fatal throughout — no fair-link problem may block a sale, and the
-     nightly reconcile retries PENDING. The rule — No fair, a scan's slip place
-     and date then the KEYER's fair (owner 2026-10-19), a typed pick, the brand's
-     booth then the keyer's own — is fair-binding.ts::fairLinkOnCreate. */
+     nightly reconcile retries PENDING. The rule — No fair, nothing for a scan
+     (owner 2026-11-12), a typed pick, the brand's booth then the keyer's own —
+     is fair-binding.ts::fairLinkOnCreate. */
   {
     const fairLink = await fairLinkOnCreate({
       db: c.env.DB as unknown as FairDb, companySql: activeCompanySql(c, 'p.company_id'),
-      companyCode: c.get('companyCode'), scanned: c.auditSource === 'scan',
+      companyCode: c.get('companyCode'), scanned: scanCreate,
       keyerId: Number(c.get('houzsUser')?.id ?? NaN), body, venue: resolvedVenueName,
       soDate: soDateForVenue, brand: effectiveBrand, bindingProjectId: projectIdToStamp,
     });
     await scopeToCompany(sb.from('mfg_sales_orders').update(fairLink.columns).eq('doc_no', docNo), c);
-    /* A scan's fair was the system's call: History says which rule made it (fair-audit.ts). */
-    if (fairLink.step) {
+    /* History says a scan was placed nowhere, so the later pick reads as a person's (fair-audit.ts). */
+    if (fairLink.note) {
       await recordFairChange({
         sb, db: c.env.DB as unknown as FairDb, companySql: activeCompanySql(c, 'p.company_id'), docNo,
         before: { projectId: null, fairMatch: null }, after: fairStateOf(fairLink.columns), how: 'scan',
-        actorId: user.id, actorName: null, note: SCAN_STEP_NOTE[fairLink.step],
+        actorId: user.id, actorName: null, note: fairLink.note,
       });
     }
   }
