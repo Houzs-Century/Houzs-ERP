@@ -62,6 +62,7 @@ export const BROWSER_STORAGE_KEY_REGISTRY: readonly StorageKeyRegistration[] = [
   { id: "chunk-print-resume", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "chunk-print-resume (the print to reopen after that reload)", matches: exact("chunk-print-resume") },
   { id: "workspace-tabs", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "houzs.workspaceTabs.v1 (per-window strip; blob records its {user,company} owner)", matches: exact("houzs.workspaceTabs.v1") },
   { id: "scm-list-return", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "houzs.scmListReturn.v1 (per-section last filtered list URL, for detail Back)", matches: exact("houzs.scmListReturn.v1") },
+  { id: "event-commission-view", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "houzs.eventCommission.v1 (Event Commission's view, brand and open fairs, kept for Back)", matches: exact("houzs.eventCommission.v1") },
   { id: "scm-list-focus", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "houzs.scmListFocus.v1 (per-section row last opened from a list, scrolled back to on return)", matches: exact("houzs.scmListFocus.v1") },
   // Peter 2026-10-14: the desktop Projects list saves <main>'s scrollTop when a
   // row opens and restores it on detail Back — same detail-Back shape as
@@ -261,6 +262,9 @@ export const PRODUCTION_STORAGE_CALLERS = [
   "pages/scm-v2/finance/useColumnWidths.ts",
   // The report opened last (finance-report-last), for the sidebar's Reports entry.
   "pages/scm-v2/reports/lastReport.ts",
+  // Event Commission's view, brand and open fairs (event-commission-view), kept
+  // for Back: reads and writes its own sessionStorage key only, no identity data.
+  "pages/scm-v2/EventCommission.tsx",
   "pages/scm-v2/ProductModels.tsx",
   "pages/scm-v2/SoFromProducts.tsx",
   "pages/scm-v2/SupplierDetail.tsx",

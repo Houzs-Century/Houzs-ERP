@@ -5,12 +5,14 @@
      • months close in order, once each has ended, and once only;
      • only the latest closed month reopens, and the reopening is recorded.
    The rules that turn a closed month into the next month's adjustments are the
-   lib's (scm/lib/event-commission.test.ts, "closing a month"). */
+   lib's (scm/lib/event-commission.test.ts, "closing a month").
+   Finance's two buttons (owner 2026-11-12): marking an order "not counted" or
+   "next month", and taking the mark away — each written to the order's History. */
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
 import {
-  closeCommissionMonthHandler, eventCommissionHandler, reopenCommissionMonthHandler,
+  closeCommissionMonthHandler, eventCommissionHandler, markCommissionOrderHandler, reopenCommissionMonthHandler, unmarkCommissionOrderHandler,
 } from '../src/scm/routes/acc-event-commission';
 
 const CO = 1;
@@ -90,5 +92,68 @@ describe('only the latest closed month reopens', () => {
   test('nothing closed, nothing to reopen', async () => {
     const res = await run(reopenCommissionMonthHandler, ctx(fakeSb({ event_commission_closes: [], entity_audit_log: [] }), { body: { month: '2026-09' } }));
     expect([res.status, res.body.error]).toEqual([409, 'nothing_closed']);
+  });
+});
+
+describe("Finance's two buttons — 这张单不要算 / 这个算下个月 (owner 2026-11-12)", () => {
+  const MARK_ID = '3f0c1d7e-2b1a-4c5d-9e8f-0a1b2c3d4e5f';
+  const tables = (marks: Row[] = []) => ({
+    event_commission_closes: [closed('2026-09')],
+    event_commission_marks: marks,
+    mfg_sales_orders: [{ doc_no: 'HC-SO-2610-001', company_id: CO }, { doc_no: 'HC-SO-2610-099', company_id: 2 }],
+    mfg_so_audit_log: [] as Row[],
+    entity_audit_log: [] as Row[],
+  });
+  const excludeOnce = [{ table: 'event_commission_marks', column: 'so_doc_no', covers: (r: Row) => r.kind === 'exclude', name: 'event_commission_marks_exclude_uq' }];
+
+  test("「这张单不要算」: the mark keeps who and why, the order's History says so, and twice is refused", async () => {
+    const t = tables();
+    const sb = fakeSb(t, {}, excludeOnce);
+    const res = await run(markCommissionOrderHandler, ctx(sb, { body: { docNo: 'hc-so-2610-001', kind: 'exclude', reason: 'checking the price' } }));
+    expect(res.status).toBe(200);
+    expect(res.body.mark).toMatchObject({ docNo: 'HC-SO-2610-001', kind: 'exclude', month: null, reason: 'checking the price', markedBy: 'Finance Chew' });
+    expect(t.mfg_so_audit_log).toEqual([expect.objectContaining({
+      so_doc_no: 'HC-SO-2610-001', action: 'COMMISSION_MARK', actor_name_snapshot: 'Finance Chew', note: 'checking the price',
+      field_changes: [{ field: 'eventCommission', from: 'Counted', to: 'Not counted' }],
+    })]);
+    const again = await run(markCommissionOrderHandler, ctx(sb, { body: { docNo: 'HC-SO-2610-001', kind: 'exclude' } }));
+    expect([again.status, again.body.error]).toEqual([409, 'already_marked']);
+  });
+
+  test('「这个算下个月」 moves an open month only; a closed month is refused', async () => {
+    const closedMonth = await run(markCommissionOrderHandler, ctx(fakeSb(tables()), { body: { docNo: 'HC-SO-2610-001', kind: 'defer', month: '2026-09' } }));
+    expect([closedMonth.status, closedMonth.body.error, closedMonth.body.message])
+      .toEqual([409, 'month_closed', "2026/09 is closed — only an open month's commission can move to the next month."]);
+    const t = tables();
+    const ok = await run(markCommissionOrderHandler, ctx(fakeSb(t), { body: { docNo: 'HC-SO-2610-001', kind: 'defer', month: '2026-10' } }));
+    expect(ok.body.mark).toMatchObject({ kind: 'defer', month: '2026-10' });
+    expect(t.mfg_so_audit_log[0]).toMatchObject({ field_changes: [{ field: 'eventCommission', from: 'Counted', to: 'Counted in 2026/11, not 2026/10' }] });
+  });
+
+  test.each([
+    [{ docNo: '', kind: 'exclude' }, 400, 'bad_doc_no'],
+    [{ docNo: 'HC-SO-2610-001', kind: 'maybe' }, 400, 'bad_kind'],
+    [{ docNo: 'HC-SO-2610-001', kind: 'defer' }, 400, 'bad_month'],
+    [{ docNo: 'HC-SO-2610-099', kind: 'exclude' }, 404, 'not_found'],
+  ])('%j → %s %s', async (body, status, error) => {
+    const res = await run(markCommissionOrderHandler, ctx(fakeSb(tables()), { body }));
+    expect([res.status, res.body.error]).toEqual([status, error]);
+  });
+
+  test('Undo takes the mark away and says so in the History; a mark already gone is a 404', async () => {
+    const t = tables([{
+      id: MARK_ID, company_id: CO, so_doc_no: 'HC-SO-2610-001', kind: 'defer', month: '2026-10-01', reason: null, marked_by: 'Finance', marked_at: '2026-11-12T03:00:00Z',
+    }]);
+    const sb = fakeSb(t);
+    const res = await run(unmarkCommissionOrderHandler, ctx(sb, { body: { id: MARK_ID } }));
+    expect(res.body).toMatchObject({ ok: true, mark: { docNo: 'HC-SO-2610-001', kind: 'defer', month: '2026-10' } });
+    expect((sb as any).tables.event_commission_marks).toEqual([]);
+    expect(t.mfg_so_audit_log).toEqual([expect.objectContaining({
+      action: 'COMMISSION_UNMARK', field_changes: [{ field: 'eventCommission', from: 'Counted in 2026/11, not 2026/10', to: 'Counted' }],
+    })]);
+    const gone = await run(unmarkCommissionOrderHandler, ctx(sb, { body: { id: MARK_ID } }));
+    expect([gone.status, gone.body.error]).toEqual([404, 'not_found']);
+    const bad = await run(unmarkCommissionOrderHandler, ctx(sb, { body: { id: 'row-1' } }));
+    expect([bad.status, bad.body.error]).toEqual([400, 'bad_id']);
   });
 });
