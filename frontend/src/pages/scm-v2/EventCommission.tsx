@@ -40,6 +40,10 @@
 //   · the SO list shows the fair's full name beside its brand (「要有 fair full
 //     name」) and the order's Sales — its total — before its Goods (「我也要看到
 //     sales, 然后 goods」); a fair's own orders show Sales too.
+// THEN (owner, 做): the earlier orders table lists only an order that reached
+// 30% or was cancelled in the range (「earlier order 我只想显示reached 30% 和
+// cancelled」); its price changes are the Upsales / Drop sales table's alone, so
+// no change is shown twice.
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
@@ -64,7 +68,7 @@ import { periodLabel } from './reports/statementColumns';
 import { useReportRange } from './reports/useReportRange';
 import {
   BASIS_WORDS, LEFT_OUT_NOTE, NOT_COUNTED, RULE_NOTE, SUMMARY_HINT, SUMMARY_LABEL, amt, amtRm, belowDepositOf, brandsOf, changedOf, deferredInOf,
-  earlierOf, eventCommissionCsv, eventCommissionSheet, fairPlace, fairSortKey, fmtRm, forBrand, lateOf, markWords, markedOf, monthAdjOf,
+  earlierOf, earlierShownOf, eventCommissionCsv, eventCommissionSheet, fairPlace, fairSortKey, fmtRm, forBrand, lateOf, markWords, markedOf, monthAdjOf,
   markMonthOf, monthLabel, monthOf, myt, nextMonthOf, sum, summaryOf, whatOf, wholeMonthOf, type BelowDepositRow,
 } from './eventCommissionModel';
 import ec from './EventCommission.module.css';
@@ -363,7 +367,7 @@ const soListColumns = (ctl: MarkCtl): Column<SoListRow>[] => {
 const amendedCell = (sen: number) => (sen === 0
   ? <span className="text-ink-muted">–</span>
   : <span className={cn('font-medium tabular-nums', sen > 0 ? 'text-synced' : 'text-err')}>{sen > 0 ? '+' : '−'}{fmtRm(Math.abs(sen))}</span>);
-const historyTag = (on: boolean) => (on ? <span className="ml-1.5 rounded bg-surface-2 px-1.5 py-0.5 text-[10.5px] text-ink-muted" title="Back-filled from the order's modification history (1–19 October 2026)">from history</span> : null);
+const historyTag = (on: boolean) => (on ? <span className="ml-1.5 rounded bg-surface-2 px-1.5 py-0.5 text-[10.5px] text-ink-muted" title="Back-filled from the order's modification history (1 September – 19 October 2026)">from history</span> : null);
 const orderPlace = (o: { fairName: string; brand: string | null; organizer: string | null; venue: string | null; state: string | null }) =>
   fairPlace({ name: o.fairName, brand: o.brand, organizer: o.organizer, venue: o.venue, state: o.state });
 const moneyColumns = <R extends { originalSen: number; latestSen: number; amendedSen: number }>(): Column<R>[] => [
@@ -378,7 +382,7 @@ const moneyColumns = <R extends { originalSen: number; latestSen: number; amende
 
 const earlierColumns = (ctl: MarkCtl): Column<CommissionEarlierOrder>[] => [
   { key: 'date', label: 'Date', width: '85px', render: (o) => <span className="whitespace-nowrap">{fmtDateOrDash(o.lastDate)}</span>, getValue: (o) => o.lastDate },
-  { key: 'what', label: 'What', width: '170px', render: (o) => <span className="whitespace-normal">{whatOf(o)}{historyTag(o.fromHistory)}</span>, getValue: (o) => whatOf(o) },
+  { key: 'what', label: 'What', width: '150px', render: (o) => <span className="whitespace-normal">{whatOf(o)}</span>, getValue: (o) => whatOf(o) },
   { key: 'order', label: 'Order', width: '140px', render: (o) => <OrderLink docNo={o.docNo} />, getValue: (o) => o.docNo },
   refColumn<CommissionEarlierOrder>(true),
   soDateColumn<CommissionEarlierOrder>(true),
@@ -386,9 +390,14 @@ const earlierColumns = (ctl: MarkCtl): Column<CommissionEarlierOrder>[] => [
   { key: 'salesperson', label: 'Salesperson', width: '100px', render: (o) => o.salesperson ?? '—', getValue: (o) => o.salesperson },
   customerColumn<CommissionEarlierOrder>(),
   statusColumn<CommissionEarlierOrder>(),
-  ...moneyColumns<CommissionEarlierOrder>(),
   {
-    key: 'commission', label: 'Commission', align: 'right', width: '105px', description: 'What this order moved in the range: reaching 30% (its goods × rate), an upsale / drop after 30% (± the change × rate), a cancellation (− its goods × rate).',
+    key: 'original', label: 'Original', align: 'right', width: '95px',
+    description: 'The order before the range\'s upsales / drop sales — what reaching 30% earns on, or what a cancellation takes back. Its price changes are in the Upsales / Drop sales table.',
+    render: (o) => num(fmtRm(o.originalSen)), getValue: (o) => o.originalSen, exportValue: (o) => o.originalSen / 100,
+  },
+  { key: 'rate', label: 'Rate', align: 'right', width: '60px', render: (o) => (o.ratePct == null ? <span className="text-ink-muted">–</span> : num(`${o.ratePct}%`)), getValue: (o) => o.ratePct },
+  {
+    key: 'commission', label: 'Commission', align: 'right', width: '105px', description: 'Reaching 30% here: the original amount × the rate. Cancelled here: − what it had earned. Its upsales / drop sales are not in it — they are in the Upsales / Drop sales table.',
     render: (o) => <span className={cn('font-semibold tabular-nums', o.commissionSen < 0 && 'text-err')}>{fmtRm(o.commissionSen)}</span>,
     getValue: (o) => o.commissionSen, exportValue: (o) => o.commissionSen / 100,
     total: (rows) => num(fmtRm(sum(rows, (o) => o.commissionSen))),
@@ -426,8 +435,13 @@ const changedColumns = (ctl: MarkCtl): Column<CommissionChangedOrder>[] => [
 const MONTH_ADJ_COLUMNS: Column<CommissionMonthAdjustment>[] = [
   { key: 'month', label: 'Month', width: '85px', description: 'The closed month this belongs to.', render: (a) => <span className="whitespace-nowrap">{monthLabel(a.month)}</span>, getValue: (a) => a.month },
   { key: 'order', label: 'Order', width: '140px', render: (a) => <OrderLink docNo={a.docNo} />, getValue: (a) => a.docNo },
+  /* Ref No. here too, as on every other order table (owner 2026-11-12: 「这个没有reference no. 吗？」). */
+  refColumn<CommissionMonthAdjustment>(),
+  soDateColumn<CommissionMonthAdjustment>(true),
   ...hideState(placeColumns<CommissionMonthAdjustment>((a) => fairPlace({ name: a.fairName, brand: a.brand }), { brand: '85px', organizer: '115px', venue: '150px', state: '100px' })),
   { key: 'salesperson', label: 'Salesperson', width: '100px', render: (a) => a.salesperson ?? '—', getValue: (a) => a.salesperson },
+  customerColumn<CommissionMonthAdjustment>(),
+  statusColumn<CommissionMonthAdjustment>(),
   {
     key: 'was', label: 'Paid', align: 'right', width: '95px', description: 'What that month paid for the order: as it was closed, plus adjustments paid since.',
     render: (a) => num(amt(a.wasSen)), getValue: (a) => a.wasSen, exportValue: (a) => a.wasSen / 100,
@@ -683,7 +697,7 @@ export const EventCommissionTab = () => {
   const changedCols = useMemo(() => changedColumns(ctl), [ctl]);
   const markedCols = useMemo(() => markedColumns(ctl), [ctl]);
   const soList = useMemo<SoListRow[]>(() => (r ? r.fairs.flatMap((f) => f.sos.map((s) => ({ ...s, fair: f }))) : []), [r]);
-  const earlierRows = r ? earlierOf(r) : [];
+  const earlierRows = r ? earlierShownOf(r) : [];
   const changedRows = r ? changedOf(r) : [];
   const monthAdjRows = r ? monthAdjOf(r) : [];
   const deferredRows = r ? deferredInOf(r) : [];
@@ -771,7 +785,7 @@ export const EventCommissionTab = () => {
       )}
 
       {r && (
-        <Card title={words.part2} hint="one row per order · amounts in RM">
+        <Card title={words.part2} hint="one row per order · their upsales / drop sales are in the Upsales / Drop sales table · amounts in RM">
           {earlierRows.length === 0 ? <p className={ec.empty}>{words.part2Empty}</p> : (
             <DataTable<CommissionEarlierOrder>
               tableId="event-commission-earlier-orders" exportName={`event-commission-earlier-${range.from}-${range.to}`} freezeHeight="screen"

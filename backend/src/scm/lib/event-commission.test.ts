@@ -157,6 +157,38 @@ describe('Part 2 — what happened in the range to orders of earlier fairs', () 
     expect(r.adjustments.map((a) => [a.docNo, a.kind, a.commissionSen])).toEqual([['HC-SO-2609-050', 'cancelled', -130_00]]);
   });
 
+  it('an order keyed after its payments earns on what it was keyed at by the end of that day, not its first figure (HC-SO-2611-050)', () => {
+    /* Keyed on 3/11 at RM 4,000, put right to RM 800 the same day; its payments
+       are dated 14–16/10, so it reached 30% in October — on RM 800. */
+    const keyedLate = late({
+      docNo: 'HC-SO-2611-050', createdAt: '2026-11-03T04:00:00Z', soDate: '2026-11-03', goodsSen: 800_00, totalSen: 800_00,
+    });
+    const r = buildEventCommission({
+      ...OCT, fairs: [SEP], ratePctByBrand: RATES,
+      sos: [keyedLate],
+      payments: [
+        { docNo: 'HC-SO-2611-050', paidAt: '2026-10-14', amountSen: 400_00 },
+        { docNo: 'HC-SO-2611-050', paidAt: '2026-10-16', amountSen: 200_00 },
+      ],
+      changes: [
+        change({ docNo: 'HC-SO-2611-050', changedAt: '2026-11-03T05:00:00Z', beforeGoodsSen: 4_000_00, afterGoodsSen: 0, beforeTotalSen: 4_000_00, afterTotalSen: 0 }),
+        change({ docNo: 'HC-SO-2611-050', changedAt: '2026-11-03T05:01:00Z', beforeGoodsSen: 0, afterGoodsSen: 800_00, beforeTotalSen: 0, afterTotalSen: 800_00 }),
+      ],
+      cancels: [],
+    });
+    expect(r.adjustments.map((a) => [a.docNo, a.kind, a.goodsSen, a.commissionSen])).toEqual([['HC-SO-2611-050', 'reached', 800_00, 104_00]]);
+    expect(r.earlierOrders[0]).toMatchObject({ originalSen: 800_00, latestSen: 800_00, commissionSen: 104_00 });
+    /* By fair, a fair of the range shows such an order as at its last day the same way. */
+    const own = buildEventCommission({
+      ...OCT, fairs: [fair()], ratePctByBrand: RATES,
+      sos: [so({ docNo: 'HC-SO-2611-004', createdAt: '2026-11-01T04:00:00Z', soDate: '2026-11-01', goodsSen: 682_50, totalSen: 682_50 })],
+      payments: [{ docNo: 'HC-SO-2611-004', paidAt: '2026-10-04', amountSen: 300_00 }],
+      changes: [change({ docNo: 'HC-SO-2611-004', changedAt: '2026-11-01T06:00:00Z', beforeGoodsSen: 788_80, afterGoodsSen: 682_50, beforeTotalSen: 788_80, afterTotalSen: 682_50 })],
+      cancels: [],
+    });
+    expect(own.fairs[0]!.sos[0]).toMatchObject({ goodsSen: 682_50, commissionSen: 95_55 });
+  });
+
   it('orders of fairs starting in the range are not in Part 2, and a change on the day 30% is reached is folded into it', () => {
     const r = buildEventCommission({
       ...OCT, fairs: [SEP, fair()], ratePctByBrand: RATES,
@@ -310,7 +342,7 @@ describe('closing a month — 关月 (owner 2026-10-26)', () => {
   const sep = (o: Partial<CommissionSo> = {}) => so({ docNo: 'HC-SO-2609-050', projectId: 2, createdAt: '2026-09-05T03:00:00Z', soDate: '2026-09-05', ...o });
   const september = (payments: CommissionPayment[]) => buildEventCommission({
     from: '2026-09-01', to: '2026-09-30', fairs: [SEPF], ratePctByBrand: RATES,
-    sos: [sep(), sep({ docNo: 'HC-SO-2609-051', salesperson: 'Wei Pin' })], payments, changes: [], cancels: [],
+    sos: [sep(), sep({ docNo: 'HC-SO-2609-051', salesperson: 'Wei Pin', ref: 'ZNT0480' })], payments, changes: [], cancels: [],
   });
   const october = () => buildEventCommission({ ...OCT, fairs: [], ratePctByBrand: RATES, sos: [], payments: [], changes: [], cancels: [] });
   const PAID_050 = { docNo: 'HC-SO-2609-050', paidAt: '2026-09-05', amountSen: 400_00 };
@@ -325,6 +357,7 @@ describe('closing a month — 关月 (owner 2026-10-26)', () => {
     const rows = monthAdjustmentsOf([closedSep()], new Map([['2026-09', now]]));
     expect(rows).toEqual([{
       month: '2026-09', docNo: 'HC-SO-2609-051', fairId: 2, fairName: SEPF.name, brand: 'ZANOTTI', salesperson: 'Wei Pin', customer: 'Tan',
+      ref: 'ZNT0480', soDate: '2026-09-05', status: 'CONFIRMED',
       wasSen: 0, nowSen: 130_00, adjustmentSen: 130_00,
     }]);
   });

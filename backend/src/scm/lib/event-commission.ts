@@ -122,7 +122,7 @@ export type ChangeView = {
   uncounted: boolean;
   source: string;
   changedBy: string | null;
-  /** Back-filled from the SO's modification history (1–19 October 2026). */
+  /** Back-filled from the SO's modification history (1 September – 19 October 2026). */
   fromHistory: boolean;
 };
 
@@ -301,6 +301,11 @@ export type MonthAdjustmentRow = {
   brand: string | null;
   salesperson: string | null;
   customer: string | null;
+  /** Ref No. (the booklet number), SO date and status, as on the order tables
+      (owner 2026-11-12: 「这个没有reference no. 吗？」). Absent on rows made before. */
+  ref?: string | null;
+  soDate?: string | null;
+  status?: string;
   /** What that month paid for the order: as closed, plus the adjustments paid since. */
   wasSen: number;
   /** That month recalculated today. */
@@ -348,16 +353,16 @@ export function monthAdjustmentsOf(closed: readonly ClosedMonthPaid[], live: Rea
     const nowPaid = paidByOrder(now);
     const where = new Map<string, Omit<MonthAdjustmentRow, 'month' | 'docNo' | 'wasSen' | 'nowSen' | 'adjustmentSen'>>();
     for (const f of now.fairs) for (const so of f.sos) {
-      where.set(so.docNo, { fairId: f.id, fairName: f.name, brand: f.brand, salesperson: so.salesperson, customer: so.customer });
+      where.set(so.docNo, { fairId: f.id, fairName: f.name, brand: f.brand, salesperson: so.salesperson, customer: so.customer, ref: so.ref, soDate: so.soDate, status: so.status });
     }
     for (const o of now.earlierOrders) {
-      if (!where.has(o.docNo)) where.set(o.docNo, { fairId: o.fairId, fairName: o.fairName, brand: o.brand, salesperson: o.salesperson, customer: o.customer });
+      if (!where.has(o.docNo)) where.set(o.docNo, { fairId: o.fairId, fairName: o.fairName, brand: o.brand, salesperson: o.salesperson, customer: o.customer, ref: o.ref, soDate: o.soDate, status: o.status });
     }
     for (const doc of new Set([...Object.keys(was), ...Object.keys(nowPaid)])) {
       const w = was[doc] ?? 0;
       const n = nowPaid[doc] ?? 0;
       if (w === n) continue;
-      const at = where.get(doc) ?? { fairId: null, fairName: '', brand: null, salesperson: null, customer: null };
+      const at = where.get(doc) ?? { fairId: null, fairName: '', brand: null, salesperson: null, customer: null, ref: null, soDate: null };
       rows.push({ month: k.month, docNo: doc, ...at, wasSen: w, nowSen: n, adjustmentSen: n - w });
     }
   }
@@ -613,6 +618,15 @@ export function buildEventCommission(input: {
     salesperson: so.salesperson, customer: so.customer, ratePct: rateOf(f),
     ref: so.ref ?? null, soDate: so.soDate, status: so.status,
   });
+  /* An order's goods at the end of `day` — or, for a day before it was keyed (a
+     payment dated before the order, an order keyed after the range: HC-SO-2611-050
+     was keyed on 3/11 at RM 4,000 and put right to RM 800 the same day, against
+     payments of 14–16/10), at the end of the day it was keyed: that day's own
+     corrections are the order as it was sold, not a change to walk back. */
+  const goodsOn = (so: CommissionSo, chs: readonly CommissionChange[], day: string): number => {
+    const keyed = mytDay(so.createdAt);
+    return goodsAt(so.goodsSen, chs, day < keyed ? keyed : day);
+  };
   /* The range's counted changes of an order (before `until`, when it was cancelled). */
   const countedIn = (so: CommissionSo, chs: readonly CommissionChange[], until: string | null = null): ChangeView[] =>
     chs.map((ch) => changeView(ch, so))
@@ -639,7 +653,7 @@ export function buildEventCommission(input: {
     if (counted.length === 0) return;
     const amended = counted.reduce((s, v) => s + v.deltaGoodsSen, 0);
     if (amended === 0) return;
-    const latest = goodsAt(so.goodsSen, chs, to);
+    const latest = goodsOn(so, chs, to);
     const reached = reachedOn(so.totalSen, paymentsOf.get(so.docNo) ?? [], to);
     const place = placeOf(so, f);
     const off = counted.reduce((s, v) => (v.uncounted ? s + v.deltaGoodsSen : s), 0);
@@ -661,7 +675,7 @@ export function buildEventCommission(input: {
     if (so.status === 'CANCELLED' && (!cancelled || cancelled <= to)) return null;
     const pays = paymentsOf.get(so.docNo) ?? [];
     const chs = changesOf.get(so.docNo) ?? [];
-    const goods = goodsAt(so.goodsSen, chs, to);
+    const goods = goodsOn(so, chs, to);
     const paid = pays.filter((p) => mytDay(p.paidAt) <= to).reduce((s, p) => s + (Number(p.amountSen) || 0), 0);
     const reached = reachedOn(so.totalSen, pays, to);
     return {
@@ -738,7 +752,7 @@ export function buildEventCommission(input: {
     const earned = reached != null && (cancelled == null || reached < cancelled);
     const base = { docNo: so.docNo, fairId: f.id, fairName: f.name, salesperson: so.salesperson };
     if (earned && reached! >= from && reached! <= to) {
-      const goods = goodsAt(so.goodsSen, chs, reached!);
+      const goods = goodsOn(so, chs, reached!);
       adjustments.push({ ...base, date: reached!, kind: 'reached', goodsSen: goods, ...earnedOn(goods, uncountedGoods(so, chs, reached!), rate), beforeReach: false });
     }
     for (const ch of chs) {
@@ -757,7 +771,7 @@ export function buildEventCommission(input: {
     }
     if (earned && cancelled != null && cancelled >= from && cancelled <= to) {
       /* Taken back: what it earned — its goods less the changes left out. */
-      const goods = goodsAt(so.goodsSen, chs, cancelled);
+      const goods = goodsOn(so, chs, cancelled);
       const had = earnedOn(goods, uncountedGoods(so, chs, cancelled), rate);
       adjustments.push({
         ...base, date: cancelled, kind: 'cancelled', goodsSen: goods, commissionSen: -had.commissionSen, beforeReach: false,
@@ -769,7 +783,7 @@ export function buildEventCommission(input: {
     if (mine.length > 0) {
       const counted = countedIn(so, chs, cancelled);
       const amended = counted.reduce((s, v) => s + v.deltaGoodsSen, 0);
-      const latest = goodsAt(so.goodsSen, chs, to);
+      const latest = goodsOn(so, chs, to);
       earlierOrders.push({
         ...placeOf(so, f),
         events: mine.map((a) => ({ date: a.date, kind: a.kind, beforeReach: a.beforeReach, ...(a.uncounted ? { uncounted: true as const } : {}) })),

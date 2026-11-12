@@ -11,7 +11,9 @@
    orders under 30% apart, order numbers are links, the view kept for Back, and
    Finance's two buttons — don't count / next month — each undoable. Later that
    day: a price change left out on the Upsales / Drop sales table (「只是改价不算」),
-   and the SO list with the fair's full name and the order's Sales. */
+   and the SO list with the fair's full name and the order's Sales. Then: the
+   earlier orders only those that reached 30% or were cancelled, their price
+   changes left to the Upsales / Drop sales table. */
 
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
@@ -101,7 +103,7 @@ afterEach(() => { current = null; vi.useRealTimers(); sessionStorage.clear(); vi
 
 import { MemoryRouter } from 'react-router-dom';
 import { EventCommissionTab } from './EventCommission';
-import { basisOf, brandsOf, eventCommissionCsv, eventCommissionSheet, fairLines, fairPlace, forBrand, orderLines, summaryOf, whatOf } from './eventCommissionModel';
+import { basisOf, brandsOf, earlierShownOf, eventCommissionCsv, eventCommissionSheet, fairLines, fairPlace, forBrand, orderLines, summaryOf, whatOf } from './eventCommissionModel';
 
 /* The report reads the shared range (the report shell's): no dates in the address → This month. */
 const renderTab = (ui: React.ReactElement) => render(<MemoryRouter initialEntries={['/scm/accounting?tab=commission']}>{ui}</MemoryRouter>);
@@ -140,18 +142,57 @@ describe('the Event Commission tab', () => {
     expect(within(tables()[0]!).getByText('HC-SO-2610-002').closest('tr')!.textContent).toContain('not yet');
   });
 
-  test('earlier orders read once each: what happened, Original → Latest, Amended, the commission it moved', () => {
+  test('earlier orders: only those that reached 30% or were cancelled, on their original amount — a price change is the Upsales / Drop sales table\'s', () => {
     renderTab(<EventCommissionTab />);
+    expect(screen.getByText('Earlier fairs — reached 30% or cancelled in the range')).toBeTruthy();
     const earlier = tables()[1]!;
     const reached = rowOf(earlier, 'HC-SO-2609-050');
     expect(reached.textContent).toContain('Reached 30%');
-    expect(cellsOf(reached)).toContain('143.00');
+    expect(cellsOf(reached)).toEqual(expect.arrayContaining(['1,100.00', '13%', '143.00']));
     expect(cellsOf(rowOf(earlier, 'HC-SO-2609-051'))).toContain('(130.00)');
-    const waiting = rowOf(earlier, 'HC-SO-2609-052');
-    expect(waiting.textContent).toContain('Upsale (before 30%)');
-    expect(waiting.textContent).toContain('from history');
-    expect(cellsOf(waiting)).toEqual(expect.arrayContaining(['900.00', '1,000.00', '+100.00']));
+    /* Only priced up before 30%: not an earlier order to list here. */
+    expect(within(earlier).queryByText('HC-SO-2609-052')).toBeNull();
+    expect(within(earlier).queryByText('Latest')).toBeNull();
     expect(earlier.querySelector('tfoot')!.textContent).toContain('13.00');
+    expect(tile('Earlier fairs')).toContain('2 orders');
+  });
+
+  test('an earlier order that reached 30% and was priced in the range shows the reach on its original amount; the change stays in Upsales / Drop sales', () => {
+    /* HC-SO-2609-397's shape: 15,776 dropped to 7,888 before 30%, reached 30% in
+       the range — 1,104.32 on the order; the drop's −1,104.32 is the Upsales /
+       Drop sales table's, so the earlier table shows 2,208.64 on 15,776. And an
+       order reached, then priced up after 30%: the reach alone here. */
+    const SHAPED: EventCommission = {
+      ...REPORT,
+      earlierOrders: [
+        {
+          ...ZAN_PLACE, ratePct: 14, docNo: 'HC-SO-2609-397', lastDate: '2026-10-21', originalSen: 15_776_00, latestSen: 7_888_00, amendedSen: -7_888_00,
+          events: [{ date: '2026-10-05', kind: 'drop', beforeReach: true }, { date: '2026-10-21', kind: 'reached', beforeReach: false }],
+          commissionSen: 1_104_32, fromHistory: true,
+        },
+        {
+          ...ZAN_PLACE, docNo: 'HC-SO-2609-060', lastDate: '2026-10-25', originalSen: 1_000_00, latestSen: 1_200_00, amendedSen: 200_00,
+          events: [{ date: '2026-10-08', kind: 'reached', beforeReach: false }, { date: '2026-10-25', kind: 'upsale', beforeReach: false }],
+          commissionSen: 156_00, fromHistory: false,
+        },
+      ],
+      changedOrders: [
+        { ...ZAN_PLACE, ratePct: 14, docNo: 'HC-SO-2609-397', part: 'earlier', lastChange: '2026-10-05', originalSen: 15_776_00, latestSen: 7_888_00, amendedSen: -7_888_00, reachedOn: '2026-10-21', effectSen: -1_104_32, fromHistory: true },
+        { ...ZAN_PLACE, docNo: 'HC-SO-2609-060', part: 'earlier', lastChange: '2026-10-25', originalSen: 1_000_00, latestSen: 1_200_00, amendedSen: 200_00, reachedOn: '2026-10-08', effectSen: 26_00, fromHistory: false },
+      ],
+    };
+    expect(earlierShownOf(SHAPED).map((o) => [o.docNo, whatOf(o), o.lastDate, o.commissionSen])).toEqual([
+      ['HC-SO-2609-397', 'Reached 30%', '2026-10-21', 2_208_64],
+      ['HC-SO-2609-060', 'Reached 30%', '2026-10-08', 130_00],
+    ]);
+    /* Marked not counted: nothing either side. */
+    const mark = { id: 'm1', kind: 'exclude' as const, month: null, reason: null, markedBy: 'Finance', markedAt: '2026-11-12T10:00:00Z' };
+    const marked: EventCommission = {
+      ...SHAPED,
+      earlierOrders: SHAPED.earlierOrders!.map((o) => ({ ...o, commissionSen: 0, mark })),
+      changedOrders: SHAPED.changedOrders!.map((o) => ({ ...o, effectSen: 0, mark })),
+    };
+    expect(earlierShownOf(marked).map((o) => o.commissionSen)).toEqual([0, 0]);
   });
 
   test('every order the range changed, once: its final amount, + green / − red, the effect at the brand rate, not yet 30% says so', () => {
@@ -199,7 +240,7 @@ describe('the Event Commission tab', () => {
     expect(screen.queryByText('Total sales')).toBeNull();
     const row = cellsOf(rowOf(tables()[0]!, 'HC-SO-2610-010'));
     for (const t of ['2026/10/01', 'ZANOTTI', 'BIGHOME', 'SUNWAY PYRAMID', 'Jason', '36.4%', '130.00']) expect(row).toContain(t);
-    expect(screen.getByText(/Nothing on earlier orders in this range/)).toBeTruthy();
+    expect(screen.getByText(/No earlier order reached 30% or was cancelled in this range/)).toBeTruthy();
     expect(screen.getByText('No upsale or drop sale in this range.')).toBeTruthy();
   });
 
@@ -262,7 +303,7 @@ describe('the Event Commission layout', () => {
   test('a fair opens to a compact table of its orders: what they came to, Paid and Paid % apart, upsales green, drops red, a subtotal', () => {
     renderTab(<EventCommissionTab />);
     fireEvent.click(within(tables()[0]!).getByText('MID VALLEY'));
-    expect(screen.getByText(/reached 30%/).parentElement!.textContent).toContain('2 orders · 1 reached 30% · commission RM 140.00');
+    expect(screen.getByText(/\d+ reached 30%/).parentElement!.textContent).toContain('2 orders · 1 reached 30% · commission RM 140.00');
     const first = within(tables()[0]!).getByText('HC-SO-2610-001').closest('tr')!;
     expect(cellsOf(first)).toEqual(expect.arrayContaining(['400.00', '36.4%']));
     expect(within(first).getByText('+RM 150.00').className).toContain('text-synced');
@@ -306,6 +347,7 @@ describe('the Event Commission layout', () => {
 describe('closing a month — 关月 (owner 2026-10-26)', () => {
   const MONTH_ADJ = [{
     month: '2026-09', docNo: 'HC-SO-2609-051', fairId: 2214, fairName: ZAN_PLACE.fairName, brand: 'ZANOTTI', salesperson: 'Wei Pin', customer: 'Lim',
+    ref: 'ZNT0480', soDate: '2026-09-05', status: 'CONFIRMED',
     wasSen: 0, nowSen: 130_00, adjustmentSen: 130_00,
   }];
 
@@ -347,7 +389,8 @@ describe('closing a month — 关月 (owner 2026-10-26)', () => {
     expect(tile('Total commission')).toContain('283.00');
     expect(tile('Closed months — adjustments')).toContain('1 order · 2026/09');
     const cells = cellsOf(rowOf(tables()[2]!, 'HC-SO-2609-051'));
-    for (const t of ['2026/09', 'ZANOTTI', 'Wei Pin', '+130.00']) expect(cells).toContain(t);
+    /* Its Ref No. too, as on every order table (「这个没有reference no. 吗？」). */
+    for (const t of ['2026/09', 'ZNT0480', 'ZANOTTI', 'Wei Pin', '+130.00']) expect(cells).toContain(t);
     const csv = eventCommissionCsv(current);
     expect(csv).toContain('"Closed months — adjustments","130.00"');
     expect(csv).toContain('"Total","283.00"');
