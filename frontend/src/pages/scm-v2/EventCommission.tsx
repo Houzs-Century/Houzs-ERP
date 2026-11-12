@@ -122,7 +122,7 @@ const MarkCell = ({ docNo, mark, ctl }: { docNo: string; mark?: CommissionMarkIn
   );
 };
 const markColumn = <R extends { docNo: string; mark?: CommissionMarkInfo }>(ctl: MarkCtl): Column<R> => ({
-  key: 'actions', label: 'Actions', width: '190px', description: "Don't count this order, or pay it next month (Finance).",
+  key: 'actions', label: 'Actions', width: '210px', description: "Don't count this order, or pay it next month (Finance).",
   render: (r) => <MarkCell docNo={r.docNo} mark={r.mark} ctl={ctl} />, getValue: (r) => (r.mark ? markWords(r.mark) : ''),
 });
 
@@ -146,7 +146,7 @@ const refColumn = <R extends { ref?: string | null }>(hidden = false): Column<R>
   key: 'ref', label: 'Ref No.', width: '105px', defaultHidden: hidden, render: (r) => r.ref ?? '—', getValue: (r) => r.ref ?? null,
 });
 const soDateColumn = <R extends { soDate?: string | null }>(hidden: boolean): Column<R> => ({
-  key: 'soDate', label: 'SO date', width: '90px', defaultHidden: hidden,
+  key: 'soDate', label: 'SO date', width: '95px', defaultHidden: hidden,
   render: (r) => <span className="whitespace-nowrap">{fmtDateOrDash(r.soDate ?? null)}</span>, getValue: (r) => r.soDate ?? null,
 });
 const statusColumn = <R extends { status?: string }>(): Column<R> => ({
@@ -248,12 +248,13 @@ const orderMoneyColumns = <R extends CommissionSoRow>(): Column<R>[] => [
     render: (s) => <span className="font-semibold tabular-nums">{amt(s.commissionSen)}</span>, getValue: (s) => s.commissionSen,
     exportValue: (s) => s.commissionSen / 100, total: (rows) => num(fmtRm(sum(rows, (s) => s.commissionSen))),
   },
-  {
-    key: 'changes', label: 'Upsales / drop sales', render: (s) => <Changes changes={s.changes} />,
-    getValue: (s) => sum(s.changes.filter((ch) => !ch.notCounted), (ch) => ch.deltaGoodsSen),
-    exportValue: (s) => s.changes.map((ch) => `${ch.kind === 'upsale' ? '+' : '-'}${fmtRm(Math.abs(ch.deltaGoodsSen))} ${ch.date}${ch.notCounted ? ' (not counted)' : ''}`).join('; '),
-  },
 ];
+/* Last, after the mark: a wide cell that would push the mark off the screen. */
+const changesColumn = <R extends CommissionSoRow>(): Column<R> => ({
+  key: 'changes', label: 'Upsales / drop sales', render: (s) => <Changes changes={s.changes} />,
+  getValue: (s) => sum(s.changes.filter((ch) => !ch.notCounted), (ch) => ch.deltaGoodsSen),
+  exportValue: (s) => s.changes.map((ch) => `${ch.kind === 'upsale' ? '+' : '-'}${fmtRm(Math.abs(ch.deltaGoodsSen))} ${ch.date}${ch.notCounted ? ' (not counted)' : ''}`).join('; '),
+});
 
 const orderColumns = (ctl: MarkCtl): Column<CommissionSoRow>[] => [
   { key: 'order', label: 'Order', render: (o) => <OrderLink docNo={o.docNo} />, getValue: (o) => o.docNo },
@@ -264,6 +265,7 @@ const orderColumns = (ctl: MarkCtl): Column<CommissionSoRow>[] => [
   statusColumn<CommissionSoRow>(),
   ...orderMoneyColumns<CommissionSoRow>(),
   markColumn<CommissionSoRow>(ctl),
+  changesColumn<CommissionSoRow>(),
 ];
 
 /** A fair opened: one line on what its orders came to, then the orders. */
@@ -286,7 +288,7 @@ const FairOrders = ({ fair, ctl }: { fair: CommissionFairRow; ctl: MarkCtl }) =>
    date 应该是 SO list，不要分 by fair」). */
 type SoListRow = CommissionSoRow & { fair: CommissionFairRow };
 const soListColumns = (ctl: MarkCtl): Column<SoListRow>[] => [
-  { key: 'order', label: 'Order', width: '125px', render: (o) => <OrderLink docNo={o.docNo} />, getValue: (o) => o.docNo },
+  { key: 'order', label: 'Order', width: '140px', render: (o) => <OrderLink docNo={o.docNo} />, getValue: (o) => o.docNo },
   refColumn<SoListRow>(),
   soDateColumn<SoListRow>(false),
   ...hideState(placeColumns<SoListRow>((o) => fairPlace(o.fair), { brand: '85px', organizer: '115px', venue: '150px', state: '100px' })),
@@ -300,6 +302,7 @@ const soListColumns = (ctl: MarkCtl): Column<SoListRow>[] => [
   statusColumn<SoListRow>(),
   ...orderMoneyColumns<SoListRow>(),
   markColumn<SoListRow>(ctl),
+  changesColumn<SoListRow>(),
 ];
 
 /** Original → Latest and the difference: + in green, − in red. */
@@ -322,7 +325,7 @@ const moneyColumns = <R extends { originalSen: number; latestSen: number; amende
 const earlierColumns = (ctl: MarkCtl): Column<CommissionEarlierOrder>[] => [
   { key: 'date', label: 'Date', width: '85px', render: (o) => <span className="whitespace-nowrap">{fmtDateOrDash(o.lastDate)}</span>, getValue: (o) => o.lastDate },
   { key: 'what', label: 'What', width: '170px', render: (o) => <span className="whitespace-normal">{whatOf(o)}{historyTag(o.fromHistory)}</span>, getValue: (o) => whatOf(o) },
-  { key: 'order', label: 'Order', width: '125px', render: (o) => <OrderLink docNo={o.docNo} />, getValue: (o) => o.docNo },
+  { key: 'order', label: 'Order', width: '140px', render: (o) => <OrderLink docNo={o.docNo} />, getValue: (o) => o.docNo },
   refColumn<CommissionEarlierOrder>(true),
   soDateColumn<CommissionEarlierOrder>(true),
   ...hideState(placeColumns<CommissionEarlierOrder>(orderPlace, { brand: '85px', organizer: '115px', venue: '150px', state: '100px' })),
@@ -341,7 +344,7 @@ const earlierColumns = (ctl: MarkCtl): Column<CommissionEarlierOrder>[] => [
 
 const CHANGED_COLUMNS: Column<CommissionChangedOrder>[] = [
   { key: 'lastChange', label: 'Last change', width: '90px', render: (o) => <span className="whitespace-nowrap">{fmtDateOrDash(o.lastChange)}{historyTag(o.fromHistory)}</span>, getValue: (o) => o.lastChange },
-  { key: 'order', label: 'Order', width: '125px', render: (o) => <OrderLink docNo={o.docNo} />, getValue: (o) => o.docNo },
+  { key: 'order', label: 'Order', width: '140px', render: (o) => <OrderLink docNo={o.docNo} />, getValue: (o) => o.docNo },
   refColumn<CommissionChangedOrder>(),
   soDateColumn<CommissionChangedOrder>(true),
   ...hideState(placeColumns<CommissionChangedOrder>(orderPlace, { brand: '85px', organizer: '115px', venue: '150px', state: '100px' })),
@@ -365,7 +368,7 @@ const CHANGED_COLUMNS: Column<CommissionChangedOrder>[] = [
 
 const MONTH_ADJ_COLUMNS: Column<CommissionMonthAdjustment>[] = [
   { key: 'month', label: 'Month', width: '85px', description: 'The closed month this belongs to.', render: (a) => <span className="whitespace-nowrap">{monthLabel(a.month)}</span>, getValue: (a) => a.month },
-  { key: 'order', label: 'Order', width: '125px', render: (a) => <OrderLink docNo={a.docNo} />, getValue: (a) => a.docNo },
+  { key: 'order', label: 'Order', width: '140px', render: (a) => <OrderLink docNo={a.docNo} />, getValue: (a) => a.docNo },
   ...hideState(placeColumns<CommissionMonthAdjustment>((a) => fairPlace({ name: a.fairName, brand: a.brand }), { brand: '85px', organizer: '115px', venue: '150px', state: '100px' })),
   { key: 'salesperson', label: 'Salesperson', width: '100px', render: (a) => a.salesperson ?? '—', getValue: (a) => a.salesperson },
   {
@@ -385,7 +388,7 @@ const MONTH_ADJ_COLUMNS: Column<CommissionMonthAdjustment>[] = [
 
 const DEFERRED_COLUMNS: Column<CommissionDeferredIn>[] = [
   { key: 'month', label: 'From month', width: '90px', render: (d) => monthLabel(d.fromMonth), getValue: (d) => d.fromMonth },
-  { key: 'order', label: 'Order', width: '125px', render: (d) => <OrderLink docNo={d.docNo} />, getValue: (d) => d.docNo },
+  { key: 'order', label: 'Order', width: '140px', render: (d) => <OrderLink docNo={d.docNo} />, getValue: (d) => d.docNo },
   refColumn<CommissionDeferredIn>(),
   ...hideState(placeColumns<CommissionDeferredIn>(orderPlace, { brand: '85px', organizer: '115px', venue: '150px', state: '100px' })),
   { key: 'salesperson', label: 'Salesperson', width: '100px', render: (d) => d.salesperson ?? '—', getValue: (d) => d.salesperson },
@@ -398,7 +401,7 @@ const DEFERRED_COLUMNS: Column<CommissionDeferredIn>[] = [
 ];
 
 const BELOW_COLUMNS: Column<BelowDepositRow>[] = [
-  { key: 'order', label: 'Order', width: '125px', render: (o) => <OrderLink docNo={o.docNo} />, getValue: (o) => o.docNo },
+  { key: 'order', label: 'Order', width: '140px', render: (o) => <OrderLink docNo={o.docNo} />, getValue: (o) => o.docNo },
   refColumn<BelowDepositRow>(),
   soDateColumn<BelowDepositRow>(true),
   ...hideState(placeColumns<BelowDepositRow>((o) => fairPlace(o.fair), { brand: '85px', organizer: '115px', venue: '150px', state: '100px' })),
@@ -426,7 +429,7 @@ const BELOW_COLUMNS: Column<BelowDepositRow>[] = [
 
 const markedColumns = (ctl: MarkCtl): Column<CommissionMarkedOrder>[] => [
   { key: 'kind', label: 'Mark', width: '150px', render: (m) => markWords(m.mark), getValue: (m) => markWords(m.mark) },
-  { key: 'order', label: 'Order', width: '125px', render: (m) => <OrderLink docNo={m.docNo} />, getValue: (m) => m.docNo },
+  { key: 'order', label: 'Order', width: '140px', render: (m) => <OrderLink docNo={m.docNo} />, getValue: (m) => m.docNo },
   refColumn<CommissionMarkedOrder>(),
   ...hideState(placeColumns<CommissionMarkedOrder>(orderPlace, { brand: '85px', organizer: '115px', venue: '150px', state: '100px' })),
   { key: 'salesperson', label: 'Salesperson', width: '100px', render: (m) => m.salesperson ?? '—', getValue: (m) => m.salesperson },
@@ -438,7 +441,7 @@ const markedColumns = (ctl: MarkCtl): Column<CommissionMarkedOrder>[] => [
     total: (rows) => num(fmtRm(sum(rows, (m) => m.commissionSen))),
   },
   {
-    key: 'actions', label: 'Actions', width: '80px',
+    key: 'actions', label: 'Actions', width: '90px',
     render: (m) => <button type="button" className={ec.markBtn} disabled={ctl.busy} onClick={(e) => { e.stopPropagation(); ctl.undo(m.mark); }}>Undo</button>,
   },
 ];
@@ -644,7 +647,6 @@ export const EventCommissionTab = () => {
       sub: `${n(monthAdjRows.length, 'order')} · ${[...new Set(monthAdjRows.map((a) => monthLabel(a.month)))].join(', ')}`,
     }] : []),
     ...(deferredRows.length > 0 ? [{ key: 'deferredIn', label: SUMMARY_LABEL.deferredIn, value: fmtRm(summary.deferredIn), sub: n(deferredRows.length, 'order') }] : []),
-    ...(markedRows.length > 0 ? [{ key: 'marked', label: 'Marked — not paid here', value: fmtRm(sum(markedRows, (m) => m.commissionSen)), sub: n(markedRows.length, 'order') }] : []),
   ] : [];
 
   return (

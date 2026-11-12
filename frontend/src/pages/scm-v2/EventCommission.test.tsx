@@ -400,10 +400,10 @@ describe('round 3 (owner 2026-11-12)', () => {
     };
     renderTab(<EventCommissionTab />);
     expect(tile('Total commission')).toContain('10.00');
-    expect(tile('Marked — not paid here')).toContain('143.00');
     const row = within(tables()[1]!).getByText('HC-SO-2609-050').closest('tr')!;
     expect(row.textContent).toContain('Not counted');
     const listed = screen.getByRole('region', { name: 'Marked — not paid here' });
+    expect(listed.querySelector('tfoot')!.textContent).toContain('143.00');
     expect(cellsOf(within(listed).getByText('HC-SO-2609-050').closest('tr')!)).toEqual(expect.arrayContaining(['Not counted', 'price to check', 'Finance Chew', '143.00']));
     fireEvent.click(within(row).getByRole('button', { name: 'Undo' }));
     await waitFor(() => expect(unmarkOrder).toHaveBeenCalledWith(mark.id));
