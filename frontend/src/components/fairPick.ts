@@ -149,3 +149,12 @@ export function fairDayCheck(now: FairKeys, was: FairKeys): Record<string, strin
     fairDate: text(now.fairDate) || null,
   };
 }
+
+/** A SCANNED order: its venue, fair and fair day are a person's picks, so no
+ *  form default may fill them (owner 2026-11-12). The slip photo it was read
+ *  from is the marker, in either spelling the detail read answers with. */
+export function isScannedOrder(
+  h: { slip_image_key?: string | null; slipImageKey?: string | null } | null | undefined,
+): boolean {
+  return ((h?.slipImageKey ?? h?.slip_image_key) ?? '').trim() !== '';
+}
