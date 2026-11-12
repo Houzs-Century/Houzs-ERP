@@ -160,10 +160,18 @@ export function moduleFamilies(codes: readonly string[]): ModuleFamily[] {
 export type ModelEntry = { code: string; name: string; supplierCode: string | null; combos: number };
 
 /** The list on the left: models that have combos, unless asked for all or searching.
- *  A search looks everywhere, and the open model never drops out from under you. */
-export function listedModels(all: readonly ModelEntry[], query: string, showAll: boolean, open: string | null): ModelEntry[] {
+ *  A search looks through every sofa model (`everyModel`, which adds models with no
+ *  SKU module yet), so a model with no combo can be found and given its first one.
+ *  The open model never drops out from under you. */
+export function listedModels(all: readonly ModelEntry[], everyModel: readonly ModelEntry[], query: string, showAll: boolean, open: string | null): ModelEntry[] {
   const q = query.trim().toLowerCase();
-  if (q) return all.filter((m) => `${m.code} ${m.name} ${m.supplierCode ?? ''}`.toLowerCase().includes(q));
+  if (q) {
+    const pool = new Map(all.map((m) => [m.code, m]));
+    for (const m of everyModel) if (!pool.has(m.code)) pool.set(m.code, m);
+    return [...pool.values()]
+      .filter((m) => `${m.code} ${m.name} ${m.supplierCode ?? ''}`.toLowerCase().includes(q))
+      .sort((a, b) => a.code.localeCompare(b.code));
+  }
   return showAll ? [...all] : all.filter((m) => m.combos > 0 || m.code === open);
 }
 
