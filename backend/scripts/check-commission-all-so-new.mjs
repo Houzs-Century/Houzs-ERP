@@ -98,7 +98,7 @@ async function main() {
             return {
               from: rg.from, to: rg.to, closed: r.closed ?? null, totals: r.totals,
               fairs: r.fairs.map((f) => ({ id: f.id, startDate: f.startDate, orders: f.sos.length, payableSen: f.payableSen })),
-              partOne: r.fairs.flatMap((f) => f.sos.map((s) => ({ docNo: s.docNo, fairId: f.id, fairName: f.name, brand: f.brand, ratePct: f.ratePct, venue: s.venue ?? null, salesperson: s.salesperson, goodsSen: s.goodsSen, paidPct: s.paidPct, commissionSen: s.commissionSen, reachedOn: s.reachedOn, mark: s.mark ?? null }))),
+              partOne: r.fairs.flatMap((f) => f.sos.map((s) => ({ docNo: s.docNo, fairId: f.id, fairName: f.name, brand: f.brand, ratePct: f.ratePct, venue: s.venue ?? null, salesperson: s.salesperson, goodsSen: s.goodsSen, paidPct: s.paidPct, commissionSen: s.commissionSen, reachedOn: s.reachedOn, mark: s.mark ?? null, ref: s.ref ?? null, soDate: s.soDate ?? null, totalSen: s.totalSen, paidSen: s.paidSen, organizer: f.organizer ?? null, fairVenue: f.venue ?? null, state: f.state ?? null, startDate: f.startDate, endDate: f.endDate ?? null, changes: (s.changes ?? []).map((ch) => ({ date: ch.date, deltaGoodsSen: ch.deltaGoodsSen, kind: ch.kind, notCounted: ch.notCounted ?? null, uncounted: ch.uncounted ?? false })) }))),
               earlier: (r.earlierOrders ?? []).map((o) => ({
                 docNo: o.docNo, fairId: o.fairId, soDate: o.soDate, events: o.events, commissionSen: o.commissionSen,
                 originalSen: o.originalSen, latestSen: o.latestSen, amendedSen: o.amendedSen, ratePct: o.ratePct,
