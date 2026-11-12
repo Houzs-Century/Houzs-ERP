@@ -301,7 +301,42 @@ describe("a sent email keeps its files on the thread", () => {
       { headers: { Authorization: `Bearer ${token}` } },
       liveEnv,
     );
-    const threads = (await list.json()) as Array<{ id: string; hasAttachment: boolean }>;
-    expect(threads.find((thread) => thread.id === first.threadId)?.hasAttachment).toBe(false);
+    const threads = (await list.json()) as Array<{ id: string; hasAttachment: boolean; attachmentCount: number; attachments: unknown[] }>;
+    const listed = threads.find((thread) => thread.id === first.threadId);
+    expect(listed).toMatchObject({ hasAttachment: false, attachmentCount: 0, attachments: [] });
+  });
+
+  test("the inbox list names the first three files and counts the rest", async () => {
+    const first = await inbound("<cust-8@example.com>");
+    reply(200, { id: "prov-sent-2" });
+    const fileNames = ["a.pdf", "b.pdf", "c.pdf", "d.pdf", "e.pdf"];
+    const res = await app.request(
+      `/api/mail-center/threads/${first.threadId}/reply`,
+      authed({
+        text: "Five files.",
+        fromAddress: MAILBOX,
+        attachments: fileNames.map((filename) => ({ filename, contentBase64: btoa("%PDF-1.4") })),
+      }),
+      liveEnv,
+    );
+    expect(res.status).toBe(200);
+
+    const list = await app.request(
+      `/api/mail-center/threads?page=1`,
+      { headers: { Authorization: `Bearer ${token}` } },
+      liveEnv,
+    );
+    const page = (await list.json()) as {
+      threads: Array<{ id: string; hasAttachment: boolean; attachmentCount: number; attachments: Array<{ id: string; filename: string; contentType: string }> }>;
+    };
+    const listed = page.threads.find((thread) => thread.id === first.threadId);
+    expect(listed?.hasAttachment).toBe(true);
+    expect(listed?.attachmentCount).toBe(5);
+    expect(listed?.attachments).toHaveLength(3);
+    for (const attachment of listed?.attachments ?? []) {
+      expect(fileNames).toContain(attachment.filename);
+      expect(attachment.contentType).toBe("application/pdf");
+      expect(attachment.id).toBeTruthy();
+    }
   });
 });

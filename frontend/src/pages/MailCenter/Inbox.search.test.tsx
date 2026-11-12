@@ -23,6 +23,8 @@ describe("MailCenter search transition", () => {
             labels: [],
             status: "open",
             hasOutbound: false,
+            attachmentCount: 0,
+            attachments: [],
             lastDirection: "inbound",
             createdAt: "2026-07-20T08:00:00Z",
           } as any,

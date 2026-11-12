@@ -48,6 +48,7 @@ import { mytDayOf, todayMyt } from "../vendor/scm/lib/dates";
 import { openLoadedTab } from "../lib/openLoadedTab";
 import { Paperclip } from "lucide-react";
 import { isImageAttachment, useAttachmentPreviewUrl } from "../pages/MailCenter/mail-attach-preview";
+import type { ThreadFilePreview } from "../pages/MailCenter/ThreadFileChips";
 
 // Mobile Mail Center — the email client, wired to /api/mail-center. Kept at
 // desktop feature parity (MailCenter/Inbox.tsx + Thread.tsx) minus the desktop-
@@ -96,6 +97,8 @@ type Thread = {
   labels: string[];
   hasOutbound: boolean;
   hasAttachment: boolean;
+  attachmentCount: number;
+  attachments: ThreadFilePreview[];
   createdAt: string;
   trashedAt?: string | null;
 };
@@ -617,6 +620,19 @@ export function MobileMailCenter({ onBack }: { onBack?: () => void }) {
 // subject (bold when unread) with the thread message count, a one-line snippet,
 // label chips, and a TRAILING teal unread dot. The unread border tint + weight
 // come from the live thread.unread. Star + reply direction stay from the wiring.
+function ThreadFileNames({ firstFile, fileCount }: { firstFile: ThreadFilePreview; fileCount: number }) {
+  const otherFileCount = fileCount - 1;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, minWidth: 0 }}>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 5, minWidth: 0, maxWidth: "75%", border: "1px solid var(--hz-c-border-subtle)", borderRadius: 999, padding: "3px 9px", fontSize: 11.5, color: "var(--hz-c-ink)" }}>
+        <Paperclip aria-hidden="true" size={12} style={{ flex: "none", color: "var(--hz-c-ink-muted)" }} />
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{firstFile.filename}</span>
+      </span>
+      {otherFileCount > 0 && <span style={{ flex: "none", fontSize: 11.5, color: "var(--hz-c-ink-muted)" }}>+{otherFileCount}</span>}
+    </div>
+  );
+}
+
 function ThreadRow({ t, colorMap, onOpen }: { t: Thread; colorMap: Map<string, string>; onOpen: () => void }) {
   const who = t.counterpartyName || t.counterpartyEmail || "(unknown)";
   return (
@@ -644,6 +660,7 @@ function ThreadRow({ t, colorMap, onOpen }: { t: Thread; colorMap: Map<string, s
           {t.messageCount > 1 && <span style={{ color: "var(--hz-c-ink-soft)", fontWeight: 600 }}> ({t.messageCount})</span>}
         </div>
         <div style={{ fontSize: 11.5, color: "var(--hz-c-ink-muted)", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.lastSnippet}</div>
+        {t.attachments.length > 0 && <ThreadFileNames firstFile={t.attachments[0]} fileCount={t.attachmentCount} />}
         {t.labels.length > 0 && (
           <div style={{ display: "flex", gap: 5, marginTop: 6, flexWrap: "wrap" }}>
             {t.labels.map((l) => {

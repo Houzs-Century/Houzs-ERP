@@ -50,6 +50,7 @@ import {
 } from "../../lib/activeCompany";
 import { ComposeDialog } from "./Compose";
 import { MailThread } from "./Thread";
+import { ThreadFileChips, type ThreadFilePreview } from "./ThreadFileChips";
 import { EMAIL_FRAME_SANDBOX, emailSrcDoc } from "./mail-email-frame";
 import { PendingAcks } from "./mail-acks";
 import { FolderItem, MyMailboxNav, VisibilityPanel } from "./mail-sidebar";
@@ -152,6 +153,8 @@ type MailThreadRow = {
   trashedAt: string | null;
   hasOutbound: boolean;
   hasAttachment: boolean;
+  attachmentCount: number;
+  attachments: ThreadFilePreview[];
 };
 
 type MailAddress = {
@@ -588,41 +591,48 @@ function CompactRow({
       <span className="flex w-3 shrink-0 items-center justify-center">
         {unread && <span className="h-2 w-2 rounded-full bg-primary" aria-hidden="true" />}
       </span>
-      <button
-        onClick={() => onOpen(t.id)}
-        className="flex min-w-0 flex-1 items-center gap-2 py-1.5 pl-1.5 pr-2 text-left"
-      >
-        <span
-          className={cn(
-            "w-32 shrink-0 truncate text-sm sm:w-40",
-            unread ? "font-semibold text-ink" : "font-medium text-ink/80",
-          )}
+      <div className="flex min-w-0 flex-1 flex-col">
+        <button
+          onClick={() => onOpen(t.id)}
+          className="flex min-w-0 items-center gap-2 py-1.5 pl-1.5 pr-2 text-left"
         >
-          {senderLabel(t)}
-        </span>
-        {chips.length > 0 && (
-          <span className="flex shrink-0 items-center gap-0.5">
-            {chips.slice(0, 3).map((l) => (
-              <span
-                key={l}
-                title={l}
-                className="h-2 w-2 rounded-full ring-1 ring-inset ring-black/10"
-                style={{ backgroundColor: colorForLabel(l, colorMap) }}
-                aria-hidden="true"
-              />
-            ))}
+          <span
+            className={cn(
+              "w-32 shrink-0 truncate text-sm sm:w-40",
+              unread ? "font-semibold text-ink" : "font-medium text-ink/80",
+            )}
+          >
+            {senderLabel(t)}
           </span>
-        )}
-        <span className="min-w-0 flex-1 truncate text-sm">
-          <span className={cn(unread ? "text-ink" : "text-ink/70")}>
-            {t.subject || "(no subject)"}
-          </span>
-          {t.messageCount > 1 && <span className="text-ink-muted"> ({t.messageCount})</span>}
-          {t.lastSnippet && (
-            <span className="text-ink-muted/70">{" — "}{cleanSnippet(t.lastSnippet)}</span>
+          {chips.length > 0 && (
+            <span className="flex shrink-0 items-center gap-0.5">
+              {chips.slice(0, 3).map((l) => (
+                <span
+                  key={l}
+                  title={l}
+                  className="h-2 w-2 rounded-full ring-1 ring-inset ring-black/10"
+                  style={{ backgroundColor: colorForLabel(l, colorMap) }}
+                  aria-hidden="true"
+                />
+              ))}
+            </span>
           )}
-        </span>
-      </button>
+          <span className="min-w-0 flex-1 truncate text-sm">
+            <span className={cn(unread ? "text-ink" : "text-ink/70")}>
+              {t.subject || "(no subject)"}
+            </span>
+            {t.messageCount > 1 && <span className="text-ink-muted"> ({t.messageCount})</span>}
+            {t.lastSnippet && (
+              <span className="text-ink-muted/70">{" — "}{cleanSnippet(t.lastSnippet)}</span>
+            )}
+          </span>
+        </button>
+        {t.attachments.length > 0 && (
+          <div className="pb-1.5 pl-[8.875rem] pr-2 sm:pl-[10.875rem]">
+            <ThreadFileChips files={t.attachments} fileCount={t.attachmentCount} onShowAll={() => onOpen(t.id)} />
+          </div>
+        )}
+      </div>
       <span className="inline-flex shrink-0 items-center gap-1 px-2 text-xs text-ink-muted group-hover:hidden group-focus-within:hidden">
         {t.hasAttachment && <Paperclip role="img" aria-label="Has attachment" className="h-3 w-3 text-ink-secondary" />}
         {fmtTime(t.lastMessageAt)}
@@ -661,72 +671,79 @@ function ComfortableRow({
       )}
     >
       <RowLead t={t} selected={selected} onToggleSelect={onToggleSelect} onRowAction={onRowAction} />
-      <button
-        onClick={() => onOpen(t.id)}
-        className="flex min-w-0 flex-1 items-start gap-2 py-3 pr-2 text-left"
-      >
-        <div className="mt-1.5 flex h-4 w-4 shrink-0 items-center justify-center">
-          {unread ? (
-            <span className="h-2.5 w-2.5 rounded-full bg-primary" />
-          ) : t.lastDirection === "outbound" ? (
-            <ArrowUpRight className="h-3.5 w-3.5 text-ink-muted/50" />
-          ) : (
-            <ArrowDownLeft className="h-3.5 w-3.5 text-ink-muted/50" />
-          )}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center justify-between gap-2">
-            <span className={cn("truncate text-sm", unread ? "font-semibold text-ink" : "font-medium text-ink/90")}>
-              {senderLabel(t)}
-            </span>
-            <span className="inline-flex shrink-0 items-center gap-1 text-xs text-ink-muted">
-              {t.hasAttachment && <Paperclip role="img" aria-label="Has attachment" className="h-3 w-3 text-ink-secondary" />}
-              {fmtTime(t.lastMessageAt)}
-            </span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className={cn("truncate text-sm", unread ? "text-ink" : "text-ink-muted")}>
-              {t.subject}
-            </span>
-            {t.messageCount > 1 && (
-              <span className="shrink-0 text-xs text-ink-muted">({t.messageCount})</span>
+      <div className="flex min-w-0 flex-1 flex-col">
+        <button
+          onClick={() => onOpen(t.id)}
+          className="flex min-w-0 items-start gap-2 py-3 pr-2 text-left"
+        >
+          <div className="mt-1.5 flex h-4 w-4 shrink-0 items-center justify-center">
+            {unread ? (
+              <span className="h-2.5 w-2.5 rounded-full bg-primary" />
+            ) : t.lastDirection === "outbound" ? (
+              <ArrowUpRight className="h-3.5 w-3.5 text-ink-muted/50" />
+            ) : (
+              <ArrowDownLeft className="h-3.5 w-3.5 text-ink-muted/50" />
             )}
           </div>
-          {t.lastSnippet && (
-            <p className="truncate text-xs text-ink-muted/80">{cleanSnippet(t.lastSnippet)}</p>
-          )}
-          {chips.length > 0 && (
-            <div className="mt-1 flex flex-wrap gap-1">
-              {chips.map((l) => {
-                const color = colorForLabel(l, colorMap);
-                return (
-                  <span
-                    key={l}
-                    style={chipStyle(color)}
-                    className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium ring-1 ring-inset ring-black/5"
-                  >
-                    <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: color }} aria-hidden="true" />
-                    {l}
-                  </span>
-                );
-              })}
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center justify-between gap-2">
+              <span className={cn("truncate text-sm", unread ? "font-semibold text-ink" : "font-medium text-ink/90")}>
+                {senderLabel(t)}
+              </span>
+              <span className="inline-flex shrink-0 items-center gap-1 text-xs text-ink-muted">
+                {t.hasAttachment && <Paperclip role="img" aria-label="Has attachment" className="h-3 w-3 text-ink-secondary" />}
+                {fmtTime(t.lastMessageAt)}
+              </span>
             </div>
-          )}
-        </div>
-        <div className="ml-1 flex shrink-0 flex-col items-end gap-1">
-          {t.mailboxAddress && (
-            <span className="max-w-[150px] truncate rounded-full bg-surface-dim px-1.5 py-0.5 text-[10px] text-ink-secondary">
-              {t.mailboxAddress}
-            </span>
-          )}
-          {t.status === "closed" && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 dark:bg-emerald-950/40 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300 ring-1 ring-inset ring-emerald-200">
-              <Check className="h-3 w-3" />
-              Archived
-            </span>
-          )}
-        </div>
-      </button>
+            <div className="flex items-center gap-1.5">
+              <span className={cn("truncate text-sm", unread ? "text-ink" : "text-ink-muted")}>
+                {t.subject}
+              </span>
+              {t.messageCount > 1 && (
+                <span className="shrink-0 text-xs text-ink-muted">({t.messageCount})</span>
+              )}
+            </div>
+            {t.lastSnippet && (
+              <p className="truncate text-xs text-ink-muted/80">{cleanSnippet(t.lastSnippet)}</p>
+            )}
+            {chips.length > 0 && (
+              <div className="mt-1 flex flex-wrap gap-1">
+                {chips.map((l) => {
+                  const color = colorForLabel(l, colorMap);
+                  return (
+                    <span
+                      key={l}
+                      style={chipStyle(color)}
+                      className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium ring-1 ring-inset ring-black/5"
+                    >
+                      <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: color }} aria-hidden="true" />
+                      {l}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          <div className="ml-1 flex shrink-0 flex-col items-end gap-1">
+            {t.mailboxAddress && (
+              <span className="max-w-[150px] truncate rounded-full bg-surface-dim px-1.5 py-0.5 text-[10px] text-ink-secondary">
+                {t.mailboxAddress}
+              </span>
+            )}
+            {t.status === "closed" && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 dark:bg-emerald-950/40 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300 ring-1 ring-inset ring-emerald-200">
+                <Check className="h-3 w-3" />
+                Archived
+              </span>
+            )}
+          </div>
+        </button>
+        {t.attachments.length > 0 && (
+          <div className="-mt-1.5 pb-3 pl-6 pr-2">
+            <ThreadFileChips files={t.attachments} fileCount={t.attachmentCount} onShowAll={() => onOpen(t.id)} />
+          </div>
+        )}
+      </div>
       <RowActions t={t} folder={folder} onRowAction={onRowAction} />
     </li>
   );
