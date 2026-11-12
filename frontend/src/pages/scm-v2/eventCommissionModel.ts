@@ -10,6 +10,10 @@
 // sits on exactly one line, so the lines add up to its total —
 //   Fair commission       this range's fairs (by SO date: the orders opened in
 //                         it), less the upsales / drops inside them;
+//   No fair               by SO date, the orders opened in it with no fair, at
+//                         their own brand's rate (owner 2026-11-12: 「全部列出来，
+//                         没有展会的标 No fair，要算佣金」 — Finance leaves out the
+//                         ones that should not earn with Don't count);
 //   Upsales / drop sales  the effect of the range's upsales and drops;
 //   Late bills (补开单)    an order sold at a fair that had ended before the range
 //                         and keyed in it (「上个月展会卖、这个月才开单」), all of it;
@@ -200,21 +204,24 @@ export const forBrand = (r: EventCommission, brand: string): EventCommission => 
 
 /* ── The summary: each sen on one line ────────────────────────────────────── */
 
-export type SummaryKey = 'fair' | 'changes' | 'late' | 'earlier' | 'monthAdj' | 'deferredIn';
+export type SummaryKey = 'fair' | 'noFair' | 'changes' | 'late' | 'earlier' | 'monthAdj' | 'deferredIn';
+/** The server's "No fair" rows (by SO date, an order with no fair) carry an id below 0. */
+export const isNoFair = (f: Pick<CommissionFairRow, 'id'>): boolean => f.id < 0;
 export type CommissionSummary = Record<SummaryKey, number> & { totalSen: number };
 export const SUMMARY_LABEL: Record<SummaryKey, string> = {
-  fair: 'Fair commission', changes: 'Upsales / drop sales', late: 'Late bills (补开单)', earlier: 'Earlier orders',
+  fair: 'Fair commission', noFair: 'No fair', changes: 'Upsales / drop sales', late: 'Late bills (补开单)', earlier: 'Earlier orders',
   monthAdj: 'Closed months — adjustments', deferredIn: 'Moved from last month',
 };
 export const SUMMARY_HINT: Record<SummaryKey, string> = {
   fair: 'what the orders earned, before their upsales / drop sales',
+  noFair: 'orders opened in the range with no fair, at the rate of their own brand',
   changes: 'the effect of the upsales and drop sales, at the brand rate',
   late: 'sold at a fair that had ended before the range, keyed in it',
   earlier: 'earlier orders that reached 30% here, or were cancelled',
   monthAdj: 'what changed for a closed month\'s orders',
   deferredIn: 'what last month moved here',
 };
-export const SUMMARY_ORDER: SummaryKey[] = ['fair', 'changes', 'late', 'earlier', 'monthAdj', 'deferredIn'];
+export const SUMMARY_ORDER: SummaryKey[] = ['fair', 'noFair', 'changes', 'late', 'earlier', 'monthAdj', 'deferredIn'];
 
 /** One order's commission on this report, split over the summary lines. */
 export type OrderLine = {
@@ -236,7 +243,7 @@ export function orderLines(r: EventCommission): OrderLine[] {
   const late = lateOf(r);
   const effect = new Map(changedOf(r).map((o) => [o.docNo, o]));
   const lines = new Map<string, OrderLine>();
-  const zero = (): Record<SummaryKey, number> => ({ fair: 0, changes: 0, late: 0, earlier: 0, monthAdj: 0, deferredIn: 0 });
+  const zero = (): Record<SummaryKey, number> => ({ fair: 0, noFair: 0, changes: 0, late: 0, earlier: 0, monthAdj: 0, deferredIn: 0 });
   const lineOf = (docNo: string, init: () => Omit<OrderLine, 'split' | 'totalSen' | 'marks' | 'markedSen'>): OrderLine => {
     let l = lines.get(docNo);
     if (!l) {
@@ -259,7 +266,7 @@ export function orderLines(r: EventCommission): OrderLine[] {
       const e = effect.get(s.docNo);
       const inside = e && e.part === 'range' ? e.effectSen : 0;
       add(l, 'changes', inside);
-      add(l, 'fair', s.commissionSen - inside);
+      add(l, isNoFair(f) ? 'noFair' : 'fair', s.commissionSen - inside);
     }
   }
   const earlierByDoc = new Map<string, number>();
@@ -290,7 +297,7 @@ export function orderLines(r: EventCommission): OrderLine[] {
 /** The report on the summary lines; they add up to its total. */
 export function summaryOf(r: EventCommission): CommissionSummary {
   const lines = orderLines(r);
-  const out = { fair: 0, changes: 0, late: 0, earlier: 0, monthAdj: 0, deferredIn: 0, totalSen: 0 };
+  const out = { fair: 0, noFair: 0, changes: 0, late: 0, earlier: 0, monthAdj: 0, deferredIn: 0, totalSen: 0 };
   for (const l of lines) {
     for (const k of SUMMARY_ORDER) out[k] += l.split[k];
     out.totalSen += l.totalSen;

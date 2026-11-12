@@ -88,7 +88,9 @@ export type CommissionFair = {
 
 export type CommissionSo = {
   docNo: string;
-  projectId: number;
+  /** Its fair (project); null when it has none — by SO date such an order is
+      listed under "No fair" (owner 2026-11-12). */
+  projectId: number | null;
   salesperson: string | null;
   customer: string | null;
   status: string;
@@ -100,6 +102,11 @@ export type CommissionSo = {
   soDate: string | null;
   /** Ref No. — the booklet number typed on the order (customer_so_no). */
   ref?: string | null;
+  /** The order's own brand (its branding, else its VP brand): the rate of an
+      order with no fair. */
+  brand?: string | null;
+  /** The venue typed on the order: shown for an order with no fair. */
+  venue?: string | null;
 };
 
 export type CommissionPayment = { docNo: string; paidAt: string; amountSen: number };
@@ -166,6 +173,8 @@ export type SoRow = {
   commissionSen: number;
   /** What 「这次改价不算」 left out of the commission here; absent when nothing. */
   uncountedSen?: number;
+  /** The venue typed on an order with no fair (its fair row is "No fair"). */
+  venue?: string | null;
   changes: ChangeView[];
 };
 
@@ -527,6 +536,13 @@ export function fairOrder(a: Pick<CommissionFair, 'startDate' | 'endDate' | 'ven
 }
 
 export const COMMISSION_PAID_SHARE = 0.3;
+/* By SO date, every order opened in the range is listed (owner 2026-11-12:
+   「全部列出来，没有展会的标 No fair，要算佣金，然后我检查了不要算的我才自己按
+   don't count」): one with no fair sits under a "No fair" row of its own brand,
+   at that brand's rate, from the first month the system works out (September
+   2026) — the old orders before it, many of them showroom sales, stay out. */
+export const NO_FAIR_NAME = 'No fair';
+export const NO_FAIR_FROM = '2026-09-01';
 /** so_total_changes.source of the rows back-filled from the modification history. */
 export const HISTORY = 'history';
 export const HISTORY_IGNORED = 'history-ignored';
@@ -612,9 +628,29 @@ export function buildEventCommission(input: {
   }
   const rateOf = (f: CommissionFair): number | null => input.ratePctByBrand.get((f.brand ?? '').trim()) ?? null;
   const fairById = new Map(input.fairs.map((f) => [f.id, f]));
+  /* By SO date, an order with no fair opened from NO_FAIR_FROM goes under a
+     "No fair" row of its own brand (the rate card's spelling of it, any case),
+     at that brand's rate. Rows numbered -1, -2 … by brand, so a report reads the
+     same each time. */
+  const cardOf = (brand: string | null | undefined): string | null => {
+    const b = (brand ?? '').trim();
+    if (!b) return null;
+    if (input.ratePctByBrand.has(b)) return b;
+    return [...input.ratePctByBrand.keys()].find((k) => k.trim().toUpperCase() === b.toUpperCase()) ?? b;
+  };
+  const noFair = (so: CommissionSo): boolean => basis === 'so_date' && so.projectId == null && so.soDate != null && so.soDate >= NO_FAIR_FROM;
+  const noFairBrands = [...new Set(input.sos.filter(noFair).map((so) => cardOf(so.brand) ?? ''))].sort();
+  const noFairId = new Map(noFairBrands.map((b, i) => [b, -(i + 1)]));
+  for (const [b, id] of noFairId) {
+    fairById.set(id, {
+      id, name: NO_FAIR_NAME, brand: b || null, startDate: '', endDate: null, totalSalesRm: null, estimateRm: null,
+      organizer: null, venue: null, state: null,
+    });
+  }
+  const sosIn: CommissionSo[] = input.sos.map((so) => (noFair(so) ? { ...so, projectId: noFairId.get(cardOf(so.brand) ?? '')! } : so));
   const placeOf = (so: CommissionSo, f: CommissionFair): OrderPlace => ({
     docNo: so.docNo, fairId: f.id, fairName: f.name,
-    brand: f.brand, organizer: f.organizer ?? null, venue: f.venue ?? null, state: f.state ?? null,
+    brand: f.brand, organizer: f.organizer ?? null, venue: f.id < 0 ? (so.venue ?? null) : (f.venue ?? null), state: f.state ?? null,
     salesperson: so.salesperson, customer: so.customer, ratePct: rateOf(f),
     ref: so.ref ?? null, soDate: so.soDate, status: so.status,
   });
@@ -692,6 +728,7 @@ export function buildEventCommission(input: {
       paidPct: so.totalSen > 0 ? Math.round((paid / so.totalSen) * 1000) / 10 : 0,
       reachedOn: reached,
       ...(reached ? earnedOn(goods, uncountedGoods(so, chs, to), rate) : { commissionSen: 0 }),
+      ...(so.projectId != null && so.projectId < 0 ? { venue: so.venue ?? null } : {}),
       changes: chs.filter((ch) => mytDay(ch.changedAt) <= to).map((ch) => changeView(ch, so)).filter((v): v is ChangeView => v != null),
     };
   };
@@ -717,12 +754,12 @@ export function buildEventCommission(input: {
   const fairs: FairRow[] = [];
   if (basis === 'fair') {
     for (const f of input.fairs.filter((x) => inRange(x.startDate)).sort(fairOrder)) {
-      fairs.push(fairRowOf(f, input.sos.filter((s) => s.projectId === f.id)));
+      fairs.push(fairRowOf(f, sosIn.filter((s) => s.projectId === f.id)));
     }
   } else {
     const opened = new Map<number, CommissionSo[]>();
-    for (const so of input.sos) {
-      if (!inRange(so.soDate) || !fairById.has(so.projectId)) continue;
+    for (const so of sosIn) {
+      if (so.projectId == null || !inRange(so.soDate) || !fairById.has(so.projectId)) continue;
       const list = opened.get(so.projectId);
       if (list) list.push(so); else opened.set(so.projectId, [so]);
     }
@@ -736,8 +773,8 @@ export function buildEventCommission(input: {
     basis === 'fair' ? f.startDate < from : so.soDate != null && so.soDate < from;
   const adjustments: AdjustmentRow[] = [];
   const earlierOrders: EarlierOrderRow[] = [];
-  for (const so of input.sos) {
-    const f = fairById.get(so.projectId);
+  for (const so of sosIn) {
+    const f = so.projectId == null ? undefined : fairById.get(so.projectId);
     if (!f || !earlier(so, f)) continue;
     const firstLine = adjustments.length;
     if (so.status === 'DRAFT' || so.onHold || so.status === 'ON_HOLD') continue;
@@ -803,9 +840,9 @@ export function buildEventCommission(input: {
 
   /* 补开单 (owner 2026-11-12, 「上个月展会卖、这个月才开单」): keyed in the range
      for a fair that had ended before it. */
-  const lateBills = input.sos
+  const lateBills = sosIn
     .filter((so) => {
-      const f = fairById.get(so.projectId);
+      const f = so.projectId == null ? undefined : fairById.get(so.projectId);
       const ended = f ? (f.endDate || f.startDate) : '';
       return f != null && ended !== '' && ended < from && inRange(mytDay(so.createdAt));
     })

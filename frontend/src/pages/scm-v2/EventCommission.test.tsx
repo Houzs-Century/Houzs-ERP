@@ -214,21 +214,42 @@ describe('the Event Commission tab', () => {
     expect(csv).toContain('"Late bills (补开单)","0.00"');
     expect(csv).toContain('"Earlier orders","13.00"');
     expect(csv).toContain('"Total","153.00"');
-    expect(csv).toContain('"HC-SO-2610-001","","Kuala Lumpur [AKEMI] BIGHOME @ MID VALLEY","AKEMI","Ethan","2026-10-02","1,000.00","36.4%","2026-10-02","119.00","21.00","0.00","0.00","0.00","0.00","140.00","",""');
+    expect(csv).toContain('"HC-SO-2610-001","","Kuala Lumpur [AKEMI] BIGHOME @ MID VALLEY","AKEMI","Ethan","2026-10-02","1,000.00","36.4%","2026-10-02","119.00","0.00","21.00","0.00","0.00","0.00","0.00","140.00","",""');
     expect(csv).toContain('"HC-SO-2609-051","","SELANGOR [ZANOTTI] BIGHOME @ SUNWAY PYRAMID","ZANOTTI","Jason"');
-    expect(csv.trim().split('\n').at(-1)).toBe('"Total","","","","","","","","","119.00","21.00","0.00","13.00","0.00","0.00","153.00","",""');
+    expect(csv.trim().split('\n').at(-1)).toBe('"Total","","","","","","","","","119.00","0.00","21.00","0.00","13.00","0.00","0.00","153.00","",""');
   });
 
   test('the summary lines add up to the total; a late bill (补开单) is all on its own line', () => {
-    expect(summaryOf(REPORT)).toEqual({ fair: 119_00, changes: 21_00, late: 0, earlier: 13_00, monthAdj: 0, deferredIn: 0, totalSen: 153_00 });
+    expect(summaryOf(REPORT)).toEqual({ fair: 119_00, noFair: 0, changes: 21_00, late: 0, earlier: 13_00, monthAdj: 0, deferredIn: 0, totalSen: 153_00 });
     const late = { ...REPORT, lateBills: ['HC-SO-2609-050'] };
-    expect(summaryOf(late)).toEqual({ fair: 119_00, changes: 21_00, late: 143_00, earlier: -130_00, monthAdj: 0, deferredIn: 0, totalSen: 153_00 });
+    expect(summaryOf(late)).toEqual({ fair: 119_00, noFair: 0, changes: 21_00, late: 143_00, earlier: -130_00, monthAdj: 0, deferredIn: 0, totalSen: 153_00 });
     expect(orderLines(late).find((l) => l.docNo === 'HC-SO-2609-050')!.split.late).toBe(143_00);
     renderTab(<EventCommissionTab />);
     expect(tile('Fair commission')).toContain('119.00');
     expect(tile('Upsales / drop sales')).toContain('21.00');
     expect(tile('Late bills (补开单)')).toContain('0 orders');
     expect(tile('Earlier fairs')).toContain('13.00');
+  });
+
+  test('By SO date lists an order with no fair too: "No fair", the venue typed on it, its brand’s rate — its own summary line and tile', () => {
+    const NO_FAIR = {
+      id: -1, name: 'No fair', brand: 'ERGOTEX', organizer: null, venue: null, state: null, startDate: '', endDate: null,
+      ratePct: 14, totalSalesRm: null, estimateRm: null, payableSen: 140_00,
+      sos: [{
+        docNo: 'HC-SO-2610-058', soDate: '2026-10-05', venue: 'THE STARLING MALL', salesperson: 'Shawn', customer: 'Lee',
+        goodsSen: 1_000_00, totalSen: 1_000_00, paidSen: 1_000_00, paidPct: 100, reachedOn: '2026-10-05', commissionSen: 140_00, changes: [],
+      }],
+    };
+    current = { ...BY_SO_DATE, fairs: [...BY_SO_DATE.fairs, NO_FAIR], totals: { ...BY_SO_DATE.totals, payableSen: 270_00, totalSen: 270_00 } };
+    renderTab(<EventCommissionTab />);
+    fireEvent.click(screen.getByRole('button', { name: 'By SO date' }));
+    const row = cellsOf(rowOf(tables()[0]!, 'HC-SO-2610-058'));
+    for (const t of ['ERGOTEX', 'No fair', 'THE STARLING MALL', 'Shawn', '140.00']) expect(row).toContain(t);
+    expect(tile('No fair')).toContain('140.00');
+    expect(tile('No fair')).toContain('1 order');
+    expect(tile('Fair commission')).toContain('1 order');
+    expect(summaryOf(current).noFair).toBe(140_00);
+    expect(eventCommissionCsv(current)).toContain('"No fair","140.00"');
   });
 
   test('By SO date is a list of the orders opened in the range, one row each, the fair as columns', () => {
@@ -261,7 +282,7 @@ describe('the redesign (batch 6 §5.11)', () => {
     expect(sheet.title).toBe('Event commission');
     expect(sheet.subtitle).toBe('October 2026 · by fair · all brands · total 153.00 · RM');
     expect(sheet.tables[0]!.rows.map((r) => [r.label, r.cells[0]])).toEqual([
-      ['Fair commission', 119_00], ['Upsales / drop sales', 21_00], ['Late bills (补开单)', 0], ['Earlier orders', 13_00],
+      ['Fair commission', 119_00], ['No fair', 0], ['Upsales / drop sales', 21_00], ['Late bills (补开单)', 0], ['Earlier orders', 13_00],
       ['Closed months — adjustments', 0], ['Moved from last month', 0], ['Total commission', 153_00],
     ]);
     expect(sheet.tables[1]!.columns.map((c) => c.label)).toEqual(['Dates', 'Rate', 'Total sales', 'Estimate', 'Orders', 'Commission']);
@@ -553,9 +574,9 @@ describe('a price change left out, and the SO list\'s columns (owner 2026-11-12)
   });
 
   test('the export says which mark: a price change left out reads apart from an order not counted, and both when both', () => {
-    expect(summaryOf(LEFT_OUT)).toEqual({ fair: 119_00, changes: 0, late: 0, earlier: 13_00, monthAdj: 0, deferredIn: 0, totalSen: 132_00 });
+    expect(summaryOf(LEFT_OUT)).toEqual({ fair: 119_00, noFair: 0, changes: 0, late: 0, earlier: 13_00, monthAdj: 0, deferredIn: 0, totalSen: 132_00 });
     expect(eventCommissionCsv(LEFT_OUT)).toContain(
-      '"HC-SO-2610-001","","Kuala Lumpur [AKEMI] BIGHOME @ MID VALLEY","AKEMI","Ethan","2026-10-02","1,000.00","36.4%","2026-10-02","119.00","0.00","0.00","0.00","0.00","0.00","119.00","Price change not counted","21.00"',
+      '"HC-SO-2610-001","","Kuala Lumpur [AKEMI] BIGHOME @ MID VALLEY","AKEMI","Ethan","2026-10-02","1,000.00","36.4%","2026-10-02","119.00","0.00","0.00","0.00","0.00","0.00","0.00","119.00","Price change not counted","21.00"',
     );
     const exclude = { ...changeMark, id: 'x1', kind: 'exclude' as const, month: null, reason: null };
     const both = { ...LEFT_OUT, marked: [{ ...LEFT_OUT.marked![0]!, mark: exclude, commissionSen: 119_00 }, ...LEFT_OUT.marked!] };
