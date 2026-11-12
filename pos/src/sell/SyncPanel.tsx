@@ -6,16 +6,27 @@ import { useEffect, useState } from "react";
 import { backupFolderSupported, downloadBackup, pickBackupFolder } from "../backup";
 import { refreshBundle } from "../deviceStore";
 import { fmtMyt } from "../loginRules";
-import { buildBackup, heartbeat, onSyncStatus, setBackupFolder, syncNow, type SyncStatus } from "../sync";
+import { buildBackup, heartbeat, initialSyncStatus, onSyncStatus, setBackupFolder, syncNow, type SyncStatus } from "../sync";
+import { lostTerminalText } from "../reconnectRules";
 import type { DeviceState } from "../types";
 import { Modal } from "./Modal";
 
 const rm = (sen: number) => (sen / 100).toFixed(2);
 
 export function useSyncStatus(): SyncStatus {
-  const [s, setS] = useState<SyncStatus>(() => ({ phase: "idle", online: null, pending: 0, pending_sen: 0, last_sync_at: null, last_attempt_at: null, last_error: null, last_result: null, catalog_version: null, catalog_update_available: false, backup_at: null, backup_folder: null }));
+  const [s, setS] = useState<SyncStatus>(initialSyncStatus);
   useEffect(() => onSyncStatus(setS), []);
   return s;
+}
+
+/** On the front and on the sell screen: this device was cut off (and what
+ *  happens next), or another device is waiting for a supervisor. */
+export function ReconnectBanner({ terminal }: { terminal: string }) {
+  const s = useSyncStatus();
+  const lost = lostTerminalText(s.lost_terminal, terminal);
+  if (lost) return <div className="banner offline">{lost}</div>;
+  if (s.reconnect_requests > 0) return <div className="banner update">{s.reconnect_requests === 1 ? "A POS device is" : `${s.reconnect_requests} POS devices are`} asking to be reconnected. A supervisor can approve it in Settings.</div>;
+  return null;
 }
 
 /** The top-bar / status-bar words. */

@@ -9,11 +9,12 @@
 import { deviceApi, erpReachable } from "./api";
 import { encryptBackup, tokenHash, writeBackupToFolder, type BackupFile } from "./backup";
 import { idb, storageEstimate } from "./db";
-import { loadDeviceState, platformName, refreshBundle, saveDeviceState } from "./deviceStore";
+import { loadDeviceState, platformName, refreshBundle, saveDeviceState, stateFromBundle } from "./deviceStore";
+import { lostTerminal, requestRefused, type LostTerminal } from "./reconnectRules";
 import { APP_VERSION } from "./pwa";
 import type { SaleRecord } from "./sale";
 import { currentCounter, listSales, pendingSummary, saveSale } from "./salesStore";
-import type { DeviceState } from "./types";
+import type { DeviceState, PosBundle } from "./types";
 
 export type SyncStatus = {
   phase: "idle" | "syncing";
@@ -28,16 +29,24 @@ export type SyncStatus = {
   catalog_update_available: boolean;
   backup_at: string | null;
   backup_folder: string | null;
+  /** This device lost its terminal to another one (reconnectRules.ts). */
+  lost_terminal: LostTerminal;
+  /** Other devices of the company waiting for a supervisor to reconnect them. */
+  reconnect_requests: number;
 };
+
+export const initialSyncStatus = (): SyncStatus => ({ phase: "idle", online: null, pending: 0, pending_sen: 0, last_sync_at: null, last_attempt_at: null, last_error: null, last_result: null, catalog_version: null, catalog_update_available: false, backup_at: null, backup_folder: null, lost_terminal: "no", reconnect_requests: 0 });
 
 type BatchResult = { uuid: string; status: "accepted" | "duplicate" | "updated" | "rejected"; reason?: string; stock_warning?: string | null };
 
-let status: SyncStatus = { phase: "idle", online: null, pending: 0, pending_sen: 0, last_sync_at: null, last_attempt_at: null, last_error: null, last_result: null, catalog_version: null, catalog_update_available: false, backup_at: null, backup_folder: null };
+let status: SyncStatus = initialSyncStatus();
 const listeners = new Set<(s: SyncStatus) => void>();
 let running: Promise<void> | null = null;
 let timer: number | null = null;
 let heartbeatTimer: number | null = null;
 let backoffMs = 0;
+let claimTimer: number | null = null;
+let asking = false;
 let cashierName: string | null = null;
 const stateListeners = new Set<(s: DeviceState) => void>();
 
@@ -97,6 +106,7 @@ export function syncNow(reason: string): Promise<void> {
     } catch (e) {
       const msg = e instanceof Error ? e.message : "sync failed";
       set({ last_error: `${reason}: ${msg}` });
+      if (lostTerminal(e)) void askToReconnect();
       backoffMs = Math.min(5 * 60_000, backoffMs ? backoffMs * 2 : 15_000);
     } finally {
       await refreshCounts();
@@ -124,7 +134,7 @@ export async function heartbeat(): Promise<void> {
       storage, catalog_version: state.bundle.event.catalog_version, db_empty: total === 0,
     });
     const newer = r.catalog_version != null && r.catalog_version > state.bundle.event.catalog_version;
-    set({ catalog_version: r.catalog_version, catalog_update_available: newer });
+    set({ catalog_version: r.catalog_version, catalog_update_available: newer, lost_terminal: "no", reconnect_requests: r.reconnect_requests ?? 0 });
     if (newer) {
       const next = await refreshBundle(state);
       set({ catalog_update_available: false, catalog_version: next.bundle.event.catalog_version });
@@ -132,6 +142,48 @@ export async function heartbeat(): Promise<void> {
     }
   } catch (e) {
     set({ last_error: e instanceof Error ? e.message : "heartbeat failed" });
+    if (lostTerminal(e)) void askToReconnect();
+  }
+}
+
+const stopClaiming = () => { if (claimTimer) { window.clearInterval(claimTimer); claimTimer = null; } };
+
+/** The ERP no longer knows this token: ask for the terminal back with it
+ *  (only the device displaced last is heard), then look every 20 s for a
+ *  supervisor's approval. A refusal means this device needs a pairing link. */
+async function askToReconnect(): Promise<void> {
+  if (asking) return;
+  asking = true;
+  try {
+    const state = await loadDeviceState();
+    if (!state) return;
+    const r = await deviceApi.reconnectRequest(state.token, state.device_name);
+    set({ lost_terminal: "waiting" });
+    if (r.status === "approved") { await claimTerminal(); return; }
+    if (!claimTimer) claimTimer = window.setInterval(() => void claimTerminal(), 20_000);
+  } catch (e) {
+    if (requestRefused(e)) { stopClaiming(); set({ lost_terminal: "not_eligible" }); }
+  } finally {
+    asking = false;
+  }
+}
+
+/** Collect the new token once approved: the bills and the settings of this
+ *  device stay, the sync engine restarts on the new token and pushes them. */
+async function claimTerminal(): Promise<void> {
+  const state = await loadDeviceState();
+  if (!state) return;
+  try {
+    const r = await deviceApi.reconnectClaim<PosBundle>(state.token);
+    if (r.status === "none") { void askToReconnect(); return; }
+    if (r.status !== "approved" || !r.token || !r.bundle) return;
+    const next = stateFromBundle(r.token, r.bundle, state, state.device_name);
+    await saveDeviceState(next);
+    stopClaiming();
+    set({ lost_terminal: "no", last_error: null });
+    for (const fn of stateListeners) fn(next);
+  } catch (e) {
+    if (requestRefused(e)) { stopClaiming(); set({ lost_terminal: "not_eligible" }); }
   }
 }
 
@@ -186,5 +238,6 @@ export function startSyncEngine(heartbeatMinutes: number): () => void {
     window.removeEventListener("offline", onOffline);
     if (heartbeatTimer) window.clearInterval(heartbeatTimer);
     if (timer) window.clearTimeout(timer);
+    stopClaiming();
   };
 }

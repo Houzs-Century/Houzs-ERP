@@ -120,6 +120,8 @@ export type PosTerminal = {
   app_version: string | null;
   status: string;
   active: boolean;
+  /** A device that lost this terminal and waits for an approval to get it back. */
+  reconnect: { device_name: string | null; requested_at: string } | null;
 };
 
 const list = <T,>(raw: unknown): T[] => (raw && typeof raw === "object" && Array.isArray((raw as { data?: unknown }).data) ? ((raw as { data: T[] }).data) : []);
