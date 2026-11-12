@@ -92,17 +92,21 @@ export type CommissionChange = {
   deltaGoodsSen: number;
   kind: 'upsale' | 'drop';
   notCounted: 'opening_day' | 'first_price' | 'system_fix' | null;
+  /** An upsale / drop Finance left out (「这次改价不算」): listed, moving no commission. Absent before 2026-11-12. */
+  uncounted?: boolean;
   source: string;
   changedBy: string | null;
   /** Back-filled from the SO's modification history (1–19 October 2026); absent from older servers. */
   fromHistory?: boolean;
 };
-/* Finance's two buttons (owner 2026-11-12: 「1个这张单不要算，1个是这个算下个月」). */
-export type CommissionMarkKind = 'exclude' | 'defer';
+/* Finance's buttons (owner 2026-11-12: 「1个这张单不要算，1个是这个算下个月」, then on
+   the Upsales / Drop sales table 「只是改价不算」 — 'exclude_change'). */
+export type CommissionMarkKind = 'exclude' | 'defer' | 'exclude_change';
 export type CommissionMarkInfo = {
   id: string;
   kind: CommissionMarkKind;
-  /** defer: the month (YYYY-MM) its commission leaves; exclude: null. */
+  /** defer: the month (YYYY-MM) its commission leaves; exclude_change: the month
+      whose upsales / drop sales are left out; exclude: null. */
   month: string | null;
   reason: string | null;
   markedBy: string | null;
@@ -125,6 +129,8 @@ export type CommissionSoRow = {
   paidPct: number;
   reachedOn: string | null;
   commissionSen: number;
+  /** What 「这次改价不算」 left out of the commission here; absent when nothing. */
+  uncountedSen?: number;
   changes: CommissionChange[];
 };
 export type CommissionFairRow = {
@@ -159,6 +165,9 @@ export type CommissionAdjustment = {
   goodsSen: number;
   commissionSen: number;
   beforeReach: boolean;
+  /** An upsale / drop Finance left out, and what that left out of the line. */
+  uncounted?: boolean;
+  uncountedSen?: number;
 };
 /** Where an order sits: its fair and that fair's place (owner 2026-10-26). */
 export type CommissionOrderPlace = {
@@ -171,7 +180,7 @@ export type CommissionOrderPlace = {
 /** An earlier order once, its final result in the range (「我看final结果」). */
 export type CommissionEarlierOrder = CommissionOrderPlace & {
   mark?: CommissionMarkInfo;
-  events: Array<{ date: string; kind: CommissionAdjustment['kind']; beforeReach: boolean }>;
+  events: Array<{ date: string; kind: CommissionAdjustment['kind']; beforeReach: boolean; uncounted?: boolean }>;
   lastDate: string;
   originalSen: number; latestSen: number; amendedSen: number;
   commissionSen: number;
@@ -180,9 +189,13 @@ export type CommissionEarlierOrder = CommissionOrderPlace & {
 /** An order the range's upsales / drop sales changed, once, final. */
 export type CommissionChangedOrder = CommissionOrderPlace & {
   mark?: CommissionMarkInfo;
+  /** The 「这次改价不算」 mark behind the changes left out — for the row's Undo. */
+  changeMark?: CommissionMarkInfo;
   part: 'range' | 'earlier';
   lastChange: string;
   originalSen: number; latestSen: number; amendedSen: number;
+  /** The goods of the changes left out: in Amended, not in the effect. */
+  uncountedGoodsSen?: number;
   reachedOn: string | null;
   effectSen: number;
   fromHistory: boolean;
@@ -277,7 +290,8 @@ export function useReopenCommissionMonth() {
 }
 
 /** Mark an order (Finance): 「这张单不要算」 — not counted, any month; 「这个算下个月」 —
- *  what it earns in `month` (an open month) is paid the month after. */
+ *  what it earns in `month` (an open month) is paid the month after; 「这次改价不算」
+ *  — its upsales / drop sales of `month` move no commission, the order still counted. */
 export function useMarkCommissionOrder() {
   const qc = useQueryClient();
   return useMutation({

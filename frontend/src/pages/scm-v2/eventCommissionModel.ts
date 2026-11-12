@@ -17,7 +17,9 @@
 //   Closed months         what changed for a closed month's orders;
 //   Moved from last month what the month before moved here (「这个算下个月」).
 // An order Finance marked (「这张单不要算」 / 「这个算下个月」) earns nothing here;
-// what the mark took out is listed apart, not in the total.
+// what the mark took out is listed apart, not in the total. A price change
+// Finance left out (「这次改价不算」) is not on the Upsales / drop sales line and
+// the order earns on the rest — what it left out is listed apart the same way.
 // ----------------------------------------------------------------------------
 
 import { guardFormula } from '../../lib/csv';
@@ -69,6 +71,8 @@ export const NOT_COUNTED: Record<NonNullable<CommissionChange['notCounted']>, st
   opening_day: 'opening-day fix, not counted', first_price: 'priced after opening, not counted',
   system_fix: 'system price fix, not counted',
 };
+/** An upsale / drop Finance left out (「这次改价不算」), beside the change. */
+export const LEFT_OUT_NOTE = 'left out by Finance, not counted';
 
 /* The words each basis puts on the page. */
 export const BASIS_WORDS: Record<CommissionBasis, { toggle: string; part1: string; part1Empty: string; part2: string; part2Empty: string; inRange: string; earlier: string }> = {
@@ -97,10 +101,14 @@ export const markedOf = (r: EventCommission): CommissionMarkedOrder[] => r.marke
 export const deferredInOf = (r: EventCommission): CommissionDeferredIn[] => r.deferredIn ?? [];
 /** What happened to an earlier order in the range, in a few words. */
 export const whatOf = (o: CommissionEarlierOrder): string =>
-  o.events.map((e) => `${KIND_LABEL[e.kind]}${e.beforeReach ? ' (before 30%)' : ''}`).filter((w, i, all) => all.indexOf(w) === i).join(' · ');
-/** A mark in a few words: "Not counted" or "Next month (2026/11)". */
-export const markWords = (m: Pick<CommissionMarkInfo, 'kind' | 'month'>): string =>
-  (m.kind === 'exclude' ? 'Not counted' : `Next month${m.month ? ` (${monthLabel(nextMonthOf(m.month))})` : ''}`);
+  o.events.map((e) => `${KIND_LABEL[e.kind]}${e.uncounted ? ' (left out)' : e.beforeReach ? ' (before 30%)' : ''}`)
+    .filter((w, i, all) => all.indexOf(w) === i).join(' · ');
+/** A mark in a few words: "Not counted", "Price change not counted" or "Next month (2026/11)". */
+export const markWords = (m: Pick<CommissionMarkInfo, 'kind' | 'month'>): string => {
+  if (m.kind === 'exclude') return 'Not counted';
+  if (m.kind === 'exclude_change') return 'Price change not counted';
+  return `Next month${m.month ? ` (${monthLabel(nextMonthOf(m.month))})` : ''}`;
+};
 
 /** A fair's name on two lines. Fair names read "<state> [<BRAND>] <ORGANIZER>
     @ <VENUE>" — "Kuala Lumpur [AKEMI] BIGHOME @ MID VALLEY" becomes
@@ -189,10 +197,13 @@ export type OrderLine = {
   goodsSen: number | null; paidPct: number | null; reachedOn: string | null;
   split: Record<SummaryKey, number>;
   totalSen: number;
-  /** A mark on it, and what the mark took out of this report. */
-  mark: CommissionMarkInfo | null;
+  /** Its marks — the order not counted or moved, a price change left out — and
+      what they took out of this report together. */
+  marks: CommissionMarkInfo[];
   markedSen: number;
 };
+/** An order's marks in the export's one cell. */
+const marksText = (l: OrderLine): string => l.marks.map(markWords).join('; ');
 
 /** Every order on the report, once, its commission split over the summary
     lines; the lines' sums are the summary and add up to the report's total. */
@@ -201,10 +212,10 @@ export function orderLines(r: EventCommission): OrderLine[] {
   const effect = new Map(changedOf(r).map((o) => [o.docNo, o]));
   const lines = new Map<string, OrderLine>();
   const zero = (): Record<SummaryKey, number> => ({ fair: 0, changes: 0, late: 0, earlier: 0, monthAdj: 0, deferredIn: 0 });
-  const lineOf = (docNo: string, init: () => Omit<OrderLine, 'split' | 'totalSen' | 'mark' | 'markedSen'>): OrderLine => {
+  const lineOf = (docNo: string, init: () => Omit<OrderLine, 'split' | 'totalSen' | 'marks' | 'markedSen'>): OrderLine => {
     let l = lines.get(docNo);
     if (!l) {
-      l = { ...init(), split: zero(), totalSen: 0, mark: null, markedSen: 0 };
+      l = { ...init(), split: zero(), totalSen: 0, marks: [], markedSen: 0 };
       lines.set(docNo, l);
     }
     return l;
@@ -245,8 +256,8 @@ export function orderLines(r: EventCommission): OrderLine[] {
   for (const d of deferredInOf(r)) add(lineOf(d.docNo, placeLine(d)), 'deferredIn', d.commissionSen);
   for (const m of markedOf(r)) {
     const l = lineOf(m.docNo, placeLine(m));
-    l.mark = m.mark;
-    l.markedSen = m.commissionSen;
+    l.marks.push(m.mark);
+    l.markedSen += m.commissionSen;
   }
   return [...lines.values()].sort((a, b) => (a.fairName < b.fairName ? -1 : a.fairName > b.fairName ? 1 : a.docNo < b.docNo ? -1 : 1));
 }
@@ -287,14 +298,14 @@ export const eventCommissionCsv = (r: EventCommission): string => {
   for (const l of orderLines(r)) {
     lines.push(row([
       l.docNo, l.ref, l.fairName, l.brand, l.salesperson, l.soDate, l.goodsSen == null ? '' : fmtRm(l.goodsSen), percentText(l.paidPct), l.reachedOn,
-      ...SUMMARY_ORDER.map((k) => fmtRm(l.split[k])), fmtRm(l.totalSen), l.mark ? markWords(l.mark) : '', l.mark ? fmtRm(l.markedSen) : '',
+      ...SUMMARY_ORDER.map((k) => fmtRm(l.split[k])), fmtRm(l.totalSen), marksText(l), l.marks.length > 0 ? fmtRm(l.markedSen) : '',
     ]));
   }
   lines.push('', row(['Total', '', '', '', '', '', '', '', '', ...SUMMARY_ORDER.map((k) => fmtRm(s[k])), fmtRm(s.totalSen), '', '']));
   return `${lines.join('\n')}\n`;
 };
 
-export const RULE_NOTE = 'An order earns its goods (no delivery or service) × the fair\'s brand rate once 30% of the order is paid. Upsales and drop sales count from 1/10/2026 (1–19 October read from each order\'s modification history), each in the month it happened, at the fair\'s brand rate. A late bill (补开单) is an order keyed in the range for a fair that had ended before it.';
+export const RULE_NOTE = 'An order earns its goods (no delivery or service) × the fair\'s brand rate once 30% of the order is paid. Upsales and drop sales count from 1/10/2026 (1–19 October read from each order\'s modification history), each in the month it happened, at the fair\'s brand rate; one Finance left out (Don\'t count change) moves no commission and the order earns on the rest. A late bill (补开单) is an order keyed in the range for a fair that had ended before it.';
 
 /** The report as the owner asked to export it: the summary, the fairs (by fair),
     then every order once with its commission split over the summary lines. */
@@ -340,7 +351,7 @@ export function eventCommissionSheet(r: EventCommission, period: string, brand: 
     rows: [
       ...lines.map((l): SheetRow => ({
         kind: 'row', depth: 0, label: l.docNo,
-        cells: [text(l.ref), l.fairName, text(l.salesperson), l.goodsSen, text(percentText(l.paidPct)), ...SUMMARY_ORDER.map((k) => l.split[k]), l.totalSen, l.mark ? markWords(l.mark) : null],
+        cells: [text(l.ref), l.fairName, text(l.salesperson), l.goodsSen, text(percentText(l.paidPct)), ...SUMMARY_ORDER.map((k) => l.split[k]), l.totalSen, text(marksText(l))],
       })),
       { kind: 'total', depth: 0, label: 'Every order', cells: [null, null, null, null, null, ...SUMMARY_ORDER.map((k) => s[k]), s.totalSen, null] },
     ],

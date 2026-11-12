@@ -33,6 +33,13 @@
 //   · the open fairs, the view and the brand are kept when you come back;
 //   · Finance's two buttons on an order (「1个这张单不要算，1个是这个算下个月」),
 //     on a whole open month, each asking for an optional reason, each undoable.
+// LATER THAT DAY (owner, 做):
+//   · the Upsales / Drop sales table has its own button (「这边不能按不count 吗？」
+//     → 「只是改价不算」): Don't count change leaves the order's upsales / drop
+//     sales of the month out — the order still earns on its original amount;
+//   · the SO list shows the fair's full name beside its brand (「要有 fair full
+//     name」) and the order's Sales — its total — before its Goods (「我也要看到
+//     sales, 然后 goods」); a fair's own orders show Sales too.
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
@@ -56,7 +63,7 @@ import {
 import { periodLabel } from './reports/statementColumns';
 import { useReportRange } from './reports/useReportRange';
 import {
-  BASIS_WORDS, NOT_COUNTED, RULE_NOTE, SUMMARY_HINT, SUMMARY_LABEL, amt, amtRm, belowDepositOf, brandsOf, changedOf, deferredInOf,
+  BASIS_WORDS, LEFT_OUT_NOTE, NOT_COUNTED, RULE_NOTE, SUMMARY_HINT, SUMMARY_LABEL, amt, amtRm, belowDepositOf, brandsOf, changedOf, deferredInOf,
   earlierOf, eventCommissionCsv, eventCommissionSheet, fairPlace, fairSortKey, fmtRm, forBrand, lateOf, markWords, markedOf, monthAdjOf,
   markMonthOf, monthLabel, monthOf, myt, nextMonthOf, sum, summaryOf, whatOf, wholeMonthOf, type BelowDepositRow,
 } from './eventCommissionModel';
@@ -101,11 +108,15 @@ type MarkCtl = {
   undo: (m: CommissionMarkInfo) => void;
 };
 
+/** Why and by whom, for a mark's hover. */
+const markNote = (mark: CommissionMarkInfo): string | undefined =>
+  [mark.reason, mark.markedBy ? `by ${mark.markedBy}` : null].filter(Boolean).join(' · ') || undefined;
+
 /** The order's mark with Undo, or the two buttons; a dash when neither applies. */
 const MarkCell = ({ docNo, mark, ctl }: { docNo: string; mark?: CommissionMarkInfo; ctl: MarkCtl }) => {
   if (mark) {
     return (
-      <span className={ec.markTag} title={[mark.reason, mark.markedBy ? `by ${mark.markedBy}` : null].filter(Boolean).join(' · ') || undefined}>
+      <span className={ec.markTag} title={markNote(mark)}>
         {markWords(mark)}
         <button type="button" className={ec.markBtn} disabled={ctl.busy} onClick={(e) => { e.stopPropagation(); ctl.undo(mark); }}>Undo</button>
       </span>
@@ -124,6 +135,30 @@ const MarkCell = ({ docNo, mark, ctl }: { docNo: string; mark?: CommissionMarkIn
 const markColumn = <R extends { docNo: string; mark?: CommissionMarkInfo }>(ctl: MarkCtl): Column<R> => ({
   key: 'actions', label: 'Actions', width: '210px', description: "Don't count this order, or pay it next month (Finance).",
   render: (r) => <MarkCell docNo={r.docNo} mark={r.mark} ctl={ctl} />, getValue: (r) => (r.mark ? markWords(r.mark) : ''),
+});
+
+/** A changed order's price change (owner 2026-11-12: 「只是改价不算」): Undo once
+    it is left out (its effect cell says "not counted") — or the button that
+    leaves it out. An order not counted at all has nothing more to leave out. */
+const ChangeMarkCell = ({ row, ctl }: { row: CommissionChangedOrder; ctl: MarkCtl }) => {
+  const left = row.changeMark;
+  if (left) {
+    return (
+      <button type="button" className={ec.markBtn} disabled={ctl.busy} title={[markWords(left), markNote(left)].filter(Boolean).join(' · ')}
+        onClick={(e) => { e.stopPropagation(); ctl.undo(left); }}>Undo</button>
+    );
+  }
+  if (row.mark?.kind === 'exclude' || !ctl.canMark || !ctl.month) return <span className="text-ink-muted">–</span>;
+  return (
+    <button type="button" className={ec.markBtn} disabled={ctl.busy}
+      title={`Leave its upsales / drop sales of ${monthLabel(ctl.month)} out of the commission — the order's original amount still counts`}
+      onClick={(e) => { e.stopPropagation(); ctl.mark(row.docNo, 'exclude_change'); }}>Don&apos;t count change</button>
+  );
+};
+const changeMarkColumn = (ctl: MarkCtl): Column<CommissionChangedOrder> => ({
+  key: 'actions', label: 'Actions', width: '145px',
+  description: "Leave this order's upsales / drop sales of the month out of the commission; its original amount still counts (Finance).",
+  render: (o) => <ChangeMarkCell row={o} ctl={ctl} />, getValue: (o) => (o.changeMark ? markWords(o.changeMark) : ''),
 });
 
 /* ── Columns ──────────────────────────────────────────────────────────────── */
@@ -209,11 +244,12 @@ const Changes = ({ changes }: { changes: CommissionChange[] }) => (changes.lengt
     <div className="space-y-0.5">
       {changes.map((ch, i) => (
         <div key={`${ch.date}-${i}`} className="whitespace-nowrap">
-          <span className={cn('font-medium tabular-nums', ch.notCounted ? 'text-ink-muted' : ch.kind === 'upsale' ? 'text-synced' : 'text-err')}>
+          <span className={cn('font-medium tabular-nums', ch.notCounted || ch.uncounted ? 'text-ink-muted' : ch.kind === 'upsale' ? 'text-synced' : 'text-err')}>
             {ch.kind === 'upsale' ? '+' : '−'}RM {fmtRm(Math.abs(ch.deltaGoodsSen))}
           </span>
           <span className="text-ink-muted">
-            {' · '}{fmtDateOrDash(ch.date)}{ch.source === 'amendment' ? ' · amendment' : ''}{ch.notCounted ? ` · ${NOT_COUNTED[ch.notCounted]}` : ''}
+            {' · '}{fmtDateOrDash(ch.date)}{ch.source === 'amendment' ? ' · amendment' : ''}
+            {ch.notCounted ? ` · ${NOT_COUNTED[ch.notCounted]}` : ch.uncounted ? ` · ${LEFT_OUT_NOTE}` : ''}
           </span>
         </div>
       ))}
@@ -223,7 +259,13 @@ const Changes = ({ changes }: { changes: CommissionChange[] }) => (changes.lengt
 /* An order's own columns — the fair's orders and the By SO date list share them. */
 const orderMoneyColumns = <R extends CommissionSoRow>(): Column<R>[] => [
   {
-    key: 'goods', label: 'Goods', align: 'right', render: (s) => num(fmtRm(s.goodsSen)), getValue: (s) => s.goodsSen,
+    key: 'sales', label: 'Sales', align: 'right', description: 'The order total: its goods plus delivery and service. Paid % is of this.',
+    render: (s) => num(fmtRm(s.totalSen)), getValue: (s) => s.totalSen,
+    exportValue: (s) => s.totalSen / 100, total: (rows) => num(fmtRm(sum(rows, (s) => s.totalSen))),
+  },
+  {
+    key: 'goods', label: 'Goods', align: 'right', description: 'What earns commission: the order without delivery or service.',
+    render: (s) => num(fmtRm(s.goodsSen)), getValue: (s) => s.goodsSen,
     exportValue: (s) => s.goodsSen / 100, total: (rows) => num(fmtRm(sum(rows, (s) => s.goodsSen))),
   },
   {
@@ -245,15 +287,21 @@ const orderMoneyColumns = <R extends CommissionSoRow>(): Column<R>[] => [
   },
   {
     key: 'commission', label: 'Commission', align: 'right',
-    render: (s) => <span className="font-semibold tabular-nums">{amt(s.commissionSen)}</span>, getValue: (s) => s.commissionSen,
+    /* Less than goods × rate when a price change is left out: the hover says by how much. */
+    render: (s) => (
+      <span className="font-semibold tabular-nums" title={s.uncountedSen ? `A price change is left out: RM ${fmtRm(s.uncountedSen)} not counted` : undefined}>
+        {amt(s.commissionSen)}
+      </span>
+    ),
+    getValue: (s) => s.commissionSen,
     exportValue: (s) => s.commissionSen / 100, total: (rows) => num(fmtRm(sum(rows, (s) => s.commissionSen))),
   },
 ];
 /* Last, after the mark: a wide cell that would push the mark off the screen. */
 const changesColumn = <R extends CommissionSoRow>(): Column<R> => ({
   key: 'changes', label: 'Upsales / drop sales', render: (s) => <Changes changes={s.changes} />,
-  getValue: (s) => sum(s.changes.filter((ch) => !ch.notCounted), (ch) => ch.deltaGoodsSen),
-  exportValue: (s) => s.changes.map((ch) => `${ch.kind === 'upsale' ? '+' : '-'}${fmtRm(Math.abs(ch.deltaGoodsSen))} ${ch.date}${ch.notCounted ? ' (not counted)' : ''}`).join('; '),
+  getValue: (s) => sum(s.changes.filter((ch) => !ch.notCounted && !ch.uncounted), (ch) => ch.deltaGoodsSen),
+  exportValue: (s) => s.changes.map((ch) => `${ch.kind === 'upsale' ? '+' : '-'}${fmtRm(Math.abs(ch.deltaGoodsSen))} ${ch.date}${ch.notCounted || ch.uncounted ? ' (not counted)' : ''}`).join('; '),
 });
 
 const orderColumns = (ctl: MarkCtl): Column<CommissionSoRow>[] => [
@@ -287,23 +335,29 @@ const FairOrders = ({ fair, ctl }: { fair: CommissionFairRow; ctl: MarkCtl }) =>
 /* By SO date: one row per order, its fair as columns (owner 2026-11-12: 「by SO
    date 应该是 SO list，不要分 by fair」). */
 type SoListRow = CommissionSoRow & { fair: CommissionFairRow };
-const soListColumns = (ctl: MarkCtl): Column<SoListRow>[] => [
-  { key: 'order', label: 'Order', width: '140px', render: (o) => <OrderLink docNo={o.docNo} />, getValue: (o) => o.docNo },
-  refColumn<SoListRow>(),
-  soDateColumn<SoListRow>(false),
-  ...hideState(placeColumns<SoListRow>((o) => fairPlace(o.fair), { brand: '85px', organizer: '115px', venue: '150px', state: '100px' })),
-  {
-    key: 'fairDates', label: 'Fair dates', width: '100px', defaultHidden: true,
-    render: (o) => <span className="whitespace-nowrap">{fmtDayMonthRange(o.fair.startDate, o.fair.endDate)}</span>,
-    getValue: (o) => o.fair.startDate, exportValue: (o) => fmtDayMonthRange(o.fair.startDate, o.fair.endDate),
-  },
-  { key: 'salesperson', label: 'Salesperson', width: '100px', render: (s) => s.salesperson ?? '—', getValue: (s) => s.salesperson },
-  customerColumn<SoListRow>(),
-  statusColumn<SoListRow>(),
-  ...orderMoneyColumns<SoListRow>(),
-  markColumn<SoListRow>(ctl),
-  changesColumn<SoListRow>(),
-];
+const soListColumns = (ctl: MarkCtl): Column<SoListRow>[] => {
+  const [brand, ...place] = hideState(placeColumns<SoListRow>((o) => fairPlace(o.fair), { brand: '85px', organizer: '115px', venue: '150px', state: '100px' }));
+  return [
+    { key: 'order', label: 'Order', width: '140px', render: (o) => <OrderLink docNo={o.docNo} />, getValue: (o) => o.docNo },
+    refColumn<SoListRow>(),
+    soDateColumn<SoListRow>(false),
+    brand!,
+    /* The fair's whole name beside its brand (owner 2026-11-12: 「要有 fair full name」). */
+    { key: 'fair', label: 'Fair (full name)', width: '260px', render: (o) => <span title={o.fair.name}>{o.fair.name}</span>, getValue: (o) => o.fair.name },
+    ...place,
+    {
+      key: 'fairDates', label: 'Fair dates', width: '100px', defaultHidden: true,
+      render: (o) => <span className="whitespace-nowrap">{fmtDayMonthRange(o.fair.startDate, o.fair.endDate)}</span>,
+      getValue: (o) => o.fair.startDate, exportValue: (o) => fmtDayMonthRange(o.fair.startDate, o.fair.endDate),
+    },
+    { key: 'salesperson', label: 'Salesperson', width: '100px', render: (s) => s.salesperson ?? '—', getValue: (s) => s.salesperson },
+    customerColumn<SoListRow>(),
+    statusColumn<SoListRow>(),
+    ...orderMoneyColumns<SoListRow>(),
+    markColumn<SoListRow>(ctl),
+    changesColumn<SoListRow>(),
+  ];
+};
 
 /** Original → Latest and the difference: + in green, − in red. */
 const amendedCell = (sen: number) => (sen === 0
@@ -342,7 +396,7 @@ const earlierColumns = (ctl: MarkCtl): Column<CommissionEarlierOrder>[] => [
   markColumn<CommissionEarlierOrder>(ctl),
 ];
 
-const CHANGED_COLUMNS: Column<CommissionChangedOrder>[] = [
+const changedColumns = (ctl: MarkCtl): Column<CommissionChangedOrder>[] => [
   { key: 'lastChange', label: 'Last change', width: '90px', render: (o) => <span className="whitespace-nowrap">{fmtDateOrDash(o.lastChange)}{historyTag(o.fromHistory)}</span>, getValue: (o) => o.lastChange },
   { key: 'order', label: 'Order', width: '140px', render: (o) => <OrderLink docNo={o.docNo} />, getValue: (o) => o.docNo },
   refColumn<CommissionChangedOrder>(),
@@ -360,10 +414,13 @@ const CHANGED_COLUMNS: Column<CommissionChangedOrder>[] = [
       ? <span className="text-ink-muted">{markWords(o.mark)}</span>
       : o.reachedOn == null
         ? <span className="text-ink-muted">not yet 30%</span>
-        : <span className={cn('tabular-nums', o.effectSen < 0 && 'text-err')}>{fmtRm(o.effectSen)}</span>),
+        : o.changeMark && o.effectSen === 0
+          ? <span className="text-ink-muted">not counted</span>
+          : <span className={cn('tabular-nums', o.effectSen < 0 && 'text-err')}>{fmtRm(o.effectSen)}</span>),
     getValue: (o) => o.effectSen, exportValue: (o) => o.effectSen / 100,
     total: (rows) => num(fmtRm(sum(rows, (o) => o.effectSen))),
   },
+  changeMarkColumn(ctl),
 ];
 
 const MONTH_ADJ_COLUMNS: Column<CommissionMonthAdjustment>[] = [
@@ -428,7 +485,7 @@ const BELOW_COLUMNS: Column<BelowDepositRow>[] = [
 ];
 
 const markedColumns = (ctl: MarkCtl): Column<CommissionMarkedOrder>[] => [
-  { key: 'kind', label: 'Mark', width: '150px', render: (m) => markWords(m.mark), getValue: (m) => markWords(m.mark) },
+  { key: 'kind', label: 'Mark', width: '185px', render: (m) => markWords(m.mark), getValue: (m) => markWords(m.mark) },
   { key: 'order', label: 'Order', width: '140px', render: (m) => <OrderLink docNo={m.docNo} />, getValue: (m) => m.docNo },
   refColumn<CommissionMarkedOrder>(),
   ...hideState(placeColumns<CommissionMarkedOrder>(orderPlace, { brand: '85px', organizer: '115px', venue: '150px', state: '100px' })),
@@ -436,7 +493,7 @@ const markedColumns = (ctl: MarkCtl): Column<CommissionMarkedOrder>[] => [
   { key: 'reason', label: 'Reason', width: '180px', render: (m) => m.mark.reason ?? '—', getValue: (m) => m.mark.reason },
   { key: 'by', label: 'Marked by', width: '110px', render: (m) => m.mark.markedBy ?? '—', getValue: (m) => m.mark.markedBy },
   {
-    key: 'commission', label: 'Not paid here', align: 'right', width: '110px', description: 'What the order would have earned in this range.',
+    key: 'commission', label: 'Not paid here', align: 'right', width: '110px', description: 'What the mark took out of this range: what the order would have earned, or what the price change left out would have moved.',
     render: (m) => num(amt(m.commissionSen)), getValue: (m) => m.commissionSen, exportValue: (m) => m.commissionSen / 100,
     total: (rows) => num(fmtRm(sum(rows, (m) => m.commissionSen))),
   },
@@ -595,21 +652,26 @@ export const EventCommissionTab = () => {
     mark: (docNo, kind) => {
       if (!month) return;
       const next = monthLabel(nextMonthOf(month));
-      void askReason({
-        title: kind === 'exclude' ? `Don't count ${docNo}?` : `Pay ${docNo} in ${next}?`,
-        body: kind === 'exclude'
-          ? 'It earns no commission in any month until the mark is taken away. Its row stays, marked.'
-          : `What it earns in ${monthLabel(month)} is paid in ${next} instead.`,
-        confirmLabel: kind === 'exclude' ? "Don't count" : `Pay in ${next}`,
-        input: { label: 'Reason (optional)', placeholder: 'e.g. price to check with the salesperson' },
-      }).then((reason) => {
+      const ask = kind === 'exclude'
+        ? { title: `Don't count ${docNo}?`, body: 'It earns no commission in any month until the mark is taken away. Its row stays, marked.', confirmLabel: "Don't count" }
+        : kind === 'defer'
+          ? { title: `Pay ${docNo} in ${next}?`, body: `What it earns in ${monthLabel(month)} is paid in ${next} instead.`, confirmLabel: `Pay in ${next}` }
+          : {
+            title: `Don't count the price change of ${docNo}?`,
+            body: `Its upsales and drop sales of ${monthLabel(month)} move no commission, now or later. The order's original amount still counts.`,
+            confirmLabel: "Don't count change",
+          };
+      void askReason({ ...ask, input: { label: 'Reason (optional)', placeholder: 'e.g. price to check with the salesperson' } }).then((reason) => {
         if (reason == null) return;
-        markMutate({ docNo, kind, ...(kind === 'defer' ? { month } : {}), reason: reason.trim() || null });
+        markMutate({ docNo, kind, ...(kind === 'exclude' ? {} : { month }), reason: reason.trim() || null });
       });
     },
     undo: (m) => {
-      void askConfirm({ title: `Take away "${markWords(m)}"?`, body: 'The order counts again in the month it belongs to.', confirmLabel: 'Take away' })
-        .then((ok) => { if (ok) unmarkMutate(m.id); });
+      void askConfirm({
+        title: `Take away "${markWords(m)}"?`,
+        body: m.kind === 'exclude_change' ? 'The price change counts again, in the month it was made.' : 'The order counts again in the month it belongs to.',
+        confirmLabel: 'Take away',
+      }).then((ok) => { if (ok) unmarkMutate(m.id); });
     },
   }), [canMark, month, busy, askReason, askConfirm, markMutate, unmarkMutate]);
 
@@ -618,6 +680,7 @@ export const EventCommissionTab = () => {
   const fairCols = useMemo(() => fairColumns(), []);
   const soListCols = useMemo(() => soListColumns(ctl), [ctl]);
   const earlierCols = useMemo(() => earlierColumns(ctl), [ctl]);
+  const changedCols = useMemo(() => changedColumns(ctl), [ctl]);
   const markedCols = useMemo(() => markedColumns(ctl), [ctl]);
   const soList = useMemo<SoListRow[]>(() => (r ? r.fairs.flatMap((f) => f.sos.map((s) => ({ ...s, fair: f }))) : []), [r]);
   const earlierRows = r ? earlierOf(r) : [];
@@ -737,11 +800,12 @@ export const EventCommissionTab = () => {
       )}
 
       {r && (
-        <Card title="Upsales / Drop sales" hint="each order once, its final amount in the range · the effect is already inside the commission above">
+        <Card title="Upsales / Drop sales"
+          hint={`each order once, its final amount in the range · the effect is already inside the commission above${canMark ? " · Finance: Don't count change leaves the price change out, the original amount still counts" : ''}`}>
           {changedRows.length === 0 ? <p className={ec.empty}>No upsale or drop sale in this range.</p> : (
             <DataTable<CommissionChangedOrder>
               tableId="event-commission-changes" exportName={`event-commission-upsales-drops-${range.from}-${range.to}`} freezeHeight="screen"
-              columns={CHANGED_COLUMNS} rows={changedRows} getRowKey={(o) => o.docNo}
+              columns={changedCols} rows={changedRows} getRowKey={(o) => o.docNo}
             />
           )}
         </Card>
@@ -757,7 +821,7 @@ export const EventCommissionTab = () => {
       )}
 
       {r && markedRows.length > 0 && (
-        <Card title="Marked — not paid here" hint="Finance's marks: not counted, or paid next month · not in the total above · amounts in RM">
+        <Card title="Marked — not paid here" hint="Finance's marks: not counted, a price change left out, or paid next month · not in the total above · amounts in RM">
           <DataTable<CommissionMarkedOrder>
             tableId="event-commission-marked" exportName={`event-commission-marked-${range.from}-${range.to}`} freezeHeight="screen"
             columns={markedCols} rows={markedRows} getRowKey={(m) => m.mark.id}

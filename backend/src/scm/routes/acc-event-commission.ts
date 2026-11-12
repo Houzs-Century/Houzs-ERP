@@ -23,6 +23,9 @@
 // report applies the marks (the lib's withMarks), the closed months' recalculation
 // behind the adjustments included, and a one-month report receives what the
 // month before moved to it. Each mark and undo lands in the order's History.
+// A third kind, 'exclude_change' with a month (「这次改价不算」, the same day): the
+// order's upsales / drop sales of that month move no commission — the changes are
+// flagged before the report is built (withUncountedChanges); the order still earns.
 // Mounted under /acc-events, behind scmAreaGuard("scm.finance.accounting"):
 // reading needs view; closing, reopening and marking edit on Finance › Accounting.
 
@@ -31,7 +34,7 @@ import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { todayMyt } from '../lib/my-time';
 import { dateOrNull } from '../lib/date-coerce';
 import {
-  buildEventCommission, deferredInFrom, monthAdjustmentsOf, monthOfRange, paidByOrder, withMarks, withMonthAdjustments,
+  buildEventCommission, deferredInFrom, monthAdjustmentsOf, monthOfRange, paidByOrder, withMarks, withMonthAdjustments, withUncountedChanges,
   type ClosedMonthPaid, type CommissionBasis, type CommissionCancel, type CommissionChange, type CommissionFair, type CommissionMark,
   type CommissionPayment, type CommissionSo, type DeferredInRow, type EventCommissionReport, type MonthAdjustmentRow,
 } from '../lib/event-commission';
@@ -81,8 +84,9 @@ const fail = (c: any, what: string, reason: string) =>
 
 type Live = { report: EventCommissionReport } | { response: Response };
 
-/** The report for [from, to] as the data stands now. */
-async function liveReport(c: any, companyId: number, from: string, to: string, basis: CommissionBasis): Promise<Live> {
+/** The report for [from, to] as the data stands now; the price changes Finance
+ *  left out (`marks`, 「这次改价不算」) move no commission in it. */
+async function liveReport(c: any, companyId: number, from: string, to: string, basis: CommissionBasis, marks: readonly CommissionMark[]): Promise<Live> {
   const env = c.env;
   const sb = c.get('supabase');
   const fromTs = `${from}T00:00:00+08:00`;
@@ -216,12 +220,13 @@ async function liveReport(c: any, companyId: number, from: string, to: string, b
       ref: s.customer_so_no?.trim() || null,
     })),
     payments: pays.data.map((p): CommissionPayment => ({ docNo: p.so_doc_no, paidAt: dayOf(p.paid_at) ?? stampOf(p.paid_at), amountSen: n(p.amount_sen) })),
-    changes: chs.data.map((r): CommissionChange => ({
+    changes: withUncountedChanges(chs.data.map((r): CommissionChange => ({
       docNo: String(r.so_doc_no), changedAt: stampOf(r.changed_at),
       beforeGoodsSen: n(r.before_goods_sen), afterGoodsSen: n(r.after_goods_sen),
       beforeTotalSen: n(r.before_total_sen), afterTotalSen: n(r.after_total_sen),
       source: String(r.source ?? 'edit'), changedBy: (r.changed_by as string | null) ?? null,
-    })),
+      uncounted: false,
+    })), marks),
     cancels: cancels.data.map((r): CommissionCancel => ({ docNo: r.doc_no, at: stampOf(r.created_at) })),
   });
   return { report };
@@ -262,7 +267,7 @@ const closesMeta = (closes: readonly Closed[]) => ({
 type MarkRead = { id: string; so_doc_no: string; kind: string; month: string | null; reason: string | null; marked_by: string | null; marked_at: string };
 const MARK_COLS = 'id, so_doc_no, kind, month, reason, marked_by, marked_at';
 const markOf = (r: MarkRead): CommissionMark => ({
-  id: String(r.id), docNo: r.so_doc_no, kind: r.kind === 'defer' ? 'defer' : 'exclude', month: r.month ? ym(r.month) : null,
+  id: String(r.id), docNo: r.so_doc_no, kind: r.kind === 'defer' || r.kind === 'exclude_change' ? r.kind : 'exclude', month: r.month ? ym(r.month) : null,
   reason: r.reason ?? null, markedBy: r.marked_by ?? null, markedAt: stampOf(r.marked_at),
 });
 async function readMarks(sb: any, companyId: number): Promise<{ marks: CommissionMark[] } | { error: string }> {
@@ -285,7 +290,7 @@ const prevMonth = (month: string): string => {
 /** The live report with the marks applied, and — for a report of one month (or
  *  of it so far) — what the month before moved to it. */
 async function markedLive(c: any, companyId: number, from: string, to: string, basis: CommissionBasis, ctx: Ctx, depth = 0): Promise<Live> {
-  const live = await liveReport(c, companyId, from, to, basis);
+  const live = await liveReport(c, companyId, from, to, basis, ctx.marks);
   if ('response' in live) return live;
   const month = monthOfRange(from, to);
   let deferredIn: DeferredInRow[] = [];
@@ -469,8 +474,11 @@ export const reopenCommissionMonthHandler = async (c: any): Promise<Response> =>
 const DOC_NO = /^[A-Z0-9][A-Z0-9-]{3,39}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** How the mark reads in the order's History. */
-const markWords = (m: Pick<CommissionMark, 'kind' | 'month'>): string =>
-  (m.kind === 'exclude' ? 'Not counted' : `Counted in ${monthLabel(nextMonth(m.month ?? ''))}, not ${monthLabel(m.month ?? '')}`);
+const markWords = (m: Pick<CommissionMark, 'kind' | 'month'>): string => {
+  if (m.kind === 'exclude') return 'Not counted';
+  if (m.kind === 'exclude_change') return `Price change of ${monthLabel(m.month ?? '')} not counted`;
+  return `Counted in ${monthLabel(nextMonth(m.month ?? ''))}, not ${monthLabel(m.month ?? '')}`;
+};
 const historyActor = (c: any) => {
   const user = c.get('user');
   return {
@@ -479,19 +487,23 @@ const historyActor = (c: any) => {
   };
 };
 
-/* POST /commission/marks { docNo, kind: 'exclude' | 'defer', month?: 'YYYY-MM', reason? }
+/* POST /commission/marks { docNo, kind: 'exclude' | 'defer' | 'exclude_change', month?: 'YYYY-MM', reason? }
    「这张单不要算」 marks the order not counted, in any month; 「这个算下个月」 moves
-   what it earns in `month` — an open month — to the month after. */
+   what it earns in `month` — an open month — to the month after; 「这次改价不算」
+   leaves its upsales / drop sales of `month` — an open month — out of the
+   commission, the order itself still counted. */
 export const markCommissionOrderHandler = async (c: any): Promise<Response> => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const body = (await c.req.json().catch(() => ({}))) as { docNo?: unknown; kind?: unknown; month?: unknown; reason?: unknown };
   const docNo = String(body.docNo ?? '').trim().toUpperCase();
   if (!DOC_NO.test(docNo)) return c.json({ error: 'bad_doc_no', message: 'Pick an order.' }, 400);
-  const kind = body.kind === 'exclude' || body.kind === 'defer' ? body.kind : null;
-  if (!kind) return c.json({ error: 'bad_kind', message: 'Choose "don\'t count" or "next month".' }, 400);
-  const month = kind === 'defer' ? String(body.month ?? '').trim() : null;
-  if (month != null && !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return c.json({ error: 'bad_month', message: 'Pick the month its commission leaves.' }, 400);
+  const kind = body.kind === 'exclude' || body.kind === 'defer' || body.kind === 'exclude_change' ? body.kind : null;
+  if (!kind) return c.json({ error: 'bad_kind', message: 'Choose "don\'t count", "next month" or "don\'t count the price change".' }, 400);
+  const month = kind === 'exclude' ? null : String(body.month ?? '').trim();
+  if (month != null && !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+    return c.json({ error: 'bad_month', message: kind === 'defer' ? 'Pick the month its commission leaves.' : 'Pick the month of the price change.' }, 400);
+  }
   const reason = String(body.reason ?? '').trim().slice(0, 500) || null;
   const sb = c.get('supabase');
   const companyId = co.companyId;
@@ -503,7 +515,8 @@ export const markCommissionOrderHandler = async (c: any): Promise<Response> => {
     const read = await readCloses(sb, companyId);
     if ('error' in read) return fail(c, 'closed months', read.error);
     if (read.closes.some((k) => k.month === month)) {
-      return c.json({ error: 'month_closed', message: `${monthLabel(month)} is closed — only an open month's commission can move to the next month.` }, 409);
+      const open = kind === 'defer' ? "only an open month's commission can move to the next month" : "only an open month's price change can be left out";
+      return c.json({ error: 'month_closed', message: `${monthLabel(month)} is closed — ${open}.` }, 409);
     }
   }
   const actor = actorOf(c);

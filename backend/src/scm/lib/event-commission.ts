@@ -59,6 +59,13 @@
 //     is paid the month after). `withMarks` takes their commission out of the
 //     report — the rows stay, tagged — and lists them; the month after a `defer`
 //     receives it as `deferredIn`. The marks live in scm.event_commission_marks.
+//   · 「这次改价不算」 (the same day, on the Upsales / Drop sales table: 「只是改价
+//     不算」): a third mark, `exclude_change`, on an order and a month. The order's
+//     upsales and drop sales of that month move no commission, then or later —
+//     it earns on its goods LESS them when it reaches 30%, on its later changes
+//     and at a cancellation, so month after month nothing is paid or taken back
+//     for them. The changes stay listed: `withUncountedChanges` flags them
+//     before the report is built, `withMarks` tags the order's row for its Undo.
 // ----------------------------------------------------------------------------
 
 /** Which date puts an order in the range: its fair's start, or its own SO date. */
@@ -100,6 +107,8 @@ export type CommissionChange = {
   docNo: string; changedAt: string;
   beforeGoodsSen: number; afterGoodsSen: number; beforeTotalSen: number; afterTotalSen: number;
   source: string; changedBy: string | null;
+  /** Finance left the order's price changes of this month out (「这次改价不算」) — set by withUncountedChanges. */
+  uncounted: boolean;
 };
 export type CommissionCancel = { docNo: string; at: string };
 
@@ -109,21 +118,24 @@ export type ChangeView = {
   kind: 'upsale' | 'drop';
   /** Why it is not an upsale / drop; null when it is one. */
   notCounted: 'opening_day' | 'first_price' | 'system_fix' | null;
+  /** An upsale / drop Finance left out (「这次改价不算」): listed, and moves no commission. */
+  uncounted: boolean;
   source: string;
   changedBy: string | null;
   /** Back-filled from the SO's modification history (1–19 October 2026). */
   fromHistory: boolean;
 };
 
-/* ── Finance's two buttons ─────────────────────────────────────────────────── */
+/* ── Finance's buttons ─────────────────────────────────────────────────────── */
 
 /** A mark Finance put on an order (scm.event_commission_marks). */
 export type CommissionMark = {
   id: string;
   docNo: string;
-  /** 'exclude' — 「这张单不要算」; 'defer' — 「这个算下个月」. */
-  kind: 'exclude' | 'defer';
-  /** defer: the month (YYYY-MM) whose commission moves to the month after; exclude: null. */
+  /** 'exclude' — 「这张单不要算」; 'defer' — 「这个算下个月」; 'exclude_change' — 「这次改价不算」. */
+  kind: 'exclude' | 'defer' | 'exclude_change';
+  /** defer: the month (YYYY-MM) whose commission moves to the month after;
+      exclude_change: the month whose upsales / drop sales are left out; exclude: null. */
   month: string | null;
   reason: string | null;
   markedBy: string | null;
@@ -152,6 +164,8 @@ export type SoRow = {
   /** The day payments reached 30% of the total, on or before `to`. */
   reachedOn: string | null;
   commissionSen: number;
+  /** What 「这次改价不算」 left out of the commission here; absent when nothing. */
+  uncountedSen?: number;
   changes: ChangeView[];
 };
 
@@ -188,6 +202,10 @@ export type AdjustmentRow = {
   commissionSen: number;
   /** An upsale / drop before the order reached 30% moves no commission yet. */
   beforeReach: boolean;
+  /** An upsale / drop Finance left out (「这次改价不算」): the line stays, earning nothing. */
+  uncounted?: true;
+  /** What 「这次改价不算」 left out of this line's commission; absent when nothing. */
+  uncountedSen?: number;
 };
 
 /** Where an order sits on the page: its fair, and that fair's place. */
@@ -202,7 +220,7 @@ export type OrderPlace = {
 /** An earlier order, once, with what happened to it in the range. */
 export type EarlierOrderRow = OrderPlace & {
   mark?: MarkInfo;
-  events: Array<{ date: string; kind: AdjustmentRow['kind']; beforeReach: boolean }>;
+  events: Array<{ date: string; kind: AdjustmentRow['kind']; beforeReach: boolean; uncounted?: true }>;
   lastDate: string;
   /** Goods before the range's counted changes, as at `to`, and the difference. */
   originalSen: number; latestSen: number; amendedSen: number;
@@ -214,13 +232,17 @@ export type EarlierOrderRow = OrderPlace & {
 /** An order whose goods the range changed (upsales / drop sales), once, final. */
 export type ChangedOrderRow = OrderPlace & {
   mark?: MarkInfo;
+  /** The 「这次改价不算」 mark behind the changes left out, for the row's Undo. */
+  changeMark?: MarkInfo;
   /** 'range' — this range's fairs (the effect is inside their commission);
       'earlier' — an earlier order (inside the earlier lines). */
   part: 'range' | 'earlier';
   lastChange: string;
   originalSen: number; latestSen: number; amendedSen: number;
+  /** The goods of the range's changes Finance left out: in Amended, not in the effect. Absent when none. */
+  uncountedGoodsSen?: number;
   reachedOn: string | null;
-  /** Amended × the brand rate once the order has reached 30% by `to`, else 0. */
+  /** (Amended less the goods left out) × the brand rate once the order has reached 30% by `to`, else 0. */
   effectSen: number;
   fromHistory: boolean;
 };
@@ -389,6 +411,9 @@ const infoOf = (m: CommissionMark): MarkInfo => ({ id: m.id, kind: m.kind, month
  * of it so far — monthOfRange).
  * Closed months' adjustments are left alone: a month recalculated with an
  * `exclude` drops the order there, and the adjustment takes it back.
+ * An `exclude_change` is already IN the report (withUncountedChanges, before it
+ * was built): here the changed order's row gets the mark for its Undo, and the
+ * mark is listed with what it left out — the order itself still earns.
  */
 export function withMarks(r: EventCommissionReport, marks: readonly CommissionMark[], deferredIn: readonly DeferredInRow[] = []): EventCommissionReport {
   const month = monthOfRange(r.from, r.to);
@@ -398,6 +423,19 @@ export function withMarks(r: EventCommissionReport, marks: readonly CommissionMa
   const places = placesOf(r);
   const taken = new Map<string, number>();
   const take = (doc: string, sen: number) => { if (sen !== 0) taken.set(doc, (taken.get(doc) ?? 0) + sen); };
+
+  /* 「这次改价不算」: per order, its latest such mark up to the range's last month,
+     and what the changes left out took off its commission on this report. */
+  const changeMarkOf = new Map<string, CommissionMark>();
+  for (const m of marks) {
+    if (m.kind !== 'exclude_change' || m.month == null || m.month > r.to.slice(0, 7)) continue;
+    const seen = changeMarkOf.get(m.docNo);
+    if (!seen || (seen.month ?? '') < m.month) changeMarkOf.set(m.docNo, m);
+  }
+  const leftOut = new Map<string, number>();
+  const leave = (doc: string, sen: number | undefined) => { if (sen) leftOut.set(doc, (leftOut.get(doc) ?? 0) + sen); };
+  for (const f of r.fairs) for (const s of f.sos) leave(s.docNo, s.uncountedSen);
+  for (const a of r.adjustments) leave(a.docNo, a.uncountedSen);
 
   const fairs = r.fairs.map((f) => {
     const sos = f.sos.map((s) => {
@@ -418,8 +456,10 @@ export function withMarks(r: EventCommissionReport, marks: readonly CommissionMa
     return m ? { ...o, commissionSen: 0, mark: infoOf(m) } : o;
   });
   const changedOrders = r.changedOrders.map((o) => {
+    const change = o.uncountedGoodsSen ? changeMarkOf.get(o.docNo) : undefined;
+    const row = change ? { ...o, changeMark: infoOf(change) } : o;
     const m = markOf.get(o.docNo);
-    return m ? { ...o, effectSen: 0, mark: infoOf(m) } : o;
+    return m ? { ...row, effectSen: 0, mark: infoOf(m) } : row;
   });
   const din = deferredIn.map((d) => {
     const m = markOf.get(d.docNo);
@@ -429,10 +469,16 @@ export function withMarks(r: EventCommissionReport, marks: readonly CommissionMa
   });
   for (const d of din) if (!places.has(d.docNo)) places.set(d.docNo, asPlace(d));
 
-  const marked: MarkedOrderRow[] = [...markOf.values()]
-    .filter((m) => places.has(m.docNo))
-    .map((m) => ({ ...places.get(m.docNo)!, mark: infoOf(m), commissionSen: taken.get(m.docNo) ?? 0 }))
-    .sort((a, b) => (a.docNo < b.docNo ? -1 : 1));
+  const changeDocs = new Set([...leftOut.keys(), ...r.changedOrders.filter((o) => o.uncountedGoodsSen).map((o) => o.docNo)]);
+  const changeRank = (m: MarkedOrderRow) => (m.mark.kind === 'exclude_change' ? 1 : 0);
+  const marked: MarkedOrderRow[] = [
+    ...[...markOf.values()]
+      .filter((m) => places.has(m.docNo))
+      .map((m) => ({ ...places.get(m.docNo)!, mark: infoOf(m), commissionSen: taken.get(m.docNo) ?? 0 })),
+    ...[...changeDocs]
+      .filter((doc) => changeMarkOf.has(doc) && places.has(doc))
+      .map((doc) => ({ ...places.get(doc)!, mark: infoOf(changeMarkOf.get(doc)!), commissionSen: leftOut.get(doc) ?? 0 })),
+  ].sort((a, b) => (a.docNo < b.docNo ? -1 : a.docNo > b.docNo ? 1 : changeRank(a) - changeRank(b)));
   return {
     ...r, fairs, adjustments, earlierOrders, changedOrders, deferredIn: din, marked,
     totals: totalsOf({
@@ -442,6 +488,15 @@ export function withMarks(r: EventCommissionReport, marks: readonly CommissionMa
       deferredInSen: din.reduce((t, d) => t + d.commissionSen, 0),
     }),
   };
+}
+
+/** The changes with Finance's 「这次改价不算」 on them: a change of a marked order
+ *  made in the month the mark names (its Malaysian day) is flagged uncounted,
+ *  every other is not. The report is built from these. */
+export function withUncountedChanges(changes: readonly CommissionChange[], marks: readonly CommissionMark[]): CommissionChange[] {
+  const off = new Set<string>();
+  for (const m of marks) if (m.kind === 'exclude_change' && m.month) off.add(`${m.docNo}|${m.month}`);
+  return changes.map((ch) => ({ ...ch, uncounted: off.has(`${ch.docNo}|${mytDay(ch.changedAt).slice(0, 7)}`) }));
 }
 
 /** What a month's report moved to the month after: its `defer` marks for that
@@ -516,7 +571,10 @@ export function changeView(ch: CommissionChange, so: Pick<CommissionSo, 'created
     : ch.beforeTotalSen <= FIRST_PRICE_MAX_SEN ? 'first_price'
     : null;
   return {
-    date, deltaGoodsSen: delta, kind: delta > 0 ? 'upsale' : 'drop', notCounted, source: ch.source, changedBy: ch.changedBy,
+    date, deltaGoodsSen: delta, kind: delta > 0 ? 'upsale' : 'drop', notCounted,
+    /* Only an upsale / drop can be left out: a fix that is neither keeps its goods. */
+    uncounted: notCounted == null && ch.uncounted === true,
+    source: ch.source, changedBy: ch.changedBy,
     fromHistory: ch.source === HISTORY || ch.source === HISTORY_IGNORED,
   };
 }
@@ -559,6 +617,19 @@ export function buildEventCommission(input: {
   const countedIn = (so: CommissionSo, chs: readonly CommissionChange[], until: string | null = null): ChangeView[] =>
     chs.map((ch) => changeView(ch, so))
       .filter((v): v is ChangeView => v != null && v.notCounted == null && v.date >= from && v.date <= to && (until == null || v.date < until));
+  /* 「这次改价不算」: the goods of the order's changes Finance left out, up to the
+     end of `day`. What the order earns on is its goods less these. */
+  const uncountedGoods = (so: CommissionSo, chs: readonly CommissionChange[], day: string): number =>
+    chs.reduce((g, ch) => {
+      const v = changeView(ch, so);
+      return v != null && v.uncounted && v.date <= day ? g + v.deltaGoodsSen : g;
+    }, 0);
+  /* The commission on `goods` with `off` of them left out, and what that left out. */
+  const earnedOn = (goods: number, off: number, rate: number | null): { commissionSen: number; uncountedSen?: number } => {
+    const commissionSen = commissionOf(goods - off, rate);
+    const left = commissionOf(goods, rate) - commissionSen;
+    return left === 0 ? { commissionSen } : { commissionSen, uncountedSen: left };
+  };
   const changedOrders: ChangedOrderRow[] = [];
   /* An order whose goods the range changed, once: Original before the counted
      changes, Latest as at `to`. Nothing to list when they cancel out. */
@@ -571,11 +642,13 @@ export function buildEventCommission(input: {
     const latest = goodsAt(so.goodsSen, chs, to);
     const reached = reachedOn(so.totalSen, paymentsOf.get(so.docNo) ?? [], to);
     const place = placeOf(so, f);
+    const off = counted.reduce((s, v) => (v.uncounted ? s + v.deltaGoodsSen : s), 0);
     changedOrders.push({
       ...place, part,
       lastChange: counted.reduce((m, v) => (v.date > m ? v.date : m), counted[0]!.date),
       originalSen: latest - amended, latestSen: latest, amendedSen: amended, reachedOn: reached,
-      effectSen: reached ? commissionOf(amended, place.ratePct) : 0,
+      ...(off !== 0 ? { uncountedGoodsSen: off } : {}),
+      effectSen: reached ? commissionOf(amended - off, place.ratePct) : 0,
       fromHistory: counted.some((v) => v.fromHistory),
     });
   };
@@ -604,7 +677,7 @@ export function buildEventCommission(input: {
       paidSen: paid,
       paidPct: so.totalSen > 0 ? Math.round((paid / so.totalSen) * 1000) / 10 : 0,
       reachedOn: reached,
-      commissionSen: reached ? commissionOf(goods, rate) : 0,
+      ...(reached ? earnedOn(goods, uncountedGoods(so, chs, to), rate) : { commissionSen: 0 }),
       changes: chs.filter((ch) => mytDay(ch.changedAt) <= to).map((ch) => changeView(ch, so)).filter((v): v is ChangeView => v != null),
     };
   };
@@ -666,7 +739,7 @@ export function buildEventCommission(input: {
     const base = { docNo: so.docNo, fairId: f.id, fairName: f.name, salesperson: so.salesperson };
     if (earned && reached! >= from && reached! <= to) {
       const goods = goodsAt(so.goodsSen, chs, reached!);
-      adjustments.push({ ...base, date: reached!, kind: 'reached', goodsSen: goods, commissionSen: commissionOf(goods, rate), beforeReach: false });
+      adjustments.push({ ...base, date: reached!, kind: 'reached', goodsSen: goods, ...earnedOn(goods, uncountedGoods(so, chs, reached!), rate), beforeReach: false });
     }
     for (const ch of chs) {
       const v = changeView(ch, so);
@@ -674,15 +747,22 @@ export function buildEventCommission(input: {
       if (cancelled != null && v.date >= cancelled) continue;
       if (reached != null && v.date === reached) continue; // folded into the amount earned that day
       const after = earned && reached! < v.date;
+      const moves = after ? commissionOf(v.deltaGoodsSen, rate) : 0;
       adjustments.push({
         ...base, date: v.date, kind: v.kind, goodsSen: v.deltaGoodsSen,
-        commissionSen: after ? commissionOf(v.deltaGoodsSen, rate) : 0,
+        commissionSen: v.uncounted ? 0 : moves,
         beforeReach: !after,
+        ...(v.uncounted ? { uncounted: true as const, ...(moves !== 0 ? { uncountedSen: moves } : {}) } : {}),
       });
     }
     if (earned && cancelled != null && cancelled >= from && cancelled <= to) {
+      /* Taken back: what it earned — its goods less the changes left out. */
       const goods = goodsAt(so.goodsSen, chs, cancelled);
-      adjustments.push({ ...base, date: cancelled, kind: 'cancelled', goodsSen: goods, commissionSen: -commissionOf(goods, rate), beforeReach: false });
+      const had = earnedOn(goods, uncountedGoods(so, chs, cancelled), rate);
+      adjustments.push({
+        ...base, date: cancelled, kind: 'cancelled', goodsSen: goods, commissionSen: -had.commissionSen, beforeReach: false,
+        ...(had.uncountedSen ? { uncountedSen: -had.uncountedSen } : {}),
+      });
     }
     /* The same order once, its final result in the range. */
     const mine = adjustments.slice(firstLine);
@@ -692,7 +772,7 @@ export function buildEventCommission(input: {
       const latest = goodsAt(so.goodsSen, chs, to);
       earlierOrders.push({
         ...placeOf(so, f),
-        events: mine.map((a) => ({ date: a.date, kind: a.kind, beforeReach: a.beforeReach })),
+        events: mine.map((a) => ({ date: a.date, kind: a.kind, beforeReach: a.beforeReach, ...(a.uncounted ? { uncounted: true as const } : {}) })),
         lastDate: mine.reduce((m, a) => (a.date > m ? a.date : m), mine[0]!.date),
         originalSen: latest - amended, latestSen: latest, amendedSen: amended,
         commissionSen: mine.reduce((s, a) => s + a.commissionSen, 0),
