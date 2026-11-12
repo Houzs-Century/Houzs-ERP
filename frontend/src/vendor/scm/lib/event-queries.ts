@@ -91,7 +91,8 @@ export type CommissionChange = {
   date: string;
   deltaGoodsSen: number;
   kind: 'upsale' | 'drop';
-  notCounted: 'opening_day' | 'first_price' | 'system_fix' | null;
+  /** 'price_wiped' (from 2026-11-13): the order's price wiped to 0, not put back yet. */
+  notCounted: 'opening_day' | 'first_price' | 'system_fix' | 'price_wiped' | null;
   /** An upsale / drop Finance left out (「这次改价不算」): listed, moving no commission. Absent before 2026-11-12. */
   uncounted?: boolean;
   source: string;

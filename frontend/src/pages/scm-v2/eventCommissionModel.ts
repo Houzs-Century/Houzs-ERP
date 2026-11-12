@@ -76,7 +76,7 @@ export const KIND_LABEL: Record<CommissionAdjustment['kind'], string> = {
 };
 export const NOT_COUNTED: Record<NonNullable<CommissionChange['notCounted']>, string> = {
   opening_day: 'opening-day fix, not counted', first_price: 'priced after opening, not counted',
-  system_fix: 'system price fix, not counted',
+  system_fix: 'system price fix, not counted', price_wiped: 'price wiped to 0, not counted',
 };
 /** An upsale / drop Finance left out (「这次改价不算」), beside the change. */
 export const LEFT_OUT_NOTE = 'left out by Finance, not counted';
@@ -337,7 +337,7 @@ export const eventCommissionCsv = (r: EventCommission): string => {
   return `${lines.join('\n')}\n`;
 };
 
-export const RULE_NOTE = 'An order earns its goods (no delivery or service) × the fair\'s brand rate once 30% of the order is paid. Upsales and drop sales count from 1/9/2026 (1 September – 19 October read from each order\'s modification history), each in the month it happened, at the fair\'s brand rate; one Finance left out (Don\'t count change) moves no commission and the order earns on the rest. A late bill (补开单) is an order keyed in the range for a fair that had ended before it. By SO date, an order with no fair earns at its own brand\'s rate from 1/10/2026; one opened before then earns only on its upsales and drop sales, whatever has been paid.';
+export const RULE_NOTE = 'An order earns its goods (no delivery or service) × the fair\'s brand rate once 30% of the order is paid. Upsales and drop sales count from 1/9/2026 (1 September – 19 October read from each order\'s modification history), each in the month it happened, at the fair\'s brand rate; one Finance left out (Don\'t count change) moves no commission and the order earns on the rest. A price wiped to 0 and typed again is no change (typed again at another figure, the difference counts that day). A late bill (补开单) is an order keyed in the range for a fair that had ended before it. By SO date, an order with no fair earns at its own brand\'s rate from 1/10/2026; one opened before then earns only on its upsales and drop sales, whatever has been paid.';
 
 /** The report as the owner asked to export it: the summary, the fairs (by fair),
     then every order once with its commission split over the summary lines. */
