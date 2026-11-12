@@ -115,6 +115,8 @@ export type CommissionMarkInfo = {
 export type CommissionSoRow = {
   docNo: string;
   soDate: string | null;
+  /** The venue typed on an order with no fair (its fair row is "No fair", id below 0). */
+  venue?: string | null;
   /** Ref No. (the booklet number), status and when it was keyed — absent before 2026-11-12. */
   ref?: string | null;
   status?: string;

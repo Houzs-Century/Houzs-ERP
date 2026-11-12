@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  buildEventCommission, changeView, deferredInFrom, goodsAt, monthAdjustmentsOf, mytDay, paidByOrder, reachedOn, withMarks, withMonthAdjustments,
+  NO_FAIR_FROM, buildEventCommission, changeView, deferredInFrom, goodsAt, monthAdjustmentsOf, mytDay, paidByOrder, reachedOn, withMarks, withMonthAdjustments,
   withUncountedChanges,
   type CommissionChange, type CommissionFair, type CommissionMark, type CommissionPayment, type CommissionSo,
 } from './event-commission';
@@ -260,6 +260,75 @@ describe('by SO date — the same two parts keyed on the order\'s own SO date', 
     const byFair = buildEventCommission(input);
     expect(bySo.totals).toEqual({ payableSen: 130_00, adjustmentsSen: 0, monthAdjustmentsSen: 0, deferredInSen: 0, totalSen: 130_00 });
     expect(byFair.totals).toEqual({ payableSen: 0, adjustmentsSen: 130_00, monthAdjustmentsSen: 0, deferredInSen: 0, totalSen: 130_00 });
+  });
+});
+
+/* Owner 2026-11-12: 「全部列出来，没有展会的标 No fair，要算佣金，然后我检查了不要算的
+   我才自己按don't count」 — by SO date every order opened in the range is listed;
+   one with no fair under "No fair" of its own brand, at that brand's rate. */
+describe('by SO date, an order with no fair — 「没有展会的标 No fair，要算佣金」', () => {
+  const noFair = (o: Partial<CommissionSo> = {}) => so({ docNo: 'HC-SO-2610-058', projectId: null, brand: 'ERGOTEX', venue: 'THE STARLING MALL', soDate: '2026-10-05', ...o });
+  const pays = (doc: string, day: string, sen: number): CommissionPayment => ({ docNo: doc, paidAt: day, amountSen: sen });
+
+  it('is listed under "No fair" of its own brand (as the rate card spells it, any case) with its venue, earning at the rate of that brand', () => {
+    const r = buildEventCommission({
+      ...OCT, basis: 'so_date', fairs: [fair()], ratePctByBrand: new Map([...RATES, ['Carres Mattress', 14]]),
+      sos: [
+        so(),
+        noFair({ docNo: 'HC-SO-2610-427', brand: 'AKEMI', venue: 'MID VALLEY' }),
+        noFair({ docNo: 'HC-SO-2610-410', brand: 'zanotti', venue: 'SUNWAY CARNIVAL' }),
+        noFair({ docNo: 'HC-SO-2610-500', brand: 'CARRES MATTRESS', venue: null }),
+        noFair({ docNo: 'HC-SO-2610-320', brand: 'BEDFRAME', venue: 'AEON RAWANG' }),
+      ],
+      payments: ['HC-SO-2610-001', 'HC-SO-2610-427', 'HC-SO-2610-410', 'HC-SO-2610-500', 'HC-SO-2610-320'].map((d) => pays(d, '2026-10-06', 1_000_00)),
+      changes: [], cancels: [],
+    });
+    const rows = r.fairs.map((f) => [f.id, f.name, f.brand, f.ratePct, f.sos.map((x) => [x.docNo, x.venue ?? '-', x.commissionSen])]);
+    expect(rows).toEqual([
+      [-1, 'No fair', 'AKEMI', 14, [['HC-SO-2610-427', 'MID VALLEY', 140_00]]],
+      [-2, 'No fair', 'BEDFRAME', null, [['HC-SO-2610-320', 'AEON RAWANG', 0]]],
+      [-3, 'No fair', 'Carres Mattress', 14, [['HC-SO-2610-500', '-', 140_00]]],
+      [-4, 'No fair', 'ZANOTTI', 13, [['HC-SO-2610-410', 'SUNWAY CARNIVAL', 130_00]]],
+      [1, 'KL [AKEMI] BIGHOME @ MID VALLEY', 'AKEMI', 14, [['HC-SO-2610-001', '-', 140_00]]],
+    ]);
+    expect(r.totals.payableSen).toBe(550_00);
+  });
+
+  it('under 30% it waits like any order, and reaching 30% the month after counts there; a cancellation takes it back', () => {
+    const oct = buildEventCommission({
+      ...OCT, basis: 'so_date', fairs: [], ratePctByBrand: RATES,
+      sos: [noFair({ goodsSen: 28_000_00, totalSen: 28_000_00 })], payments: [pays('HC-SO-2610-058', '2026-10-05', 1_000_00)], changes: [], cancels: [],
+    });
+    expect(oct.fairs[0]!.sos[0]).toMatchObject({ docNo: 'HC-SO-2610-058', reachedOn: null, commissionSen: 0, venue: 'THE STARLING MALL' });
+    const nov = buildEventCommission({
+      from: '2026-11-01', to: '2026-11-30', basis: 'so_date', fairs: [], ratePctByBrand: new Map([...RATES, ['ERGOTEX', 14]]),
+      sos: [noFair({ goodsSen: 28_000_00, totalSen: 28_000_00 }), noFair({ docNo: 'HC-SO-2610-196', brand: 'ZANOTTI', goodsSen: 1_000_00, totalSen: 1_000_00, status: 'CANCELLED' })],
+      payments: [pays('HC-SO-2610-058', '2026-10-05', 1_000_00), pays('HC-SO-2610-058', '2026-11-10', 8_000_00), pays('HC-SO-2610-196', '2026-10-14', 1_000_00)],
+      changes: [], cancels: [{ docNo: 'HC-SO-2610-196', at: '2026-11-20T02:00:00Z' }],
+    });
+    expect(nov.adjustments.map((a) => [a.docNo, a.kind, a.commissionSen])).toEqual([
+      ['HC-SO-2610-058', 'reached', 3_920_00],
+      ['HC-SO-2610-196', 'cancelled', -130_00],
+    ]);
+    expect(nov.earlierOrders.map((o) => [o.docNo, o.fairName, o.venue])).toEqual([
+      ['HC-SO-2610-058', 'No fair', 'THE STARLING MALL'],
+      ['HC-SO-2610-196', 'No fair', 'THE STARLING MALL'],
+    ]);
+  });
+
+  it('not by fair, and not an order opened before September 2026 — the old showroom orders stay out', () => {
+    const input = {
+      ...OCT, fairs: [], ratePctByBrand: RATES,
+      sos: [noFair(), noFair({ docNo: 'HC-SO-009915', soDate: '2026-08-20' })],
+      payments: [pays('HC-SO-2610-058', '2026-10-05', 28_000_00), pays('HC-SO-009915', '2026-10-09', 1_000_00)],
+      changes: [], cancels: [],
+    };
+    expect(buildEventCommission(input).fairs).toEqual([]);
+    expect(buildEventCommission(input).adjustments).toEqual([]);
+    const bySo = buildEventCommission({ ...input, basis: 'so_date' });
+    expect(bySo.fairs.flatMap((f) => f.sos.map((x) => x.docNo))).toEqual(['HC-SO-2610-058']);
+    expect(bySo.adjustments).toEqual([]);
+    expect(NO_FAIR_FROM).toBe('2026-09-01');
   });
 });
 

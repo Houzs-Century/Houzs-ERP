@@ -34,7 +34,7 @@ import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { todayMyt } from '../lib/my-time';
 import { dateOrNull } from '../lib/date-coerce';
 import {
-  buildEventCommission, deferredInFrom, monthAdjustmentsOf, monthOfRange, paidByOrder, withMarks, withMonthAdjustments, withUncountedChanges,
+  NO_FAIR_FROM, buildEventCommission, deferredInFrom, monthAdjustmentsOf, monthOfRange, paidByOrder, withMarks, withMonthAdjustments, withUncountedChanges,
   type ClosedMonthPaid, type CommissionBasis, type CommissionCancel, type CommissionChange, type CommissionFair, type CommissionMark,
   type CommissionPayment, type CommissionSo, type DeferredInRow, type EventCommissionReport, type MonthAdjustmentRow,
 } from '../lib/event-commission';
@@ -69,8 +69,9 @@ type SoRead = {
   status: string; on_hold: boolean | null; mattress_sofa_sen: number | null; bedframe_sen: number | null;
   accessories_sen: number | null; others_sen: number | null; local_total_sen: number | null;
   total_revenue_sen: number | null; created_at: string; so_date: string | null; customer_so_no: string | null;
+  branding: string | null; vp_brand: string | null; venue: string | null;
 };
-const SO_COLS = 'doc_no, project_id, salesperson_id, debtor_name, status, on_hold, mattress_sofa_sen, bedframe_sen, accessories_sen, others_sen, local_total_sen, total_revenue_sen, created_at, so_date, customer_so_no';
+const SO_COLS = 'doc_no, project_id, salesperson_id, debtor_name, status, on_hold, mattress_sofa_sen, bedframe_sen, accessories_sen, others_sen, local_total_sen, total_revenue_sen, created_at, so_date, customer_so_no, branding, vp_brand, venue';
 
 type FairRead = {
   id: number | string; name: string | null; brand: string | null; start_date: string | null; end_date: string | null; archived_at: string | null; status: string | null; total_sales: number | string | null;
@@ -96,7 +97,8 @@ async function liveReport(c: any, companyId: number, from: string, to: string, b
   });
 
   /* 1–2. Part 1's orders. By fair: the fairs starting in the range and all their
-     orders. By SO date: the orders opened in the range that have a fair. */
+     orders. By SO date: every order opened in the range — one with no fair too
+     (owner 2026-11-12: 「全部列出来，没有展会的标 No fair，要算佣金」). */
   let rangeFairs: FairRead[] = [];
   let partOne: { data: SoRead[]; error: { message: string } | null };
   if (basis === 'fair') {
@@ -112,7 +114,7 @@ async function liveReport(c: any, companyId: number, from: string, to: string, b
       scopeToCompanyId(sb.from('mfg_sales_orders').select(SO_COLS).in('project_id', batch), companyId).order('doc_no').range(lo, hi));
   } else {
     const opened = await paginateAll<SoRead>((lo, hi) =>
-      scopeToCompanyId(sb.from('mfg_sales_orders').select(SO_COLS).gte('so_date', from).lte('so_date', to).not('project_id', 'is', null), companyId)
+      scopeToCompanyId(sb.from('mfg_sales_orders').select(SO_COLS).gte('so_date', from).lte('so_date', to), companyId)
         .order('doc_no').range(lo, hi));
     partOne = { data: opened.data ?? [], error: opened.error };
   }
@@ -136,9 +138,16 @@ async function liveReport(c: any, companyId: number, from: string, to: string, b
   const touched = [...new Set([
     ...(payIn.data ?? []).map((r) => r.so_doc_no), ...(chIn.data ?? []).map((r) => r.so_doc_no), ...(cancelIn.data ?? []).map((r) => r.doc_no),
   ])].filter((d) => d && !known.has(d));
-  const partTwoRead = await chunkIn<SoRead, string>(touched, (batch, lo, hi) =>
-    scopeToCompanyId(sb.from('mfg_sales_orders').select(SO_COLS).in('doc_no', batch).not('project_id', 'is', null), companyId).order('doc_no').range(lo, hi));
+  /* By SO date an order with no fair counts too, from NO_FAIR_FROM (the old ones
+     before it stay out); by fair only orders on a fair. */
+  const partTwoRead = await chunkIn<SoRead, string>(touched, (batch, lo, hi) => {
+    const q = scopeToCompanyId(sb.from('mfg_sales_orders').select(SO_COLS).in('doc_no', batch), companyId);
+    return (basis === 'fair' ? q.not('project_id', 'is', null) : q).order('doc_no').range(lo, hi);
+  });
   if (partTwoRead.error) return fail(c, 'orders', partTwoRead.error.message);
+  const twoRows = basis === 'so_date'
+    ? partTwoRead.data.filter((s) => s.project_id != null || (dayOf(s.so_date) ?? '') >= NO_FAIR_FROM)
+    : partTwoRead.data;
 
   /* The fairs the rest needs: by fair, the earlier fairs of those orders (started
      before the range); by SO date, every fair any of the orders is on. */
@@ -149,16 +158,16 @@ async function liveReport(c: any, companyId: number, from: string, to: string, b
       .bind(companyId, ...ids, ...(startedBefore ? [startedBefore] : [])).all();
     return (res.results ?? []) as FairRead[];
   };
-  const fairIdsOf = (rows: SoRead[]) => [...new Set(rows.map((s) => Number(s.project_id)).filter((id) => Number.isInteger(id)))];
+  const fairIdsOf = (rows: SoRead[]) => [...new Set(rows.filter((s) => s.project_id != null).map((s) => Number(s.project_id)).filter((id) => Number.isInteger(id)))];
   let earlierFairs: FairRead[];
   let partTwo: SoRead[];
   try {
     if (basis === 'fair') {
-      earlierFairs = await readFairs(fairIdsOf(partTwoRead.data).filter((id) => !rangeIds.includes(id)), from);
+      earlierFairs = await readFairs(fairIdsOf(twoRows).filter((id) => !rangeIds.includes(id)), from);
       const earlierSet = new Set(earlierFairs.map((f) => Number(f.id)));
-      partTwo = partTwoRead.data.filter((s) => earlierSet.has(Number(s.project_id)));
+      partTwo = twoRows.filter((s) => earlierSet.has(Number(s.project_id)));
     } else {
-      partTwo = partTwoRead.data.filter((s) => (dayOf(s.so_date) ?? '9999-12-31') < from);
+      partTwo = twoRows.filter((s) => (dayOf(s.so_date) ?? '9999-12-31') < from);
       earlierFairs = await readFairs(fairIdsOf([...partOne.data, ...partTwo]), null);
     }
   } catch (e) {
@@ -187,7 +196,12 @@ async function liveReport(c: any, companyId: number, from: string, to: string, b
   const fairsRead = [...rangeFairs, ...earlierFairs];
   let rates: Awaited<ReturnType<typeof loadCostRates>>;
   try {
-    rates = await loadCostRates(env, fairsRead.map((f) => f.brand));
+    /* By SO date an order with no fair earns at its own brand's rate: every rate
+       card is read, so its brand is found whatever its case. */
+    const cards = basis === 'so_date'
+      ? ((await env.DB.prepare('SELECT brand FROM project_cost_rates').bind().all()).results ?? []).map((r: Record<string, unknown>) => String(r.brand ?? ''))
+      : [];
+    rates = await loadCostRates(env, [...fairsRead.map((f) => f.brand), ...cards]);
   } catch (e) {
     return fail(c, 'rate cards', String((e as Error)?.message ?? e));
   }
@@ -211,13 +225,15 @@ async function liveReport(c: any, companyId: number, from: string, to: string, b
     basis, from, to, fairs,
     ratePctByBrand: new Map([...rates].map(([brand, r]) => [brand, r.commission_normal_pct ?? null])),
     sos: sos.map((s): CommissionSo => ({
-      docNo: s.doc_no, projectId: Number(s.project_id), salesperson: s.salesperson_id ? staffName.get(s.salesperson_id) ?? null : null,
+      docNo: s.doc_no, projectId: s.project_id == null ? null : Number(s.project_id), salesperson: s.salesperson_id ? staffName.get(s.salesperson_id) ?? null : null,
       customer: s.debtor_name, status: String(s.status ?? '').toUpperCase(), onHold: s.on_hold === true,
       goodsSen: n(s.mattress_sofa_sen) + n(s.bedframe_sen) + n(s.accessories_sen) + n(s.others_sen),
       totalSen: n(s.total_revenue_sen) > 0 ? n(s.total_revenue_sen) : n(s.local_total_sen),
       createdAt: stampOf(s.created_at),
       soDate: dayOf(s.so_date),
       ref: s.customer_so_no?.trim() || null,
+      brand: s.branding?.trim() || s.vp_brand?.trim() || null,
+      venue: s.venue?.trim() || null,
     })),
     payments: pays.data.map((p): CommissionPayment => ({ docNo: p.so_doc_no, paidAt: dayOf(p.paid_at) ?? stampOf(p.paid_at), amountSen: n(p.amount_sen) })),
     changes: withUncountedChanges(chs.data.map((r): CommissionChange => ({

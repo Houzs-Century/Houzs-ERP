@@ -40,6 +40,10 @@
 //   · the SO list shows the fair's full name beside its brand (「要有 fair full
 //     name」) and the order's Sales — its total — before its Goods (「我也要看到
 //     sales, 然后 goods」); a fair's own orders show Sales too.
+// AND (owner, 「全部列出来，没有展会的标 No fair，要算佣金」): By SO date lists every
+// order opened in the range; one with no fair sits under "No fair" with the
+// venue typed on it, earning at its own brand's rate, and has a line of its own
+// in the summary — Finance presses Don't count on the ones that should not earn.
 // THEN (owner, 做): the earlier orders table lists only an order that reached
 // 30% or was cancelled in the range (「earlier order 我只想显示reached 30% 和
 // cancelled」); its price changes are the Upsales / Drop sales table's alone, so
@@ -67,7 +71,7 @@ import {
 import { periodLabel } from './reports/statementColumns';
 import { useReportRange } from './reports/useReportRange';
 import {
-  BASIS_WORDS, LEFT_OUT_NOTE, NOT_COUNTED, RULE_NOTE, SUMMARY_HINT, SUMMARY_LABEL, amt, amtRm, belowDepositOf, brandsOf, changedOf, deferredInOf,
+  BASIS_WORDS, LEFT_OUT_NOTE, NOT_COUNTED, RULE_NOTE, SUMMARY_HINT, SUMMARY_LABEL, amt, amtRm, belowDepositOf, brandsOf, changedOf, deferredInOf, isNoFair,
   earlierOf, earlierShownOf, eventCommissionCsv, eventCommissionSheet, fairPlace, fairSortKey, fmtRm, forBrand, lateOf, markWords, markedOf, monthAdjOf,
   markMonthOf, monthLabel, monthOf, myt, nextMonthOf, sum, summaryOf, whatOf, wholeMonthOf, type BelowDepositRow,
 } from './eventCommissionModel';
@@ -340,7 +344,9 @@ const FairOrders = ({ fair, ctl }: { fair: CommissionFairRow; ctl: MarkCtl }) =>
    date 应该是 SO list，不要分 by fair」). */
 type SoListRow = CommissionSoRow & { fair: CommissionFairRow };
 const soListColumns = (ctl: MarkCtl): Column<SoListRow>[] => {
-  const [brand, ...place] = hideState(placeColumns<SoListRow>((o) => fairPlace(o.fair), { brand: '85px', organizer: '115px', venue: '150px', state: '100px' }));
+  /* "No fair": its own brand, the venue typed on the order. */
+  const placeOf = (o: SoListRow) => (isNoFair(o.fair) ? { brand: o.fair.brand?.toUpperCase() ?? null, organizer: null, venue: o.venue ?? null, state: null } : fairPlace(o.fair));
+  const [brand, ...place] = hideState(placeColumns<SoListRow>(placeOf, { brand: '85px', organizer: '115px', venue: '150px', state: '100px' }));
   return [
     { key: 'order', label: 'Order', width: '140px', render: (o) => <OrderLink docNo={o.docNo} />, getValue: (o) => o.docNo },
     refColumn<SoListRow>(),
@@ -704,6 +710,7 @@ export const EventCommissionTab = () => {
   const markedRows = r ? markedOf(r) : [];
   const belowRows = useMemo(() => (r ? belowDepositOf(r) : []), [r]);
   const summary = useMemo(() => (r ? summaryOf(r) : null), [r]);
+  const noFairCount = soList.filter((s) => isNoFair(s.fair)).length;
   const lateCount = useMemo(() => {
     if (!r) return 0;
     const late = lateOf(r);
@@ -715,7 +722,8 @@ export const EventCommissionTab = () => {
 
   const tiles: ReportTile[] = r && summary ? [
     { key: 'total', label: 'Total commission', value: fmtRm(r.totals.totalSen), sub: brandNow || 'all brands', tone: 'good' },
-    { key: 'fair', label: SUMMARY_LABEL.fair, value: fmtRm(summary.fair), sub: n(soList.length, 'order') },
+    { key: 'fair', label: SUMMARY_LABEL.fair, value: fmtRm(summary.fair), sub: n(soList.filter((s) => !isNoFair(s.fair)).length, 'order') },
+    ...(noFairCount > 0 ? [{ key: 'noFair', label: SUMMARY_LABEL.noFair, value: fmtRm(summary.noFair), sub: n(noFairCount, 'order') }] : []),
     { key: 'changes', label: SUMMARY_LABEL.changes, value: fmtRm(summary.changes), sub: n(changedRows.length, 'order') },
     { key: 'late', label: SUMMARY_LABEL.late, value: fmtRm(summary.late), sub: n(lateCount, 'order') },
     { key: 'earlier', label: words.earlier, value: fmtRm(summary.earlier), sub: n(earlierRows.length, 'order') },
