@@ -8,7 +8,7 @@ import { resetInVisitColFilters } from "./dataTableColFilterMemory";
    Ticking a value shortens the table; when the rows had been scrolled (inside the
    frozen table box, or the page near its end) the browser pulls that scrollTop
    back inside the shorter content and fires `scroll` for it, and the popover
-   closed on any scroll. jsdom has no layout, so each test fires the scroll the
+   closed on any scroll. jsdom has no layout, so the tests fire the scrolls the
    browser would. */
 
 type Row = { id: number; fair: string };
