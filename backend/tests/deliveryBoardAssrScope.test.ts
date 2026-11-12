@@ -159,16 +159,20 @@ describe("Delivery Planning board — a board-marked Delivered leg is DELIVERED 
     expect(sql).toContain("delivery_cancelled_at");
   });
 
-  test("the union back-fills the ORIGINAL order's Ref No. + DO numbers (owner 2026-11-11)", () => {
-    // Ref No. from the linked order (ref, else customer_so_no); DO numbers aggregated
-    // from scm.delivery_orders keyed on the RESOLVED order doc_no, falling back to the
-    // case's own doc_no — so a case whose order predates the ERP simply stays blank.
+  test("the union selects the case's own ref_no + delivery_order, with the order ref as fallback (owner 2026-11-11)", () => {
+    // Ref No. = the case's ref_no (the detail's source); the order ref is only a
+    // fallback. DO numbers are NOT resolved in the union any more — the row builder
+    // runs the case through attachDeliveryOrders (the detail/board's one resolver).
     const sql = assrBoardUnionSql(ctx([1]), SINCE);
+    // doc_no MUST be an output column: the row builder passes it to
+    // attachDeliveryOrders, which resolves the DO numbers (without it, every DO
+    // No. cell goes blank — regression caught on the live board 2026-11-11).
+    expect(sql).toContain("assr_cases.doc_no        AS doc_no");
+    expect(sql).toContain("assr_cases.ref_no AS ref_no");
+    expect(sql).toContain("assr_cases.delivery_order AS delivery_order");
     expect(sql).toContain("so.ref AS so_ref_src");
     expect(sql).toContain("so.customer_so_no AS so_custso_src");
-    expect(sql).toContain("dos.do_nos AS related_do_nos");
-    expect(sql).toContain("FROM scm.delivery_orders dd");
-    expect(sql).toContain("COALESCE(so.order_doc_no, assr_cases.doc_no)");
+    expect(sql).not.toContain("related_do_nos");
   });
 });
 

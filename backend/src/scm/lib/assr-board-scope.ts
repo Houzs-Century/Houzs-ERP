@@ -194,6 +194,7 @@ export function assrBoardUnionSql(c: CompanyScopeCtx, recentClosedSince: string)
   return `SELECT assr_cases.id            AS id,
               assr_cases.assr_no       AS assr_no,
               assr_cases.company_id    AS company_id,
+              assr_cases.doc_no        AS doc_no,
               assr_cases.status        AS status,
               assr_cases.stage         AS stage,
               assr_cases.customer_name AS customer_name,
@@ -227,23 +228,23 @@ export function assrBoardUnionSql(c: CompanyScopeCtx, recentClosedSince: string)
               assr_cases.pickup_message_status AS pickup_message_status,
               assr_cases.inspection_message_status AS inspection_message_status,
               assr_cases.addr1 AS addr1, assr_cases.addr2 AS addr2, assr_cases.addr3 AS addr3, assr_cases.addr4 AS addr4,
+              -- Ref No. + the DO No. column are back-filled from the ORIGINAL order (owner
+              -- 2026-11-11). Ref is the case's OWN ref_no (the HC##### customer docket it was
+              -- raised with), the same value the case detail shows; the order's ref is only a
+              -- fallback. The DO numbers are NOT resolved here — the row builder runs the case
+              -- through attachDeliveryOrders (services/assr.ts), the one resolver the detail
+              -- page uses, so a HOUZS case on an AutoCount-numbered order (its DOs live in the
+              -- AutoCount mirror, matched by ref_no) resolves the same on the board as in detail.
+              assr_cases.ref_no AS ref_no, assr_cases.delivery_order AS delivery_order,
               so.customer_state AS so_state, so.postcode AS so_postcode, so.customer_country AS so_country,
-              so.ref AS so_ref_src, so.customer_so_no AS so_custso_src, dos.do_nos AS related_do_nos
+              so.ref AS so_ref_src, so.customer_so_no AS so_custso_src
          FROM assr_cases
          LEFT JOIN LATERAL (
-              SELECT o.customer_state, o.postcode, o.customer_country, o.ref, o.customer_so_no, o.doc_no AS order_doc_no
+              SELECT o.customer_state, o.postcode, o.customer_country, o.ref, o.customer_so_no
                 FROM scm.mfg_sales_orders o
                WHERE o.doc_no = assr_cases.doc_no OR o.linked_ac_docno = assr_cases.doc_no
                ORDER BY (o.doc_no = assr_cases.doc_no) DESC
                LIMIT 1) so ON TRUE
-         LEFT JOIN LATERAL (
-              -- The original order's delivery orders (DO No. column) + its Ref No., back-filled
-              -- onto the Service-Case row (owner 2026-11-11). Keyed on the RESOLVED order doc_no
-              -- (so.order_doc_no), falling back to the case's own doc_no when no order matched;
-              -- an old case whose order predates the ERP matches neither and stays blank.
-              SELECT string_agg(dd.do_number, ' | ' ORDER BY dd.do_number) AS do_nos
-                FROM scm.delivery_orders dd
-               WHERE dd.so_doc_no = COALESCE(so.order_doc_no, assr_cases.doc_no)) dos ON TRUE
         WHERE (assr_cases.customer_pickup_at IS NOT NULL OR assr_cases.do_date IS NOT NULL
                OR assr_cases.sched_pickup_date IS NOT NULL OR assr_cases.sched_delivery_date IS NOT NULL
                OR (assr_cases.inspection_visit_at IS NOT NULL AND assr_cases.inspection_by = 'own')
