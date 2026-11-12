@@ -226,7 +226,17 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
   ];
 
   const modelEntries = models.map((m) => ({ code: m, name: modelNames.get(m) ?? '', supplierCode: supplierCodeOf(m), combos: (book.get(m) ?? []).length }));
-  const shownModels = listedModels(modelEntries, search, allModels, model);
+  // A search on Products also finds sofa models with no SKU module yet (Products > Modular).
+  const everyModel = supplierId ? [] : [
+    ...(productModelsQ.data ?? []).filter((m) => m.active).map((m) => m.model_code),
+    ...(productsQ.data ?? []).map((p) => (p as unknown as { base_model?: string | null }).base_model ?? ''),
+  ].filter((code) => code !== '').map((code) => ({
+    code,
+    name: modelNames.get(code) ?? (productModelsQ.data ?? []).find((m) => m.model_code === code)?.name ?? '',
+    supplierCode: null,
+    combos: (book.get(code) ?? []).length,
+  }));
+  const shownModels = listedModels(modelEntries, everyModel, search, allModels, model);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: '8px 0' }}>

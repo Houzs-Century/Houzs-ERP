@@ -75,17 +75,30 @@ describe('the model list', () => {
     { code: '9081', name: 'Nova', supplierCode: null, combos: 0 },
   ];
   it('shows only models with combos by default', () => {
-    expect(listedModels(all, '', false, null).map((m) => m.code)).toEqual(['5030']);
+    expect(listedModels(all, [], '', false, null).map((m) => m.code)).toEqual(['5030']);
   });
   it('shows every model when asked', () => {
-    expect(listedModels(all, '', true, null)).toHaveLength(3);
+    expect(listedModels(all, [], '', true, null)).toHaveLength(3);
   });
   it('keeps the open model listed', () => {
-    expect(listedModels(all, '', false, '9081').map((m) => m.code)).toEqual(['5030', '9081']);
+    expect(listedModels(all, [], '', false, '9081').map((m) => m.code)).toEqual(['5030', '9081']);
   });
   it('a search finds a model with no combos, by our code, our name or the supplier code', () => {
-    expect(listedModels(all, 'booq', false, null).map((m) => m.code)).toEqual(['5527']);
-    expect(listedModels(all, '8030', false, null).map((m) => m.code)).toEqual(['5527']);
+    expect(listedModels(all, [], 'booq', false, null).map((m) => m.code)).toEqual(['5527']);
+    expect(listedModels(all, [], '8030', false, null).map((m) => m.code)).toEqual(['5527']);
+  });
+  it('a search also finds a sofa model outside the list, one with no combo and no SKU module yet', () => {
+    const every = [
+      { code: '7001', name: 'Harbour', supplierCode: null, combos: 0 },
+      { code: '5030', name: 'Cloud', supplierCode: null, combos: 2 },
+    ];
+    expect(listedModels(all, every, 'harb', false, null).map((m) => m.code)).toEqual(['7001']);
+    expect(listedModels(all, every, '0', false, null).map((m) => m.code)).toEqual(['5030', '5527', '7001', '9081']);
+  });
+  it('without a search the extra models stay out of the default list', () => {
+    const every = [{ code: '7001', name: 'Harbour', supplierCode: null, combos: 0 }];
+    expect(listedModels(all, every, '', false, null).map((m) => m.code)).toEqual(['5030']);
+    expect(listedModels(all, every, '', true, null)).toHaveLength(3);
   });
 });
 
