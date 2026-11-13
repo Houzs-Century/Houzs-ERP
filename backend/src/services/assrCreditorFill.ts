@@ -30,5 +30,16 @@ export async function fillCreditorFromNewPo(env: Env, rows: Array<Record<string,
 export async function attachOrderPosAndFill(env: Env, rows: Array<Record<string, any>>) {
   await attachOrderPurchaseOrders(getSupabaseService(env), rows);
   await fillCreditorFromNewPo(env, rows);
-  await applyErpSupplierNames(getSupabaseService(env), rows, null);
+  await showErpSupplierNames(env, rows, null);
+}
+
+/** `<a>company_id` for a case read, or NULL with no scm: the D1 test mirror has
+ *  neither scm nor assr_cases.company_id, and showErpSupplierNames is a no-op there. */
+export function caseCompanySql(env: Env, a: string): string {
+  return isSupabaseConfigured(env) ? `${a}company_id` : "NULL";
+}
+
+/** HC-0228: see applyErpSupplierNames. No scm in the D1 test env. */
+export async function showErpSupplierNames(env: Env, rows: Array<Record<string, unknown>>, trips: Array<Record<string, unknown>> | null) {
+  if (isSupabaseConfigured(env)) await applyErpSupplierNames(getSupabaseService(env), rows, trips);
 }

@@ -17,8 +17,7 @@ import { resolveCreditorForCase } from "./stockItems";
 import { getActiveStaffToken } from "./caseTracking";
 import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
 import { assrVisibilityPredicateSql } from "./assrVisibility";
-import { attachOrderPosAndFill } from "./assrCreditorFill";
-import { applyErpSupplierNames } from "./assrOrderPos";
+import { attachOrderPosAndFill, caseCompanySql, showErpSupplierNames } from "./assrCreditorFill";
 import { attachOrderDeliveryDates } from "./assrOrderDos";
 
 // ── Types ─────────────────────────────────────────────────────
@@ -818,7 +817,7 @@ export async function getAssrDetail(env: Env, id: number) {
   // summary columns on the case mirror the CURRENT (highest) round; this list
   // is the full history so a case sent back twice keeps both trips' dates.
   const supplierReturns = await listSupplierReturns(env, id);
-  if (isSupabaseConfigured(env)) await applyErpSupplierNames(getSupabaseService(env), [caseRow], supplierReturns);
+  await showErpSupplierNames(env, [caseRow], supplierReturns);
 
   // v3.1 — per-stage lifecycle for the Workflow Progress Tracker.
   // Returns one row per stage (entered + exited timestamps), ordered
@@ -2243,7 +2242,7 @@ export async function exportAssrCases(
             c.complained_date, c.created_at, c.deadline_at,
             c.po_amount, c.po_no,
             u.name as assigned_to_name, u2.name as created_by_name,
-            c.creditor_code as creditor_code,
+            c.creditor_code as creditor_code, c.creditor_source, ${caseCompanySql(env, "c.")} AS company_id,
             cr.company_name as creditor_name,
             co.code as company_code,
             CASE WHEN NOT ${assrOpenStageSql("c")} THEN 0
@@ -2261,6 +2260,7 @@ export async function exportAssrCases(
     .all();
   const results = (rows.results ?? []) as any[];
   await attachDeliveryOrders(env, results);
+  await showErpSupplierNames(env, results, null);
   return results;
 }
 

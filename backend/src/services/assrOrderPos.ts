@@ -178,7 +178,15 @@ export async function applyErpSupplierNames(
   }));
 }
 
-export const poKey =(companyId: unknown, docNo: unknown, itemCode: unknown) => `${Number(companyId)}|${docNo}|${itemCode}`;
+/* HC-0228, for GROUP BY reports: PO/SO-filled cases group apart from AutoCount
+   picks on the same code (and per company, as suppliers are), and come out as
+   creditor_source / company_id so applyErpSupplierNames can name them. */
+export function erpSupplierGroupSql(a: string, companyCol: string): { source: string; company: string } {
+  const erp = `${a}creditor_source IN ('po', 'so')`;
+  return { source: `CASE WHEN ${erp} THEN 'po' END`, company: `CASE WHEN ${erp} THEN ${companyCol} END` };
+}
+
+export const poKey = (companyId: unknown, docNo: unknown, itemCode: unknown) => `${Number(companyId)}|${docNo}|${itemCode}`;
 
 /* Batched: which (company, SO, item) triples have a non-cancelled PO raised for
    that SO line. 3 reads per company, whatever the number of cases. Read error
