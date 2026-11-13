@@ -150,6 +150,9 @@ export type GrnMatchResult = {
   // poItemId -> rack as written -> the qty its rows put on that rack, so split
   // rows of one line go to their own racks.
   rackQty: Record<string, Record<string, number>>;
+  // poItemId -> the first delivery-order row that line was received from, so the
+  // check card lists rows in the paper's order (DO-2611-037 showed matched rows last).
+  rowOf: Record<string, ScannedGrnLine>;
   // The open POs the delivery order named (header or rows), resolved.
   namedPos: string[];
 };
@@ -374,7 +377,9 @@ export function matchGrnScanToPoLines(
   // Identical lines (one per customer order) take a row's qty in PO line order.
   const rackOf = new Map<string, string | null>(); // null = rows disagreed
   const rackQty: Record<string, Record<string, number>> = {};
+  const rowOf: Record<string, ScannedGrnLine> = {};
   const noteRack = (poItemId: string, row: ScannedGrnLine, qty: number): void => {
+    rowOf[poItemId] ??= row;
     const r = (row.rack ?? '').trim();
     if (!r) return;
     const prev = rackOf.get(poItemId);
@@ -600,6 +605,7 @@ export function matchGrnScanToPoLines(
     soMatches,
     racks: refused ? {} : Object.fromEntries([...rackOf].filter((e): e is [string, string] => e[1] !== null)),
     rackQty: refused ? {} : Object.fromEntries(Object.entries(rackQty).filter(([id]) => picks.some((p) => p.poItemId === id))),
+    rowOf: refused ? {} : rowOf,
     namedPos: [...anchoredPos],
   };
 }

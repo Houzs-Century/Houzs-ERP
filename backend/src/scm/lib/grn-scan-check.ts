@@ -62,7 +62,8 @@ export function buildReview(parsed: GrnExtracted | null, supplierId: string | nu
   // Each piece of a set shows the one row that printed it.
   const setRow = new Map((match?.soMatches ?? []).flatMap((m) => m.poItemIds.map((id) => [id, readOf(m.line)] as const)));
   for (const p of match?.picks ?? []) {
-    const tie = { poItemId: p.poItemId, poNumber: null, gift: null, suggested: false, read: setRow.get(p.poItemId) ?? null };
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- a match result built before rowOf existed has none
+    const tie = { poItemId: p.poItemId, poNumber: null, gift: null, suggested: false, read: setRow.get(p.poItemId) ?? (match?.rowOf?.[p.poItemId] ? readOf(match.rowOf[p.poItemId]) : null) };
     // Rows of one PO line written onto different racks: one line per rack, each with its own qty.
     const shares = Object.entries(match?.rackQty[p.poItemId] ?? {});
     if (shares.length < 2) { lines.push({ key: lineKey(), ...tie, qty: p.qty, rack: match?.racks[p.poItemId] ?? null }); continue; }
@@ -80,7 +81,11 @@ export function buildReview(parsed: GrnExtracted | null, supplierId: string | nu
     // A printed code taught as a free gift arrives already marked as one.
     const taught = isGiftRow(u.line, gifts) ? gifts.find((g) => [u.line.itemCode, u.line.barcode].includes(g.printedCode)) : undefined;
     lines.push({
-      key: lineKey(), poItemId: !taught && u.candidatePoItemIds.length === 1 ? u.candidatePoItemIds[0] : null, poNumber: null,
+      key: lineKey(), poItemId: !taught && u.candidatePoItemIds.length === 1 ? u.candidatePoItemIds[0] : null,
+      // The row's printed PO, when it is open for this supplier: the SKU list then
+      // shows only what that PO still owes (DO-2611-037: 5567-1A on PO-2610-197,
+      // which owes 5540-1A), so a person picks from two lines, not 640.
+      poNumber: taught || u.candidatePoItemIds.length === 1 ? null : openPoNamed(u.line.poNo, open),
       gift: taught ? { itemCode: taught.itemCode, name: taught.name } : null, qty: u.line.qty, rack: u.line.rack ?? null, suggested: false, read: readOf(u.line),
     });
   }
@@ -105,6 +110,13 @@ const poKey = (s: string): string => {
   const t = s.toUpperCase().replace(/[_\s-]*R\d+\s*$/, '');
   return (/PO[-\s]*([\d-]+)/.exec(t)?.[1] ?? t).replace(/\D/g, '').replace(/^0+/, '').slice(-7);
 };
+/** The open PO a printed number names, as our PO number, else null. */
+function openPoNamed(printed: string | null | undefined, open: ReadonlyArray<OpenPoLine>): string | null {
+  if (!printed) return null;
+  const k = poKey(printed);
+  const pos = [...new Set(open.filter((o) => poKey(o.poNumber) === k).map((o) => o.poNumber))];
+  return pos.length === 1 ? pos[0] : null;
+}
 const words = (s: string | null | undefined): string[] => (s ?? '').toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean);
 
 /** Every word of our item code is printed on the row, MATT aside: AKEMI EQUINOX
