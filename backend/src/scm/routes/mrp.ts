@@ -62,7 +62,7 @@
 // ----------------------------------------------------------------------------
 
 import { Hono } from 'hono';
-import { computeVariantKey, buildVariantSummary, isServiceLine, splitSofaCode, effectiveDelivery, effectiveSoDelivery, type VariantAttrs } from '../shared';
+import { canonicalVariantKey, computeVariantKey, buildVariantSummary, isServiceLine, splitSofaCode, effectiveDelivery, effectiveSoDelivery, type VariantAttrs } from '../shared';
 import { supabaseAuth } from '../middleware/auth';
 import { soDeliverableRemaining } from './delivery-orders-mfg';
 import { activeCompanyId } from '../lib/companyScope';
@@ -81,6 +81,8 @@ import {
 import { loadLeadBuffers } from '../../services/agents/procurement-learning';
 import {
   applyCommittedSupply,
+  commitmentKey,
+  type OutstandingCommitment,
   type PoSupplyEntry,
 } from '../lib/ship-commitment';
 import { collectBatchClaims, openBucketStock, drawBucketStock } from '../lib/batch-claimed-stock';
@@ -100,6 +102,7 @@ import { SO_PROCESSING_DATE_COLUMN } from '../shared/so-processing-date';
 import { isDefaultMrpView, readMrpSnapshot, refreshMrpSnapshot } from '../lib/mrp-snapshot';
 import { allocSourceOf, allocSourceCoveringPo, type AllocSource } from '../shared/mrp-alloc-source';
 import { isHardBoundLine, HARD_BOUND_COMPANY_ID } from '../lib/so-stock-allocation';
+import { variantTrackedCompany } from '../lib/binding-mode';
 
 export const mrp = new Hono<{ Bindings: Env; Variables: Variables }>();
 mrp.use('*', supabaseAuth);
@@ -541,6 +544,13 @@ export async function computeMrp(
      Houzs), so existing behaviour is unchanged where no company is passed. */
   const scoped = <Q>(q: Q): Q =>
     companyId != null ? (q as unknown as { eq(c: string, v: unknown): Q }).eq('company_id', companyId) : q;
+  /* A variant-tracked company (binding-mode.ts) compares bucket keys canonically,
+     as the SO allocator has since #5617: stock keyed `...|legheight=2"` is the
+     same goods as a line keyed `...|legheight=2"|totalheight=22"`. Without this the
+     SO read READY while MRP read SHORT for the same line (2990-0059). Company 1
+     keeps the exact string. */
+  const bucketOf = (whId: string | null, code: string, vkey: string): string =>
+    composite(whId, code, variantTrackedCompany(companyId) ? canonicalVariantKey(vkey) : vkey);
 
   /* ── ONE WAVE FOR THE READS THAT NEED NOTHING FROM EACH OTHER (2026-08-17) ──
      Four of this engine's reads depend on no earlier result — they key off the
@@ -867,7 +877,7 @@ export async function computeMrp(
   if (balErr) throw new Error(`mrp_load_failed: ${balErr.message}`);
   const stockByKey = new Map<string, number>();
   for (const b of balances ?? []) {
-    const k = composite(b.warehouse_id ?? null, b.item_code, b.variant_key ?? '');
+    const k = bucketOf(b.warehouse_id ?? null, b.item_code, b.variant_key ?? '');
     stockByKey.set(k, (stockByKey.get(k) ?? 0) + (b.qty ?? 0));
   }
 
@@ -1013,7 +1023,7 @@ export async function computeMrp(
     if (left <= 0) continue;
     const poWh = r.warehouse_id ?? r.po.purchase_location_id ?? null;
     if (whFilter && poWh !== whFilter) continue;
-    const k = composite(poWh, r.item_code, variantKeyOf(r.item_group, r.variants));
+    const k = bucketOf(poWh, r.item_code, variantKeyOf(r.item_group, r.variants));
     poDrafts.push({
       bucketKey: k, poNumber: r.po.po_number, eta, qtyLeft: left, supplierId: r.po.supplier_id ?? null,
     });
@@ -1028,9 +1038,12 @@ export async function computeMrp(
      inventory_balances, so deducting alone would count the commitment twice.
      applyCommittedSupply guarantees the two are the same number in the same
      bucket; see its contract. */
-  const committed = await loadCommittedShipments(
-    sb, scoped, poDrafts.map((d) => d.poNumber),
-  );
+  const committed = new Map<string, OutstandingCommitment>();
+  for (const c of (await loadCommittedShipments(sb, scoped, poDrafts.map((d) => d.poNumber))).values()) {
+    const bucketKey = bucketOf(c.warehouseId, c.itemCode, c.variantKey);
+    const k = commitmentKey(bucketKey, c.batchNo);
+    committed.set(k, { ...c, bucketKey, qty: (committed.get(k)?.qty ?? 0) + c.qty });
+  }
   const supply = applyCommittedSupply(poDrafts, committed);
   /* Deliberately NOT silent. These are commitments the deduction could not
      reach: the PO is fully received, went dead, or the shipment sits in a
@@ -1078,7 +1091,7 @@ export async function computeMrp(
      See lib/batch-claimed-stock.ts for the rule and its edges. */
   const batchClaims = collectBatchClaims(demand.map((d) => ({
     soItemId: d.id,
-    bucketKey: composite(d.warehouse_id ?? null, d.item_code, variantKeyOf(d.item_group, d.variants)),
+    bucketKey: bucketOf(d.warehouse_id ?? null, d.item_code, variantKeyOf(d.item_group, d.variants)),
     /* camelCase trap, same as the PO-line read above: a repair script driving
        this through the postgres shim gets allocatedBatchNo — dual-read so the
        carve does not silently vanish on that path. */
@@ -1204,7 +1217,7 @@ export async function computeMrp(
     if (whFilter && (d.warehouse_id ?? null) !== whFilter) continue;
     const whId = d.warehouse_id ?? null;
     const vkey = variantKeyOf(d.item_group, d.variants);
-    const k = composite(whId, d.item_code, vkey);
+    const k = bucketOf(whId, d.item_code, vkey);
     const bucket = demandByKey.get(k)
       ?? { whId, code: d.item_code, vkey, vlabel: buildVariantSummary(d.item_group, d.variants), rows: [] };
     bucket.rows.push(d);
@@ -1490,7 +1503,7 @@ export async function computeMrp(
     if (whFilter && (d.warehouse_id ?? null) !== whFilter) continue;
     const whId = d.warehouse_id ?? null;
     const vkey = variantKeyOf(d.item_group, d.variants);
-    const k = composite(whId, d.item_code, vkey);
+    const k = bucketOf(whId, d.item_code, vkey);
     const bucket = sofaByKey.get(k) ?? { whId, code: d.item_code, vkey, rows: [] };
     bucket.rows.push(d);
     sofaByKey.set(k, bucket);

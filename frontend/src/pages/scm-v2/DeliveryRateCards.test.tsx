@@ -1,5 +1,6 @@
 // Carriers & Rates (restyle + audit 2026-11-07; card redesign 2026-11-11; finance
-// tables 2026-11-11): every carrier is listed with the supplier it bills as (no
+// tables 2026-11-11; the Areas ruled table back 2026-11-12): every carrier is
+// listed with the supplier it bills as (no
 // count of prices), a card whose 3PL company was deleted is not passed off as
 // own fleet, the card's settings read as one line and are edited in a drawer, a
 // price is changed from its tile, the categories are tabs with outstation towns
@@ -64,9 +65,8 @@ function api(path: string, init?: RequestInit) {
 /** Opens MSJ's card from the carrier list. */
 const openMsj = async () => { fireEvent.click(await screen.findByText('MSJ TRANSPORT')); };
 
-/** The Areas table: the finance table whose head reads Town. */
+/** The Areas table: the ruled table whose head reads Town. */
 const areasTable = (panel: HTMLElement) => within(panel).getAllByRole('columnheader').find((h) => h.textContent === 'Town')?.closest('table') as HTMLElement;
-const townRow = (panel: HTMLElement, town: string) => within(areasTable(panel)).getByText(town).closest('tr') as HTMLElement;
 
 const mount = () => render(
   <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
@@ -229,40 +229,44 @@ describe('Carriers & Rates', () => {
     expect(tab.textContent).toContain('2');
     fireEvent.click(tab);
     const out = screen.getByRole('tabpanel', { name: 'Outstation' });
-    /* One finance table: the card's own prices first, then a shaded band per
-       area over a row per town, the area's prices on its first town. */
-    expect(within(areasTable(out)).getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['Town', '1st Set', '3rd Set and After', 'Change the area']);
-    const own = townRow(out, 'Towns not in an area below');
+    /* One ruled table (owner 2026-11-12 「改回原本的」): the card's own prices
+       first, then a row per town, the area's name, prices and pencil merged
+       down across its towns and sitting on its first town's line. */
+    const table = areasTable(out);
+    expect(within(table).getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['Area', 'Town', '1st set', '3rd set and after', 'Change the area']);
+    const own = within(table).getByRole('rowgroup', { name: 'Everywhere else' });
+    expect(within(own).getByText('Towns not in an area below')).toBeTruthy();
     expect(within(own).getByText('80.00')).toBeTruthy();
     expect(within(own).getByText('40.00')).toBeTruthy();
-    expect(within(areasTable(out)).getByText('Everywhere else · the card’s own prices')).toBeTruthy();
-    expect(within(areasTable(out)).getByText('Far towns')).toBeTruthy();
-    expect(within(townRow(out, 'Bintulu')).getByRole('button', { name: 'Edit 1st set for Far towns, RM 200.00' })).toBeTruthy();
-    expect(within(townRow(out, 'Labuan')).queryAllByRole('button')).toHaveLength(0);
-    /* Its other towns stay blank: a dash there would read as "no price". */
-    expect(townRow(out, 'Labuan').textContent).toBe('Labuan');
+    const far = within(table).getByRole('rowgroup', { name: 'Far towns' });
+    const [bintulu, labuan] = within(far).getAllByRole('row');
+    expect(within(far).getAllByRole('row')).toHaveLength(2);
+    expect(within(bintulu).getByText('Bintulu')).toBeTruthy();
+    expect(within(bintulu).getByText('2 towns')).toBeTruthy();
+    const price = within(bintulu).getByRole('button', { name: 'Edit 1st set for Far towns, RM 200.00' });
+    expect(price.closest('td')?.getAttribute('rowspan')).toBe('2');
+    expect(within(bintulu).getByRole('button', { name: 'Change Far towns' }).closest('td')?.getAttribute('rowspan')).toBe('2');
+    expect(labuan.textContent).toBe('Labuan');
     expect(within(out).getByText(/its town price adds on top of the area’s price/).textContent).toContain('Labuan (Far towns)');
 
-    /* The pencil opens the area's name and towns under the table. */
-    fireEvent.click(within(townRow(out, 'Bintulu')).getByRole('button', { name: 'Change Far towns' }));
-    expect(within(out).getByText('Change Far towns')).toBeTruthy();
-    expect((within(out).getByLabelText(/^Towns, separated by commas/) as HTMLTextAreaElement).value).toBe('BINTULU, LABUAN');
-    fireEvent.click(within(out).getByRole('button', { name: 'Cancel' }));
-    expect(within(out).queryByText('Change Far towns')).toBeNull();
+    /* The pencil opens the area's name and towns in a row under the area. */
+    fireEvent.click(within(far).getByRole('button', { name: 'Change Far towns' }));
+    expect((within(far).getByLabelText(/^Towns, separated by commas/) as HTMLTextAreaElement).value).toBe('BINTULU, LABUAN');
+    fireEvent.click(within(far).getByRole('button', { name: 'Cancel' }));
+    expect(within(far).queryByLabelText(/^Towns, separated by commas/)).toBeNull();
 
-    const far = () => townRow(out, 'Bintulu');
-    fireEvent.click(within(far()).getByRole('button', { name: 'Edit 1st set for Far towns, RM 200.00' }));
-    fireEvent.change(within(far()).getByLabelText('Amount for 1st set for Far towns'), { target: { value: '250' } });
-    fireEvent.click(within(far()).getByRole('button', { name: 'Save 1st set for Far towns' }));
+    fireEvent.click(within(far).getByRole('button', { name: 'Edit 1st set for Far towns, RM 200.00' }));
+    fireEvent.change(within(far).getByLabelText('Amount for 1st set for Far towns'), { target: { value: '250' } });
+    fireEvent.click(within(far).getByRole('button', { name: 'Save 1st set for Far towns' }));
     await waitFor(() => {
       const patch = fetchMock.mock.calls.find((c) => c[1]?.method === 'PATCH' && String(c[0]).includes('/rules/'));
       expect(patch?.[0]).toBe('/delivery-rate-cards/card-msj/rules/ra1');
       expect(JSON.parse(String(patch?.[1].body))).toEqual({ amountSen: 25000 });
     });
 
-    fireEvent.click(within(far()).getByRole('button', { name: 'Add 3rd set and after price for Far towns' }));
-    fireEvent.change(within(far()).getByLabelText('Amount for 3rd set and after for Far towns'), { target: { value: '50' } });
-    fireEvent.click(within(far()).getByRole('button', { name: 'Save 3rd set and after price for Far towns' }));
+    fireEvent.click(within(far).getByRole('button', { name: 'Add 3rd set and after price for Far towns' }));
+    fireEvent.change(within(far).getByLabelText('Amount for 3rd set and after for Far towns'), { target: { value: '50' } });
+    fireEvent.click(within(far).getByRole('button', { name: 'Save 3rd set and after price for Far towns' }));
     await waitFor(() => {
       const post = fetchMock.mock.calls.find((c) => c[1]?.method === 'POST' && c[0] === '/delivery-rate-cards/card-msj/rules');
       expect(JSON.parse(String(post?.[1].body))).toEqual({ ruleType: 'POSITIONAL_TIER', tierPosition: 3, areaId: 'area-far', amountSen: 5000 });

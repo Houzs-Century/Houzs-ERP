@@ -90,7 +90,8 @@ import { activeCompanyId, scopeToCompany, scopeToAllowedCompanies, companyCodeMa
    Both statements live in ONE module, with the reasoning, so the predicate is
    assertable and cannot be re-derived by hand here. */
 import { assrBoardLocation, assrLegGuardSql, assrLegOpen, ASSR_BOARD_LEGS, ASSR_CONFIRMED_COL, assrBoardLegs, assrCaseClosed, ASSR_LEG_TIME_COL, ASSR_LEG_MSG_COL, ASSR_LEG_REMARK_COL } from '../lib/assr-board-scope'; import { overlayAssrChatState } from '../lib/assr-arrangement-message';
-import { logActivity } from '../../services/assr';
+import { logActivity, attachDeliveryOrders } from '../../services/assr';
+import { orderDoNumbers } from '../../services/assrOrderDos';
 import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { computeReleaseGate } from '../../services/agents/release-gate';
@@ -350,6 +351,14 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     if ('err' in assrR) throw assrR.err;
     const assrRows = assrR.ok;
 
+    // Resolve each case's ORIGINAL-order DO numbers through the SAME resolver the
+    // case detail uses (attachDeliveryOrders): hand-entered delivery_order wins, else
+    // sales_orders.transfer_to / the AutoCount DO-mirror matched by ref_no / scm by
+    // so_doc_no. It needs company_code (HOUZS vs 2990) and mutates each row's
+    // do_numbers; fail-soft. Batched once for the whole board, not per leg.
+    for (const a of (assrRows.results ?? [])) a.company_code = codeMap.get(Number(a.company_id)) ?? null;
+    await attachDeliveryOrders(c.env, (assrRows.results ?? []) as unknown as Record<string, unknown>[]);
+
     for (const a of (assrRows.results ?? [])) {
       const assrNo = String(a.assr_no ?? '').trim();
       if (!assrNo) continue;
@@ -367,12 +376,16 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       // A closed / archived case's legs are DONE → they belong on Delivered.
       const caseClosed = assrCaseClosed(a);
 
-      // The ORIGINAL order's Ref No. + DO No., back-filled onto the Service-Case row
-      // (owner 2026-11-11). Ref follows the SO row's rule (the order's ref, else its
-      // customer_so_no); DO numbers come pre-aggregated from the union. Both are blank
-      // when the case's order predates the ERP (no match) — blank, not wrong.
-      const soRefBackfill = (String(a.so_ref_src ?? '').trim() || String(a.so_custso_src ?? '').trim()) || null;
-      const relatedDoNos = a.related_do_nos ? String(a.related_do_nos).split(' | ').filter(Boolean) : null;
+      // Ref No. = the case's OWN ref_no (the HC##### customer docket it was raised with —
+      // exactly what the case detail shows), with the linked order's ref only as a fallback.
+      // A placeholder like "-" / "." is not an identifying ref (same rule as the DO resolver).
+      // DO No. = the case's resolved order DOs (attachDeliveryOrders, above) — the same source
+      // the detail uses, so a HOUZS AutoCount-numbered case shows its DOs here too.
+      const caseRef = String(a.ref_no ?? '').trim();
+      const soRefBackfill = (/[A-Za-z0-9]/.test(caseRef) ? caseRef : '')
+        || String(a.so_ref_src ?? '').trim() || String(a.so_custso_src ?? '').trim() || null;
+      const doNos = orderDoNumbers(a);
+      const relatedDoNos = doNos.length ? doNos : null;
 
       // Own-team legs: Service's date = request, Logistics' = confirmed (assrBoardLegs).
       for (const leg of assrBoardLegs(a, caseClosed, today)) {

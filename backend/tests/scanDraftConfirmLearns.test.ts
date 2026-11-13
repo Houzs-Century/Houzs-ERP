@@ -86,6 +86,8 @@ function world(auditAfterCreate: Row[]) {
     mfg_sales_orders: [{
       doc_no: DOC, company_id: CO, status: 'DRAFT', version: 2, debtor_code: 'C1',
       salesperson_id: 'staff-1', venue: 'JB fair',
+      // A scan confirms only once a person has picked its fair and fair day.
+      project_id: 340, fair_match: 'PICKED', fair_date: '2026-10-14',
       // The operator corrected the name the scan misread.
       debtor_name: 'Tan Ah Kaw', phone: '+60127778888', emergency_contact_phone: null,
       address1: '12 Jalan Mawar', city: 'Skudai', postcode: '81300', customer_state: 'Johor',

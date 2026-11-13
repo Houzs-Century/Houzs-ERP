@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { read, utils } from 'xlsx';
 import { buildStyledXlsx } from '../../lib/styled-xlsx';
 import type { SofaComboRule } from '../../lib/sofa-combos-queries';
-import { comboBook, familyMatches, fitSlots, listedModels, offeredSizes, historyLines, itemsFromEdits, moduleFamilies, presetSlots, type ComboLine } from './comboBook';
+import { comboBook, familyMatches, fitSlots, listedModels, offeredSizes, historyLines, itemsFromEdits, moduleFamilies, presetPieces, presetSlots, type ComboLine } from './comboBook';
 import { comboSheets, planComboImport, type ComboGrids } from './comboExcel';
 
 const rule = (over: Partial<SofaComboRule>): SofaComboRule => ({
@@ -50,8 +50,17 @@ describe('copying a combo to another model', () => {
   it('names the piece it cannot make', () => {
     expect(fitSlots([['3S'], ['CNR']], OWN).missing).toEqual(['3S']);
   });
-  it('reads a preset piece as both sides', () => {
-    expect(presetSlots('2A + CNR', OWN)).toEqual([['2A(LHF)', '2A(RHF)'], ['CNR']]);
+  it('reads a preset piece with no side as both sides', () => {
+    expect(presetSlots([['2A'], ['CNR']], OWN)).toEqual([['2A(LHF)', '2A(RHF)'], ['CNR']]);
+  });
+  it('keeps a preset piece with a side as that side only', () => {
+    expect(presetSlots([['2A(RHF)'], ['CNR']], OWN)).toEqual([['2A(RHF)'], ['CNR']]);
+  });
+  it('a preset piece the model does not make is named missing', () => {
+    expect(fitSlots(presetSlots([['2A'], ['3S']], OWN), OWN).missing).toEqual(['3S']);
+  });
+  it('writes a preset on one line', () => {
+    expect(presetPieces([['2A'], ['CNR'], ['1A', '1B']])).toBe('2A + CNR + 1A or 1B');
   });
 });
 
@@ -75,17 +84,30 @@ describe('the model list', () => {
     { code: '9081', name: 'Nova', supplierCode: null, combos: 0 },
   ];
   it('shows only models with combos by default', () => {
-    expect(listedModels(all, '', false, null).map((m) => m.code)).toEqual(['5030']);
+    expect(listedModels(all, [], '', false, null).map((m) => m.code)).toEqual(['5030']);
   });
   it('shows every model when asked', () => {
-    expect(listedModels(all, '', true, null)).toHaveLength(3);
+    expect(listedModels(all, [], '', true, null)).toHaveLength(3);
   });
   it('keeps the open model listed', () => {
-    expect(listedModels(all, '', false, '9081').map((m) => m.code)).toEqual(['5030', '9081']);
+    expect(listedModels(all, [], '', false, '9081').map((m) => m.code)).toEqual(['5030', '9081']);
   });
   it('a search finds a model with no combos, by our code, our name or the supplier code', () => {
-    expect(listedModels(all, 'booq', false, null).map((m) => m.code)).toEqual(['5527']);
-    expect(listedModels(all, '8030', false, null).map((m) => m.code)).toEqual(['5527']);
+    expect(listedModels(all, [], 'booq', false, null).map((m) => m.code)).toEqual(['5527']);
+    expect(listedModels(all, [], '8030', false, null).map((m) => m.code)).toEqual(['5527']);
+  });
+  it('a search also finds a sofa model outside the list, one with no combo and no SKU module yet', () => {
+    const every = [
+      { code: '7001', name: 'Harbour', supplierCode: null, combos: 0 },
+      { code: '5030', name: 'Cloud', supplierCode: null, combos: 2 },
+    ];
+    expect(listedModels(all, every, 'harb', false, null).map((m) => m.code)).toEqual(['7001']);
+    expect(listedModels(all, every, '0', false, null).map((m) => m.code)).toEqual(['5030', '5527', '7001', '9081']);
+  });
+  it('without a search the extra models stay out of the default list', () => {
+    const every = [{ code: '7001', name: 'Harbour', supplierCode: null, combos: 0 }];
+    expect(listedModels(all, every, '', false, null).map((m) => m.code)).toEqual(['5030']);
+    expect(listedModels(all, every, '', true, null)).toHaveLength(3);
   });
 });
 

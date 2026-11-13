@@ -26,7 +26,7 @@ import { useAuth as useHouzsAuth } from "../auth/AuthContext";
 import { useVenues, type AutoVenue } from "../vendor/scm/lib/venues-queries";
 import { FairDayPicker, FairPicker, useAutoFair, type FairPickValue } from "../components/FairPicker";
 import { FairFallback } from "../components/FairFallback";
-import { fairDayCheck, fairEditPatch, fairEventOf, fairPickValue, linkedEvent, type LinkedFair } from "../components/fairPick";
+import { fairDayCheck, fairEditPatch, fairEventOf, fairPickValue, isScannedOrder, linkedEvent, type LinkedFair } from "../components/fairPick";
 import { useStateWarehouseMappings } from "../vendor/scm/lib/state-warehouse-queries";
 import { todayMyt } from "../vendor/scm/lib/dates";
 import { addressLineProps } from "../lib/acColumnWidths";
@@ -199,7 +199,7 @@ type SoHeader = {
   venue_id?: string | null;
   venueId?: string | null;
   fair?: LinkedFair | null; // the linked event (owner 2026-09-24); absent on an older server
-  fair_date?: string | null; fair_match?: string | null; // the day of that event; how it was linked
+  fair_date?: string | null; fair_match?: string | null; slip_image_key?: string | null; slipImageKey?: string | null; // the day of that event; how it was linked; the slip a scan was read from
   sales_location?: string | null;
   note: string | null;
   address1: string | null;
@@ -883,7 +883,7 @@ export function MobileNewSO({
      a month later must offer the fairs that were on when the order was written,
      not the ones on today (owner 2026-09-23). Desktop passes header.so_date. */
   const [orderDate, setOrderDate] = useState<string | null>(null);
-  const [linkedFair, setLinkedFair] = useState<LinkedFair | null>(null); // seeds the picker's event
+  const [linkedFair, setLinkedFair] = useState<LinkedFair | null>(null); const [scannedOrder, setScannedOrder] = useState(false); // seeds the picker's event; a scan takes no venue default (owner 2026-11-12)
   const [linkedDay, setLinkedDay] = useState<string | null>(null); // ...and the day of it
   // SKU picker sheet — the line key it was opened for, or null when closed.
   const [pickerFor, setPickerFor] = useState<string | null>(null);
@@ -962,7 +962,7 @@ export function MobileNewSO({
         setCustType(h.customer_type ?? "");
         setBuildingType(h.building_type ?? "");
         setPrefillVenueId(h.venueId ?? h.venue_id ?? null);
-        setPrefillVenueName(h.venue ?? "");
+        setPrefillVenueName(h.venue ?? ""); setScannedOrder(isScannedOrder(h));
         setOrderDate(h.so_date ? h.so_date.slice(0, 10) : null);
         setLinkedFair(h.fair ?? null); setLinkedDay(h.fair_date ?? null); setNoFair(h.fair_match === "NO_FAIR");
         setProcDate((h.processing_date ?? "").slice(0, 10));
@@ -1145,7 +1145,7 @@ export function MobileNewSO({
      match nothing in useVenues(). */
   const savedVenue = isEdit && (prefillVenueId != null || prefillVenueName.trim() !== "");
   const resolvedVenueId: string | null =
-    prefillVenueId ?? (savedVenue ? null : selectedStaff?.venueId ?? authStaff?.venueId ?? autoVenue?.venueId) ?? null;
+    prefillVenueId ?? (savedVenue || scannedOrder ? null : selectedStaff?.venueId ?? authStaff?.venueId ?? autoVenue?.venueId) ?? null;
   const resolvedVenueName: string = useMemo(() => {
     if (resolvedVenueId) {
       const v = (venuesQ.data ?? []).find((r) => r.id === resolvedVenueId);
