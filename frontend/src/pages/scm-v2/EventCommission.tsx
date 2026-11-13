@@ -50,7 +50,7 @@
 // no change is shown twice.
 // ----------------------------------------------------------------------------
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight, Lock } from 'lucide-react';
 import {
   useAddCommissionLine, useCloseCommissionMonth, useEventCommission, useMarkCommissionOrder, useRemoveCommissionLine, useReopenCommissionMonth,
@@ -571,12 +571,23 @@ const AddLineForm = ({ month, busy, onAdd, onCancel }: {
   const [reason, setReason] = useState('');
   const goodsSen = Math.round(Number(amount.replace(/,/g, '').trim()) * 100);
   const ready = docNo.trim() !== '' && amount.trim() !== '' && Number.isFinite(goodsSen) && goodsSen !== 0 && reason.trim() !== '';
+  /* The card sits far down the page, and the header's menu opens the form from
+     the top of it: the press looked as if it had done nothing (owner 2026-11-13,
+     「我要如何add?」). The form comes into view and the cursor waits in its first box. */
+  const formRef = useRef<HTMLFormElement>(null);
+  const orderRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const form = formRef.current;
+    /* jsdom has no scrollIntoView: asked for, not assumed. */
+    if (form && 'scrollIntoView' in form) form.scrollIntoView({ block: 'center' });
+    orderRef.current?.focus({ preventScroll: true });
+  }, []);
   return (
-    <form className={ec.lineForm} aria-label={`Add a line for ${monthLabel(month)}`}
+    <form ref={formRef} className={ec.lineForm} aria-label={`Add a line for ${monthLabel(month)}`}
       onSubmit={(e) => { e.preventDefault(); if (ready && !busy) onAdd({ docNo: docNo.trim().toUpperCase(), goodsSen, reason: reason.trim() }); }}>
       <label className={ec.field}>
         <span className={ec.fieldLabel}>Order</span>
-        <input className={ec.input} value={docNo} onChange={(e) => setDocNo(e.target.value)} placeholder="HC-SO-…" autoComplete="off" />
+        <input ref={orderRef} className={ec.input} value={docNo} onChange={(e) => setDocNo(e.target.value)} placeholder="HC-SO-…" autoComplete="off" />
       </label>
       <label className={ec.field}>
         <span className={ec.fieldLabel}>Goods (RM)</span>

@@ -701,6 +701,24 @@ describe("Finance's own lines (owner 2026-11-13)", () => {
     expect(within(screen.getByRole('region', { name: 'Added by Finance' })).getByRole('form', { name: 'Add a line for 2026/10' })).toBeTruthy();
   });
 
+  test('the form opened from the menu comes into view, with the cursor in its first box', () => {
+    october();
+    const scrolled = vi.fn();
+    const was = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollIntoView');
+    Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value(this: Element, opts: unknown) { scrolled(this, opts); } });
+    try {
+      renderTab(<EventCommissionTab />);
+      fireEvent.click(screen.getByRole('button', { name: 'More' }));
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Add a line (Finance)' }));
+      const form = screen.getByRole('form', { name: 'Add a line for 2026/10' });
+      expect(scrolled).toHaveBeenCalledWith(form, { block: 'center' });
+      expect(document.activeElement).toBe(within(form).getByLabelText('Order'));
+    } finally {
+      if (was) Object.defineProperty(Element.prototype, 'scrollIntoView', was);
+      else Reflect.deleteProperty(Element.prototype, 'scrollIntoView');
+    }
+  });
+
   test('Remove asks first, then takes the line away; a closed month offers neither', async () => {
     october();
     current = withLine;
