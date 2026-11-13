@@ -34,6 +34,8 @@
 // Under this, leave the file alone: it is already safely inside the API's cap
 // (2MB raw -> ~2.7MB base64), and re-encoding would cost handwriting fidelity
 // to save bytes that were never a problem. Matches HOOKKA's threshold.
+import { rasterizeScannerPdf } from './pdf-rasterize';
+
 const SKIP_UNDER_BYTES = 2 * 1024 * 1024;
 const MAX_EDGE_PX = 2000;
 const JPEG_QUALITY = 0.85;
@@ -50,8 +52,8 @@ function toJpegBlob(canvas: HTMLCanvasElement, quality: number): Promise<Blob | 
  * done — a compression bug must never block a scan.
  */
 export async function compressForOcr(file: File): Promise<File> {
-  // A PDF has no canvas path here (HOOKKA needed pdfjs for that); scan-so.ts
-  // forwards it as a document block, which has its own limits. Leave it be.
+  // A PDF goes up as a document block; only a fax-coded scanner PDF is re-drawn.
+  if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) return rasterizeScannerPdf(file);
   if (!isImage(file)) return file;
   if (file.size <= SKIP_UNDER_BYTES) return file;
 

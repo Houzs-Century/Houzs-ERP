@@ -3,6 +3,7 @@
 One line per open item: what — waiting on — since. Delete the line when it is done. Older items were dropped on 2026-09-15; they are in tag `archive/docs-2026-09-15`.
 
 ## Waiting on owner
+- The GitHub Actions secret `ANTHROPIC_API_KEY` is rejected by Anthropic (401 invalid x-api-key, run 43420961221), so model-calling tools in `run-script.yml` cannot run; the Worker's own key works. Owner re-enters a current key in GitHub repo secrets (since 2026-11-13).
 - STOCK WORK ON HOLD (owner 2026-11-11: "don't touch stock; someone else checks"). Nothing below may be applied until that person signs off:
   - Half-done documents, `repair-half-done-documents-2026-11.mjs` (PLAN run 42965040246, refusals 0): HC-GRN-2609-118 (IN +1 8030-2A(LHF), linked to HC-DO-2610-329's uncosted OUT), HC-GRN-2610-045 (IN +1 each 8030-1A(LHF) / 8030-2A(RHF), lots closed at once; the cancel-then-repost bug, fixed for the future by #5645), HC-DO-2610-319 (5 units OUT, LOADED since 2026-10-22 with no OUT; confirm the goods really left). `DOC_NOS=` limits a run (#5654)
   - HC-DO-2610-419 ELEPHANE-(K) @ BALAKONG: repair ends movements -1 / open lots 0 because the 2026-08-29 AutoCount opening row was -1; finance confirms that opening before applying
