@@ -36,7 +36,8 @@ import {
   type ContentBlock,
   type UploadedImage,
 } from '../lib/scan-ocr';
-import { callClaudeGrExtract, emptyScanNote, loadGrnFewShot, type GrnExtracted } from '../lib/grn-scan-extract';
+import { NOTE_READ_FAILED, callClaudeGrExtract, emptyScanNote, loadGrnFewShot, type GrnExtracted } from '../lib/grn-scan-extract';
+import { readDeliveryOrder } from '../lib/grn-scan-pages';
 import { draftFromScan, matchScan, toScanned, type ScanDraftOutcome } from '../lib/grn-scan-draft';
 import { reviewOfRead } from '../lib/grn-scan-check-read';
 import { todayMyt } from '../lib/my-time';
@@ -210,8 +211,11 @@ async function runGrnScanJob(
     if (!apiKey) { console.error('[scan-gr] ANTHROPIC_API_KEY missing'); return await fail(JOB_MSG.noKey); }
 
     const fewShot = await loadGrnFewShot(svc);
-    const call = await callClaudeGrExtract(apiKey, job.fileBlocks, fewShot,
-      { env, feature: 'scan_gr', model: CLAUDE_MODEL, companyId: job.companyId, userId: job.houzsUserId, waitUntil: null });
+    const usage = { env, feature: 'scan_gr', model: CLAUDE_MODEL, companyId: job.companyId, userId: job.houzsUserId, waitUntil: null };
+    // Reading page by page restarts the stale-job clock first, so the reaper
+    // does not re-run a long delivery order still being read.
+    const call = await readDeliveryOrder(job.fileBlocks, job.firstBuffer,
+      (blocks) => callClaudeGrExtract(apiKey, blocks, fewShot, usage), () => touch({ status: 'running' }));
     const parsed = call.parsed;
 
     const imageSha256 = job.firstBuffer ? await sha256Hex(job.firstBuffer) : null;
@@ -221,11 +225,20 @@ async function runGrnScanJob(
     if (sampleId) await touch({ sample_id: sampleId });
     await storeGrnScanImage(env.SO_ITEM_PHOTOS, svc, sampleId, job.uploadedImages);
 
+    if (call.failed) {
+      // A failed call is not an unreadable paper: fail, so Read again is offered
+      // and the empty result is never kept (or reused for the same file).
+      console.error('[scan-gr] read call failed:', job.id, call.errorMsg);
+      return await fail(NOTE_READ_FAILED);
+    }
+
     if (job.review) {
       const { review, note } = await reviewOfRead(svc, job.companyId, parsed, todayMyt());
-      await touch({ status: 'done', review_state: 'pending', review, error: note });
+      await touch({ status: 'done', review_state: 'pending', review, error: call.partialNote ?? note });
       return;
     }
+
+    if (call.partialNote) return await needsReview(call.partialNote);
 
     if (!parsed || parsed.lines.length === 0) {
       console.error('[scan-gr] extraction empty, needs review:', job.id, call.errorMsg);

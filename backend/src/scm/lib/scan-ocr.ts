@@ -110,6 +110,8 @@ export function stripJsonFences(text: string): string {
 export type AnthropicResponse = {
   content?: Array<{ type: string; text?: string }>;
   error?: { type: string; message: string };
+  // 'max_tokens' = the answer was cut off at the output cap, mid-JSON.
+  stop_reason?: string | null;
   usage?: { cache_creation_input_tokens?: number; cache_read_input_tokens?: number };
 };
 
