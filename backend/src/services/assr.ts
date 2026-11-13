@@ -17,7 +17,7 @@ import { resolveCreditorForCase } from "./stockItems";
 import { getActiveStaffToken } from "./caseTracking";
 import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
 import { assrVisibilityPredicateSql } from "./assrVisibility";
-import { attachOrderPosAndFill, caseCompanySql, showErpSupplierNames } from "./assrCreditorFill";
+import { attachOrderPosAndFill, caseCompanySql, pickedSupplierName, showErpSupplierNames } from "./assrCreditorFill";
 import { attachOrderDeliveryDates } from "./assrOrderDos";
 
 // ── Types ─────────────────────────────────────────────────────
@@ -1403,22 +1403,12 @@ export async function setCaseCreditorManual(
 
   let creditorName: string | null = null;
   if (creditorCode) {
-    const cr = await env.DB.prepare(
-      `SELECT company_name FROM creditors WHERE creditor_code = ?`
-    )
-      .bind(creditorCode)
-      .first<{ company_name: string | null }>();
     // HC-0228: an ERP supplier code is valid even when AutoCount lacks it, and its ERP name wins.
-    const erp: Record<string, unknown> = { creditor_code: creditorCode, company_id: existing.company_id };
-    await showErpSupplierNames(env, [erp], null);
-    if (!cr && erp.creditor_name === undefined) {
-      return {
-        ok: false,
-        status: 400,
-        error: "Unknown supplier code — pick one from the search results or add it first",
-      };
+    const name = await pickedSupplierName(env, creditorCode, existing.company_id);
+    if (name === undefined) {
+      return { ok: false, status: 400, error: "Unknown supplier code — pick one from the search results or add it first" };
     }
-    creditorName = (erp.creditor_name as string | undefined) ?? cr?.company_name ?? null;
+    creditorName = name;
   }
 
   await env.DB.prepare(

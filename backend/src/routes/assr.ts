@@ -68,9 +68,7 @@ import { sendServiceCaseReceivedAck } from "../services/assrConnectAck";
 import { overviewFilter, withOverviewFilter } from "./lib/assr-overview-filter";
 import { todayMyt } from "../scm/lib/my-time";
 import { assrExportShowsCost, buildAssrCasesCsv } from "./lib/assr-export-csv";
-import { caseCompanySql, showErpSupplierNames } from "../services/assrCreditorFill";
-import { supplierPickerResults } from "../services/assrOrderPos";
-import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
+import { caseCompanySql, namedSupplierGroups, showErpSupplierNames, withErpSuppliers } from "../services/assrCreditorFill";
 
 /* The context the extracted handlers below receive. They are exported so the
    route tests can drive them directly; the shape is exactly what app.get/post
@@ -994,10 +992,7 @@ app.get("/creditors/search", requireServiceCaseAccess(), async (c) => {
   )
     .bind(like, like)
     .all<{ creditor_code: string; company_name: string | null; phone1: string | null }>();
-  const hits = rows.results ?? [];
-  const ids = assrCompanyIds(c);
-  if (!isSupabaseConfigured(c.env) || !ids?.length) return c.json({ results: hits });
-  return c.json({ results: await supplierPickerResults(getSupabaseService(c.env), ids, q, hits) });
+  return c.json({ results: await withErpSuppliers(c.env, assrCompanyIds(c), q, rows.results ?? []) });
 });
 
 app.post("/creditors/create", requirePermission("service_cases.write"), async (c) => {
@@ -1087,16 +1082,8 @@ app.get("/by-creditor", requirePermission("service_cases.read"), async (c) => {
         AND c.creditor_code IS NOT NULL${coC}${visC.sql}
       GROUP BY c.creditor_code, ${coCol}, cr.company_name, cr.email, cr.phone1
       ORDER BY total DESC, creditor_name ASC`
-  )
-    .bind(...visC.binds)
-    .all<Record<string, unknown>>();
-  const named = grouped.results ?? [];
-  await showErpSupplierNames(c.env, named, null);
-  // Searched after naming, so "hookka" finds the ERP-named 400-H004 group.
-  const q = search.toLowerCase();
-  const rows = named
-    .filter((r) => !q || [r.creditor_name, r.creditor_code].some((v) => String(v ?? "").toLowerCase().includes(q)))
-    .map(({ creditor_email, creditor_phone, creditor_mobile: _m, creditor_attention: _a, ...r }) => ({ ...r, email: creditor_email ?? null, phone: creditor_phone ?? null }));
+  ).bind(...visC.binds).all<Record<string, unknown>>();
+  const rows = await namedSupplierGroups(c.env, grouped.results ?? [], search);
 
   const unassigned = await c.env.DB.prepare(
     `SELECT COUNT(*) AS total,
@@ -2508,8 +2495,7 @@ app.get("/metrics", requirePermission("service_cases.read"), async (c) => {
   )
     .bind(...visA.binds)
     .all<Record<string, unknown>>();
-  const perfRows = creditorPerf.results ?? [];
-  await showErpSupplierNames(c.env, perfRows, null);
+  const perfRows = await showErpSupplierNames(c.env, creditorPerf.results ?? [], null);
 
   // Monthly trend (last 12 months of case opens). Use complained_date
   // when populated, fall back to created_at — legacy rows imported
