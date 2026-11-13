@@ -577,7 +577,9 @@ const AddLineForm = ({ month, busy, onAdd, onCancel }: {
   const formRef = useRef<HTMLFormElement>(null);
   const orderRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    formRef.current?.scrollIntoView?.({ block: 'center' });
+    const form = formRef.current;
+    /* jsdom has no scrollIntoView: asked for, not assumed. */
+    if (form && 'scrollIntoView' in form) form.scrollIntoView({ block: 'center' });
     orderRef.current?.focus({ preventScroll: true });
   }, []);
   return (
