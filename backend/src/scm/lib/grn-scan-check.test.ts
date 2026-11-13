@@ -154,3 +154,13 @@ describe('DO-2611-037: the card follows the paper, and a row keeps its printed P
     expect(r.lines[1]).toMatchObject({ poItemId: null, poNumber: 'HC-PO-2610-197' });
   });
 });
+
+describe('an X row stays off the draft (owner 2026-11-13)', () => {
+  test('it is listed untied, with no PO and no suggestion', () => {
+    const row = { itemCode: '5530-1NA', barcode: null, description: 'SOFA 5530 1NA NICCA-06', qty: 1, poNo: 'HC-PO-2610-172', rack: 'X' };
+    const doc = { supplierName: 'HOOKKA', poNo: null, doNo: 'DO-2611-037', deliveryDate: null, lines: [row] };
+    const open: OpenPoLine[] = [{ poItemId: 'p1', poId: 'p', poNumber: 'HC-PO-2610-172', supplierId: 's1', itemCode: '5530-1NA', materialName: null, supplierSku: null, remaining: 1, locationCode: 'KL' }];
+    const m = { picks: [], racks: {}, rackQty: {}, rowOf: {}, unmatched: [{ line: row, reason: 'not_received', candidatePoItemIds: [] }] } as unknown as GrnMatchResult;
+    expect(buildReview(doc, 's1', m, [], open, '2026-11-13').lines[0]).toMatchObject({ poItemId: null, poNumber: null, rack: 'X' });
+  });
+});

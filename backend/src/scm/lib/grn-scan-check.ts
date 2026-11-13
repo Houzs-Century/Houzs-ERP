@@ -11,7 +11,7 @@
 import type { GrnExtracted } from './grn-scan-extract';
 import { byPrintedColour } from './grn-scan-colour';
 import { isGiftRow, type GiftLine } from './grn-scan-gifts';
-import type { GrnMatchResult, OpenPoLine } from './grn-scan-match';
+import { markedNotReceived, type GrnMatchResult, type OpenPoLine } from './grn-scan-match';
 import { bestLines, lineSizeOf, printedSize } from './scan-word-match';
 
 /** One line of the working copy. `poItemId` null = not yet tied to a PO line
@@ -85,7 +85,7 @@ export function buildReview(parsed: GrnExtracted | null, supplierId: string | nu
       // The row's printed PO, when it is open for this supplier: the SKU list then
       // shows only what that PO still owes (DO-2611-037: 5567-1A on PO-2610-197,
       // which owes 5540-1A), so a person picks from two lines, not 640.
-      poNumber: taught || u.candidatePoItemIds.length === 1 ? null : openPoNamed(u.line.poNo, open),
+      poNumber: taught || u.candidatePoItemIds.length === 1 || u.reason === 'not_received' ? null : openPoNamed(u.line.poNo, open),
       gift: taught ? { itemCode: taught.itemCode, name: taught.name } : null, qty: u.line.qty, rack: u.line.rack ?? null, suggested: false, read: readOf(u.line),
     });
   }
@@ -178,7 +178,8 @@ export function suggestByName(lines: ReviewLine[], open: ReadonlyArray<OpenPoLin
   const onDoc = new Set(printedPos.filter((p): p is string => !!p).map(poKey));
   for (const l of lines) { const hit = open.find((o) => o.poItemId === l.poItemId); if (hit) onDoc.add(poKey(hit.poNumber)); }
   for (const l of lines) {
-    if (l.poItemId || l.gift || !l.read?.description) continue;
+    // An X row did not arrive: it stays untied, so it is left off the draft.
+    if (l.poItemId || l.gift || !l.read?.description || markedNotReceived(l.rack)) continue;
     const rowPo = l.read.poNo ? poKey(l.read.poNo) : null;
     const owing = open.filter((o) => (left.get(o.poItemId) ?? 0) > 0);
     const size = printedSize(`${l.read.itemCode ?? ''} ${l.read.description}`);
