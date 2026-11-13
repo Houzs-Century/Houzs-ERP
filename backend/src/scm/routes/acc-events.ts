@@ -11,6 +11,8 @@
 //   POST /commission/reopen       reopen the latest closed month
 //   POST /commission/marks        Finance's two buttons on an order: not counted, or next month
 //   POST /commission/marks/undo   take a mark away
+//   POST /commission/lines        Finance's own line: goods, plus or minus, on an order for an open month
+//   POST /commission/lines/remove take a line away
 //   POST /pv-lines/:lineId/event  change the event on one voucher line — posted
 //                                 or not — and on its journal leg
 //   GET  /logistics               the Logistics cost report: ?from..?to, by region,
@@ -37,7 +39,8 @@ import { assertAuditWritable, auditUnavailableBody, fieldChange, recordEntityAud
 import { listEventOptions, loadEventsByIds, parseEventId, pvLineEventRefusal, toEventRow, type EventRow } from '../lib/event-tags';
 import { buildEventCosts, type ChartRow, type LegEntry, type TaggedLeg } from '../lib/event-costs';
 import {
-  closeCommissionMonthHandler, eventCommissionHandler, markCommissionOrderHandler, reopenCommissionMonthHandler, unmarkCommissionOrderHandler,
+  addCommissionLineHandler, closeCommissionMonthHandler, eventCommissionHandler, markCommissionOrderHandler, removeCommissionLineHandler,
+  reopenCommissionMonthHandler, unmarkCommissionOrderHandler,
 } from './acc-event-commission';
 import { logisticsCostHandler } from './acc-logistics';
 import {
@@ -133,6 +136,8 @@ accEvents.post('/commission/close', closeCommissionMonthHandler);
 accEvents.post('/commission/reopen', reopenCommissionMonthHandler);
 accEvents.post('/commission/marks', markCommissionOrderHandler);
 accEvents.post('/commission/marks/undo', unmarkCommissionOrderHandler);
+accEvents.post('/commission/lines', addCommissionLineHandler);
+accEvents.post('/commission/lines/remove', removeCommissionLineHandler);
 accEvents.get('/logistics', logisticsCostHandler);
 accEvents.get('/logistics/pnl', logisticsPnlHandler);
 accEvents.put('/logistics/income-rate', saveIncomeRateHandler);

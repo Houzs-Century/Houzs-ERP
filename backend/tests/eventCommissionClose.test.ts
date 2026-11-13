@@ -20,7 +20,8 @@ vi.mock('../src/services/eventPnlInputs', () => ({ loadCostRates: async () => ne
 
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
 import {
-  closeCommissionMonthHandler, eventCommissionHandler, markCommissionOrderHandler, reopenCommissionMonthHandler, unmarkCommissionOrderHandler,
+  addCommissionLineHandler, closeCommissionMonthHandler, eventCommissionHandler, markCommissionOrderHandler, removeCommissionLineHandler,
+  reopenCommissionMonthHandler, unmarkCommissionOrderHandler,
 } from '../src/scm/routes/acc-event-commission';
 
 const CO = 1;
@@ -307,5 +308,123 @@ describe('an old order with no fair — its upsales and drop sales count', () =>
       env: { DB: { prepare: () => ({ bind: () => ({ all: async () => ({ results: [] }) }) }) } },
     });
     expect(JSON.stringify(byFair.body)).not.toContain('HC-SO-013367');
+  });
+});
+
+/* Owner 2026-11-13 (「做」): an amount Finance types on an order for an open month,
+   for what the system holds no record of — an upsale made before the order came
+   into the ERP. Paid in that month at the order's own rate; the order's History
+   keeps who and why. */
+describe("Finance's own lines — an amount typed on an order for an open month", () => {
+  const LINE_ID = '9d2e4f60-1a2b-4c3d-8e9f-0a1b2c3d4e5f';
+  const WHY = 'Raised before the order came into the ERP';
+  const order = (doc: string, o: Partial<Row> = {}): Row => ({
+    doc_no: doc, company_id: CO, project_id: null, salesperson_id: null, debtor_name: 'Lim', status: 'CONFIRMED', on_hold: false,
+    mattress_sofa_sen: 7_970_00, bedframe_sen: 0, accessories_sen: 0, others_sen: 0, local_total_sen: 7_970_00, total_revenue_sen: 7_970_00,
+    created_at: '2026-08-28T03:00:00Z', so_date: '2026-04-13', customer_so_no: 'REF1001', branding: 'Akemi', vp_brand: null, venue: 'MID VALLEY', ...o,
+  });
+  const tables = (lines: Row[] = [], closes: Row[] = []) => ({
+    event_commission_closes: closes,
+    event_commission_marks: [] as Row[],
+    event_commission_lines: lines,
+    mfg_sales_orders: [
+      order('HC-SO-009001'),
+      /* One October order at an AKEMI fair: goods 1,000.00, half paid. */
+      order('HC-SO-2610-001', { project_id: 1, so_date: '2026-10-02', created_at: '2026-10-02T03:00:00Z', customer_so_no: 'HC11617', mattress_sofa_sen: 1_000_00, local_total_sen: 1_000_00, total_revenue_sen: 1_000_00 }),
+      order('HC-SO-2610-099', { company_id: 2 }),
+    ],
+    mfg_sales_order_payments: [{ so_doc_no: 'HC-SO-2610-001', company_id: CO, paid_at: '2026-10-02', amount_sen: 500_00 }],
+    so_total_changes: [] as Row[],
+    mfg_so_status_changes: [] as Row[],
+    staff: [] as Row[],
+    mfg_so_audit_log: [] as Row[],
+    entity_audit_log: [] as Row[],
+  });
+  const FAIR = { id: 1, name: 'KL [AKEMI] BIGHOME @ MID VALLEY', brand: 'AKEMI', start_date: '2026-10-02', end_date: '2026-10-05', archived_at: null, status: 'active', total_sales: null, organizer: 'BIGHOME', venue: 'MID VALLEY', state: 'Kuala Lumpur' };
+  const report = (sb: unknown, basis: 'fair' | 'so_date' = 'so_date') => run(eventCommissionHandler, {
+    ...ctx(sb, { query: { from: '2026-10-01', to: '2026-10-31', ...(basis === 'so_date' ? { basis } : {}) } }),
+    env: { DB: { prepare: () => ({ bind: () => ({ all: async () => ({ results: [FAIR] }) }) }) } },
+  });
+  const stored = (o: Partial<Row> = {}): Row => ({
+    id: LINE_ID, company_id: CO, so_doc_no: 'HC-SO-009001', month: '2026-10-01', goods_sen: 800_00, reason: WHY, added_by: 'Finance', added_at: '2026-10-26T03:00:00Z', ...o,
+  });
+
+  test.each([
+    [{ docNo: '', month: '2026-10', goodsSen: 800_00, reason: WHY }, 400, 'bad_doc_no'],
+    [{ docNo: 'HC-SO-009001', month: '10/2026', goodsSen: 800_00, reason: WHY }, 400, 'bad_month'],
+    [{ docNo: 'HC-SO-009001', month: '2026-11', goodsSen: 800_00, reason: WHY }, 400, 'bad_month'], // today is 26 October: November has not begun
+    [{ docNo: 'HC-SO-009001', month: '2026-10', goodsSen: 0, reason: WHY }, 400, 'bad_amount'],
+    [{ docNo: 'HC-SO-009001', month: '2026-10', goodsSen: 800.5, reason: WHY }, 400, 'bad_amount'],
+    [{ docNo: 'HC-SO-009001', month: '2026-10', goodsSen: 'a lot', reason: WHY }, 400, 'bad_amount'],
+    [{ docNo: 'HC-SO-009001', month: '2026-10', goodsSen: 800_00, reason: '   ' }, 400, 'reason_required'],
+    [{ docNo: 'HC-SO-2610-099', month: '2026-10', goodsSen: 800_00, reason: WHY }, 404, 'order_not_found'],
+  ])('%j → %s %s', async (body, status, error) => {
+    const t = tables();
+    const res = await run(addCommissionLineHandler, ctx(fakeSb(t), { body }));
+    expect([res.status, res.body.error]).toEqual([status, error]);
+    expect(t.event_commission_lines).toEqual([]);
+  });
+
+  test('a closed month takes no line', async () => {
+    const t = tables([], [closed('2026-09')]);
+    const res = await run(addCommissionLineHandler, ctx(fakeSb(t), { body: { docNo: 'HC-SO-009001', month: '2026-09', goodsSen: 800_00, reason: WHY } }));
+    expect([res.status, res.body.error, res.body.message]).toEqual([409, 'month_closed', '2026/09 is closed — add the line to an open month.']);
+    expect(t.event_commission_lines).toEqual([]);
+  });
+
+  test("added: it keeps who and why, and the order's History says so", async () => {
+    const t = tables();
+    const res = await run(addCommissionLineHandler, ctx(fakeSb(t), { body: { docNo: 'hc-so-009001', month: '2026-10', goodsSen: 800_00, reason: `  ${WHY} ` } }));
+    expect(res.status).toBe(200);
+    expect(res.body.line).toMatchObject({ docNo: 'HC-SO-009001', month: '2026-10', goodsSen: 800_00, reason: WHY, addedBy: 'Finance Chew' });
+    expect(t.event_commission_lines).toMatchObject([{ company_id: CO, so_doc_no: 'HC-SO-009001', month: '2026-10-01', goods_sen: 800_00, reason: WHY, added_by: 'Finance Chew' }]);
+    expect(t.mfg_so_audit_log).toEqual([expect.objectContaining({
+      so_doc_no: 'HC-SO-009001', action: 'COMMISSION_LINE_ADD', actor_name_snapshot: 'Finance Chew', note: WHY,
+      field_changes: [{ field: 'eventCommission', from: null, to: 'Finance line for 2026/10: goods +800.00' }],
+    })]);
+  });
+
+  test("the report pays it in its month at the order's own rate — its fair's brand, or with no fair its own brand's card; by fair only an order on a fair", async () => {
+    const lines = [stored(), stored({ id: '0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d', so_doc_no: 'HC-SO-2610-001', goods_sen: -100_00, reason: 'Taken back by hand' })];
+    const bySo = await report(fakeSb(tables(lines)));
+    expect(bySo.status).toBe(200);
+    expect(bySo.body.manualLines).toMatchObject([
+      { docNo: 'HC-SO-009001', fairName: 'No fair', brand: 'AKEMI', venue: 'MID VALLEY', ref: 'REF1001', ratePct: 14, goodsSen: 800_00, commissionSen: 112_00, line: { id: LINE_ID, month: '2026-10', reason: WHY, addedBy: 'Finance' } },
+      { docNo: 'HC-SO-2610-001', fairName: 'KL [AKEMI] BIGHOME @ MID VALLEY', brand: 'AKEMI', ratePct: 14, goodsSen: -100_00, commissionSen: -14_00 },
+    ]);
+    expect(bySo.body.totals).toMatchObject({ payableSen: 140_00, manualSen: 98_00, totalSen: 238_00 });
+    const byFair = await report(fakeSb(tables(lines)), 'fair');
+    expect(byFair.body.manualLines.map((m: Row) => m.docNo)).toEqual(['HC-SO-2610-001']);
+    expect(byFair.body.totals).toMatchObject({ payableSen: 140_00, manualSen: -14_00, totalSen: 126_00 });
+    /* No line: the report carries neither the list nor the figure. */
+    const none = await report(fakeSb(tables()));
+    expect([none.body.manualLines, none.body.totals.manualSen, none.body.totals.totalSen]).toEqual([undefined, undefined, 140_00]);
+    /* A line of another month is not this month's. */
+    const other = await report(fakeSb(tables([stored({ month: '2026-09-01' })])));
+    expect(other.body.manualLines).toBeUndefined();
+  });
+
+  test("taken away while its month is open, and the History says so; a closed month's line stays; one already gone is a 404", async () => {
+    const t = tables([stored()]);
+    const sb = fakeSb(t);
+    const res = await run(removeCommissionLineHandler, ctx(sb, { body: { id: LINE_ID } }));
+    expect(res.body).toMatchObject({ ok: true, line: { docNo: 'HC-SO-009001', month: '2026-10', goodsSen: 800_00 } });
+    expect((sb as any).tables.event_commission_lines).toEqual([]);
+    expect(t.mfg_so_audit_log).toEqual([expect.objectContaining({
+      so_doc_no: 'HC-SO-009001', action: 'COMMISSION_LINE_REMOVE', note: WHY,
+      field_changes: [{ field: 'eventCommission', from: 'Finance line for 2026/10: goods +800.00', to: null }],
+    })]);
+    const gone = await run(removeCommissionLineHandler, ctx(sb, { body: { id: LINE_ID } }));
+    expect([gone.status, gone.body.error]).toEqual([404, 'not_found']);
+    const bad = await run(removeCommissionLineHandler, ctx(sb, { body: { id: 'row-1' } }));
+    expect([bad.status, bad.body.error]).toEqual([400, 'bad_id']);
+
+    const kept = tables([stored({ month: '2026-09-01' })], [closed('2026-09')]);
+    const refused = await run(removeCommissionLineHandler, ctx(fakeSb(kept), { body: { id: LINE_ID } }));
+    expect([refused.status, refused.body.error, refused.body.message]).toEqual([409, 'month_closed', '2026/09 is closed — its lines stay as they were paid.']);
+    expect(kept.event_commission_lines).toHaveLength(1);
+    /* Another company's line is not this company's to take away. */
+    const theirs = await run(removeCommissionLineHandler, ctx(fakeSb(tables([stored({ company_id: 2 })])), { body: { id: LINE_ID } }));
+    expect([theirs.status, theirs.body.error]).toEqual([404, 'not_found']);
   });
 });
