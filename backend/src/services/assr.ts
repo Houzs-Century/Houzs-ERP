@@ -2069,7 +2069,7 @@ async function attachOrderPos(env: Env, rows: Array<Record<string, unknown>>) {
  *  e.g. the D1 test env) leaves rows without do_numbers — the list itself
  *  must never 500 over an enrichment column. Failures are logged, not
  *  swallowed silently. */
-async function attachDeliveryOrders(env: Env, rows: any[]) {
+export async function attachDeliveryOrders(env: Env, rows: any[]) {
   if (rows.length === 0) return;
 
   const houzs = rows.filter((r) => !r.company_code || r.company_code === "HOUZS");

@@ -83,7 +83,7 @@ threeplDoCharges.get('/', async (c) => {
     if (e4) return c.json({ error: 'load_failed', reason: e4.message }, 500);
     for (const d of (data ?? []) as Row[]) doById.set(String(d.id), d);
   }
-  const facts = await loadDoFacts((q) => scopeToAllowedCompanies(q, c), sb, [...doById.values()].map((d) => ({ id: String(d.id), soDocNo: str(d.so_doc_no) })));
+  const facts = await loadDoFacts((q) => scopeToAllowedCompanies(q, c), sb, [...doById.values()].map((d) => ({ id: String(d.id), soDocNo: str(d.so_doc_no) })), loaded.cards.zoneMap);
   if (!facts.ok) return c.json({ error: 'load_failed', reason: facts.reason }, 500);
 
   const codes = companyCodeMap(c);

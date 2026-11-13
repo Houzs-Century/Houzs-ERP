@@ -175,7 +175,7 @@ import {
   type VenueSource,
   type VenueBindingSb,
 } from '../lib/venue-binding';
-import { bindVenueOnCreate, editFairKeyerId, fairConfirmProblems, fairLinkForEdit, fairLinkOnCreate, fairRequiredProblem, loadLinkedFair, resolveFairForSave, SCAN_STEP_NOTE, type FairDb } from '../lib/fair-binding';
+import { bindVenueOnCreate, editFairKeyerId, fairConfirmProblems, fairLinkForEdit, fairLinkOnCreate, fairRequiredProblem, isScanCreate, loadLinkedFair, resolveFairForSave, type FairDb } from '../lib/fair-binding';
 import { companyUsesKeyerFair, fairDayMissing, fairDayOnSave, fairWhyOf } from '../lib/fair-options';
 import { loadVpBrandAsk, type VpBrandDb } from '../lib/vp-brand-ask';
 import { recordSoAudit, diffFields, type FieldChange } from '../lib/so-audit';
@@ -287,6 +287,8 @@ import {
   findFreeTextSoLines, freeTextSoLineResponse,
 } from '../lib/validate-item-codes';
 import { collectSoConfirmProblems, soConfirmProblemsForDoc } from '../lib/so-confirm-gate';
+import { companyNeedsTransportFee, transportFeeProblem, transportFeeRegion } from '../shared/so-transport-fee';
+import { soTransportFeeEditProblem, type SoTransportFeeChange } from '../lib/so-transport-fee-edit';
 import { companyRequiresStockLocation, soLocationProblem, soLocationProblemForDoc } from '../lib/so-location-gate';
 import { collectSoSubmitProblems, soPaymentSubFieldGap } from '../shared/so-submit-problems';
 import { soAgentToStamp, readStaffForStamp, followSalespersonToAgent } from '../lib/so-agent';
@@ -2506,13 +2508,17 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
        3. the caller's own staff.venue_id when they're a POS-side role
      A venue-less salesperson (admin testing under their own name) stays
      NULL — admins oversee every venue by design. */
-  let venueIdToStamp: string | null = (body.venueId as string | null | undefined) ?? null;
-  if (!venueIdToStamp && salespersonIdToStamp) {
+  /* A SCAN is written with no venue, no fair and no fair day (owner 2026-11-12):
+     none of the defaults below run for it, and a person picks all three on the
+     draft before Confirm (fair-binding.ts::fairConfirmProblems). */
+  const scanCreate = isScanCreate(c.auditSource, body);
+  let venueIdToStamp: string | null = scanCreate ? null : ((body.venueId as string | null | undefined) ?? null);
+  if (!scanCreate && !venueIdToStamp && salespersonIdToStamp) {
     venueIdToStamp = salespersonIdToStamp === callerStaffId
       ? ((callerStaff?.venue_id as string | null) ?? null)
       : (stampStaff?.venueId ?? null);
   }
-  if (!venueIdToStamp) {
+  if (!scanCreate && !venueIdToStamp) {
     if (callerStaff && callerStaff.venue_id &&
         ['sales', 'sales_executive', 'outlet_manager'].includes(callerStaff.role)) {
       venueIdToStamp = callerStaff.venue_id as string;
@@ -2525,7 +2531,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      body.venue still wins (the Backend form types it); lines inherit via the
      report flatten. */
   let resolvedVenueName: string | null =
-    typeof body.venue === 'string' && body.venue.trim() ? body.venue.trim() : null;
+    !scanCreate && typeof body.venue === 'string' && body.venue.trim() ? body.venue.trim() : null;
   /* A venue the CLIENT sent is a human's pick — the operator either accepted the
      pre-filled default or typed over it, and either way they are the person who
      knows where they are standing. Marking it MANUAL is what stops any later
@@ -2593,8 +2599,8 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     staffId: salespersonIdToStamp ?? callerStaffId,
     soDate: soDateForVenue,
   });
-  let projectIdToStamp: number | null = autoBind.projectId;
-  if (!resolvedVenueName && autoBind.venueName) {
+  let projectIdToStamp: number | null = scanCreate ? null : autoBind.projectId;
+  if (!scanCreate && !resolvedVenueName && autoBind.venueName) {
     resolvedVenueName = autoBind.venueName;
     venueSource = autoBind.source;
   }
@@ -2641,6 +2647,21 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       companySql: activeCompanySql(c, 'p.company_id'), keyerId: Number(c.get('houzsUser')?.id ?? NaN), orderDate: soDateForVenue,
     });
     if (fairProblem) confirmProblems.push(fairProblem);
+    /* ...and a transport fee for Sabah / Sarawak / Labuan / Kelantan / Terengganu / Perlis /
+       Singapore (owner 2026-11-11). The POS handover's applyDeliveryFee builds
+       its fee lines after the insert, so that create is not judged here. */
+    if (!body.applyDeliveryFee) {
+      const createState = (body.customerState as string | null | undefined) ?? null;
+      const createCountry = typeof body.customerCountry === 'string' && body.customerCountry.trim()
+        ? body.customerCountry : await deriveCountryFromState(sb, createState);
+      const feeProblem = transportFeeProblem(c.get('companyCode') ?? null, createState, createCountry, items.map((it) => ({
+        itemCode: (it.itemCode as string | null | undefined) ?? null,
+        description: (it.description as string | null | undefined) ?? null,
+        itemGroup: (it.itemGroup as string | null | undefined) ?? null,
+        amountSen: Number(it.qty ?? 1) * Number(it.unitPriceSen ?? 0) - Number(it.discountSen ?? 0),
+      })));
+      if (feeProblem) confirmProblems.push(feeProblem);
+    }
     if (confirmProblems.length > 0) return c.json(validationFailedBody(confirmProblems), 422);
   }
 
@@ -4630,23 +4651,23 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      leaving a blank that reads the same as "nobody has looked".
 
      Non-fatal throughout — no fair-link problem may block a sale, and the
-     nightly reconcile retries PENDING. The rule — No fair, a scan's slip place
-     and date then the KEYER's fair (owner 2026-10-19), a typed pick, the brand's
-     booth then the keyer's own — is fair-binding.ts::fairLinkOnCreate. */
+     nightly reconcile retries PENDING. The rule — No fair, nothing for a scan
+     (owner 2026-11-12), a typed pick, the brand's booth then the keyer's own —
+     is fair-binding.ts::fairLinkOnCreate. */
   {
     const fairLink = await fairLinkOnCreate({
       db: c.env.DB as unknown as FairDb, companySql: activeCompanySql(c, 'p.company_id'),
-      companyCode: c.get('companyCode'), scanned: c.auditSource === 'scan',
+      companyCode: c.get('companyCode'), scanned: scanCreate,
       keyerId: Number(c.get('houzsUser')?.id ?? NaN), body, venue: resolvedVenueName,
       soDate: soDateForVenue, brand: effectiveBrand, bindingProjectId: projectIdToStamp,
     });
     await scopeToCompany(sb.from('mfg_sales_orders').update(fairLink.columns).eq('doc_no', docNo), c);
-    /* A scan's fair was the system's call: History says which rule made it (fair-audit.ts). */
-    if (fairLink.step) {
+    /* History says a scan was placed nowhere, so the later pick reads as a person's (fair-audit.ts). */
+    if (fairLink.note) {
       await recordFairChange({
         sb, db: c.env.DB as unknown as FairDb, companySql: activeCompanySql(c, 'p.company_id'), docNo,
         before: { projectId: null, fairMatch: null }, after: fairStateOf(fairLink.columns), how: 'scan',
-        actorId: user.id, actorName: null, note: SCAN_STEP_NOTE[fairLink.step],
+        actorId: user.id, actorName: null, note: fairLink.note,
       });
     }
   }
@@ -4933,6 +4954,24 @@ mfgSalesOrders.post('/validate', async (c) => {
       && !mixesSofaWithOtherMain(((body.origItemGroups as unknown[] | undefined) ?? []).map((g) => (typeof g === 'string' ? g : null))),
     paymentGaps,
   });
+  /* Transport fee for the far states and Singapore (owner 2026-11-11, Houzs
+     only). On a create, on a scanned draft being turned into an order
+     (confirmingDraft), and on an edit that moves the order's State (the edit
+     surfaces send origCustomerState). Taking the fee off a line is refused by
+     the line routes themselves. A line posted without unitPriceSen is not
+     judged on its amount. */
+  const stateMoved = isEdit && typeof body.origCustomerState === 'string'
+    && transportFeeRegion(body.origCustomerState || null, null) !== transportFeeRegion(str(body.customerState) || null, str(body.customerCountry) || null);
+  if (!asDraft && (!isEdit || body.confirmingDraft === true || stateMoved)) {
+    const feeProblem = transportFeeProblem(typeof companyCode === 'string' ? companyCode : null, str(body.customerState) || null, str(body.customerCountry) || null, items.map((it) => ({
+      itemCode: str(it.itemCode) || null,
+      description: str(it.description) || null,
+      itemGroup: str(it.itemGroup) || null,
+      amountSen: it.unitPriceSen === undefined || it.unitPriceSen === null ? null
+        : Number(it.qty ?? 1) * Number(it.unitPriceSen) - Number(it.discountSen ?? 0),
+    })));
+    if (feeProblem) problems.push(feeProblem);
+  }
 
   return c.json({ problems }, 200);
 });
@@ -5162,7 +5201,7 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
      (or predates) the gate, and re-gating those would strand legacy orders. */
   const isConfirm = fromNorm === 'DRAFT' && toStatus === 'CONFIRMED';
   if (isConfirm) {
-    const confirmProblems = await soConfirmProblemsForDoc(sb, docNo);
+    const confirmProblems = await soConfirmProblemsForDoc(sb, docNo, c.get('companyCode') ?? null);
     /* ...and the fair (owner 2026-10-19): a fair or No fair — fair-binding.ts
        (Sales Attending no longer stops it, owner 2026-10-22). */
     confirmProblems.push(...await fairConfirmProblems({
@@ -5962,6 +6001,17 @@ export async function rederiveDeliveryFee(sb: any, docNo: string, c: any): Promi
   if (res === null) await recomputeTotals(sb, docNo, c);
 }
 
+/** The transport-fee rule on an edit of a live Houzs order (owner 2026-11-11):
+ *  a 422 when THIS change moves the order to a fee place without a fee, or
+ *  takes the fee off. null = the edit may proceed. */
+async function transportFeeEditRefusal(c: any, sb: any, docNo: string, change: SoTransportFeeChange): Promise<Response | null> {
+  const companyCode = (c.get('companyCode') as string | null | undefined) ?? null;
+  if (!companyNeedsTransportFee(companyCode)) return null;
+  const co = requireActiveCompanyId(c); if (!co.ok) return c.json(co.refusal, 409);
+  const problem = await soTransportFeeEditProblem(sb, { docNo, companyId: co.companyId, companyCode, change });
+  return problem ? c.json(validationFailedBody([problem]), 422) : null;
+}
+
 export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const user = c.get('user');
   let body: Record<string, unknown>;
@@ -6296,6 +6346,13 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
       sb,
       body['customerState'] as string | null,
     );
+    /* A State moved to Sabah & co. needs a fee. Both edit screens write their
+       line changes before this header save, so a fee line added in the same
+       save is already on the order here. */
+    const feeRefusal = await transportFeeEditRefusal(c, sb, docNo, {
+      kind: 'header', state: (body['customerState'] as string | null) ?? null, country: (updates['customer_country'] as string | null) ?? null,
+    });
+    if (feeRefusal) return feeRefusal;
     /* Commander 2026-05-29 — Location follows the address. When the State
        changes and the caller didn't also send an explicit salesLocation,
        re-derive the warehouse so Location tracks the new State. An explicit
@@ -8304,6 +8361,17 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
     updates['warehouse_id'] = it.warehouseId as string | null;
   }
 
+  /* Re-pricing the transport fee to RM 0, or re-coding it, takes the fee off. */
+  const feeRefusal = await transportFeeEditRefusal(c, sb, docNo, {
+    kind: 'line', itemId, after: {
+      itemCode: itemCodeAfter ?? null,
+      description: it.description !== undefined ? String(it.description ?? '') : prev.description,
+      itemGroup: it.itemGroup !== undefined ? String(it.itemGroup ?? '') : prev.item_group,
+      amountSen: qty * unit - discount,
+    },
+  });
+  if (feeRefusal) return feeRefusal;
+
   lap('line-checks');
   const { error } = await scopeSoItemToDocument(
     sb.from('mfg_sales_order_items').update(updates),
@@ -8419,6 +8487,10 @@ mfgSalesOrders.delete('/:docNo/items/:itemId', async (c) => {
      afterwards the row is gone and its DtlKey with it, and an edit that does not
      NAME the removal leaves the line live and outstanding in the account book. */
   const retire = await retiredLineOf(sb, 'mfg_sales_order_items', itemId);
+
+  /* Deleting the only transport fee line of a Sabah & co. order takes the fee off. */
+  const feeRefusal = await transportFeeEditRefusal(c, sb, docNo, { kind: 'line', itemId, after: null });
+  if (feeRefusal) return feeRefusal;
 
   const { error } = await scopeSoItemToDocument(
     sb.from('mfg_sales_order_items').delete(),
@@ -11563,6 +11635,29 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
         reason: 'The Processing Date cannot be later than the Delivery Date.',
       }, 400);
     }
+  }
+
+  /* Transport fee (owner 2026-11-11, Houzs): an amendment may not move the order
+     to Sabah & co. without a fee, nor take the fee off. */
+  {
+    const stateMove = 'customerState' in headerChanges
+      ? { state: headerChanges['customerState'] ?? null, country: await deriveCountryFromState(sb, headerChanges['customerState'] ?? null) }
+      : null;
+    const feeRefusal = await transportFeeEditRefusal(c, sb, docNo, {
+      kind: 'amendment',
+      state: stateMove,
+      lines: (Array.isArray(body.lines) ? body.lines : []).map((l) => {
+        const t = String(l.changeType ?? '').toUpperCase();
+        return {
+          op: t === 'ADD' ? 'ADD' as const : t === 'REMOVE' ? 'REMOVE' as const : 'CHANGE' as const,
+          itemId: typeof l.salesOrderItemId === 'string' ? l.salesOrderItemId : null,
+          itemCode: typeof l.newItemCode === 'string' && l.newItemCode.trim() ? l.newItemCode.trim() : null,
+          qty: l.newQty == null ? null : Number(l.newQty),
+          unitPriceSen: l.newUnitPriceSen == null ? null : Number(l.newUnitPriceSen),
+        };
+      }),
+    });
+    if (feeRefusal) return feeRefusal;
   }
 
   /* ── Two-lane split (owner rework 2026-07-27) ─────────────────────────────

@@ -59,6 +59,7 @@ import { aggregateSales } from "../scm/shared/pos-report";
 import { posReceiptStatusLabel } from "../scm/shared/pos-vocabulary";
 import { decryptBackupPayload, isPosBackupFile, type PosBackupFile } from "../scm/shared/pos-backup-crypto";
 import { PAIRING_MINUTES, formatPairingCode, mintPairingCode, pairingCodeHash } from "../scm/shared/pos-pairing";
+import { reconnectPhase } from "./lib/pos-reconnect";
 import {
   isCashierRole,
   isPosCashierPin,
@@ -668,11 +669,13 @@ posAdmin.get("/terminals", async (c) => {
   const pids = Array.from(new Set(rows.map((r) => r.project_id).filter((v): v is number => v != null)));
   const names = pids.length ? await db.execute<{ id: number; name: string }>(sql`SELECT id, name FROM projects WHERE id IN ${pids} AND company_id = ${co.companyId}`) : [];
   const nameBy = new Map(names.map((n) => [Number(n.id), n.name]));
+  const nowMs = Date.now();
   return c.json({
     data: rows.map((r) => ({
       id: r.id, code: r.code, device_name: r.device_name, platform: r.platform, project_id: r.project_id, project_name: r.project_id ? nameBy.get(r.project_id) ?? null : null,
       printer: r.printer, prepared_at: r.prepared_at, last_seen_at: r.last_seen_at, last_sync_at: r.last_sync_at, pending_count: r.pending_count,
       pending_amount_sen: r.pending_amount_sen, receipt_counter: r.receipt_counter, app_version: r.app_version, status: r.status, active: r.active,
+      reconnect: reconnectPhase(r, nowMs) === "waiting" ? { device_name: r.reconnect_device_name, requested_at: r.reconnect_requested_at } : null,
     })),
   });
 });
@@ -728,7 +731,8 @@ posAdmin.post("/device/register", async (c) => {
   const now = nowIso();
   const res = await db
     .update(pos_terminals)
-    .set({ project_id: projectId, token_hash: await deviceTokenHash(token), prepared_at: now, last_seen_at: now, status: "PREPARED", device_name: str(body.device_name) ?? undefined, platform: str(body.platform) ?? undefined, updated_at: now })
+    /* The outgoing hash is kept so the device that held this terminal can ask for it back (lib/pos-reconnect.ts). */
+    .set({ project_id: projectId, token_hash: await deviceTokenHash(token), prev_token_hash: sql`${pos_terminals.token_hash}`, reconnect_requested_at: null, reconnect_device_name: null, reconnect_approved_at: null, reconnect_approved_by: null, prepared_at: now, last_seen_at: now, status: "PREPARED", device_name: str(body.device_name) ?? undefined, platform: str(body.platform) ?? undefined, updated_at: now })
     .where(and(eq(pos_terminals.id, terminalId), eq(pos_terminals.company_id, co.companyId), eq(pos_terminals.active, true)))
     .returning({ id: pos_terminals.id, code: pos_terminals.code });
   if (res.length === 0) return c.json({ error: "Not found" }, 404);
@@ -928,6 +932,26 @@ posAdmin.get("/report", async (c) => {
   });
 });
 
+
+/* ── reconnect by approval, answered from the ERP (lib/pos-reconnect.ts) ── */
+
+/** A device that lost this terminal asked for it back; whoever manages POS
+ *  approves here, and the device collects its new token by itself. */
+posAdmin.post("/terminals/:id/reconnect-approve", async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const id = intParam(c, "id");
+  if (!id) return c.json({ error: "invalid_id" }, 400);
+  const db = getDb(c.env);
+  const rows = await db.select().from(pos_terminals).where(and(eq(pos_terminals.id, id), eq(pos_terminals.company_id, co.companyId), eq(pos_terminals.active, true))).limit(1);
+  if (rows.length === 0) return c.json({ error: "Not found" }, 404);
+  if (reconnectPhase(rows[0], Date.now()) !== "waiting") return c.json({ error: "no_open_request", reason: "That request is no longer open." }, 409);
+  const now = nowIso();
+  const u = c.get("user");
+  await db.update(pos_terminals).set({ reconnect_approved_at: now, reconnect_approved_by: u?.name ?? "ERP", updated_at: now }).where(and(eq(pos_terminals.id, id), eq(pos_terminals.company_id, co.companyId)));
+  await audit(db, co.companyId, c, "pos_terminal", id, "reconnect_approved", null, rows[0].code);
+  return c.json({ ok: true, terminal: rows[0].code });
+});
 
 /* ── pairing a device from the ERP (POS Admin > Terminals > Pair device) ── */
 

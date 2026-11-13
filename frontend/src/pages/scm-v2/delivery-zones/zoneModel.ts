@@ -12,6 +12,7 @@ export const ZONE_NAME: Record<string, string> = {
   NS: 'Negeri Sembilan', MELAKA: 'Melaka', JOHOR: 'Johor',
   PENANG: 'Penang', KEDAH: 'Kedah and Perlis', PERAK: 'Perak',
   PAHANG: 'Pahang', EAST: 'Kelantan and Terengganu',
+  SABAH: 'Sabah', SARAWAK: 'Sarawak', LABUAN: 'Labuan',
 };
 export const zoneName = (zone: string): string => ZONE_NAME[zone] ?? zone;
 
@@ -19,14 +20,20 @@ export const zoneName = (zone: string): string => ZONE_NAME[zone] ?? zone;
 export const KLANG_VALLEY = ['KL', 'PJ', 'KLANG', 'KAJANG', 'RAWANG', 'PUCHONG'] as const;
 export const isKlangValley = (zone: string) => (KLANG_VALLEY as readonly string[]).includes(zone);
 
+/** East Malaysia: zones for the 3PL rate cards only, never planned on the own
+ *  lorries (owner 2026-11-11; backend THREEPL_ONLY_ZONES). */
+export const EAST_MALAYSIA_ZONES = ['SABAH', 'SARAWAK', 'LABUAN'] as const;
+export const isThreePlOnly = (zone: string) => (EAST_MALAYSIA_ZONES as readonly string[]).includes(zone);
+
 /** Tile background / text per zone: green for the Klang Valley, blue south,
- *  violet north, sand for the east coast and Pahang. */
+ *  violet north, sand for the east coast and Pahang, rose for East Malaysia. */
 const ZONE_COLOUR: Record<string, [string, string]> = {
   KL: ['#cfe6df', '#0b4740'], PJ: ['#d9ece6', '#0b4740'], KLANG: ['#e3f0eb', '#0b4740'], KAJANG: ['#c4dfd6', '#0b4740'],
   RAWANG: ['#e9f3ef', '#0b4740'], PUCHONG: ['#dbebe5', '#0b4740'],
   NS: ['#e0e9f2', '#1f4f75'], MELAKA: ['#d7e3ef', '#1f4f75'], JOHOR: ['#cddcea', '#1f4f75'],
   PENANG: ['#ebe4f1', '#4b2f6b'], KEDAH: ['#e5ddef', '#4b2f6b'], PERAK: ['#dfd5ea', '#4b2f6b'],
   PAHANG: ['#f3eadb', '#6b3f0e'], EAST: ['#f0e3cf', '#6b3f0e'],
+  SABAH: ['#f3dfe2', '#7a2f3b'], SARAWAK: ['#efd6da', '#7a2f3b'], LABUAN: ['#f6e7e9', '#7a2f3b'],
 };
 export const zoneColour = (zone: string): [string, string] => ZONE_COLOUR[zone] ?? ['#eef0ec', '#414539'];
 
@@ -40,13 +47,6 @@ export const OUTSTATION_TILES: { zone: string; col: string; row: string }[] = [
   { zone: 'NS', col: '3 / 5', row: '6 / 7' },
   { zone: 'MELAKA', col: '2 / 4', row: '7 / 8' },
   { zone: 'JOHOR', col: '4 / 7', row: '7 / 9' },
-];
-
-/** East Malaysia has no area zone of its own; these postcode blocks show
- *  which zone (if any) a rule sends them to. */
-export const EAST_MALAYSIA: { key: string; name: string; from: number; to: number }[] = [
-  { key: 'SABAH', name: 'Sabah', from: 88, to: 91 },
-  { key: 'SARAWAK', name: 'Sarawak', from: 93, to: 98 },
 ];
 
 export const pad2 = (n: number) => String(n).padStart(2, '0');

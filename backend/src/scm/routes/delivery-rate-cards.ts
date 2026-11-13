@@ -51,9 +51,13 @@ import {
   type RateRuleSpec,
   type RateRuleType,
   type DeliveryFacts,
+  type DeliveryStop,
+  type PlaceSpec,
 } from '../lib/delivery-rate-card';
 import { RATE_RULE_TYPES } from '../lib/rate-rule-taxonomy';
-import { ZONE_SET, DEFAULT_ZONE_PREFIX_MAP, zoneForAddress, type ZonePrefixRule } from '../lib/zone-classify';
+import { ZONE_SET, zoneForAddress } from '../lib/zone-classify';
+import { loadPlaces, placeName, placeRefusal } from './delivery-places';
+import { MAP_COLS, toPrefixMap, type MapRow } from './delivery-zones';
 import { deriveSetCount, type SetLine } from '../lib/set-count';
 import { composeAddress } from '../lib/geocode';
 
@@ -161,6 +165,7 @@ function toRuleSpecs(rules: ReturnType<typeof ruleOut>[]): RateRuleSpec[] {
 
 export function toCardSpec(
   card: ReturnType<typeof cardOut>, rules: ReturnType<typeof ruleOut>[], areas: ReturnType<typeof areaOut>[] = [],
+  places: readonly PlaceSpec[] = [],
 ): RateCardSpec {
   return {
     basis: card.basis,
@@ -170,7 +175,17 @@ export function toCardSpec(
     rounding: card.rounding as RateCardSpec['rounding'],
     rules: toRuleSpecs(rules),
     areas: areas.filter((a) => a.cardId === card.id).map((a) => ({ id: a.id, name: a.name, towns: a.towns })),
+    places,
   };
+}
+
+/** The address a Price check names (a zone or a town) as the one stop it
+ *  prices: a town sits in its place's zone, so the calculator reads it there. */
+export function priceCheckStop(destination: string | null | undefined, places: readonly PlaceSpec[]): DeliveryStop | null {
+  const name = placeName(String(destination ?? ''));
+  if (!name) return null;
+  const zone = ZONE_SET.has(name) ? name : (places.find((p) => p.name === name)?.zone ?? null);
+  return { zone, addressText: name };
 }
 
 /** The areas of these cards, scoped to the request's company. */
@@ -198,11 +213,25 @@ deliveryRateCards.get('/meta', async (c) => {
     isInternal: r.is_internal !== false,
   }));
   // WS4b: 3PL companies — a card is now priced per company (its lorries inherit).
-  const { data: coData } = await paginateAll<Row>((lo, hi) =>
-    scopeToCompany(sb.from('threepl_companies').select('id, name, is_active'), c)
+  const { data: coData, error: coErr } = await paginateAll<Row>((lo, hi) =>
+    scopeToCompany(sb.from('threepl_companies').select('id, name, is_active, supplier_id'), c)
       .eq('is_active', true).order('name', { ascending: true }).range(lo, hi),
   );
-  const companies = (coData ?? []).map((r) => ({ id: String(r.id), name: String(r.name ?? '') }));
+  if (coErr) return c.json({ error: 'load_failed', reason: coErr.message }, 500);
+  /* The supplier each carrier bills as (owner 2026-11-11: a 3PL is one of the
+     company's suppliers), shown under its name in the carrier list. */
+  const supplierIds = [...new Set((coData ?? []).map((r) => s(r.supplier_id)).filter((x): x is string => !!x))];
+  const supplierById = new Map<string, { code: string | null; name: string }>();
+  if (supplierIds.length > 0) {
+    const { data: supData, error: supErr } = await scopeToCompany(sb.from('suppliers').select('id, code, name'), c).in('id', supplierIds);
+    if (supErr) return c.json({ error: 'load_failed', reason: supErr.message }, 500);
+    for (const r of (supData as Row[] | null) ?? []) supplierById.set(String(r.id), { code: s(r.code), name: String(r.name ?? '') });
+  }
+  const companies = (coData ?? []).map((r) => ({
+    id: String(r.id),
+    name: String(r.name ?? ''),
+    supplier: supplierById.get(String(r.supplier_id ?? '')) ?? null,
+  }));
   return c.json({ carriers, companies, ruleTypes: RULE_TYPES, zones: [...ZONE_SET] });
 });
 
@@ -431,6 +460,11 @@ deliveryRateCards.post('/:id/rules', async (c) => {
   if (!(await loadCardForWrite(c, id, co.companyId))) return c.json(NOT_THIS_COMPANY, 404);
   const noArea = await areaRefusal(c, id, co.companyId, p.areaId, p.ruleType);
   if (noArea) return c.json(noArea.body, noArea.status);
+  /* A town price names a zone or a town with a zone (Delivery Zones). */
+  if (CARD_ONLY_TYPES.has(p.ruleType) && p.zone) {
+    const unplaced = await placeRefusal(c, [p.zone]);
+    if (unplaced) return c.json(unplaced.body, unplaced.status);
+  }
   const sb = c.get('supabase');
   const { data, error } = await rc(sb).from('delivery_rate_rules').insert({
     company_id: co.companyId,
@@ -471,6 +505,10 @@ deliveryRateCards.patch('/:id/rules/:ruleId', async (c) => {
   if (p.bracketMin !== undefined) updates.bracket_min = p.bracketMin;
   if (p.bracketMax !== undefined) updates.bracket_max = p.bracketMax;
   if (p.zone !== undefined) updates.zone = p.zone ? p.zone.toUpperCase() : null;
+  if (p.zone) {
+    const unplaced = await placeRefusal(c, [p.zone]);
+    if (unplaced) return c.json(unplaced.body, unplaced.status);
+  }
   if (p.areaId !== undefined) {
     /* The rule's type decides whether an area may hold it: the new type when it changes, else the stored one. */
     let ruleType: string | null = p.ruleType ?? null;
@@ -553,6 +591,8 @@ deliveryRateCards.post('/:id/areas', async (c) => {
   const parsed = areaSchema.safeParse(body);
   if (!parsed.success) return c.json({ error: 'invalid_body', issues: parsed.error.issues }, 400);
   if (!(await loadCardForWrite(c, id, co.companyId))) return c.json(NOT_THIS_COMPANY, 404);
+  const unplaced = await placeRefusal(c, parsed.data.towns);
+  if (unplaced) return c.json(unplaced.body, unplaced.status);
   const { data, error } = await rc(c.get('supabase')).from('delivery_rate_areas').insert({
     company_id: co.companyId,
     card_id: id,
@@ -576,7 +616,11 @@ deliveryRateCards.patch('/areas/:areaId', async (c) => {
   const p = parsed.data;
   const updates: Record<string, unknown> = {};
   if (p.name !== undefined) updates.name = p.name;
-  if (p.towns !== undefined) updates.towns = townsOf(p.towns);
+  if (p.towns !== undefined) {
+    const unplaced = await placeRefusal(c, p.towns);
+    if (unplaced) return c.json(unplaced.body, unplaced.status);
+    updates.towns = townsOf(p.towns);
+  }
   if (p.sortOrder !== undefined) updates.sort_order = p.sortOrder;
   if (Object.keys(updates).length === 0) return c.json({ error: 'no_changes' }, 400);
   updates.updated_at = new Date().toISOString();
@@ -639,14 +683,19 @@ deliveryRateCards.post('/:id/compute', async (c) => {
   );
   const areas = await loadAreas(c, [id]);
   if (!areas.ok) return c.json({ error: 'fetch_failed', reason: areas.reason }, 500);
+  const places = await loadPlaces(c);
+  if (!places.ok) return c.json({ error: 'fetch_failed', reason: places.reason }, 500);
   const cardO = cardOut(card as Row);
-  const spec = toCardSpec(cardO, (rules ?? []).map(ruleOut), areas.areas);
+  const spec = toCardSpec(cardO, (rules ?? []).map(ruleOut), areas.areas, places.places);
+  /* The destination it names is one stop, read in its zone (a town in its place's). */
+  const stop = priceCheckStop(parsed.data.destinationZone, places.places);
+  const facts: DeliveryFacts = { ...parsed.data, ...(stop ? { stops: [stop] } : {}) };
   /* perTrip: the calculator on the Rate Cards page could NEVER show an
      OUTSTATION_TRIP line — the rules editor let you create one and this
      endpoint never applied it, so the figure on screen silently disagreed
      with what the reconciliation would bill. It prices a trip, like the
      reconcile does. */
-  const breakdown = computeDeliveryCost(spec, parsed.data as DeliveryFacts, { perTrip: true });
+  const breakdown = computeDeliveryCost(spec, facts, { perTrip: true });
   return c.json({ card: cardO, facts: parsed.data, breakdown });
 });
 
@@ -674,7 +723,16 @@ deliveryRateCards.get('/reconcile', async (c) => {
   const sb = c.get('supabase');
   const from = c.req.query('from');
   const to = c.req.query('to');
-  const zoneMapRules: ZonePrefixRule[] = [...DEFAULT_ZONE_PREFIX_MAP];
+  /* The company's own zone map (Delivery Zones), as the planning reads it; the
+     in-code default only while the company has no rules. It read the default
+     alone, so a zone the owner added never reached the 3PL check. */
+  const { data: mapRows, error: mapErr } = await paginateAll<MapRow>((lo, hi) =>
+    scopeToCompany(sb.from('delivery_zone_postcodes').select(MAP_COLS), c).order('id').range(lo, hi),
+  );
+  if (mapErr) return c.json({ error: 'load_failed', reason: mapErr.message }, 500);
+  const zoneMapRules = toPrefixMap(mapRows ?? []).map;
+  const places = await loadPlaces(c);
+  if (!places.ok) return c.json({ error: 'load_failed', reason: places.reason }, 500);
 
   // 1) OUTSOURCE trips carrying a captured billed cost, in the date window.
   const { data: tripData, error: tripErr } = await paginateAll<Row>((lo, hi) => {
@@ -818,11 +876,14 @@ deliveryRateCards.get('/reconcile', async (c) => {
     let expectedSen: number | null = null;
     let breakdown: ReturnType<typeof computeDeliveryCost> | null = null;
     if (card) {
-      const spec = toCardSpec(card, rulesByCard.get(card.id) ?? [], cardAreas.areas);
+      const spec = toCardSpec(card, rulesByCard.get(card.id) ?? [], cardAreas.areas, places.places);
+      /* Each drop's address with its postcode zone: a town counts only inside
+         its own zone (Delivery Zones places), so Jalan Ipoh in KL is not Ipoh. */
+      const stops: DeliveryStop[] = soDocs.map((d) => ({ zone: zoneBySo.get(d) ?? null, addressText: addressBySo.get(d) ?? '' }));
       /* perTrip: the FIXED per-trip outstation fee is now emitted INSIDE the
          calculator, before the min/cap/rounding envelope. It used to be added
          here afterwards, which let a capped card bill above its own cap. */
-      breakdown = computeDeliveryCost(spec, { setCount, dropCount, customerCount, destinationZone, destinationZones: zones, addressText: soDocs.map((d) => addressBySo.get(d) ?? '').join(' | ') }, { perTrip: true });
+      breakdown = computeDeliveryCost(spec, { setCount, dropCount, customerCount, destinationZone, destinationZones: zones, addressText: soDocs.map((d) => addressBySo.get(d) ?? '').join(' | '), stops }, { perTrip: true });
       expectedSen = breakdown.totalSen;
     }
     const deltaSen = expectedSen == null ? null : billedSen - expectedSen;

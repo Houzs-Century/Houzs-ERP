@@ -91,9 +91,9 @@ export function measureFixedWidthPanel(
 }
 
 /** `measureFixedWidthPanel` against the live window, recomputed when the
- *  anchor changes. For a menu anchored to a rect captured at click time — it
- *  has no live element to re-measure, and this app's point-anchored menus
- *  close on scroll rather than following it. */
+ *  anchor changes. For a menu whose caller hands in the anchor's rect: the
+ *  DataTable funnel measures its button again on every scroll and passes the
+ *  new rect, so the popover moves with its header instead of closing. */
 export function useFixedWidthPanel(
   anchor: { top: number; bottom: number; left: number } | null,
   width: number,

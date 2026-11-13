@@ -15,19 +15,31 @@
 // the month's own range is served as closed, and the first open month carries
 // what changed for the closed months' orders since (「X 月调整」, the lib's
 // monthAdjustmentsOf). POST /commission/reopen undoes the latest close only.
+//
+// Finance's two buttons (owner 2026-11-12, 「1个这张单不要算，1个是这个算下个月」):
+// POST /commission/marks { docNo, kind: 'exclude' | 'defer', month?, reason? }
+// marks an order — not counted at all, or what it earns in an open month paid
+// the month after; POST /commission/marks/undo { id } takes the mark away. Every
+// report applies the marks (the lib's withMarks), the closed months' recalculation
+// behind the adjustments included, and a one-month report receives what the
+// month before moved to it. Each mark and undo lands in the order's History.
+// A third kind, 'exclude_change' with a month (「这次改价不算」, the same day): the
+// order's upsales / drop sales of that month move no commission — the changes are
+// flagged before the report is built (withUncountedChanges); the order still earns.
 // Mounted under /acc-events, behind scmAreaGuard("scm.finance.accounting"):
-// reading needs view, closing and reopening edit on Finance › Accounting.
+// reading needs view; closing, reopening and marking edit on Finance › Accounting.
 
 import { requireActiveCompanyId, scopeToCompanyId } from '../lib/companyScope';
 import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { todayMyt } from '../lib/my-time';
 import { dateOrNull } from '../lib/date-coerce';
 import {
-  buildEventCommission, monthAdjustmentsOf, paidByOrder, withMonthAdjustments,
-  type ClosedMonthPaid, type CommissionBasis, type CommissionCancel, type CommissionChange, type CommissionFair, type CommissionPayment,
-  type CommissionSo, type EventCommissionReport, type MonthAdjustmentRow,
+  NO_FAIR_FROM, buildEventCommission, deferredInFrom, monthAdjustmentsOf, monthOfRange, paidByOrder, withMarks, withMonthAdjustments, withUncountedChanges,
+  type ClosedMonthPaid, type CommissionBasis, type CommissionCancel, type CommissionChange, type CommissionFair, type CommissionMark,
+  type CommissionPayment, type CommissionSo, type DeferredInRow, type EventCommissionReport, type MonthAdjustmentRow,
 } from '../lib/event-commission';
 import { assertAuditWritable, auditUnavailableBody, recordEntityAudit } from '../lib/entity-audit';
+import { recordSoAudit } from '../lib/so-audit';
 import { pnlForProjects } from '../../services/eventPnlBatch';
 import { loadCostRates } from '../../services/eventPnlInputs';
 import { LEDGER_COST_CATEGORIES } from '../../services/projects';
@@ -56,9 +68,10 @@ type SoRead = {
   doc_no: string; project_id: number | string | null; salesperson_id: string | null; debtor_name: string | null;
   status: string; on_hold: boolean | null; mattress_sofa_sen: number | null; bedframe_sen: number | null;
   accessories_sen: number | null; others_sen: number | null; local_total_sen: number | null;
-  total_revenue_sen: number | null; created_at: string; so_date: string | null;
+  total_revenue_sen: number | null; created_at: string; so_date: string | null; customer_so_no: string | null;
+  branding: string | null; vp_brand: string | null; venue: string | null;
 };
-const SO_COLS = 'doc_no, project_id, salesperson_id, debtor_name, status, on_hold, mattress_sofa_sen, bedframe_sen, accessories_sen, others_sen, local_total_sen, total_revenue_sen, created_at, so_date';
+const SO_COLS = 'doc_no, project_id, salesperson_id, debtor_name, status, on_hold, mattress_sofa_sen, bedframe_sen, accessories_sen, others_sen, local_total_sen, total_revenue_sen, created_at, so_date, customer_so_no, branding, vp_brand, venue';
 
 type FairRead = {
   id: number | string; name: string | null; brand: string | null; start_date: string | null; end_date: string | null; archived_at: string | null; status: string | null; total_sales: number | string | null;
@@ -72,8 +85,9 @@ const fail = (c: any, what: string, reason: string) =>
 
 type Live = { report: EventCommissionReport } | { response: Response };
 
-/** The report for [from, to] as the data stands now. */
-async function liveReport(c: any, companyId: number, from: string, to: string, basis: CommissionBasis): Promise<Live> {
+/** The report for [from, to] as the data stands now; the price changes Finance
+ *  left out (`marks`, 「这次改价不算」) move no commission in it. */
+async function liveReport(c: any, companyId: number, from: string, to: string, basis: CommissionBasis, marks: readonly CommissionMark[]): Promise<Live> {
   const env = c.env;
   const sb = c.get('supabase');
   const fromTs = `${from}T00:00:00+08:00`;
@@ -83,7 +97,8 @@ async function liveReport(c: any, companyId: number, from: string, to: string, b
   });
 
   /* 1–2. Part 1's orders. By fair: the fairs starting in the range and all their
-     orders. By SO date: the orders opened in the range that have a fair. */
+     orders. By SO date: every order opened in the range — one with no fair too
+     (owner 2026-11-12: 「全部列出来，没有展会的标 No fair，要算佣金」). */
   let rangeFairs: FairRead[] = [];
   let partOne: { data: SoRead[]; error: { message: string } | null };
   if (basis === 'fair') {
@@ -99,7 +114,7 @@ async function liveReport(c: any, companyId: number, from: string, to: string, b
       scopeToCompanyId(sb.from('mfg_sales_orders').select(SO_COLS).in('project_id', batch), companyId).order('doc_no').range(lo, hi));
   } else {
     const opened = await paginateAll<SoRead>((lo, hi) =>
-      scopeToCompanyId(sb.from('mfg_sales_orders').select(SO_COLS).gte('so_date', from).lte('so_date', to).not('project_id', 'is', null), companyId)
+      scopeToCompanyId(sb.from('mfg_sales_orders').select(SO_COLS).gte('so_date', from).lte('so_date', to), companyId)
         .order('doc_no').range(lo, hi));
     partOne = { data: opened.data ?? [], error: opened.error };
   }
@@ -123,9 +138,21 @@ async function liveReport(c: any, companyId: number, from: string, to: string, b
   const touched = [...new Set([
     ...(payIn.data ?? []).map((r) => r.so_doc_no), ...(chIn.data ?? []).map((r) => r.so_doc_no), ...(cancelIn.data ?? []).map((r) => r.doc_no),
   ])].filter((d) => d && !known.has(d));
-  const partTwoRead = await chunkIn<SoRead, string>(touched, (batch, lo, hi) =>
-    scopeToCompanyId(sb.from('mfg_sales_orders').select(SO_COLS).in('doc_no', batch).not('project_id', 'is', null), companyId).order('doc_no').range(lo, hi));
+  /* By SO date an order with no fair counts too, from NO_FAIR_FROM (the old ones
+     before it stay out); by fair only orders on a fair. */
+  const partTwoRead = await chunkIn<SoRead, string>(touched, (batch, lo, hi) => {
+    const q = scopeToCompanyId(sb.from('mfg_sales_orders').select(SO_COLS).in('doc_no', batch), companyId);
+    return (basis === 'fair' ? q.not('project_id', 'is', null) : q).order('doc_no').range(lo, hi);
+  });
   if (partTwoRead.error) return fail(c, 'orders', partTwoRead.error.message);
+  /* …and an older order with no fair whose price changed in the range: its
+     upsales and drop sales count (owner 2026-11-13) — or that was cancelled in
+     it: it gives back what it was paid on (owner 2026-11-13, 「要扣」). */
+  const changedInRange = new Set((chIn.data ?? []).map((r) => r.so_doc_no));
+  const cancelledInRange = new Set((cancelIn.data ?? []).map((r) => r.doc_no));
+  const twoRows = basis === 'so_date'
+    ? partTwoRead.data.filter((s) => s.project_id != null || (dayOf(s.so_date) ?? '') >= NO_FAIR_FROM || changedInRange.has(s.doc_no) || cancelledInRange.has(s.doc_no))
+    : partTwoRead.data;
 
   /* The fairs the rest needs: by fair, the earlier fairs of those orders (started
      before the range); by SO date, every fair any of the orders is on. */
@@ -136,16 +163,16 @@ async function liveReport(c: any, companyId: number, from: string, to: string, b
       .bind(companyId, ...ids, ...(startedBefore ? [startedBefore] : [])).all();
     return (res.results ?? []) as FairRead[];
   };
-  const fairIdsOf = (rows: SoRead[]) => [...new Set(rows.map((s) => Number(s.project_id)).filter((id) => Number.isInteger(id)))];
+  const fairIdsOf = (rows: SoRead[]) => [...new Set(rows.filter((s) => s.project_id != null).map((s) => Number(s.project_id)).filter((id) => Number.isInteger(id)))];
   let earlierFairs: FairRead[];
   let partTwo: SoRead[];
   try {
     if (basis === 'fair') {
-      earlierFairs = await readFairs(fairIdsOf(partTwoRead.data).filter((id) => !rangeIds.includes(id)), from);
+      earlierFairs = await readFairs(fairIdsOf(twoRows).filter((id) => !rangeIds.includes(id)), from);
       const earlierSet = new Set(earlierFairs.map((f) => Number(f.id)));
-      partTwo = partTwoRead.data.filter((s) => earlierSet.has(Number(s.project_id)));
+      partTwo = twoRows.filter((s) => earlierSet.has(Number(s.project_id)));
     } else {
-      partTwo = partTwoRead.data.filter((s) => (dayOf(s.so_date) ?? '9999-12-31') < from);
+      partTwo = twoRows.filter((s) => (dayOf(s.so_date) ?? '9999-12-31') < from);
       earlierFairs = await readFairs(fairIdsOf([...partOne.data, ...partTwo]), null);
     }
   } catch (e) {
@@ -174,7 +201,12 @@ async function liveReport(c: any, companyId: number, from: string, to: string, b
   const fairsRead = [...rangeFairs, ...earlierFairs];
   let rates: Awaited<ReturnType<typeof loadCostRates>>;
   try {
-    rates = await loadCostRates(env, fairsRead.map((f) => f.brand));
+    /* By SO date an order with no fair earns at its own brand's rate: every rate
+       card is read, so its brand is found whatever its case. */
+    const cards = basis === 'so_date'
+      ? ((await env.DB.prepare('SELECT brand FROM project_cost_rates').bind().all()).results ?? []).map((r: Record<string, unknown>) => String(r.brand ?? ''))
+      : [];
+    rates = await loadCostRates(env, [...fairsRead.map((f) => f.brand), ...cards]);
   } catch (e) {
     return fail(c, 'rate cards', String((e as Error)?.message ?? e));
   }
@@ -198,20 +230,25 @@ async function liveReport(c: any, companyId: number, from: string, to: string, b
     basis, from, to, fairs,
     ratePctByBrand: new Map([...rates].map(([brand, r]) => [brand, r.commission_normal_pct ?? null])),
     sos: sos.map((s): CommissionSo => ({
-      docNo: s.doc_no, projectId: Number(s.project_id), salesperson: s.salesperson_id ? staffName.get(s.salesperson_id) ?? null : null,
+      docNo: s.doc_no, projectId: s.project_id == null ? null : Number(s.project_id), salesperson: s.salesperson_id ? staffName.get(s.salesperson_id) ?? null : null,
       customer: s.debtor_name, status: String(s.status ?? '').toUpperCase(), onHold: s.on_hold === true,
       goodsSen: n(s.mattress_sofa_sen) + n(s.bedframe_sen) + n(s.accessories_sen) + n(s.others_sen),
       totalSen: n(s.total_revenue_sen) > 0 ? n(s.total_revenue_sen) : n(s.local_total_sen),
       createdAt: stampOf(s.created_at),
       soDate: dayOf(s.so_date),
+      ref: s.customer_so_no?.trim() || null,
+      brand: s.branding?.trim() || null,
+      vpBrand: s.vp_brand?.trim() || null,
+      venue: s.venue?.trim() || null,
     })),
     payments: pays.data.map((p): CommissionPayment => ({ docNo: p.so_doc_no, paidAt: dayOf(p.paid_at) ?? stampOf(p.paid_at), amountSen: n(p.amount_sen) })),
-    changes: chs.data.map((r): CommissionChange => ({
+    changes: withUncountedChanges(chs.data.map((r): CommissionChange => ({
       docNo: String(r.so_doc_no), changedAt: stampOf(r.changed_at),
       beforeGoodsSen: n(r.before_goods_sen), afterGoodsSen: n(r.after_goods_sen),
       beforeTotalSen: n(r.before_total_sen), afterTotalSen: n(r.after_total_sen),
       source: String(r.source ?? 'edit'), changedBy: (r.changed_by as string | null) ?? null,
-    })),
+      uncounted: false,
+    })), marks),
     cancels: cancels.data.map((r): CommissionCancel => ({ docNo: r.doc_no, at: stampOf(r.created_at) })),
   });
   return { report };
@@ -247,11 +284,67 @@ const closesMeta = (closes: readonly Closed[]) => ({
   openFrom: closes.length > 0 ? nextMonth(closes[closes.length - 1]!.month) : null,
 });
 
+/* ── Finance's marks ─────────────────────────────────────────────────────── */
+
+type MarkRead = { id: string; so_doc_no: string; kind: string; month: string | null; reason: string | null; marked_by: string | null; marked_at: string };
+const MARK_COLS = 'id, so_doc_no, kind, month, reason, marked_by, marked_at';
+const markOf = (r: MarkRead): CommissionMark => ({
+  id: String(r.id), docNo: r.so_doc_no, kind: r.kind === 'defer' || r.kind === 'exclude_change' ? r.kind : 'exclude', month: r.month ? ym(r.month) : null,
+  reason: r.reason ?? null, markedBy: r.marked_by ?? null, markedAt: stampOf(r.marked_at),
+});
+async function readMarks(sb: any, companyId: number): Promise<{ marks: CommissionMark[] } | { error: string }> {
+  const res = await paginateAll<MarkRead>((lo, hi) =>
+    scopeToCompanyId(sb.from('event_commission_marks').select(MARK_COLS), companyId).order('marked_at').range(lo, hi));
+  if (res.error) return { error: res.error.message };
+  return { marks: (res.data ?? []).map(markOf) };
+}
+
+/** What every report needs besides its range: the closed months and the marks. */
+type Ctx = { closes: readonly Closed[]; marks: readonly CommissionMark[] };
+/** How many months back a chain of 「算下个月」 is followed. */
+const DEFER_CHAIN_MAX = 3;
+const prevMonth = (month: string): string => {
+  const d = new Date(`${month}-01T00:00:00Z`);
+  d.setUTCMonth(d.getUTCMonth() - 1);
+  return d.toISOString().slice(0, 7);
+};
+
+/** The live report with the marks applied, and — for a report of one month (or
+ *  of it so far) — what the month before moved to it. */
+async function markedLive(c: any, companyId: number, from: string, to: string, basis: CommissionBasis, ctx: Ctx, depth = 0): Promise<Live> {
+  const live = await liveReport(c, companyId, from, to, basis, ctx.marks);
+  if ('response' in live) return live;
+  const month = monthOfRange(from, to);
+  let deferredIn: DeferredInRow[] = [];
+  const prev = month ? prevMonth(month) : null;
+  if (prev && depth < DEFER_CHAIN_MAX && ctx.marks.some((m) => m.kind === 'defer' && m.month === prev)) {
+    const before = await monthReport(c, companyId, prev, basis, ctx, depth + 1);
+    if ('response' in before) return before;
+    deferredIn = deferredInFrom(before.report, prev);
+  }
+  return { report: withMarks(live.report, ctx.marks, deferredIn) };
+}
+
+/** One month's report: as closed when it is, else live with the marks. */
+async function monthReport(c: any, companyId: number, month: string, basis: CommissionBasis, ctx: Ctx, depth: number): Promise<Live> {
+  if (ctx.closes.some((k) => k.month === month)) {
+    const col = basis === 'so_date' ? 'report_so_date' : 'report_fair';
+    const sb = c.get('supabase');
+    const { data, error } = await scopeToCompanyId(sb.from('event_commission_closes').select(col).eq('month', `${month}-01`), companyId).maybeSingle();
+    if (error || !data) return { response: fail(c, 'closed month', error?.message ?? 'not found') };
+    return { report: (data as Record<string, unknown>)[col] as EventCommissionReport };
+  }
+  return markedLive(c, companyId, `${month}-01`, monthEnd(`${month}-01`), basis, ctx, depth);
+}
+
 /** The closed months' outstanding adjustments by one basis, each month recalculated now. */
-async function adjustmentsFor(c: any, companyId: number, basis: CommissionBasis, closes: readonly Closed[]): Promise<{ rows: MonthAdjustmentRow[] } | { response: Response }> {
+async function adjustmentsFor(c: any, companyId: number, basis: CommissionBasis, ctx: Ctx): Promise<{ rows: MonthAdjustmentRow[] } | { response: Response }> {
+  const { closes } = ctx;
   const live = new Map<string, EventCommissionReport>();
   const recent = closes.slice(-ADJUST_MONTHS_BACK);
-  const reads = await Promise.all(recent.map((k) => liveReport(c, companyId, `${k.month}-01`, monthEnd(`${k.month}-01`), basis)));
+  /* Recalculated WITH the marks: an order marked "not counted" after its month
+     closed drops out here, and the adjustment takes back what was paid. */
+  const reads = await Promise.all(recent.map((k) => markedLive(c, companyId, `${k.month}-01`, monthEnd(`${k.month}-01`), basis, ctx)));
   for (let i = 0; i < recent.length; i += 1) {
     const r = reads[i]!;
     if ('response' in r) return r;
@@ -276,10 +369,12 @@ export const eventCommissionHandler = async (c: any): Promise<Response> => {
   /* By fair (the fair's start) or by SO date (the order's own) — owner 2026-10-20. */
   const basis: CommissionBasis = c.req.query('basis') === 'so_date' ? 'so_date' : 'fair';
 
-  const read = await readCloses(sb, companyId);
+  const [read, markRead] = await Promise.all([readCloses(sb, companyId), readMarks(sb, companyId)]);
   if ('error' in read) return fail(c, 'closed months', read.error);
+  if ('error' in markRead) return fail(c, 'marked orders', markRead.error);
   const closes = read.closes;
   const meta = closesMeta(closes);
+  const ctx: Ctx = { closes, marks: markRead.marks };
 
   /* A closed month, asked for whole: as it was closed. */
   const exact = closes.find((k) => from === `${k.month}-01` && to === monthEnd(`${k.month}-01`));
@@ -296,8 +391,8 @@ export const eventCommissionHandler = async (c: any): Promise<Response> => {
   const openDay = meta.openFrom ? `${meta.openFrom}-01` : null;
   const carries = openDay != null && from <= openDay && openDay <= to;
   const [live, adj] = await Promise.all([
-    liveReport(c, companyId, from, to, basis),
-    carries ? adjustmentsFor(c, companyId, basis, closes) : Promise.resolve(null),
+    markedLive(c, companyId, from, to, basis, ctx),
+    carries ? adjustmentsFor(c, companyId, basis, ctx) : Promise.resolve(null),
   ]);
   if ('response' in live) return live.response;
   if (adj && 'response' in adj) return adj.response;
@@ -320,9 +415,11 @@ export const closeCommissionMonthHandler = async (c: any): Promise<Response> => 
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return c.json({ error: 'bad_month', message: 'Pick a month to close.' }, 400);
   const sb = c.get('supabase');
   const companyId = co.companyId;
-  const known = await readCloses(sb, companyId);
+  const [known, markRead] = await Promise.all([readCloses(sb, companyId), readMarks(sb, companyId)]);
   if ('error' in known) return fail(c, 'closed months', known.error);
+  if ('error' in markRead) return fail(c, 'marked orders', markRead.error);
   const closes = known.closes;
+  const ctx: Ctx = { closes, marks: markRead.marks };
   if (closes.some((k) => k.month === month)) return c.json({ error: 'already_closed', message: `${monthLabel(month)} is already closed.` }, 409);
   const latest = closes.length > 0 ? closes[closes.length - 1]!.month : null;
   if (latest && month !== nextMonth(latest)) {
@@ -333,8 +430,8 @@ export const closeCommissionMonthHandler = async (c: any): Promise<Response> => 
   const reports = {} as Record<CommissionBasis, EventCommissionReport>;
   const bases = ['fair', 'so_date'] as const;
   const read = await Promise.all(bases.map((basis) => Promise.all([
-    liveReport(c, companyId, `${month}-01`, monthEnd(`${month}-01`), basis),
-    closes.length > 0 ? adjustmentsFor(c, companyId, basis, closes) : Promise.resolve(null),
+    markedLive(c, companyId, `${month}-01`, monthEnd(`${month}-01`), basis, ctx),
+    closes.length > 0 ? adjustmentsFor(c, companyId, basis, ctx) : Promise.resolve(null),
   ])));
   for (let i = 0; i < bases.length; i += 1) {
     const [live, adj] = read[i]!;
@@ -392,4 +489,92 @@ export const reopenCommissionMonthHandler = async (c: any): Promise<Response> =>
     note: `Event Commission ${monthLabel(month)} reopened`,
   });
   return c.json({ ok: true, month, closes: closesMeta(closes.slice(0, -1)) });
+};
+
+/* ── Finance's two buttons (owner 2026-11-12) ─────────────────────────────── */
+
+const DOC_NO = /^[A-Z0-9][A-Z0-9-]{3,39}$/;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** How the mark reads in the order's History. */
+const markWords = (m: Pick<CommissionMark, 'kind' | 'month'>): string => {
+  if (m.kind === 'exclude') return 'Not counted';
+  if (m.kind === 'exclude_change') return `Price change of ${monthLabel(m.month ?? '')} not counted`;
+  return `Counted in ${monthLabel(nextMonth(m.month ?? ''))}, not ${monthLabel(m.month ?? '')}`;
+};
+const historyActor = (c: any) => {
+  const user = c.get('user');
+  return {
+    actorId: (user?.id as string | undefined) ?? null,
+    actorName: (user?.user_metadata as { name?: string } | undefined)?.name ?? actorOf(c)?.name ?? null,
+  };
+};
+
+/* POST /commission/marks { docNo, kind: 'exclude' | 'defer' | 'exclude_change', month?: 'YYYY-MM', reason? }
+   「这张单不要算」 marks the order not counted, in any month; 「这个算下个月」 moves
+   what it earns in `month` — an open month — to the month after; 「这次改价不算」
+   leaves its upsales / drop sales of `month` — an open month — out of the
+   commission, the order itself still counted. */
+export const markCommissionOrderHandler = async (c: any): Promise<Response> => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const body = (await c.req.json().catch(() => ({}))) as { docNo?: unknown; kind?: unknown; month?: unknown; reason?: unknown };
+  const docNo = String(body.docNo ?? '').trim().toUpperCase();
+  if (!DOC_NO.test(docNo)) return c.json({ error: 'bad_doc_no', message: 'Pick an order.' }, 400);
+  const kind = body.kind === 'exclude' || body.kind === 'defer' || body.kind === 'exclude_change' ? body.kind : null;
+  if (!kind) return c.json({ error: 'bad_kind', message: 'Choose "don\'t count", "next month" or "don\'t count the price change".' }, 400);
+  const month = kind === 'exclude' ? null : String(body.month ?? '').trim();
+  if (month != null && !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+    return c.json({ error: 'bad_month', message: kind === 'defer' ? 'Pick the month its commission leaves.' : 'Pick the month of the price change.' }, 400);
+  }
+  const reason = String(body.reason ?? '').trim().slice(0, 500) || null;
+  const sb = c.get('supabase');
+  const companyId = co.companyId;
+
+  const { data: so, error: soErr } = await scopeToCompanyId(sb.from('mfg_sales_orders').select('doc_no').eq('doc_no', docNo), companyId).maybeSingle();
+  if (soErr) return fail(c, 'order', soErr.message);
+  if (!so) return c.json({ error: 'not_found', message: `${docNo} is not an order of this company.` }, 404);
+  if (month != null) {
+    const read = await readCloses(sb, companyId);
+    if ('error' in read) return fail(c, 'closed months', read.error);
+    if (read.closes.some((k) => k.month === month)) {
+      const open = kind === 'defer' ? "only an open month's commission can move to the next month" : "only an open month's price change can be left out";
+      return c.json({ error: 'month_closed', message: `${monthLabel(month)} is closed — ${open}.` }, 409);
+    }
+  }
+  const actor = actorOf(c);
+  const { data, error } = await sb.from('event_commission_marks').insert({
+    company_id: companyId, so_doc_no: docNo, kind, month: month ? `${month}-01` : null, reason,
+    marked_by: actor?.name ?? actor?.email ?? null,
+  }).select(MARK_COLS).single();
+  if (error) {
+    if (String(error.code) === '23505') return c.json({ error: 'already_marked', message: `${docNo} is already marked.` }, 409);
+    return c.json({ error: 'mark_failed', message: `${docNo} could not be marked — try again.`, reason: error.message }, 500);
+  }
+  const mark = markOf(data as MarkRead);
+  await recordSoAudit(sb, {
+    docNo, action: 'COMMISSION_MARK', ...historyActor(c),
+    fieldChanges: [{ field: 'eventCommission', from: 'Counted', to: markWords(mark) }],
+    source: 'event-commission', ...(reason ? { note: reason } : {}),
+  });
+  return c.json({ ok: true, mark });
+};
+
+/* POST /commission/marks/undo { id } — the mark taken away; the order counts again. */
+export const unmarkCommissionOrderHandler = async (c: any): Promise<Response> => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const body = (await c.req.json().catch(() => ({}))) as { id?: unknown };
+  const id = String(body.id ?? '').trim();
+  if (!UUID.test(id)) return c.json({ error: 'bad_id', message: 'Pick a marked order.' }, 400);
+  const sb = c.get('supabase');
+  const { data, error } = await scopeToCompanyId(sb.from('event_commission_marks').delete().eq('id', id), co.companyId).select(MARK_COLS).maybeSingle();
+  if (error) return c.json({ error: 'undo_failed', message: 'The mark could not be taken away — try again.', reason: error.message }, 500);
+  if (!data) return c.json({ error: 'not_found', message: 'That mark is already gone.' }, 404);
+  const mark = markOf(data as MarkRead);
+  await recordSoAudit(sb, {
+    docNo: mark.docNo, action: 'COMMISSION_UNMARK', ...historyActor(c),
+    fieldChanges: [{ field: 'eventCommission', from: markWords(mark), to: 'Counted' }],
+    source: 'event-commission',
+  });
+  return c.json({ ok: true, mark });
 };

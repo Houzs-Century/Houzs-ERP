@@ -10,6 +10,9 @@ const ACTIONS: Record<string, string> = {
   UPDATE_DETAILS: 'Updated details',
   /* Every fair move, named (owner 2026-10-19; backend scm/lib/fair-audit.ts). */
   UPDATE_FAIR:    'Fair changed',
+  /* Finance's marks on the Event Commission report (owner 2026-11-12). */
+  COMMISSION_MARK:   'Event commission marked',
+  COMMISSION_UNMARK: 'Event commission mark taken away',
   UPDATE_STATUS:  'Status changed',
   ADD_LINE:       'Added line',
   UPDATE_LINE:    'Updated line',
@@ -22,6 +25,7 @@ const ACTIONS: Record<string, string> = {
 const FIELDS: Record<string, string> = {
   debtorCode: 'Customer code', debtorName: 'Customer', agent: 'Agent',
   phone: 'Phone', email: 'Email', soDate: 'SO date', status: 'Status',
+  eventCommission: 'Event commission',
   paymentMethod: 'Payment method', depositSen: 'Deposit',
   processingDate: 'Processing date', customerSoNo: 'Ref No.',
   customerPo: 'Customer PO', customerState: 'State',

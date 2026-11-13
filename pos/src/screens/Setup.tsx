@@ -7,7 +7,7 @@
  * Terminals instead. Cashiers never see this screen. */
 import { useEffect, useState } from "react";
 import { formatPairingCode, isPairingCode, normalizePairingCode } from "@shared/pos-pairing";
-import { adminApi, deviceApi, erpReachable } from "../api";
+import { adminApi, deviceApi, erpReachable, type ReconnectRequest } from "../api";
 import { requestPersistentStorage, storageEstimate } from "../db";
 import { refreshBundle, saveDeviceState, stateFromBundle, platformName } from "../deviceStore";
 import { fmtMyt, takesTerminalOver } from "../loginRules";
@@ -15,6 +15,7 @@ import type { Manager } from "../manager";
 import { connectPrinter, onPrinterStatus, printerSupported, type PrinterStatus } from "../printer";
 import { printTestPage } from "../printing";
 import { clearTestSales } from "../salesStore";
+import { heartbeat } from "../sync";
 import { APP_VERSION, isStandalone, onInstallAvailable, promptInstall } from "../pwa";
 import type { DeviceState, PosBundle } from "../types";
 
@@ -49,6 +50,29 @@ export function Setup({ state, manager, onPrepared, onExit, onToggleTest }: {
   const support = printerSupported();
   const [canInstall, setCanInstall] = useState(false);
   useEffect(() => onInstallAvailable(setCanInstall), []);
+  /* Devices that lost their terminal and wait for a supervisor (reconnectRules.ts). */
+  const [requests, setRequests] = useState<ReconnectRequest[]>([]);
+  const [approvePin, setApprovePin] = useState("");
+  const loadRequests = () => { if (!state.provisional) deviceApi.reconnectRequests(state.token).then((r) => setRequests(r.data)).catch(() => setRequests([])); };
+  // Once on opening Settings; approving reloads it.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(loadRequests, [state.token]);
+
+  async function approve(r: ReconnectRequest) {
+    setBusy("approve");
+    setMsg(null);
+    try {
+      await deviceApi.reconnectApprove(state.token, r.terminal_id, approvePin);
+      setApprovePin("");
+      void heartbeat();
+      setMsg({ tone: "ok", text: `${r.code} approved. ${r.asking_device ? `"${r.asking_device}"` : "That device"} reconnects by itself within a minute and sends its bills.` });
+      loadRequests();
+    } catch (e) {
+      setMsg({ tone: "bad", text: e instanceof Error ? e.message : "Could not approve" });
+    } finally {
+      setBusy(null);
+    }
+  }
   useEffect(() => onPrinterStatus(setPrinter), []);
 
   useEffect(() => {
@@ -167,6 +191,25 @@ export function Setup({ state, manager, onPrepared, onExit, onToggleTest }: {
         <div className="banner update">This device is not set up yet. Pick the terminal and the fair below and press Set up this device; the cashier tiles and the items arrive with it.</div>
       )}
 
+      {requests.length > 0 && (
+        <div className="card">
+          <h2>Devices asking to be reconnected</h2>
+          <p className="muted" style={{ marginTop: 0 }}>A device shows up here when another device was set up on its terminal. Approve with your supervisor PIN; it reconnects by itself and its bills come through.</p>
+          <label className="field" style={{ maxWidth: 220, marginBottom: 8 }}><span>Supervisor PIN</span><input type="password" inputMode="numeric" autoComplete="off" maxLength={8} value={approvePin} onChange={(e) => setApprovePin(e.target.value.replace(/\D/g, ""))} /></label>
+          {requests.map((r) => (
+            <div key={r.terminal_id} className="status-line" style={{ alignItems: "flex-start", flexWrap: "wrap", gap: 8 }}>
+              <span className="grow">
+                <b>{r.code}</b>: {r.asking_device ? `"${r.asking_device}"` : "a device"} asked {fmtMyt(r.requested_at)}.{" "}
+                {r.is_this_device
+                  ? `${r.code} is on THIS device now; approving hands it back and disconnects this device.`
+                  : `${r.code} is now on ${r.holder_device ? `"${r.holder_device}"` : "another device"}${r.holder_last_seen_at ? `, last seen ${fmtMyt(r.holder_last_seen_at)}` : ""}; approving disconnects that one.`}
+              </span>
+              <button type="button" className="btn primary" style={{ minHeight: 34 }} disabled={busy !== null || approvePin.length < 4 || online === false} onClick={() => void approve(r)}>{busy === "approve" ? "Approving…" : `Approve ${r.code}`}</button>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="card">
         <h2>{setUpAlready ? "Move this device to another terminal or fair" : "Set up this device"}</h2>
         {manager && !listsError ? (
@@ -190,7 +233,7 @@ export function Setup({ state, manager, onPrepared, onExit, onToggleTest }: {
             <label className="field"><span>Device name</span><input value={deviceName} onChange={(e) => setDeviceName(e.target.value)} placeholder="e.g. Laptop Lenovo" /></label>
             {takeOver && picked && (
               <div className="banner offline">
-                {picked.code} is already set up on {picked.device_name ? `"${picked.device_name}"` : "another device"}{picked.last_seen_at ? `, last seen ${fmtMyt(picked.last_seen_at)}` : ""}. Setting it up here disconnects that device: it stops syncing and shows device_not_registered until someone pairs it again. For a second device, create a new terminal in POS Admin, Terminals.
+                {picked.code} is already set up on {picked.device_name ? `"${picked.device_name}"` : "another device"}{picked.last_seen_at ? `, last seen ${fmtMyt(picked.last_seen_at)}` : ""}. Setting it up here disconnects that device: it stops syncing until a supervisor approves its request to reconnect. For a second device, create a new terminal in POS Admin, Terminals.
               </div>
             )}
             <button type="button" className="btn primary" disabled={busy !== null || terminalId === "" || projectId === "" || online === false} onClick={() => void setUp()}>{busy === "setup" ? "Setting up…" : takeOver && picked ? (takeOverOk === terminalId ? `Yes, take ${picked.code} over` : `Take ${picked.code} over…`) : setUpAlready ? "Move this device" : "Set up this device"}</button>

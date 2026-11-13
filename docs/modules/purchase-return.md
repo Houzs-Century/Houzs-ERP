@@ -11,6 +11,7 @@ Stock received from a supplier sent back — damaged, wrong, or surplus. Mirror 
 | GET | `/`, `/:id`, `/:id/linked` | List, detail, the source GRN + PO for the detail's links |
 | POST | `/` | Create — lands POSTED with inventory OUT written |
 | POST | `/from-grn`, `/from-grns` | Convert GRN line(s) into a return |
+| GET | `/returnable-grn-lines?poId=`, `/returnable-pi-lines?piId=` | The pool a PO- or PI-sourced return draws from |
 | PATCH | `/:id/post` | Back-compat, idempotent |
 | PATCH | `/:id/complete` | POSTED -> COMPLETED, optional credit-note ref |
 | PATCH | `/:id/cancel` | Cancel |
@@ -29,6 +30,8 @@ The right-click menu offers Confirm only on a DRAFT and Cancel on any row the se
 `GET /returnable-grn-lines?poId=` answers the POSTED receipt lines received against that purchase order, with `qty_accepted - returned_qty > 0`, plus the PO's own supplier. **It is keyed on the LINE link** (`grn_items.purchase_order_item_id`), not on `grns.purchase_order_id` — a receipt may be HEADED at one purchase order and carry lines from several others, which is deliberate here (one group, one lorry; owner 2026-09-28). Matching the header alone hid every unit received that way: HC-PO-010114 read RECEIVED with nothing returnable, because both its units sat on receipts headed at Hookka POs. Same header-FK-only blind spot #4199 fixed for the PO list and the relationship map.
 
 The header link survives for ONE case: a line on this PO's own receipt that carries no line link (pre-link imports, a receipt raised without picking PO lines). The rules and that carve-out live in `backend/src/scm/lib/returnable-grn-lines.ts`.
+
+A return raised from a **Purchase Invoice** (`?piId=`, HC-0227; PI detail button and PI list right-click) draws the receipt lines the invoice's lines bill (`purchase_invoice_items.grn_item_id`), each capped at the smaller of the invoice's qty and the receipt line's remaining; the supplier is the invoice's. It is an ordinary return: stock OUT, `returned_qty`, the HC-0221 replacement question, credit note on Complete. It does not touch the invoice's own amount or outstanding.
 
 **The supplier answered is the PO's**, not the receipt's. On a shared receipt the receipt's supplier is a different counterparty from the one the goods were bought from — sending the return to them would be the wrong company. `POST /from-grn` still takes the RECEIPT's supplier, which is right for a single-supplier receipt and is the known gap on a shared one.
 

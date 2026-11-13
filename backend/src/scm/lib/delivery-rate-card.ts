@@ -34,7 +34,32 @@
 // carries with the area's rules and every other type with the card's own, so a
 // card with no area prices exactly as before. Town surcharges (OUTSTATION,
 // OUTSTATION_TRIP) stay the card's own and add on top, as Labuan's customs fee does.
+//
+// PLACES (mig 20261111T1100; owner 2026-11-11: the 3PL areas aligned with the
+// Delivery Zones maintenance, 做). Given the addresses a drop reaches (stops,
+// each with its zone from the postcode) and the company's places (a town and
+// the zone it lies in), a name a card prices is read per address: a zone name
+// covers its whole zone by postcode, spelled in the address or not; a place
+// counts only inside its own zone, so a Kuala Lumpur street called Jalan Ipoh
+// is not Ipoh. Without stops the calculator reads destinationZone(s) and the
+// address text exactly as before.
 // ---------------------------------------------------------------------------
+
+import { ZONE_SET } from './zone-classify';
+
+/** A place under a delivery zone: the town a card may price and the zone its
+ *  postcodes fall in (null = in no zone, e.g. abroad). */
+export interface PlaceSpec {
+  name: string;
+  zone: string | null;
+}
+
+/** One address a drop or trip reaches: its zone from the postcode (null when
+ *  the postcode is missing or no zone rule covers it) and its text. */
+export interface DeliveryStop {
+  zone: string | null;
+  addressText: string | null;
+}
 
 /** The card-level dimensions the calculator needs (a subset of the stored card). */
 export interface RateCardSpec {
@@ -64,6 +89,8 @@ export interface RateCardSpec {
   rules: readonly RateRuleSpec[];
   /** The card's priced areas (see AREAS above). Absent or empty: none. */
   areas?: readonly RateAreaSpec[];
+  /** The company's places (see PLACES above), read with facts.stops. */
+  places?: readonly PlaceSpec[];
 }
 
 /** One priced area of a card: the towns it covers, each matched as a whole word
@@ -141,6 +168,10 @@ export interface DeliveryFacts {
   /** The area to price in, when the caller knows it (the Price check names one);
    *  otherwise the address decides (areaOf). */
   areaId?: string | null;
+  /** Every address the drop or trip reaches, each with its postcode zone. When
+   *  given, town and area names are read per address (see PLACES above) and
+   *  destinationZone(s) / addressText are not read for them. */
+  stops?: readonly DeliveryStop[] | null;
   disposeCount?: number | null;
   setupCount?: number | null;
   dismantleCount?: number | null;
@@ -249,8 +280,23 @@ export function chargingUnitLabel(card: Pick<RateCardSpec, 'basis' | 'aggregatio
 export function farthestZone(
   rules: readonly RateRuleSpec[],
   ruleType: 'OUTSTATION' | 'OUTSTATION_TRIP',
-  facts: Pick<DeliveryFacts, 'destinationZone' | 'destinationZones' | 'addressText'>,
+  facts: Pick<DeliveryFacts, 'destinationZone' | 'destinationZones' | 'addressText' | 'stops'>,
+  places?: readonly PlaceSpec[],
 ): string | null {
+  if (facts.stops && facts.stops.length > 0) {
+    /* Per address (see PLACES): the dearest rule some stop reaches, once. */
+    const homes = placeZones(places);
+    let found: { zone: string; amount: number } | null = null;
+    for (const r of rules) {
+      const z = String(r.zone ?? '').trim().toUpperCase();
+      if (r.ruleType !== ruleType || !z) continue;
+      if (!facts.stops.some((s) => reaches(z, s, homes))) continue;
+      const amount = intOf(r.amountSen);
+      /* Ties keep the first rule, so a re-run prices the same. */
+      if (!found || amount > found.amount) found = { zone: z, amount };
+    }
+    return found ? found.zone : null;
+  }
   const candidates = [
     ...((facts.destinationZones && facts.destinationZones.length > 0)
       ? facts.destinationZones
@@ -293,6 +339,29 @@ export function townsInAddress(
 
 const asWords = (v: unknown): string => ` ${String(v ?? '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim()} `;
 
+/** The company's places as name → home zone (null = in no zone). PURE. */
+function placeZones(places: readonly PlaceSpec[] | undefined): ReadonlyMap<string, string | null> {
+  return new Map((places ?? []).map((p) => [p.name.trim().toUpperCase(), p.zone ? p.zone.trim().toUpperCase() : null]));
+}
+
+/**
+ * Whether a name a card prices (a zone or a town) is reached by this address.
+ * PURE. A zone name: the address's postcode zone is that zone (its words only
+ * when the postcode tells no zone). A place: spelled in the address, and the
+ * address is in the place's zone (or either zone is unknown). A town not yet a
+ * place: spelled anywhere, as before places.
+ */
+export function reaches(name: string, stop: DeliveryStop, homes: ReadonlyMap<string, string | null>): boolean {
+  const n = name.trim().toUpperCase();
+  if (!n) return false;
+  const spelled = asWords(stop.addressText).includes(asWords(n));
+  const zone = stop.zone ? stop.zone.trim().toUpperCase() : null;
+  if (ZONE_SET.has(n)) return zone ? zone === n : spelled;
+  if (!homes.has(n)) return spelled;
+  const home = homes.get(n) ?? null;
+  return spelled && (home === null || zone === null || zone === home);
+}
+
 /**
  * The area a delivery is priced in, or null. PURE.
  *
@@ -300,21 +369,27 @@ const asWords = (v: unknown): string => ` ${String(v ?? '').toUpperCase().replac
  * whose towns appears as a whole word in the delivery address. When the address
  * names towns of two areas — a trip's several addresses — the area whose first
  * charging unit costs most: as farthestZone reads "farthest" off a surcharge,
- * the dearest area is the farthest one, priced once.
+ * the dearest area is the farthest one, priced once. Given stops, each town of
+ * an area is read per address against the places (see PLACES).
  */
 export function areaOf(
-  card: Pick<RateCardSpec, 'areas' | 'rules'>,
-  facts: Pick<DeliveryFacts, 'areaId' | 'addressText'>,
+  card: Pick<RateCardSpec, 'areas' | 'rules' | 'places'>,
+  facts: Pick<DeliveryFacts, 'areaId' | 'addressText' | 'stops'>,
 ): RateAreaSpec | null {
   const areas = card.areas ?? [];
   if (areas.length === 0) return null;
   if (facts.areaId) return areas.find((a) => a.id === facts.areaId) ?? null;
+  const stops = facts.stops ?? [];
+  const homes = placeZones(card.places);
   const text = asWords(facts.addressText);
-  if (!text.trim()) return null;
+  const inArea = (a: RateAreaSpec): boolean => (stops.length > 0
+    ? a.towns.some((t) => stops.some((s) => reaches(t, s, homes)))
+    : a.towns.some((t) => asWords(t).trim() !== '' && text.includes(asWords(t))));
+  if (stops.length === 0 && !text.trim()) return null;
   let best: RateAreaSpec | null = null;
   let bestSen = -1;
   for (const a of areas) {
-    if (!a.towns.some((t) => asWords(t).trim() !== '' && text.includes(asWords(t)))) continue;
+    if (!inArea(a)) continue;
     const first = (card.rules ?? [])
       .filter((r) => r.areaId === a.id && r.ruleType === 'POSITIONAL_TIER')
       .sort((x, y) => intOf(x.tierPosition) - intOf(y.tierPosition))[0];
@@ -420,7 +495,7 @@ export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts, op
   // query, which is not the first stop on the route — it is arbitrary, so the
   // same trip could reconcile differently on a re-run. A Melaka->Johor trip
   // could be charged Melaka's RM300 when the lorry went to Johor.
-  const farZone = farthestZone(rules, 'OUTSTATION', facts);
+  const farZone = farthestZone(rules, 'OUTSTATION', facts, card.places);
   if (farZone) {
     const os = rulesOf('OUTSTATION').find((r) => String(r.zone ?? '').toUpperCase() === farZone);
     if (os) {
@@ -459,7 +534,7 @@ export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts, op
 
   // ── The fixed per-TRIP outstation fee (once per trip, not per drop) ───────
   if (opts.perTrip) {
-    const tripZone = farthestZone(rules, 'OUTSTATION_TRIP', facts);
+    const tripZone = farthestZone(rules, 'OUTSTATION_TRIP', facts, card.places);
     const tripFee = tripOutstationFeeSen(rules, tripZone);
     if (tripFee > 0) {
       lines.push({

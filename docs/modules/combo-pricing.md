@@ -38,6 +38,7 @@ Prices a whole COMBINATION of sofa modules instead of summing the modules indivi
 - `pickComboMatch` reads every row of a tuple, so a size emptied on a new row falls through to the older row's price. Taking a price away must retire the older rows (`POST /apply` does).
 - An Auto cost stays editable by owner ruling; the next supplier save replaces it, and the save bar says so. Changing modules on a supplier's page is allowed too and disconnects that combo from the master; the dialog says so. PWP rules are kept by hand: deleting or recomposing a combo does not update them.
 - The Products grid edits COST (`prices_by_height`), and an edit carries the selling grid forward unchanged. A master row with only a selling price shows it as the cell's hint.
+- New combo's presets are rows of `scm.sofa_combo_presets` per company (name, `slots` string[][], order, active), kept under the Presets button; switched off, never deleted. A code with no side (`2A`) fits either side the model makes. Writes need `scm_config_write`. A new company starts with none.
 - The model list shows models with combos; Show all models or a search reaches the rest. A supplier's page leads with our model code and name, with the supplier's own code beside it.
 - A model's size columns are its own `allowed_options.sizes`, else the Maintenance `sofaSizes` master, plus any size already priced. They follow the master; nothing is listed in code.
 - The Excel file is written by `styled-xlsx.ts`, not SheetJS: the community edition drops cell fills, and the fills are the instructions. It reads back with SheetJS.
@@ -54,3 +55,4 @@ Prices a whole COMBINATION of sofa modules instead of summing the modules indivi
 - `frontend/src/vendor/scm/lib/sofa-combos-queries.ts` — query hooks.
 - `frontend/src/vendor/scm/components/SofaComboTab.tsx` — the screen; `combo/` holds its dialogs, `comboBook.ts` (rows to combos) and `comboExcel.ts` (the file, both ways).
 - `backend/src/scm/lib/sofa-combo-apply.ts` — the pure rules of a batch write.
+- `backend/src/scm/routes/sofa-combo-presets.ts` — the New combo presets; `combo/PresetsDialog.tsx` maintains them.

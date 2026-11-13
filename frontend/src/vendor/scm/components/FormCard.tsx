@@ -19,8 +19,9 @@
 // ---------------------------------------------------------------------------
 
 import type * as React from 'react';
-import type { ReactNode } from 'react';
+import type { ComponentProps, ReactNode } from 'react';
 import styles from '../../../pages/scm-v2/SalesOrderNew.module.css';
+import { SearchableSelect } from './SearchableSelect';
 
 export const FormCard = ({ title, actions, children }: {
   title: string;
@@ -68,6 +69,13 @@ export const FormField = ({ label, required, hint, span, children }: {
  *  exist in that file at all. */
 export const FormInput = (props: React.InputHTMLAttributes<HTMLInputElement>) => (
   <input {...props} className={`${styles.fieldInput}${props.className ? ` ${props.className}` : ''}`} />
+);
+
+/** A type-to-search picker in FormInput's box, for the same reason FormInput is
+ *  exported: SearchableSelect styles only the input it draws, from a class it is
+ *  handed. */
+export const FormSearchSelect = (props: Omit<ComponentProps<typeof SearchableSelect>, 'className'>) => (
+  <SearchableSelect {...props} className={styles.fieldInput} />
 );
 
 export default FormCard;

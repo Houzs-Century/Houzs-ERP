@@ -25,6 +25,7 @@ import { productModels } from "./routes/product-models";
 import { sofaCompartmentPhotos } from "./routes/sofa-compartment-photos";
 import { maintenanceConfig } from "./routes/maintenance-config";
 import { sofaCombos } from "./routes/sofa-combos";
+import { sofaComboPresets } from "./routes/sofa-combo-presets";
 import { fabricTracking } from "./routes/fabric-tracking";
 import { suppliers } from "./routes/suppliers";
 import { mfgPurchaseOrders } from "./routes/mfg-purchase-orders";
@@ -139,6 +140,7 @@ import { threeplCompanies } from "./routes/threepl-companies";
 import { savedLocations } from "./routes/saved-locations";
 import { deliveryZones } from "./routes/delivery-zones";
 import { deliveryRateCards } from "./routes/delivery-rate-cards";
+import { deliveryPlaces } from "./routes/delivery-places";
 import { threeplDoCharges } from "./routes/threepl-do-charges";
 import { driverLeave } from "./routes/driver-leave";
 import { trips } from "./routes/trips";
@@ -315,6 +317,10 @@ scm.route("/maintenance-config", maintenanceConfig);
 // SupplierDetail) are admin pages already behind their own ScmGuard. If the
 // 2990 POS repoint later needs combo reads, give it a cost-stripped shape
 // (sellingPricesByHeight / pwpPricesByHeight only) rather than openRead.
+// New combo presets (mig 20261112T1400): names and slots only, no price; the
+// Products combo screen is their only reader. Writes are gated in-route.
+scm.use("/sofa-combo-presets/*", scmAreaGuard("scm.procurement.products"));
+scm.route("/sofa-combo-presets", sofaComboPresets);
 scm.use("/sofa-combos/*", scmAreaGuard("scm.procurement.products"));
 scm.route("/sofa-combos", sofaCombos);
 // openRead (2026-07-16): Quick Picks are LAYOUTS — the table stores NO price
@@ -947,6 +953,9 @@ scm.route("/delivery-zones", deliveryZones);
 // and it does NOT touch the FIFO money-path.
 scm.use("/delivery-rate-cards/*", scmAreaGuard("scm.transportation.drivers"));
 scm.route("/delivery-rate-cards", deliveryRateCards);
+// Towns under the delivery zones (mig 20261111T1100): the places a rate card prices.
+scm.use("/delivery-places/*", scmAreaGuard("scm.transportation.drivers"));
+scm.route("/delivery-places", deliveryPlaces);
 // HC-0031 - the 3PL invoice keyed in after delivery, tallied per DO against the
 // rate cards above. Same Transportation area gate.
 scm.use("/threepl-do-charges/*", scmAreaGuard("scm.transportation.drivers"));

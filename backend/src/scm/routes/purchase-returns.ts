@@ -49,7 +49,7 @@ import {
 } from '../lib/check-stock-availability';
 import { markIdempotencyNoWrite } from '../../middleware/idempotency';
 import { recordEntityAudit } from '../lib/entity-audit';
-import { buildReturnablePool, type GrnLineRow } from '../lib/returnable-grn-lines';
+import { buildReturnablePool, buildPiReturnablePool, type GrnLineRow } from '../lib/returnable-grn-lines';
 import {
   isPurchaseReturnReasonCode, isPurchaseReturnKind, kindMatchesReason,
   PURCHASE_RETURN_REASON_CODES,
@@ -226,6 +226,52 @@ purchaseReturns.get('/returnable-grn-lines', async (c) => {
 
   const lines = buildReturnablePool(rows, postedGrnNumberById, poItemIds, headerGrnIds);
   return c.json({ lines, supplierId });
+});
+
+/* HC-0227 (Sim, AutoCount in hand: "Transfer to new Purchase Return" from a
+   Purchase Invoice). The pool is the receipt lines this invoice's LINES bill,
+   capped at what this invoice bills for each; the supplier is the invoice's.
+   Invoice-only lines (no receipt behind them) were never received, so they
+   cannot go back. Registered BEFORE '/:id' or that route swallows the path. */
+purchaseReturns.get('/returnable-pi-lines', async (c) => {
+  const sb = c.get('supabase');
+  const piId = c.req.query('piId');
+  if (!piId) return c.json({ error: 'pi_id_required' }, 400);
+
+  const { data: piRow, error: piErr } = await scopeToCompany(sb.from('purchase_invoices')
+    .select('id, invoice_number, supplier_id, purchase_order_id')
+    .eq('id', piId), c).maybeSingle();
+  if (piErr) return c.json({ error: 'load_failed', reason: piErr.message }, 500);
+  if (!piRow) return c.json({ error: 'pi_not_found' }, 404);
+  const pi = piRow as { invoice_number: string; supplier_id: string | null; purchase_order_id: string | null };
+
+  const { data: piLines, error: plErr } = await sb.from('purchase_invoice_items')
+    .select('grn_item_id, qty').eq('purchase_invoice_id', piId).not('grn_item_id', 'is', null);
+  if (plErr) return c.json({ error: 'load_failed', reason: plErr.message }, 500);
+  const invoicedQtyByGrnItem = new Map<string, number>();
+  for (const l of (piLines as Array<{ grn_item_id: string; qty: number | null }>)) {
+    invoicedQtyByGrnItem.set(l.grn_item_id, (invoicedQtyByGrnItem.get(l.grn_item_id) ?? 0) + Number(l.qty ?? 0));
+  }
+  const empty = { lines: [], invoiceNumber: pi.invoice_number, supplierId: pi.supplier_id, purchaseOrderId: pi.purchase_order_id };
+  if (invoicedQtyByGrnItem.size === 0) return c.json(empty);
+
+  const { data: rowData, error: rErr } = await chunkIn([...invoicedQtyByGrnItem.keys()], (batch, from, to) =>
+    sb.from('grn_items').select('id, grn_id, purchase_order_item_id, material_kind, item_code, material_name, item_group, variants, qty_accepted, returned_qty, unit_price_sen, rejection_reason').in('id', batch).range(from, to));
+  if (rErr) return c.json({ error: 'load_failed', reason: rErr.message }, 500);
+  const rows = rowData as GrnLineRow[];
+  if (rows.length === 0) return c.json(empty);
+
+  const grnIds = [...new Set(rows.map((r) => r.grn_id))];
+  const { data: grnRows, error: gErr } = await chunkIn(grnIds, (batch, from, to) =>
+    scopeToCompany(sb.from('grns').select('id, grn_number, status').in('id', batch), c).range(from, to));
+  if (gErr) return c.json({ error: 'load_failed', reason: gErr.message }, 500);
+  const postedGrnNumberById = new Map<string, string>();
+  for (const g of (grnRows as Array<{ id: string; grn_number: string; status: string }>)) {
+    if (g.status === 'POSTED') postedGrnNumberById.set(g.id, g.grn_number);
+  }
+
+  const lines = buildPiReturnablePool(rows, postedGrnNumberById, invoicedQtyByGrnItem);
+  return c.json({ ...empty, lines });
 });
 
 purchaseReturns.get('/:id', async (c) => {

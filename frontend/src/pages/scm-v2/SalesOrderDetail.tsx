@@ -144,7 +144,7 @@ import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useAuth } from '../../vendor/scm/lib/auth';
 import { useVenues } from '../../vendor/scm/lib/venues-queries';
 import { FairDayPicker, FairPicker } from '../../components/FairPicker';
-import { fairDayCheck, fairEditPatch, fairElsewhereLine, fairEventOf, fairPickValue, linkedEvent, type LinkedFair } from '../../components/fairPick';
+import { fairDayCheck, fairEditPatch, fairElsewhereLine, fairEventOf, fairPickValue, isScannedOrder, linkedEvent, type LinkedFair } from '../../components/fairPick';
 import { useStateWarehouseMappings } from '../../vendor/scm/lib/state-warehouse-queries';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { generateSalesOrderPdf } from '../../vendor/scm/lib/sales-order-pdf';
@@ -3036,13 +3036,14 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     /* Houzs 2026-06-23 (owner): Venue is manually pickable — only auto-fill the
        DEFAULT when it is still empty; never override a manual or loaded pick. */
     if (form.venueId || form.venue.trim()) return; // a saved venue often has no venue_id: its TEXT is the loaded pick
+    if (isScannedOrder(header)) return; // a scan's venue is a person's pick (owner 2026-11-12)
     const picked = staffList.find((s) => s.id === form.salespersonId);
     const resolvedId = picked?.venueId ?? '';
     if (!resolvedId) return;
     const resolvedName = (venuesQ.data ?? []).find((v) => v.id === resolvedId)?.name;
     if (!resolvedName) return; // 0591: `?? ''` blanked a loaded venue, permanently
     setForm((s) => (s.venueId || s.venue.trim() ? s : { ...s, venueId: resolvedId, venue: resolvedName, fair: null }));
-  }, [form.salespersonId, staffList, venuesQ.data, form.venueId, form.venue]);
+  }, [form.salespersonId, staffList, venuesQ.data, form.venueId, form.venue, header]);
 
   /* Commander 2026-05-27 (Fix 5) — State → Sales Location cascade. When the
      user picks a delivery state, look up state_warehouse_mappings and set

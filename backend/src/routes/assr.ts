@@ -43,6 +43,7 @@ import {
   allowedCompanyIds,
   allowedCompaniesSql,
   activeCompanyId,
+  companyCodeMap,
   type CompanyScopeCtx,
 } from "../scm/lib/companyScope";
 import { hasPermission } from "../services/permissions";
@@ -65,6 +66,7 @@ import { verificationFieldsError } from "../scm/shared/assr-verification-fields"
 import { getVerificationNotes, saveVerificationNotes, takeVerificationNotes } from "../services/assrVerificationNotes";
 import { getQcNotes, saveQcNotes, takeQcNotes } from "../services/assrQcNotes";
 import { sendCompletionSurvey } from "../services/assrCompletionSurvey";
+import { sendServiceCaseReceivedAck } from "../services/assrConnectAck";
 import { overviewFilter, withOverviewFilter } from "./lib/assr-overview-filter";
 import { todayMyt } from "../scm/lib/my-time";
 import { assrExportShowsCost, buildAssrCasesCsv } from "./lib/assr-export-csv";
@@ -1815,7 +1817,8 @@ app.post(
   try {
     // company-scope: reads back the row THIS request just created (result.id), stamped with assrCreateCompanyId above.
     const row = await c.env.DB.prepare(
-      `SELECT assigned_to, assigned_to_2, sales_agent, customer_name, phone, doc_no, created_by
+      `SELECT assigned_to, assigned_to_2, sales_agent, customer_name, phone, doc_no, created_by,
+              ref_no, company_id, delivery_order
          FROM assr_cases WHERE id = ?`,
     )
       .bind(result.id)
@@ -1827,6 +1830,9 @@ app.post(
         phone: string | null;
         doc_no: string | null;
         created_by: number | null;
+        ref_no: string | null;
+        company_id: number | null;
+        delivery_order: string | null;
       }>();
     if (row) {
       // Notify the CREATOR too (owner 2026-07-16): the salesperson who opened
@@ -1840,7 +1846,20 @@ app.post(
         userIds: [row.assigned_to, row.assigned_to_2, row.created_by],
         agentNames: [row.sales_agent],
       });
-      // No customer WhatsApp on create (HC-0222, Operation 2026-11): staff only.
+      // Customer WhatsApp ack via Houzs Connect (best-effort, create-only; ref_1 =
+      // the SO/order ref). Owner 2026-11-11 re-opened the create ack that HC-0222
+      // had turned off, GATED: a case whose order has NO DO sends nothing — the gate
+      // (sendServiceCaseReceivedAck, assrConnectAck.ts) resolves the DO the same way
+      // the board/detail do, so it needs ref_no + company_code + any delivery_order.
+      await sendServiceCaseReceivedAck(c.env, {
+        assrNo: result.assr_no,
+        soNo: row.doc_no,
+        customerName: row.customer_name,
+        phone: row.phone,
+        refNo: row.ref_no,
+        companyCode: row.company_id != null ? (companyCodeMap(c).get(row.company_id) ?? null) : null,
+        deliveryOrder: row.delivery_order,
+      });
     }
   } catch (e) {
     console.error("[assr.create] notify failed:", (e as Error).message);

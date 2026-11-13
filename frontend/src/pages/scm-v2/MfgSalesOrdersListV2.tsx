@@ -2111,7 +2111,7 @@ export function MfgSalesOrdersListV2() {
           type="search"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search SO, customer, phone, ref, approval code…"
+          placeholder="Search SO, customer, phone, ref, PO no, approval code…"
           className="h-10 w-full rounded-lg border border-border bg-surface px-3.5 text-[14px] text-ink outline-none transition-colors placeholder:text-ink-muted focus:border-primary focus:ring-2 focus:ring-primary/20"
         />
         <SearchProgress
@@ -2235,7 +2235,7 @@ export function MfgSalesOrdersListV2() {
             search={{
               value: search,
               onChange: setSearch,
-              placeholder: "Search doc no, customer, phone, ref, approval code…",
+              placeholder: "Search doc no, customer, phone, ref, PO no, approval code…",
               debounceMs: 0,
               searching: searchTransition.isSearching,
               countPending: isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale,
@@ -2266,7 +2266,7 @@ export function MfgSalesOrdersListV2() {
                 type="search"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search doc no, customer, phone, ref, approval code…"
+                placeholder="Search doc no, customer, phone, ref, PO no, approval code…"
                 className="h-9 max-w-[320px] flex-1 rounded-md border border-border bg-surface px-3.5 text-[13px] text-ink outline-none transition-colors placeholder:text-ink-muted focus:border-primary focus:ring-2 focus:ring-primary/20"
               />
               <SearchProgress active={searchTransition.isSearching} label="Searching…" />

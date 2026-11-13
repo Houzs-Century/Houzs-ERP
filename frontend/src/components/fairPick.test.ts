@@ -9,7 +9,7 @@
 import { describe, expect, it } from 'vitest';
 import { diffHeaderPayload } from '../vendor/scm/lib/so-header-diff';
 import {
-  fairDayCheck, fairDaysOf, fairEditPatch, fairElsewhereLine, fairEventOf, fairPickValue, linkedEvent, soleFairDay, type LinkedFair,
+  fairDayCheck, fairDaysOf, fairEditPatch, fairElsewhereLine, fairEventOf, fairPickValue, isScannedOrder, linkedEvent, soleFairDay, type LinkedFair,
 } from './fairPick';
 
 const MLE: LinkedFair = { venue: 'MID VALLEY', organizer: 'MLE', solo: false, startDate: '2026-08-08', endDate: '2026-08-09' };
@@ -188,5 +188,16 @@ describe('fairDayCheck — what the submit check is asked about the day', () => 
   it('an edit that changes the event, or clears the day, is checked', () => {
     expect(fairDayCheck(event(null), event('2026-08-08'))).toMatchObject({ fairDate: null });
     expect(fairDayCheck(event('2026-08-09'), event('2026-08-08'))).toMatchObject({ fairDate: '2026-08-09' });
+  });
+});
+
+describe('isScannedOrder — a scan takes no venue default (owner 2026-11-12)', () => {
+  it('reads the slip photo in either spelling, and nothing else', () => {
+    expect(isScannedOrder({ slip_image_key: 'scan-so/1/a.jpg' })).toBe(true);
+    expect(isScannedOrder({ slipImageKey: 'scan-so/1/a.jpg' })).toBe(true);
+    expect(isScannedOrder({ slip_image_key: '  ' })).toBe(false);
+    expect(isScannedOrder({ slip_image_key: null })).toBe(false);
+    expect(isScannedOrder({})).toBe(false);
+    expect(isScannedOrder(null)).toBe(false);
   });
 });

@@ -33,12 +33,20 @@ describe('the create path refuses a typed order with no fair', () => {
     expect(gate).toContain('orderDate: soDateForVenue');
   });
 
-  it("the new order's fair link is fairLinkOnCreate: scans by slip, the keyer is the logged-in person", () => {
+  it("the new order's fair link is fairLinkOnCreate: nothing for a scan, the keyer is the logged-in person", () => {
     const link = core.slice(core.indexOf('── FAIR LINK (owner 2026-09-13)'));
     expect(link).toContain('await fairLinkOnCreate({');
-    expect(link).toContain("scanned: c.auditSource === 'scan'");
+    expect(link).toContain('scanned: scanCreate');
     expect(link).toContain("keyerId: Number(c.get('houzsUser')?.id ?? NaN)");
     expect(link).toContain('bindingProjectId: projectIdToStamp');
+  });
+
+  it('a scan takes none of the venue defaults (owner 2026-11-12)', () => {
+    expect(core).toContain('const scanCreate = isScanCreate(c.auditSource, body);');
+    expect(core).toContain('let venueIdToStamp: string | null = scanCreate ? null :');
+    expect(core).toContain("!scanCreate && typeof body.venue === 'string' && body.venue.trim() ? body.venue.trim() : null;");
+    expect(core).toContain('let projectIdToStamp: number | null = scanCreate ? null : autoBind.projectId;');
+    expect(core).toContain('if (!scanCreate && !resolvedVenueName && autoBind.venueName) {');
   });
 });
 

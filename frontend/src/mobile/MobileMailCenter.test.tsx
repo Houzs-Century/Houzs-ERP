@@ -62,6 +62,8 @@ function thread(id: string, subject: string) {
     starred: false,
     labels: [],
     hasOutbound: false,
+    attachmentCount: 0,
+    attachments: [],
     createdAt: "2026-07-20T08:00:00Z",
   };
 }

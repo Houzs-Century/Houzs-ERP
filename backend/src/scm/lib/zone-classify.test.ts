@@ -3,7 +3,9 @@ import {
   ZONES,
   DEFAULT_ZONE_PREFIX_MAP,
   KLANG_VALLEY_ZONES,
+  THREEPL_ONLY_ZONES,
   isKlangValleyZone,
+  isThreePlOnlyZone,
   parsePostcode,
   postcodePrefix,
   zoneForPostcode,
@@ -73,6 +75,16 @@ describe('zoneForPostcode — default Malaysian map', () => {
     ['39000', 'PAHANG'],   // Cameron Highlands
     ['49000', 'PAHANG'],   // Genting
     ['69000', 'PAHANG'],
+    // Owner 2026-11-11 (3PL areas aligned with Delivery Zones): the gaps the
+    // carriers' cards price, and East Malaysia.
+    ['01000', 'KEDAH'],    // Kangar, Perlis
+    ['45000', 'KLANG'],    // Kuala Selangor
+    ['64000', 'KAJANG'],   // KLIA
+    ['87000', 'LABUAN'],
+    ['88000', 'SABAH'],    // Kota Kinabalu
+    ['90000', 'SABAH'],    // Sandakan
+    ['93000', 'SARAWAK'],  // Kuching
+    ['98000', 'SARAWAK'],  // Miri
   ];
   for (const [pc, zone] of cases) {
     it(`${pc} -> ${zone}`, () => {
@@ -80,8 +92,8 @@ describe('zoneForPostcode — default Malaysian map', () => {
     });
   }
 
-  it('returns null for an unmapped prefix (e.g. 90xxx East Malaysia not in default)', () => {
-    expect(zoneForPostcode('90000', MAP)).toBeNull();
+  it('returns null for an unmapped prefix (99xxx is no postcode)', () => {
+    expect(zoneForPostcode('99000', MAP)).toBeNull();
   });
   it('returns null for garbage input', () => {
     expect(zoneForPostcode('not-a-postcode', MAP)).toBeNull();
@@ -116,14 +128,20 @@ describe('zoneForAddress', () => {
     expect(r).toEqual({ zone: null, method: 'none', postcode: null });
   });
   it('reports a postcode that maps to no zone (method postcode, zone null)', () => {
-    const r = zoneForAddress({ postcode: '90000' }, MAP);
-    expect(r).toEqual({ zone: null, method: 'postcode', postcode: '90000' });
+    const r = zoneForAddress({ postcode: '99000' }, MAP);
+    expect(r).toEqual({ zone: null, method: 'postcode', postcode: '99000' });
   });
 });
 
 describe('zone metadata', () => {
-  it('has exactly 14 zones', () => {
-    expect(ZONES).toHaveLength(14);
+  it('has the 14 planning zones and the 3 East Malaysia zones', () => {
+    expect(ZONES).toHaveLength(17);
+  });
+  it('East Malaysia is priced on 3PL rate cards, never planned on own lorries', () => {
+    expect([...THREEPL_ONLY_ZONES].sort()).toEqual(['LABUAN', 'SABAH', 'SARAWAK']);
+    expect(isThreePlOnlyZone('SARAWAK')).toBe(true);
+    expect(isThreePlOnlyZone('JOHOR')).toBe(false);
+    expect(isThreePlOnlyZone(null)).toBe(false);
   });
   it('classifies Klang Valley membership', () => {
     expect(KLANG_VALLEY_ZONES).toHaveLength(6);

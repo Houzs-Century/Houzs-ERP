@@ -35,6 +35,7 @@ import {
   useCreatePurchaseReturn,
   usePostPurchaseReturn,
   useReturnableGrnLines,
+  useReturnablePiLines,
 } from '../../vendor/scm/lib/purchase-return-queries';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { readConvertScope, UnrecognisedScopeNotice } from '../../lib/convertScope';
@@ -131,19 +132,23 @@ export const PurchaseReturnNew = () => {
      through lib/convertScope). The scope read now goes through the same module,
      and a parameter this page does not understand is SHOWN rather than dropped
      — a silent drop is what let that mismatch survive. */
-  const scope    = readConvertScope('grnToPr', params, ['poId']);
+  const scope    = readConvertScope('grnToPr', params, ['poId', 'piId']);
   const grnId    = params.get('grnId');
   const poId     = params.get('poId');
+  // HC-0227: from a Purchase Invoice — the receipt lines it bills, same pool shape as PO mode.
+  const piId     = params.get('piId');
 
   const grnQ       = useGrnDetail(grnId);
   const poQ        = usePurchaseOrderDetail(poId);
   // PO mode draws from the PO's receipts — see the prefill effect below.
   const returnableQ = useReturnableGrnLines(poId);
+  const returnablePiQ = useReturnablePiLines(piId);
+  const poolQ = poId ? returnableQ : returnablePiQ;
   const suppliersQ = useSuppliers({ status: 'ACTIVE' });
 
-  // Free-form mode = no GRN and no PO source. Then the operator picks a
+  // Free-form mode = no GRN, PO or PI source. Then the operator picks a
   // supplier + adds lines by hand (with the inline Item Code picker).
-  const isManual = !grnId && !poId;
+  const isManual = !grnId && !poId && !piId;
 
   // Commander 2026-05-29 — maintenance config drives the per-category variant
   // editor on MANUAL bedframe/sofa lines (same dropdown pools as New PO / GRN).
@@ -238,10 +243,10 @@ export const PurchaseReturnNew = () => {
      lines with remaining > 0 — same linkage the GRN prefill above produces.
      Supplier comes from the receipts (falling back to the PO header). */
   useEffect(() => {
-    if (!poId || !returnableQ.data) return;
+    if ((!poId && !piId) || !poolQ.data) return;
     const po = poQ.data?.purchaseOrder;
-    setSupplierId(returnableQ.data.supplierId ?? po?.supplier_id ?? '');
-    const items: DraftLine[] = (returnableQ.data.lines ?? []).map((l) => ({
+    setSupplierId(poolQ.data.supplierId ?? po?.supplier_id ?? '');
+    const items: DraftLine[] = (poolQ.data.lines ?? []).map((l) => ({
       rid:            `r${l.grnItemId}`,
       grnItemId:      l.grnItemId,
       materialKind:   l.materialKind ?? 'mfg_product',
@@ -255,7 +260,7 @@ export const PurchaseReturnNew = () => {
       notes:          '',
     }));
     if (items.length > 0) setLines(items);
-  }, [poId, returnableQ.data, poQ.data]);
+  }, [poId, piId, poolQ.data, poQ.data]);
 
   const setLine  = (rid: string, patch: Partial<DraftLine>) =>
     setLines((prev) => prev.map((l) => (l.rid === rid ? { ...l, ...patch } : l)));
@@ -326,7 +331,7 @@ export const PurchaseReturnNew = () => {
       const createRes = await create.mutateAsync({
         idempotencyKey: idemKey,
         supplierId,
-        purchaseOrderId: poId ?? (grn?.purchase_order_id ?? null),
+        purchaseOrderId: poId ?? (piId ? returnablePiQ.data?.purchaseOrderId ?? null : grn?.purchase_order_id ?? null),
         grnId,
         returnDate,
         reason,
@@ -360,7 +365,7 @@ export const PurchaseReturnNew = () => {
       if (!createRes.movementErrors?.length) {
         await notify({ title: `Purchase Return ${createRes.returnNumber} created + posted`, body: 'Stock OUT recorded.' });
       }
-      navigate(afterCreatePath(`/scm/purchase-returns/${createRes.id}`, sourceDocPath.goodsReceipt(grnId) ?? sourceDocPath.purchaseOrder(poId)));
+      navigate(afterCreatePath(`/scm/purchase-returns/${createRes.id}`, sourceDocPath.goodsReceipt(grnId) ?? sourceDocPath.purchaseOrder(poId) ?? sourceDocPath.purchaseInvoice(piId)));
     } catch (err) {
       notify({ title: 'Save failed', body: `${err instanceof Error ? err.message : 'Something went wrong.'}`, tone: 'error' });
     }
@@ -369,6 +374,7 @@ export const PurchaseReturnNew = () => {
   const sourceTitle =
     grn ? `from GRN ${grn.grn_number}` :
     po  ? `from PO ${po.po_number}` :
+    returnablePiQ.data ? `from Purchase Invoice ${returnablePiQ.data.invoiceNumber}` :
     '(free-form)';
 
   /* PO mode with nothing received: say the SCOPED thing is empty (the
@@ -376,6 +382,8 @@ export const PurchaseReturnNew = () => {
      exist" are different facts, and the operator acts on the wrong one by
      keying a free-form return for goods that were never received. */
   const poPoolEmpty = Boolean(poId) && returnableQ.isSuccess && (returnableQ.data?.lines ?? []).length === 0;
+  const piPool = piId && returnablePiQ.isSuccess ? returnablePiQ.data : null;
+  const piPoolEmpty = piPool !== null && piPool.lines.length === 0;
 
   return (
     <div className="space-y-4">
@@ -385,6 +393,13 @@ export const PurchaseReturnNew = () => {
           Nothing returnable on {po?.po_number ?? 'this Purchase Order'} — no posted Goods Receipt
           line still carries a remaining quantity. A return sends RECEIVED goods back: receive the
           delivery first, or open the Goods Receipt and use Transfer to Purchase Return.
+        </div>
+      )}
+      {piPoolEmpty && (
+        <div className="rounded-md border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-4 py-3 text-sm text-amber-900 dark:text-amber-300">
+          Nothing returnable on {piPool.invoiceNumber} — none of its
+          lines has a posted Goods Receipt line behind it with quantity still here. Either it bills no
+          received goods, or what it billed has already gone back.
         </div>
       )}
       <PageHeader back

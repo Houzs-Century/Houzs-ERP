@@ -97,8 +97,33 @@ const piMenu = (over: Partial<Parameters<typeof purchaseInvoiceRowMenu<Row>>[0]>
     cancel: noop,
     canConfirm: (r) => (r.status ?? "").toUpperCase() === "DRAFT",
     canCancel: (r) => !["CANCELLED", "PAID"].includes((r.status ?? "").toUpperCase()),
+    transferToPr: noop,
+    canReturn: () => false,
     ...over,
   });
+
+/* HC-0227 (Sim, AutoCount: right click a Purchase Invoice → Transfer to new
+   Purchase Return). RED on the unfixed tree: the PI menu had no transfer group. */
+describe("a purchase invoice can be returned from the menu", () => {
+  test("the transfer sits in its own group, above Confirm", () => {
+    expect(labels(piMenu({ canReturn: () => true })(R({ status: "DRAFT" })))).toEqual([
+      "Open", "Edit", "Copy as new", "Print", "—", "Transfer to Purchase Return", "—", "Confirm",
+      "—", "Put On Hold", "—", "Cancel Purchase Invoice",
+    ]);
+  });
+
+  test("it hands the page the row it was opened on", () => {
+    const transferToPr = vi.fn();
+    const row = R({ status: "POSTED" });
+    piMenu({ canReturn: () => true, transferToPr })(row)
+      .find((i) => i.label === "Transfer to Purchase Return")!.onClick();
+    expect(transferToPr).toHaveBeenCalledWith(row);
+  });
+
+  test("a row the page says cannot return gets no entry", () => {
+    expect(labels(piMenu()(R({ status: "CANCELLED" })))).not.toContain("Transfer to Purchase Return");
+  });
+});
 
 describe("purchaseInvoiceRowMenu", () => {
   test("a DRAFT offers Confirm, and Cancel below it", () => {

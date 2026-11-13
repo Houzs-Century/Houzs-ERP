@@ -21,7 +21,9 @@ import {
   AlertTriangle,
   Send,
   Plus,
+  Undo2,
 } from "lucide-react";
+import { convertToLink, transferToLabel } from "../../lib/convertScope";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
 import { DataTable, type Column } from "../../components/DataTable";
@@ -790,6 +792,12 @@ function PurchaseInvoiceDetailV2ReadOnly() {
             )}
             {canRecordPayment && (
               <Button variant="secondary" icon={<Wallet size={14} />} onClick={goRecordPayment}>Record payment</Button>
+            )}
+            {/* HC-0227: only an invoice with goods received behind it has anything to send back. */}
+            {!isCancelled && sourceGrns.length > 0 && pageAccess("scm.procurement.pr") !== "none" && (
+              <Button variant="secondary" icon={<Undo2 size={14} />} onClick={() => id && navigate(convertToLink("piToPr", id))}>
+                {transferToLabel("pr")}
+              </Button>
             )}
             <Button variant="secondary" icon={<Plus size={14} />} onClick={goAddLine}>{ADD_LINE_LABEL}</Button>
             <Button variant="primary" icon={<Edit3 size={14} />} onClick={goEdit}>Edit</Button>

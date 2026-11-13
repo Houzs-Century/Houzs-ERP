@@ -22,6 +22,8 @@ import { soStatusesForTab } from './so-tab-statuses';
 import { escapeForOr, phoneSearchOrParts } from './postgrest-search';
 import { normalizePhone } from '../shared/phone';
 import { APPROVAL_CODE_SEARCH_CAP, approvalCodeOrPart } from './so-list-approval-codes';
+import { soDocNosByPoNumber } from './so-list-po-search';
+import { inArm } from './so-ref-search';
 import { applySoScope } from './salesScope';
 import { scopeToCompany, type CompanyScopeCtx } from './companyScope';
 import { prepareSoListFilters } from './so-list-query-filters';
@@ -143,10 +145,10 @@ export function fromSoList(
 
 /**
  * Validate and resolve the list's filters ONCE: the second-level rows (400 on a
- * refused row, 500 when the "is me" lookup fails) and the approval-code search
- * (500 when that read fails — a search that silently dropped its matches would
- * be a wrong answer, not an empty one). `scopeIds` is the caller's row-level
- * sales scope (resolveSalesScopeIds; null = view-all).
+ * refused row, 500 when the "is me" lookup fails), the approval-code search and
+ * the PO-number search (each 500 when its read fails — a search that silently
+ * dropped its matches would be a wrong answer, not an empty one). `scopeIds` is
+ * the caller's row-level sales scope (resolveSalesScopeIds; null = view-all).
  */
 export async function prepareSoListRead(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SCM PostgREST client is untyped throughout (see salesScope.ts)
@@ -163,6 +165,10 @@ export async function prepareSoListRead(
   const code = await readApprovalCodePart(sb, c, p.q);
   if (!code.ok) return code;
   const codePart = code.part;
+
+  const po = await readPoNumberArm(sb, c, p.q);
+  if (!po.ok) return po;
+  const poArm = po.arm;
 
   const branding = await resolveSoBrandingFunnel(sb, c, p.brandings);
   if (!branding.ok) return branding;
@@ -187,8 +193,9 @@ export async function prepareSoListRead(
     }
     /* free-text search over the reference the list DISPLAYS: customerRefOf is
        `ref || customer_so_no`, so BOTH are searched (bug 0755). Plus doc_no /
-       debtor / agent / location / branding, the customer's phone (#816), and
-       the approval-code orders read above. */
+       debtor / agent / location / branding, the customer's phone (#816), the
+       approval-code orders read above, and the orders a searched system PO
+       number was raised for (poArm — the reverse of the "PO No." column). */
     if (search) {
       const s = escapeForOr(search);
       if (s) q = q.or([
@@ -197,6 +204,7 @@ export async function prepareSoListRead(
         `customer_so_no.ilike.%${s}%`, `branding.ilike.%${s}%`,
         ...phoneSearchOrParts(s, search, normalizePhone),
         ...(codePart ? [codePart] : []),
+        ...poArm,
       ].join(','));
     }
     /* Optional so_date window (ISO yyyy-mm-dd, inclusive) — the mobile list's
@@ -244,4 +252,25 @@ async function readApprovalCodePart(
     codePart = approvalCodeOrPart(((data ?? []) as Array<{ so_doc_no: string }>).map((r) => r.so_doc_no));
   }
   return { ok: true, part: codePart };
+}
+
+/* An order is also found by the SYSTEM PURCHASE ORDER number raised against it
+   (owner 2026-11-11) — the HC-PO the SO list already shows in its "PO No."
+   column (so-converted-po.ts). The number lives on the PO, not the SO header, so
+   soDocNosByPoNumber walks PO -> PO line -> SO line -> SO doc_no and the matching
+   orders are admitted as ONE `doc_no.in.(...)` arm (inArm). A failed read refuses
+   the list, like the approval-code search: silently dropping the matches would be
+   a wrong answer, not an empty one. */
+async function readPoNumberArm(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SCM PostgREST client is untyped throughout (see salesScope.ts)
+  sb: any,
+  c: CompanyScopeCtx,
+  q: string | null,
+): Promise<{ ok: true; arm: string[] } | { ok: false; status: 500; body: { error: string; reason: string } }> {
+  try {
+    const docNos = await soDocNosByPoNumber(sb, c, q);
+    return { ok: true, arm: inArm('doc_no', docNos) };
+  } catch (e) {
+    return { ok: false, status: 500, body: { error: 'load_failed', reason: `po numbers: ${(e as Error).message}` } };
+  }
 }

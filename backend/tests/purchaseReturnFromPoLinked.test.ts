@@ -76,3 +76,28 @@ describe('PurchaseReturnNew — the PO prefill carries the receipt linkage', () 
     expect(FE).toContain('Nothing returnable on');
   });
 });
+
+/* HC-0227: a return raised from a Purchase Invoice. */
+describe('GET /purchase-returns/returnable-pi-lines', () => {
+  const start = BE.indexOf("purchaseReturns.get('/returnable-pi-lines'");
+  const seg = BE.slice(start, BE.indexOf("purchaseReturns.get('/:id'", start));
+
+  it('is registered BEFORE the /:id route', () => {
+    expect(start, 'endpoint missing').toBeGreaterThan(-1);
+    expect(start).toBeLessThan(BE.indexOf("purchaseReturns.get('/:id'"));
+  });
+
+  it('scopes the invoice and the receipts to the company, and uses the shared pool', () => {
+    expect(seg).toContain("scopeToCompany(sb.from('purchase_invoices')");
+    expect(seg).toContain("scopeToCompany(sb.from('grns')");
+    expect(seg).toContain('buildPiReturnablePool(');
+    for (const bound of ['error: piErr', 'error: plErr', 'error: rErr', 'error: gErr']) {
+      expect(seg, `unbound read: ${bound}`).toContain(bound);
+    }
+  });
+
+  it('the form reads it under piId and links each line to its receipt line', () => {
+    expect(FE).toContain('useReturnablePiLines(piId)');
+    expect(FE).toContain("readConvertScope('grnToPr', params, ['poId', 'piId'])");
+  });
+});
