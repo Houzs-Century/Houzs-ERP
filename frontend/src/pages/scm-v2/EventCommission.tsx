@@ -72,9 +72,9 @@ import {
 import { periodLabel } from './reports/statementColumns';
 import { useReportRange } from './reports/useReportRange';
 import {
-  BASIS_WORDS, LEFT_OUT_NOTE, NOT_COUNTED, RULE_NOTE, SUMMARY_HINT, SUMMARY_LABEL, amt, amtRm, belowDepositOf, brandsOf, changedOf, deferredInOf, isNoFair,
-  earlierOf, earlierShownOf, eventCommissionCsv, eventCommissionSheet, fairPlace, fairSortKey, fmtRm, forBrand, lateOf, manualOf, markWords, markedOf, monthAdjOf,
-  markMonthOf, monthLabel, monthOf, myt, nextMonthOf, sum, summaryOf, whatOf, wholeMonthOf, type BelowDepositRow,
+  BASIS_WORDS, HINT, LEFT_OUT_NOTE, NOT_COUNTED, RULE_NOTE, TITLE, amt, amtRm, belowDepositOf, brandsOf, cardsOf, changesEarlierOf, changesInRangeOf, changesTitle,
+  deferredInOf, isNoFair, earlierShownOf, eventCommissionCsv, eventCommissionSheet, fairPlace, fairSortKey, fmtRm, forBrand, manualOf, markWords, markedOf, monthAdjOf,
+  markMonthOf, monthLabel, monthOf, myt, nextMonthOf, sum, whatOf, wholeMonthOf, type BelowDepositRow,
 } from './eventCommissionModel';
 import ec from './EventCommission.module.css';
 
@@ -266,7 +266,7 @@ const Changes = ({ changes }: { changes: CommissionChange[] }) => (changes.lengt
   ));
 
 /* An order's own columns — the fair's orders and the By SO date list share them. */
-const orderMoneyColumns = <R extends CommissionSoRow>(): Column<R>[] => [
+const orderMoneyColumns = <R extends CommissionSoRow>(rateOf: (s: R) => number | null): Column<R>[] => [
   {
     key: 'sales', label: 'Sales', align: 'right', description: 'The order total: its goods plus delivery and service. Paid % is of this.',
     render: (s) => num(fmtRm(s.totalSen)), getValue: (s) => s.totalSen,
@@ -276,6 +276,11 @@ const orderMoneyColumns = <R extends CommissionSoRow>(): Column<R>[] => [
     key: 'goods', label: 'Goods', align: 'right', description: 'What earns commission: the order without delivery or service.',
     render: (s) => num(fmtRm(s.goodsSen)), getValue: (s) => s.goodsSen,
     exportValue: (s) => s.goodsSen / 100, total: (rows) => num(fmtRm(sum(rows, (s) => s.goodsSen))),
+  },
+  /* The rate the commission is worked at, beside the goods it is worked on (owner 2026-11-13). */
+  {
+    key: 'rate', label: 'Rate', align: 'right', width: '60px', description: "The fair's brand rate; an order with no fair: its own brand's. Commission = Goods × Rate once 30% is paid.",
+    render: (s) => { const rate = rateOf(s); return rate == null ? <span className="text-ink-muted">–</span> : num(`${rate}%`); }, getValue: (s) => rateOf(s),
   },
   {
     key: 'paid', label: 'Paid', align: 'right', render: (s) => num(fmtRm(s.paidSen)), getValue: (s) => s.paidSen,
@@ -313,21 +318,21 @@ const changesColumn = <R extends CommissionSoRow>(): Column<R> => ({
   exportValue: (s) => s.changes.map((ch) => `${ch.kind === 'upsale' ? '+' : '-'}${fmtRm(Math.abs(ch.deltaGoodsSen))} ${ch.date}${ch.notCounted || ch.uncounted ? ' (not counted)' : ''}`).join('; '),
 });
 
-const orderColumns = (ctl: MarkCtl): Column<CommissionSoRow>[] => [
+const orderColumns = (ctl: MarkCtl, ratePct: number | null): Column<CommissionSoRow>[] => [
   { key: 'order', label: 'Order', render: (o) => <OrderLink docNo={o.docNo} />, getValue: (o) => o.docNo },
   refColumn<CommissionSoRow>(),
   { key: 'soDate', label: 'SO date', render: (s) => <span className="whitespace-nowrap">{fmtDateOrDash(s.soDate)}</span>, getValue: (s) => s.soDate },
   { key: 'salesperson', label: 'Salesperson', render: (s) => s.salesperson ?? '—', getValue: (s) => s.salesperson },
   { key: 'customer', label: 'Customer', render: (s) => s.customer ?? '—', getValue: (s) => s.customer },
   statusColumn<CommissionSoRow>(),
-  ...orderMoneyColumns<CommissionSoRow>(),
+  ...orderMoneyColumns<CommissionSoRow>(() => ratePct),
   markColumn<CommissionSoRow>(ctl),
   changesColumn<CommissionSoRow>(),
 ];
 
 /** A fair opened: one line on what its orders came to, then the orders. */
 const FairOrders = ({ fair, ctl }: { fair: CommissionFairRow; ctl: MarkCtl }) => {
-  const columns = useMemo(() => orderColumns(ctl), [ctl]);
+  const columns = useMemo(() => orderColumns(ctl, fair.ratePct), [ctl, fair.ratePct]);
   if (fair.sos.length === 0) return <div className="pl-6 text-[12px] text-ink-muted">No orders at this fair yet.</div>;
   const reached = fair.sos.filter((s) => s.reachedOn).length;
   return (
@@ -364,7 +369,7 @@ const soListColumns = (ctl: MarkCtl): Column<SoListRow>[] => {
     { key: 'salesperson', label: 'Salesperson', width: '100px', render: (s) => s.salesperson ?? '—', getValue: (s) => s.salesperson },
     customerColumn<SoListRow>(),
     statusColumn<SoListRow>(),
-    ...orderMoneyColumns<SoListRow>(),
+    ...orderMoneyColumns<SoListRow>((o) => o.fair.ratePct),
     markColumn<SoListRow>(ctl),
     changesColumn<SoListRow>(),
   ];
@@ -449,6 +454,16 @@ const MONTH_ADJ_COLUMNS: Column<CommissionMonthAdjustment>[] = [
   { key: 'salesperson', label: 'Salesperson', width: '100px', render: (a) => a.salesperson ?? '—', getValue: (a) => a.salesperson },
   customerColumn<CommissionMonthAdjustment>(),
   statusColumn<CommissionMonthAdjustment>(),
+  /* What Now is worked on (owner 2026-11-13: 「我看不到goods amount和rate」). */
+  {
+    key: 'goods', label: 'Goods', align: 'right', width: '100px', description: 'The goods that month pays the order on today: its own goods once it had 30%, or the goods of its earlier lines (reaching 30%, an upsale or drop sale, a cancellation).',
+    render: (a) => (a.goodsSen == null ? <span className="text-ink-muted">–</span> : num(fmtRm(a.goodsSen))), getValue: (a) => a.goodsSen ?? null,
+    exportValue: (a) => (a.goodsSen == null ? null : a.goodsSen / 100), total: (rows) => num(fmtRm(sum(rows, (a) => a.goodsSen ?? 0))),
+  },
+  {
+    key: 'rate', label: 'Rate', align: 'right', width: '60px', description: 'Now = Goods × Rate.',
+    render: (a) => (a.ratePct == null ? <span className="text-ink-muted">–</span> : num(`${a.ratePct}%`)), getValue: (a) => a.ratePct ?? null,
+  },
   {
     key: 'was', label: 'Paid', align: 'right', width: '95px', description: 'What that month paid for the order: as it was closed, plus adjustments paid since.',
     render: (a) => num(amt(a.wasSen)), getValue: (a) => a.wasSen, exportValue: (a) => a.wasSen / 100,
@@ -801,36 +816,23 @@ export const EventCommissionTab = () => {
   const manualCols = useMemo(() => manualColumns(lineCtl), [lineCtl]);
   const soList = useMemo<SoListRow[]>(() => (r ? r.fairs.flatMap((f) => f.sos.map((s) => ({ ...s, fair: f }))) : []), [r]);
   const earlierRows = r ? earlierShownOf(r) : [];
-  const changedRows = r ? changedOf(r) : [];
   const monthAdjRows = r ? monthAdjOf(r) : [];
   const deferredRows = r ? deferredInOf(r) : [];
   const markedRows = r ? markedOf(r) : [];
   const manualRows = r ? manualOf(r) : [];
   const belowRows = useMemo(() => (r ? belowDepositOf(r) : []), [r]);
-  const summary = useMemo(() => (r ? summaryOf(r) : null), [r]);
-  const noFairCount = soList.filter((s) => isNoFair(s.fair)).length;
-  const lateCount = useMemo(() => {
-    if (!r) return 0;
-    const late = lateOf(r);
-    return new Set([...soList, ...earlierOf(r)].map((o) => o.docNo).filter((d) => late.has(d))).size;
-  }, [r, soList]);
+  const cards = useMemo(() => (r ? cardsOf(r) : []), [r]);
+  const changesEarlier = r ? changesEarlierOf(r) : [];
+  const changesInRange = r ? changesInRangeOf(r) : [];
   const period = range.usable ? periodLabel(range.from, range.to) : '';
   useReportSubtitle(range.usable ? `${period} · ${words.toggle.toLowerCase()} · ${brandNow || 'all brands'}` : 'Pick dates.');
   const fileBase = `event-commission-${byFair ? 'by-fair' : 'by-so-date'}${brandNow ? `-${brandNow.toLowerCase()}` : ''}-${range.from}-${range.to}`;
 
-  const tiles: ReportTile[] = r && summary ? [
+  /* A card per table, in the tables' order, each its table's total (owner 2026-11-13:
+     「卡的顺序和下面的table的顺序要一样」, 「这两个total不是应该一样？」). */
+  const tiles: ReportTile[] = r ? [
     { key: 'total', label: 'Total commission', value: fmtRm(r.totals.totalSen), sub: brandNow || 'all brands', tone: 'good' },
-    { key: 'fair', label: SUMMARY_LABEL.fair, value: fmtRm(summary.fair), sub: n(soList.filter((s) => !isNoFair(s.fair)).length, 'order') },
-    ...(noFairCount > 0 ? [{ key: 'noFair', label: SUMMARY_LABEL.noFair, value: fmtRm(summary.noFair), sub: n(noFairCount, 'order') }] : []),
-    { key: 'changes', label: SUMMARY_LABEL.changes, value: fmtRm(summary.changes), sub: n(changedRows.length, 'order') },
-    { key: 'late', label: SUMMARY_LABEL.late, value: fmtRm(summary.late), sub: n(lateCount, 'order') },
-    { key: 'earlier', label: words.earlier, value: fmtRm(summary.earlier), sub: n(earlierRows.length, 'order') },
-    ...(monthAdjRows.length > 0 ? [{
-      key: 'monthAdj', label: 'Closed months — adjustments', value: fmtRm(summary.monthAdj),
-      sub: `${n(monthAdjRows.length, 'order')} · ${[...new Set(monthAdjRows.map((a) => monthLabel(a.month)))].join(', ')}`,
-    }] : []),
-    ...(deferredRows.length > 0 ? [{ key: 'deferredIn', label: SUMMARY_LABEL.deferredIn, value: fmtRm(summary.deferredIn), sub: n(deferredRows.length, 'order') }] : []),
-    ...(manualRows.length > 0 ? [{ key: 'manual', label: SUMMARY_LABEL.manual, value: fmtRm(summary.manual ?? 0), sub: n(manualRows.length, 'line') }] : []),
+    ...cards.map((c): ReportTile => ({ key: c.key, label: c.label, value: fmtRm(c.sen), sub: c.count })),
   ] : [];
 
   return (
@@ -839,7 +841,7 @@ export const EventCommissionTab = () => {
         {full && range.usable && <MonthCloseAction r={full} range={range} />}
         <ReportExports sheet={() => (r ? eventCommissionSheet(r, period, brandNow) : null)} fileBase={fileBase} />
         <ReportMore items={[
-          { label: 'CSV', disabled: !r, onClick: () => { if (r) downloadText(`${fileBase}.csv`, eventCommissionCsv(r)); } },
+          { label: 'CSV', disabled: !r, onClick: () => { if (r) downloadText(`${fileBase}.csv`, eventCommissionCsv(r, period, brandNow)); } },
           ...(canMark ? [{ label: 'Add a line (Finance)', onClick: () => setAddOpen(true) }] : []),
         ]} />
       </ReportHeaderActions>
@@ -906,7 +908,7 @@ export const EventCommissionTab = () => {
       )}
 
       {r && monthAdjRows.length > 0 && (
-        <Card title="Closed months — adjustments" hint="what changed for a closed month's orders after it closed · paid in this month · amounts in RM">
+        <Card title={TITLE.monthAdj} hint="what changed for a closed month's orders after it closed · paid in this month · amounts in RM">
           <DataTable<CommissionMonthAdjustment>
             tableId="event-commission-month-adjustments" exportName={`event-commission-month-adjustments-${range.from}-${range.to}`} freezeHeight="screen"
             columns={MONTH_ADJ_COLUMNS} rows={monthAdjRows} getRowKey={(a) => `${a.month}-${a.docNo}`}
@@ -915,7 +917,7 @@ export const EventCommissionTab = () => {
       )}
 
       {r && deferredRows.length > 0 && (
-        <Card title={SUMMARY_LABEL.deferredIn} hint={`${SUMMARY_HINT.deferredIn} (「这个算下个月」) · paid in this month · amounts in RM`}>
+        <Card title={TITLE.deferredIn} hint={`${HINT.deferredIn} (「这个算下个月」) · paid in this month · amounts in RM`}>
           <DataTable<CommissionDeferredIn>
             tableId="event-commission-moved-in" exportName={`event-commission-moved-in-${range.from}-${range.to}`} freezeHeight="screen"
             columns={DEFERRED_COLUMNS} rows={deferredRows} getRowKey={(d) => `${d.fromMonth}-${d.docNo}`}
@@ -924,7 +926,7 @@ export const EventCommissionTab = () => {
       )}
 
       {r && month && (manualRows.length > 0 || (addOpen && canMark)) && (
-        <Card title={SUMMARY_LABEL.manual} hint={`${SUMMARY_HINT.manual} · amounts in RM`}>
+        <Card title={TITLE.manual} hint={`${HINT.manual} · amounts in RM`}>
           {addOpen && canMark && (
             <AddLineForm month={month} busy={adding} onCancel={() => setAddOpen(false)}
               onAdd={(line) => addLine({ ...line, month }, { onSuccess: () => setAddOpen(false) })} />
@@ -941,7 +943,7 @@ export const EventCommissionTab = () => {
         </Card>
       )}
       {r && !month && manualRows.length > 0 && (
-        <Card title={SUMMARY_LABEL.manual} hint={`${SUMMARY_HINT.manual} · amounts in RM`}>
+        <Card title={TITLE.manual} hint={`${HINT.manual} · amounts in RM`}>
           <DataTable<CommissionManualLine>
             tableId="event-commission-finance-lines" exportName={`event-commission-finance-lines-${range.from}-${range.to}`} freezeHeight="screen"
             columns={manualCols} rows={manualRows} getRowKey={(m) => m.line.id}
@@ -950,14 +952,24 @@ export const EventCommissionTab = () => {
       )}
 
       {r && (
-        <Card title="Upsales / Drop sales"
-          hint={`each order once, its final amount in the range · the effect is already inside the commission above${canMark ? " · Finance: Don't count change leaves the price change out, the original amount still counts" : ''}`}>
-          {changedRows.length === 0 ? <p className={ec.empty}>No upsale or drop sale in this range.</p> : (
+        <Card title={changesTitle(words.earlier)}
+          hint={`each order once, its final amount in the range · added to the total (the last card)${canMark ? " · Finance: Don't count change leaves the price change out, the original amount still counts" : ''}`}>
+          {changesEarlier.length === 0 ? <p className={ec.empty}>No upsale or drop sale on an earlier order in this range.</p> : (
             <DataTable<CommissionChangedOrder>
-              tableId="event-commission-changes" exportName={`event-commission-upsales-drops-${range.from}-${range.to}`} freezeHeight="screen"
-              columns={changedCols} rows={changedRows} getRowKey={(o) => o.docNo}
+              tableId="event-commission-changes-earlier" exportName={`event-commission-upsales-drops-earlier-${range.from}-${range.to}`} freezeHeight="screen"
+              columns={changedCols} rows={changesEarlier} getRowKey={(o) => o.docNo}
             />
           )}
+        </Card>
+      )}
+
+      {r && changesInRange.length > 0 && (
+        <Card title={changesTitle(words.card1)}
+          hint={`each order once, its final amount in the range · already inside ${words.card1} above, not added again${canMark ? " · Finance: Don't count change leaves the price change out, the original amount still counts" : ''}`}>
+          <DataTable<CommissionChangedOrder>
+            tableId="event-commission-changes-in-range" exportName={`event-commission-upsales-drops-in-range-${range.from}-${range.to}`} freezeHeight="screen"
+            columns={changedCols} rows={changesInRange} getRowKey={(o) => o.docNo}
+          />
         </Card>
       )}
 

@@ -107,12 +107,16 @@ afterEach(() => { current = null; vi.useRealTimers(); sessionStorage.clear(); vi
 
 import { MemoryRouter } from 'react-router-dom';
 import { EventCommissionTab } from './EventCommission';
-import { basisOf, brandsOf, earlierShownOf, eventCommissionCsv, eventCommissionSheet, fairLines, fairPlace, fmtRm, forBrand, orderLines, summaryOf, whatOf } from './eventCommissionModel';
+import { basisOf, brandsOf, cardsOf, earlierShownOf, eventCommissionCsv, eventCommissionSheet, fairLines, fairPlace, fmtRm, forBrand, insideFirstOf, whatOf } from './eventCommissionModel';
 
 /* The report reads the shared range (the report shell's): no dates in the address → This month. */
 const renderTab = (ui: React.ReactElement) => render(<MemoryRouter initialEntries={['/scm/accounting?tab=commission']}>{ui}</MemoryRouter>);
 /** A tile's label and the figure under it (the redesign's tiles: no RM on the figure). */
 const tile = (label: string) => within(screen.getByRole('group', { name: 'Totals' })).getByText(label).parentElement!.textContent;
+/** The tiles' labels, in their order. */
+const tileLabels = () => [...screen.getByRole('group', { name: 'Totals' }).children].map((el) => el.firstElementChild!.textContent);
+/** The cards' keys and figures. */
+const cardSens = (r: EventCommission) => cardsOf(r).map((c) => [c.key, c.sen]);
 
 const tables = () => screen.getAllByRole('table');
 const rowOf = (table: HTMLElement, text: string) => within(table).getByText(text).closest('tr')!;
@@ -199,16 +203,18 @@ describe('the Event Commission tab', () => {
     expect(earlierShownOf(marked).map((o) => o.commissionSen)).toEqual([0, 0]);
   });
 
-  test('every order the range changed, once: its final amount, + green / − red, the effect at the brand rate, not yet 30% says so', () => {
+  test('every order the range changed, once — the earlier fairs\' apart from the range\'s own: its final amount, + green / − red, the effect at the brand rate, not yet 30% says so', () => {
     renderTab(<EventCommissionTab />);
-    const changes = tables()[2]!;
-    const up = rowOf(changes, 'HC-SO-2610-001');
+    const inRange = screen.getByRole('region', { name: 'Upsales / Drop sales — fairs starting in the range' });
+    const up = within(inRange).getByText('HC-SO-2610-001').closest('tr')!;
     expect(cellsOf(up)).toEqual(expect.arrayContaining(['850.00', '1,000.00', '+150.00', '14%', '21.00']));
     expect(within(up).getByText('+150.00').className).toContain('text-synced');
     expect(up.textContent).toContain('from history');
-    const down = rowOf(changes, 'HC-SO-2609-053');
+    const earlier = screen.getByRole('region', { name: 'Upsales / Drop sales — earlier fairs' });
+    const down = within(earlier).getByText('HC-SO-2609-053').closest('tr')!;
     expect(within(down).getByText('−400.00').className).toContain('text-err');
     expect(down.textContent).toContain('not yet 30%');
+    expect(within(earlier).queryByText('HC-SO-2610-001')).toBeNull();
   });
 
   /* Owner 2026-11-13: 「旧的单upsale？ 应该要算吧」 — an old order with no fair counts
@@ -226,32 +232,49 @@ describe('the Event Commission tab', () => {
     const row = screen.getAllByText('HC-SO-013238').map((el) => el.closest('tr')!).find((tr) => tr.textContent.includes('+2,000.00'))!;
     expect(cellsOf(row)).toEqual(expect.arrayContaining(['10,000.00', '12,000.00', '+2,000.00', '14%', '280.00']));
     expect(row.textContent).not.toContain('not yet 30%');
-    expect(tile('Upsales / drop sales')).toContain('280.00');
-    expect(summaryOf(current)).toMatchObject({ changes: 280_00, earlier: 0, totalSen: 410_00 });
+    expect(tile('Upsales / Drop sales — earlier orders')).toContain('280.00');
+    expect(cardSens(current)).toEqual([['inRange', 130_00], ['earlier', 0], ['earlierChanges', 280_00]]);
+    /* One brand: the line with no fair stays under its order's brand, and the cards still add up. */
+    const akemi = forBrand(current, 'AKEMI');
+    expect(akemi.totals.totalSen).toBe(280_00);
+    expect(cardSens(akemi)).toEqual([['inRange', 0], ['earlier', 0], ['earlierChanges', 280_00]]);
   });
 
-  test('the CSV: the summary lines, then every order once with its commission split over them; both add up to the total', () => {
-    const csv = eventCommissionCsv(REPORT);
-    expect(csv).toContain('"Fair commission","119.00"');
-    expect(csv).toContain('"Upsales / drop sales","21.00"');
-    expect(csv).toContain('"Late bills (补开单)","0.00"');
-    expect(csv).toContain('"Earlier orders","13.00"');
-    expect(csv).toContain('"Total","153.00"');
-    expect(csv).toContain('"HC-SO-2610-001","","Kuala Lumpur [AKEMI] BIGHOME @ MID VALLEY","AKEMI","Ethan","2026-10-02","1,000.00","36.4%","2026-10-02","119.00","0.00","21.00","0.00","0.00","0.00","0.00","140.00","",""');
-    expect(csv).toContain('"HC-SO-2609-051","","SELANGOR [ZANOTTI] BIGHOME @ SUNWAY PYRAMID","ZANOTTI","Jason"');
-    expect(csv.trim().split('\n').at(-1)).toBe('"Total","","","","","","","","","119.00","0.00","21.00","0.00","13.00","0.00","0.00","153.00","",""');
+  test('the CSV is the export: the cards with what the first holds inside it, then each table under its title', () => {
+    const csv = eventCommissionCsv(REPORT, 'October 2026', '');
+    expect(csv).toContain('"Summary"');
+    expect(csv).toContain('"Fairs starting in the range","2 fairs · 2 orders","140.00"');
+    expect(csv).toContain('"of which upsales / drop sales","1 order","21.00"');
+    expect(csv).toContain('"of which late bills","0 orders","0.00"');
+    expect(csv).toContain('"Earlier fairs","2 orders","13.00"');
+    expect(csv).toContain('"Upsales / Drop sales — earlier fairs","1 order","0.00"');
+    expect(csv).toContain('"Total commission","","153.00"');
+    expect(csv).toContain('"Order","Ref No.","SO date","Brand","Fair","Salesperson","Goods","Rate","Paid %","30% reached","Commission","Marked"');
+    expect(csv).toContain('"HC-SO-2610-001","","2026/10/02","AKEMI","Kuala Lumpur [AKEMI] BIGHOME @ MID VALLEY","Ethan","1,000.00","14%","36.4%","2026/10/02","140.00",""');
+    expect(csv).toContain('"Total · 2 orders","","","","","","1,500.00","","","","140.00",""');
+    expect(csv).toContain('"HC-SO-2609-051","2026/10/12","Cancelled","","ZANOTTI","Jason","1,000.00","13%","(130.00)",""');
   });
 
-  test('the summary lines add up to the total; a late bill (补开单) is all on its own line', () => {
-    expect(summaryOf(REPORT)).toEqual({ fair: 119_00, noFair: 0, changes: 21_00, late: 0, earlier: 13_00, monthAdj: 0, deferredIn: 0, totalSen: 153_00 });
-    const late = { ...REPORT, lateBills: ['HC-SO-2609-050'] };
-    expect(summaryOf(late)).toEqual({ fair: 119_00, noFair: 0, changes: 21_00, late: 143_00, earlier: -130_00, monthAdj: 0, deferredIn: 0, totalSen: 153_00 });
-    expect(orderLines(late).find((l) => l.docNo === 'HC-SO-2609-050')!.split.late).toBe(143_00);
+  test('a card per table, in the tables\' order, each its table\'s total — together the total; what the first holds inside it', () => {
+    expect(cardsOf(REPORT).map((c) => [c.key, c.label, c.sen, c.count])).toEqual([
+      ['inRange', 'Fairs starting in the range', 140_00, '2 fairs · 2 orders'],
+      ['earlier', 'Earlier fairs', 13_00, '2 orders'],
+      ['earlierChanges', 'Upsales / Drop sales — earlier fairs', 0, '1 order'],
+    ]);
+    expect(cardsOf(REPORT).reduce((t, c) => t + c.sen, 0)).toBe(REPORT.totals.totalSen);
+    expect(insideFirstOf({ ...REPORT, lateBills: ['HC-SO-2610-001'] })).toEqual([
+      { label: 'of which upsales / drop sales', sen: 21_00, count: '1 order' },
+      { label: 'of which late bills', sen: 140_00, count: '1 order' },
+    ]);
     renderTab(<EventCommissionTab />);
-    expect(tile('Fair commission')).toContain('119.00');
-    expect(tile('Upsales / drop sales')).toContain('21.00');
-    expect(tile('Late bills (补开单)')).toContain('0 orders');
+    expect(tileLabels()).toEqual(['Total commission', 'Fairs starting in the range', 'Earlier fairs', 'Upsales / Drop sales — earlier fairs']);
+    /* The tables in the same order, each total the card's figure. */
+    const regions = ['Fairs starting in the range', 'Earlier fairs — reached 30% or cancelled in the range', 'Upsales / Drop sales — earlier fairs'];
+    expect(screen.getAllByRole('region').map((r) => r.getAttribute('aria-label')).filter((n) => regions.includes(n ?? ''))).toEqual(regions);
+    expect(tile('Fairs starting in the range')).toContain('140.00');
+    expect(tables()[0]!.querySelector('tfoot')!.textContent).toContain('140.00');
     expect(tile('Earlier fairs')).toContain('13.00');
+    expect(tables()[1]!.querySelector('tfoot')!.textContent).toContain('13.00');
   });
 
   test('By SO date lists an order with no fair too: "No fair", the venue typed on it, its brand’s rate — its own summary line and tile', () => {
@@ -268,11 +291,10 @@ describe('the Event Commission tab', () => {
     fireEvent.click(screen.getByRole('button', { name: 'By SO date' }));
     const row = cellsOf(rowOf(tables()[0]!, 'HC-SO-2610-058'));
     for (const t of ['ERGOTEX', 'No fair', 'THE STARLING MALL', 'Shawn', '140.00']) expect(row).toContain(t);
-    expect(tile('No fair')).toContain('140.00');
-    expect(tile('No fair')).toContain('1 order');
-    expect(tile('Fair commission')).toContain('1 order');
-    expect(summaryOf(current).noFair).toBe(140_00);
-    expect(eventCommissionCsv(current)).toContain('"No fair","140.00"');
+    expect(tile('Orders opened in the range')).toContain('270.00');
+    expect(tile('Orders opened in the range')).toContain('2 orders');
+    expect(insideFirstOf(current)[0]).toEqual({ label: 'of which No fair', sen: 140_00, count: '1 order' });
+    expect(eventCommissionCsv(current)).toContain('"of which No fair","1 order","140.00"');
   });
 
   test('By SO date is a list of the orders opened in the range, one row each, the fair as columns', () => {
@@ -285,14 +307,14 @@ describe('the Event Commission tab', () => {
     const row = cellsOf(rowOf(tables()[0]!, 'HC-SO-2610-010'));
     for (const t of ['2026/10/01', 'ZANOTTI', 'BIGHOME', 'SUNWAY PYRAMID', 'Jason', '36.4%', '130.00']) expect(row).toContain(t);
     expect(screen.getByText(/No earlier order reached 30% or was cancelled in this range/)).toBeTruthy();
-    expect(screen.getByText('No upsale or drop sale in this range.')).toBeTruthy();
+    expect(screen.getByText('No upsale or drop sale on an earlier order in this range.')).toBeTruthy();
   });
 
   test('a report from a server older than the toggle or the order lists reads as by fair, its lists empty', () => {
     const { basis: _drop, earlierOrders: _e, changedOrders: _c, ...old } = REPORT;
     void _drop; void _e; void _c;
     expect(basisOf(old)).toBe('fair');
-    expect(eventCommissionCsv(old)).toContain('"Total","153.00"');
+    expect(eventCommissionCsv(old)).toContain('"Total commission","","153.00"');
   });
 });
 
@@ -300,19 +322,33 @@ describe('the Event Commission tab', () => {
    2026-10-25: 这个header，table 要和 pv 那边一样能调整，能换位 / 这个点开排版好看一点.
    2026-10-26: 做宽一点 / brand, organizer, venue 全部一个column. */
 describe('the redesign (batch 6 §5.11)', () => {
-  test('Excel and PDF: the summary, the fairs, then every order once with its split; the CSV sits under the header’s ⋯; an order number is a link', () => {
+  test('Excel and PDF: the cards as the summary, then each table under its title in the page\'s order; the CSV sits under the header’s ⋯; an order number is a link', () => {
     const sheet = eventCommissionSheet(REPORT, 'October 2026', '');
     expect(sheet.title).toBe('Event commission');
     expect(sheet.subtitle).toBe('October 2026 · by fair · all brands · total 153.00 · RM');
-    expect(sheet.tables[0]!.rows.map((r) => [r.label, r.cells[0]])).toEqual([
-      ['Fair commission', 119_00], ['No fair', 0], ['Upsales / drop sales', 21_00], ['Late bills (补开单)', 0], ['Earlier orders', 13_00],
-      ['Closed months — adjustments', 0], ['Moved from last month', 0], ['Total commission', 153_00],
+    expect(sheet.tables[0]!.rows.map((r) => [r.label, r.cells])).toEqual([
+      ['Fairs starting in the range', ['2 fairs · 2 orders', 140_00]],
+      ['of which upsales / drop sales', ['1 order', 21_00]],
+      ['of which late bills', ['0 orders', 0]],
+      ['Earlier fairs', ['2 orders', 13_00]],
+      ['Upsales / Drop sales — earlier fairs', ['1 order', 0]],
+      ['Total commission', ['', 153_00]],
     ]);
-    expect(sheet.tables[1]!.columns.map((c) => c.label)).toEqual(['Dates', 'Rate', 'Total sales', 'Estimate', 'Orders', 'Commission']);
-    expect(sheet.tables[1]!.rows.at(-1)).toMatchObject({ kind: 'total', cells: [null, null, 0, 0, null, 140_00] });
-    expect(sheet.tables[2]!.rows.at(-1)).toMatchObject({ kind: 'total', label: 'Every order' });
-    /* By SO date has no fair table: the summary, then every order. */
-    expect(eventCommissionSheet(BY_SO_DATE, 'October 2026', '').tables).toHaveLength(2);
+    expect(sheet.tables.map((t) => t.title)).toEqual([
+      'Summary', 'Fairs starting in the range', 'Fairs starting in the range — their orders', 'Earlier fairs — reached 30% or cancelled in the range',
+      'Upsales / Drop sales — earlier fairs', 'Upsales / Drop sales — fairs starting in the range (inside Fairs starting in the range, not added again)',
+      'Below 30% paid (not in the total)',
+    ]);
+    expect(sheet.tables[1]!.columns.map((c) => c.label)).toEqual(['Dates', 'Rate', 'Goods', 'Goods × rate', 'Orders', 'Commission']);
+    const orders = sheet.tables[2]!;
+    expect(orders.labelHeader).toBe('Order');
+    expect(orders.columns.find((c) => c.label === 'Fair')).toEqual({ label: 'Fair', kind: 'text', align: 'left', width: 44 });
+    expect(orders.rows.at(-1)).toEqual({ kind: 'total', depth: 0, label: 'Total · 2 orders', cells: ['', '', '', '', '', 1_500_00, '', '', '', 140_00, ''] });
+    /* Its own words in English: the PDF's Chinese face has no 补开单, and refused the whole export over it. */
+    expect(JSON.stringify(eventCommissionSheet({ ...REPORT, lateBills: ['HC-SO-2610-001'] }, 'October 2026', ''))).not.toMatch(/[\u3000-\u9fff]/);
+    /* By SO date has no fair table: the summary, the orders, the earlier orders, the earlier orders' changes. */
+    expect(eventCommissionSheet(BY_SO_DATE, 'October 2026', '').tables.map((t) => t.title))
+      .toEqual(['Summary', 'Orders opened in the range (SO date)', 'Earlier orders — reached 30% or cancelled in the range', 'Upsales / Drop sales — earlier orders']);
 
     renderTab(<EventCommissionTab />);
     fireEvent.click(screen.getByRole('button', { name: 'More' }));
@@ -392,7 +428,7 @@ describe('closing a month — 关月 (owner 2026-10-26)', () => {
   const MONTH_ADJ = [{
     month: '2026-09', docNo: 'HC-SO-2609-051', fairId: 2214, fairName: ZAN_PLACE.fairName, brand: 'ZANOTTI', salesperson: 'Wei Pin', customer: 'Lim',
     ref: 'ZNT0480', soDate: '2026-09-05', status: 'CONFIRMED',
-    wasSen: 0, nowSen: 130_00, adjustmentSen: 130_00,
+    wasSen: 0, nowSen: 130_00, adjustmentSen: 130_00, goodsSen: 1_000_00, ratePct: 13,
   }];
 
   test('a closed month reads as closed — when and by whom — and the latest offers Reopen behind a confirm', async () => {
@@ -434,10 +470,12 @@ describe('closing a month — 关月 (owner 2026-10-26)', () => {
     expect(tile('Closed months — adjustments')).toContain('1 order · 2026/09');
     const cells = cellsOf(rowOf(tables()[2]!, 'HC-SO-2609-051'));
     /* Its Ref No. too, as on every order table (「这个没有reference no. 吗？」). */
-    for (const t of ['2026/09', 'ZNT0480', 'ZANOTTI', 'Wei Pin', '+130.00']) expect(cells).toContain(t);
+    /* The goods its Now is worked on and the rate (「我看不到goods amount和rate」). */
+    for (const t of ['2026/09', 'ZNT0480', 'ZANOTTI', 'Wei Pin', '1,000.00', '13%', '+130.00']) expect(cells).toContain(t);
     const csv = eventCommissionCsv(current);
-    expect(csv).toContain('"Closed months — adjustments","130.00"');
-    expect(csv).toContain('"Total","283.00"');
+    expect(csv).toContain('"Closed months — adjustments","1 order · 2026/09","130.00"');
+    expect(csv).toContain('"HC-SO-2609-051","2026/09","ZNT0480","ZANOTTI","Wei Pin","1,000.00","13%","0.00","130.00","130.00"');
+    expect(csv).toContain('"Total commission","","283.00"');
     expect(forBrand(current, 'AKEMI').totals).toEqual({ payableSen: 140_00, adjustmentsSen: 0, monthAdjustmentsSen: 0, deferredInSen: 0, totalSen: 140_00 });
   });
 });
@@ -511,7 +549,7 @@ describe('round 3 (owner 2026-11-12)', () => {
     expect(tile('Moved from last month')).toContain('50.00');
     const card = screen.getByRole('region', { name: 'Moved from last month' });
     expect(cellsOf(within(card).getByText('HC-SO-2609-060').closest('tr')!)).toEqual(expect.arrayContaining(['2026/09', 'paid late', '50.00']));
-    expect(summaryOf(current).deferredIn).toBe(50_00);
+    expect(cardSens(current)).toContainEqual(['deferredIn', 50_00]);
   });
 
   test('coming back keeps the view and the open fairs', () => {
@@ -551,7 +589,7 @@ describe('a price change left out, and the SO list\'s columns (owner 2026-11-12)
   test('each changed order has "Don\'t count change" on an open month: it asks for a reason and names the month', async () => {
     october();
     renderTab(<EventCommissionTab />);
-    const card = screen.getByRole('region', { name: 'Upsales / Drop sales' });
+    const card = screen.getByRole('region', { name: 'Upsales / Drop sales — fairs starting in the range' });
     const up = within(card).getByText('HC-SO-2610-001').closest('tr')!;
     fireEvent.click(within(up).getByRole('button', { name: "Don't count change" }));
     await waitFor(() => expect(markOrder).toHaveBeenCalledWith({ docNo: 'HC-SO-2610-001', kind: 'exclude_change', month: '2026-10', reason: 'checking the price' }));
@@ -572,9 +610,9 @@ describe('a price change left out, and the SO list\'s columns (owner 2026-11-12)
     current = LEFT_OUT;
     renderTab(<EventCommissionTab />);
     expect(tile('Total commission')).toContain('132.00');
-    expect(tile('Fair commission')).toContain('119.00');
-    expect(tile('Upsales / drop sales')).toContain('0.00');
-    const card = screen.getByRole('region', { name: 'Upsales / Drop sales' });
+    expect(tile('Fairs starting in the range')).toContain('119.00');
+    expect(tile('Upsales / Drop sales — earlier fairs')).toContain('0.00');
+    const card = screen.getByRole('region', { name: 'Upsales / Drop sales — fairs starting in the range' });
     const row = within(card).getByText('HC-SO-2610-001').closest('tr')!;
     /* Its amounts stay; the effect reads "not counted", and the button is now Undo. */
     expect(cellsOf(row)).toEqual(expect.arrayContaining(['850.00', '1,000.00', '+150.00', 'not counted']));
@@ -597,16 +635,13 @@ describe('a price change left out, and the SO list\'s columns (owner 2026-11-12)
   });
 
   test('the export says which mark: a price change left out reads apart from an order not counted, and both when both', () => {
-    expect(summaryOf(LEFT_OUT)).toEqual({ fair: 119_00, noFair: 0, changes: 0, late: 0, earlier: 13_00, monthAdj: 0, deferredIn: 0, totalSen: 132_00 });
-    expect(eventCommissionCsv(LEFT_OUT)).toContain(
-      '"HC-SO-2610-001","","Kuala Lumpur [AKEMI] BIGHOME @ MID VALLEY","AKEMI","Ethan","2026-10-02","1,000.00","36.4%","2026-10-02","119.00","0.00","0.00","0.00","0.00","0.00","0.00","119.00","Price change not counted","21.00"',
-    );
+    expect(cardSens(LEFT_OUT)).toEqual([['inRange', 119_00], ['earlier', 13_00], ['earlierChanges', 0]]);
+    expect(eventCommissionCsv(LEFT_OUT)).toContain('"HC-SO-2610-001","Price change not counted","","AKEMI","typing fix","Ethan","21.00"');
     const exclude = { ...changeMark, id: 'x1', kind: 'exclude' as const, month: null, reason: null };
     const both = { ...LEFT_OUT, marked: [{ ...LEFT_OUT.marked![0]!, mark: exclude, commissionSen: 119_00 }, ...LEFT_OUT.marked!] };
-    const line = orderLines(both).find((l) => l.docNo === 'HC-SO-2610-001')!;
-    expect(line.marks.map((m) => m.kind)).toEqual(['exclude', 'exclude_change']);
-    expect(line.markedSen).toBe(140_00);
-    expect(eventCommissionCsv(both)).toContain('"Not counted; Price change not counted","140.00"');
+    const csv = eventCommissionCsv(both);
+    expect(csv).toContain('"HC-SO-2610-001","Not counted","","AKEMI","","Ethan","119.00"');
+    expect(csv).toContain('"Total · 2 marks","","","","","","140.00"');
     expect(whatOf({ ...REPORT.earlierOrders![0]!, events: [{ date: '2026-10-03', kind: 'upsale', beforeReach: false, uncounted: true }] })).toBe('Upsale (left out)');
   });
 
@@ -641,7 +676,7 @@ describe("Finance's own lines (owner 2026-11-13)", () => {
     expect(screen.queryByRole('region', { name: 'Added by Finance' })).toBeNull();
     expect(within(screen.getByRole('group', { name: 'Totals' })).queryByText('Added by Finance')).toBeNull();
     expect(eventCommissionCsv(REPORT)).not.toContain('Added by Finance');
-    expect(summaryOf(REPORT).manual).toBeUndefined();
+    expect(cardsOf(REPORT).some((c) => c.key === 'manual')).toBe(false);
   });
 
   test('a line has a card of its own — order, goods, rate, commission, why and who — a tile, and is in the total and the export', () => {
@@ -655,11 +690,11 @@ describe("Finance's own lines (owner 2026-11-13)", () => {
     expect(cellsOf(within(card).getByText('HC-SO-009001').closest('tr')!)).toEqual(expect.arrayContaining([
       'REF1001', 'ZANOTTI', 'MID VALLEY', 'Sales A', '800.00', '13%', '104.00', 'Raised before the order came into the ERP', 'Finance Chew',
     ]));
-    expect(summaryOf(withLine).manual).toBe(104_00);
-    expect(summaryOf(withLine).totalSen).toBe(withLine.totals.totalSen);
+    expect(cardSens(withLine)).toContainEqual(['manual', 104_00]);
+    expect(cardsOf(withLine).reduce((t, c) => t + c.sen, 0)).toBe(withLine.totals.totalSen);
     const csv = eventCommissionCsv(withLine);
-    expect(csv).toContain('"Added by Finance","104.00"');
-    expect(orderLines(withLine).find((l) => l.docNo === 'HC-SO-009001')!.split.manual).toBe(104_00);
+    expect(csv).toContain('"Added by Finance","1 line","104.00"');
+    expect(csv).toContain('"HC-SO-009001","REF1001","ZANOTTI","Sales A","Raised before the order came into the ERP","Finance Chew","800.00","13%","104.00"');
     /* One brand: its own lines only, and the total with them. */
     expect(forBrand(withLine, 'AKEMI').manualLines).toEqual([]);
     expect(forBrand(withLine, 'ZANOTTI').totals).toMatchObject({ manualSen: 104_00 });

@@ -24,7 +24,7 @@ import { PDF_COMPRESS } from './pdf-options';
 
 /** A printed column: which sheet columns it carries (an amount and the % beside it), whether
     a rule follows it, and the heading it shares with the columns beside it. */
-export type PrintedColumn = { label: string; cols: number[]; edge: boolean; group?: string };
+export type PrintedColumn = { label: string; cols: number[]; edge: boolean; group?: string; align?: 'left' | 'right' };
 
 /** The columns as printed: a % that rides beside an amount merges into its cell. */
 export const printedColumns = (t: SheetTable): PrintedColumn[] => {
@@ -36,13 +36,15 @@ export const printedColumns = (t: SheetTable): PrintedColumn[] => {
       if (c.edge) last.edge = true;
       return;
     }
-    out.push({ label: c.label, cols: [i], edge: Boolean(c.edge), ...(c.group ? { group: c.group } : {}) });
+    out.push({ label: c.label, cols: [i], edge: Boolean(c.edge), ...(c.group ? { group: c.group } : {}), ...(c.align ? { align: c.align } : {}) });
   });
   return out;
 };
 
+/** Where a printed column's text sits: a column asked to read left to right, else right. */
+const alignOf = (pc: PrintedColumn): 'left' | 'right' => (pc.align === 'left' ? 'left' : 'right');
 /** A cell as autoTable takes it: its text, or its text running across columns or rows. */
-export type PrintedCell = string | { content: string; colSpan?: number; rowSpan?: number; styles?: { halign: 'center' } };
+export type PrintedCell = string | { content: string; colSpan?: number; rowSpan?: number; styles?: { halign: 'center' | 'left' } };
 
 /** The table exactly as printed — pure, so a test reads it without a PDF.
     `head` is the columns' names; `headRows` the header as printed — that one row, or,
@@ -54,7 +56,7 @@ export function printedTable(t: SheetTable, fmt: (sen: number) => string = fmtSe
   head: string[]; headRows: PrintedCell[][]; body: PrintedCell[][]; beside: Array<Array<string | null>>; printed: PrintedColumn[];
 } {
   const printed = printedColumns(t);
-  const head = ['', ...printed.map((p) => p.label)];
+  const head = [t.labelHeader ?? '', ...printed.map((p) => p.label)];
   const cellText = (r: SheetRow, ci: number): string => sheetText(t.columns[ci]!, r.cells[ci] ?? null, fmt);
   /* A sheet column's printed column — a run of sheet cells becomes a run of printed ones. */
   const printedAt = new Map<number, number>();
@@ -76,13 +78,16 @@ export function printedTable(t: SheetTable, fmt: (sen: number) => string = fmtSe
     return out;
   });
   const beside = t.rows.map((r) => [null, ...printed.map((p) => (r.cells.length === 0 || p.cols.length < 2 ? null : cellText(r, p.cols[1]!)))]);
-  return { head, headRows: printed.some((p) => p.group) ? groupedHead(printed) : [head], body, beside, printed };
+  const columnHead = printed.some((p) => p.group) ? groupedHead(printed, t.labelHeader ?? '') : [head];
+  /* A section's title on a row of its own above the header, across the table. */
+  const titleRow: PrintedCell[][] = t.title ? [[{ content: t.title, colSpan: printed.length + 1, styles: { halign: 'left' } }]] : [];
+  return { head, headRows: [...titleRow, ...columnHead], body, beside, printed };
 }
 
 /** The two header rows of columns under shared headings: the name column and a column
     without a heading stand two rows tall; a heading spans its columns, their names below. */
-function groupedHead(printed: PrintedColumn[]): PrintedCell[][] {
-  const top: PrintedCell[] = [{ content: '', rowSpan: 2 }];
+function groupedHead(printed: PrintedColumn[], name = ''): PrintedCell[][] {
+  const top: PrintedCell[] = [{ content: name, rowSpan: 2 }];
   const under: PrintedCell[] = [];
   printed.forEach((p, i) => {
     if (!p.group) { top.push({ content: p.label, rowSpan: 2 }); return; }
@@ -165,13 +170,20 @@ export async function generateReportPdf(given: ReportSheet, opts: { fileName: st
       headStyles: { ...DOC_TABLE_HEAD_STYLES, halign: 'right' },
       columnStyles: {
         0: { cellWidth: page.labelW, halign: 'left' },
-        ...Object.fromEntries(p.printed.map((_, i) => [i + 1, { halign: 'right' as const, ...(figureW ? { cellWidth: figureW } : {}) }])),
+        ...Object.fromEntries(p.printed.map((pc, i) => [i + 1, { halign: alignOf(pc), ...(figureW ? { cellWidth: figureW } : {}) }])),
       },
       margin: { left: margin, right: margin },
       didParseCell: (data) => {
         const pc = data.column.index > 0 ? p.printed[data.column.index - 1] : null;
         if (data.section === 'head') {
           if (data.column.index === 0) data.cell.styles.halign = 'left';
+          else if (pc) data.cell.styles.halign = alignOf(pc);
+          /* The section title: a size up, no rules, a little air above. */
+          if (t.title && data.row.index === 0) {
+            data.cell.styles.fontSize = page.fontSize + 1.5;
+            data.cell.styles.lineWidth = 0;
+            data.cell.styles.cellPadding = { top: 3, bottom: 1.2, left: 1.5, right: 1.5 };
+          }
           return;
         }
         const row = t.rows.at(data.row.index);
