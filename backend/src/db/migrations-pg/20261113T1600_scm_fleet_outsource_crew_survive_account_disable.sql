@@ -1,4 +1,4 @@
--- 20261113T0100_scm_fleet_outsource_crew_survive_account_disable
+-- 20261113T1600_scm_fleet_outsource_crew_survive_account_disable
 --
 -- SYMPTOM. Penang / outsource drivers and helpers (MSJ TRANSPORT crew,
 -- in_house = false) kept vanishing from the Project "Setup & Dismantle — crew
@@ -22,6 +22,9 @@
 --
 -- REVERSAL (run by hand to undo): restore 20261029T1700's body — drop the
 --   `AND in_house IS NOT FALSE` clause from both disable branches below.
+--
+-- CREATE OR REPLACE below is independent of migration order (it only redefines a
+-- function); re-stamped to 20261113T1600 at merge time to sort after the tree.
 
 SET search_path = scm, public;
 

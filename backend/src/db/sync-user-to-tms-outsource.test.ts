@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 
 /* ═══════════════════════════════════════════════════════════════════════════
    scm.sync_user_to_tms() — disabling an account must NOT retire an outsource
-   crew row (migration 20261113T0100).
+   crew row (migration 20261113T1600).
    ═══════════════════════════════════════════════════════════════════════════
 
    SYMPTOM. Penang / outsource drivers and helpers (in_house = false) kept
@@ -31,7 +31,7 @@ function disableSyncOld(rows: CrewRow[], userId: number): void {
   for (const r of rows) if (r.user_id === userId && r.active) r.active = false;
 }
 
-/** Fixed (20261113T0100): ... AND in_house IS NOT FALSE.
+/** Fixed (20261113T1600): ... AND in_house IS NOT FALSE.
  *  `in_house IS NOT FALSE` is true for TRUE and NULL, false for FALSE —
  *  mirrored here by `r.in_house !== false`. */
 function disableSyncNew(rows: CrewRow[], userId: number): void {
