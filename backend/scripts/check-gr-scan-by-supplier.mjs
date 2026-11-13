@@ -33,6 +33,40 @@ try {
     const pct = r.lines ? Math.round((100 * r.tied) / r.lines) : 0;
     console.log(`${r.supplier} | ${r.scans} | ${r.pdfs} | ${r.failed} | ${r.empty} | ${r.lines} | ${r.tied} | ${pct}%`);
   }
+
+  // Only scans a person went on to create a goods receipt from, one per DO: the
+  // honest rate (re-scans of a DO already received cannot tie and inflate the misses).
+  const made = await sql`
+    SELECT coalesce(s.name, '(supplier not found)') AS supplier,
+           count(DISTINCT coalesce(j.review->>'doNo', j.id::text))::int AS dos,
+           coalesce(sum(jsonb_array_length(coalesce(j.review->'lines', '[]'::jsonb))), 0)::int AS lines,
+           coalesce(sum((SELECT count(*) FROM jsonb_array_elements(coalesce(j.review->'lines', '[]'::jsonb)) e WHERE e->>'poItemId' IS NOT NULL)), 0)::int AS tied
+      FROM scm.scan_jobs j
+      LEFT JOIN scm.suppliers s ON s.id::text = j.review->>'supplierId'
+     WHERE j.document_type = 'GR' AND j.created_at >= now() - make_interval(days => ${DAYS}) AND j.review_state = 'created'
+     GROUP BY 1 ORDER BY 2 DESC`;
+  console.log('');
+  console.log('Of those, scans a goods receipt was created from (lines as saved by the person):');
+  console.log('supplier | DOs | lines | tied | tied%');
+  for (const r of made) console.log(`${r.supplier} | ${r.dos} | ${r.lines} | ${r.tied} | ${r.lines ? Math.round((100 * r.tied) / r.lines) : 0}%`);
+
+  const states = await sql`
+    SELECT coalesce(review_state, '(none)') AS state, status, count(*)::int AS n
+      FROM scm.scan_jobs WHERE document_type = 'GR' AND created_at >= now() - make_interval(days => ${DAYS})
+     GROUP BY 1, 2 ORDER BY 3 DESC`;
+  console.log('');
+  console.log('scan states: ' + states.map((r) => `${r.state}/${r.status}=${r.n}`).join(', '));
+
+  const lost = await sql`
+    SELECT to_char(created_at AT TIME ZONE 'Asia/Kuala_Lumpur', 'MM-DD HH24:MI') AS at, review_state, status,
+           lower(substring(coalesce(file_name, '') from '\.([a-z0-9]+)$')) AS ext, left(coalesce(error, ''), 90) AS note
+      FROM scm.scan_jobs
+     WHERE document_type = 'GR' AND created_at >= now() - make_interval(days => ${DAYS})
+       AND (review->>'supplierId') IS NULL
+     ORDER BY created_at`;
+  console.log('');
+  console.log('Scans with no supplier found:');
+  for (const r of lost) console.log(`${r.at} | ${r.ext || '?'} | ${r.review_state}/${r.status} | ${r.note}`);
 } finally {
   await sql.end();
 }
