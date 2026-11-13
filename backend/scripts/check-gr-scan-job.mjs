@@ -63,6 +63,17 @@ async function main() {
   for (const c of calls) {
     console.log(`  ${new Date(c.created_at).toISOString()} | ${c.feature} | ${c.model} | in=${c.input_tokens} out=${c.output_tokens} | ok=${c.ok} http=${c.http_status} | ${c.error}`);
   }
+
+  // Was a failure this scan's alone, or every model call at that time?
+  const minutes = await sql`
+    SELECT date_trunc('minute', created_at) AS m, count(*) FILTER (WHERE ok)::int AS ok,
+           count(*) FILTER (WHERE NOT ok)::int AS failed,
+           string_agg(DISTINCT CASE WHEN NOT ok THEN http_status::text || ' ' || left(coalesce(error, ''), 60) END, '; ') AS errors
+    FROM public.ai_usage_events
+    WHERE created_at >= ${SINCE} AND created_at < ${UNTIL}
+    GROUP BY 1 ORDER BY 1`;
+  console.log(`All model calls by minute (every feature): ${minutes.length} minutes`);
+  for (const r of minutes) console.log(`  ${new Date(r.m).toISOString()} | ok=${r.ok} failed=${r.failed} | ${r.errors ?? ''}`);
 }
 
 try {
