@@ -1002,3 +1002,32 @@ describe('a delivery order across seven POs and three warehouses (NICE FUTURE 20
     expect(nameMatchItem('AKEMI BULWARK', akemi)).toBeNull();
   });
 });
+
+describe('Hookka DO-2611-037: two lines of one model on a PO, and a row with no PO', () => {
+  const hok = (poItemId: string, poNumber: string, supplierSku: string, description2: string, soDocNo: string | null = null) =>
+    line({ poItemId, poNumber, supplierId: 'sup-hok', itemCode: supplierSku.replace(/^HOK-/, ''), supplierSku, remaining: 1, description2, soDocNo });
+  const cody03 = hok('cody-03', 'HC-PO-2610-399', 'HOK-1007-(Q)', 'PC151-03 / DIVAN 8" + NO LEG / GAP 12" / T.Heights 20"');
+  const cody14 = hok('cody-14', 'HC-PO-2610-399', 'HOK-1007-(Q)', 'PC151-14 / DIVAN 8" + NO LEG / GAP 12" / T.Heights 20"');
+
+  test('each CODY row takes the PO line of the fabric it prints', () => {
+    const rows = [
+      scan({ itemCode: '1007-(Q)', poNo: 'HC-PO-2610-399', description: 'CODY BEDFRAME (5FT) (152X190CM) PC151-14 / DIVAN 8" + NO LEG / GAP 12" / T.Heights 20"' }),
+      scan({ itemCode: '1007-(Q)', poNo: 'HC-PO-2610-399', description: 'CODY BEDFRAME (5FT) (152X190CM) PC151-03 / DIVAN 8" + NO LEG / GAP 12" / T.Heights 20"' }),
+    ];
+    const res = matchGrnScanToPoLines(null, rows, [cody03, cody14], [], 'sup-hok');
+    expect(res.picks).toEqual(expect.arrayContaining([{ poItemId: 'cody-14', qty: 1 }, { poItemId: 'cody-03', qty: 1 }]));
+    expect(res.unmatched).toEqual([]);
+  });
+
+  test('without the fabric line the row stays for a person to choose', () => {
+    const res = matchGrnScanToPoLines(null, [scan({ itemCode: '1005-(Q)', poNo: 'HC-PO-2610-399', description: 'CODY BEDFRAME (5FT) (152X190CM)' })], [cody03, cody14], [], 'sup-hok');
+    expect(res.picks).toEqual([]);
+  });
+
+  test('no PO printed: our SO number on the row picks that order\'s line', () => {
+    const mine = hok('5530-316', 'HC-PO-2609-317', '5530-L(RHF)', 'BO315-21 / SEAT 28 / LEG 6"', 'HC-SO-2609-316');
+    const other = hok('5530-154', 'HC-PO-2610-154', '5530-L(RHF)', 'BO315-01 / SEAT 28 / LEG 4"', 'HC-SO-2610-020');
+    const res = matchGrnScanToPoLines(null, [scan({ itemCode: '5530-L(RHF)', description: 'SOFA 5530 L(RHF) BO315-21 / Size: 28 / 6" LEG SO: HC-SO-2609-316' })], [mine, other], [], 'sup-hok');
+    expect(res.picks).toEqual([{ poItemId: '5530-316', qty: 1 }]);
+  });
+});

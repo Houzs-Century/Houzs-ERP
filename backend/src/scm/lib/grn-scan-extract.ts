@@ -163,7 +163,8 @@ RULES:
 - A row's rack is ONLY a short location the receiving warehouse wrote BY HAND (pen) beside the row, usually in the left margin: a letter L or R followed by numbers, e.g. "R7-2", "L8-1", "L9.1", "L12.1", "R:11-2", "L-19-2". It goes in "rack" only, never in poNo, itemCode or description. Transcribe it as written; after the L or R it is only digits and separators, so a mark that looks like a letter there is a digit (a handwritten 6 often looks like "b"). If a value is crossed out and another is written beside it, use the one NOT crossed out. If one rack is written with a bracket or line spanning several rows, give every row under that bracket the same rack. Never take a printed code, a SO / PO / REF number, a tick or a quantity mark as a rack. No handwritten rack beside the row -> null.
 - Ignore sub-total / total / remarks / signature rows — only real product lines go in "lines".
 - A delivery order printed over several pages is ONE document: read the header once (from page 1) and put the lines of EVERY page into "lines", in order.
-- Keep each description short: the first line of a long multi-line description is enough (product name, size, colour). Never repeat the header per row.
+- A row's description is its product name line AND its spec line (fabric / colour code, size, divan, leg, gap, heights, special), joined with a space, e.g. "CODY BEDFRAME (5FT) (152X190CM) PC151-14 / DIVAN 8\" + NO LEG / GAP 12\" / T.Heights 20\"". The spec is what tells two lines of the same model apart, so never drop it. Leave out other free text. Never repeat the header per row.
+- When a row prints our sales order as "SO: HC-SO-..." (not the supplier's own "Our SO"), end its description with it, e.g. " SO: HC-SO-2609-316". It finds the order when the row's PO is missing.
 - Never invent a P.O. No, D.O. No or code you cannot read; use null.`;
 
 // Defensive coercion — the model occasionally omits a field or returns the

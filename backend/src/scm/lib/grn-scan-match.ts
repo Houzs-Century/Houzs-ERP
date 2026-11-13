@@ -507,10 +507,13 @@ export function matchGrnScanToPoLines(
       }
       continue;
     }
-    const hit = hitList.length === 1 ? hitList[0] : pickBySpec(sl.description, hitList);
+    // Same model on several POs and the row prints no PO, but our SO number
+    // (Hookka DO-2611-037 printed "PO: HC-" blank, "SO: HC-SO-2609-316"): that SO's lines.
+    const ofSo = hitList.length > 1 && anchorPo === null ? setLinesBySo(sl, hitList)?.lines ?? hitList : hitList;
+    const hit = ofSo.length === 1 ? ofSo[0] : pickBySpec(sl.description, ofSo);
     if (!hit) {
       // Ambiguous — refuse to guess which PO line this delivery row clears.
-      unmatched.push({ line: sl, reason: 'ambiguous', candidatePoItemIds: hitList.map((l) => l.poItemId) });
+      unmatched.push({ line: sl, reason: 'ambiguous', candidatePoItemIds: ofSo.map((l) => l.poItemId) });
       continue;
     }
     const remaining = remainingById.get(hit.poItemId) ?? 0;
