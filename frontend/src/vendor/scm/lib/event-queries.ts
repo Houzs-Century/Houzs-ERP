@@ -235,6 +235,13 @@ export type CommissionDeferredIn = CommissionOrderPlace & {
   /** Marked again here — moved on or not counted; 0 is paid here then. */
   markedAgain?: CommissionMarkInfo;
 };
+/** One of Finance's own lines (owner 2026-11-13): goods typed on an order for a
+ *  month — plus adds commission, minus takes it back — at the order's own rate. */
+export type CommissionManualLine = CommissionOrderPlace & {
+  line: { id: string; month: string; reason: string | null; addedBy: string | null; addedAt: string };
+  goodsSen: number;
+  commissionSen: number;
+};
 /** Which date puts an order in the range: its fair's start, or its own SO date. */
 export type CommissionBasis = 'fair' | 'so_date';
 export type EventCommission = {
@@ -254,7 +261,9 @@ export type EventCommission = {
   /** The orders Finance marked on this report, and what the month before moved here. */
   marked?: CommissionMarkedOrder[];
   deferredIn?: CommissionDeferredIn[];
-  totals: { payableSen: number; adjustmentsSen: number; monthAdjustmentsSen?: number; deferredInSen?: number; totalSen: number };
+  /** Finance's own lines for the months the range begins — absent when there are none. */
+  manualLines?: CommissionManualLine[];
+  totals: { payableSen: number; adjustmentsSen: number; monthAdjustmentsSen?: number; deferredInSen?: number; manualSen?: number; totalSen: number };
   /** Set when the range is a closed month, served as it was closed. */
   closed?: { month: string; closedAt: string; closedBy: string | null };
   /** The company's closed months (YYYY-MM) and the first open one. */
@@ -307,6 +316,26 @@ export function useMarkCommissionOrder() {
       authedFetch<{ ok: true; mark: CommissionMarkInfo }>('/acc-events/commission/marks', { method: 'POST', body: JSON.stringify(body) }),
     onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['acc-events', 'commission'] }); },
     onError: writeFailedAs('Order not marked'),
+  });
+}
+
+/** Type a line on an order for an open month (Finance): goods, plus or minus, with the reason. */
+export function useAddCommissionLine() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { docNo: string; month: string; goodsSen: number; reason: string }) =>
+      authedFetch<{ ok: true }>('/acc-events/commission/lines', { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['acc-events', 'commission'] }); },
+    onError: writeFailedAs('Line not added'),
+  });
+}
+/** Take one of Finance's lines away, while its month is open. */
+export function useRemoveCommissionLine() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => authedFetch<{ ok: true }>('/acc-events/commission/lines/remove', { method: 'POST', body: JSON.stringify({ id }) }),
+    onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['acc-events', 'commission'] }); },
+    onError: writeFailedAs('Line not taken away'),
   });
 }
 

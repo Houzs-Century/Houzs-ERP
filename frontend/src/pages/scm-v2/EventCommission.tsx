@@ -53,9 +53,10 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight, Lock } from 'lucide-react';
 import {
-  useCloseCommissionMonth, useEventCommission, useMarkCommissionOrder, useReopenCommissionMonth, useUnmarkCommissionOrder,
+  useAddCommissionLine, useCloseCommissionMonth, useEventCommission, useMarkCommissionOrder, useRemoveCommissionLine, useReopenCommissionMonth,
+  useUnmarkCommissionOrder,
   type CommissionBasis, type CommissionChange, type CommissionChangedOrder, type CommissionDeferredIn, type CommissionEarlierOrder,
-  type CommissionFairRow, type CommissionMarkedOrder, type CommissionMarkInfo, type CommissionMarkKind, type CommissionMonthAdjustment,
+  type CommissionFairRow, type CommissionManualLine, type CommissionMarkedOrder, type CommissionMarkInfo, type CommissionMarkKind, type CommissionMonthAdjustment,
   type CommissionSoRow, type EventCommission,
 } from '../../vendor/scm/lib/event-queries';
 import { useConfirm, usePrompt } from '../../vendor/scm/components/ConfirmDialog';
@@ -72,7 +73,7 @@ import { periodLabel } from './reports/statementColumns';
 import { useReportRange } from './reports/useReportRange';
 import {
   BASIS_WORDS, LEFT_OUT_NOTE, NOT_COUNTED, RULE_NOTE, SUMMARY_HINT, SUMMARY_LABEL, amt, amtRm, belowDepositOf, brandsOf, changedOf, deferredInOf, isNoFair,
-  earlierOf, earlierShownOf, eventCommissionCsv, eventCommissionSheet, fairPlace, fairSortKey, fmtRm, forBrand, lateOf, markWords, markedOf, monthAdjOf,
+  earlierOf, earlierShownOf, eventCommissionCsv, eventCommissionSheet, fairPlace, fairSortKey, fmtRm, forBrand, lateOf, manualOf, markWords, markedOf, monthAdjOf,
   markMonthOf, monthLabel, monthOf, myt, nextMonthOf, sum, summaryOf, whatOf, wholeMonthOf, type BelowDepositRow,
 } from './eventCommissionModel';
 import ec from './EventCommission.module.css';
@@ -523,6 +524,76 @@ const markedColumns = (ctl: MarkCtl): Column<CommissionMarkedOrder>[] => [
   },
 ];
 
+/* ── Finance's own lines (owner 2026-11-13, 「做」) ──────────────────────────── */
+
+type LineCtl = {
+  /** One month, whole or so far, that is not closed: a line can be typed and taken away. */
+  canEdit: boolean;
+  month: string | null;
+  busy: boolean;
+  remove: (m: CommissionManualLine) => void;
+};
+
+const manualColumns = (ctl: LineCtl): Column<CommissionManualLine>[] => [
+  { key: 'order', label: 'Order', width: '135px', render: (m) => <OrderLink docNo={m.docNo} />, getValue: (m) => m.docNo },
+  refColumn<CommissionManualLine>(),
+  /* The organizer is in the Columns: a typed line reads by its order, its amount and its reason, and Remove stays in sight. */
+  ...hideState(placeColumns<CommissionManualLine>(orderPlace, { brand: '85px', organizer: '115px', venue: '130px', state: '100px' }))
+    .map((c) => (c.key === 'organizer' ? { ...c, defaultHidden: true } : c)),
+  { key: 'salesperson', label: 'Salesperson', width: '100px', render: (m) => m.salesperson ?? '—', getValue: (m) => m.salesperson },
+  {
+    key: 'goods', label: 'Goods', align: 'right', width: '105px', description: 'The amount Finance typed: more than 0 adds commission, less than 0 takes it back.',
+    render: (m) => <span className={cn('tabular-nums', m.goodsSen < 0 && 'text-err')}>{fmtRm(m.goodsSen)}</span>, getValue: (m) => m.goodsSen,
+    exportValue: (m) => m.goodsSen / 100, total: (rows) => num(fmtRm(sum(rows, (m) => m.goodsSen))),
+  },
+  { key: 'rate', label: 'Rate', align: 'right', width: '60px', render: (m) => (m.ratePct == null ? <span className="text-ink-muted">–</span> : num(`${m.ratePct}%`)), getValue: (m) => m.ratePct },
+  {
+    key: 'commission', label: 'Commission', align: 'right', width: '105px', description: 'Goods × the order\'s own rate: its fair\'s brand, or with no fair its own brand\'s card.',
+    render: (m) => <span className={cn('font-semibold tabular-nums', m.commissionSen < 0 && 'text-err')}>{fmtRm(m.commissionSen)}</span>, getValue: (m) => m.commissionSen,
+    exportValue: (m) => m.commissionSen / 100, total: (rows) => num(fmtRm(sum(rows, (m) => m.commissionSen))),
+  },
+  { key: 'reason', label: 'Reason', width: '210px', render: (m) => m.line.reason ?? '—', getValue: (m) => m.line.reason },
+  { key: 'by', label: 'Added by', width: '105px', render: (m) => m.line.addedBy ?? '—', getValue: (m) => m.line.addedBy },
+  {
+    key: 'actions', label: 'Actions', width: '90px',
+    render: (m) => (ctl.canEdit && ctl.month === m.line.month
+      ? <button type="button" className={ec.markBtn} disabled={ctl.busy} onClick={(e) => { e.stopPropagation(); ctl.remove(m); }}>Remove</button>
+      : <span className="text-ink-muted">–</span>),
+  },
+];
+
+/** Finance types a line: the order, an amount of goods (less than 0 takes back) and why. */
+const AddLineForm = ({ month, busy, onAdd, onCancel }: {
+  month: string; busy: boolean; onAdd: (line: { docNo: string; goodsSen: number; reason: string }) => void; onCancel: () => void;
+}) => {
+  const [docNo, setDocNo] = useState('');
+  const [amount, setAmount] = useState('');
+  const [reason, setReason] = useState('');
+  const goodsSen = Math.round(Number(amount.replace(/,/g, '').trim()) * 100);
+  const ready = docNo.trim() !== '' && amount.trim() !== '' && Number.isFinite(goodsSen) && goodsSen !== 0 && reason.trim() !== '';
+  return (
+    <form className={ec.lineForm} aria-label={`Add a line for ${monthLabel(month)}`}
+      onSubmit={(e) => { e.preventDefault(); if (ready && !busy) onAdd({ docNo: docNo.trim().toUpperCase(), goodsSen, reason: reason.trim() }); }}>
+      <label className={ec.field}>
+        <span className={ec.fieldLabel}>Order</span>
+        <input className={ec.input} value={docNo} onChange={(e) => setDocNo(e.target.value)} placeholder="HC-SO-…" autoComplete="off" />
+      </label>
+      <label className={ec.field}>
+        <span className={ec.fieldLabel}>Goods (RM)</span>
+        <input className={ec.input} value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" placeholder="800.00 · -800.00 takes back" autoComplete="off" />
+      </label>
+      <label className={cn(ec.field, ec.fieldWide)}>
+        <span className={ec.fieldLabel}>Reason</span>
+        <input className={ec.input} value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} placeholder="e.g. raised before the order came into the ERP" autoComplete="off" />
+      </label>
+      <div className={ec.formBtns}>
+        <button type="submit" className={ec.closeBtn} disabled={!ready || busy}>{busy ? 'Adding…' : `Add to ${monthLabel(month)}`}</button>
+        <button type="button" className={ec.markBtn} onClick={onCancel}>Cancel</button>
+      </div>
+    </form>
+  );
+};
+
 /* ── Closing a month ──────────────────────────────────────────────────────── */
 
 /** Where the range stands on closing (owner 2026-10-26, 关月): the months closed,
@@ -664,6 +735,9 @@ export const EventCommissionTab = () => {
   const askConfirm = useConfirm();
   const { mutate: markMutate, isPending: marking } = useMarkCommissionOrder();
   const { mutate: unmarkMutate, isPending: unmarking } = useUnmarkCommissionOrder();
+  const { mutate: addLine, isPending: adding } = useAddCommissionLine();
+  const { mutate: removeLine, isPending: removing } = useRemoveCommissionLine();
+  const [addOpen, setAddOpen] = useState(false);
   const month = range.usable ? markMonthOf(range) : null;
   const canMark = month != null && full != null && !full.closed && !(full.closes?.months ?? []).includes(month);
   const busy = marking || unmarking;
@@ -702,12 +776,25 @@ export const EventCommissionTab = () => {
   const earlierCols = useMemo(() => earlierColumns(ctl), [ctl]);
   const changedCols = useMemo(() => changedColumns(ctl), [ctl]);
   const markedCols = useMemo(() => markedColumns(ctl), [ctl]);
+  /* Finance's own lines: typed and taken away on the month the marks act on. */
+  const lineCtl = useMemo<LineCtl>(() => ({
+    canEdit: canMark, month, busy: adding || removing,
+    remove: (m) => {
+      void askConfirm({
+        title: `Take the line on ${m.docNo} away?`,
+        body: `Goods ${fmtRm(m.goodsSen)} for ${monthLabel(m.line.month)} is no longer paid.`,
+        confirmLabel: 'Take away',
+      }).then((ok) => { if (ok) removeLine(m.line.id); });
+    },
+  }), [canMark, month, adding, removing, askConfirm, removeLine]);
+  const manualCols = useMemo(() => manualColumns(lineCtl), [lineCtl]);
   const soList = useMemo<SoListRow[]>(() => (r ? r.fairs.flatMap((f) => f.sos.map((s) => ({ ...s, fair: f }))) : []), [r]);
   const earlierRows = r ? earlierShownOf(r) : [];
   const changedRows = r ? changedOf(r) : [];
   const monthAdjRows = r ? monthAdjOf(r) : [];
   const deferredRows = r ? deferredInOf(r) : [];
   const markedRows = r ? markedOf(r) : [];
+  const manualRows = r ? manualOf(r) : [];
   const belowRows = useMemo(() => (r ? belowDepositOf(r) : []), [r]);
   const summary = useMemo(() => (r ? summaryOf(r) : null), [r]);
   const noFairCount = soList.filter((s) => isNoFair(s.fair)).length;
@@ -732,6 +819,7 @@ export const EventCommissionTab = () => {
       sub: `${n(monthAdjRows.length, 'order')} · ${[...new Set(monthAdjRows.map((a) => monthLabel(a.month)))].join(', ')}`,
     }] : []),
     ...(deferredRows.length > 0 ? [{ key: 'deferredIn', label: SUMMARY_LABEL.deferredIn, value: fmtRm(summary.deferredIn), sub: n(deferredRows.length, 'order') }] : []),
+    ...(manualRows.length > 0 ? [{ key: 'manual', label: SUMMARY_LABEL.manual, value: fmtRm(summary.manual ?? 0), sub: n(manualRows.length, 'line') }] : []),
   ] : [];
 
   return (
@@ -739,7 +827,10 @@ export const EventCommissionTab = () => {
       <ReportHeaderActions>
         {full && range.usable && <MonthCloseAction r={full} range={range} />}
         <ReportExports sheet={() => (r ? eventCommissionSheet(r, period, brandNow) : null)} fileBase={fileBase} />
-        <ReportMore items={[{ label: 'CSV', disabled: !r, onClick: () => { if (r) downloadText(`${fileBase}.csv`, eventCommissionCsv(r)); } }]} />
+        <ReportMore items={[
+          { label: 'CSV', disabled: !r, onClick: () => { if (r) downloadText(`${fileBase}.csv`, eventCommissionCsv(r)); } },
+          ...(canMark ? [{ label: 'Add a line (Finance)', onClick: () => setAddOpen(true) }] : []),
+        ]} />
       </ReportHeaderActions>
       <ReportToolbar>
         <FinanceDateRange />
@@ -817,6 +908,32 @@ export const EventCommissionTab = () => {
           <DataTable<CommissionDeferredIn>
             tableId="event-commission-moved-in" exportName={`event-commission-moved-in-${range.from}-${range.to}`} freezeHeight="screen"
             columns={DEFERRED_COLUMNS} rows={deferredRows} getRowKey={(d) => `${d.fromMonth}-${d.docNo}`}
+          />
+        </Card>
+      )}
+
+      {r && month && (manualRows.length > 0 || (addOpen && canMark)) && (
+        <Card title={SUMMARY_LABEL.manual} hint={`${SUMMARY_HINT.manual} · amounts in RM`}>
+          {addOpen && canMark && (
+            <AddLineForm month={month} busy={adding} onCancel={() => setAddOpen(false)}
+              onAdd={(line) => addLine({ ...line, month }, { onSuccess: () => setAddOpen(false) })} />
+          )}
+          {manualRows.length > 0 && (
+            <DataTable<CommissionManualLine>
+              tableId="event-commission-finance-lines" exportName={`event-commission-finance-lines-${range.from}-${range.to}`} freezeHeight="screen"
+              columns={manualCols} rows={manualRows} getRowKey={(m) => m.line.id}
+            />
+          )}
+          {canMark && !addOpen && (
+            <button type="button" className={ec.idle} onClick={() => setAddOpen(true)}>+ Add a line for {monthLabel(month)}</button>
+          )}
+        </Card>
+      )}
+      {r && !month && manualRows.length > 0 && (
+        <Card title={SUMMARY_LABEL.manual} hint={`${SUMMARY_HINT.manual} · amounts in RM`}>
+          <DataTable<CommissionManualLine>
+            tableId="event-commission-finance-lines" exportName={`event-commission-finance-lines-${range.from}-${range.to}`} freezeHeight="screen"
+            columns={manualCols} rows={manualRows} getRowKey={(m) => m.line.id}
           />
         </Card>
       )}
