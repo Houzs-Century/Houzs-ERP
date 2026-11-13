@@ -14,6 +14,7 @@ import {
   supplierOfPrintedPo,
   normalizeCode,
   pickBySpec,
+  markedNotReceived,
   normalizeSupplierName,
   resolvePrintedPo,
   resolveScannedSupplier,
@@ -1029,5 +1030,22 @@ describe('Hookka DO-2611-037: two lines of one model on a PO, and a row with no 
     const other = hok('5530-154', 'HC-PO-2610-154', '5530-L(RHF)', 'BO315-01 / SEAT 28 / LEG 4"', 'HC-SO-2610-020');
     const res = matchGrnScanToPoLines(null, [scan({ itemCode: '5530-L(RHF)', description: 'SOFA 5530 L(RHF) BO315-21 / Size: 28 / 6" LEG SO: HC-SO-2609-316' })], [mine, other], [], 'sup-hok');
     expect(res.picks).toEqual([{ poItemId: '5530-316', qty: 1 }]);
+  });
+});
+
+describe('an X where the rack goes: not received (owner 2026-11-13, DO-2611-037)', () => {
+  const pillow = line({ poItemId: 'pillow', poNumber: 'HC-PO-2610-172', supplierId: 'sup-hok', itemCode: 'LONG PILLOW', supplierSku: 'HOK-LONG PILLOW', remaining: 3 });
+  test('an X row is never received, a rack row is', () => {
+    const res = matchGrnScanToPoLines(null, [
+      scan({ itemCode: 'LONG PILLOW', poNo: 'HC-PO-2610-172', rack: 'X' }),
+      scan({ itemCode: 'LONG PILLOW', poNo: 'HC-PO-2610-172', rack: ' x ' }),
+      scan({ itemCode: 'LONG PILLOW', poNo: 'HC-PO-2610-172', rack: 'L16.1' }),
+    ], [pillow], [], 'sup-hok');
+    expect(res.picks).toEqual([{ poItemId: 'pillow', qty: 1 }]);
+    expect(res.unmatched.map((u) => u.reason)).toEqual(['not_received', 'not_received']);
+  });
+  test('only a lone X counts', () => {
+    expect(['X', 'x', '×', '✗'].every(markedNotReceived)).toBe(true);
+    expect(['XL1.2', 'L9.1', '', null].some(markedNotReceived)).toBe(false);
   });
 });

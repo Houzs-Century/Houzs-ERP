@@ -108,7 +108,8 @@ export type UnmatchedScanLine = {
   //   not_on_po     — the row's PO is known but nothing on it is this item
   //                   (a free gift, or an item ordered on another PO).
   //   colour_not_on_po — the item is on the PO, but not in the colour printed.
-  reason: 'no_open_po_line' | 'ambiguous' | 'nothing_remaining' | 'po_not_open' | 'no_po_number' | 'not_on_po' | 'colour_not_on_po';
+  //   not_received  — the warehouse wrote X beside the row: it did not arrive.
+  reason: 'no_open_po_line' | 'ambiguous' | 'nothing_remaining' | 'po_not_open' | 'no_po_number' | 'not_on_po' | 'colour_not_on_po' | 'not_received';
   // When ambiguous, the candidate PO lines we refused to guess between.
   candidatePoItemIds: string[];
 };
@@ -156,6 +157,11 @@ export type GrnMatchResult = {
   // The open POs the delivery order named (header or rows), resolved.
   namedPos: string[];
 };
+
+/** The warehouse's X beside a row, written where the rack goes: not received. */
+export function markedNotReceived(rack: string | null | undefined): boolean {
+  return /^\s*[xX×✕✖✗✘]\s*$/.test(rack ?? '');
+}
 
 // Normalise a code/number for comparison: uppercase, drop every non-alnum char.
 // "HC-PO-2609-166" -> "HCPO2609166"; "9050-2B(RHF)" -> "90502BRHF";
@@ -407,6 +413,8 @@ export function matchGrnScanToPoLines(
 
   for (const sl of scannedLines) {
     if (!(sl.qty > 0)) continue; // a zero/blank qty line carries nothing to receive
+    // An X where the rack goes means it did not arrive (owner 2026-11-13, DO-2611-037).
+    if (markedNotReceived(sl.rack)) { unmatched.push({ line: sl, reason: 'not_received', candidatePoItemIds: [] }); continue; }
     scannedCount += 1;
 
     let anchorPo: string | null = null;
@@ -758,6 +766,7 @@ const UNMATCHED_WHY: Record<UnmatchedScanLine['reason'], (l: ScannedGrnLine, all
   no_po_number: () => 'no PO printed on the row',
   not_on_po: () => 'not on the PO',
   colour_not_on_po: () => 'its colour is on no open PO line',
+  not_received: () => 'the warehouse marked it X: not received',
 };
 
 const scanLineLabel = (l: ScannedGrnLine): string =>
