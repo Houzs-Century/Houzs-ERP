@@ -1049,3 +1049,31 @@ describe('an X where the rack goes: not received (owner 2026-11-13, DO-2611-037)
     expect(['XL1.2', 'L9.1', '', null].some(markedNotReceived)).toBe(false);
   });
 });
+
+describe('the pieces-of-an-SO fallback keeps to the model and size the row prints (DO-2611-037, 2026-11-13)', () => {
+  const so = (poItemId: string, poNumber: string, supplierSku: string, soDocNo: string) =>
+    line({ poItemId, poNumber, supplierId: 'sup-hok', itemCode: supplierSku.replace(/^HOK-/, ''), supplierSku, remaining: 1, soDocNo });
+  const sl = (itemCode: string, poNo: string, soNo: string) => scan({ itemCode, poNo, description: `ROW SO: ${soNo}` });
+
+  test('a CODY row never takes a CELENE line of its SO', () => {
+    const celene = so('celene', 'HC-PO-2611-024', 'HOK-2038(A)-(Q)', 'HC-SO-2610-355');
+    expect(setLinesBySo(sl('1007-(Q)', 'HC-PO-2611-024', 'HC-SO-2610-355'), [celene])).toBeNull();
+  });
+
+  test('a (Q) row never takes the (SS) line of the same model', () => {
+    const ss = so('ss', 'HC-PO-2611-026', 'HOK-1007-(SS)', 'HC-SO-2610-296');
+    expect(setLinesBySo(sl('1007-(Q)', 'HC-PO-2611-026', 'HC-SO-2610-296'), [ss])).toBeNull();
+    const q = so('q', 'HC-PO-2611-026', 'HOK-1007-(Q)', 'HC-SO-2610-296');
+    expect(setLinesBySo(sl('1007-(Q)', 'HC-PO-2611-026', 'HC-SO-2610-296'), [ss, q])?.lines.map((l) => l.poItemId)).toEqual(['q']);
+  });
+
+  test('a sofa row never takes the square pillows of its SO', () => {
+    const pillow = line({ poItemId: 'pil', poNumber: 'HC-PO-2610-103', supplierId: 'sup-hok', itemCode: 'SQUARE PILLOW', supplierSku: 'HOK-SQUARE PILLOW', remaining: 4, soDocNo: 'HC-SO-011159' });
+    expect(setLinesBySo(sl('5536-1A(LHF)', 'HC-PO-2610-103', 'HC-SO-011159'), [pillow])).toBeNull();
+  });
+
+  test('a set row still takes its own model\'s pieces (Dorsettloft DSL8051)', () => {
+    const p1 = line({ poItemId: 'p1', poNumber: 'HC-PO-1', supplierId: 's', itemCode: '8051-1S', remaining: 1, soDocNo: 'HC-SO-013339' });
+    expect(setLinesBySo(scan({ itemCode: 'DSL8051(30")', description: '*HC-SO-013339 - 1 SEATER' }), [p1])?.lines.map((l) => l.poItemId)).toEqual(['p1']);
+  });
+});

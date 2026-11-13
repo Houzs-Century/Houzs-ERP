@@ -684,6 +684,10 @@ const soKeys = (v: string | null | undefined): string[] =>
     .map((m) => m[1].replace(/-/g, '').replace(/^0+/, ''))
     .filter((k) => k.length >= 4);
 
+/** The size or hand a code ends with, "1007-(Q)" -> "Q", "5536-1A(LHF)" -> "LHF"; else null. */
+const codeSuffix = (code: string | null | undefined): string | null =>
+  /\(([A-Z]{1,3})\)\s*$/i.exec((code ?? '').trim())?.[1]?.toUpperCase() ?? null;
+
 /**
  * The PO lines a delivery-order row delivers as one set: the row prints one of
  * our SO numbers ("*HC-SO-013339", or "*SO-011717" without the company prefix)
@@ -700,7 +704,15 @@ export function setLinesBySo(row: ScannedGrnLine, poLines: OpenPoLine[]): { soDo
   const models = new Set([...(row.itemCode ?? '').matchAll(/(\d{4,})/g)].map((m) => m[1]));
   // Our code can name the model (BANGGAU-2A(LHF)) where the supplier's holds the number (DSL8075-2A(LHF)).
   const ofModel = ofSo.filter((l) => [/^(\d{4,})/.exec(l.itemCode)?.[1], /(\d{4,})/.exec(l.supplierSku ?? '')?.[1]].some((n) => n !== undefined && models.has(n)));
-  return { soDocNo: [...docs][0] as string, lines: ofModel.length > 0 ? ofModel : ofSo };
+  // A row that prints a model takes only that model's pieces, in its size or hand:
+  // Hookka DO-2611-037's CODY 1007-(Q) took a CELENE 2038 line, a 1007-(SS) line and
+  // four SQUARE PILLOWs of its SO once its own line was received (2026-11-13).
+  if (models.size > 0) {
+    const want = codeSuffix(row.itemCode);
+    const lines = want === null ? ofModel : ofModel.filter((l) => [l.itemCode, l.supplierSku].some((c) => codeSuffix(c) === want));
+    return lines.length > 0 ? { soDocNo: [...docs][0] as string, lines } : null;
+  }
+  return { soDocNo: [...docs][0] as string, lines: ofSo };
 }
 
 const PO_STATUS_WHY: Record<string, string> = {
