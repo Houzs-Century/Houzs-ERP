@@ -33,7 +33,7 @@ describe("salesReportFormatIssues", () => {
     const issues = salesReportFormatIssues(report);
     const miss = issues.find((i) => i.code === "bills_missing_name");
     expect(miss).toBeTruthy();
-    expect(miss?.message).toContain("1 bill");
+    expect(miss?.message).toContain("1 bill is missing");
   });
 
   it("well-formed bill paste with names → no hints for name/summary", () => {
