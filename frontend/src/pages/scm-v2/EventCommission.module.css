@@ -63,3 +63,17 @@ a.docLink { display: inline-block; }
   display: inline-flex; align-items: center; gap: 8px; padding: 2px 4px 2px 8px; border-radius: 5px; background: var(--fin-paper);
   font: 600 11.5px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-detail); white-space: nowrap;
 }
+
+/* Finance types a line (owner 2026-11-13): order, goods, reason — one row that wraps on a phone. */
+.lineForm { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 12px; margin-bottom: 12px; }
+.field { display: grid; gap: 4px; flex: 1 1 170px; min-width: 0; max-width: 240px; }
+.fieldWide { flex: 3 1 260px; max-width: none; }
+.fieldLabel { font: 600 11.5px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-text); }
+.input {
+  height: 32px; box-sizing: border-box; width: 100%; padding: 0 10px; border: 1px solid var(--fin-line); border-radius: 6px; background: var(--fin-surface);
+  font: 500 13px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-ink);
+}
+.input::placeholder { color: var(--fin-muted); }
+.input:focus { outline: 2px solid var(--fin-petrol-line); outline-offset: 1px; border-color: var(--fin-petrol-line); }
+.formBtns { display: inline-flex; align-items: center; gap: 8px; }
+.formBtns .markBtn { height: 32px; padding: 0 10px; font-size: 12.5px; }

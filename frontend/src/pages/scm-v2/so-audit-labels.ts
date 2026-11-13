@@ -13,6 +13,8 @@ const ACTIONS: Record<string, string> = {
   /* Finance's marks on the Event Commission report (owner 2026-11-12). */
   COMMISSION_MARK:   'Event commission marked',
   COMMISSION_UNMARK: 'Event commission mark taken away',
+  COMMISSION_LINE_ADD:    'Event commission line added by Finance',
+  COMMISSION_LINE_REMOVE: 'Event commission line taken away',
   UPDATE_STATUS:  'Status changed',
   ADD_LINE:       'Added line',
   UPDATE_LINE:    'Updated line',

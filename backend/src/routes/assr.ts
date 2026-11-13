@@ -42,6 +42,7 @@ import {
   allowedCompanyIds,
   allowedCompaniesSql,
   activeCompanyId,
+  companyCodeMap,
   type CompanyScopeCtx,
 } from "../scm/lib/companyScope";
 import { hasPermission } from "../services/permissions";
@@ -67,6 +68,7 @@ import { sendServiceCaseReceivedAck } from "../services/assrConnectAck";
 import { overviewFilter, withOverviewFilter } from "./lib/assr-overview-filter";
 import { todayMyt } from "../scm/lib/my-time";
 import { assrExportShowsCost, buildAssrCasesCsv } from "./lib/assr-export-csv";
+import { caseCompanySql, namedSupplierGroups, showErpSupplierNames, withErpSuppliers } from "../services/assrCreditorFill";
 
 /* The context the extracted handlers below receive. They are exported so the
    route tests can drive them directly; the shape is exactly what app.get/post
@@ -989,8 +991,8 @@ app.get("/creditors/search", requireServiceCaseAccess(), async (c) => {
       LIMIT 20`
   )
     .bind(like, like)
-    .all();
-  return c.json({ results: rows.results ?? [] });
+    .all<{ creditor_code: string; company_name: string | null; phone1: string | null }>();
+  return c.json({ results: await withErpSuppliers(c.env, assrCompanyIds(c), q, rows.results ?? []) });
 });
 
 app.post("/creditors/create", requirePermission("service_cases.write"), async (c) => {
@@ -1055,17 +1057,18 @@ app.post("/:id{[0-9]+}/set-creditor", requirePermission("service_cases.write"), 
 // separate `unassigned` bucket so the caller can surface it.
 app.get("/by-creditor", requirePermission("service_cases.read"), async (c) => {
   const search = (c.req.query("search") || "").trim();
-  const like = search ? `%${search}%` : null;
   const coC = assrCompanySql(c, "c.company_id");
   const vis = await assrVisibilityScope(c);
   const visC = vis("c.");
   const visBare = vis("assr_cases.");
 
-  const rowsQ = c.env.DB.prepare(
+  const coCol = caseCompanySql(c.env, "c.");
+  const grouped = await c.env.DB.prepare(
     `SELECT c.creditor_code,
+            ${coCol} AS company_id,
             cr.company_name AS creditor_name,
-            cr.email        AS email,
-            cr.phone1       AS phone,
+            cr.email        AS creditor_email,
+            cr.phone1       AS creditor_phone,
             COUNT(*) AS total,
             SUM(CASE WHEN ${assrOpenStageSql("c")} THEN 1 ELSE 0 END) AS open,
             SUM(CASE WHEN c.stage  = 'completed' THEN 1 ELSE 0 END) AS closed,
@@ -1077,15 +1080,10 @@ app.get("/by-creditor", requirePermission("service_cases.read"), async (c) => {
        LEFT JOIN creditors cr ON cr.creditor_code = c.creditor_code
       WHERE c.archived_at IS NULL
         AND c.creditor_code IS NOT NULL${coC}${visC.sql}
-        ${like ? "AND (cr.company_name LIKE ? OR c.creditor_code LIKE ?)" : ""}
-      GROUP BY c.creditor_code
+      GROUP BY c.creditor_code, ${coCol}, cr.company_name, cr.email, cr.phone1
       ORDER BY total DESC, creditor_name ASC`
-  );
-  // Binds are positional and the visibility fragment sits BEFORE the search
-  // clause in the SQL above, so its binds must lead here too.
-  const rows = like
-    ? await rowsQ.bind(...visC.binds, like, like).all()
-    : await rowsQ.bind(...visC.binds).all();
+  ).bind(...visC.binds).all<Record<string, unknown>>();
+  const rows = await namedSupplierGroups(c.env, grouped.results ?? [], search);
 
   const unassigned = await c.env.DB.prepare(
     `SELECT COUNT(*) AS total,
@@ -1097,7 +1095,7 @@ app.get("/by-creditor", requirePermission("service_cases.read"), async (c) => {
     .first<{ total: number; open: number }>();
 
   return c.json({
-    rows: rows.results ?? [],
+    rows,
     unassigned: {
       total: unassigned?.total ?? 0,
       open: unassigned?.open ?? 0,
@@ -1824,7 +1822,8 @@ app.post(
   try {
     // company-scope: reads back the row THIS request just created (result.id), stamped with assrCreateCompanyId above.
     const row = await c.env.DB.prepare(
-      `SELECT assigned_to, assigned_to_2, sales_agent, customer_name, phone, doc_no, created_by
+      `SELECT assigned_to, assigned_to_2, sales_agent, customer_name, phone, doc_no, created_by,
+              ref_no, company_id, delivery_order
          FROM assr_cases WHERE id = ?`,
     )
       .bind(result.id)
@@ -1836,6 +1835,9 @@ app.post(
         phone: string | null;
         doc_no: string | null;
         created_by: number | null;
+        ref_no: string | null;
+        company_id: number | null;
+        delivery_order: string | null;
       }>();
     if (row) {
       // Notify the CREATOR too (owner 2026-07-16): the salesperson who opened
@@ -1851,9 +1853,18 @@ app.post(
       });
       // Customer WhatsApp ack via Houzs Connect (best-effort, create-only; ref_1 =
       // the SO/order ref). Owner 2026-11-11 re-opened the create ack that HC-0222
-      // had turned off, GATED: a case whose order has NO DO sends nothing — the
-      // gate lives in sendServiceCaseReceivedAck (assrConnectAck.ts).
-      await sendServiceCaseReceivedAck(c.env, result.assr_no, row.doc_no, row.customer_name, row.phone);
+      // had turned off, GATED: a case whose order has NO DO sends nothing — the gate
+      // (sendServiceCaseReceivedAck, assrConnectAck.ts) resolves the DO the same way
+      // the board/detail do, so it needs ref_no + company_code + any delivery_order.
+      await sendServiceCaseReceivedAck(c.env, {
+        assrNo: result.assr_no,
+        soNo: row.doc_no,
+        customerName: row.customer_name,
+        phone: row.phone,
+        refNo: row.ref_no,
+        companyCode: row.company_id != null ? (companyCodeMap(c).get(row.company_id) ?? null) : null,
+        deliveryOrder: row.delivery_order,
+      });
     }
   } catch (e) {
     console.error("[assr.create] notify failed:", (e as Error).message);
@@ -2458,9 +2469,11 @@ app.get("/metrics", requirePermission("service_cases.read"), async (c) => {
   // Creditor performance (within window). Joined against the
   // creditors mirror via a.creditor_code rather than the old
   // suppliers table — creditor is now the source of truth.
+  const coColA = caseCompanySql(c.env, "a.");
   const creditorPerf = await c.env.DB.prepare(
     `SELECT a.creditor_code as creditor_code,
-            cr.company_name as name,
+            ${coColA} as company_id,
+            cr.company_name as creditor_name,
             COUNT(DISTINCT a.id) as total_cases,
             SUM(CASE WHEN a.stage = 'completed' THEN 1 ELSE 0 END) as closed_cases,
             SUM(CASE WHEN ${assrOpenStageSql("a")} AND a.deadline_at IS NOT NULL
@@ -2476,12 +2489,13 @@ app.get("/metrics", requirePermission("service_cases.read"), async (c) => {
        LEFT JOIN creditors cr ON cr.creditor_code = a.creditor_code
       WHERE a.creditor_code IS NOT NULL
         ${sinceFor("a.")}${coA}${visA.sql}
-      GROUP BY a.creditor_code, cr.company_name
+      GROUP BY a.creditor_code, ${coColA}, cr.company_name
       ORDER BY total_cases DESC
       LIMIT 15`
   )
     .bind(...visA.binds)
-    .all();
+    .all<Record<string, unknown>>();
+  const perfRows = await showErpSupplierNames(c.env, creditorPerf.results ?? [], null);
 
   // Monthly trend (last 12 months of case opens). Use complained_date
   // when populated, fall back to created_at — legacy rows imported
@@ -2512,7 +2526,7 @@ app.get("/metrics", requirePermission("service_cases.read"), async (c) => {
     resolutions: resolutions.results ?? [],
     repeat_items: repeatItems.results ?? [],
     repeat_customers: repeatCustomers.results ?? [],
-    creditor_performance: creditorPerf.results ?? [],
+    creditor_performance: perfRows.map(({ creditor_name, creditor_email: _e, creditor_phone: _p, creditor_mobile: _m, creditor_attention: _a, ...r }) => ({ ...r, name: creditor_name ?? null })),
     monthly_trend: trend.results ?? [],
     case_duration: {
       opening_count: caseDuration?.opening_count ?? 0,
@@ -2699,7 +2713,7 @@ app.get("/metrics/drill", requirePermission("service_cases.read"), async (c) => 
   const rows = await c.env.DB.prepare(
     `SELECT ${distinct} c.id, c.assr_no, c.customer_name, c.stage, c.priority,
             c.complained_date, c.deadline_at, c.issue_category, c.complaint_issue, c.resolution_method,
-            c.creditor_code,
+            c.creditor_code, ${caseCompanySql(c.env, "c.")} AS company_id,
             cr.company_name AS creditor_name,
             (julianday('now') - julianday(c.complained_date)) AS age_days,
             CASE WHEN c.deadline_at IS NOT NULL AND datetime('now') > c.deadline_at
@@ -2710,7 +2724,8 @@ app.get("/metrics/drill", requirePermission("service_cases.read"), async (c) => 
       LIMIT ${limit}`
   )
     .bind(...binds)
-    .all();
+    .all<Record<string, unknown>>();
+  await showErpSupplierNames(c.env, rows.results ?? [], null);
 
   return c.json({
     metric,
@@ -2738,7 +2753,7 @@ app.post("/:id/generate-po", requirePermission("service_cases.manage"), async (c
      statement joins. */
   const poCoSql = assrCompanySql(c, "c.company_id");
   const existing = await c.env.DB.prepare(
-    `SELECT c.po_no, c.creditor_code, cr.company_name AS creditor_name
+    `SELECT c.po_no, c.creditor_code, ${caseCompanySql(c.env, "c.")} AS company_id, cr.company_name AS creditor_name
        FROM assr_cases c
        LEFT JOIN creditors cr ON cr.creditor_code = c.creditor_code
       WHERE c.id = ?${poCoSql}`
@@ -2762,6 +2777,7 @@ app.post("/:id/generate-po", requirePermission("service_cases.manage"), async (c
   // Name when the mirror has the creditor, else the raw code — a case can carry
   // a creditor_code the mirror has not synced yet, and the code still tells the
   // reader who the PO is for.
+  await showErpSupplierNames(c.env, [existing], null);
   const supplierLabel = existing.creditor_name || existing.creditor_code;
   await logActivity(
     c.env,

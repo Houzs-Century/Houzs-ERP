@@ -31,6 +31,7 @@ import {
 } from "../vendor/scm/lib/assr/stages";
 import { ANOTHER_RETURN_HINT, type SupplierReturn } from "../vendor/scm/lib/assr/returns";
 import { MobileFactoryTrips } from "./MobileFactoryTrips";
+import { MobileExchangePoRow } from "./MobileExchangePoRow";
 import { ITEM_LOCATION_OPTIONS, PICKUP_STATUS_OPTIONS, pickupTrackingOptions, pickupPicSelectOptions, usePickupPicDrivers } from "../components/assr/PickupTrackingFields";
 import { pendingWithOptions } from "../vendor/scm/lib/assr-verification-fields";
 import { MobileReopenControl } from "./MobileReopenControl";
@@ -50,8 +51,7 @@ import {
   caseNo,
   cellEllipsis,
   customer,
-  dm,
-  dtm,
+  dm, dtm,
   get,
   prettyStage,
   priorityOf,
@@ -263,7 +263,7 @@ function useAssignableUsers(): PicUser[] {
  *  the core /api/assr backend. A non-director Sales rep opens the READ-ONLY
  *  detail instead (owner 2026-07-23), keeping the list + create sheet as on
  *  desktop. The predicate is IMPORTED; the why is in MobileMyCaseDetail. */
-export function MobileServiceCase({ onBack, startNew = false }: { onBack?: () => void; startNew?: boolean }) {
+export function MobileServiceCase({ onBack, startNew = false, onRaiseExchangePo }: { onBack?: () => void; startNew?: boolean; onRaiseExchangePo?: () => void }) {
   const { user } = useAuth();
   const [openId, setOpenId] = useState<number | null>(null);
   // `startNew` (from the Orders FAB "+ New Service Case") opens the create sheet
@@ -272,7 +272,7 @@ export function MobileServiceCase({ onBack, startNew = false }: { onBack?: () =>
 
   if (openId != null) {
     const Detail = isSalesNonDirector(user) ? MobileMyCaseDetail : CaseDetail;
-    return <Detail id={openId} onBack={() => setOpenId(null)} />;
+    return <Detail id={openId} onBack={() => setOpenId(null)} onRaiseExchangePo={onRaiseExchangePo} />;
   }
   return (
     <>
@@ -701,7 +701,7 @@ function Avatar({ name, size = 38 }: { name: string; size?: number }) {
 // ── DETAIL — tabbed (Overview / Stage / Info / Timeline) ──────────
 type DetailTab = "overview" | "stage" | "info" | "timeline";
 
-function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
+function CaseDetail({ id, onBack, onRaiseExchangePo }: { id: number; onBack: () => void; onRaiseExchangePo?: () => void }) {
   const qc = useQueryClient();
   const confirm = useConfirm();
   const notify = useNotify();
@@ -1367,6 +1367,7 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
                     <div style={{ fontSize: 11, color: GREY, lineHeight: 1.4, margin: "6px 0 2px" }}>{ANOTHER_RETURN_HINT}</div>
                   )}
                   <KV label="Order PO" value={assrOrderPoText(c) || "—"} mono />
+                  <MobileExchangePoRow c={c} onRaise={onRaiseExchangePo} />
                   <KV label="PO No" value={(poNo ? [String(poNo)] : []).concat(relatedPOs.map((p) => String(get(p, "docNo", "doc_no") ?? "")).filter(Boolean)).join(", ") || "—"} mono />
                 </EditableAcc>
               </>

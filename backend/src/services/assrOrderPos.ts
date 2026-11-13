@@ -50,6 +50,58 @@ export async function attachOrderPurchaseOrders(
   );
 }
 
+/* Exchange POs (owner 2026-11-13) — the REAL purchase orders raised FROM a
+   service case for a one-to-one exchange, linked by scm.purchase_orders
+   .assr_case_id (stamped by the PO create handler). Attached as `exchange_pos`,
+   the twin of order_pos but the case's OWN documents and the entry into
+   PO -> GRN -> purchase return / purchase invoice. Scoped to each case's own
+   company; fail-soft so the case still loads. */
+export type AssrExchangePo = { id: string; po_number: string; status: string };
+
+export async function attachExchangePurchaseOrders(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  rows: Array<Record<string, unknown>>,
+): Promise<void> {
+  const byCompany = new Map<number, Array<Record<string, unknown>>>();
+  for (const r of rows) {
+    r.exchange_pos = [];
+    const cid = Number(r.company_id);
+    const id = Number(r.id);
+    if (!Number.isInteger(cid) || cid <= 0 || !Number.isInteger(id) || id <= 0) continue;
+    const group = byCompany.get(cid) ?? [];
+    group.push(r);
+    byCompany.set(cid, group);
+  }
+  await Promise.all(
+    [...byCompany].map(async ([cid, group]) => {
+      try {
+        const ids = group.map((r) => Number(r.id));
+        const res = await sb
+          .from("purchase_orders")
+          .select("id, po_number, status, assr_case_id")
+          .eq("company_id", cid)
+          .in("assr_case_id", ids);
+        if (res.error || !res.data) return;
+        type Po = { id: string | null; po_number: string | null; status: string | null; assr_case_id: number | null };
+        const byCase = new Map<number, AssrExchangePo[]>();
+        for (const p of res.data as Po[]) {
+          if (!p.id || !p.po_number || p.assr_case_id == null) continue;
+          const list = byCase.get(Number(p.assr_case_id)) ?? [];
+          list.push({ id: String(p.id), po_number: p.po_number, status: p.status ?? "" });
+          byCase.set(Number(p.assr_case_id), list);
+        }
+        for (const [, list] of byCase) {
+          list.sort((a, b) => a.po_number.localeCompare(b.po_number, undefined, { numeric: true }));
+        }
+        for (const r of group) r.exchange_pos = byCase.get(Number(r.id)) ?? [];
+      } catch {
+        /* fail-soft: the case still loads with exchange_pos = [] */
+      }
+    }),
+  );
+}
+
 /* HC-0130 — the supplier on the PO raised from the case item's SO line
    (SO line -> purchase_order_items.so_item_id -> purchase_orders.supplier),
    so the Solution step's SUPPLIER fills itself. CANCELLED POs are skipped;
@@ -140,7 +192,74 @@ export async function orderSupplierCode(
   return so ? { code: so, source: "so" } : null;
 }
 
-export const poKey = (companyId: unknown, docNo: unknown, itemCode: unknown) => `${Number(companyId)}|${docNo}|${itemCode}`;
+/* HC-0228: service cases name their supplier from the ERP list (scm.suppliers).
+   The SQL reads join the AutoCount `creditors` mirror, which can hold ANOTHER
+   company under the same code (400-H004: ERP Hookka Industries, AutoCount Hao Hua
+   Furniture). A code the ERP list does not have (MAN-xxxx, old AutoCount-only
+   codes) keeps the creditors name. Supplier-return trips on the same code follow
+   the case. Fail-soft. */
+export async function applyErpSupplierNames(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  rows: Array<Record<string, unknown>>,
+  trips: Array<Record<string, unknown>> | null,
+): Promise<void> {
+  const byCompany = new Map<number, Array<Record<string, unknown>>>();
+  for (const r of rows) {
+    const cid = Number(r.company_id);
+    if (typeof r.creditor_code !== "string" || !r.creditor_code || !Number.isInteger(cid) || cid <= 0) continue;
+    byCompany.set(cid, [...(byCompany.get(cid) ?? []), r]);
+  }
+  await Promise.all([...byCompany].map(async ([cid, group]) => {
+    try {
+      const res = await sb.from("suppliers").select("code, name, email, phone, contact_person")
+        .eq("company_id", cid).in("code", [...new Set(group.map((r) => r.creditor_code))]);
+      if (res.error) return;
+      const byCode = new Map(((res.data ?? []) as Array<Record<string, string | null>>).map((s) => [s.code, s]));
+      for (const r of group) {
+        const s = byCode.get(r.creditor_code as string);
+        if (!s?.name) continue;
+        r.creditor_name = s.name;
+        r.creditor_email = s.email ?? null;
+        r.creditor_phone = s.phone ?? null;
+        r.creditor_mobile = null;
+        r.creditor_attention = s.contact_person ?? null;
+        for (const t of trips ?? []) if (t.creditor_code === r.creditor_code) t.creditor_name = s.name;
+      }
+    } catch { /* fail-soft: the creditors name stays */ }
+  }));
+}
+
+type PickerHit = { creditor_code: string; company_name: string | null; phone1: string | null };
+
+/* HC-0228: the service-case supplier picker. ERP suppliers of the caller's
+   companies first, then creditors hits whose code the ERP list does not have, so
+   400-H004 is offered as Hookka Industries only. The ERP list is small (63 on
+   prod), so it is read whole and searched here. Read error -> creditors hits. */
+export async function supplierPickerResults(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  companyIds: number[],
+  q: string,
+  creditorHits: PickerHit[],
+): Promise<PickerHit[]> {
+  try {
+    const res = await sb.from("suppliers").select("code, name, phone").in("company_id", companyIds);
+    if (res.error) return creditorHits;
+    const all = (res.data ?? []) as Array<{ code: string; name: string | null; phone: string | null }>;
+    const erpCodes = new Set(all.map((s) => s.code));
+    const erp = all
+      .filter((s) => !q || [s.code, s.name].some((v) => String(v ?? "").toLowerCase().includes(q)))
+      .map((s) => ({ creditor_code: s.code, company_name: s.name, phone1: s.phone ?? null }));
+    return [...erp, ...creditorHits.filter((h) => !erpCodes.has(h.creditor_code))]
+      .sort((a, b) => String(a.company_name ?? "").localeCompare(String(b.company_name ?? "")))
+      .slice(0, 20);
+  } catch {
+    return creditorHits;
+  }
+}
+
+export const poKey =(companyId: unknown, docNo: unknown, itemCode: unknown) => `${Number(companyId)}|${docNo}|${itemCode}`;
 
 /* Batched: which (company, SO, item) triples have a non-cancelled PO raised for
    that SO line. 3 reads per company, whatever the number of cases. Read error

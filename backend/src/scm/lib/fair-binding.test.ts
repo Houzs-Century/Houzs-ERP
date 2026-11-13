@@ -6,10 +6,10 @@ import {
   fairLinkForEdit,
   fairLinkOnCreate,
   fairRequiredProblem,
+  isScanCreate,
   keyerFairDefaultFor,
   loadKeyerFairs,
   resolveFairForCreate,
-  resolveScanFair,
   type FairConfirmSb,
   type FairDb,
 } from './fair-binding';
@@ -149,10 +149,6 @@ describe('fairRequiredProblem — a typed Houzs order names a fair or No fair (o
   });
 });
 
-/* ── Scanned orders (owner 2026-10-19) ─────────────────────────────────────────
-   「先优先匹配上地点和日期和他站的场。如果没有就地点和日期，没有就他今天站的场，
-   再没有就他最近站的场」. The query shapes, most specific first. */
-const AT_PLACE_ON_DAY = /lower\(trim\(p\.venue\)\) = lower\(trim\(\?\)\)\s+AND p\.start_date <= \?/;
 const KEYER_AMONG = /p\.id IN \(/;
 const EVENT_BOOTHS = /p\.start_date = \?/;
 const KEYER_FAIRS = /p\.pic_id = \?/;
@@ -161,86 +157,41 @@ const USER_NAME = /FROM users u/;
 
 const REX = (id: number, brand: string) =>
   project({ id, brand, organizer: 'REX', startdate: '2026-10-15', enddate: '2026-10-18' });
-const scanArgs = { companySql: CO, keyerId: 57, slipVenue: 'MID VALLEY', slipDate: '2026-10-16', keyedDate: '2026-10-19' };
-
-describe('resolveScanFair — slip place and date first, the keyer\'s fair after', () => {
-  it('1. a fair at the slip place on the slip date that the keyer stands at: the brand\'s booth, Fair Day = slip date', async () => {
-    const db = fakeDb([[KEYER_AMONG, [{ id: 341 }]], [AT_PLACE_ON_DAY, [REX(340, 'AKEMI'), REX(341, 'DUNLOPILLO')]]]);
-    const r = await resolveScanFair({ db, ...scanArgs, brand: 'AKEMI' });
-    expect(r).toMatchObject({ projectId: 340, match: 'PICKED', step: 'slip_mine', fairDate: '2026-10-16', venue: 'MID VALLEY' });
-    const day = db.calls.find((c) => AT_PLACE_ON_DAY.test(c.sql))!;
-    expect(day.binds).toEqual(['MID VALLEY', '2026-10-16', '2026-10-16']);
-  });
-
-  it('1. stays inside the keyer\'s event: no brand booth there means the keyer\'s own booth, not another organizer\'s', async () => {
-    const MLE_ZANOTTI = project({ id: 350, brand: 'ZANOTTI', organizer: 'MLE', startdate: '2026-10-16', enddate: '2026-10-16' });
-    const db = fakeDb([[KEYER_AMONG, [{ id: 341 }]], [AT_PLACE_ON_DAY, [REX(340, 'AKEMI'), REX(341, 'DUNLOPILLO'), MLE_ZANOTTI]]]);
-    const r = await resolveScanFair({ db, ...scanArgs, brand: 'ZANOTTI' });
-    expect(r).toMatchObject({ projectId: 341, step: 'slip_mine' });
-  });
-
-  it('2. a fair there that day the keyer is not on: linked all the same (Confirm waits for PMS)', async () => {
-    const db = fakeDb([[KEYER_AMONG, []], [AT_PLACE_ON_DAY, [REX(340, 'AKEMI'), REX(341, 'DUNLOPILLO')]]]);
-    const r = await resolveScanFair({ db, ...scanArgs, brand: 'AKEMI' });
-    expect(r).toMatchObject({ projectId: 340, step: 'slip_place', fairDate: '2026-10-16' });
-  });
-
-  it('3. nothing at the slip place that day: the keyer\'s fair today, its brand booth, no Fair Day', async () => {
-    const IOI = (id: number, brand: string) => project({ id, venue: 'IOIGECC', organizer: 'MLE', brand, startdate: '2026-10-17', enddate: '2026-10-20' });
-    const db = fakeDb([
-      [AT_PLACE_ON_DAY, []], [EVENT_BOOTHS, [IOI(2320, 'AKEMI'), IOI(2321, 'ERGOTEX')]], [KEYER_FAIRS, [IOI(2320, 'AKEMI')]],
-    ]);
-    const r = await resolveScanFair({ db, ...scanArgs, brand: 'ERGOTEX' });
-    expect(r).toMatchObject({ projectId: 2321, step: 'today', fairDate: null, venue: 'IOIGECC' });
-  });
-
-  it('4. none today: the latest within the window', async () => {
-    const BIGHOME = project({ id: 2301, organizer: 'BIGHOME', brand: 'AKEMI', startdate: '2026-10-02', enddate: '2026-10-04' });
-    const db = fakeDb([[AT_PLACE_ON_DAY, []], [EVENT_BOOTHS, [BIGHOME]], [KEYER_FAIRS, [BIGHOME]]]);
-    expect(await resolveScanFair({ db, ...scanArgs, brand: 'AKEMI' })).toMatchObject({ projectId: 2301, step: 'latest' });
-  });
-
-  it('a slip date after the day it was keyed is a misread: the place is not looked up by it', async () => {
-    const db = fakeDb([[KEYER_FAIRS, []]]);
-    const r = await resolveScanFair({ db, ...scanArgs, slipDate: '2026-11-16', brand: 'AKEMI' });
-    expect(r.step).toBe('none');
-    expect(db.calls.some((c) => AT_PLACE_ON_DAY.test(c.sql))).toBe(false);
-  });
-
-  it('5. nothing anywhere, or a failed read: PENDING, never a guess', async () => {
-    expect(await resolveScanFair({ db: fakeDb([[AT_PLACE_ON_DAY, []], [KEYER_FAIRS, []]]), ...scanArgs, brand: 'AKEMI' }))
-      .toEqual({ projectId: null, match: 'PENDING', candidateIds: [], step: 'none', fairDate: null, venue: null });
-    expect((await resolveScanFair({ db: fakeDb([[AT_PLACE_ON_DAY, new Error('down')]]), ...scanArgs, brand: 'AKEMI' })).step).toBe('none');
-  });
-});
 
 describe('fairLinkOnCreate — the columns a new order is written with', () => {
   const base = { companySql: CO, keyerId: 57, soDate: '2026-10-19', bindingProjectId: 2228 };
 
   it('No fair ticked is decided, whatever else came', async () => {
     const r = await fairLinkOnCreate({ ...base, db: fakeDb([]), companyCode: 'HOUZS', scanned: false, body: { noFair: true, fairOrganizer: 'REX' }, venue: 'MID VALLEY', brand: null });
-    expect(r).toEqual({ columns: { project_id: null, fair_match: 'NO_FAIR' }, step: null });
+    expect(r).toEqual({ columns: { project_id: null, fair_match: 'NO_FAIR' }, note: null });
   });
 
-  it('a Houzs scan found by slip place and date takes the slip date as its Fair Day', async () => {
-    const db = fakeDb([[KEYER_AMONG, [{ id: 340 }]], [AT_PLACE_ON_DAY, [REX(340, 'AKEMI')]]]);
-    const r = await fairLinkOnCreate({ ...base, db, companyCode: 'HOUZS', scanned: true, body: { venue: 'MID VALLEY', slipDate: '2026-10-16' }, venue: 'MID VALLEY', brand: 'AKEMI' });
-    expect(r).toEqual({ columns: { project_id: 340, fair_match: 'PICKED', fair_date: '2026-10-16' }, step: 'slip_mine' });
-  });
-
-  it('a slip with no place takes the place of the fair it was put at', async () => {
-    const IOI = project({ id: 2320, venue: 'IOIGECC', organizer: 'MLE', startdate: '2026-10-17', enddate: '2026-10-20' });
-    const db = fakeDb([[EVENT_BOOTHS, [IOI]], [KEYER_FAIRS, [IOI]]]);
-    const r = await fairLinkOnCreate({ ...base, db, companyCode: 'HOUZS', scanned: true, body: { venue: null, slipDate: '2026-10-16' }, venue: null, brand: 'AKEMI' });
-    expect(r).toEqual({ columns: { project_id: 2320, fair_match: 'PICKED', venue: 'IOIGECC', venue_source: 'PMS' }, step: 'today' });
+  it('a scan is placed nowhere, in either company, and reads nothing to decide it (owner 2026-11-12)', async () => {
+    /* 「OCR 本身不会去自动填 venue, fair & fair date ... 强制性自己必须手动去填」 */
+    for (const companyCode of ['HOUZS', '2990']) {
+      const db = fakeDb([[KEYER_FAIRS, [REX(340, 'AKEMI')]], [EVENT_BOOTHS, [REX(340, 'AKEMI')]]]);
+      const r = await fairLinkOnCreate({ ...base, db, companyCode, scanned: true, body: { venue: 'MID VALLEY', slipDate: '2026-10-16' }, venue: 'MID VALLEY', brand: 'AKEMI' });
+      expect(r).toEqual({ columns: { project_id: null, fair_match: 'PENDING' }, note: expect.stringContaining('picked by a person') });
+      expect(db.calls).toEqual([]);
+    }
   });
 
   it('Houzs never falls back to the keyer\'s running fair at ANOTHER place; 2990 keeps that fallback', async () => {
     const typed = { scanned: false, body: { fairOrganizer: 'REX', fairStart: '2026-10-15', fairEnd: '2026-10-18' }, venue: 'KLCC', brand: 'AKEMI' };
     expect(await fairLinkOnCreate({ ...base, ...typed, db: fakeDb([[EVENT_BOOTHS, []]]), companyCode: 'HOUZS' }))
-      .toEqual({ columns: { project_id: null, fair_match: 'PENDING' }, step: null });
+      .toEqual({ columns: { project_id: null, fair_match: 'PENDING' }, note: null });
     expect(await fairLinkOnCreate({ ...base, ...typed, db: fakeDb([[EVENT_BOOTHS, []]]), companyCode: '2990' }))
-      .toEqual({ columns: { project_id: 2228, fair_match: 'PICKED' }, step: null });
+      .toEqual({ columns: { project_id: 2228, fair_match: 'PICKED' }, note: null });
+  });
+});
+
+describe('isScanCreate — what counts as a scan on the create path', () => {
+  it('the background job, or a draft posted with the slip it was read from', () => {
+    expect(isScanCreate('scan', {})).toBe(true);
+    expect(isScanCreate(undefined, { asDraft: true, slipImageKey: 'scan-so/1/a.jpg' })).toBe(true);
+    expect(isScanCreate('web', { asDraft: true })).toBe(false);
+    expect(isScanCreate('web', { asDraft: true, slipImageKey: ' ' })).toBe(false);
+    expect(isScanCreate('web', { slipImageKey: 'scan-so/1/a.jpg' })).toBe(false);
   });
 });
 
@@ -260,11 +211,31 @@ function fakeSb(tables: Record<string, Row[] | Error>): FairConfirmSb {
 describe('fairConfirmProblems — what a DRAFT needs before Confirm (owner 2026-10-19)', () => {
   const run = (sb: FairConfirmSb, db: FairDb, over: Partial<{ companyCode: string; confirmerId: number }> = {}) =>
     fairConfirmProblems({ sb, db, companySql: CO, companyCode: 'HOUZS', scope: (q) => q, docNo: 'HC-SO-2610-300', confirmerId: 57, todayMyt: '2026-10-19', ...over });
-  const linked = (extra: Row = {}) => ({ mfg_sales_orders: [{ project_id: 340, fair_match: 'PICKED', venue: 'MID VALLEY', ...extra }] });
+  const linked = (extra: Row = {}) => ({ mfg_sales_orders: [{ project_id: 340, fair_match: 'PICKED', venue: 'MID VALLEY', fair_date: '2026-10-16', ...extra }] });
   const BOOTH = REX(340, 'AKEMI');
 
-  it('2990 is not on this rule', async () => {
+  it('a typed 2990 order is not on this rule', async () => {
     expect(await run(fakeSb({ mfg_sales_orders: [{ project_id: null, fair_match: 'PENDING' }] }), fakeDb([]), { companyCode: '2990' })).toEqual([]);
+  });
+
+  it('a SCAN needs a fair or No fair in every company (owner 2026-11-12)', async () => {
+    const unplaced = { mfg_sales_orders: [{ project_id: null, fair_match: 'PENDING' }], scan_jobs: [{ houzs_user_id: 57 }] };
+    expect(await run(fakeSb(unplaced), fakeDb([]), { companyCode: '2990' }))
+      .toEqual([{ code: 'fair_required', field: 'Fair', message: 'Pick the Fair, or mark it No fair (showroom).' }]);
+    expect((await run(fakeSb(unplaced), fakeDb([[KEYER_FAIRS, []]])))[0]?.code).toBe('fair_required');
+    /* The phone's old fallback scan has no job row: the slip photo marks it. */
+    const fallback = { mfg_sales_orders: [{ project_id: null, fair_match: 'PENDING', slip_image_key: 'scan-so/1/a.jpg' }] };
+    expect((await run(fakeSb(fallback), fakeDb([]), { companyCode: '2990' }))[0]?.code).toBe('fair_required');
+    const noFair = { mfg_sales_orders: [{ project_id: null, fair_match: 'NO_FAIR' }], scan_jobs: [{ houzs_user_id: 57 }] };
+    expect(await run(fakeSb(noFair), fakeDb([]), { companyCode: '2990' })).toEqual([]);
+  });
+
+  it('a SCAN linked to a fair needs its Fair Day; a typed order does not', async () => {
+    const day = [{ code: 'required_field', field: 'Fair day', message: 'Fair day is required.' }];
+    const scan = { ...linked({ fair_date: null }), scan_jobs: [{ houzs_user_id: 57 }] };
+    expect(await run(fakeSb(scan), fakeDb([[BOOTH_BY_ID, [BOOTH]]]))).toEqual(day);
+    expect(await run(fakeSb(scan), fakeDb([]), { companyCode: '2990' })).toEqual(day);
+    expect(await run(fakeSb({ ...linked({ fair_date: null }), scan_jobs: [] }), fakeDb([[BOOTH_BY_ID, [BOOTH]]]))).toEqual([]);
   });
 
   it('no fair and no No fair: refused, worded by why the keyer got none', async () => {

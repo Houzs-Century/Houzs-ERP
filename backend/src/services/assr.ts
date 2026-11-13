@@ -17,7 +17,7 @@ import { resolveCreditorForCase } from "./stockItems";
 import { getActiveStaffToken } from "./caseTracking";
 import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
 import { assrVisibilityPredicateSql } from "./assrVisibility";
-import { attachOrderPosAndFill } from "./assrCreditorFill";
+import { attachOrderPosAndFill, attachExchangePosEnv, caseCompanySql, pickedSupplierName, showErpSupplierNames } from "./assrCreditorFill";
 import { attachOrderDeliveryDates } from "./assrOrderDos";
 
 // ── Types ─────────────────────────────────────────────────────
@@ -774,7 +774,7 @@ export async function getAssrDetail(env: Env, id: number) {
   // SCM fallback) so the detail page's DO field also fills for cases
   // whose hand-entered delivery_order was never set — which is nearly
   // all of them.
-  await Promise.all([attachDeliveryOrders(env, [caseRow]).then(() => attachOrderDeliveryDates(env, [caseRow])), attachOrderPos(env, [caseRow])]);
+  await Promise.all([attachDeliveryOrders(env, [caseRow]).then(() => attachOrderDeliveryDates(env, [caseRow])), attachOrderPos(env, [caseRow]), attachExchangePosEnv(env, [caseRow])]);
 
   const items = await env.DB.prepare(
     `SELECT * FROM assr_items WHERE assr_id = ? ORDER BY id`
@@ -817,6 +817,7 @@ export async function getAssrDetail(env: Env, id: number) {
   // summary columns on the case mirror the CURRENT (highest) round; this list
   // is the full history so a case sent back twice keeps both trips' dates.
   const supplierReturns = await listSupplierReturns(env, id);
+  await showErpSupplierNames(env, [caseRow], supplierReturns);
 
   // v3.1 — per-stage lifecycle for the Workflow Progress Tracker.
   // Returns one row per stage (entered + exited timestamps), ordered
@@ -1394,27 +1395,20 @@ export async function setCaseCreditorManual(
   | { ok: false; status: 400 | 404; error: string }
 > {
   const existing = await env.DB.prepare(
-    `SELECT creditor_code FROM assr_cases WHERE id = ? AND archived_at IS NULL`
+    `SELECT creditor_code, ${caseCompanySql(env, "")} AS company_id FROM assr_cases WHERE id = ? AND archived_at IS NULL`
   )
     .bind(id)
-    .first<{ creditor_code: string | null }>();
+    .first<{ creditor_code: string | null; company_id: number | null }>();
   if (!existing) return { ok: false, status: 404, error: "Case not found" };
 
   let creditorName: string | null = null;
   if (creditorCode) {
-    const cr = await env.DB.prepare(
-      `SELECT company_name FROM creditors WHERE creditor_code = ?`
-    )
-      .bind(creditorCode)
-      .first<{ company_name: string | null }>();
-    if (!cr) {
-      return {
-        ok: false,
-        status: 400,
-        error: "Unknown supplier code — pick one from the search results or add it first",
-      };
+    // HC-0228: an ERP supplier code is valid even when AutoCount lacks it, and its ERP name wins.
+    const name = await pickedSupplierName(env, creditorCode, existing.company_id);
+    if (name === undefined) {
+      return { ok: false, status: 400, error: "Unknown supplier code — pick one from the search results or add it first" };
     }
-    creditorName = cr.company_name ?? null;
+    creditorName = name;
   }
 
   await env.DB.prepare(
@@ -2069,7 +2063,7 @@ async function attachOrderPos(env: Env, rows: Array<Record<string, unknown>>) {
  *  e.g. the D1 test env) leaves rows without do_numbers — the list itself
  *  must never 500 over an enrichment column. Failures are logged, not
  *  swallowed silently. */
-async function attachDeliveryOrders(env: Env, rows: any[]) {
+export async function attachDeliveryOrders(env: Env, rows: any[]) {
   if (rows.length === 0) return;
 
   const houzs = rows.filter((r) => !r.company_code || r.company_code === "HOUZS");
@@ -2241,7 +2235,7 @@ export async function exportAssrCases(
             c.complained_date, c.created_at, c.deadline_at,
             c.po_amount, c.po_no,
             u.name as assigned_to_name, u2.name as created_by_name,
-            c.creditor_code as creditor_code,
+            c.creditor_code as creditor_code, ${caseCompanySql(env, "c.")} AS company_id,
             cr.company_name as creditor_name,
             co.code as company_code,
             CASE WHEN NOT ${assrOpenStageSql("c")} THEN 0
@@ -2259,6 +2253,7 @@ export async function exportAssrCases(
     .all();
   const results = (rows.results ?? []) as any[];
   await attachDeliveryOrders(env, results);
+  await showErpSupplierNames(env, results, null);
   return results;
 }
 

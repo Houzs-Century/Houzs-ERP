@@ -23,17 +23,30 @@
 // report applies the marks (the lib's withMarks), the closed months' recalculation
 // behind the adjustments included, and a one-month report receives what the
 // month before moved to it. Each mark and undo lands in the order's History.
+// A third kind, 'exclude_change' with a month (「这次改价不算」, the same day): the
+// order's upsales / drop sales of that month move no commission — the changes are
+// flagged before the report is built (withUncountedChanges); the order still earns.
+//
+// Finance's own lines (owner 2026-11-13, 「做」): POST /commission/lines
+// { docNo, month, goodsSen, reason } types an amount of goods, plus or minus, on
+// an order for an open month — for what the system holds no record of (an upsale
+// made before the order came into the ERP). It is paid in that month at the
+// order's own rate, beside the report (the lib's withManualLines), and frozen
+// with the month when it closes. POST /commission/lines/remove { id } takes it
+// away while its month is open. Each lands in the order's History.
 // Mounted under /acc-events, behind scmAreaGuard("scm.finance.accounting"):
-// reading needs view; closing, reopening and marking edit on Finance › Accounting.
+// reading needs view; closing, reopening, marking and typing a line edit on
+// Finance › Accounting.
 
 import { requireActiveCompanyId, scopeToCompanyId } from '../lib/companyScope';
 import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { todayMyt } from '../lib/my-time';
 import { dateOrNull } from '../lib/date-coerce';
 import {
-  buildEventCommission, deferredInFrom, monthAdjustmentsOf, monthOfRange, paidByOrder, withMarks, withMonthAdjustments,
-  type ClosedMonthPaid, type CommissionBasis, type CommissionCancel, type CommissionChange, type CommissionFair, type CommissionMark,
-  type CommissionPayment, type CommissionSo, type DeferredInRow, type EventCommissionReport, type MonthAdjustmentRow,
+  NO_FAIR_FROM, buildEventCommission, deferredInFrom, manualLineRows, monthAdjustmentsOf, monthOfRange, paidByOrder, withManualLines, withMarks, withMonthAdjustments,
+  withUncountedChanges,
+  type ClosedMonthPaid, type CommissionBasis, type CommissionCancel, type CommissionChange, type CommissionFair, type CommissionManualLine, type CommissionMark,
+  type CommissionPayment, type CommissionSo, type DeferredInRow, type EventCommissionReport, type ManualLineRow, type MonthAdjustmentRow,
 } from '../lib/event-commission';
 import { assertAuditWritable, auditUnavailableBody, recordEntityAudit } from '../lib/entity-audit';
 import { recordSoAudit } from '../lib/so-audit';
@@ -66,8 +79,9 @@ type SoRead = {
   status: string; on_hold: boolean | null; mattress_sofa_sen: number | null; bedframe_sen: number | null;
   accessories_sen: number | null; others_sen: number | null; local_total_sen: number | null;
   total_revenue_sen: number | null; created_at: string; so_date: string | null; customer_so_no: string | null;
+  branding: string | null; vp_brand: string | null; venue: string | null;
 };
-const SO_COLS = 'doc_no, project_id, salesperson_id, debtor_name, status, on_hold, mattress_sofa_sen, bedframe_sen, accessories_sen, others_sen, local_total_sen, total_revenue_sen, created_at, so_date, customer_so_no';
+const SO_COLS = 'doc_no, project_id, salesperson_id, debtor_name, status, on_hold, mattress_sofa_sen, bedframe_sen, accessories_sen, others_sen, local_total_sen, total_revenue_sen, created_at, so_date, customer_so_no, branding, vp_brand, venue';
 
 type FairRead = {
   id: number | string; name: string | null; brand: string | null; start_date: string | null; end_date: string | null; archived_at: string | null; status: string | null; total_sales: number | string | null;
@@ -79,10 +93,25 @@ const FAIR_SQL = `SELECT p.id, p.name, p.brand, p.start_date, p.end_date, p.arch
 const fail = (c: any, what: string, reason: string) =>
   c.json({ error: 'load_failed', message: `The ${what} could not be read — try again.`, reason }, 500);
 
+/** A sales order row as the lib reads it. */
+const commissionSoOf = (s: SoRead, staffName: ReadonlyMap<string, string | null>): CommissionSo => ({
+  docNo: s.doc_no, projectId: s.project_id == null ? null : Number(s.project_id), salesperson: s.salesperson_id ? staffName.get(s.salesperson_id) ?? null : null,
+  customer: s.debtor_name, status: String(s.status ?? '').toUpperCase(), onHold: s.on_hold === true,
+  goodsSen: n(s.mattress_sofa_sen) + n(s.bedframe_sen) + n(s.accessories_sen) + n(s.others_sen),
+  totalSen: n(s.total_revenue_sen) > 0 ? n(s.total_revenue_sen) : n(s.local_total_sen),
+  createdAt: stampOf(s.created_at),
+  soDate: dayOf(s.so_date),
+  ref: s.customer_so_no?.trim() || null,
+  brand: s.branding?.trim() || null,
+  vpBrand: s.vp_brand?.trim() || null,
+  venue: s.venue?.trim() || null,
+});
+
 type Live = { report: EventCommissionReport } | { response: Response };
 
-/** The report for [from, to] as the data stands now. */
-async function liveReport(c: any, companyId: number, from: string, to: string, basis: CommissionBasis): Promise<Live> {
+/** The report for [from, to] as the data stands now; the price changes Finance
+ *  left out (`marks`, 「这次改价不算」) move no commission in it. */
+async function liveReport(c: any, companyId: number, from: string, to: string, basis: CommissionBasis, marks: readonly CommissionMark[]): Promise<Live> {
   const env = c.env;
   const sb = c.get('supabase');
   const fromTs = `${from}T00:00:00+08:00`;
@@ -92,7 +121,8 @@ async function liveReport(c: any, companyId: number, from: string, to: string, b
   });
 
   /* 1–2. Part 1's orders. By fair: the fairs starting in the range and all their
-     orders. By SO date: the orders opened in the range that have a fair. */
+     orders. By SO date: every order opened in the range — one with no fair too
+     (owner 2026-11-12: 「全部列出来，没有展会的标 No fair，要算佣金」). */
   let rangeFairs: FairRead[] = [];
   let partOne: { data: SoRead[]; error: { message: string } | null };
   if (basis === 'fair') {
@@ -108,7 +138,7 @@ async function liveReport(c: any, companyId: number, from: string, to: string, b
       scopeToCompanyId(sb.from('mfg_sales_orders').select(SO_COLS).in('project_id', batch), companyId).order('doc_no').range(lo, hi));
   } else {
     const opened = await paginateAll<SoRead>((lo, hi) =>
-      scopeToCompanyId(sb.from('mfg_sales_orders').select(SO_COLS).gte('so_date', from).lte('so_date', to).not('project_id', 'is', null), companyId)
+      scopeToCompanyId(sb.from('mfg_sales_orders').select(SO_COLS).gte('so_date', from).lte('so_date', to), companyId)
         .order('doc_no').range(lo, hi));
     partOne = { data: opened.data ?? [], error: opened.error };
   }
@@ -132,9 +162,21 @@ async function liveReport(c: any, companyId: number, from: string, to: string, b
   const touched = [...new Set([
     ...(payIn.data ?? []).map((r) => r.so_doc_no), ...(chIn.data ?? []).map((r) => r.so_doc_no), ...(cancelIn.data ?? []).map((r) => r.doc_no),
   ])].filter((d) => d && !known.has(d));
-  const partTwoRead = await chunkIn<SoRead, string>(touched, (batch, lo, hi) =>
-    scopeToCompanyId(sb.from('mfg_sales_orders').select(SO_COLS).in('doc_no', batch).not('project_id', 'is', null), companyId).order('doc_no').range(lo, hi));
+  /* By SO date an order with no fair counts too, from NO_FAIR_FROM (the old ones
+     before it stay out); by fair only orders on a fair. */
+  const partTwoRead = await chunkIn<SoRead, string>(touched, (batch, lo, hi) => {
+    const q = scopeToCompanyId(sb.from('mfg_sales_orders').select(SO_COLS).in('doc_no', batch), companyId);
+    return (basis === 'fair' ? q.not('project_id', 'is', null) : q).order('doc_no').range(lo, hi);
+  });
   if (partTwoRead.error) return fail(c, 'orders', partTwoRead.error.message);
+  /* …and an older order with no fair whose price changed in the range: its
+     upsales and drop sales count (owner 2026-11-13) — or that was cancelled in
+     it: it gives back what it was paid on (owner 2026-11-13, 「要扣」). */
+  const changedInRange = new Set((chIn.data ?? []).map((r) => r.so_doc_no));
+  const cancelledInRange = new Set((cancelIn.data ?? []).map((r) => r.doc_no));
+  const twoRows = basis === 'so_date'
+    ? partTwoRead.data.filter((s) => s.project_id != null || (dayOf(s.so_date) ?? '') >= NO_FAIR_FROM || changedInRange.has(s.doc_no) || cancelledInRange.has(s.doc_no))
+    : partTwoRead.data;
 
   /* The fairs the rest needs: by fair, the earlier fairs of those orders (started
      before the range); by SO date, every fair any of the orders is on. */
@@ -145,16 +187,16 @@ async function liveReport(c: any, companyId: number, from: string, to: string, b
       .bind(companyId, ...ids, ...(startedBefore ? [startedBefore] : [])).all();
     return (res.results ?? []) as FairRead[];
   };
-  const fairIdsOf = (rows: SoRead[]) => [...new Set(rows.map((s) => Number(s.project_id)).filter((id) => Number.isInteger(id)))];
+  const fairIdsOf = (rows: SoRead[]) => [...new Set(rows.filter((s) => s.project_id != null).map((s) => Number(s.project_id)).filter((id) => Number.isInteger(id)))];
   let earlierFairs: FairRead[];
   let partTwo: SoRead[];
   try {
     if (basis === 'fair') {
-      earlierFairs = await readFairs(fairIdsOf(partTwoRead.data).filter((id) => !rangeIds.includes(id)), from);
+      earlierFairs = await readFairs(fairIdsOf(twoRows).filter((id) => !rangeIds.includes(id)), from);
       const earlierSet = new Set(earlierFairs.map((f) => Number(f.id)));
-      partTwo = partTwoRead.data.filter((s) => earlierSet.has(Number(s.project_id)));
+      partTwo = twoRows.filter((s) => earlierSet.has(Number(s.project_id)));
     } else {
-      partTwo = partTwoRead.data.filter((s) => (dayOf(s.so_date) ?? '9999-12-31') < from);
+      partTwo = twoRows.filter((s) => (dayOf(s.so_date) ?? '9999-12-31') < from);
       earlierFairs = await readFairs(fairIdsOf([...partOne.data, ...partTwo]), null);
     }
   } catch (e) {
@@ -183,7 +225,12 @@ async function liveReport(c: any, companyId: number, from: string, to: string, b
   const fairsRead = [...rangeFairs, ...earlierFairs];
   let rates: Awaited<ReturnType<typeof loadCostRates>>;
   try {
-    rates = await loadCostRates(env, fairsRead.map((f) => f.brand));
+    /* By SO date an order with no fair earns at its own brand's rate: every rate
+       card is read, so its brand is found whatever its case. */
+    const cards = basis === 'so_date'
+      ? ((await env.DB.prepare('SELECT brand FROM project_cost_rates').bind().all()).results ?? []).map((r: Record<string, unknown>) => String(r.brand ?? ''))
+      : [];
+    rates = await loadCostRates(env, [...fairsRead.map((f) => f.brand), ...cards]);
   } catch (e) {
     return fail(c, 'rate cards', String((e as Error)?.message ?? e));
   }
@@ -206,22 +253,15 @@ async function liveReport(c: any, companyId: number, from: string, to: string, b
   const report = buildEventCommission({
     basis, from, to, fairs,
     ratePctByBrand: new Map([...rates].map(([brand, r]) => [brand, r.commission_normal_pct ?? null])),
-    sos: sos.map((s): CommissionSo => ({
-      docNo: s.doc_no, projectId: Number(s.project_id), salesperson: s.salesperson_id ? staffName.get(s.salesperson_id) ?? null : null,
-      customer: s.debtor_name, status: String(s.status ?? '').toUpperCase(), onHold: s.on_hold === true,
-      goodsSen: n(s.mattress_sofa_sen) + n(s.bedframe_sen) + n(s.accessories_sen) + n(s.others_sen),
-      totalSen: n(s.total_revenue_sen) > 0 ? n(s.total_revenue_sen) : n(s.local_total_sen),
-      createdAt: stampOf(s.created_at),
-      soDate: dayOf(s.so_date),
-      ref: s.customer_so_no?.trim() || null,
-    })),
+    sos: sos.map((s) => commissionSoOf(s, staffName)),
     payments: pays.data.map((p): CommissionPayment => ({ docNo: p.so_doc_no, paidAt: dayOf(p.paid_at) ?? stampOf(p.paid_at), amountSen: n(p.amount_sen) })),
-    changes: chs.data.map((r): CommissionChange => ({
+    changes: withUncountedChanges(chs.data.map((r): CommissionChange => ({
       docNo: String(r.so_doc_no), changedAt: stampOf(r.changed_at),
       beforeGoodsSen: n(r.before_goods_sen), afterGoodsSen: n(r.after_goods_sen),
       beforeTotalSen: n(r.before_total_sen), afterTotalSen: n(r.after_total_sen),
       source: String(r.source ?? 'edit'), changedBy: (r.changed_by as string | null) ?? null,
-    })),
+      uncounted: false,
+    })), marks),
     cancels: cancels.data.map((r): CommissionCancel => ({ docNo: r.doc_no, at: stampOf(r.created_at) })),
   });
   return { report };
@@ -262,7 +302,7 @@ const closesMeta = (closes: readonly Closed[]) => ({
 type MarkRead = { id: string; so_doc_no: string; kind: string; month: string | null; reason: string | null; marked_by: string | null; marked_at: string };
 const MARK_COLS = 'id, so_doc_no, kind, month, reason, marked_by, marked_at';
 const markOf = (r: MarkRead): CommissionMark => ({
-  id: String(r.id), docNo: r.so_doc_no, kind: r.kind === 'defer' ? 'defer' : 'exclude', month: r.month ? ym(r.month) : null,
+  id: String(r.id), docNo: r.so_doc_no, kind: r.kind === 'defer' || r.kind === 'exclude_change' ? r.kind : 'exclude', month: r.month ? ym(r.month) : null,
   reason: r.reason ?? null, markedBy: r.marked_by ?? null, markedAt: stampOf(r.marked_at),
 });
 async function readMarks(sb: any, companyId: number): Promise<{ marks: CommissionMark[] } | { error: string }> {
@@ -272,8 +312,66 @@ async function readMarks(sb: any, companyId: number): Promise<{ marks: Commissio
   return { marks: (res.data ?? []).map(markOf) };
 }
 
-/** What every report needs besides its range: the closed months and the marks. */
-type Ctx = { closes: readonly Closed[]; marks: readonly CommissionMark[] };
+/* ── Finance's own lines ─────────────────────────────────────────────────── */
+
+type LineRead = { id: string; so_doc_no: string; month: string; goods_sen: number | string; reason: string | null; added_by: string | null; added_at: string };
+const LINE_COLS = 'id, so_doc_no, month, goods_sen, reason, added_by, added_at';
+const lineOf = (r: LineRead): CommissionManualLine => ({
+  id: String(r.id), docNo: r.so_doc_no, month: ym(r.month), goodsSen: n(r.goods_sen),
+  reason: r.reason ?? null, addedBy: r.added_by ?? null, addedAt: stampOf(r.added_at),
+});
+async function readLines(sb: any, companyId: number): Promise<{ lines: CommissionManualLine[] } | { error: string }> {
+  const res = await paginateAll<LineRead>((lo, hi) =>
+    scopeToCompanyId(sb.from('event_commission_lines').select(LINE_COLS), companyId).order('added_at').range(lo, hi));
+  if (res.error) return { error: res.error.message };
+  return { lines: (res.data ?? []).map(lineOf) };
+}
+
+/** Finance's lines on their orders' places: the orders, their fairs and the
+ *  rate cards are read here — an order with a line need not be on the report. */
+async function manualRowsFor(c: any, companyId: number, basis: CommissionBasis, lines: readonly CommissionManualLine[]): Promise<{ rows: ManualLineRow[] } | { response: Response }> {
+  const env = c.env;
+  const sb = c.get('supabase');
+  const docs = [...new Set(lines.map((l) => l.docNo))];
+  const read = await chunkIn<SoRead, string>(docs, (batch, lo, hi) =>
+    scopeToCompanyId(sb.from('mfg_sales_orders').select(SO_COLS).in('doc_no', batch), companyId).order('doc_no').range(lo, hi));
+  if (read.error) return { response: fail(c, 'orders', read.error.message) };
+  const sos = read.data;
+  const fairIds = [...new Set(sos.filter((s) => s.project_id != null).map((s) => Number(s.project_id)).filter((id) => Number.isInteger(id)))];
+  let fairsRead: FairRead[] = [];
+  let rates: Awaited<ReturnType<typeof loadCostRates>>;
+  try {
+    if (fairIds.length > 0) {
+      const res = await env.DB.prepare(`${FAIR_SQL}
+         WHERE p.company_id = ? AND p.id IN (${fairIds.map(() => '?').join(', ')})`).bind(companyId, ...fairIds).all();
+      fairsRead = (res.results ?? []) as FairRead[];
+    }
+    /* An order with no fair earns at its own brand's card, whatever its case: read them all. */
+    const cards = ((await env.DB.prepare('SELECT brand FROM project_cost_rates').bind().all()).results ?? []).map((r: Record<string, unknown>) => String(r.brand ?? ''));
+    rates = await loadCostRates(env, [...fairsRead.map((f) => f.brand), ...cards]);
+  } catch (e) {
+    return { response: fail(c, 'rate cards', String((e as Error)?.message ?? e)) };
+  }
+  const staffIds = [...new Set(sos.map((s) => s.salesperson_id).filter((v): v is string => !!v))];
+  const staff = await chunkIn<{ id: string; name: string | null }, string>(staffIds, (batch, lo, hi) =>
+    sb.from('staff').select('id, name').in('id', batch).order('id').range(lo, hi));
+  if (staff.error) return { response: fail(c, 'order history', staff.error.message) };
+  const staffName = new Map(staff.data.map((s) => [s.id, s.name]));
+  return {
+    rows: manualLineRows({
+      lines, basis,
+      sos: sos.map((s) => commissionSoOf(s, staffName)),
+      fairs: fairsRead.map((f): CommissionFair => ({
+        id: Number(f.id), name: String(f.name ?? `#${f.id}`), brand: f.brand, startDate: dayOf(f.start_date) ?? '', endDate: dayOf(f.end_date),
+        totalSalesRm: null, estimateRm: null, organizer: f.organizer ?? null, venue: f.venue ?? null, state: f.state ?? null,
+      })),
+      ratePctByBrand: new Map([...rates].map(([brand, r]) => [brand, r.commission_normal_pct ?? null])),
+    }),
+  };
+}
+
+/** What every report needs besides its range: the closed months, the marks and Finance's own lines. */
+type Ctx = { closes: readonly Closed[]; marks: readonly CommissionMark[]; lines: readonly CommissionManualLine[] };
 /** How many months back a chain of 「算下个月」 is followed. */
 const DEFER_CHAIN_MAX = 3;
 const prevMonth = (month: string): string => {
@@ -285,7 +383,7 @@ const prevMonth = (month: string): string => {
 /** The live report with the marks applied, and — for a report of one month (or
  *  of it so far) — what the month before moved to it. */
 async function markedLive(c: any, companyId: number, from: string, to: string, basis: CommissionBasis, ctx: Ctx, depth = 0): Promise<Live> {
-  const live = await liveReport(c, companyId, from, to, basis);
+  const live = await liveReport(c, companyId, from, to, basis, ctx.marks);
   if ('response' in live) return live;
   const month = monthOfRange(from, to);
   let deferredIn: DeferredInRow[] = [];
@@ -295,7 +393,14 @@ async function markedLive(c: any, companyId: number, from: string, to: string, b
     if ('response' in before) return before;
     deferredIn = deferredInFrom(before.report, prev);
   }
-  return { report: withMarks(live.report, ctx.marks, deferredIn) };
+  const marked = withMarks(live.report, ctx.marks, deferredIn);
+  /* Finance's own lines of the months this range begins — the same rule as the
+     closed months' adjustments (the range holds the month's first day). */
+  const mine = ctx.lines.filter((l) => from <= `${l.month}-01` && `${l.month}-01` <= to);
+  if (mine.length === 0) return { report: marked };
+  const manual = await manualRowsFor(c, companyId, basis, mine);
+  if ('response' in manual) return manual;
+  return { report: withManualLines(marked, manual.rows) };
 }
 
 /** One month's report: as closed when it is, else live with the marks. */
@@ -342,12 +447,13 @@ export const eventCommissionHandler = async (c: any): Promise<Response> => {
   /* By fair (the fair's start) or by SO date (the order's own) — owner 2026-10-20. */
   const basis: CommissionBasis = c.req.query('basis') === 'so_date' ? 'so_date' : 'fair';
 
-  const [read, markRead] = await Promise.all([readCloses(sb, companyId), readMarks(sb, companyId)]);
+  const [read, markRead, lineRead] = await Promise.all([readCloses(sb, companyId), readMarks(sb, companyId), readLines(sb, companyId)]);
   if ('error' in read) return fail(c, 'closed months', read.error);
   if ('error' in markRead) return fail(c, 'marked orders', markRead.error);
+  if ('error' in lineRead) return fail(c, 'lines added by Finance', lineRead.error);
   const closes = read.closes;
   const meta = closesMeta(closes);
-  const ctx: Ctx = { closes, marks: markRead.marks };
+  const ctx: Ctx = { closes, marks: markRead.marks, lines: lineRead.lines };
 
   /* A closed month, asked for whole: as it was closed. */
   const exact = closes.find((k) => from === `${k.month}-01` && to === monthEnd(`${k.month}-01`));
@@ -388,11 +494,12 @@ export const closeCommissionMonthHandler = async (c: any): Promise<Response> => 
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return c.json({ error: 'bad_month', message: 'Pick a month to close.' }, 400);
   const sb = c.get('supabase');
   const companyId = co.companyId;
-  const [known, markRead] = await Promise.all([readCloses(sb, companyId), readMarks(sb, companyId)]);
+  const [known, markRead, lineRead] = await Promise.all([readCloses(sb, companyId), readMarks(sb, companyId), readLines(sb, companyId)]);
   if ('error' in known) return fail(c, 'closed months', known.error);
   if ('error' in markRead) return fail(c, 'marked orders', markRead.error);
+  if ('error' in lineRead) return fail(c, 'lines added by Finance', lineRead.error);
   const closes = known.closes;
-  const ctx: Ctx = { closes, marks: markRead.marks };
+  const ctx: Ctx = { closes, marks: markRead.marks, lines: lineRead.lines };
   if (closes.some((k) => k.month === month)) return c.json({ error: 'already_closed', message: `${monthLabel(month)} is already closed.` }, 409);
   const latest = closes.length > 0 ? closes[closes.length - 1]!.month : null;
   if (latest && month !== nextMonth(latest)) {
@@ -469,8 +576,11 @@ export const reopenCommissionMonthHandler = async (c: any): Promise<Response> =>
 const DOC_NO = /^[A-Z0-9][A-Z0-9-]{3,39}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** How the mark reads in the order's History. */
-const markWords = (m: Pick<CommissionMark, 'kind' | 'month'>): string =>
-  (m.kind === 'exclude' ? 'Not counted' : `Counted in ${monthLabel(nextMonth(m.month ?? ''))}, not ${monthLabel(m.month ?? '')}`);
+const markWords = (m: Pick<CommissionMark, 'kind' | 'month'>): string => {
+  if (m.kind === 'exclude') return 'Not counted';
+  if (m.kind === 'exclude_change') return `Price change of ${monthLabel(m.month ?? '')} not counted`;
+  return `Counted in ${monthLabel(nextMonth(m.month ?? ''))}, not ${monthLabel(m.month ?? '')}`;
+};
 const historyActor = (c: any) => {
   const user = c.get('user');
   return {
@@ -479,19 +589,23 @@ const historyActor = (c: any) => {
   };
 };
 
-/* POST /commission/marks { docNo, kind: 'exclude' | 'defer', month?: 'YYYY-MM', reason? }
+/* POST /commission/marks { docNo, kind: 'exclude' | 'defer' | 'exclude_change', month?: 'YYYY-MM', reason? }
    「这张单不要算」 marks the order not counted, in any month; 「这个算下个月」 moves
-   what it earns in `month` — an open month — to the month after. */
+   what it earns in `month` — an open month — to the month after; 「这次改价不算」
+   leaves its upsales / drop sales of `month` — an open month — out of the
+   commission, the order itself still counted. */
 export const markCommissionOrderHandler = async (c: any): Promise<Response> => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const body = (await c.req.json().catch(() => ({}))) as { docNo?: unknown; kind?: unknown; month?: unknown; reason?: unknown };
   const docNo = String(body.docNo ?? '').trim().toUpperCase();
   if (!DOC_NO.test(docNo)) return c.json({ error: 'bad_doc_no', message: 'Pick an order.' }, 400);
-  const kind = body.kind === 'exclude' || body.kind === 'defer' ? body.kind : null;
-  if (!kind) return c.json({ error: 'bad_kind', message: 'Choose "don\'t count" or "next month".' }, 400);
-  const month = kind === 'defer' ? String(body.month ?? '').trim() : null;
-  if (month != null && !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return c.json({ error: 'bad_month', message: 'Pick the month its commission leaves.' }, 400);
+  const kind = body.kind === 'exclude' || body.kind === 'defer' || body.kind === 'exclude_change' ? body.kind : null;
+  if (!kind) return c.json({ error: 'bad_kind', message: 'Choose "don\'t count", "next month" or "don\'t count the price change".' }, 400);
+  const month = kind === 'exclude' ? null : String(body.month ?? '').trim();
+  if (month != null && !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+    return c.json({ error: 'bad_month', message: kind === 'defer' ? 'Pick the month its commission leaves.' : 'Pick the month of the price change.' }, 400);
+  }
   const reason = String(body.reason ?? '').trim().slice(0, 500) || null;
   const sb = c.get('supabase');
   const companyId = co.companyId;
@@ -503,7 +617,8 @@ export const markCommissionOrderHandler = async (c: any): Promise<Response> => {
     const read = await readCloses(sb, companyId);
     if ('error' in read) return fail(c, 'closed months', read.error);
     if (read.closes.some((k) => k.month === month)) {
-      return c.json({ error: 'month_closed', message: `${monthLabel(month)} is closed — only an open month's commission can move to the next month.` }, 409);
+      const open = kind === 'defer' ? "only an open month's commission can move to the next month" : "only an open month's price change can be left out";
+      return c.json({ error: 'month_closed', message: `${monthLabel(month)} is closed — ${open}.` }, 409);
     }
   }
   const actor = actorOf(c);
@@ -542,4 +657,88 @@ export const unmarkCommissionOrderHandler = async (c: any): Promise<Response> =>
     source: 'event-commission',
   });
   return c.json({ ok: true, mark });
+};
+
+/* ── Finance's own lines (owner 2026-11-13, 「做」) ──────────────────────────── */
+
+/** A typing slip, not a line: RM 10 million of goods on one order. */
+const MAX_LINE_SEN = 10_000_000_00;
+/** How the line reads in the order's History. */
+const lineWords = (l: Pick<CommissionManualLine, 'month' | 'goodsSen'>): string =>
+  `Finance line for ${monthLabel(l.month)}: goods ${l.goodsSen > 0 ? '+' : '-'}${rmOf(Math.abs(l.goodsSen))}`;
+
+/* POST /commission/lines { docNo, month: 'YYYY-MM', goodsSen, reason }
+   An amount of goods on an order for an open month that has begun: more than 0
+   adds commission, less than 0 takes it back, at the order's own rate. The
+   reason is asked for — it is money typed by hand. */
+export const addCommissionLineHandler = async (c: any): Promise<Response> => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const body = (await c.req.json().catch(() => ({}))) as { docNo?: unknown; month?: unknown; goodsSen?: unknown; reason?: unknown };
+  const docNo = String(body.docNo ?? '').trim().toUpperCase();
+  if (!DOC_NO.test(docNo)) return c.json({ error: 'bad_doc_no', message: 'Type the order number.' }, 400);
+  const month = String(body.month ?? '').trim();
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return c.json({ error: 'bad_month', message: 'Pick the month the line is paid in.' }, 400);
+  if (month > todayMyt().slice(0, 7)) return c.json({ error: 'bad_month', message: `${monthLabel(month)} has not begun yet.` }, 400);
+  const goodsSen = Number(body.goodsSen);
+  if (!Number.isInteger(goodsSen) || goodsSen === 0 || Math.abs(goodsSen) > MAX_LINE_SEN) {
+    return c.json({ error: 'bad_amount', message: 'Type the goods amount: more than 0 to add, less than 0 to take back.' }, 400);
+  }
+  const reason = String(body.reason ?? '').trim().slice(0, 500);
+  if (!reason) return c.json({ error: 'reason_required', message: 'Say why the line is added.' }, 400);
+  const sb = c.get('supabase');
+  const companyId = co.companyId;
+
+  const { data: so, error: soErr } = await scopeToCompanyId(sb.from('mfg_sales_orders').select('doc_no').eq('doc_no', docNo), companyId).maybeSingle();
+  if (soErr) return fail(c, 'order', soErr.message);
+  /* Its own code, not `not_found`: the screen swaps that one for "refresh", and a
+     refresh does not help an order number typed wrong. */
+  if (!so) return c.json({ error: 'order_not_found', message: `${docNo} is not an order of this company.` }, 404);
+  const read = await readCloses(sb, companyId);
+  if ('error' in read) return fail(c, 'closed months', read.error);
+  if (read.closes.some((k) => k.month === month)) {
+    return c.json({ error: 'month_closed', message: `${monthLabel(month)} is closed — add the line to an open month.` }, 409);
+  }
+  const actor = actorOf(c);
+  const { data, error } = await sb.from('event_commission_lines').insert({
+    company_id: companyId, so_doc_no: docNo, month: `${month}-01`, goods_sen: goodsSen, reason,
+    added_by: actor?.name ?? actor?.email ?? null,
+  }).select(LINE_COLS).single();
+  if (error) return c.json({ error: 'add_failed', message: `The line on ${docNo} could not be added — try again.`, reason: error.message }, 500);
+  const line = lineOf(data as LineRead);
+  await recordSoAudit(sb, {
+    docNo, action: 'COMMISSION_LINE_ADD', ...historyActor(c),
+    fieldChanges: [{ field: 'eventCommission', from: null, to: lineWords(line) }],
+    source: 'event-commission', note: reason,
+  });
+  return c.json({ ok: true, line });
+};
+
+/* POST /commission/lines/remove { id } — the line taken away, while its month is open. */
+export const removeCommissionLineHandler = async (c: any): Promise<Response> => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const body = (await c.req.json().catch(() => ({}))) as { id?: unknown };
+  const id = String(body.id ?? '').trim();
+  if (!UUID.test(id)) return c.json({ error: 'bad_id', message: 'Pick a line.' }, 400);
+  const sb = c.get('supabase');
+  const companyId = co.companyId;
+  const { data: found, error: readErr } = await scopeToCompanyId(sb.from('event_commission_lines').select(LINE_COLS).eq('id', id), companyId).maybeSingle();
+  if (readErr) return fail(c, 'line', readErr.message);
+  if (!found) return c.json({ error: 'not_found', message: 'That line is already gone.' }, 404);
+  const line = lineOf(found as LineRead);
+  const read = await readCloses(sb, companyId);
+  if ('error' in read) return fail(c, 'closed months', read.error);
+  if (read.closes.some((k) => k.month === line.month)) {
+    return c.json({ error: 'month_closed', message: `${monthLabel(line.month)} is closed — its lines stay as they were paid.` }, 409);
+  }
+  const { data, error } = await scopeToCompanyId(sb.from('event_commission_lines').delete().eq('id', id), companyId).select(LINE_COLS).maybeSingle();
+  if (error) return c.json({ error: 'remove_failed', message: 'The line could not be taken away — try again.', reason: error.message }, 500);
+  if (!data) return c.json({ error: 'not_found', message: 'That line is already gone.' }, 404);
+  await recordSoAudit(sb, {
+    docNo: line.docNo, action: 'COMMISSION_LINE_REMOVE', ...historyActor(c),
+    fieldChanges: [{ field: 'eventCommission', from: lineWords(line), to: null }],
+    source: 'event-commission', ...(line.reason ? { note: line.reason } : {}),
+  });
+  return c.json({ ok: true, line });
 };

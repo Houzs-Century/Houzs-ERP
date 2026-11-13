@@ -99,14 +99,6 @@ export const modulesBrief = (modules: readonly (readonly string[])[]): string =>
 export const slotLabel = (slot: readonly string[]): string =>
   (slot.length > 2 ? `${slot.slice(0, 2).join(' or ')} +${slot.length - 2} more` : slot.join(' or '));
 
-export const COMBO_PRESETS: ReadonlyArray<{ name: string; pieces: string }> = [
-  { name: 'L shape', pieces: '2A + L' },
-  { name: '3 + 2 + 1', pieces: '1S + 2S + 3S' },
-  { name: 'Corner set', pieces: '2A + CNR + 1A' },
-  { name: 'Corner with chaise', pieces: '2A + CNR + L' },
-  { name: '2 + 1', pieces: '1S + 2S' },
-];
-
 /** A combo written for one model, read against the modules another has. `missing`
  *  names the pieces this model does not make; such a combo cannot be added. */
 export function fitSlots(slots: readonly (readonly string[])[], own: readonly string[]): { modules: string[][]; missing: string[] } {
@@ -120,11 +112,21 @@ export function fitSlots(slots: readonly (readonly string[])[], own: readonly st
   return { modules, missing };
 }
 
-export const presetSlots = (pieces: string, own: readonly string[]): string[][] =>
-  pieces.split(' + ').map((piece) => {
-    const matches = own.filter((code) => familyOf(code) === piece);
-    return matches.length > 0 ? matches : [piece];
-  });
+/** A preset's slots (Presets, from the server) read against a model: a code with
+ *  no side, "2A", stands for every side of it the model makes; "2A(LHF)" is that
+ *  side only. A code the model does not make stays, so fitSlots names it missing. */
+export const presetSlots = (slots: readonly (readonly string[])[], own: readonly string[]): string[][] =>
+  slots.map((slot) => [...new Set(slot.flatMap((code) => {
+    if (familyOf(code) !== code) return [code];
+    const matches = own.filter((o) => familyOf(o) === code);
+    return matches.length > 0 ? matches : [code];
+  }))]);
+
+/** A preset's slots on one line: "2A + CNR + 1A", alternatives as "1A or 1B". */
+export const presetPieces = (slots: readonly (readonly string[])[]): string => slots.map((slot) => slot.join(' or ')).join(' + ');
+
+/** Every module code a preset slot may hold: each side, and the plain code for "either side". */
+export const presetModuleCodes = (codes: readonly string[]): string[] => [...new Set([...codes, ...codes.map(familyOf)])].sort();
 
 export type ModuleFamily = { code: string; group: string; variants: Array<{ code: string; label: string }> };
 
@@ -160,10 +162,18 @@ export function moduleFamilies(codes: readonly string[]): ModuleFamily[] {
 export type ModelEntry = { code: string; name: string; supplierCode: string | null; combos: number };
 
 /** The list on the left: models that have combos, unless asked for all or searching.
- *  A search looks everywhere, and the open model never drops out from under you. */
-export function listedModels(all: readonly ModelEntry[], query: string, showAll: boolean, open: string | null): ModelEntry[] {
+ *  A search looks through every sofa model (`everyModel`, which adds models with no
+ *  SKU module yet), so a model with no combo can be found and given its first one.
+ *  The open model never drops out from under you. */
+export function listedModels(all: readonly ModelEntry[], everyModel: readonly ModelEntry[], query: string, showAll: boolean, open: string | null): ModelEntry[] {
   const q = query.trim().toLowerCase();
-  if (q) return all.filter((m) => `${m.code} ${m.name} ${m.supplierCode ?? ''}`.toLowerCase().includes(q));
+  if (q) {
+    const pool = new Map(all.map((m) => [m.code, m]));
+    for (const m of everyModel) if (!pool.has(m.code)) pool.set(m.code, m);
+    return [...pool.values()]
+      .filter((m) => `${m.code} ${m.name} ${m.supplierCode ?? ''}`.toLowerCase().includes(q))
+      .sort((a, b) => a.code.localeCompare(b.code));
+  }
   return showAll ? [...all] : all.filter((m) => m.combos > 0 || m.code === open);
 }
 
