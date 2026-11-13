@@ -18,6 +18,7 @@ import { getActiveStaffToken } from "./caseTracking";
 import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
 import { assrVisibilityPredicateSql } from "./assrVisibility";
 import { attachOrderPosAndFill } from "./assrCreditorFill";
+import { applyErpSupplierNames } from "./assrOrderPos";
 import { attachOrderDeliveryDates } from "./assrOrderDos";
 
 // ── Types ─────────────────────────────────────────────────────
@@ -817,6 +818,7 @@ export async function getAssrDetail(env: Env, id: number) {
   // summary columns on the case mirror the CURRENT (highest) round; this list
   // is the full history so a case sent back twice keeps both trips' dates.
   const supplierReturns = await listSupplierReturns(env, id);
+  if (isSupabaseConfigured(env)) await applyErpSupplierNames(getSupabaseService(env), [caseRow], supplierReturns);
 
   // v3.1 — per-stage lifecycle for the Workflow Progress Tracker.
   // Returns one row per stage (entered + exited timestamps), ordered

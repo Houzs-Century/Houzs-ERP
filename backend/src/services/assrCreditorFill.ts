@@ -1,6 +1,6 @@
 import type { Env } from "../types";
 import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
-import { attachOrderPurchaseOrders, itemsWithLivePo, poKey } from "./assrOrderPos";
+import { applyErpSupplierNames, attachOrderPurchaseOrders, itemsWithLivePo, poKey } from "./assrOrderPos";
 import { resolveCreditorForCase } from "./stockItems";
 
 /** HC-0130: a PO raised after the case was created never reached the Supplier.
@@ -30,4 +30,5 @@ export async function fillCreditorFromNewPo(env: Env, rows: Array<Record<string,
 export async function attachOrderPosAndFill(env: Env, rows: Array<Record<string, any>>) {
   await attachOrderPurchaseOrders(getSupabaseService(env), rows);
   await fillCreditorFromNewPo(env, rows);
+  await applyErpSupplierNames(getSupabaseService(env), rows, null);
 }

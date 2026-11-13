@@ -140,7 +140,45 @@ export async function orderSupplierCode(
   return so ? { code: so, source: "so" } : null;
 }
 
-export const poKey = (companyId: unknown, docNo: unknown, itemCode: unknown) => `${Number(companyId)}|${docNo}|${itemCode}`;
+/* HC-0228: a 'po' / 'so' creditor_code is an ERP supplier code (scm.suppliers),
+   but the case reads its name from the AutoCount `creditors` mirror, which can
+   hold ANOTHER company under the same code (400-H004: ERP Hookka Industries,
+   AutoCount Hao Hua Furniture). Those rows show the ERP supplier instead.
+   Manual / auto picks came from the creditors list and keep its name.
+   Supplier-return trips on the same code follow the case. Fail-soft. */
+export async function applyErpSupplierNames(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  rows: Array<Record<string, unknown>>,
+  trips: Array<Record<string, unknown>> | null,
+): Promise<void> {
+  const byCompany = new Map<number, Array<Record<string, unknown>>>();
+  for (const r of rows) {
+    const cid = Number(r.company_id);
+    if ((r.creditor_source !== "po" && r.creditor_source !== "so") || typeof r.creditor_code !== "string" || !r.creditor_code || !Number.isInteger(cid) || cid <= 0) continue;
+    byCompany.set(cid, [...(byCompany.get(cid) ?? []), r]);
+  }
+  await Promise.all([...byCompany].map(async ([cid, group]) => {
+    try {
+      const res = await sb.from("suppliers").select("code, name, email, phone, contact_person")
+        .eq("company_id", cid).in("code", [...new Set(group.map((r) => r.creditor_code))]);
+      if (res.error) return;
+      const byCode = new Map(((res.data ?? []) as Array<Record<string, string | null>>).map((s) => [s.code, s]));
+      for (const r of group) {
+        const s = byCode.get(r.creditor_code as string);
+        if (!s?.name) continue;
+        r.creditor_name = s.name;
+        r.creditor_email = s.email ?? null;
+        r.creditor_phone = s.phone ?? null;
+        r.creditor_mobile = null;
+        r.creditor_attention = s.contact_person ?? null;
+        for (const t of trips ?? []) if (t.creditor_code === r.creditor_code) t.creditor_name = s.name;
+      }
+    } catch { /* fail-soft: the creditors name stays */ }
+  }));
+}
+
+export const poKey =(companyId: unknown, docNo: unknown, itemCode: unknown) => `${Number(companyId)}|${docNo}|${itemCode}`;
 
 /* Batched: which (company, SO, item) triples have a non-cancelled PO raised for
    that SO line. 3 reads per company, whatever the number of cases. Read error

@@ -4,7 +4,7 @@
 // ORDER lines. Pinned through a minimal fake PostgREST client, the same shape
 // as scm/lib/so-converted-po.test.ts, because the D1 test harness has no scm.
 import { describe, expect, test } from 'vitest';
-import { attachOrderPurchaseOrders, orderPoSupplierCode, orderSupplierCode } from './assrOrderPos';
+import { applyErpSupplierNames, attachOrderPurchaseOrders, orderPoSupplierCode, orderSupplierCode } from './assrOrderPos';
 
 type Row = Record<string, unknown>;
 
@@ -201,5 +201,34 @@ describe('orderSupplierCode', () => {
     expect(await orderSupplierCode(fakeSb(t), 'HC-SO-2', 'MAT-9', HOUZS)).toBe('so-missing');
     expect(await orderSupplierCode(fakeSb(t), 'SO-001911', 'MAT-1', HOUZS)).toBe('so-missing');
     expect(await orderSupplierCode(fakeSb(t), 'HC-SO-2', 'MAT-1', null)).toBe('so-missing');
+  });
+});
+
+// HC-0228: PO HC-PO-2610-185 is Hookka Industries (ERP 400-H004), but the
+// AutoCount creditors mirror has Hao Hua Furniture under 400-H004.
+describe('applyErpSupplierNames', () => {
+  const sb = () => fakeSb({
+    suppliers: [
+      { code: '400-H004', name: 'HOOKKA INDUSTRIES SDN. BHD.', email: 'siti@hookka.com', phone: '+60 11-6133 3173', contact_person: 'MS VIOLET', company_id: HOUZS },
+      { code: '400-H004', name: 'OTHER CO SUPPLIER', email: null, phone: null, contact_person: null, company_id: CO_2990 },
+    ],
+  });
+  const hh = { creditor_code: '400-H004', creditor_name: 'HAO HUA FURNITURE ', creditor_mobile: '+6075564463', company_id: HOUZS };
+
+  test('a PO- or SO-filled case and its trips show the ERP supplier', async () => {
+    const po = { ...hh, creditor_source: 'po' };
+    const so = { ...hh, creditor_source: 'so' };
+    const trips = [{ creditor_code: '400-H004', creditor_name: 'HAO HUA FURNITURE ' }, { creditor_code: '400-X001', creditor_name: 'X' }];
+    await applyErpSupplierNames(sb(), [po, so], trips);
+    expect(po).toMatchObject({ creditor_name: 'HOOKKA INDUSTRIES SDN. BHD.', creditor_email: 'siti@hookka.com', creditor_mobile: null, creditor_attention: 'MS VIOLET' });
+    expect(so.creditor_name).toBe('HOOKKA INDUSTRIES SDN. BHD.');
+    expect(trips.map((t) => t.creditor_name)).toEqual(['HOOKKA INDUSTRIES SDN. BHD.', 'X']);
+  });
+
+  test('a manual or older auto pick keeps the AutoCount creditor name', async () => {
+    const manual = { ...hh, creditor_source: 'manual' };
+    const auto = { ...hh, creditor_source: 'auto' };
+    await applyErpSupplierNames(sb(), [manual, auto], null);
+    expect([manual.creditor_name, auto.creditor_name]).toEqual(['HAO HUA FURNITURE ', 'HAO HUA FURNITURE ']);
   });
 });
