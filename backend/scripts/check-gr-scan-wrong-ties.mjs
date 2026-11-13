@@ -41,6 +41,19 @@ try {
     console.log(`${r.at} | ${r.review_state} | ${r.do_no} | printed ${r.printed} -> ${r.po_number} ${r.supplier_sku ?? r.item_code} | ${modelOff ? 'model' : 'size'}`);
   }
   console.log(`tied lines checked: ${rows.length}; model or size differs: ${bad}`);
+  // DO=<no>: every line of that delivery order's created scan, side by side with its PO line.
+  if (process.env.DO) {
+    const all = await sql`
+      SELECT e->'read'->>'itemCode' AS printed, left(e->'read'->>'description', 70) AS spec, e->>'qty' AS qty, e->>'rack' AS rack,
+             po.po_number, pi.supplier_sku, pi.item_code, left(pi.description2, 50) AS po_spec
+        FROM scm.scan_jobs j
+        CROSS JOIN LATERAL jsonb_array_elements(coalesce(j.review->'lines', '[]'::jsonb)) e
+        LEFT JOIN scm.purchase_order_items pi ON pi.id::text = e->>'poItemId'
+        LEFT JOIN scm.purchase_orders po ON po.id = pi.purchase_order_id
+       WHERE j.document_type = 'GR' AND j.review_state = 'created' AND j.review->>'doNo' = ${process.env.DO}`;
+    console.log(`${process.env.DO}: ${all.length} lines in the created scan`);
+    for (const r of all) console.log(`${r.printed} | ${r.spec} | q${r.qty} | ${r.rack ?? '-'} -> ${r.po_number ?? 'NOT RECEIVED'} ${r.supplier_sku ?? r.item_code ?? ''} | ${r.po_spec ?? ''}`);
+  }
   const made = await sql`
     SELECT g.grn_number, g.status, g.created_at
       FROM scm.goods_receipts g
