@@ -9,6 +9,8 @@
 // their racks. pdf.js decodes both codecs, so the browser does the conversion.
 // ----------------------------------------------------------------------------
 
+import { PDF_COMPRESS } from '../scm/lib/pdf-options';
+
 const PAGE_EDGE_PX = 2200;
 const JPEG_QUALITY = 0.85;
 // pdf.js stops drawing in a hidden tab; past this the original goes up unchanged.
@@ -65,7 +67,7 @@ async function redraw(file: File): Promise<File> {
         const jpeg = canvas.toDataURL('image/jpeg', JPEG_QUALITY);
         const size: [number, number] = [base.width, base.height];
         const orientation = base.width > base.height ? 'landscape' : 'portrait';
-        if (!out) out = new jsPDF({ unit: 'pt', format: size, orientation, compress: true });
+        if (!out) out = new jsPDF({ ...PDF_COMPRESS, unit: 'pt', format: size, orientation });
         else out.addPage(size, orientation);
         out.addImage(jpeg, 'JPEG', 0, 0, base.width, base.height);
         page.cleanup();
