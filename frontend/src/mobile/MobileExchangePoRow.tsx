@@ -1,19 +1,9 @@
+import { type Any } from "./assr-case-fields";
 import { assrExchangePoText } from "../vendor/scm/lib/assr/case-fields";
 import { writeScmHandoff } from "../lib/scmHandoffStorage";
 
 const INK = "#11140f";
 const MUTED = "#767b6e";
-
-type CaseRow = {
-  id: number;
-  company_id?: number | string | null;
-  item_code?: string | null;
-  item_name?: string | null;
-  item_group?: string | null;
-  assr_no?: string | null;
-  stage?: string | null;
-  exchange_pos?: unknown;
-};
 
 /* Mobile case-detail "Exchange PO": the case's own REAL exchange purchase orders
    (read-only), plus a "Raise exchange PO" button that seeds the mobile New-PO
@@ -21,9 +11,12 @@ type CaseRow = {
    assr_case_id. onRaise opens the PO-create screen (MobileApp); it is undefined —
    and the button hidden — with no create permission. Its own module because
    MobileServiceCase.tsx sits at its file-size ceiling. */
-export function MobileExchangePoRow({ c, onRaise }: { c: CaseRow; onRaise?: () => void }) {
+export function MobileExchangePoRow({ c, onRaise }: { c: Any; onRaise?: () => void }) {
   const text = assrExchangePoText(c);
-  const canRaise = !!onRaise && !!c.item_code && c.stage !== "completed" && c.stage !== "voided";
+  const caseId = Number(c.id);
+  const canRaise =
+    !!onRaise && Number.isFinite(caseId) && caseId > 0 && !!c.item_code &&
+    c.stage !== "completed" && c.stage !== "voided";
   if (!text && !canRaise) return null;
   return (
     <>
@@ -37,10 +30,10 @@ export function MobileExchangePoRow({ c, onRaise }: { c: CaseRow; onRaise?: () =
         <button
           onClick={() => {
             writeScmHandoff("exchangePoSeed", {
-              assrCaseId: Number(c.id),
-              itemCode: c.item_code,
-              itemName: c.item_name ?? undefined,
-              itemGroup: c.item_group ?? undefined,
+              assrCaseId: caseId,
+              itemCode: String(c.item_code),
+              itemName: c.item_name ? String(c.item_name) : undefined,
+              itemGroup: c.item_group ? String(c.item_group) : undefined,
             });
             onRaise!();
           }}

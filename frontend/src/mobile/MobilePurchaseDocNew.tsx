@@ -198,7 +198,7 @@ export function MobilePurchaseDocNew({
     removeScmHandoff("exchangePoSeed");
     if (typeof seed.assrCaseId === "number") setExchangeCaseId(seed.assrCaseId);
     if (seed.itemCode) {
-      setLines([{ key: newKey(), itemCode: seed.itemCode, name: seed.itemName || seed.itemCode, itemGroup: seed.itemGroup, qty: 1, unitPriceSen: null, remark: "" }]);
+      setLines([{ key: newKey(), itemCode: seed.itemCode, name: seed.itemName || seed.itemCode, itemGroup: seed.itemGroup ?? "", qty: 1, unitPriceSen: null, remark: "" }]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot seed on first mount of a PO create
   }, [kind]);

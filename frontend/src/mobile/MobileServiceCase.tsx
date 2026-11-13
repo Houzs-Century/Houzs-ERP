@@ -271,7 +271,7 @@ export function MobileServiceCase({ onBack, startNew = false, onRaiseExchangePo 
 
   if (openId != null) {
     const Detail = isSalesNonDirector(user) ? MobileMyCaseDetail : CaseDetail;
-    return <Detail id={openId} onBack={() => setOpenId(null)} />;
+    return <Detail id={openId} onBack={() => setOpenId(null)} onRaiseExchangePo={onRaiseExchangePo} />;
   }
   return (
     <>
@@ -700,7 +700,7 @@ function Avatar({ name, size = 38 }: { name: string; size?: number }) {
 // ── DETAIL — tabbed (Overview / Stage / Info / Timeline) ──────────
 type DetailTab = "overview" | "stage" | "info" | "timeline";
 
-function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
+function CaseDetail({ id, onBack, onRaiseExchangePo }: { id: number; onBack: () => void; onRaiseExchangePo?: () => void }) {
   const qc = useQueryClient();
   const confirm = useConfirm();
   const notify = useNotify();
