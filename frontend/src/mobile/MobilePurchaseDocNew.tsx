@@ -31,8 +31,9 @@
  *   - no per-line delivery date, warehouse override, discount or rack.
  * ------------------------------------------------------------------------- */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { readScmHandoff, removeScmHandoff } from "../lib/scmHandoffStorage";
 import { invalidateMobileLists } from "./sharedInvalidate";
 import { lineIdentity } from "@2990s/shared";
 import { todayMyt } from "../vendor/scm/lib/dates";
@@ -183,6 +184,25 @@ export function MobilePurchaseDocNew({
   const setLine = (key: string, patch: Partial<PurchaseLineDraft>) =>
     setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
 
+  /* Opened from a service case's "Raise exchange PO" (MobileExchangePoRow writes
+     the seed, then MobileApp opens this screen): pre-add the case's item line and
+     carry the case id so the created PO stamps assr_case_id and shows back on the
+     case. The purchaser still picks supplier / warehouse / price, as for any PO. */
+  const [exchangeCaseId, setExchangeCaseId] = useState<number | null>(null);
+  const seedAppliedRef = useRef(false);
+  useEffect(() => {
+    if (seedAppliedRef.current || kind !== "po") return;
+    seedAppliedRef.current = true;
+    const seed = readScmHandoff<{ assrCaseId?: number; itemCode?: string; itemName?: string; itemGroup?: string }>("exchangePoSeed");
+    if (!seed) return;
+    removeScmHandoff("exchangePoSeed");
+    if (typeof seed.assrCaseId === "number") setExchangeCaseId(seed.assrCaseId);
+    if (seed.itemCode) {
+      setLines([{ key: newKey(), itemCode: seed.itemCode, name: seed.itemName || seed.itemCode, itemGroup: seed.itemGroup, qty: 1, unitPriceSen: null, remark: "" }]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot seed on first mount of a PO create
+  }, [kind]);
+
   const suppliers = useMemo(() => {
     const q = supplierFilter.trim().toLowerCase();
     const all = suppliersQ.data ?? [];
@@ -247,7 +267,7 @@ export function MobilePurchaseDocNew({
     setBusy(true);
     try {
       if (kind === "po") {
-        const res = await createPo.mutateAsync({ idempotencyKey: idemKey, ...buildPoPayload(header, lines, asDraft) });
+        const res = await createPo.mutateAsync({ idempotencyKey: idemKey, assrCaseId: exchangeCaseId ?? undefined, ...buildPoPayload(header, lines, asDraft) });
         await notifyAcNotSent(notify, res, "Purchase order");
         await finish({ id: res.id, number: res.poNumber }, asDraft);
       } else if (kind === "grn") {

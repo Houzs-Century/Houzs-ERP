@@ -198,12 +198,19 @@ describe("where Order PO appears", () => {
     expect(panel).toContain('writeScmHandoff("poNewDraft"');
   });
 
-  test("mobile: Exchange PO shown read-only between Order PO and PO No", () => {
+  test("mobile: the Exchange PO row sits between Order PO and PO No; display + raise live in its module", () => {
     const order = mobile.indexOf('<KV label="Order PO"');
-    const exchange = mobile.indexOf('<KV label="Exchange PO"');
+    const row = mobile.indexOf("<MobileExchangePoRow c={c} onRaise={onRaiseExchangePo} />");
     const po = mobile.indexOf('<KV label="PO No"');
-    expect(exchange).toBeGreaterThan(order);
-    expect(po).toBeGreaterThan(exchange);
-    expect(mobile).toContain("assrExchangePoText(c)");
+    expect(row).toBeGreaterThan(order);
+    expect(po).toBeGreaterThan(row);
+    const rowSrc = code("src/mobile/MobileExchangePoRow.tsx");
+    expect(rowSrc).toContain("assrExchangePoText(c)");
+    expect(rowSrc).toContain("Raise exchange PO");
+    expect(rowSrc).toContain('writeScmHandoff("exchangePoSeed"');
+    const create = code("src/mobile/MobilePurchaseDocNew.tsx");
+    expect(create).toContain("readScmHandoff");
+    expect(create).toContain("exchangePoSeed");
+    expect(create).toContain("assrCaseId: exchangeCaseId");
   });
 });

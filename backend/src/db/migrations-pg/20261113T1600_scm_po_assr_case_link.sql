@@ -1,4 +1,4 @@
--- 20261113T0900_scm_po_assr_case_link.sql
+-- 20261113T1600_scm_po_assr_case_link.sql
 -- REVERSAL:
 --   DROP INDEX IF EXISTS scm.purchase_orders_assr_case_id_idx;
 --   ALTER TABLE scm.purchase_orders DROP COLUMN IF EXISTS assr_case_id;

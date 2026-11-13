@@ -30,6 +30,7 @@ import {
 } from "../vendor/scm/lib/assr/stages";
 import { ANOTHER_RETURN_HINT, type SupplierReturn } from "../vendor/scm/lib/assr/returns";
 import { MobileFactoryTrips } from "./MobileFactoryTrips";
+import { MobileExchangePoRow } from "./MobileExchangePoRow";
 import { ITEM_LOCATION_OPTIONS, PICKUP_STATUS_OPTIONS, pickupTrackingOptions, pickupPicSelectOptions, usePickupPicDrivers } from "../components/assr/PickupTrackingFields";
 import { pendingWithOptions } from "../vendor/scm/lib/assr-verification-fields";
 import { MobileReopenControl } from "./MobileReopenControl";
@@ -49,8 +50,7 @@ import {
   caseNo,
   cellEllipsis,
   customer,
-  dm,
-  dtm,
+  dm, dtm,
   get,
   prettyStage,
   priorityOf,
@@ -64,7 +64,7 @@ import {
 import {
   ASSR_ISSUE_CATEGORIES as ISSUE_CATEGORY_OPTIONS,
   missingCaseFields,
-  ASSR_NOTE_AUDIENCES, assrOrderPoText, assrExchangePoText,
+  ASSR_NOTE_AUDIENCES, assrOrderPoText,
   type AssrNoteAudience as NoteAudience,
 } from "../vendor/scm/lib/assr/case-fields";
 import "./mobile.css";
@@ -262,7 +262,7 @@ function useAssignableUsers(): PicUser[] {
  *  the core /api/assr backend. A non-director Sales rep opens the READ-ONLY
  *  detail instead (owner 2026-07-23), keeping the list + create sheet as on
  *  desktop. The predicate is IMPORTED; the why is in MobileMyCaseDetail. */
-export function MobileServiceCase({ onBack, startNew = false }: { onBack?: () => void; startNew?: boolean }) {
+export function MobileServiceCase({ onBack, startNew = false, onRaiseExchangePo }: { onBack?: () => void; startNew?: boolean; onRaiseExchangePo?: () => void }) {
   const { user } = useAuth();
   const [openId, setOpenId] = useState<number | null>(null);
   // `startNew` (from the Orders FAB "+ New Service Case") opens the create sheet
@@ -1366,7 +1366,7 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
                     <div style={{ fontSize: 11, color: GREY, lineHeight: 1.4, margin: "6px 0 2px" }}>{ANOTHER_RETURN_HINT}</div>
                   )}
                   <KV label="Order PO" value={assrOrderPoText(c) || "—"} mono />
-                  {assrExchangePoText(c) && <KV label="Exchange PO" value={assrExchangePoText(c)} mono />}
+                  <MobileExchangePoRow c={c} onRaise={onRaiseExchangePo} />
                   <KV label="PO No" value={(poNo ? [String(poNo)] : []).concat(relatedPOs.map((p) => String(get(p, "docNo", "doc_no") ?? "")).filter(Boolean)).join(", ") || "—"} mono />
                 </EditableAcc>
               </>
