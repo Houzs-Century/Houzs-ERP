@@ -32,7 +32,7 @@
 import { guardFormula } from '../../lib/csv';
 import type {
   CommissionAdjustment, CommissionBasis, CommissionChange, CommissionChangedOrder, CommissionDeferredIn, CommissionEarlierOrder,
-  CommissionFairRow, CommissionMarkedOrder, CommissionMarkInfo, CommissionMonthAdjustment, CommissionSoRow, EventCommission,
+  CommissionFairRow, CommissionManualLine, CommissionMarkedOrder, CommissionMarkInfo, CommissionMonthAdjustment, CommissionSoRow, EventCommission,
 } from '../../vendor/scm/lib/event-queries';
 import { fmtDateOrDash, fmtDayMonthRange } from '../../vendor/shared/format';
 import { AMOUNT_COLUMN, type ReportSheet, type SheetRow, type SheetTable, type SheetValue } from '../../vendor/scm/lib/report-sheet';
@@ -106,6 +106,8 @@ export const monthAdjOf = (r: EventCommission): CommissionMonthAdjustment[] => r
 export const lateOf = (r: EventCommission): Set<string> => new Set(r.lateBills ?? []);
 export const markedOf = (r: EventCommission): CommissionMarkedOrder[] => r.marked ?? [];
 export const deferredInOf = (r: EventCommission): CommissionDeferredIn[] => r.deferredIn ?? [];
+/* Nor, before 2026-11-13, a line typed by Finance. */
+export const manualOf = (r: EventCommission): CommissionManualLine[] => r.manualLines ?? [];
 /** The earlier orders as the page lists them (owner 2026-11-12: 「earlier order 我只
     想显示reached 30% 和cancelled」, 「这样drop up sales 就不需要算cancelled 了」): only
     an order that reached 30% or was cancelled in the range, with those events
@@ -176,7 +178,7 @@ export const brandsOf = (r: EventCommission | undefined): string[] => {
   if (!r) return [];
   const all = [
     ...r.fairs.map(brandOfFair), ...r.adjustments.map((a) => fairLines(a.fairName).brand), ...changedOf(r).map((o) => brandOfOrder(o)),
-    ...monthAdjOf(r).map((a) => brandOfOrder(a)), ...deferredInOf(r).map((o) => brandOfOrder(o)),
+    ...monthAdjOf(r).map((a) => brandOfOrder(a)), ...deferredInOf(r).map((o) => brandOfOrder(o)), ...manualOf(r).map((o) => brandOfOrder(o)),
   ];
   return [...new Set(all.filter((b): b is string => !!b))].sort();
 };
@@ -196,21 +198,29 @@ export const forBrand = (r: EventCommission, brand: string): EventCommission => 
   const adjustmentsSen = sum(adjustments, (a) => a.commissionSen);
   const monthAdjustmentsSen = sum(monthAdjustments, (a) => a.adjustmentSen);
   const deferredInSen = sum(deferredIn, (o) => o.commissionSen);
+  /* Finance's own lines: only a report that has some carries the list and its figure. */
+  const manualLines = manualOf(r).filter((o) => brandOfOrder(o) === brand);
+  const manualSen = sum(manualLines, (o) => o.commissionSen);
+  const manual = r.manualLines ? { manualLines } : {};
   return {
-    ...r, fairs, adjustments, earlierOrders, changedOrders, monthAdjustments, marked, deferredIn,
-    totals: { payableSen, adjustmentsSen, monthAdjustmentsSen, deferredInSen, totalSen: payableSen + adjustmentsSen + monthAdjustmentsSen + deferredInSen },
+    ...r, fairs, adjustments, earlierOrders, changedOrders, monthAdjustments, marked, deferredIn, ...manual,
+    totals: {
+      payableSen, adjustmentsSen, monthAdjustmentsSen, deferredInSen, ...(r.manualLines ? { manualSen } : {}),
+      totalSen: payableSen + adjustmentsSen + monthAdjustmentsSen + deferredInSen + manualSen,
+    },
   };
 };
 
 /* ── The summary: each sen on one line ────────────────────────────────────── */
 
-export type SummaryKey = 'fair' | 'noFair' | 'changes' | 'late' | 'earlier' | 'monthAdj' | 'deferredIn';
+export type SummaryKey = 'fair' | 'noFair' | 'changes' | 'late' | 'earlier' | 'monthAdj' | 'deferredIn' | 'manual';
 /** The server's "No fair" rows (by SO date, an order with no fair) carry an id below 0. */
 export const isNoFair = (f: Pick<CommissionFairRow, 'id'>): boolean => f.id < 0;
-export type CommissionSummary = Record<SummaryKey, number> & { totalSen: number };
+/** `manual` — Finance's own lines — is there only on a report that has some. */
+export type CommissionSummary = Record<Exclude<SummaryKey, 'manual'>, number> & { manual?: number; totalSen: number };
 export const SUMMARY_LABEL: Record<SummaryKey, string> = {
   fair: 'Fair commission', noFair: 'No fair', changes: 'Upsales / drop sales', late: 'Late bills (补开单)', earlier: 'Earlier orders',
-  monthAdj: 'Closed months — adjustments', deferredIn: 'Moved from last month',
+  monthAdj: 'Closed months — adjustments', deferredIn: 'Moved from last month', manual: 'Added by Finance',
 };
 export const SUMMARY_HINT: Record<SummaryKey, string> = {
   fair: 'what the orders earned, before their upsales / drop sales',
@@ -220,8 +230,11 @@ export const SUMMARY_HINT: Record<SummaryKey, string> = {
   earlier: 'earlier orders that reached 30% here, or were cancelled',
   monthAdj: 'what changed for a closed month\'s orders',
   deferredIn: 'what last month moved here',
+  manual: 'amounts Finance typed on an order for this month, at the order\'s own rate',
 };
 export const SUMMARY_ORDER: SummaryKey[] = ['fair', 'noFair', 'changes', 'late', 'earlier', 'monthAdj', 'deferredIn'];
+/** The summary lines of one report: Finance's own line last, on a report that has some. */
+export const summaryKeysOf = (r: EventCommission): SummaryKey[] => (manualOf(r).length > 0 ? [...SUMMARY_ORDER, 'manual'] : SUMMARY_ORDER);
 
 /** One order's commission on this report, split over the summary lines. */
 export type OrderLine = {
@@ -243,7 +256,7 @@ export function orderLines(r: EventCommission): OrderLine[] {
   const late = lateOf(r);
   const effect = new Map(changedOf(r).map((o) => [o.docNo, o]));
   const lines = new Map<string, OrderLine>();
-  const zero = (): Record<SummaryKey, number> => ({ fair: 0, noFair: 0, changes: 0, late: 0, earlier: 0, monthAdj: 0, deferredIn: 0 });
+  const zero = (): Record<SummaryKey, number> => ({ fair: 0, noFair: 0, changes: 0, late: 0, earlier: 0, monthAdj: 0, deferredIn: 0, manual: 0 });
   const lineOf = (docNo: string, init: () => Omit<OrderLine, 'split' | 'totalSen' | 'marks' | 'markedSen'>): OrderLine => {
     let l = lines.get(docNo);
     if (!l) {
@@ -286,6 +299,7 @@ export function orderLines(r: EventCommission): OrderLine[] {
     add(l, late.has(a.docNo) ? 'late' : 'monthAdj', a.adjustmentSen);
   }
   for (const d of deferredInOf(r)) add(lineOf(d.docNo, placeLine(d)), 'deferredIn', d.commissionSen);
+  for (const m of manualOf(r)) add(lineOf(m.docNo, placeLine(m)), 'manual', m.commissionSen);
   for (const m of markedOf(r)) {
     const l = lineOf(m.docNo, placeLine(m));
     l.marks.push(m.mark);
@@ -297,9 +311,10 @@ export function orderLines(r: EventCommission): OrderLine[] {
 /** The report on the summary lines; they add up to its total. */
 export function summaryOf(r: EventCommission): CommissionSummary {
   const lines = orderLines(r);
-  const out = { fair: 0, noFair: 0, changes: 0, late: 0, earlier: 0, monthAdj: 0, deferredIn: 0, totalSen: 0 };
+  const out: CommissionSummary = { fair: 0, noFair: 0, changes: 0, late: 0, earlier: 0, monthAdj: 0, deferredIn: 0, totalSen: 0 };
+  const keys = summaryKeysOf(r);
   for (const l of lines) {
-    for (const k of SUMMARY_ORDER) out[k] += l.split[k];
+    for (const k of keys) out[k] = (out[k] ?? 0) + l.split[k];
     out.totalSen += l.totalSen;
   }
   return out;
@@ -322,22 +337,23 @@ export const eventCommissionCsv = (r: EventCommission): string => {
   const esc = (v: string | number | null) => `"${guardFormula(String(v ?? '')).replace(/"/g, '""')}"`;
   const row = (cells: Array<string | number | null>) => cells.map(esc).join(',');
   const s = summaryOf(r);
+  const keys = summaryKeysOf(r);
   const lines = [row(['Summary', 'RM'])];
-  for (const k of SUMMARY_ORDER) lines.push(row([SUMMARY_LABEL[k], fmtRm(s[k])]));
+  for (const k of keys) lines.push(row([SUMMARY_LABEL[k], fmtRm(s[k] ?? 0)]));
   lines.push(row(['Total', fmtRm(s.totalSen)]), '');
   lines.push(row(['Order', 'Ref No.', 'Fair', 'Brand', 'Salesperson', 'SO date', 'Goods', 'Paid %', '30% reached',
-    ...SUMMARY_ORDER.map((k) => SUMMARY_LABEL[k]), 'Commission', 'Marked', 'Not paid here']));
+    ...keys.map((k) => SUMMARY_LABEL[k]), 'Commission', 'Marked', 'Not paid here']));
   for (const l of orderLines(r)) {
     lines.push(row([
       l.docNo, l.ref, l.fairName, l.brand, l.salesperson, l.soDate, l.goodsSen == null ? '' : fmtRm(l.goodsSen), percentText(l.paidPct), l.reachedOn,
-      ...SUMMARY_ORDER.map((k) => fmtRm(l.split[k])), fmtRm(l.totalSen), marksText(l), l.marks.length > 0 ? fmtRm(l.markedSen) : '',
+      ...keys.map((k) => fmtRm(l.split[k])), fmtRm(l.totalSen), marksText(l), l.marks.length > 0 ? fmtRm(l.markedSen) : '',
     ]));
   }
-  lines.push('', row(['Total', '', '', '', '', '', '', '', '', ...SUMMARY_ORDER.map((k) => fmtRm(s[k])), fmtRm(s.totalSen), '', '']));
+  lines.push('', row(['Total', '', '', '', '', '', '', '', '', ...keys.map((k) => fmtRm(s[k] ?? 0)), fmtRm(s.totalSen), '', '']));
   return `${lines.join('\n')}\n`;
 };
 
-export const RULE_NOTE = 'An order earns its goods (no delivery or service) × the fair\'s brand rate once 30% of the order is paid. Upsales and drop sales count from 1/9/2026 (1 September – 19 October read from each order\'s modification history), each in the month it happened, at the fair\'s brand rate; one Finance left out (Don\'t count change) moves no commission and the order earns on the rest. A price wiped to 0 and typed again is no change (typed again at another figure, the difference counts that day). A late bill (补开单) is an order keyed in the range for a fair that had ended before it. By SO date, an order with no fair earns at its own brand\'s rate from 1/10/2026; one opened before then earns only on its upsales and drop sales, whatever has been paid, and cancelled from 1/10/2026 it gives back its goods × that rate (under Earlier orders, in the month it was cancelled).';
+export const RULE_NOTE = 'An order earns its goods (no delivery or service) × the fair\'s brand rate once 30% of the order is paid. Upsales and drop sales count from 1/9/2026 (1 September – 19 October read from each order\'s modification history), each in the month it happened, at the fair\'s brand rate; one Finance left out (Don\'t count change) moves no commission and the order earns on the rest. A price wiped to 0 and typed again is no change (typed again at another figure, the difference counts that day). A late bill (补开单) is an order keyed in the range for a fair that had ended before it. By SO date, an order with no fair earns at its own brand\'s rate from 1/10/2026; one opened before then earns only on its upsales and drop sales, whatever has been paid, and cancelled from 1/10/2026 it gives back its goods × that rate (under Earlier orders, in the month it was cancelled). A line added by Finance is an amount of goods typed on an order for one month, at the order\'s own rate.';
 
 /** The report as the owner asked to export it: the summary, the fairs (by fair),
     then every order once with its commission split over the summary lines. */
@@ -346,10 +362,11 @@ export function eventCommissionSheet(r: EventCommission, period: string, brand: 
   const words = BASIS_WORDS[basisOf(r)];
   const text = (v: string | number | null | undefined): SheetValue => (v == null || v === '' ? null : String(v));
   const s = summaryOf(r);
+  const keys = summaryKeysOf(r);
   const summary: SheetTable = {
     columns: [AMOUNT_COLUMN('Commission')],
     rows: [
-      ...SUMMARY_ORDER.map((k): SheetRow => ({ kind: 'row', depth: 0, label: SUMMARY_LABEL[k], cells: [s[k]] })),
+      ...keys.map((k): SheetRow => ({ kind: 'row', depth: 0, label: SUMMARY_LABEL[k], cells: [s[k] ?? 0] })),
       { kind: 'total', depth: 0, label: 'Total commission', cells: [s.totalSen] },
     ],
   };
@@ -378,14 +395,14 @@ export function eventCommissionSheet(r: EventCommission, period: string, brand: 
   tables.push({
     columns: [
       { label: 'Ref No.', kind: 'text' }, { label: 'Fair', kind: 'text' }, { label: 'Salesperson', kind: 'text' }, AMOUNT_COLUMN('Goods'), { label: 'Paid %', kind: 'text' },
-      ...SUMMARY_ORDER.map((k) => AMOUNT_COLUMN(SUMMARY_LABEL[k])), AMOUNT_COLUMN('Commission'), { label: 'Marked', kind: 'text' },
+      ...keys.map((k) => AMOUNT_COLUMN(SUMMARY_LABEL[k])), AMOUNT_COLUMN('Commission'), { label: 'Marked', kind: 'text' },
     ],
     rows: [
       ...lines.map((l): SheetRow => ({
         kind: 'row', depth: 0, label: l.docNo,
-        cells: [text(l.ref), l.fairName, text(l.salesperson), l.goodsSen, text(percentText(l.paidPct)), ...SUMMARY_ORDER.map((k) => l.split[k]), l.totalSen, text(marksText(l))],
+        cells: [text(l.ref), l.fairName, text(l.salesperson), l.goodsSen, text(percentText(l.paidPct)), ...keys.map((k) => l.split[k]), l.totalSen, text(marksText(l))],
       })),
-      { kind: 'total', depth: 0, label: 'Every order', cells: [null, null, null, null, null, ...SUMMARY_ORDER.map((k) => s[k]), s.totalSen, null] },
+      { kind: 'total', depth: 0, label: 'Every order', cells: [null, null, null, null, null, ...keys.map((k) => s[k] ?? 0), s.totalSen, null] },
     ],
   });
   return {

@@ -84,6 +84,8 @@ const closeMonth = vi.fn();
 const reopenMonth = vi.fn();
 const markOrder = vi.fn();
 const unmarkOrder = vi.fn();
+const addLine = vi.fn();
+const removeLine = vi.fn();
 const confirmAsk = vi.fn(async () => true);
 const promptAsk = vi.fn(async (): Promise<string | null> => 'checking the price');
 
@@ -97,13 +99,15 @@ vi.mock('../../vendor/scm/lib/event-queries', async (importOriginal) => ({
   useReopenCommissionMonth: () => ({ mutate: reopenMonth, isPending: false }),
   useMarkCommissionOrder: () => ({ mutate: markOrder, isPending: false }),
   useUnmarkCommissionOrder: () => ({ mutate: unmarkOrder, isPending: false }),
+  useAddCommissionLine: () => ({ mutate: addLine, isPending: false }),
+  useRemoveCommissionLine: () => ({ mutate: removeLine, isPending: false }),
 }));
 vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({ useConfirm: () => confirmAsk, usePrompt: () => promptAsk }));
 afterEach(() => { current = null; vi.useRealTimers(); sessionStorage.clear(); vi.clearAllMocks(); });
 
 import { MemoryRouter } from 'react-router-dom';
 import { EventCommissionTab } from './EventCommission';
-import { basisOf, brandsOf, earlierShownOf, eventCommissionCsv, eventCommissionSheet, fairLines, fairPlace, forBrand, orderLines, summaryOf, whatOf } from './eventCommissionModel';
+import { basisOf, brandsOf, earlierShownOf, eventCommissionCsv, eventCommissionSheet, fairLines, fairPlace, fmtRm, forBrand, orderLines, summaryOf, whatOf } from './eventCommissionModel';
 
 /* The report reads the shared range (the report shell's): no dates in the address → This month. */
 const renderTab = (ui: React.ReactElement) => render(<MemoryRouter initialEntries={['/scm/accounting?tab=commission']}>{ui}</MemoryRouter>);
@@ -617,5 +621,101 @@ describe('a price change left out, and the SO list\'s columns (owner 2026-11-12)
     const row = cellsOf(rowOf(list, 'HC-SO-2610-010'));
     expect(row).toEqual(expect.arrayContaining(['SELANGOR [ZANOTTI] BIGHOME @ SUNWAY PYRAMID', '1,100.00', '1,000.00']));
     expect(list.querySelector('tfoot')!.textContent).toContain('1,100.00');
+  });
+});
+
+/* Owner 2026-11-13 (「做」): an amount Finance types on an order for a month, for
+   what the system holds no record of. */
+describe("Finance's own lines (owner 2026-11-13)", () => {
+  const october = () => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-10-26T04:00:00Z')); };
+  const LINE = {
+    docNo: 'HC-SO-009001', fairId: -1, fairName: 'No fair', brand: 'ZANOTTI', organizer: null, venue: 'MID VALLEY', state: null,
+    salesperson: 'Sales A', customer: 'Lim', ratePct: 13, ref: 'REF1001', soDate: '2026-04-13', status: 'IN_PRODUCTION',
+    line: { id: '9d2e4f60-1a2b-4c3d-8e9f-0a1b2c3d4e5f', month: '2026-10', reason: 'Raised before the order came into the ERP', addedBy: 'Finance Chew', addedAt: '2026-11-13T07:00:00Z' },
+    goodsSen: 800_00, commissionSen: 104_00,
+  };
+  const withLine: EventCommission = { ...BY_SO_DATE, manualLines: [LINE], totals: { ...BY_SO_DATE.totals, manualSen: 104_00, totalSen: BY_SO_DATE.totals.totalSen + 104_00 } };
+
+  test('a report with none shows no card, no tile, and exports as before', () => {
+    renderTab(<EventCommissionTab />);
+    expect(screen.queryByRole('region', { name: 'Added by Finance' })).toBeNull();
+    expect(within(screen.getByRole('group', { name: 'Totals' })).queryByText('Added by Finance')).toBeNull();
+    expect(eventCommissionCsv(REPORT)).not.toContain('Added by Finance');
+    expect(summaryOf(REPORT).manual).toBeUndefined();
+  });
+
+  test('a line has a card of its own — order, goods, rate, commission, why and who — a tile, and is in the total and the export', () => {
+    october();
+    current = withLine;
+    renderTab(<EventCommissionTab />);
+    fireEvent.click(screen.getByRole('button', { name: 'By SO date' }));
+    expect(tile('Total commission')).toContain(fmtRm(withLine.totals.totalSen));
+    expect(tile('Added by Finance')).toContain('104.00');
+    const card = screen.getByRole('region', { name: 'Added by Finance' });
+    expect(cellsOf(within(card).getByText('HC-SO-009001').closest('tr')!)).toEqual(expect.arrayContaining([
+      'REF1001', 'ZANOTTI', 'MID VALLEY', 'Sales A', '800.00', '13%', '104.00', 'Raised before the order came into the ERP', 'Finance Chew',
+    ]));
+    expect(summaryOf(withLine).manual).toBe(104_00);
+    expect(summaryOf(withLine).totalSen).toBe(withLine.totals.totalSen);
+    const csv = eventCommissionCsv(withLine);
+    expect(csv).toContain('"Added by Finance","104.00"');
+    expect(orderLines(withLine).find((l) => l.docNo === 'HC-SO-009001')!.split.manual).toBe(104_00);
+    /* One brand: its own lines only, and the total with them. */
+    expect(forBrand(withLine, 'AKEMI').manualLines).toEqual([]);
+    expect(forBrand(withLine, 'ZANOTTI').totals).toMatchObject({ manualSen: 104_00 });
+    expect(brandsOf({ ...withLine, fairs: [], adjustments: [], earlierOrders: [], changedOrders: [] })).toEqual(['ZANOTTI']);
+  });
+
+  test('on an open month Finance types a line — order, goods, reason — and it is sent with the month; less than 0 takes back', async () => {
+    october();
+    current = withLine;
+    renderTab(<EventCommissionTab />);
+    const card = screen.getByRole('region', { name: 'Added by Finance' });
+    fireEvent.click(within(card).getByRole('button', { name: '+ Add a line for 2026/10' }));
+    const form = within(card).getByRole('form', { name: 'Add a line for 2026/10' });
+    const add = within(form).getByRole('button', { name: 'Add to 2026/10' });
+    expect((add as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(within(form).getByLabelText('Order'), { target: { value: ' hc-so-009002 ' } });
+    fireEvent.change(within(form).getByLabelText('Goods (RM)'), { target: { value: '-1,250.50' } });
+    expect((add as HTMLButtonElement).disabled).toBe(true); // no reason yet
+    fireEvent.change(within(form).getByLabelText('Reason'), { target: { value: ' Taken back by hand ' } });
+    fireEvent.click(add);
+    expect(addLine).toHaveBeenCalledWith({ docNo: 'HC-SO-009002', goodsSen: -1_250_50, reason: 'Taken back by hand', month: '2026-10' }, expect.anything());
+    /* Not an amount, or 0: nothing to send. */
+    addLine.mockClear();
+    fireEvent.change(within(form).getByLabelText('Goods (RM)'), { target: { value: 'abc' } });
+    expect((add as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(within(form).getByLabelText('Goods (RM)'), { target: { value: '0' } });
+    expect((add as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(within(form).getByRole('button', { name: 'Cancel' }));
+    expect(within(card).queryByRole('form')).toBeNull();
+    expect(addLine).not.toHaveBeenCalled();
+  });
+
+  test('with no line yet, the form opens from the header’s ⋯ on an open month', () => {
+    october();
+    renderTab(<EventCommissionTab />);
+    expect(screen.queryByRole('region', { name: 'Added by Finance' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Add a line (Finance)' }));
+    expect(within(screen.getByRole('region', { name: 'Added by Finance' })).getByRole('form', { name: 'Add a line for 2026/10' })).toBeTruthy();
+  });
+
+  test('Remove asks first, then takes the line away; a closed month offers neither', async () => {
+    october();
+    current = withLine;
+    const first = renderTab(<EventCommissionTab />);
+    const card = screen.getByRole('region', { name: 'Added by Finance' });
+    fireEvent.click(within(card).getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(removeLine).toHaveBeenCalledWith(LINE.line.id));
+    expect(confirmAsk).toHaveBeenCalledWith(expect.objectContaining({ title: 'Take the line on HC-SO-009001 away?' }));
+    first.unmount();
+    current = { ...withLine, from: '2026-10-01', to: '2026-10-31', closed: { month: '2026-10', closedAt: '2026-11-20T09:00:00Z', closedBy: 'Finance' }, closes: { months: ['2026-09', '2026-10'], openFrom: '2026-11' } };
+    renderTab(<EventCommissionTab />);
+    const closedCard = screen.getByRole('region', { name: 'Added by Finance' });
+    expect(within(closedCard).queryByRole('button', { name: 'Remove' })).toBeNull();
+    expect(within(closedCard).queryByRole('button', { name: /Add a line/ })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    expect(screen.queryByRole('menuitem', { name: 'Add a line (Finance)' })).toBeNull();
   });
 });

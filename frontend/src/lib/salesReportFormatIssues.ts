@@ -45,7 +45,7 @@ export function salesReportFormatIssues(note: string | null | undefined): SalesR
       code: "summary_only",
       tone: "hint",
       message:
-        "Summary only — tak boleh tally per-bill atau detect siapa belum buka. Guna format: `date - bill# - nama - RM amount` setiap baris.",
+        "Summary only — can't tally per-bill or detect who hasn't opened. Use format: `date - bill# - name - RM amount` per line.",
     });
   }
 
@@ -59,8 +59,8 @@ export function salesReportFormatIssues(note: string | null | undefined): SalesR
         tone: "hint",
         message:
           missing === 1
-            ? "1 bill tiada nama sales person — tak boleh attribute dalam panel."
-            : `${missing} bills tiada nama sales person — tak boleh attribute dalam panel.`,
+            ? "1 bill is missing a salesperson name — can't be attributed in the panel."
+            : `${missing} bills are missing a salesperson name — can't be attributed in the panel.`,
       });
     }
   }
@@ -83,7 +83,7 @@ export function salesReportFormatIssues(note: string | null | undefined): SalesR
     issues.push({
       code: "skipped_lines",
       tone: "hint",
-      message: `${parsed.skipped.length} baris tak dikenal format bill — check dash/RM antara bill number, amount, dan nama.`,
+      message: `${parsed.skipped.length} lines don't match the bill format — check the dash/RM between bill number, amount, and name.`,
     });
   }
 

@@ -73,25 +73,55 @@ export function MobileProjectChat({
     el.style.height = `${Math.min(el.scrollHeight, 240)}px`;
   }, [draft]);
 
+  /* Pending-message list shown ABOVE the server activity while a post is in
+   *  flight (owner 2026-11-13 on the Akemi Spice Arena mobile chat: "once
+   *  sales person update sales report in chat, after update didnt show
+   *  anything. need to show they alr update so that they can no error or not").
+   *  Each row gets a client-side id so a slow send and a quick one can both be
+   *  tracked separately, cleared as soon as the server sees the post. */
+  const [pending, setPending] = useState<Array<{ id: string; note: string }>>([]);
+
   const post = useMutation({
-    mutationFn: (note: string) => api.post(`/api/projects/${projectId}/notes`, { note }),
-    onSuccess: () => {
+    mutationFn: ({ note }: { localId: string; note: string }) =>
+      api.post(`/api/projects/${projectId}/notes`, { note }),
+    onMutate: ({ localId, note }) => {
+      setPending((prev) => [...prev, { id: localId, note }]);
       setDraft("");
       setFailed(null);
+    },
+    onSuccess: (_data, { localId }) => {
+      setPending((prev) => prev.filter((p) => p.id !== localId));
       void qc.invalidateQueries({ queryKey });
       onPosted();
     },
-    onError: (e) => {
+    onError: (e, { localId, note }) => {
+      // Restore the draft so the sender can retry without re-typing, and lift
+      // the pending bubble so they don't see a phantom unsent message.
+      setPending((prev) => prev.filter((p) => p.id !== localId));
+      setDraft((cur) => (cur ? cur : note));
       setFailed(e instanceof Error ? e.message : "Couldn't send. Try again.");
     },
   });
 
   const notes = (data?.activity ?? []).filter((a) => a.action === "note");
+  const listRef = useRef<HTMLDivElement | null>(null);
+  // Auto-scroll to the newest message every time the count changes — fires for
+  // both the optimistic "sending" row and the real one that replaces it, so
+  // the floor sees their paste land without hunting for it in the scroller.
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [notes.length, pending.length]);
 
   const send = () => {
     const trimmed = draft.trim();
     if (!trimmed || post.isPending) return;
-    post.mutate(trimmed);
+    // Client-side id so the optimistic row can be cleared on the matching
+    // response — Date.now is unique enough on a phone (no sub-ms sends) and
+    // keeps the id stable across React re-renders.
+    const localId = `local-${Date.now()}`;
+    post.mutate({ localId, note: trimmed });
   };
 
   return (
@@ -107,6 +137,7 @@ export function MobileProjectChat({
             the chat at ~60vh and let it scroll on its own. Newest at bottom to
             match every chat app the floor already uses. */}
         <div
+          ref={listRef}
           style={{
             border: "1px solid var(--hz-dk-border-subtle, #eceee9)",
             borderRadius: 10,
@@ -118,7 +149,7 @@ export function MobileProjectChat({
         >
           {isLoading ? (
             <div style={{ padding: 12, fontSize: 12, color: "var(--hz-c-ink-soft)" }}>Loading…</div>
-          ) : notes.length === 0 ? (
+          ) : notes.length === 0 && pending.length === 0 ? (
             <div style={{ padding: 12, fontSize: 12, color: "var(--hz-c-ink-soft)" }}>No messages yet.</div>
           ) : (
             notes.map((n, i) => {
@@ -164,6 +195,45 @@ export function MobileProjectChat({
               );
             })
           )}
+          {/* Pending rows — the just-sent paste, shown as "Sending…" until the
+              server confirms (owner 2026-11-13). Lives below the real notes so
+              a pending message takes the newest spot without re-ordering the
+              history once it lands. */}
+          {pending.map((p) => (
+            <div
+              key={p.id}
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 2,
+                padding: "10px 12px",
+                borderTop: "1px solid var(--hz-dk-border-subtle, #eceee9)",
+                alignItems: "flex-end",
+                opacity: 0.72,
+              }}
+            >
+              <div style={{ display: "flex", gap: 6, alignItems: "baseline", fontSize: 10.5, color: "var(--hz-c-ink-muted)" }}>
+                <span style={{ fontWeight: 700, color: "var(--hz-c-ink-secondary)" }}>{user?.name ?? "Me"}</span>
+                <span>Sending…</span>
+              </div>
+              <div
+                style={{
+                  fontSize: 13,
+                  color: "var(--hz-c-ink)",
+                  background: "var(--hz-dk-synced-bg, #e5f4ec)",
+                  border: "1px dashed #bcdcd7",
+                  borderRadius: 10,
+                  padding: "8px 11px",
+                  maxWidth: "88%",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  lineHeight: 1.4,
+                }}
+              >
+                {p.note}
+              </div>
+            </div>
+          ))}
         </div>
 
         {/* Compose row — only when the user holds the chat permission. The

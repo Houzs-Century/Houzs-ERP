@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-  NO_FAIR_FROM, buildEventCommission, changeView, deferredInFrom, goodsAt, monthAdjustmentsOf, mytDay, paidByOrder, reachedOn, settledChanges, withMarks, withMonthAdjustments,
+  NO_FAIR_FROM, buildEventCommission, changeView, deferredInFrom, goodsAt, manualLineRows, monthAdjustmentsOf, mytDay, paidByOrder, reachedOn, settledChanges, withManualLines, withMarks,
+  withMonthAdjustments,
   withUncountedChanges,
-  type CommissionChange, type CommissionFair, type CommissionMark, type CommissionPayment, type CommissionSo,
+  type CommissionChange, type CommissionFair, type CommissionManualLine, type CommissionMark, type CommissionPayment, type CommissionSo,
 } from './event-commission';
 
 /* Event Commission (owner 2026-10-20): goods × the fair's brand rate, earned on
@@ -974,5 +975,71 @@ describe('a price wiped to 0 and put back, and a change recorded twice', () => {
     expect(settledChanges(bySystem, order)).toEqual(bySystem);
     const openingDay = [wipe('HC-SO-010722', '2026-08-28T05:00:00Z', 4_888_00), back];
     expect(settledChanges(openingDay, order)).toEqual(openingDay);
+  });
+});
+
+/* Owner 2026-11-13 (「做」): an amount Finance types on an order for a month, for
+   what the system holds no record of — an upsale made on an order before it
+   came into the ERP, so no change of it is dated here. */
+describe("Finance's own lines — an amount typed on an order for a month", () => {
+  const line = (o: Partial<CommissionManualLine> = {}): CommissionManualLine => ({
+    id: 'line-1', docNo: 'HC-SO-009001', month: '2026-10', goodsSen: 800_00, reason: 'Raised before the order came into the ERP',
+    addedBy: 'Finance', addedAt: '2026-11-13T07:00:00Z', ...o,
+  });
+  const oldOrder = so({ docNo: 'HC-SO-009001', projectId: null, brand: 'zanotti', soDate: '2026-04-13', venue: 'MID VALLEY', ref: 'REF1001', salesperson: 'Sales A' });
+  const fairOrder = so({ docNo: 'HC-SO-2610-001' });
+
+  it('an order with no fair earns at its own brand\'s card, by SO date; by fair it is not listed', () => {
+    const rows = manualLineRows({ lines: [line()], sos: [oldOrder], fairs: [], ratePctByBrand: RATES, basis: 'so_date' });
+    expect(rows).toEqual([{
+      docNo: 'HC-SO-009001', fairId: -1, fairName: 'No fair', brand: 'ZANOTTI', organizer: null, venue: 'MID VALLEY', state: null,
+      salesperson: 'Sales A', customer: 'Tan', ratePct: 13, ref: 'REF1001', soDate: '2026-04-13', status: 'CONFIRMED',
+      line: { id: 'line-1', month: '2026-10', reason: 'Raised before the order came into the ERP', addedBy: 'Finance', addedAt: '2026-11-13T07:00:00Z' },
+      goodsSen: 800_00, commissionSen: 104_00,
+    }]);
+    expect(manualLineRows({ lines: [line()], sos: [oldOrder], fairs: [], ratePctByBrand: RATES, basis: 'fair' })).toEqual([]);
+  });
+
+  it('an order on a fair earns at the fair\'s brand, in both views; a minus amount takes commission back', () => {
+    const lines = [line({ id: 'a', docNo: 'HC-SO-2610-001', goodsSen: -2_500_00 })];
+    for (const basis of ['fair', 'so_date'] as const) {
+      const rows = manualLineRows({ lines, sos: [fairOrder], fairs: [fair()], ratePctByBrand: RATES, basis });
+      expect(rows.map((m) => [m.docNo, m.fairId, m.fairName, m.brand, m.ratePct, m.goodsSen, m.commissionSen]))
+        .toEqual([['HC-SO-2610-001', 1, 'KL [AKEMI] BIGHOME @ MID VALLEY', 'AKEMI', 14, -2_500_00, -350_00]]);
+    }
+  });
+
+  it('a brand with no rate card earns nothing; a line whose order is gone, or of 0, is left out', () => {
+    const noCard = manualLineRows({ lines: [line()], sos: [{ ...oldOrder, brand: 'CARRESS' }], fairs: [], ratePctByBrand: RATES, basis: 'so_date' });
+    expect(noCard.map((m) => [m.brand, m.ratePct, m.commissionSen])).toEqual([['CARRESS', null, 0]]);
+    expect(manualLineRows({ lines: [line({ docNo: 'HC-SO-000001' }), line({ goodsSen: 0 })], sos: [oldOrder], fairs: [], ratePctByBrand: RATES, basis: 'so_date' })).toEqual([]);
+  });
+
+  it('the report lists them beside it, inside its total and in what the month paid the order; no mark touches them', () => {
+    const base = buildEventCommission({ ...OCT, basis: 'so_date', fairs: [fair()], ratePctByBrand: RATES, sos: [fairOrder], payments: [{ docNo: 'HC-SO-2610-001', paidAt: '2026-10-02', amountSen: 400_00 }], changes: [], cancels: [] });
+    expect(base.totals).toEqual({ payableSen: 140_00, adjustmentsSen: 0, monthAdjustmentsSen: 0, deferredInSen: 0, totalSen: 140_00 });
+    expect(withManualLines(base, [])).toBe(base);
+    const rows = manualLineRows({
+      lines: [line(), line({ id: 'b', docNo: 'HC-SO-2610-001', goodsSen: 100_00 })], sos: [oldOrder, fairOrder], fairs: [fair()], ratePctByBrand: RATES, basis: 'so_date',
+    });
+    const r = withManualLines(base, rows);
+    expect(r.manualLines!.map((m) => [m.docNo, m.commissionSen])).toEqual([['HC-SO-009001', 104_00], ['HC-SO-2610-001', 14_00]]);
+    expect(r.totals).toEqual({ payableSen: 140_00, adjustmentsSen: 0, monthAdjustmentsSen: 0, deferredInSen: 0, manualSen: 118_00, totalSen: 258_00 });
+    expect(paidByOrder(r)).toEqual({ 'HC-SO-2610-001': 154_00, 'HC-SO-009001': 104_00 });
+    /* The order marked "don't count": its own commission goes, Finance's line stays. */
+    const marked = withMarks(r, [{ id: 'm1', docNo: 'HC-SO-2610-001', kind: 'exclude', month: null, reason: null, markedBy: 'Finance', markedAt: '2026-11-13T00:00:00Z' }]);
+    expect(marked.totals).toEqual({ payableSen: 0, adjustmentsSen: 0, monthAdjustmentsSen: 0, deferredInSen: 0, manualSen: 118_00, totalSen: 118_00 });
+    expect(marked.manualLines).toHaveLength(2);
+    /* The closed months' adjustments keep them too. */
+    expect(withMonthAdjustments(r, []).totals).toMatchObject({ manualSen: 118_00, totalSen: 258_00 });
+  });
+
+  it('a month closed with a line: recalculated with the same line, nothing to adjust; without it, the line is taken back', () => {
+    const base = buildEventCommission({ ...OCT, basis: 'so_date', fairs: [], ratePctByBrand: RATES, sos: [oldOrder], payments: [], changes: [], cancels: [] });
+    const rows = manualLineRows({ lines: [line()], sos: [oldOrder], fairs: [], ratePctByBrand: RATES, basis: 'so_date' });
+    const closedAs = withManualLines(base, rows);
+    const closed = [{ month: '2026-10', paid: paidByOrder(closedAs), carried: [] }];
+    expect(monthAdjustmentsOf(closed, new Map([['2026-10', closedAs]]))).toEqual([]);
+    expect(monthAdjustmentsOf(closed, new Map([['2026-10', base]]))).toMatchObject([{ month: '2026-10', docNo: 'HC-SO-009001', wasSen: 104_00, nowSen: 0, adjustmentSen: -104_00 }]);
   });
 });
