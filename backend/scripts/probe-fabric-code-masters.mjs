@@ -1,5 +1,5 @@
-// Read-only probe, the fast half: the fabric masters and the handful of tables
-// the KN01..KN13 -> EM rename has to move. One-off; dropped before merge.
+// Read-only probe, second pass: what fires when the rename writes, and the
+// state of the documents it touches. One-off; dropped before merge.
 import postgres from "postgres";
 
 const DSN = process.env.DATABASE_URL;
@@ -9,126 +9,88 @@ const out = (m) => console.log(m);
 const cut = (s, n = 260) => { const v = String(s ?? ""); return v.length > n ? `${v.slice(0, n)}…` : v; };
 const OLD = ["KN01", "KN02", "KN03", "KN04", "KN05", "KN06", "KN07", "KN08", "KN09", "KN10", "KN11", "KN12", "KN13"];
 const OLD_RE = "(^|[^A-Za-z0-9])KN(0[1-9]|1[0-3])([^A-Za-z0-9]|$)";
+const TABLES = ["mfg_sales_order_items", "purchase_order_items", "purchase_consignment_order_items",
+  "purchase_consignment_receive_items", "inventory_lots", "inventory_movements", "product_models",
+  "product_request_lines", "hr_item_kpi", "fabric_library", "fabric_colours", "fabric_trackings"];
 
 async function section(title, fn) {
   out(`\n=== ${title} ===`);
   try { await fn(); } catch (e) { out(`  FAILED: ${cut(e.message, 300)}`); }
 }
-const dump = (rows) => { out(`  ${rows.length} row(s)`); for (const r of rows) out(`  ${cut(JSON.stringify(r), 900)}`); };
+const dump = (rows, n = 900) => { out(`  ${rows.length} row(s)`); for (const r of rows) out(`  ${cut(JSON.stringify(r), n)}`); };
 
-await section("A. companies", async () => dump(await sql`SELECT id, code, name FROM public.companies ORDER BY id`));
+await section("1. triggers on every table the rename writes", async () => dump(await sql`
+  SELECT c.relname AS t, tg.tgname, pg_get_triggerdef(tg.oid) AS def
+    FROM pg_trigger tg JOIN pg_class c ON c.oid = tg.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace
+   WHERE NOT tg.tgisinternal AND n.nspname = 'scm' AND c.relname = ANY(${TABLES}::text[])
+   ORDER BY 1, 2`, 700));
 
-await section("B. scm.fabric_trackings (code/id KN*|EM*, or series EMBRACE)", async () => dump(await sql`
-  SELECT * FROM scm.fabric_trackings
-   WHERE fabric_code ~* '^(KN|EM)[-_ ]?[0-9]' OR id ~* '^(KN|EM)[-_ ]?[0-9]' OR series ILIKE '%EMBRACE%'
-   ORDER BY company_id, fabric_code`));
+await section("2. materialized views in scm / public", async () => dump(await sql`
+  SELECT n.nspname AS s, c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+   WHERE c.relkind = 'm' AND n.nspname IN ('scm', 'public') ORDER BY 1, 2`));
 
-await section("C1. scm.fabric_library (id KN*|EM*|EMBRACE)", async () => dump(await sql`
-  SELECT * FROM scm.fabric_library
-   WHERE id ~* '^(KN|EM)([-_ ]?[0-9]|$)' OR label ILIKE '%EMBRACE%' OR id ILIKE '%EMBRACE%'
-   ORDER BY company_id, id`));
+await section("3. views whose definition reads inventory_lots / inventory_movements variant_key", async () => dump(await sql`
+  SELECT schemaname || '.' || viewname AS v FROM pg_views
+   WHERE schemaname IN ('scm', 'public') AND definition ILIKE '%variant_key%' ORDER BY 1`));
 
-await section("C2. scm.fabric_colours (fabric_id/colour_id KN*|EM*)", async () => dump(await sql`
-  SELECT * FROM scm.fabric_colours
-   WHERE fabric_id ~* '^(KN|EM)([-_ ]?[0-9]|$)' OR colour_id ~* '^(KN|EM)[-_ ]?[0-9]' OR fabric_id ILIKE '%EMBRACE%'
-   ORDER BY company_id, fabric_id, colour_id`));
+await section("4. Venture Portal feed scope", async () => dump(await sql`
+  SELECT key, value FROM scm.app_config WHERE key = 'scm.venture_portal_feed'`));
 
-await section("C3. how a multi-colour series looks today (BROWNIE / HOMELY), for the label convention", async () => {
-  dump(await sql`SELECT * FROM scm.fabric_library WHERE id IN ('BROWNIE', 'NB', 'ZL') ORDER BY id`);
-  dump(await sql`SELECT * FROM scm.fabric_colours WHERE fabric_id = 'BROWNIE' ORDER BY colour_id LIMIT 4`);
-  dump(await sql`SELECT id, company_id, fabric_code, fabric_description, series, supplier_code, is_active
-                   FROM scm.fabric_trackings WHERE fabric_code ILIKE 'BROWNIE%' ORDER BY fabric_code LIMIT 4`);
+await section("5. product request lines on the old codes, by request status", async () => dump(await sql`
+  SELECT r.company_id, r.status, r.request_type, COUNT(DISTINCT r.id)::int AS requests, COUNT(*)::int AS lines,
+         array_agg(DISTINCT l.fabric_code) AS codes, MIN(r.request_no) AS first_no, MAX(r.request_no) AS last_no
+    FROM scm.product_request_lines l JOIN scm.product_requests r ON r.id = l.request_id
+   WHERE l.fabric_code = ANY(${OLD}::text[])
+   GROUP BY 1, 2, 3 ORDER BY 1, 2`));
+
+await section("6. purchase orders that carry the old codes", async () => dump(await sql`
+  SELECT h.company_id, h.po_number, h.status, COUNT(*)::int AS lines
+    FROM scm.purchase_order_items i JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
+   WHERE i.variants::text ~* ${OLD_RE} GROUP BY 1, 2, 3 ORDER BY 2`));
+
+await section("7. purchase consignment orders / receives that carry the old codes", async () => {
+  dump(await sql`
+    SELECT i.company_id, COUNT(*)::int AS lines
+      FROM scm.purchase_consignment_order_items i WHERE i.variants::text ~* ${OLD_RE} GROUP BY 1`);
+  dump(await sql`SELECT to_jsonb(i) AS row FROM scm.purchase_consignment_order_items i WHERE i.variants::text ~* ${OLD_RE} LIMIT 2`, 1400);
+  dump(await sql`
+    SELECT i.company_id, COUNT(*)::int AS lines
+      FROM scm.purchase_consignment_receive_items i WHERE i.variants::text ~* ${OLD_RE} GROUP BY 1`);
+  dump(await sql`SELECT to_jsonb(i) AS row FROM scm.purchase_consignment_receive_items i WHERE i.variants::text ~* ${OLD_RE} LIMIT 2`, 1400);
 });
 
-await section("D1. constraints ON the three fabric tables", async () => dump(await sql`
-  SELECT conrelid::regclass::text AS t, conname, contype, pg_get_constraintdef(oid) AS def
-    FROM pg_constraint
-   WHERE conrelid IN ('scm.fabric_trackings'::regclass, 'scm.fabric_library'::regclass, 'scm.fabric_colours'::regclass)
-   ORDER BY 1, 2`));
+await section("8. columns of the two consignment purchase line tables", async () => dump(await sql`
+  SELECT table_name, string_agg(column_name, ', ' ORDER BY ordinal_position) AS cols
+    FROM information_schema.columns
+   WHERE table_schema = 'scm' AND table_name IN ('purchase_consignment_order_items', 'purchase_consignment_receive_items',
+         'inventory_lots', 'inventory_movements', 'product_request_lines', 'product_requests')
+   GROUP BY 1 ORDER BY 1`, 1600));
 
-await section("D2. foreign keys that REFERENCE the three fabric tables", async () => dump(await sql`
-  SELECT conrelid::regclass::text AS t, conname, pg_get_constraintdef(oid) AS def
-    FROM pg_constraint
-   WHERE contype = 'f'
-     AND confrelid IN ('scm.fabric_trackings'::regclass, 'scm.fabric_library'::regclass, 'scm.fabric_colours'::regclass)
-   ORDER BY 1, 2`));
+await section("9. inventory lots on the old codes", async () => dump(await sql`
+  SELECT to_jsonb(l) AS row FROM scm.inventory_lots l WHERE l.variant_key ~* ${OLD_RE}`, 900));
 
-await section("D3. triggers on the three fabric tables", async () => dump(await sql`
-  SELECT tgrelid::regclass::text AS t, tgname, pg_get_triggerdef(oid) AS def
-    FROM pg_trigger
-   WHERE NOT tgisinternal
-     AND tgrelid IN ('scm.fabric_trackings'::regclass, 'scm.fabric_library'::regclass, 'scm.fabric_colours'::regclass)
-   ORDER BY 1, 2`));
+await section("10. inventory movements on the old codes", async () => dump(await sql`
+  SELECT to_jsonb(m) AS row FROM scm.inventory_movements m WHERE m.variant_key ~* ${OLD_RE}`, 900));
 
-await section("E. scm.product_fabrics rows on the old series", async () => dump(await sql`
-  SELECT * FROM scm.product_fabrics WHERE fabric_id = ANY(${OLD}::text[]) OR fabric_id ~* '^EM([-_ ]?[0-9]|$)' ORDER BY fabric_id LIMIT 60`));
-
-await section("F. scm.hr_item_kpi fabric rules on the old series (and EM)", async () => dump(await sql`
-  SELECT * FROM scm.hr_item_kpi
-   WHERE flag_type::text = 'fabric' AND (ref = ANY(${OLD}::text[]) OR ref ~* '^EM([-_ ]?[0-9]|$)')
-   ORDER BY company_id, ref`));
-
-await section("G. scm.product_models whose fabric pool names an old code", async () => {
-  const rows = await sql`
-    SELECT m.company_id, m.id, m.model_code, m.category,
-           jsonb_array_length(m.allowed_options->'fabrics') AS pool_size,
-           (SELECT array_agg(e ORDER BY e) FROM jsonb_array_elements_text(m.allowed_options->'fabrics') e
-             WHERE e = ANY(${OLD}::text[])) AS old_in_pool,
-           (SELECT array_agg(e ORDER BY e) FROM jsonb_array_elements_text(m.allowed_options->'fabrics') e
-             WHERE e ~* '^EM([-_ ]?[0-9]|$)') AS em_in_pool
-      FROM scm.product_models m
-     WHERE jsonb_typeof(m.allowed_options->'fabrics') = 'array'
-       AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(m.allowed_options->'fabrics') e WHERE e = ANY(${OLD}::text[]))`;
-  out(`  ${rows.length} model(s)`);
-  const shapes = new Map();
-  for (const r of rows) {
-    const k = `company ${r.company_id} | ${r.category} | old ${(r.old_in_pool ?? []).length}/13 [${(r.old_in_pool ?? []).join(",")}] | EM [${(r.em_in_pool ?? []).join(",")}]`;
-    shapes.set(k, (shapes.get(k) ?? 0) + 1);
+await section("11. where the old code sits inside scan_jobs.review and the mrp snapshots", async () => {
+  for (const [t, c] of [["scm.scan_jobs", "review"], ["scm.mrp_snapshots", "result"], ["scm.mrp_list_snapshots", "result"]]) {
+    const rows = await sql.unsafe(
+      `SELECT substring(${c}::text from '.{0,160}[^A-Za-z0-9]KN(?:0[1-9]|1[0-3])[^A-Za-z0-9].{0,100}') AS around
+         FROM ${t} WHERE ${c}::text ~* $1 LIMIT 3`, [OLD_RE]);
+    out(`  ${t}.${c}:`);
+    for (const r of rows) out(`    ${cut(r.around, 420)}`);
   }
-  for (const [k, n] of shapes) out(`  ${n} model(s): ${k}`);
+  dump(await sql`SELECT to_jsonb(j) - 'review' - 'result' - 'extracted' AS row FROM scm.scan_jobs j WHERE j.review::text ~* ${OLD_RE}`, 900);
+  dump(await sql`SELECT to_jsonb(s) - 'result' AS row FROM scm.mrp_snapshots s WHERE s.result::text ~* ${OLD_RE}`, 600);
+  dump(await sql`SELECT to_jsonb(s) - 'result' AS row FROM scm.mrp_list_snapshots s WHERE s.result::text ~* ${OLD_RE}`, 600);
 });
 
-await section("H. scm.mfg_products that name an old code (fabric_color / default_variants)", async () => dump(await sql`
-  SELECT company_id, code, category, fabric_color, default_variants::text AS default_variants, status
-    FROM scm.mfg_products
-   WHERE fabric_color = ANY(${OLD}::text[]) OR default_variants::text ~* ${OLD_RE}
-   ORDER BY company_id, code LIMIT 40`));
+await section("12. other fabric_library ids of company 2 and the EM id in any company", async () => {
+  dump(await sql`SELECT id, label, active, sort_order, sofa_tier, bedframe_tier FROM scm.fabric_library WHERE company_id = 2 ORDER BY sort_order, id`);
+  dump(await sql`SELECT id, company_id FROM scm.fabric_library WHERE upper(btrim(id)) = 'EM'`);
+});
 
-await section("I. SO lines on the old codes: (fabricId, fabricCode, colourId, colourLabel, fabricLabel) shapes", async () => dump(await sql`
-  SELECT h.company_id, i.variants->>'fabricId' AS fabric_id, i.variants->>'fabricCode' AS fabric_code,
-         i.variants->>'colourId' AS colour_id, i.variants->>'colourLabel' AS colour_label,
-         i.variants->>'fabricLabel' AS fabric_label, i.variants->>'fabricSupplierCode' AS sup,
-         COUNT(*)::int AS n, MIN(i.doc_no) AS first_doc, MAX(i.doc_no) AS last_doc
-    FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
-   WHERE i.variants->>'fabricId' = ANY(${OLD}::text[]) OR i.variants->>'fabricCode' = ANY(${OLD}::text[])
-      OR i.variants->>'colourId' = ANY(${OLD}::text[]) OR i.variants->>'colorCode' = ANY(${OLD}::text[])
-      OR i.variants->>'colourCode' = ANY(${OLD}::text[]) OR i.variants->>'fabricColor' = ANY(${OLD}::text[])
-   GROUP BY 1, 2, 3, 4, 5, 6, 7 ORDER BY 1, 2, 3, 4`));
-
-await section("J. SO lines on the old codes: status of their orders", async () => dump(await sql`
-  SELECT h.company_id, h.status, COUNT(DISTINCT h.doc_no)::int AS orders, COUNT(*)::int AS lines
-    FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
-   WHERE i.variants->>'fabricId' = ANY(${OLD}::text[]) OR i.variants->>'fabricCode' = ANY(${OLD}::text[])
-   GROUP BY 1, 2 ORDER BY 1, 2`));
-
-await section("K. SO lines: sample description2 + variants for the old codes", async () => dump(await sql`
-  SELECT i.doc_no, i.item_code, i.description2, i.variants::text AS variants
-    FROM scm.mfg_sales_order_items i
-   WHERE i.variants->>'fabricCode' = ANY(${OLD}::text[]) OR i.variants->>'fabricId' = ANY(${OLD}::text[])
-   ORDER BY i.doc_no DESC LIMIT 6`));
-
-await section("L. SO lines whose description2 names an old code, by whether variants also does", async () => dump(await sql`
-  SELECT (i.variants->>'fabricCode' = ANY(${OLD}::text[])) AS variants_has_old_code,
-         (i.variants->>'fabricId' = ANY(${OLD}::text[])) AS variants_has_old_series,
-         COUNT(*)::int AS n, MIN(i.description2) AS eg
-    FROM scm.mfg_sales_order_items i
-   WHERE i.description2 ~* ${OLD_RE}
-   GROUP BY 1, 2 ORDER BY 3 DESC`));
-
-await section("M. every scm column literally named like a fabric / colour / series reference", async () => dump(await sql`
-  SELECT table_name, column_name, data_type FROM information_schema.columns
-   WHERE table_schema = 'scm'
-     AND (column_name ILIKE '%fabric%' OR column_name ILIKE '%colour%' OR column_name ILIKE '%color%' OR column_name ILIKE '%series%')
-   ORDER BY 1, 2`));
+await section("13. the unique indexes on hr_item_kpi and product_models", async () => dump(await sql`
+  SELECT tablename, indexdef FROM pg_indexes WHERE schemaname = 'scm' AND tablename IN ('hr_item_kpi', 'product_models', 'product_request_lines')`, 400));
 
 await sql.end({ timeout: 5 });
