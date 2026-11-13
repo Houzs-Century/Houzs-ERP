@@ -43,10 +43,23 @@ export const skuOption = (o: SkuOption) => (o.detail ? `${o.label} · ${o.detail
  *  stays shown until it is changed, even if it is not one of them. */
 const WH_TONES = [styles.wh0, styles.wh1, styles.wh2, styles.wh3, styles.wh4, styles.wh5, styles.wh6, styles.wh7];
 
+const rackShort = (rack: string): string => rack.replace(/^\s*rack\s*/i, '');
+const rackKeyOf = (rack: string): string => rackShort(rack).toUpperCase().replace(/[\s:]/g, '').replace(/[-,_]/g, '.');
+
+/** Labels drop the "Rack " every shelf name starts with: in a narrow cell every
+ *  option showed as "Rack...". A rack read off the paper ("L16.1") shows as the
+ *  shelf it names ("Rack L16.1"); one that names no shelf ("X") stays as read. */
+export function rackCellOptions(value: string | null, racks: ReadonlyArray<{ rack: string }>): { value: string; options: { value: string; label: string }[] } {
+  const named = value ? racks.find((r) => rackKeyOf(r.rack) === rackKeyOf(value)) : undefined;
+  const options = racks.map((r) => ({ value: r.rack, label: rackShort(r.rack) }));
+  if (value && !named) options.unshift({ value, label: value });
+  return { value: named?.rack ?? value ?? '', options };
+}
+
 function RackCell({ warehouseId, value, onChange, label }: { warehouseId: string | null; value: string | null; onChange: (rack: string | null) => void; label: string }) {
   const { racks } = useGrnRackOptions(warehouseId ?? undefined);
-  const options = [...new Set([...(value ? [value] : []), ...racks.map((r) => r.rack)])].map((r) => ({ value: r, label: r }));
-  return <SearchableSelect value={value ?? ''} onChange={(v) => onChange(v || null)} options={options} placeholder="Rack" className={styles.cell} ariaLabel={label} />;
+  const cell = rackCellOptions(value, racks);
+  return <SearchableSelect value={cell.value} onChange={(v) => onChange(v || null)} options={cell.options} placeholder="Rack" className={styles.cell} ariaLabel={label} />;
 }
 
 export function ScanGrnCheckCard({ doc, review, suppliers, poLines, checked, block, onToggle, onChange, onDelete, onRetry, onGold, onOpenGrn }: Props) {
