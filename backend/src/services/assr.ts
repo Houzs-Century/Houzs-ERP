@@ -17,7 +17,7 @@ import { resolveCreditorForCase } from "./stockItems";
 import { getActiveStaffToken } from "./caseTracking";
 import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
 import { assrVisibilityPredicateSql } from "./assrVisibility";
-import { attachOrderPosAndFill, caseCompanySql, pickedSupplierName, showErpSupplierNames } from "./assrCreditorFill";
+import { attachOrderPosAndFill, attachExchangePosEnv, caseCompanySql, pickedSupplierName, showErpSupplierNames } from "./assrCreditorFill";
 import { attachOrderDeliveryDates } from "./assrOrderDos";
 
 // ── Types ─────────────────────────────────────────────────────
@@ -774,7 +774,7 @@ export async function getAssrDetail(env: Env, id: number) {
   // SCM fallback) so the detail page's DO field also fills for cases
   // whose hand-entered delivery_order was never set — which is nearly
   // all of them.
-  await Promise.all([attachDeliveryOrders(env, [caseRow]).then(() => attachOrderDeliveryDates(env, [caseRow])), attachOrderPos(env, [caseRow])]);
+  await Promise.all([attachDeliveryOrders(env, [caseRow]).then(() => attachOrderDeliveryDates(env, [caseRow])), attachOrderPos(env, [caseRow]), attachExchangePosEnv(env, [caseRow])]);
 
   const items = await env.DB.prepare(
     `SELECT * FROM assr_items WHERE assr_id = ? ORDER BY id`
