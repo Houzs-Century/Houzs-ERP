@@ -24,7 +24,7 @@ try {
       FROM scm.scan_jobs j
       CROSS JOIN LATERAL jsonb_array_elements(coalesce(j.review->'lines', '[]'::jsonb)) e
       LEFT JOIN scm.purchase_order_items pi ON pi.id::text = e->>'poItemId'
-      LEFT JOIN scm.purchase_orders po ON po.id = pi.po_id
+      LEFT JOIN scm.purchase_orders po ON po.id = pi.purchase_order_id
      WHERE j.document_type = 'GR' AND j.created_at >= ${SINCE}
        AND e->>'poItemId' IS NOT NULL AND e->'read'->>'itemCode' IS NOT NULL
      ORDER BY j.created_at`;
