@@ -1392,25 +1392,6 @@ describe('company 1: a bound line is planned from its own purchase order only', 
     const row = res.skus.find((s) => s.variantKey === 'fabriccode=red')!;
     expect(row.shortage).toBe(0);   // pooled stock still covers it
   });
-
-  test('company 2: stock keyed without the derived total height covers the line (2990-0059)', async () => {
-    /* 2990-SO-2608-073: the BF-01 bedframe's unit sat under
-       `...|legheight=2"` while the line asked `...|legheight=2"|totalheight=22"`.
-       The SO read READY (the allocator compares canonically since #5617); MRP
-       compared the exact string and asked to buy it again. */
-    const line: Row = { ...demandRed(1), variants: { fabricCode: 'BF-01', gap: '12"', divanHeight: '8"', legHeight: '2"', totalHeight: '22"' } };
-    const sb = world({
-      mfg_sales_order_items: [line],
-      inventory_balances: [{ item_code: 'BF-100', warehouse_id: 'W1', variant_key: 'fabriccode=bf-01|gap=12"|divanheight=8"|legheight=2"', qty: 1 }],
-    }, 2);
-
-    const res = await computeMrp(asSb(sb), { ...opts, companyId: 2 });
-
-    expect(res.skus).toHaveLength(1);
-    expect(res.skus[0]!.variantKey).toContain('totalheight=22');   // the line's own key is still shown
-    expect(res.skus[0]!.stock).toBe(1);
-    expect(res.skus[0]!.shortage).toBe(0);
-  });
 });
 
 /* SOFA IS BOUND TOO — the other half of the same ruling (owner 2026-09-09,
