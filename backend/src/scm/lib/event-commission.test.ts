@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-  NO_FAIR_FROM, buildEventCommission, changeView, deferredInFrom, goodsAt, monthAdjustmentsOf, mytDay, paidByOrder, reachedOn, settledChanges, withMarks, withMonthAdjustments,
+  NO_FAIR_FROM, buildEventCommission, changeView, deferredInFrom, goodsAt, manualLineRows, monthAdjustmentsOf, mytDay, paidByOrder, reachedOn, settledChanges, withManualLines, withMarks,
+  withMonthAdjustments,
   withUncountedChanges,
-  type CommissionChange, type CommissionFair, type CommissionMark, type CommissionPayment, type CommissionSo,
+  type CommissionChange, type CommissionFair, type CommissionManualLine, type CommissionMark, type CommissionPayment, type CommissionSo,
 } from './event-commission';
 
 /* Event Commission (owner 2026-10-20): goods × the fair's brand rate, earned on
@@ -391,15 +392,78 @@ describe('by SO date, an old order with no fair — its upsales and drop sales c
     expect(oct.adjustments.map((a) => [a.docNo, a.kind, a.commissionSen])).toEqual([['HC-SO-013473', 'upsale', 5_72]]);
   });
 
-  it('cancelled in the range: the month\'s changes go with it, and nothing is taken back', () => {
-    const r = buildEventCommission({
-      ...OCT, basis: 'so_date', fairs: [], ratePctByBrand: RATES,
+  /* Owner 2026-11-13 (「要扣」): his own October file took the August order
+     HC-SO-013367 off when it was cancelled; the page took nothing. */
+  describe('cancelled — it gives back what it was paid on', () => {
+    const cancelledOld = {
+      basis: 'so_date' as const, fairs: [], ratePctByBrand: RATES,
       sos: [old({ status: 'CANCELLED' })],
-      payments: [{ docNo: 'HC-SO-013238', paidAt: '2026-08-28', amountSen: 12_000_00 }],
       changes: [priced('HC-SO-013238', '2026-10-03T03:00:00Z', 10_000_00, 12_000_00)],
       cancels: [{ docNo: 'HC-SO-013238', at: '2026-10-18T02:00:00Z' }],
+      /* A third of it paid in August. */
+      payments: [{ docNo: 'HC-SO-013238', paidAt: '2026-08-28', amountSen: 4_000_00 }],
+    };
+
+    it('its goods on the day it was cancelled, at its brand\'s rate; the month\'s changes before that day count', () => {
+      const r = buildEventCommission({ ...OCT, ...cancelledOld });
+      expect(r.adjustments.map((a) => [a.docNo, a.fairName, a.date, a.kind, a.goodsSen, a.commissionSen, a.beforeReach])).toEqual([
+        ['HC-SO-013238', 'No fair', '2026-10-03', 'upsale', 2_000_00, 280_00, false],
+        ['HC-SO-013238', 'No fair', '2026-10-18', 'cancelled', 12_000_00, -1_680_00, false],
+      ]);
+      /* One row in the earlier orders: what it was before the month's upsale, taken back. */
+      expect(r.earlierOrders).toMatchObject([{
+        docNo: 'HC-SO-013238', fairName: 'No fair', brand: 'AKEMI', lastDate: '2026-10-18',
+        events: [{ date: '2026-10-03', kind: 'upsale' }, { date: '2026-10-18', kind: 'cancelled' }],
+        originalSen: 10_000_00, latestSen: 12_000_00, amendedSen: 2_000_00, commissionSen: -1_400_00,
+      }]);
+      /* Cancelled by the end of the range: not an upsale to list. */
+      expect(r.changedOrders).toEqual([]);
+      expect(r.fairs).toEqual([]);
+      expect(r.totals.totalSen).toBe(-1_400_00);
     });
-    expect([r.adjustments, r.earlierOrders, r.changedOrders]).toEqual([[], [], []]);
+
+    it('whatever it had been paid — its own amount was paid before this page: a deposit 40 sen short of 30%, or none on record', () => {
+      const lines = (payments: CommissionPayment[]) =>
+        buildEventCommission({ ...OCT, ...cancelledOld, payments }).adjustments.map((a) => [a.kind, a.commissionSen]);
+      expect(lines([{ docNo: 'HC-SO-013238', paidAt: '2026-08-28', amountSen: 3_599_60 }])).toEqual([['upsale', 280_00], ['cancelled', -1_680_00]]);
+      expect(lines([])).toEqual([['upsale', 280_00], ['cancelled', -1_680_00]]);
+    });
+
+    it('a change after it is cancelled moves nothing; the month after, nothing at all; by fair, never', () => {
+      /* Someone edits the cancelled order in November: today's goods are 12,500. */
+      const late = { ...cancelledOld, changes: [...cancelledOld.changes, priced('HC-SO-013238', '2026-11-02T03:00:00Z', 12_000_00, 12_500_00)] };
+      const sos = [old({ status: 'CANCELLED', goodsSen: 12_500_00, totalSen: 12_500_00 })];
+      const oct = buildEventCommission({ ...OCT, ...late, sos });
+      expect(oct.adjustments.map((a) => [a.kind, a.goodsSen, a.commissionSen])).toEqual([['upsale', 2_000_00, 280_00], ['cancelled', 12_000_00, -1_680_00]]);
+      const nov = buildEventCommission({ from: '2026-11-01', to: '2026-11-30', ...late, sos });
+      expect([nov.adjustments, nov.earlierOrders, nov.changedOrders]).toEqual([[], [], []]);
+      expect(buildEventCommission({ ...OCT, ...cancelledOld, basis: 'fair' }).adjustments).toEqual([]);
+    });
+
+    it('a price change Finance left out is not taken back either', () => {
+      const r = buildEventCommission({
+        ...OCT, ...cancelledOld,
+        changes: withUncountedChanges(cancelledOld.changes, [{ id: 'm1', docNo: 'HC-SO-013238', kind: 'exclude_change', month: '2026-10', reason: null, markedBy: 'Finance', markedAt: '2026-11-13T00:00:00Z' }]),
+      });
+      expect(r.adjustments.map((a) => [a.kind, a.commissionSen])).toEqual([['upsale', 0], ['cancelled', -1_400_00]]);
+      expect(r.totals.totalSen).toBe(-1_400_00);
+    });
+
+    it('cancelled before October 2026: nothing, as it was — September was settled on the owner\'s sheet', () => {
+      const sep = { ...cancelledOld, changes: [priced('HC-SO-013238', '2026-09-03T03:00:00Z', 10_000_00, 12_000_00)], cancels: [{ docNo: 'HC-SO-013238', at: '2026-09-18T02:00:00Z' }] };
+      const inSep = buildEventCommission({ from: '2026-09-01', to: '2026-09-30', ...sep });
+      expect([inSep.adjustments, inSep.earlierOrders, inSep.changedOrders]).toEqual([[], [], []]);
+      const inOct = buildEventCommission({ ...OCT, ...sep });
+      expect([inOct.adjustments, inOct.earlierOrders, inOct.changedOrders]).toEqual([[], [], []]);
+    });
+
+    it('cancelled in October, looked at for September: its September changes count as before', () => {
+      const r = buildEventCommission({
+        from: '2026-09-01', to: '2026-09-30', ...cancelledOld,
+        changes: [priced('HC-SO-013238', '2026-09-20T03:00:00Z', 10_000_00, 12_000_00)],
+      });
+      expect(r.adjustments.map((a) => [a.kind, a.commissionSen])).toEqual([['upsale', 280_00]]);
+    });
   });
 });
 
@@ -911,5 +975,71 @@ describe('a price wiped to 0 and put back, and a change recorded twice', () => {
     expect(settledChanges(bySystem, order)).toEqual(bySystem);
     const openingDay = [wipe('HC-SO-010722', '2026-08-28T05:00:00Z', 4_888_00), back];
     expect(settledChanges(openingDay, order)).toEqual(openingDay);
+  });
+});
+
+/* Owner 2026-11-13 (「做」): an amount Finance types on an order for a month, for
+   what the system holds no record of — an upsale made on an order before it
+   came into the ERP, so no change of it is dated here. */
+describe("Finance's own lines — an amount typed on an order for a month", () => {
+  const line = (o: Partial<CommissionManualLine> = {}): CommissionManualLine => ({
+    id: 'line-1', docNo: 'HC-SO-009001', month: '2026-10', goodsSen: 800_00, reason: 'Raised before the order came into the ERP',
+    addedBy: 'Finance', addedAt: '2026-11-13T07:00:00Z', ...o,
+  });
+  const oldOrder = so({ docNo: 'HC-SO-009001', projectId: null, brand: 'zanotti', soDate: '2026-04-13', venue: 'MID VALLEY', ref: 'REF1001', salesperson: 'Sales A' });
+  const fairOrder = so({ docNo: 'HC-SO-2610-001' });
+
+  it('an order with no fair earns at its own brand\'s card, by SO date; by fair it is not listed', () => {
+    const rows = manualLineRows({ lines: [line()], sos: [oldOrder], fairs: [], ratePctByBrand: RATES, basis: 'so_date' });
+    expect(rows).toEqual([{
+      docNo: 'HC-SO-009001', fairId: -1, fairName: 'No fair', brand: 'ZANOTTI', organizer: null, venue: 'MID VALLEY', state: null,
+      salesperson: 'Sales A', customer: 'Tan', ratePct: 13, ref: 'REF1001', soDate: '2026-04-13', status: 'CONFIRMED',
+      line: { id: 'line-1', month: '2026-10', reason: 'Raised before the order came into the ERP', addedBy: 'Finance', addedAt: '2026-11-13T07:00:00Z' },
+      goodsSen: 800_00, commissionSen: 104_00,
+    }]);
+    expect(manualLineRows({ lines: [line()], sos: [oldOrder], fairs: [], ratePctByBrand: RATES, basis: 'fair' })).toEqual([]);
+  });
+
+  it('an order on a fair earns at the fair\'s brand, in both views; a minus amount takes commission back', () => {
+    const lines = [line({ id: 'a', docNo: 'HC-SO-2610-001', goodsSen: -2_500_00 })];
+    for (const basis of ['fair', 'so_date'] as const) {
+      const rows = manualLineRows({ lines, sos: [fairOrder], fairs: [fair()], ratePctByBrand: RATES, basis });
+      expect(rows.map((m) => [m.docNo, m.fairId, m.fairName, m.brand, m.ratePct, m.goodsSen, m.commissionSen]))
+        .toEqual([['HC-SO-2610-001', 1, 'KL [AKEMI] BIGHOME @ MID VALLEY', 'AKEMI', 14, -2_500_00, -350_00]]);
+    }
+  });
+
+  it('a brand with no rate card earns nothing; a line whose order is gone, or of 0, is left out', () => {
+    const noCard = manualLineRows({ lines: [line()], sos: [{ ...oldOrder, brand: 'CARRESS' }], fairs: [], ratePctByBrand: RATES, basis: 'so_date' });
+    expect(noCard.map((m) => [m.brand, m.ratePct, m.commissionSen])).toEqual([['CARRESS', null, 0]]);
+    expect(manualLineRows({ lines: [line({ docNo: 'HC-SO-000001' }), line({ goodsSen: 0 })], sos: [oldOrder], fairs: [], ratePctByBrand: RATES, basis: 'so_date' })).toEqual([]);
+  });
+
+  it('the report lists them beside it, inside its total and in what the month paid the order; no mark touches them', () => {
+    const base = buildEventCommission({ ...OCT, basis: 'so_date', fairs: [fair()], ratePctByBrand: RATES, sos: [fairOrder], payments: [{ docNo: 'HC-SO-2610-001', paidAt: '2026-10-02', amountSen: 400_00 }], changes: [], cancels: [] });
+    expect(base.totals).toEqual({ payableSen: 140_00, adjustmentsSen: 0, monthAdjustmentsSen: 0, deferredInSen: 0, totalSen: 140_00 });
+    expect(withManualLines(base, [])).toBe(base);
+    const rows = manualLineRows({
+      lines: [line(), line({ id: 'b', docNo: 'HC-SO-2610-001', goodsSen: 100_00 })], sos: [oldOrder, fairOrder], fairs: [fair()], ratePctByBrand: RATES, basis: 'so_date',
+    });
+    const r = withManualLines(base, rows);
+    expect(r.manualLines!.map((m) => [m.docNo, m.commissionSen])).toEqual([['HC-SO-009001', 104_00], ['HC-SO-2610-001', 14_00]]);
+    expect(r.totals).toEqual({ payableSen: 140_00, adjustmentsSen: 0, monthAdjustmentsSen: 0, deferredInSen: 0, manualSen: 118_00, totalSen: 258_00 });
+    expect(paidByOrder(r)).toEqual({ 'HC-SO-2610-001': 154_00, 'HC-SO-009001': 104_00 });
+    /* The order marked "don't count": its own commission goes, Finance's line stays. */
+    const marked = withMarks(r, [{ id: 'm1', docNo: 'HC-SO-2610-001', kind: 'exclude', month: null, reason: null, markedBy: 'Finance', markedAt: '2026-11-13T00:00:00Z' }]);
+    expect(marked.totals).toEqual({ payableSen: 0, adjustmentsSen: 0, monthAdjustmentsSen: 0, deferredInSen: 0, manualSen: 118_00, totalSen: 118_00 });
+    expect(marked.manualLines).toHaveLength(2);
+    /* The closed months' adjustments keep them too. */
+    expect(withMonthAdjustments(r, []).totals).toMatchObject({ manualSen: 118_00, totalSen: 258_00 });
+  });
+
+  it('a month closed with a line: recalculated with the same line, nothing to adjust; without it, the line is taken back', () => {
+    const base = buildEventCommission({ ...OCT, basis: 'so_date', fairs: [], ratePctByBrand: RATES, sos: [oldOrder], payments: [], changes: [], cancels: [] });
+    const rows = manualLineRows({ lines: [line()], sos: [oldOrder], fairs: [], ratePctByBrand: RATES, basis: 'so_date' });
+    const closedAs = withManualLines(base, rows);
+    const closed = [{ month: '2026-10', paid: paidByOrder(closedAs), carried: [] }];
+    expect(monthAdjustmentsOf(closed, new Map([['2026-10', closedAs]]))).toEqual([]);
+    expect(monthAdjustmentsOf(closed, new Map([['2026-10', base]]))).toMatchObject([{ month: '2026-10', docNo: 'HC-SO-009001', wasSen: 104_00, nowSen: 0, adjustmentSen: -104_00 }]);
   });
 });

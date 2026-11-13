@@ -280,7 +280,38 @@ export type EventCommissionReport = {
   marked: MarkedOrderRow[];
   /** What the month before moved here (「这个算下个月」); empty unless the range is one month. */
   deferredIn: DeferredInRow[];
-  totals: { payableSen: number; adjustmentsSen: number; monthAdjustmentsSen: number; deferredInSen: number; totalSen: number };
+  /** Finance's own lines for the months the range begins (「手动加一笔」). Absent when none,
+      and on a month closed before they existed. */
+  manualLines?: ManualLineRow[];
+  /** `manualSen` — what Finance's own lines add; absent when there is none. */
+  totals: { payableSen: number; adjustmentsSen: number; monthAdjustmentsSen: number; deferredInSen: number; manualSen?: number; totalSen: number };
+};
+
+/* ── Finance's own lines (owner 2026-11-13, 「做」) ───────────────────────────
+   An amount Finance types on an order for one month, for what the system holds
+   no record of: an upsale made before the order came into the ERP (HC-SO-011254
+   and HC-SO-004110 were raised in AutoCount, so no change of theirs is dated
+   here), or commission to take back by hand. Goods, plus or minus, at the
+   order's own rate — its fair's brand, or with no fair its own brand's card. It
+   stands beside the report: no mark touches it, and it is paid in the month it
+   names. By fair an order with no fair is not listed, so neither is its line. */
+export type CommissionManualLine = {
+  id: string;
+  docNo: string;
+  /** The month it is paid in, YYYY-MM. */
+  month: string;
+  /** Goods, in sen: plus adds commission, minus takes it back. Never 0. */
+  goodsSen: number;
+  reason: string | null;
+  addedBy: string | null;
+  addedAt: string;
+};
+
+/** One of Finance's lines on the page: the order's place, the line, what it earns. */
+export type ManualLineRow = OrderPlace & {
+  line: Pick<CommissionManualLine, 'id' | 'month' | 'reason' | 'addedBy' | 'addedAt'>;
+  goodsSen: number;
+  commissionSen: number;
 };
 
 /** An order Finance marked, with the commission the mark took out of this report. */
@@ -339,19 +370,22 @@ export type ClosedMonthPaid = {
 };
 
 /** What a month's report pays each order: its fair commission, its earlier
- *  lines and what the month before moved here. The adjustments for closed
- *  months it carries are not the month's own. */
-export function paidByOrder(r: Pick<EventCommissionReport, 'fairs' | 'adjustments'> & { deferredIn?: readonly DeferredInRow[] }): Record<string, number> {
+ *  lines, what the month before moved here and Finance's own lines. The
+ *  adjustments for closed months it carries are not the month's own. */
+export function paidByOrder(
+  r: Pick<EventCommissionReport, 'fairs' | 'adjustments'> & { deferredIn?: readonly DeferredInRow[]; manualLines?: readonly ManualLineRow[] },
+): Record<string, number> {
   const out: Record<string, number> = {};
   const add = (doc: string, sen: number) => { if (sen !== 0) out[doc] = (out[doc] ?? 0) + sen; };
   for (const f of r.fairs) for (const so of f.sos) add(so.docNo, so.commissionSen);
   for (const a of r.adjustments) add(a.docNo, a.commissionSen);
   for (const d of r.deferredIn ?? []) add(d.docNo, d.commissionSen);
+  for (const m of r.manualLines ?? []) add(m.docNo, m.commissionSen);
   return out;
 }
 
 const totalsOf = (t: Omit<EventCommissionReport['totals'], 'totalSen'>): EventCommissionReport['totals'] => ({
-  ...t, totalSen: t.payableSen + t.adjustmentsSen + t.monthAdjustmentsSen + t.deferredInSen,
+  ...t, totalSen: t.payableSen + t.adjustmentsSen + t.monthAdjustmentsSen + t.deferredInSen + (t.manualSen ?? 0),
 });
 
 /** Each closed month's commission per order, recalculated today (`live`, by
@@ -372,7 +406,7 @@ export function monthAdjustmentsOf(closed: readonly ClosedMonthPaid[], live: Rea
     for (const f of now.fairs) for (const so of f.sos) {
       where.set(so.docNo, { fairId: f.id, fairName: f.name, brand: f.brand, salesperson: so.salesperson, customer: so.customer, ref: so.ref, soDate: so.soDate, status: so.status });
     }
-    for (const o of now.earlierOrders) {
+    for (const o of [...now.earlierOrders, ...(now.manualLines ?? [])]) {
       if (!where.has(o.docNo)) where.set(o.docNo, { fairId: o.fairId, fairName: o.fairName, brand: o.brand, salesperson: o.salesperson, customer: o.customer, ref: o.ref, soDate: o.soDate, status: o.status });
     }
     for (const doc of new Set([...Object.keys(was), ...Object.keys(nowPaid)])) {
@@ -390,6 +424,59 @@ export function monthAdjustmentsOf(closed: readonly ClosedMonthPaid[], live: Rea
 export function withMonthAdjustments(r: EventCommissionReport, rows: MonthAdjustmentRow[]): EventCommissionReport {
   const monthAdjustmentsSen = rows.reduce((s, a) => s + a.adjustmentSen, 0);
   return { ...r, monthAdjustments: rows, totals: totalsOf({ ...r.totals, monthAdjustmentsSen }) };
+}
+
+/** The rate card a brand name answers to, as the card spells it (any case); null when it has none. */
+const cardKeyOf = (cards: ReadonlyMap<string, number | null>, brand: string | null | undefined): string | null => {
+  const b = (brand ?? '').trim();
+  if (!b) return null;
+  if (cards.has(b)) return b;
+  return [...cards.keys()].find((k) => k.trim().toUpperCase() === b.toUpperCase()) ?? null;
+};
+/** The brand an order with no fair earns under: its branding when that has a
+ *  rate card, else the VP brand a person gave it, else its branding as a label
+ *  with no rate (owner 2026-11-13). */
+export const noFairBrandOf = (so: Pick<CommissionSo, 'brand' | 'vpBrand'>, cards: ReadonlyMap<string, number | null>): string =>
+  cardKeyOf(cards, so.brand) ?? cardKeyOf(cards, so.vpBrand) ?? ((so.brand ?? '').trim() || (so.vpBrand ?? '').trim());
+
+/** Finance's own lines as the page lists them: each on its order's place, at
+ *  that place's rate. An order on a fair earns at the fair's brand; one with no
+ *  fair at its own brand's card, by SO date only — by fair it is not listed. A
+ *  line whose order is gone is left out. */
+export function manualLineRows(input: {
+  lines: readonly CommissionManualLine[];
+  sos: readonly CommissionSo[];
+  fairs: readonly CommissionFair[];
+  ratePctByBrand: ReadonlyMap<string, number | null>;
+  basis: CommissionBasis;
+}): ManualLineRow[] {
+  const soOf = new Map(input.sos.map((so) => [so.docNo, so]));
+  const fairOf = new Map(input.fairs.map((f) => [f.id, f]));
+  const rows: ManualLineRow[] = [];
+  for (const l of input.lines) {
+    const so = soOf.get(l.docNo);
+    if (!so || !Number.isFinite(l.goodsSen) || l.goodsSen === 0) continue;
+    const f = so.projectId == null ? undefined : fairOf.get(so.projectId);
+    if (!f && input.basis === 'fair') continue;
+    const brand = f ? f.brand : noFairBrandOf(so, input.ratePctByBrand) || null;
+    const ratePct = input.ratePctByBrand.get((brand ?? '').trim()) ?? null;
+    rows.push({
+      docNo: so.docNo, fairId: f ? f.id : -1, fairName: f ? f.name : NO_FAIR_NAME,
+      brand, organizer: f?.organizer ?? null, venue: f ? (f.venue ?? null) : (so.venue ?? null), state: f?.state ?? null,
+      salesperson: so.salesperson, customer: so.customer, ratePct,
+      ref: so.ref ?? null, soDate: so.soDate, status: so.status,
+      line: { id: l.id, month: l.month, reason: l.reason, addedBy: l.addedBy, addedAt: l.addedAt },
+      goodsSen: l.goodsSen, commissionSen: commissionOf(l.goodsSen, ratePct),
+    });
+  }
+  return rows.sort((a, b) => (a.line.month < b.line.month ? -1 : a.line.month > b.line.month ? 1
+    : a.docNo < b.docNo ? -1 : a.docNo > b.docNo ? 1 : a.line.addedAt < b.line.addedAt ? -1 : 1));
+}
+
+/** The report with Finance's own lines beside it and inside its total. Unchanged when there are none. */
+export function withManualLines(r: EventCommissionReport, rows: ManualLineRow[]): EventCommissionReport {
+  if (rows.length === 0) return r;
+  return { ...r, manualLines: rows, totals: totalsOf({ ...r.totals, manualSen: rows.reduce((s, m) => s + m.commissionSen, 0) }) };
 }
 
 /** The month (YYYY-MM) a report is OF, for Finance's marks: it starts on the
@@ -508,6 +595,8 @@ export function withMarks(r: EventCommissionReport, marks: readonly CommissionMa
       adjustmentsSen: adjustments.reduce((t, a) => t + a.commissionSen, 0),
       monthAdjustmentsSen: r.totals.monthAdjustmentsSen ?? 0,
       deferredInSen: din.reduce((t, d) => t + d.commissionSen, 0),
+      /* Finance's own lines are not the marks' to touch. */
+      ...(r.totals.manualSen != null ? { manualSen: r.totals.manualSen } : {}),
     }),
   };
 }
@@ -693,21 +782,23 @@ export function buildEventCommission(input: {
      gave it (owner 2026-11-13: a bed-frame bill, BEDFRAME, VP brand AKEMI, earns
      AKEMI's rate), else its branding as a label with no rate. Rows numbered
      -1, -2 … by brand, so a report reads the same each time. */
-  const cardKey = (brand: string | null | undefined): string | null => {
-    const b = (brand ?? '').trim();
-    if (!b) return null;
-    if (input.ratePctByBrand.has(b)) return b;
-    return [...input.ratePctByBrand.keys()].find((k) => k.trim().toUpperCase() === b.toUpperCase()) ?? null;
-  };
-  const brandOf = (so: CommissionSo): string =>
-    cardKey(so.brand) ?? cardKey(so.vpBrand) ?? ((so.brand ?? '').trim() || (so.vpBrand ?? '').trim());
+  const brandOf = (so: CommissionSo): string => noFairBrandOf(so, input.ratePctByBrand);
   const noFair = (so: CommissionSo): boolean => basis === 'so_date' && so.projectId == null && so.soDate != null && so.soDate >= NO_FAIR_FROM;
   /* An OLD order with no fair (opened before NO_FAIR_FROM) never earns on its own
      amount here, but its upsales and drop sales do, in the month they happen, at
      its brand's rate, whatever it has been paid (owner 2026-11-13: 「旧的单upsale？
      应该要算吧」 … 做 — his September sheet paid them and took off their drop
-     sales). Its price changes only: no 30% line, no cancellation, and never an
-     order opened in the range. Under "No fair" like the others. */
+     sales). Its price changes only: no 30% line, and never an order opened in
+     the range. Under "No fair" like the others.
+     Cancelled, it gives back what it was paid on (owner 2026-11-13, 「要扣」 —
+     his own October file took the August order HC-SO-013367 off, this page
+     took nothing): its goods on the day it was cancelled, at its brand's rate,
+     whatever it had been paid — its own amount was paid before this page, on
+     the owner's sheets, and a deposit a few sen short of 30% was paid on like
+     any other. It is listed with the earlier orders, so Finance can leave one
+     out (Don't count). The month's changes before that day count as on any
+     other; from that day, none. From October 2026 only: September was settled
+     on the owner's sheet. */
   const oldNoFair = (so: CommissionSo): boolean => basis === 'so_date' && so.projectId == null && so.soDate != null && so.soDate < NO_FAIR_FROM;
   const changesOnly = new Set(input.sos.filter(oldNoFair).map((so) => so.docNo));
   const noFairBrands = [...new Set(input.sos.filter((so) => noFair(so) || oldNoFair(so)).map(brandOf))].sort();
@@ -868,12 +959,15 @@ export function buildEventCommission(input: {
        since is live again. */
     const cancelled = so.status === 'CANCELLED' ? cancelOf.get(so.docNo) ?? null : null;
     if (so.status === 'CANCELLED' && cancelled == null) continue; // cancelled, day unknown: never earned here
-    /* An old order with no fair: its changes only — and none once it is
-       cancelled in the range, the month's changes go with it. */
     const only = changesOnly.has(so.docNo);
-    if (only && cancelled != null && cancelled <= to) continue;
     const reached = reachedOn(so.totalSen, pays);
     const earned = reached != null && (cancelled == null || reached < cancelled);
+    /* A cancellation takes back what the order had earned. An old order with
+       no fair gives back from October 2026, whatever it had been paid; one
+       cancelled before then stays out whole, the month's changes with it, as
+       it was. */
+    const givesBack = cancelled != null && (only ? cancelled >= NO_FAIR_FROM : earned);
+    if (only && cancelled != null && cancelled <= to && !givesBack) continue;
     const base = { docNo: so.docNo, fairId: f.id, fairName: f.name, salesperson: so.salesperson };
     if (!only && earned && reached! >= from && reached! <= to) {
       const goods = goodsOn(so, chs, reached!);
@@ -893,7 +987,7 @@ export function buildEventCommission(input: {
         ...(v.uncounted ? { uncounted: true as const, ...(moves !== 0 ? { uncountedSen: moves } : {}) } : {}),
       });
     }
-    if (!only && earned && cancelled != null && cancelled >= from && cancelled <= to) {
+    if (givesBack && cancelled != null && cancelled >= from && cancelled <= to) {
       /* Taken back: what it earned — its goods less the changes left out. */
       const goods = goodsOn(so, chs, cancelled);
       const had = earnedOn(goods, uncountedGoods(so, chs, cancelled), rate);
