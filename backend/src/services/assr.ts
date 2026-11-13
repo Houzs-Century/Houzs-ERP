@@ -3,6 +3,7 @@ import type { Env } from "../types";
 // because callers and tests have imported slaHoursFor from here since mig 065.
 import { slaHoursFor, slaHoursForPriority } from "./assrSla";
 import { listSupplierReturns } from "./assrSupplierReturns";
+import { listReturnDos } from "./assrReturnDos";
 export { slaHoursFor, slaHoursForPriority };
 import { todayMyt } from "../scm/lib/my-time";
 import { BASE_COMPANY_CODE, MIRRORED_COMPANY_CODE, docPrefixForCode } from "../scm/lib/companyScope";
@@ -81,7 +82,6 @@ export type Stage =
   | "voided";
 
 type Priority = "low" | "normal" | "high" | "urgent";
-
 
 // Maps stage → user-facing status (backward compat for legacy list
 // renderers that still read `status`).
@@ -816,7 +816,7 @@ export async function getAssrDetail(env: Env, id: number) {
   // Factory/supplier returns — one row per trip (round_no 1..N). The three
   // summary columns on the case mirror the CURRENT (highest) round; this list
   // is the full history so a case sent back twice keeps both trips' dates.
-  const supplierReturns = await listSupplierReturns(env, id);
+  const [supplierReturns, returnDos] = await Promise.all([listSupplierReturns(env, id), listReturnDos(env, id)]);
 
   // v3.1 — per-stage lifecycle for the Workflow Progress Tracker.
   // Returns one row per stage (entered + exited timestamps), ordered
@@ -864,7 +864,7 @@ export async function getAssrDetail(env: Env, id: number) {
     attachments: attachments.results ?? [],
     activity: activity.results ?? [],
     logistics: logistics.results ?? [],
-    supplier_returns: supplierReturns,
+    supplier_returns: supplierReturns, return_dos: returnDos,
     related_pos: relatedPOs.results ?? [],
     portal_token: portalToken,
     stage_history: stageHistory.results ?? [],

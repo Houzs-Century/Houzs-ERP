@@ -293,6 +293,16 @@
       "why": "A type=\"date\" PROP on a wrapper component (InlineEdit / EditRow / TextInput / Field / RMLikeInput), not a native input. Each of those renders <DateField> for this branch, so the display is DD/MM/YYYY on every machine."
     },
     {
+      "file": "frontend/src/components/InlineEdit.dateSave.test.tsx",
+      "text": "render(<InlineEdit label=\"Scheduled Pickup\" type=\"date\" value={null} onSave={onSave} />);",
+      "why": "A test rendering the InlineEdit wrapper with its type=\"date\" PROP, which renders <DateField>, not a native input. It pins when the date Save button shows."
+    },
+    {
+      "file": "frontend/src/components/assr/ItemReadyFields.tsx",
+      "text": "<InlineEdit label=\"QC Inspection Date *\" type=\"date\" value={c.qc_inspected_at}",
+      "why": "A type=\"date\" PROP on the InlineEdit wrapper (Pending Item Ready QC Inspection Date), not a native input. InlineEdit renders <DateField> for this branch, so the display is DD/MM/YYYY on every machine."
+    },
+    {
       "file": "frontend/src/components/assr/PickupTrackingFields.tsx",
       "text": "type=\"date\"",
       "why": "A type=\"date\" PROP on the InlineEdit wrapper (HC-0129 scheduled + actual pickup dates), not a native input. InlineEdit renders <DateField> for this branch, so the display is DD/MM/YYYY on every machine."

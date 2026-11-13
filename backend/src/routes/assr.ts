@@ -28,6 +28,7 @@ import { normalizeSlaHours } from "../services/assrSla";
 import { assignServicePoNumber, nextManualCreditorCode } from "../services/assrNumbers";
 import { assrWindow } from "./lib/assr-window";
 import { openSupplierReturnRoute, patchSupplierReturnRoute, archiveSupplierReturnRoute } from "../services/assrSupplierReturns";
+import { addReturnDoRoute, archiveReturnDoRoute, patchReturnDoRoute, qcInspectionFieldsError } from "../services/assrReturnDos";
 import { reopenCaseRoute } from "../services/assrReopen";
 import { runSlaEscalation } from "../services/assrEscalation";
 import { issueStaffToken, issueSalesToken, revokeCaseTokens } from "../services/caseTracking";
@@ -63,6 +64,7 @@ import { ASSR_SUB_STATUS_KEYS } from "../scm/shared/assr-sub-statuses";
 import { pickupTrackingError } from "../scm/shared/assr-pickup-tracking";
 import { verificationFieldsError } from "../scm/shared/assr-verification-fields";
 import { getVerificationNotes, saveVerificationNotes, takeVerificationNotes } from "../services/assrVerificationNotes";
+import { getQcNotes, saveQcNotes, takeQcNotes } from "../services/assrQcNotes";
 import { sendCompletionSurvey } from "../services/assrCompletionSurvey";
 import { sendServiceCaseReceivedAck } from "../services/assrConnectAck";
 import { overviewFilter, withOverviewFilter } from "./lib/assr-overview-filter";
@@ -434,16 +436,6 @@ app.get("/lookups/:kind", requireServiceCaseAccess(), async (c) => {
        FROM ${table}
       ${includeInactive ? "" : "WHERE active = 1"}
       ORDER BY sort_order ASC, name ASC`,
-  ).all();
-  return c.json({ data: rows.results ?? [] });
-});
-
-// HC-0129 Pickup PIC picker. Names only: /api/scm/drivers needs Transportation
-// access and returns phone + IC. The roster is one list across companies
-// (scm/routes/drivers.ts), so no company predicate.
-app.get("/pickup-pic-drivers", requireServiceCaseAccess(), async (c) => {
-  const rows = await c.env.DB.prepare(
-    `SELECT name, in_house FROM scm."drivers" WHERE active = true ORDER BY name ASC`,
   ).all();
   return c.json({ data: rows.results ?? [] });
 });
@@ -1567,7 +1559,7 @@ app.get("/:id{[0-9]+}", requireServiceCaseAccess(), async (c) => {
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
   const detail = await getAssrDetail(c.env, id);
   if (!detail) return c.json({ error: "Not found" }, 404);
-  Object.assign((detail as { case: Record<string, unknown> }).case, await getVerificationNotes(c.env, id));
+  Object.assign((detail as { case: Record<string, unknown> }).case, await getVerificationNotes(c.env, id), await getQcNotes(c.env, id));
   /* Multi-company: a case must fall inside the caller's ASSR company scope
      (same rule as the list). Rank-and-file SALES are pinned to HOUZS; office /
      backend / directors get their allowed set. A case tagged with a company
@@ -1895,7 +1887,7 @@ app.patch("/:id{[0-9]+}", requirePermission("service_cases.write"), async (c) =>
   ) {
     return c.json({ error: "Unknown sub-status" }, 400);
   }
-  const trackingError = pickupTrackingError(body) ?? verificationFieldsError(body);
+  const trackingError = pickupTrackingError(body) ?? verificationFieldsError(body) ?? qcInspectionFieldsError(body);
   if (trackingError) return c.json({ error: trackingError }, 400);
   // Snapshot the responsible fields BEFORE the patch so we notify only on an
   // ACTUAL change (owner 2026-07-15). A doc_no re-match inside patchAssrCase can
@@ -1912,9 +1904,11 @@ app.patch("/:id{[0-9]+}", requirePermission("service_cases.write"), async (c) =>
   if (!before) return c.json({ error: "Not found or no changes" }, 404);
 
   const notes = takeVerificationNotes(body);
+  const qcNotes = takeQcNotes(body);
   const ok = await patchAssrCase(c.env, id, body, userId);
   const notesOk = notes ? await saveVerificationNotes(c.env, id, notes, userId) : false;
-  if (!ok && !notesOk) return c.json({ error: "Not found or no changes" }, 404);
+  const qcNotesOk = qcNotes ? await saveQcNotes(c.env, id, qcNotes, userId) : false;
+  if (!ok && !notesOk && !qcNotesOk) return c.json({ error: "Not found or no changes" }, 404);
 
   // Notify newly-responsible people (+ their recursive upline) when an assignee
   // or the sales_agent changed. Best-effort: never fails the PATCH.
@@ -2873,6 +2867,9 @@ app.post("/:id/transition", requirePermission("service_cases.write"), async (c) 
 app.post("/:id/supplier-returns", requirePermission("service_cases.write"), openSupplierReturnRoute);
 app.patch("/:id/supplier-returns/:roundId{[0-9]+}", requirePermission("service_cases.write"), patchSupplierReturnRoute);
 app.delete("/:id/supplier-returns/:roundId{[0-9]+}", requirePermission("service_cases.write"), archiveSupplierReturnRoute);
+app.post("/:id/return-dos", requirePermission("service_cases.write"), addReturnDoRoute);
+app.patch("/:id/return-dos/:doId{[0-9]+}", requirePermission("service_cases.write"), patchReturnDoRoute);
+app.delete("/:id/return-dos/:doId{[0-9]+}", requirePermission("service_cases.write"), archiveReturnDoRoute);
 app.post("/:id/reopen", requirePermission("service_cases.write"), reopenCaseRoute);
 // ── Notes ─────────────────────────────────────────────────────
 

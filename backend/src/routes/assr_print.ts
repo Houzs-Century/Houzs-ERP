@@ -4,6 +4,7 @@ import { requirePermission } from "../middleware/auth";
 import { getAssrDetail } from "../services/assr";
 import { earlierSupplierReturns, ensureFirstSupplierReturn, listSupplierReturns } from "../services/assrSupplierReturns";
 import { assrCaseRowInScope, assrCallerIsScoped, stripCreditorFields } from "../services/assrVisibility";
+import { getVerificationNotes } from "../services/assrVerificationNotes";
 import { allowedCompanyIds } from "../scm/lib/companyScope";
 import {
   getBrandingForCompany,
@@ -56,6 +57,15 @@ function esc(s: unknown): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+/** Document numbers and phones, one unbroken line each; a list keeps its own separators (", " or " · "). */
+export function docCodes(text: string | null | undefined): string {
+  const parts = String(text ?? "").trim().split(/(\s*[,·]\s*)/);
+  if (!parts.some((part, index) => index % 2 === 0 && part !== "")) return "—";
+  return parts
+    .map((part, index) => (index % 2 === 0 ? (part ? `<span class="doc-code">${esc(part)}</span>` : "") : esc(part)))
+    .join("");
 }
 
 // All printed dates/timestamps render in Malaysia wall-clock time
@@ -396,6 +406,7 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
   const supplierTargetIso = isSupplier
     ? supplierTargetDateIso((cs as any).stage_entered_at, (cs as any).stage_target_days)
     : null;
+  const supplierVerificationNotes = isSupplier ? await getVerificationNotes(c.env, id) : null;
 
   /* One factory trip's own paper (owner 2026-09-24): ?round=<trip id> on the
      supplier copy prints that trip as a Supplier Return Note headed by its
@@ -666,6 +677,12 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     .entities .reg { font-size: 7.5pt; color: var(--ink-3); margin-top: .8mm; }
     .entities .addr { font-size: 8pt; line-height: 1.5; color: var(--ink-2); margin-top: 1.2mm; }
     .entities .contact { font-size: 7.5pt; color: var(--ink-2); margin-top: 1.2mm; }
+    /* entity=both: the letterhead already names the service provider, so only
+       the retail entity is added, on one line (client 2026-11-10). */
+    .entity-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 1mm 3mm; margin-top: 3mm; padding: 2mm 3mm; background: var(--c-paper); border: 1px solid var(--line); border-radius: 6px; }
+    .entity-line .cap { font-size: 7.5pt; font-weight: 600; text-transform: uppercase; letter-spacing: .14em; color: var(--c-brass); }
+    .entity-line .nm { font-size: 10pt; font-weight: 600; }
+    .entity-line .reg { font-size: 8pt; color: var(--ink-3); }
     .letterhead .company .co-name { font-weight: 700; font-size: 12.5pt; letter-spacing: 0.3pt; text-transform: uppercase; }
     .letterhead .company .reg-no { font-family: "Roboto Mono", monospace; font-size: 10.0pt; margin-top: 0.5pt; }
 
@@ -860,6 +877,12 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     .mgrid.cols-4 { grid-template-columns: 27mm 1fr 27mm 1fr; }
     .mgrid.cols-2 { grid-template-columns: 27mm 1fr; }
     .mgrid.cols-8 { grid-template-columns: 22mm 1fr 18mm 1fr 20mm 1fr 17mm 1fr; }
+    /* Office / customer copy: labels sit on one line and document numbers never
+       break mid-code (client 2026-11-10: "Sales Agent" wrapped to three lines). */
+    .mgrid.cols-meta { grid-template-columns: 26mm 1.5fr 28mm 1fr 23mm 1fr; }
+    .mgrid.cols-info { grid-template-columns: 33mm 1fr 33mm 1fr; }
+    .mgrid.cols-meta .lc, .mgrid.cols-info .lc { white-space: nowrap; display: flex; align-items: center; }
+    .doc-code { white-space: nowrap; }
     .mgrid.rule-top { border-top: 1pt solid #141414; }
     .mgrid .lc {
       padding: 2.4mm 2.8mm; background: #f3f3f1;
@@ -913,6 +936,8 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     .sbox .row.lead .val { font-size: 11pt; }
     .ititle { display: grid; background: #f3f3f1; border-left: 0.4pt solid #d5d5d5; }
     .itable { display: grid; border-left: 0.4pt solid #d5d5d5; }
+    /* NO, SET and CTN are short numbers: centred in their narrow columns. */
+    .itable > :nth-child(1), .itable > :nth-child(3), .itable > :nth-child(4) { text-align: center; }
     .itable .th {
       padding: 2mm 2.8mm; background: #f3f3f1;
       border-right: 0.4pt solid #d5d5d5; border-bottom: 0.4pt solid #d5d5d5;
@@ -946,6 +971,10 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     .credit-box .v { font-family: "IBM Plex Mono", monospace; font-size: 13.1pt; font-weight: 700; line-height: 1.35; }
     .boxed { border: 0.4pt solid #d5d5d5; border-top: none; padding: 3.6mm 4mm; }
     .signoff.boxed-grid { border: 0.4pt solid #d5d5d5; border-top: none; }
+    /* Hangs straight under its section bar, one grey frame like the grids above
+       (client 2026-11-10: the 8mm gap left the box floating with no top line). */
+    .bar + .signoff.boxed-grid { margin-top: 0; }
+    .signoff.boxed-grid .panel + .panel { border-left: 0.4pt solid #d5d5d5; }
     .doc-footer {
       display: flex; align-items: flex-end; justify-content: space-between; gap: 4mm;
       padding-top: 3.6mm; margin-top: 4mm; border-top: 0.4pt solid #e0e0e0;
@@ -983,9 +1012,60 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     .muted { color: #555; }
     .small { font-size: 10.6pt; }
 
+    /* Supplier Service Order on two pages (client 2026-11-09): page 1 holds
+       every fact, page 2 the photos, inspection summary and sign-off. The
+       filler row and the full-height sheet pushed a blank last page out. */
+    body.sup { font-size: 10pt; line-height: 1.4; }
+    body.sup table.sheet { height: auto; }
+    body.sup tr.filler, body.sup table.sheet > tfoot { display: none; }
+    @media screen { body.sup table.sheet { height: auto; } }
+    body.sup .letterhead { padding-bottom: 3mm; }
+    body.sup .letterhead .logo-box { width: 24mm; }
+    body.sup .letterhead .logo.square { width: 20mm; height: 21mm; }
+    body.sup .letterhead .logo.wide { height: 11mm; }
+    body.sup .doc-title { margin: 4mm 0 2mm; }
+    body.sup .doc-title h1 { font-size: 20pt; max-width: none; }
+    body.sup .doc-title .ref { margin-top: 3mm; }
+    body.sup .bar { font-size: 10.5pt; padding: 1.3mm 3mm; margin-top: 3.5mm; }
+    body.sup .mgrid .lc { padding: 1.9mm 2.8mm; font-size: 8.4pt; display: flex; align-items: center; }
+    body.sup .mgrid .vc { padding: 1.9mm 2.8mm; font-size: 10pt; line-height: 1.4; }
+    /* Every supplier grid shares one first column so values line up down the page. */
+    body.sup .mgrid.cols-4 { grid-template-columns: 38mm 1fr 34mm 1fr; }
+    body.sup .mgrid.cols-4 .lc { white-space: nowrap; }
+    body.sup .mgrid.cols-2 { grid-template-columns: 38mm 1fr; }
+    /* Next Action + Target Date share a row; the first column matches cols-2 above it. */
+    body.sup .mgrid.cols-split { grid-template-columns: 38mm 1fr 34mm 1fr; }
+    body.sup .mgrid.cols-split .lc { white-space: nowrap; }
+    body.sup .itable .th { padding: 1.4mm 2.4mm; font-size: 8pt; }
+    body.sup .itable .td { padding: 2.1mm 2.8mm; font-size: 10pt; line-height: 1.4; }
+    body.sup .itable .td.code { font-size: 10pt; }
+    body.sup .itable .td.remark { font-size: 9.4pt; }
+    body.sup .credit-box { margin-top: 3.5mm; }
+    body.sup .credit-box .cell { padding: 2.2mm 3mm; }
+    body.sup .credit-box .k { font-size: 7.5pt; margin-bottom: 1mm; }
+    body.sup .credit-box .v { font-size: 11pt; }
+    body.sup .rc-list { padding: 2.2mm 3mm 0.6mm; }
+    body.sup .rc-body { display: flex; flex-wrap: wrap; gap: 0 3mm; align-items: baseline; padding-bottom: 1.6mm; }
+    body.sup .rc-l1 { font-size: 9pt; }
+    body.sup .rc-l2 { font-size: 8.5pt; margin-top: 0; }
+    body.sup .sup-note { margin-top: 3mm; padding: 2mm 3mm; background: #f3f3f1; font-size: 8.8pt; color: #4a4a4a; }
+    body.sup .page-two { break-before: page; page-break-before: always; }
+    body.sup .pgrid { padding: 2.4mm; gap: 2.4mm; break-inside: auto; }
+    body.sup .pgrid .ph { break-inside: avoid; }
+    body.sup .signoff .panel { padding: 3.5mm 4.5mm 4mm; display: flex; flex-direction: column; min-height: 72mm; }
+    body.sup .signoff .panel h3 { font-size: 12pt; margin: 0 0 2.5mm 0; }
+    body.sup .signoff .check { font-size: 9.6pt; margin-bottom: 2mm; gap: 3mm; }
+    body.sup .signoff .check .box { width: 4mm; height: 4mm; }
+    body.sup .signoff .sig-rule { margin-top: auto; }
+    body.sup .signoff .name-date { margin-top: 7mm; }
+    body.sup .signoff .sig-rule .cap,
+    body.sup .signoff .name-date .cell .cap { font-size: 8pt; }
+    body.sup .doc-footer { margin-top: 3mm; padding-top: 2mm; font-size: 8pt; }
+    body.sup .doc-footer .contact { font-size: 8.5pt; }
+
   </style>
 </head>
-<body>
+<body${isSupplier ? ` class="sup"` : ""}>
   <div class="print-bar">
     <div class="actions">
       <button class="secondary" onclick="window.close()">Close</button>
@@ -1022,18 +1102,10 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
           </div>
         </div>
         ${entity === "both" && houzsProfile && homeProfile ? `
-        <div class="entities">
-          ${[
-            { cap: "Service Provider", p: houzsProfile },
-            { cap: "Retail Entity", p: homeProfile },
-          ].map(({ cap, p }) => `
-          <div>
-            <div class="cap mono">${esc(cap)}</div>
-            <div class="nm">${esc(p.name)}</div>
-            ${p.reg ? `<div class="reg mono">${esc(p.reg)}</div>` : ""}
-            ${p.addressLines.length ? `<div class="addr">${p.addressLines.map((l) => esc(l)).join("<br>")}</div>` : ""}
-            ${p.tel || p.email ? `<div class="contact mono">${[p.tel, p.email].filter(Boolean).map((v) => esc(String(v))).join(" · ")}</div>` : ""}
-          </div>`).join("")}
+        <div class="entity-line">
+          <span class="cap mono">Retail Entity</span>
+          <span class="nm">${esc(homeProfile.name)}</span>${homeProfile.reg ? `
+          <span class="reg mono">${esc(homeProfile.reg)}</span>` : ""}
         </div>` : ""}
       </div>
     </td></tr></thead>
@@ -1087,13 +1159,6 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
           <span class="td">${esc(it.qty_carton ?? 1)}</span>
           <span class="td remark">${it.remark ? esc(it.remark) : i === 0 && cs.action_remark ? esc(cs.action_remark) : ""}</span>
         </div>`);
-      const blanks = Math.max(0, 3 - officeItems.length);
-      for (let i = 0; i < blanks; i++) {
-        officeItems.push(`
-        <div class="itable" style="grid-template-columns: 10mm 1fr 12mm 12mm 1.4fr;">
-          <span class="td blank"></span><span class="td blank"></span><span class="td blank"></span><span class="td blank"></span><span class="td blank"></span>
-        </div>`);
-      }
       // Split the case photos into the two panels ops asked for on the
       // customer copy: the reported defect ("Service Issue") vs the
       // post-return quality shots ("QC Approved"). Categories mirror the
@@ -1114,32 +1179,29 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
         const cells = imgs.slice(0, 6).map((a, i) =>
           `<div class="ph"><img src="${a.data_url}" alt="${esc(a.file_name || "")}" /><span class="tag">${tag}_${String(i + 1).padStart(2, "0")}</span></div>`
         );
-        if (cells.length === 0) cells.push(`<div class="add">＋ Add</div>`);
         return cells.join("");
       };
       return `
     <!-- meta grid -->
-    <div class="mgrid cols-8 rule-top">
+    <div class="mgrid cols-meta rule-top">
       <div class="lc">Sales Agent</div><div class="vc">${esc(cs.sales_agent || "—")}</div>
       <div class="lc">Request Date</div><div class="vc mono">${fmtDate(cs.complained_date)}</div>
       <div class="lc">Category</div><div class="vc">${cs.service_category || cs.issue_category ? `<span class="pill-cat">${esc(cs.service_category || cs.issue_category)}</span>` : `<span class="dim">—</span>`}</div>
-      <div class="lc">ASSR No</div><div class="vc mono" style="white-space: nowrap;">${esc(cs.assr_no)}</div>
     </div>
 
     <!-- customer info -->
     <div class="bar">Customer Info</div>
-    <div class="mgrid cols-6">
+    <div class="mgrid cols-info">
       <div class="lc">Customer Name</div><div class="vc">${esc(cs.customer_name || "—")}</div>
-      <div class="lc">HP</div><div class="vc mono">${esc(cs.phone || "—")}</div>
-      <div class="lc">Ref No</div><div class="vc mono">${esc(cs.ref_no || "—")}</div>
+      <div class="lc">HP</div><div class="vc mono">${docCodes(cs.phone)}</div>
+      <div class="lc">PO No</div><div class="vc mono">${docCodes(assrMergedPoText(cs))}</div>
+      <div class="lc">SO No</div><div class="vc mono">${docCodes(cs.doc_no)}</div>
       <div class="lc">Delivered Date</div><div class="vc mono">${fmtDate((cs as any).do_date)}</div>
-      <div class="lc">PO No</div><div class="vc mono">${esc(assrMergedPoText(cs) || "—")}</div>
-      <div class="lc">SO No</div><div class="vc mono">${esc(cs.doc_no || "—")}</div>
       <div class="lc">Inspection Date</div><div class="vc mono">${fmtDate((cs as any).sched_inspection_date)}</div>
       <div class="lc">Pickup Date</div><div class="vc mono">${fmtDate((cs as any).sched_pickup_date)}</div>
       <div class="lc">Delivery Date</div><div class="vc mono">${fmtDate((cs as any).sched_delivery_date)}</div>
-      <div class="lc">Address</div><div class="vc span5">${esc([cs.addr1, cs.addr2, cs.addr3, cs.addr4].filter(Boolean).join(", ") || "—")}</div>
-      <div class="lc">Description of the problem</div><div class="vc span5" style="font-size: 11.8pt;">${esc(cs.complaint_issue || "—")}</div>
+      <div class="lc">Address</div><div class="vc span3">${esc([cs.addr1, cs.addr2, cs.addr3, cs.addr4].filter(Boolean).join(", ") || "—")}</div>
+      <div class="lc">Problem</div><div class="vc span3" style="font-size: 11.8pt;">${esc(cs.complaint_issue || "—")}</div>
     </div>
 
     <!-- items -->
@@ -1149,13 +1211,12 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     </div>
     ${officeItems.join("")}
 
-    <!-- service issue pictures -->
+    ${issuePhotos.length ? `
     <div class="bar">Service Issue &nbsp;<span class="note">(reported defect)</span></div>
-    <div class="pgrid">${photoCells(issuePhotos, "ISS")}</div>
-
-    <!-- qc approved pictures -->
+    <div class="pgrid">${photoCells(issuePhotos, "ISS")}</div>` : ""}
+    ${qcPhotos.length ? `
     <div class="bar">QC Approved &nbsp;<span class="note">(quality inspection after service)</span></div>
-    <div class="pgrid">${photoCells(qcPhotos, "QC")}</div>
+    <div class="pgrid">${photoCells(qcPhotos, "QC")}</div>` : ""}
 
     <!-- sign-off -->
     <div class="bar">Acknowledgement &amp; Sign-off</div>
@@ -1164,7 +1225,7 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
         <h3>Customer</h3>
         <div class="check"><span class="box"></span><span>I confirm the reported issue and details above are correct.</span></div>
         <div class="check"><span class="box"></span><span>I have received the serviced / replaced item in good condition.</span></div>
-        <div class="sig-rule"><span class="cap">Signature</span><span style="float: right; font-weight: 700; color: #111;">${esc(cs.customer_name || "")}</span></div>
+        <div class="sig-rule"><span class="cap">Signature</span></div>
         <div class="name-date">
           <div class="cell"><span class="cap">Name</span></div>
           <div class="cell" style="max-width: 44mm"><span class="cap">Date</span></div>
@@ -1211,47 +1272,42 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
           <span class="td">${esc(it.qty_carton ?? 1)}</span>
           <span class="td remark">${esc(supRemark(it, i))}</span>
         </div>`);
-      const photos = inlinedImages.slice(0, 5).map((a, i) => `
+      const photos = inlinedImages.slice(0, 6).map((a, i) => `
         <div class="ph"><img src="${a.data_url}" alt="${esc(a.file_name || "")}" /><span class="tag">IMG_${String(i + 1).padStart(2, "0")}</span></div>`);
-      photos.push(`<div class="add">＋ Add</div>`);
-      const firstItem = (items as any[])[0];
+      if (photos.length === 0) photos.push(`<div class="add">No photos attached</div>`);
+      /* Return trip + its key dates, on BOTH the per-trip Return Note (?round=)
+         and the Supplier Service Order (current trip). Owner 2026-09-29: always
+         print Sent / Back from Supplier, blank when no trip exists yet. A 2nd/3rd
+         trip also lists the earlier trips' numbers. */
+      const t: any = trip || currentReturn;
+      const earlier = earlierSupplierReturns((detail as any).supplier_returns ?? [], t);
+      const reasonText = String(t?.reason ?? "").trim();
+      const issueText = String(cs.complaint_issue ?? "").trim();
+      const showIssue = issueText !== "" && issueText.toLowerCase() !== reasonText.toLowerCase();
+      const categoryText = cs.service_category || cs.issue_category;
+      const extraCategory = cs.service_category && cs.issue_category && cs.issue_category !== cs.service_category
+        ? cs.issue_category
+        : null;
+      const methodText = cs.resolution_method ? (RESOLUTION_LABEL[cs.resolution_method] || cs.resolution_method) : "—";
+      const notes = supplierVerificationNotes;
       return `
-    <!-- meta grid — ASSR No + Reference live in the header ref line above, not repeated here (owner 2026-09-28) -->
+    <!-- page 1: every fact the supplier needs. ASSR No + Ref No sit in the header ref line (owner 2026-09-28). -->
     <div class="mgrid cols-4 rule-top">
       <div class="lc">Request Date</div><div class="vc mono">${fmtDate(cs.complained_date)}</div>
-      <div class="lc">Category</div><div class="vc">${cs.service_category || cs.issue_category ? `<span class="pill-cat">${esc(cs.service_category || cs.issue_category)}</span>` : `<span class="dim">—</span>`}</div>
+      <div class="lc">Category</div><div class="vc">${categoryText ? `<span class="pill-cat">${esc(categoryText)}</span>${extraCategory ? `&nbsp;${esc(extraCategory)}` : ""}` : `<span class="dim">—</span>`}</div>
     </div>
-
-    ${(() => {
-      // Return trip + its key dates — on BOTH the per-trip Return Note (?round=)
-      // and the Supplier Service Order (uses the current trip). Owner 2026-09-28:
-      // the supplier's paper carries sent-to-supplier and back-from-supplier
-      // dates. Return ref (SVC-RTN) already appears in the header ref line, and
-      // Cust. Pickup is the same date as Sent to Supplier in practice — both dropped.
-      // Owner 2026-09-29: ALWAYS print these rows on the supplier order (blank "—"
-      // when no return trip exists yet) so the paper form is complete — never omit them.
-      const t: any = trip || currentReturn;
-      // A 2nd/3rd trip's paper also lists the earlier trips' numbers, so the
-      // supplier can match it to what they already received (owner 2026-09-29).
-      const earlier = earlierSupplierReturns((detail as any).supplier_returns ?? [], t);
-      return `
-    <!-- this trip — Return # dropped (round is implied by the SVC-RTN in the header); owner 2026-09-28 -->
     <div class="mgrid cols-2">
-      <div class="lc">Reason</div><div class="vc">${esc(t?.reason || "—")}</div>${earlier.length ? `
+      <div class="lc">Reason</div><div class="vc">${esc(reasonText || "—")}</div>${showIssue ? `
+      <div class="lc">Reported Issue</div><div class="vc" style="white-space: pre-line;">${esc(issueText)}</div>` : ""}${earlier.length ? `
       <div class="lc">Previous Return No.</div><div class="vc mono">${earlier
         .map((r: any) => `${esc(r.ref_no)} <span class="dim">(Trip ${esc(r.round_no)}${r.pickup_at ? `, sent ${fmtDate(r.pickup_at)}` : ""})</span>`)
         .join("<br>")}</div>` : ""}
     </div>
-    <div class="mgrid cols-4">
-      <div class="lc">Sent to Supplier</div><div class="vc mono">${fmtDate(t?.pickup_at)}</div>
-      <div class="lc">Back from Supplier</div><div class="vc mono">${fmtDate(t?.returned_at)}</div>
-    </div>`;
-    })()}
 
     <!-- creditor box -->
     <div class="credit-box">
       <div class="cell"><div class="k">Supplier (Creditor)</div><div class="v">${esc(trip?.creditor_name || trip?.creditor_code || (cs as any).creditor_name || (cs as any).creditor_code || "—")}</div></div>
-      <div class="cell"><div class="k">PO Number</div><div class="v">${esc(assrMergedPoText(cs) || "—")}</div></div>
+      <div class="cell"><div class="k">PO Number</div><div class="v">${docCodes(assrMergedPoText(cs))}</div></div>
       <div class="cell"><div class="k">Target Completion</div><div class="v">${supplierTargetIso ? fmtDate(supplierTargetIso) : "—"}</div></div>
     </div>
 
@@ -1265,10 +1321,17 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       <div class="lc">Warehouse</div><div class="vc">${esc(warehouseLabel || "—")}</div>
       <div class="lc">Inspection Date</div><div class="vc mono">${fmtDate((cs as any).sched_inspection_date)}</div>
       <div class="lc">Pickup Date</div><div class="vc mono">${fmtDate((cs as any).sched_pickup_date)}</div>
-      <div class="lc">Delivery Date</div><div class="vc mono">${fmtDate((cs as any).sched_delivery_date)}</div>
-      <div class="lc"></div><div class="vc"></div>
-      <div class="lc">Note</div><div class="vc span3" style="font-weight: 400; color: #6a6a6a; font-size: 10.2pt;">Customer's direct phone &amp; full address are shared after dispatch is confirmed.</div>
+      <div class="lc">Sent to Supplier</div><div class="vc mono">${fmtDate(t?.pickup_at)}</div>
+      <div class="lc">Back from Supplier</div><div class="vc mono">${fmtDate(t?.returned_at)}</div>
+      <div class="lc">Delivery Date</div><div class="vc mono span3">${fmtDate((cs as any).sched_delivery_date)}</div>
     </div>
+
+    <!-- items -->
+    <div class="bar">Items</div>
+    <div class="itable" style="grid-template-columns: 10mm 1fr 12mm 12mm 1.4fr;">
+      <span class="th">NO</span><span class="th">ITEM</span><span class="th">SET</span><span class="th">CTN</span><span class="th">REMARK (IF ANY)</span>
+    </div>
+    ${supItems.join("") || `<div class="itable" style="grid-template-columns: 10mm 1fr 12mm 12mm 1.4fr;"><span class="td blank"></span><span class="td blank"></span><span class="td blank"></span><span class="td blank"></span><span class="td blank"></span></div>`}
 
     <!-- related cases -->
     <div class="bar rc-bar">Related Cases <span class="rc-count">${relatedCases.length} case${relatedCases.length === 1 ? "" : "s"} for this customer</span></div>
@@ -1287,33 +1350,23 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       </div>`;
     }).join("")}</div>
 
-    <!-- reported issue -->
-    <div class="bar">Reported Issue</div>
-    <div class="boxed">
-      <div style="font-size: 9.5pt; letter-spacing: .08em; text-transform: uppercase; color: #8a8578;">Product Code</div>
-      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12.2pt; font-weight: 700; margin-top: 0.8mm;">${esc((items as any[]).map((it) => it.item_code).filter(Boolean).join(", ") || "—")}</div>
-      <div style="font-size: 9.5pt; letter-spacing: .08em; text-transform: uppercase; color: #8a8578; margin-top: 2.4mm;">Issue Details</div>
-      <div style="font-size: 11.0pt; font-weight: 700; color: #111; margin-top: 0.8mm; line-height: 1.55; white-space: pre-line;">${esc(cs.complaint_issue || "—")}</div>${cs.issue_category ? `
-      <div style="font-size: 10.0pt; color: #555; margin-top: 1.2mm;">Category: <b>${esc(cs.issue_category)}</b></div>` : ""}
-    </div>
+    <div class="sup-note"><b>Note:</b> Customer's direct phone &amp; full address are shared after dispatch is confirmed.</div>
 
-    <!-- items -->
-    <div class="bar">Items</div>
-    <div class="itable" style="grid-template-columns: 10mm 1fr 12mm 12mm 1.4fr;">
-      <span class="th">NO</span><span class="th">ITEM</span><span class="th">SET</span><span class="th">CTN</span><span class="th">REMARK (IF ANY)</span>
-    </div>
-    ${supItems.join("") || `<div class="itable" style="grid-template-columns: 10mm 1fr 12mm 12mm 1.4fr;"><span class="td blank"></span><span class="td blank"></span><span class="td blank"></span><span class="td blank"></span></div>`}
+    <!-- page 2: evidence, inspection summary, sign-off -->
+    <div class="page-two">
+    <div class="bar" style="margin-top: 0;">Inspection &amp; Evidence</div>
+    <div class="pgrid">${photos.join("")}</div>
 
-    <!-- resolution plan -->
-    <div class="bar">Resolution Plan</div>
-    <div class="mgrid cols-4">
-      <div class="lc">Method</div><div class="vc">${esc(cs.resolution_method ? (RESOLUTION_LABEL[cs.resolution_method] || cs.resolution_method) : "—")}</div>
+    <div class="bar">Inspection Summary</div>
+    <div class="mgrid cols-2">
+      <div class="lc">Root Cause</div><div class="vc" style="white-space: pre-line;">${esc((cs as any).verified_root_cause || "—")}</div>
+      <div class="lc">Inspection Findings / Action Taken</div><div class="vc" style="white-space: pre-line;">${esc(notes?.inspection_findings || "—")}</div>
+      <div class="lc">Resolution Plan</div><div class="vc">${esc(methodText)}</div>
+    </div>
+    <div class="mgrid cols-split">
+      <div class="lc">Next Action</div><div class="vc" style="white-space: pre-line;">${esc(notes?.next_action || "—")}</div>
       <div class="lc">Target Date</div><div class="vc mono">${supplierTargetIso ? fmtDate(supplierTargetIso) : "—"}</div>
     </div>
-
-    <!-- supporting evidence -->
-    <div class="bar">Supporting Evidence</div>
-    <div class="pgrid">${photos.join("")}</div>
 
     <!-- sign-off -->
     <div class="bar">Acknowledgement &amp; Sign-off</div>
@@ -1345,6 +1398,7 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
         <span class="contact"><b>${esc(coShort)} Contact</b> · CS Team &nbsp;<b class="mono">${esc(csPhone)}</b></span>
       </span>
       <span class="fright">Printed <b class="mono">${printedStamp()}</b></span>
+    </div>
     </div>`;
     })() : ""}
 

@@ -29,9 +29,11 @@ import {
   ASSR_SUB_STATUSES,
 } from "../vendor/scm/lib/assr/stages";
 import { ANOTHER_RETURN_HINT, type SupplierReturn } from "../vendor/scm/lib/assr/returns";
-import { MobileFactoryTrips } from "./MobileFactoryTrips";
-import { ITEM_LOCATION_OPTIONS, PICKUP_STATUS_OPTIONS, pickupTrackingOptions, pickupPicSelectOptions, usePickupPicDrivers } from "../components/assr/PickupTrackingFields";
-import { pendingWithOptions } from "../vendor/scm/lib/assr-verification-fields";
+import { MobileFactoryTrips, MobileSectionHead } from "./MobileFactoryTrips";
+import { MobileItemReady } from "./MobileItemReady";
+import { returnDoAttachmentCategory } from "../vendor/scm/lib/assr/item-ready";
+import { PICKUP_STATUS_OPTIONS, pickupTrackingLabel, pickupTrackingOptions } from "../components/assr/PickupTrackingFields";
+import { buildCaseTimeline, roleOfActivity, type TimelineActivity, type TimelineFilter, type TimelineRole, type TimelineTone } from "../vendor/scm/lib/assr/timeline";
 import { MobileReopenControl } from "./MobileReopenControl";
 import { splitCategories } from "../lib/assrProductCategories";
 import { MobileAssrCategoryChips } from "./MobileAssrCategoryChips";
@@ -147,13 +149,6 @@ const VERIFICATION_OPTIONS = [
   { value: "accepted", label: "Accepted" },
   { value: "needs_more_info", label: "Needs more info" },
   { value: "rejected", label: "Rejected" },
-] as const;
-// QC result values shared by qc_issue_result (on receipt, mig 0105) and
-// inspection_result (after repair, v3.1).
-const QC_RESULT_OPTIONS = [
-  { value: "pass", label: "Pass" },
-  { value: "fail", label: "Fail" },
-  { value: "na", label: "N/A" },
 ] as const;
 // Print copy variants — desktop opens /api/assr-print/:id?variant=…
 const PRINT_VARIANTS = [
@@ -712,7 +707,8 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
   const [noteOpen, setNoteOpen] = useState(false);
   const [noteDraft, setNoteDraft] = useState("");
   const [noteAudience, setNoteAudience] = useState<NoteAudience>("service");
-  const [tlFilter, setTlFilter] = useState("all");
+  const [tlFilter, setTlFilter] = useState<TimelineFilter>("all");
+  const [shouldShowTimelineDetails, setShouldShowTimelineDetails] = useState(false);
   const [busy, setBusy] = useState(false);
 
   // Picker option lists sourced from /api/assr/lookups/* exactly as the
@@ -726,7 +722,6 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
      yet", never as a hardcoded taxonomy the admin cannot change. */
   const productCategoryOptions = useLookupNames("product-categories", []);
   const assignableUsers = useAssignableUsers();
-  const pickupPicDrivers = usePickupPicDrivers();
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["mobile-assr-detail", id],
@@ -795,24 +790,24 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
     return m;
   }, [stageHistory]);
 
-  // Timeline audience categories present on activity rows.
-  const timelineCats = useMemo(() => {
-    const set = new Set<string>();
-    for (const a of activity) {
-      const cat = String(get(a, "category") ?? "").toUpperCase();
-      if (cat) set.add(cat);
-    }
-    // Canonical chip order (matches desktop): the four audience
-    // buckets, then SYSTEM; anything unexpected trails.
-    const ORDER = ["SYSTEM", "SERVICE", "CUSTOMER", "SUPPLIER", "SALES"];
-    const known = ORDER.filter((k) => set.has(k));
-    const rest = Array.from(set).filter((k) => !ORDER.includes(k));
-    return ["ALL", ...known, ...rest];
-  }, [activity]);
-  const shownActivity = useMemo(() => {
-    if (tlFilter === "all") return activity;
-    return activity.filter((a) => String(get(a, "category") ?? "").toUpperCase() === tlFilter);
-  }, [activity, tlFilter]);
+  const timelineActivity = useMemo(() => activity.map(toTimelineActivity), [activity]);
+  const timelineRoles = useMemo(() => {
+    const present = new Set(timelineActivity.map(roleOfActivity));
+    return TIMELINE_ROLE_ORDER.filter((role) => present.has(role));
+  }, [timelineActivity]);
+  const timelineUserNames = useMemo(
+    () => new Map(assignableUsers.map((user) => [String(user.id), user.name])),
+    [assignableUsers],
+  );
+  const timeline = useMemo(
+    () => buildCaseTimeline(timelineActivity, {
+      filter: tlFilter,
+      shouldShowDetails: shouldShowTimelineDetails,
+      salesAgent: get(c, "salesAgent", "sales_agent") || null,
+      userNames: timelineUserNames,
+    }),
+    [timelineActivity, tlFilter, shouldShowTimelineDetails, c, timelineUserNames],
+  );
 
   const assignedTo = get(c, "assignedToName", "assigned_to_name");
   const assignedTo2 = get(c, "assignedTo2Name", "assigned_to_2_name");
@@ -1044,7 +1039,7 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
             <RootCauseField value={get(c, "verifiedRootCause", "verified_root_cause")} busy={busy} onSave={(v) => patchCase({ verified_root_cause: v || null }, "Couldn't save verification")} />
             <EditRow label="Inspection findings / action taken" type="textarea" value={get(c, "inspectionFindings", "inspection_findings")} busy={busy} disabled={dis} onSave={(v) => patchCase({ inspection_findings: v }, "Couldn't save inspection findings")} />
             <EditRow label="Next action" type="textarea" value={get(c, "nextAction", "next_action")} busy={busy} disabled={dis} onSave={(v) => patchCase({ next_action: v }, "Couldn't save next action")} />
-            <EditRow label="Pending with" type="select" options={pendingWithOptions()} value={get(c, "pendingWith", "pending_with")} busy={busy} disabled={dis} onSave={(v) => patchCase({ pending_with: v }, "Couldn't save pending with")} />
+            <EditRow label="Pending with" value={get(c, "pendingWith", "pending_with")} busy={busy} disabled={dis} onSave={(v) => patchCase({ pending_with: v }, "Couldn't save pending with")} />
             {/* QC issue inspection — on receipt (mig 0105: folded in from
                 the retired Pending Inspection stage). The qc_issue_result
                 column exists but ships no UI — Nick 2026-07-14: date +
@@ -1095,7 +1090,7 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
             <StageSubChip c={c} stage="pending_supplier_pickup" busy={busy} disabled={dis} patchCase={patchCase} />
             <KV label="Supplier" value={String(get(c, "creditorName", "creditor_name") ?? creditorCode ?? "—")} />
             <KV label="Supplier code" value={creditorCode ? String(creditorCode) : "—"} mono />
-            {/* Pickup by — own team ('customer') collects, syncing the PICKUP leg to the sheet. */}
+            <MobileSectionHead title="1. Pickup Details" badge={null} />{/* Pickup by: own team ('customer') collects, syncing the PICKUP leg to the sheet. */}
             <LegOwnerToggle label="Pickup by" current={get(c, "pickupBy", "pickup_by")} disabled={dis}
               options={[{ v: "customer", label: "Own team pickup" }, { v: "supplier", label: "Supplier direct" }]}
               onPick={(v) => patchCase({ pickup_by: v }, "Couldn't save pickup-by")} />
@@ -1103,8 +1098,8 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
             <EditRow label="Scheduled pickup date (ETA)" type="date" value={get(c, "customerPickupAt", "customer_pickup_at")} busy={busy} disabled={dis} onSave={(v) => patchCase({ customer_pickup_at: v }, "Couldn't save pickup date")} />
             {get(c, "pickupBy", "pickup_by") === "customer" && !get(c, "actualPickupAt", "actual_pickup_at") && <div style={{ fontSize: 11.5, color: MUTED, margin: "0 2px 10px" }}>{logisticsConfirmedText(get(c, "customerPickupAt", "customer_pickup_at"), get(c, "schedPickupDate", "sched_pickup_date"))}</div>}
             <EditRow label="Actual pickup date" type="date" value={get(c, "actualPickupAt", "actual_pickup_at")} busy={busy} disabled={dis} onSave={(v) => patchCase({ actual_pickup_at: v }, "Couldn't save actual pickup date")} />
-            <EditRow label="Pickup PIC" type="select" options={pickupPicSelectOptions(pickupPicDrivers, get(c, "creditorName", "creditor_name") || get(c, "supplier", "supplier"), get(c, "pickupPic", "pickup_pic"))} value={get(c, "pickupPic", "pickup_pic")} busy={busy} disabled={dis} onSave={(v) => patchCase({ pickup_pic: v }, "Couldn't save pickup PIC")} />
-            <EditRow label="Current item location" type="select" options={pickupTrackingOptions(ITEM_LOCATION_OPTIONS)} value={get(c, "itemLocation", "item_location")} busy={busy} disabled={dis} onSave={(v) => patchCase({ item_location: v }, "Couldn't save item location")} />
+            <EditRow label="Pickup PIC" type="text" value={get(c, "pickupPic", "pickup_pic")} busy={busy} disabled={dis} onSave={(v) => patchCase({ pickup_pic: v }, "Couldn't save pickup PIC")} />
+            <MobileSectionHead title="2. Item Tracking" badge={null} /><EditRow label="Current item location" type="text" value={get(c, "itemLocation", "item_location") ? pickupTrackingLabel(String(get(c, "itemLocation", "item_location"))) : null} busy={busy} disabled={dis} onSave={(v) => patchCase({ item_location: v }, "Couldn't save item location")} />
             {/* 返厂 (owner 2026-09-21) — every factory trip is a row, add as many
                 as needed. The latest row is the current trip; its dates mirror to
                 supplier_pickup_at / items_ready_at for the board + sheet. */}
@@ -1120,40 +1115,9 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
         );
       case "pending_item_ready":
         return (
-          <>
-            <div className="fld-l">QC result (after repair)</div>
-            <div style={{ display: "flex", gap: 7, margin: "6px 0 4px" }}>
-              {QC_RESULT_OPTIONS.map((o) => {
-                const active = String(get(c, "inspectionResult", "inspection_result") ?? "") === o.value;
-                return (
-                  <button
-                    key={o.value}
-                    onClick={() => { if (!dis) patchCase({ inspection_result: active ? null : o.value }, "Couldn't save QC result"); }}
-                    disabled={dis}
-                    className="tinybtn"
-                    style={active ? { background: GREEN, borderColor: GREEN, color: "#fff" } : undefined}
-                  >
-                    {o.label}
-                  </button>
-                );
-              })}
-            </div>
-            <EditRow label="QC inspection date" type="date" value={get(c, "itemsReadyAt", "items_ready_at")} busy={busy} disabled={dis} onSave={(v) => patchCase({ items_ready_at: v }, "Couldn't save QC date")} />
-            <div style={{ fontSize: 10, color: GREY, marginTop: 2 }}>Pass + date → becomes the Item Ready date. Fail → stays pending.</div>
-            {/* After-repair QC photos / report — same category the old
-                "Upload inspection report" button used (qc). */}
-            <PhotoGrid
-              caseId={id}
-              attachments={attachments.filter((a) => ["qc", "inspection_report"].includes(String(get(a, "category") ?? "")))}
-              category="qc"
-              label="QC photos"
-              hint="After-repair QC evidence / report"
-              accent={GREEN}
-              onChanged={refetch}
-              notify={notify}
-              confirm={confirm}
-            />
-          </>
+          <MobileItemReady c={c} caseId={id} trips={(data?.supplier_returns ?? []) as SupplierReturn[]} returnDos={data?.return_dos ?? []} busy={busy} disabled={dis} runWrite={runWrite}
+            renderDoFiles={(doId) => <PhotoGrid caseId={id} attachments={attachments.filter((a) => String(get(a, "category") ?? "") === returnDoAttachmentCategory(doId))} category={returnDoAttachmentCategory(doId)} label="DO attachment" hint="Supplier DO photo or PDF" accent={GREEN} onChanged={refetch} notify={notify} confirm={confirm} />}
+            report={<PhotoGrid caseId={id} attachments={attachments.filter((a) => ["qc", "inspection_report"].includes(String(get(a, "category") ?? "")))} category="qc" label="QC photos / video" hint="After-repair QC evidence / report" accent={GREEN} onChanged={refetch} notify={notify} confirm={confirm} />} />
         );
       case "pending_delivery_service":
         return (
@@ -1654,16 +1618,13 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
                   </span>
                 }
               >
-                {timelineCats.length > 1 && (
+                {timelineRoles.length > 1 && (
                   <div className="hz-scroll" style={{ display: "flex", gap: 6, overflowX: "auto", marginBottom: 6, paddingBottom: 2 }}>
-                    {timelineCats.map((cat) => {
-                      const key = cat === "ALL" ? "all" : cat;
-                      return (
-                        <button key={cat} className={`sochip${tlFilter === key ? " on" : ""}`} onClick={() => setTlFilter(key)}>
-                          {cat === "ALL" ? "All" : cap(cat.toLowerCase())}
-                        </button>
-                      );
-                    })}
+                    {(["all", ...timelineRoles] as const).map((role) => (
+                      <button key={role} className={`sochip${tlFilter === role ? " on" : ""}`} onClick={() => setTlFilter(role)}>
+                        {role === "all" ? "All" : cap(role)}
+                      </button>
+                    ))}
                   </div>
                 )}
                 {/* audience picker (mig 0108). WRAPS 2x2: the labels now say what
@@ -1703,36 +1664,30 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
                   {noteAudience === "customer" ? "Visible to the customer on the portal." : "Internal only — hidden from the customer."}
                 </div>
                 {addNote.isError && <div style={{ fontSize: 11, color: RED, marginBottom: 8 }}>Couldn't add the note. Try again.</div>}
-                {shownActivity.length ? shownActivity.map((a, i) => {
-                  const cat = String(get(a, "category") ?? "").toUpperCase();
-                  const act = String(get(a, "action") ?? "");
-                  let label = get(a, "note", "toValue", "to_value", "action") ?? "Update";
-                  // Raw enum keys + UUID storage filenames read as garbage
-                  // (Nico 2026-08-01) — prettify both.
-                  if (act === "stage_change") label = `Status changed to ${prettyStage(String(get(a, "toValue", "to_value") ?? ""))}`;
-                  label = String(label).replace(
-                    /\(?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\.([a-z0-9]+))?\)?/gi,
-                    (_m, ext) => {
-                      const e = String(ext || "").toLowerCase();
-                      if (["mov", "mp4", "webm", "m4v", "avi"].includes(e)) return "(video)";
-                      if (["jpg", "jpeg", "png", "webp", "gif", "heic"].includes(e)) return "(photo)";
-                      return "(file)";
-                    },
-                  );
-                  const who = get(a, "userName", "user_name") ?? "System";
-                  const badge = catBadge(cat);
+                {(timeline.hiddenCount > 0 || shouldShowTimelineDetails) && (
+                  <button
+                    onClick={() => setShouldShowTimelineDetails((isShown) => !isShown)}
+                    style={{ minHeight: 44, padding: 0, border: "none", background: "none", color: TEAL, fontFamily: "inherit", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+                  >
+                    {shouldShowTimelineDetails ? "Show key updates only" : `Show all updates (${timeline.hiddenCount} system log hidden)`}
+                  </button>
+                )}
+                {timeline.rows.length ? timeline.rows.map((row) => {
+                  const [toneBackground, toneColor] = TIMELINE_TONE_COLORS[row.status?.tone ?? "grey"];
                   return (
-                    <div key={get(a, "id") ?? i} style={{ display: "flex", gap: 10, padding: "10px 0", borderTop: `1px solid #eceee9` }}>
-                      <span style={{ width: 9, height: 9, flex: "none", borderRadius: "50%", border: "2px solid var(--hz-c-border-strong)", marginTop: 3 }} />
+                    <div key={row.id} style={{ display: "flex", gap: 10, padding: "10px 0", borderTop: "1px solid #eceee9" }}>
+                      <span style={{ width: 9, height: 9, flex: "none", borderRadius: "50%", border: `2px solid ${row.isEscalation ? RED : TEAL}`, marginTop: 4 }} />
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 10, color: GREY }}>{dtm(get(a, "createdAt", "created_at"))}</div>
-                        <div style={{ fontSize: 12.5, fontWeight: 700, color: INK, marginTop: 1 }}>{String(label)}</div>
-                        <div style={{ fontSize: 10.5, color: MUTED, marginTop: 2, display: "flex", alignItems: "center", flexWrap: "wrap", gap: 3 }}>
-                          <span>by {String(who)}</span>
-                          {cat && (
-                            <span className="rbadge" style={{ background: badge[0], color: badge[1], marginLeft: 3 }}>{cat}</span>
-                          )}
+                        <div style={{ display: "flex", gap: 8, fontSize: 10.5, color: GREY }}>
+                          <span style={{ whiteSpace: "nowrap" }}>{dtm(row.at)}</span>
+                          <span style={{ color: INK_SEC, fontWeight: 600, minWidth: 0, overflowWrap: "anywhere" }}>{row.by}</span>
                         </div>
+                        {row.status && (
+                          <span style={{ display: "inline-block", marginTop: 4, padding: "2px 8px", borderRadius: 6, fontSize: 11, fontWeight: 700, background: toneBackground, color: toneColor }}>{row.status.label}</span>
+                        )}
+                        {row.remarks && (
+                          <div style={{ fontSize: 12.5, color: row.isEscalation ? RED : INK, marginTop: 4, whiteSpace: "pre-line", overflowWrap: "anywhere" }}>{row.remarks}</div>
+                        )}
                       </div>
                     </div>
                   );
@@ -2582,19 +2537,30 @@ function StageSubChip({ c, stage, busy, disabled, patchCase }: {
   );
 }
 
-// timeline audience badge colour (rbadge — 12% tint of the category hue).
-function catBadge(cat: string): [string, string] {
-  switch (cat) {
-    case "SERVICE": return ["#16695f1f", TEAL];
-    case "CUSTOMER": return ["#2f8a5b1f", GREEN];
-    case "SUPPLIER": return ["#a16a2e1f", BROWN];
-    case "SALES": return ["#1f3a8a1f", BLUE];
-    // Legacy rows from before mig 0108 (all migrated, but a cached
-    // payload may still carry it briefly).
-    case "PURCHASING": return ["#16695f1f", TEAL];
-    case "SYSTEM": return ["#5c61661f", GREY];
-    default: return ["#16695f1f", TEAL];
-  }
+const TIMELINE_ROLE_ORDER: readonly TimelineRole[] = ["system", "service", "customer", "supplier", "sales"];
+
+const TIMELINE_TONE_COLORS: Record<TimelineTone, [string, string]> = {
+  blue: ["#e0f2fe", "#075985"],
+  purple: ["#ede9fe", "#5b21b6"],
+  green: [OK_BG, GREEN],
+  amber: [BROWN_SOFT, BROWN_FG],
+  red: ["#fbe9e9", RED],
+  grey: [FIELD_BG, INK_SEC],
+};
+
+function toTimelineActivity(activity: Any): TimelineActivity {
+  return {
+    id: Number(get(activity, "id")),
+    created_at: String(get(activity, "createdAt", "created_at") ?? ""),
+    action: String(get(activity, "action") ?? ""),
+    category: get(activity, "category") ?? null,
+    source: get(activity, "source") ?? null,
+    source_channel: get(activity, "sourceChannel", "source_channel") ?? null,
+    from_value: get(activity, "fromValue", "from_value") ?? null,
+    to_value: get(activity, "toValue", "to_value") ?? null,
+    note: get(activity, "note") ?? null,
+    user_name: get(activity, "userName", "user_name") ?? null,
+  };
 }
 
 // ── Editable accordion (Edit → Save) ──────────────────────────────

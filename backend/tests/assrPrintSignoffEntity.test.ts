@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { signoffCompanyCode } from "../src/routes/assr_print";
+import { docCodes, signoffCompanyCode } from "../src/routes/assr_print";
 
 /**
  * The service form's sign-off names the company on the letterhead.
@@ -42,5 +42,52 @@ describe("the printed sign-off reads the signing company", () => {
     expect(src).toMatch(/const coShort = shortCompanyName\(signBranding\.companyName\)/);
     expect(src).toMatch(/const csPhone = signCode === HOUZS_COMPANY_CODE/);
     expect(src).not.toMatch(/shortCompanyName\(branding\.companyName\)/);
+  });
+});
+
+describe("docCodes keeps each document number on one line", () => {
+  test("a PO number never breaks at its hyphens", () => {
+    expect(docCodes("HC-PO-2609-116")).toBe('<span class="doc-code">HC-PO-2609-116</span>');
+  });
+
+  test("several numbers stay a comma list, each unbroken", () => {
+    expect(docCodes("HC-PO-1, HC-PO-2")).toBe('<span class="doc-code">HC-PO-1</span>, <span class="doc-code">HC-PO-2</span>');
+  });
+
+  test("a dot-separated PO list keeps its dots and each number unbroken", () => {
+    expect(docCodes("HC-PO-1 · HC-PO-2")).toBe('<span class="doc-code">HC-PO-1</span> · <span class="doc-code">HC-PO-2</span>');
+  });
+
+  test("an empty value prints a dash and markup is escaped", () => {
+    expect(docCodes(null)).toBe("—");
+    expect(docCodes("<b>")).toBe('<span class="doc-code">&lt;b&gt;</span>');
+  });
+});
+
+describe("the office and customer copies print no empty placeholders", () => {
+  const src = fs.readFileSync(path.join(REPO_BACKEND, "src/routes/assr_print.ts"), "utf8");
+
+  test("a photo section with no photos is left out, never an Add box", () => {
+    expect(src).not.toMatch(/class="add">＋ Add/);
+    expect(src).toMatch(/\$\{issuePhotos\.length \? `/);
+    expect(src).toMatch(/\$\{qcPhotos\.length \? `/);
+  });
+
+  test("the items table has no blank filler rows", () => {
+    expect(src).not.toMatch(/const blanks = Math\.max\(0, 3 - officeItems\.length\)/);
+  });
+
+  test("a both-entity print adds only the retail entity, on one line", () => {
+    expect(src).toMatch(/<div class="entity-line">/);
+    expect(src).not.toMatch(/\{ cap: "Service Provider", p: houzsProfile \}/);
+  });
+});
+
+describe("the customer's sign-off is left blank for handwriting", () => {
+  const src = fs.readFileSync(path.join(REPO_BACKEND, "src/routes/assr_print.ts"), "utf8");
+
+  test("no name is printed beside the signature line or in NAME", () => {
+    expect(src).not.toMatch(/<span class="cap">Signature<\/span><span style="float: right/);
+    expect(src).not.toMatch(/<span class="cap">Name<\/span>\$\{cs\.customer_name/);
   });
 });

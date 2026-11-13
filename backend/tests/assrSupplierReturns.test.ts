@@ -12,7 +12,7 @@
  * The numbering is unit-tested for real; the wiring is source-anchored (same
  * style as acNotSentWiring.test.ts) because there is no DB in this suite. */
 import { describe, expect, test } from 'vitest';
-import { earlierSupplierReturns, nextSupplierReturnRoundNo } from '../src/services/assrSupplierReturns';
+import { earlierSupplierReturns, nextSupplierReturnRoundNo, supplierReturnPatchError } from '../src/services/assrSupplierReturns';
 import routeRaw from '../src/routes/assr.ts?raw';
 import svcRaw from '../src/services/assrSupplierReturns.ts?raw';
 import printRaw from '../src/routes/assr_print.ts?raw';
@@ -48,6 +48,23 @@ describe('supplier print lists the earlier return numbers', () => {
   test('the trip box renders Previous Return No. from earlierSupplierReturns', () => {
     expect(printRaw).toMatch(/earlierSupplierReturns\(/);
     expect(printRaw).toMatch(/Previous Return No\./);
+  });
+});
+
+describe('trip dates, including the supplier ETA, are YYYY-MM-DD or null', () => {
+  test('accepts the three dates and clearing them', () => {
+    expect(supplierReturnPatchError({ pickup_at: '2026-10-24', expected_return_at: '2026-11-11', returned_at: null })).toBeNull();
+  });
+  test.each([
+    [{ expected_return_at: '11/11/2026' }, 'expected_return_at must be a YYYY-MM-DD date'],
+    [{ pickup_at: '2026-10-24T00:00:00Z' }, 'pickup_at must be a YYYY-MM-DD date'],
+    [{ returned_at: '' }, 'returned_at must be a YYYY-MM-DD date'],
+  ])('refuses %j', (body, message) => {
+    expect(supplierReturnPatchError(body)).toBe(message);
+  });
+  test('the PATCH route checks the body and saves expected_return_at', () => {
+    expect(svcRaw).toMatch(/const invalid = supplierReturnPatchError\(body\);/);
+    expect(svcRaw).toMatch(/const allowed = \[[^\]]*"expected_return_at"/);
   });
 });
 

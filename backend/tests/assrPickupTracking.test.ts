@@ -5,8 +5,9 @@ import assrApp from '../src/routes/assr';
 
 /* HC-0129 (Farra, Operation Dept, 2026-10-20): the Pickup / Return step tracks
    the customer pickup itself — status, actual date, who collects it (PIC) and
-   where the item is now. Status and location are closed lists and the actual
-   date is a plain YYYY-MM-DD, refused at the API so a bad value never lands. */
+   where the item is now. Status is a closed list, PIC and location are typed
+   text (owner asked for no dropdown), and the actual date is a plain
+   YYYY-MM-DD, refused at the API so a bad value never lands. */
 
 const USER = {
   id: 1,
@@ -50,7 +51,7 @@ describe('Pickup / Return tracking fields (HC-0129)', () => {
       pickup_status: 'completed',
       actual_pickup_at: '2026-10-21',
       pickup_pic: 'Ali (lorry 2)',
-      item_location: 'warehouse',
+      item_location: 'Warehouse - Balakong',
     });
     expect(res.status).toBe(200);
     const row = await env.DB.prepare(
@@ -62,7 +63,7 @@ describe('Pickup / Return tracking fields (HC-0129)', () => {
       pickup_status: 'completed',
       actual_pickup_at: '2026-10-21',
       pickup_pic: 'Ali (lorry 2)',
-      item_location: 'warehouse',
+      item_location: 'Warehouse - Balakong',
     });
   });
 
@@ -76,7 +77,8 @@ describe('Pickup / Return tracking fields (HC-0129)', () => {
 
   test.each([
     [{ pickup_status: 'done' }],
-    [{ item_location: 'lorry' }],
+    [{ item_location: 'x'.repeat(121) }],
+    [{ item_location: 42 }],
     [{ actual_pickup_at: '21/10/2026' }],
     [{ actual_pickup_at: '2026-10-21T10:00:00Z' }],
     [{ pickup_pic: 'x'.repeat(121) }],

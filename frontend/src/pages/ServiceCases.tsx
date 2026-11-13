@@ -40,6 +40,8 @@ import {
   Phone,
   MapPin,
   Play,
+  Target,
+  Image as ImageIcon,
 } from "lucide-react";
 import { HubGrid } from "../components/HubGrid";
 import { PageHeader } from "../components/Layout";
@@ -68,9 +70,17 @@ import { Panel, PanelSection, FieldRow } from "../components/Panel";
 import { CaseAccessSection } from "../components/CaseAccessSection";
 import { SupplierReturnsList } from "../components/assr/SupplierReturnsList";
 import { ReopenCaseControl } from "../components/assr/ReopenCaseControl";
+import { CaseTimeline } from "../components/assr/CaseTimeline";
 import { InlineEdit } from "../components/InlineEdit";
 import { PickupTrackingFields } from "../components/assr/PickupTrackingFields";
+import { CaseSection } from "../components/assr/CaseSection";
+import { ItemReadyFields } from "../components/assr/ItemReadyFields";
+import { QcStageChipView } from "../components/assr/QcStageChipView";
+import { GalleryUploadTile } from "../components/assr/GalleryUploadTile";
+import { itemReadySummary, returnDoAttachmentCategory } from "../vendor/scm/lib/assr/item-ready";
 import { VerificationFindingsFields } from "../components/assr/VerificationFindingsFields";
+import { InspectByToggle } from "../components/assr/InspectByToggle";
+import { VerificationOutcomeChips } from "../components/assr/VerificationOutcomeChips";
 import { DeliveryByCard } from "./ServiceCaseDeliveryBy";
 import { ExpandableText } from "../components/ExpandableText";
 import { StatCard } from "../components/StatCard";
@@ -3296,15 +3306,6 @@ function DetailContent({
   // fields, incl. the SO-No mirror re-match.
   const [custEditing, setCustEditing] = useState(false);
   const [noteCategory, setNoteCategory] = useState<AssrNoteAudience>("service");
-  // Activity timeline filter. 'all' = show everything; the others
-  // narrow to one stored category (four buckets + system since mig
-  // 0108): service / customer / supplier / sales cover authored notes
-  // and portal activity; auto-emitted events (stage_change,
-  // assignment, escalation, …) live under 'system'. Channel inference
-  // only backstops legacy rows that predate the category backfill.
-  const [activityFilter, setActivityFilter] = useState<
-    "all" | "service" | "customer" | "supplier" | "sales" | "system"
-  >("all");
   const [transitioning, setTransitioning] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [showClosePrompt, setShowClosePrompt] = useState(false);
@@ -4275,40 +4276,9 @@ function DetailContent({
               openStage={openStage}
               setOpenStage={setOpenStage}
             >
-              <div className="space-y-2.5 rounded-md border border-border-subtle bg-surface px-3 py-2.5">
-                {/* Folded in from the retired Item Pickup stage (mig 0110):
-                    the date logistics collects the faulty item from the
-                    customer's house — precedes the supplier handover. */}
-                {/* Pickup by (Nico 2026-08-07) — who collects the faulty
-                    item. Own team pickup (stored 'customer') = our logistics
-                    goes to the customer's house, which syncs the PICKUP leg to
-                    the HC Delivery sheet; Supplier direct = the supplier
-                    collects it themselves and it never reaches the sheet. */}
-                <div className="flex items-center gap-2">
-                  <span className="w-[130px] shrink-0 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
-                    Pickup by
-                  </span>
-                  <div className="flex gap-1.5">
-                    {([
-                      { v: "customer", label: "Own team pickup" },
-                      { v: "supplier", label: "Supplier direct" },
-                    ] as const).map((o) => (
-                      <button
-                        key={o.v}
-                        type="button"
-                        onClick={() => patch({ pickup_by: c.pickup_by === o.v ? null : o.v })}
-                        className={cn(
-                          "rounded-md border px-3 py-1.5 text-[12px] font-semibold transition-colors",
-                          c.pickup_by === o.v
-                            ? "border-primary bg-primary-soft text-primary"
-                            : "border-border bg-surface text-ink-secondary hover:border-primary/40",
-                        )}
-                      >
-                        {o.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+              <div className="space-y-3">
+                {/* Folded in from the retired Item Pickup stage (mig 0110). Sections
+                    follow the service flow (Operation Dept 2026-11-09). */}
                 <PickupTrackingFields c={c} patch={patch} />
                 {/* 返厂 (owner 2026-09-21). Every factory trip is a row; ops
                     adds as many as needed (a real case has been back 4 times).
@@ -4325,30 +4295,32 @@ function DetailContent({
                   formatDate={formatDate}
                   confirm={dialog.confirm}
                 />
-                {/* Mig 106 — send-out slip that goes with the item
-                    when supplier collects. Supplier sees this on
-                    their portal (read-only). */}
-                <InlineEdit
-                  label="Goods Returned Note"
-                  textarea
-                  value={c.goods_returned_note}
-                  onSave={(v) => patch({ goods_returned_note: v })}
-                  placeholder="What's leaving with the supplier (contents, condition, expected fix)"
-                />
-                {(c.supplier_pickup_at || attachments.some((a: any) => a?.category === "pickup_form")) && (
-                  <MilestoneAttachmentSlot
-                    caseId={id}
-                    category="pickup_form"
-                    label="Pickup Form / Consignment Note"
-                    emptyLabel="No pickup form yet."
-                    uploadLabel="Upload pickup form"
-                    attachments={attachments}
-                    archived={!!c.archived_at}
-                    detail={detail}
-                    dialog={dialog}
-                    toast={toast}
+                <CaseSection title="4. Handover Documents" badge={null} icon={null} action={null} isCollapsible={false}>
+                  {/* Mig 106 — send-out slip that goes with the item
+                      when supplier collects. Supplier sees this on
+                      their portal (read-only). */}
+                  <InlineEdit
+                    label="Goods Returned Note"
+                    textarea
+                    value={c.goods_returned_note}
+                    onSave={(v) => patch({ goods_returned_note: v })}
+                    placeholder="What's leaving with the supplier (contents, condition, expected fix)"
                   />
-                )}
+                  {(c.supplier_pickup_at || attachments.some((a: any) => a?.category === "pickup_form")) && (
+                    <MilestoneAttachmentSlot
+                      caseId={id}
+                      category="pickup_form"
+                      label="Pickup Form / Consignment Note"
+                      emptyLabel="No pickup form yet."
+                      uploadLabel="Upload pickup form"
+                      attachments={attachments}
+                      archived={!!c.archived_at}
+                      detail={detail}
+                      dialog={dialog}
+                      toast={toast}
+                    />
+                  )}
+                </CaseSection>
               </div>
             </StageRow>
 
@@ -4358,26 +4330,29 @@ function DetailContent({
               priorityMap={priorityMap}
               stageId="pending_item_ready"
               title="Pending Item Ready"
-              summary={
-                c.inspection_result
-                  ? `QC: ${c.inspection_result}${c.items_ready_at ? ` · ready ${formatDate(c.items_ready_at)}` : ""}`
-                  : "Awaiting supplier return + QC"
-              }
+              summary={itemReadySummary(c.inspection_result)}
+              badge={<QcStageChipView value={c.inspection_result} />}
               currentStage={c.stage}
               stages={activeStages}
               openStage={openStage}
               setOpenStage={setOpenStage}
             >
-              <InspectionCard
+              <ItemReadyFields
                 c={c}
-                patch={patch}
                 caseId={id}
-                attachments={attachments}
-                archived={!!c.archived_at}
-                detail={detail}
-                dialog={dialog}
-                toast={toast}
-                hideHeader
+                trips={supplierReturns}
+                returnDos={detail.data?.return_dos ?? []}
+                canWrite={!c.archived_at}
+                patch={patch}
+                onChanged={() => { detail.reload(); onUpdated(); }}
+                onError={(m) => toast.error(m)}
+                confirm={dialog.confirm}
+                renderDoAttachment={(doId) => <MilestoneAttachmentSlot caseId={id} category={returnDoAttachmentCategory(doId)}
+                  label="DO Attachment" uploadLabel="Upload DO file" attachments={attachments} compact
+                  archived={!!c.archived_at} detail={detail} dialog={dialog} toast={toast} />}
+                inspectionReport={<MilestoneAttachmentSlot caseId={id} category="inspection_report" label="QC Inspection Report"
+                  uploadLabel="Upload Photo / Video" attachments={attachments} gallery
+                  archived={!!c.archived_at} detail={detail} dialog={dialog} toast={toast} />}
               />
             </StageRow>
 
@@ -4852,414 +4827,82 @@ function DetailContent({
             );
           })()}
 
-          {/* Timeline — chronological log of stage changes, notes,
-              customer comments, escalations, etc. Add-note form is
-              behind the header button so the timeline reads cleanly. */}
-          <section className="mb-3 rounded-lg border border-border bg-surface px-4 py-3.5 shadow-stone">
-            <div className="mb-3 flex items-center gap-2">
-              <Clock size={13} className="shrink-0 text-ink-muted" />
-              <h3 className="flex-1 text-[10.5px] font-bold uppercase tracking-wide text-ink-secondary">
-                Timeline
-              </h3>
-              {!c.archived_at && (
-                <button
-                  onClick={() => setNoteFormOpen((x) => !x)}
-                  className="inline-flex items-center gap-1 rounded-md bg-accent px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-white shadow-sm hover:bg-accent/90"
-                >
-                  <Plus size={11} /> Add Note
-                </button>
-              )}
-            </div>
-
-            {/* Add-note form — toggled by the header button. Stays
-                compact so it doesn't push the timeline below the fold. */}
-            {noteFormOpen && !c.archived_at && (
-              <div className="mb-3 rounded-md border border-accent/30 bg-accent-soft/15 p-2">
-                <div className="mb-2 flex items-center gap-2">
-                  <select
-                    value={noteCategory}
-                    onChange={(e) => setNoteCategory(e.target.value as AssrNoteAudience)}
-                    className="rounded-md border border-border bg-surface px-2 py-1.5 text-[11px] font-semibold outline-none focus:border-primary"
-                    title="Where this note is visible"
-                  >
-                    {/* Shared with mobile (vendor/scm/lib/assr/case-fields). The
-                        two lists had already drifted on the one label that
-                        matters: this side promised "Customer-visible", the phone
-                        said only "Customer". */}
-                    {ASSR_NOTE_AUDIENCES.map((a) => (
-                      <option key={a.value} value={a.value}>{a.label}</option>
-                    ))}
-                  </select>
-                  <span className="text-[10px] text-ink-muted">
-                    {assrNoteIsCustomerVisible(noteCategory)
-                      ? "The customer will see this note on the portal."
-                      : "Internal only — hidden from the customer."}
-                  </span>
-                </div>
-                <textarea
-                  value={note}
-                  onChange={(e) => setNote(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) addNote();
-                  }}
-                  placeholder={
-                    assrNoteIsCustomerVisible(noteCategory)
-                      ? "Write a note for the customer…"
-                      : "Internal note…"
-                  }
-                  rows={2}
-                  className="w-full rounded-md border border-border bg-surface px-3 py-1.5 text-[12px] outline-none focus:border-primary"
-                />
-                <div className="mt-2 flex items-center gap-2">
-                  <button
-                    onClick={() => {
-                      setNote("");
-                      setNoteFormOpen(false);
-                    }}
-                    className="rounded-md border border-border bg-surface px-3 py-1.5 text-[11px] font-semibold text-ink-secondary hover:text-ink"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={addNote}
-                    disabled={!note.trim() || isPostingNote}
-                    className="ml-auto rounded-md bg-accent px-4 py-1.5 text-[11px] font-bold uppercase tracking-wide text-white disabled:opacity-50"
-                  >
-                    {isPostingNote ? "Posting…" : "Post note"}
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Filter tabs — Design PR 2. Roles reflect who authored the
-                activity (Service = internal, Customer = via customer
-                portal, Supplier = via supplier portal, Sales = via the
-                sales portal link). */}
-            <div className="mb-3 flex flex-wrap gap-1.5">
-              {(
-                [
-                  { value: "all" as const, label: "All" },
-                  { value: "system" as const, label: "System" },
-                  { value: "service" as const, label: "Service" },
-                  { value: "customer" as const, label: "Customer" },
-                  { value: "supplier" as const, label: "Supplier" },
-                  { value: "sales" as const, label: "Sales" },
-                ]
-              ).map((opt) => {
-                const active = activityFilter === opt.value;
-                return (
-                  <button
-                    key={opt.value}
-                    onClick={() => setActivityFilter(opt.value)}
-                    className={cn(
-                      "rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors",
-                      active
-                        ? "bg-primary text-white"
-                        : "border border-border bg-bg text-ink-muted hover:text-ink",
-                    )}
-                  >
-                    {opt.label}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Timeline list. A vertical guide runs down the left edge;
-                each row anchors to a small ring marker so the eye can
-                trace the case's history at a glance. */}
-            {(() => {
-              // Design PR 2 — derive an actor role from source_channel /
-              // action so the filter tabs and the per-entry pill agree.
-              const roleOf = (a: any): "customer" | "supplier" | "service" | "sales" | "system" => {
-                // The stored category is authoritative (four buckets +
-                // system since mig 0108); the channel inference below
-                // only backstops legacy rows without one.
-                const cat = String(a.category || "").toLowerCase();
-                if (cat === "purchasing") return "service";
-                if (
-                  cat === "service" ||
-                  cat === "customer" ||
-                  cat === "supplier" ||
-                  cat === "sales" ||
-                  cat === "system"
-                ) {
-                  return cat;
-                }
-                const ch = a.source_channel;
-                if (a.source === "sales" || a.action === "sales_comment" || a.action === "sales_upload") return "sales";
-                if (ch === "customer_portal" || a.source === "customer" || a.action === "customer_comment") return "customer";
-                if (ch === "supplier_portal") return "supplier";
-                return "service";
-              };
-              const filtered = activity.filter((a: any) => {
-                if (activityFilter === "all") return true;
-                return roleOf(a) === activityFilter;
-              });
-              // Service-form photo relay notes carry a long provenance
-              // string ending in the [gdrive:...] dedup marker (which
-              // must stay in the DB — the relay dedups on it). Collapse
-              // consecutive ones into a single compact entry and strip
-              // the marker for display.
-              // Backend notes embed the R2 storage key — a UUID filename
-              // that reads as garbage (Nico 2026-08-01: 乱码). Swap each
-              // for a friendly kind derived from the extension.
-              const prettifyText = (t: string): string =>
-                t.replace(
-                  /\(?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\.([a-z0-9]+))?\)?/gi,
-                  (_m, ext) => {
-                    const e = String(ext || "").toLowerCase();
-                    if (["mov", "mp4", "webm", "m4v", "avi"].includes(e)) return "(video)";
-                    if (["jpg", "jpeg", "png", "webp", "gif", "heic"].includes(e)) return "(photo)";
-                    return "(file)";
-                  },
-                );
-              const photoImportFile = (a: any): string | null => {
-                const m = /^Photo migrated from Google Form history(?::\s*(.*?))?\s*\[gdrive:[^\]]+\]$/.exec(
-                  String(a.note || "").trim()
-                );
-                return m ? (m[1] || "photo") : null;
-              };
-              const rows: any[] = [];
-              for (const a of filtered) {
-                const file = photoImportFile(a);
-                const prev = rows[rows.length - 1];
-                if (file !== null && prev?.__photoImports) {
-                  prev.__photoImports.push(file);
-                } else if (file !== null) {
-                  rows.push({ ...a, __photoImports: [file] });
-                } else {
-                  rows.push(a);
-                }
+          <CaseTimeline
+            activity={activity}
+            salesAgent={c.sales_agent || null}
+            userNames={new Map(userOptions.map((option) => [String(option.id), option.name]))}
+            canEdit={!c.archived_at}
+            onAddUpdate={() => setNoteFormOpen((isOpen) => !isOpen)}
+            onArchive={async (activityId) => {
+              if (!(await dialog.confirm("Archive this entry?"))) return;
+              try {
+                await api.post(`/api/assr/activity/${activityId}/archive`);
+                toast.success("Archived");
+                detail.reload();
+              } catch (e: any) {
+                toast.error(e?.message || "Something went wrong. Please try again.");
               }
-              if (rows.length === 0) {
-                return (
-                  <div className="text-[12px] text-ink-muted">
-                    No activity yet
+            }}
+            composer={
+              noteFormOpen && !c.archived_at && (
+                <div className="mb-3 rounded-md border border-accent/30 bg-accent-soft/15 p-2">
+                  <div className="mb-2 flex items-center gap-2">
+                    <select
+                      value={noteCategory}
+                      onChange={(e) => setNoteCategory(e.target.value as AssrNoteAudience)}
+                      className="rounded-md border border-border bg-surface px-2 py-1.5 text-[11px] font-semibold outline-none focus:border-primary"
+                      title="Where this note is visible"
+                    >
+                      {/* Shared with mobile (vendor/scm/lib/assr/case-fields). The
+                          two lists had already drifted on the one label that
+                          matters: this side promised "Customer-visible", the phone
+                          said only "Customer". */}
+                      {ASSR_NOTE_AUDIENCES.map((a) => (
+                        <option key={a.value} value={a.value}>{a.label}</option>
+                      ))}
+                    </select>
+                    <span className="text-[10px] text-ink-muted">
+                      {assrNoteIsCustomerVisible(noteCategory)
+                        ? "The customer will see this note on the portal."
+                        : "Internal only — hidden from the customer."}
+                    </span>
                   </div>
-                );
-              }
-              return (
-                // Bounded, self-scrolling timeline — a long history scrolls
-                // inside this box instead of stretching the whole page.
-                <div className="max-h-[65vh] overflow-y-auto overflow-x-hidden pr-1">
-                <ol className="relative space-y-3 pl-5">
-                  <span className="pointer-events-none absolute left-[7px] top-1.5 bottom-1.5 w-px bg-border" />
-                  {rows.map((a: any) => {
-                    const author =
-                      a.source === "customer"
-                        ? a.customer_name_display || a.customer_email || "Customer"
-                        : a.source === "sales"
-                          ? c.sales_agent || "Sales"
-                          : a.user_name || "System";
-                    const isEscalated = a.action === "escalated";
-                    const isCustomer = a.source === "customer";
-                    const archivable =
-                      !c.archived_at &&
-                      !a.__photoImports &&
-                      (a.action === "note" || a.action === "customer_comment" || a.action === "sales_comment");
-                    let title: React.ReactNode = a.action;
-                    let body: React.ReactNode = null;
-                    if (a.__photoImports) {
-                      const n = a.__photoImports.length;
-                      title = n > 1 ? `${n} photos imported from service form` : "Photo imported from service form";
-                      body = a.__photoImports.join("\n");
-                    } else switch (a.action) {
-                      case "stage_change":
-                        title = (
-                          <>
-                            Status changed to{" "}
-                            <span className="font-bold">
-                              {caseStageLabel(a.to_value || "")}
-                            </span>
-                          </>
-                        );
-                        if (a.note) body = a.note;
-                        break;
-                      case "sub_status_change":
-                        title = (
-                          <>
-                            Sub-status changed to{" "}
-                            <span className="font-bold">{assrSubStatusLabel(a.to_value)}</span>
-                          </>
-                        );
-                        break;
-                      case "note":
-                        // Title is redundant — the CUSTOMER/PURCHASING
-                        // pill on the "by" row already says which kind.
-                        // The note body becomes the prominent line.
-                        title = null;
-                        body = a.note;
-                        break;
-                      case "created":
-                        title = "Case created";
-                        if (a.note) body = a.note;
-                        break;
-                      case "assignment":
-                        title = `Assigned to ${
-                          userOptions.find((u) => String(u.id) === a.to_value)
-                            ?.name || `user #${a.to_value}`
-                        }`;
-                        break;
-                      case "assignment_2":
-                        title = a.to_value
-                          ? `Co-assignee set to ${
-                              userOptions.find((u) => String(u.id) === a.to_value)
-                                ?.name || `user #${a.to_value}`
-                            }`
-                          : "Co-assignee cleared";
-                        break;
-                      case "approval":
-                        title = (
-                          <>
-                            Quality review:{" "}
-                            <span className="font-bold">
-                              {a.to_value === "passed" ? "Passed" : "Reviewed"}
-                            </span>
-                          </>
-                        );
-                        break;
-                      case "po_generated":
-                        title = (
-                          <>
-                            PO generated:{" "}
-                            <span className="font-mono font-bold">
-                              {a.to_value}
-                            </span>
-                          </>
-                        );
-                        break;
-                      case "escalated":
-                        title = "Case escalated — SLA breached >24h";
-                        break;
-                      case "survey_submitted":
-                        title = (
-                          <>
-                            Satisfaction survey ·{" "}
-                            <span className="font-bold">{a.to_value}/5</span>
-                          </>
-                        );
-                        if (a.note) body = a.note;
-                        break;
-                      case "customer_comment":
-                        // Same reasoning as 'note' — the customer-coloured
-                        // ring marker + author "Customer" already convey
-                        // the kind. Comment body becomes the headline.
-                        title = null;
-                        body = a.note;
-                        break;
-                      case "customer_upload":
-                        title = "Photo uploaded";
-                        if (a.note) body = a.note;
-                        break;
-                      case "sales_comment":
-                        // Same reasoning as customer_comment — the pill
-                        // already says Sales; the comment is the headline.
-                        title = null;
-                        body = a.note;
-                        break;
-                      case "sales_upload":
-                        title = "Photo uploaded";
-                        if (a.note) body = a.note;
-                        break;
-                      default:
-                        // Backend-logged audit actions we don't special-case
-                        // (field_change, item_remark, item_added/removed,
-                        // attachment_*, logistics_*, …). Their note is a full
-                        // human sentence — show it so the timeline is a
-                        // complete, reviewable history of everything done.
-                        if (a.note) {
-                          title = null;
-                          body = a.note;
-                        }
-                        break;
+                  <textarea
+                    value={note}
+                    onChange={(e) => setNote(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) addNote();
+                    }}
+                    placeholder={
+                      assrNoteIsCustomerVisible(noteCategory)
+                        ? "Write a note for the customer…"
+                        : "Internal note…"
                     }
-                    if (typeof body === "string") body = prettifyText(body);
-                    const actorRole = roleOf(a);
-                    return (
-                      <li key={a.id} className="group relative">
-                        <span
-                          className={cn(
-                            "absolute -left-5 top-1 h-3.5 w-3.5 rounded-full border-2 bg-surface",
-                            isEscalated
-                              ? "border-err"
-                              : actorRole === "customer"
-                                ? "border-amber-500"
-                                : actorRole === "supplier"
-                                  ? "border-primary"
-                                  : actorRole === "sales"
-                                    ? "border-accent"
-                                    : "border-border"
-                          )}
-                        />
-                        <div className="flex items-center gap-2 text-[10.5px] text-ink-muted">
-                          <span>{formatDateTime(a.created_at)}</span>
-                          {archivable && (
-                            <button
-                              onClick={async () => {
-                                if (!(await dialog.confirm("Archive this entry?")))
-                                  return;
-                                try {
-                                  await api.post(
-                                    `/api/assr/activity/${a.id}/archive`
-                                  );
-                                  toast.success("Archived");
-                                  detail.reload();
-                                } catch (e: any) {
-                                  toast.error(e?.message || "Something went wrong. Please try again.");
-                                }
-                              }}
-                              className="ml-auto rounded p-0.5 text-ink-muted opacity-0 transition-opacity hover:text-err group-hover:opacity-100"
-                              title="Archive entry"
-                            >
-                              <Trash2 size={10} />
-                            </button>
-                          )}
-                        </div>
-                        {title && (
-                          <div
-                            className={cn(
-                              "text-[12.5px] font-bold",
-                              isEscalated ? "text-err" : "text-ink"
-                            )}
-                          >
-                            {title}
-                          </div>
-                        )}
-                        <div className="mt-0.5 flex items-center gap-1.5 text-[10.5px] text-ink-muted">
-                          <span
-                            className={cn(
-                              "rounded px-1.5 py-[1px] text-[9px] font-bold uppercase tracking-wider",
-                              actorRole === "customer" && "bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300",
-                              actorRole === "supplier" && "bg-primary/10 text-primary",
-                              actorRole === "sales" && "bg-accent-soft text-accent",
-                              actorRole === "service" && "bg-bg text-ink-secondary",
-                              actorRole === "system" && "border border-border-subtle bg-bg text-ink-muted",
-                            )}
-                          >
-                            {{ service: "Service", customer: "Customer", supplier: "Supplier", sales: "Sales", system: "System" }[actorRole]}
-                          </span>
-                          <span>by {author}</span>
-                        </div>
-                        {body && (
-                          <div
-                            className={cn(
-                              "mt-1 whitespace-pre-line",
-                              title
-                                ? "text-[12px] text-ink-secondary"
-                                : "text-[12.5px] text-ink"
-                            )}
-                          >
-                            {body}
-                          </div>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ol>
+                    rows={2}
+                    className="w-full rounded-md border border-border bg-surface px-3 py-1.5 text-[12px] outline-none focus:border-primary"
+                  />
+                  <div className="mt-2 flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        setNote("");
+                        setNoteFormOpen(false);
+                      }}
+                      className="rounded-md border border-border bg-surface px-3 py-1.5 text-[11px] font-semibold text-ink-secondary hover:text-ink"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={addNote}
+                      disabled={!note.trim() || isPostingNote}
+                      className="ml-auto rounded-md bg-accent px-4 py-1.5 text-[11px] font-bold uppercase tracking-wide text-white disabled:opacity-50"
+                    >
+                      {isPostingNote ? "Posting…" : "Post note"}
+                    </button>
+                  </div>
                 </div>
-              );
-            })()}
-          </section>
+              )
+            }
+          />
 
           {/* Cost / Quality / CSAT — folded by default (v2); relevant
               mostly at sign-off / close. */}
@@ -5509,11 +5152,6 @@ function useStageAutoAdvance({
 // `verified_at` / `verified_by` are server-stamped on PATCH, so the
 // timestamp can't drift from the actor.
 
-const VERIFICATION_OPTIONS = [
-  { value: "accepted", label: "Accepted", tone: "ok" as const },
-  { value: "needs_more_info", label: "Needs more info", tone: "warn" as const },
-  { value: "rejected", label: "Rejected", tone: "err" as const },
-];
 
 // ── Detail top-of-page redesign (PR 1) ─────────────────────────
 // Two card components lifted from `Service Case Detail — Redesign.dc.html`:
@@ -5561,6 +5199,7 @@ function StageRow({
   stageId,
   title,
   summary,
+  badge,
   children,
   currentStage,
   stages,
@@ -5572,6 +5211,7 @@ function StageRow({
   stageId: AssrStage;
   title: string;
   summary: string;
+  badge?: React.ReactNode;
   children: React.ReactNode;
   currentStage: AssrStage;
   // PR 4 — filtered active-stage list. If stageId isn't in it, the
@@ -5646,6 +5286,7 @@ function StageRow({
             >
               {chip}
             </span>
+            {badge}
             {/* Per-stage SLA pill — only on the CURRENT row. Reuses
                 LeadTimePill's elapsed-vs-target computation so the
                 Detail matches the case list's SLA lens. */}
@@ -5975,187 +5616,6 @@ function CollapsibleBlock({
   );
 }
 
-function InspectionCard({
-  c,
-  patch,
-  caseId,
-  attachments,
-  archived,
-  detail,
-  dialog,
-  toast,
-  hideHeader,
-}: {
-  c: AssrCase;
-  patch: (body: Record<string, any>) => Promise<void>;
-  caseId: number;
-  attachments: any[];
-  archived: boolean;
-  detail: ReturnType<typeof useQuery>;
-  dialog: ReturnType<typeof useDialog>;
-  toast: ReturnType<typeof useToast>;
-  // Refresh — when rendered inside a StageRow the surrounding
-  // accordion already labels the section, so skip the PanelSection
-  // wrapper here to avoid double headers.
-  hideHeader?: boolean;
-}) {
-  // Always visible so ops can pre-fill / cross-check even before the
-  // item reaches the post-supplier-return checkpoint. Matches the
-  // VerificationCard (QC Issue Inspection) which also has no gate.
-  const [qcOpen, setQcOpen] = useState(false);
-  // Refresh — QC Result dropdown carries a tone chip per option so
-  // ops sees the downstream route at a glance. DB values (pass /
-  // fail / na) stay unchanged; only the on-screen label + chip are
-  // remapped to match the design's language.
-  const QC_TAGS: {
-    value: "pass" | "fail" | "na";
-    slug: string;
-    label: string;
-    tone: "ok" | "warn" | "muted";
-  }[] = [
-    { value: "pass", slug: "approved", label: "Approved — to Delivery", tone: "ok" },
-    { value: "fail", slug: "need_send_back_supplier", label: "Send back to supplier", tone: "warn" },
-    { value: "na", slug: "others", label: "Others", tone: "muted" },
-  ];
-  const qcSel = QC_TAGS.find((o) => o.value === c.inspection_result);
-  const toneChip = (t: "ok" | "warn" | "muted") =>
-    t === "ok"
-      ? "bg-synced/15 text-synced"
-      : t === "warn"
-      ? "bg-accent-soft/60 text-accent"
-      : "bg-bg text-ink-muted";
-  const inner = (
-    <>
-      <div>
-        <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
-          QC Result
-        </div>
-        <div className="relative">
-          <button
-            type="button"
-            onClick={() => setQcOpen((v) => !v)}
-            className={cn(
-              "flex w-full items-center justify-between gap-2 rounded-md border bg-surface px-3 py-2.5 text-left text-[13px] outline-none transition-colors",
-              qcOpen ? "border-primary" : "border-border",
-            )}
-          >
-            {qcSel ? (
-              <span className="flex flex-wrap items-center gap-2">
-                <span className="font-mono text-[11.5px] font-semibold text-primary">
-                  {qcSel.slug}
-                </span>
-                <span className="text-ink-secondary">· {qcSel.label}</span>
-                <span
-                  className={cn(
-                    "rounded px-1.5 py-[1px] text-[9px] font-bold uppercase tracking-wider",
-                    toneChip(qcSel.tone),
-                  )}
-                >
-                  {qcSel.tone === "ok" ? "OK" : qcSel.tone === "warn" ? "Warn" : "Muted"}
-                </span>
-              </span>
-            ) : (
-              <span className="text-ink-muted">— select —</span>
-            )}
-            <span
-              className={cn(
-                "shrink-0 text-[12px] text-ink-muted transition-transform",
-                qcOpen && "rotate-180",
-              )}
-            >
-              ▾
-            </span>
-          </button>
-          {qcOpen && (
-            <div className="absolute z-30 mt-1 w-full overflow-hidden rounded-md border border-border bg-surface shadow-slab">
-              {QC_TAGS.map((o) => {
-                const active = c.inspection_result === o.value;
-                return (
-                  <button
-                    key={o.value}
-                    type="button"
-                    onClick={() => {
-                      patch({ inspection_result: o.value });
-                      setQcOpen(false);
-                    }}
-                    className={cn(
-                      "flex w-full items-center gap-2.5 border-b border-border-subtle px-3 py-2.5 text-left last:border-b-0 hover:bg-accent-soft/20",
-                      active && "bg-accent-soft/40",
-                    )}
-                  >
-                    <span className="font-mono text-[11.5px] font-semibold text-primary">
-                      {o.slug}
-                    </span>
-                    <span className="flex-1 text-[12.5px] text-ink-secondary">· {o.label}</span>
-                    <span
-                      className={cn(
-                        "rounded px-1.5 py-[1px] text-[9px] font-bold uppercase tracking-wider",
-                        toneChip(o.tone),
-                      )}
-                    >
-                      {o.tone === "ok" ? "OK" : o.tone === "warn" ? "Warn" : "Muted"}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
-      {/* The return date is the CURRENT factory round's "back" date now, edited
-          in the Factory Returns list under the Supplier stage and mirrored to
-          items_ready_at. Read-only here for QC context so the two can't drift. */}
-      <div className="flex flex-col gap-1">
-        <span className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">Return date (current trip)</span>
-        <span className="text-[13px] text-ink-secondary">{c.items_ready_at ? formatDate(c.items_ready_at) : "—"}</span>
-      </div>
-      <p className="-mt-1 text-[10.5px] leading-snug text-ink-muted">
-        Edit the return date in Factory Returns (Supplier stage). Pass here confirms the item ready.
-      </p>
-      {/* Mig 106 — the service note the supplier hands back with the
-          item on return. Supplier edits this from their portal;
-          shown here read-in-context so QC can cross-check what the
-          supplier claims to have done. */}
-      <InlineEdit
-        label="Supplier Service Note"
-        textarea
-        value={c.supplier_service_note}
-        onSave={(v) => patch({ supplier_service_note: v })}
-        placeholder="What the supplier did / findings on the returned item"
-      />
-      <MilestoneAttachmentSlot
-        caseId={caseId}
-        category="inspection_report"
-        label="QC Inspection Report"
-        emptyLabel="No inspection report uploaded yet."
-        uploadLabel="Upload inspection report"
-        attachments={attachments}
-        archived={archived}
-        detail={detail}
-        dialog={dialog}
-        toast={toast}
-      />
-    </>
-  );
-  if (hideHeader) {
-    return <div className="space-y-2.5">{inner}</div>;
-  }
-  return (
-    <PanelSection
-      icon={<ShieldCheck size={13} />}
-      accent="bg-synced"
-      title={
-        <>
-          QC Inspection{" "}
-          <span className="font-normal normal-case tracking-normal text-ink-muted/70">— after supplier return</span>
-        </>
-      }
-    >
-      {inner}
-    </PanelSection>
-  );
-}
-
 function VerificationCard({
   c,
   patch,
@@ -6250,34 +5710,11 @@ function VerificationCard({
           0105) — who inspects the reported issue. Own team routes the
           visit into Delivery Planning via customer_pickup_at; supplier
           handles it on their side via the supplier portal. */}
-      <div>
-        <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
-          Inspect by
-        </div>
-        <div className="flex gap-1.5">
-          {([
-            { v: "own", label: "Own team" },
-            { v: "supplier", label: "Supplier" },
-          ] as const).map((o) => (
-            <button
-              key={o.v}
-              type="button"
-              onClick={() =>
-                patch({ inspection_by: c.inspection_by === o.v ? null : o.v })
-              }
-              disabled={archived || saving}
-              className={cn(
-                "rounded-md border px-3 py-1.5 text-[12px] font-semibold transition-colors",
-                c.inspection_by === o.v
-                  ? "border-primary bg-primary-soft text-primary"
-                  : "border-border bg-surface text-ink-secondary hover:border-primary/40",
-              )}
-            >
-              {o.label}
-            </button>
-          ))}
-        </div>
-      </div>
+      <InspectByToggle
+        value={c.inspection_by ?? null}
+        isDisabled={archived || saving}
+        onPick={(next) => patch({ inspection_by: next })}
+      />
       {c.inspection_by === "own" && (
         <>
           <InlineEdit
@@ -6312,65 +5749,33 @@ function VerificationCard({
           </div>
         </>
       )}
-      {c.inspection_by === "supplier" && (
-        <div className="rounded-md bg-bg/60 px-3 py-2 text-[11.5px] leading-relaxed text-ink-secondary">
-          Supplier performs the inspection — progress lands in the
-          supplier portal's service note (see the Supplier Pickup /
-          Item Ready rows).
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2.5">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+          <span className="text-[13px] font-semibold text-ink">QC Issue Inspection Date</span>
+          <div className="min-w-[190px]">
+            <InlineEdit
+              label="QC Issue Inspection Date"
+              isLabelHidden
+              type="date"
+              value={c.qc_receipt_date}
+              onSave={(v) => patch({ qc_receipt_date: v || null })}
+            />
+          </div>
         </div>
-      )}
-      <InlineEdit
-        label="QC Issue Inspection Date"
-        type="date"
-        value={c.qc_receipt_date}
-        onSave={(v) => patch({ qc_receipt_date: v || null })}
-      />
-      {/* qc_issue_result column exists (mig 0105) but has no UI — Nick
-          2026-07-14: the on-receipt check only needs the date + photos;
-          the pass/fail verdict lives in Outcome below. */}
-      <div>
-        <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
-          Outcome
-        </div>
-        <div className="flex flex-wrap gap-1.5">
-          {VERIFICATION_OPTIONS.map((opt) => {
-            const active = outcome === opt.value;
-            const toneClass =
-              opt.tone === "ok"
-                ? active
-                  ? "border-ok bg-ok/15 text-ok"
-                  : "border-border text-ink-secondary hover:border-ok/40"
-                : opt.tone === "warn"
-                ? active
-                  ? "border-warn bg-warn/15 text-warn"
-                  : "border-border text-ink-secondary hover:border-warn/40"
-                : active
-                ? "border-err bg-err/15 text-err"
-                : "border-border text-ink-secondary hover:border-err/40";
-            return (
-              <button
-                key={opt.value}
-                type="button"
-                disabled={saving}
-                onClick={() => setOutcome(active ? null : opt.value)}
-                className={cn(
-                  "rounded-full border px-3 py-1 text-[11.5px] font-semibold transition-colors disabled:opacity-50",
-                  toneClass
-                )}
-              >
-                {opt.label}
-              </button>
-            );
-          })}
+        <div className="hidden h-8 w-px bg-border sm:block" />
+        {/* qc_issue_result column exists (mig 0105) but has no UI — Nick
+            2026-07-14: the on-receipt check only needs the date + photos;
+            the pass/fail verdict lives in Outcome. */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+          <span className="text-[13px] font-semibold text-ink">Outcome</span>
+          <VerificationOutcomeChips outcome={outcome} isDisabled={saving} onPick={setOutcome} />
         </div>
       </div>
 
-      <div>
-        <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
-          Root cause
-        </label>
+      <CaseSection title="Root Cause" badge={null} icon={<Target size={16} />} action={null} isCollapsible={false}>
         <input
           type="text"
+          aria-label="Root cause"
           value={rootDraft}
           onChange={(e) => setRootDraft(e.target.value)}
           onBlur={saveRootCause}
@@ -6392,7 +5797,7 @@ function VerificationCard({
             Fill the root cause to advance to Pending Solution.
           </div>
         )}
-      </div>
+      </CaseSection>
       <VerificationFindingsFields c={c} patch={patch} />
 
       {c.verified_at && (
@@ -6406,18 +5811,20 @@ function VerificationCard({
           what the item looked like BEFORE it went to the supplier.
           Distinct category from the post-return QC report so both
           checkpoints keep their own paper trail. */}
-      <MilestoneAttachmentSlot
-        caseId={caseId}
-        category="receipt_evidence"
-        label="QC Issue Inspection Photos / Videos"
-        emptyLabel="No inspection photos uploaded yet."
-        uploadLabel="Upload photo / video"
-        attachments={attachments}
-        archived={archived}
-        detail={detail}
-        dialog={dialog}
-        toast={toast}
-      />
+      <CaseSection title="QC Issue Inspection Photos / Videos" badge={null} icon={<ImageIcon size={16} />} action={null} isCollapsible={false}>
+        <MilestoneAttachmentSlot
+          caseId={caseId}
+          category="receipt_evidence"
+          label="QC Issue Inspection Photos / Videos"
+          uploadLabel="Upload photo / video"
+          attachments={attachments}
+          archived={archived}
+          detail={detail}
+          dialog={dialog}
+          toast={toast}
+          compact
+        />
+      </CaseSection>
     </>
   );
   if (hideHeader) {
@@ -6458,6 +5865,7 @@ type MilestoneCategory =
   | "receipt_evidence"
   | "pickup_form"
   | "ready_doc"
+  | `return_do_${number}`
   | "delivery_pod";
 
 function MilestoneAttachmentSlot({
@@ -6472,6 +5880,7 @@ function MilestoneAttachmentSlot({
   dialog,
   toast,
   compact,
+  gallery,
 }: {
   caseId: number;
   category: MilestoneCategory;
@@ -6487,6 +5896,8 @@ function MilestoneAttachmentSlot({
    *  uppercase header label since the surrounding field already
    *  contextualises the slot. */
   compact?: boolean;
+  /** Wider thumbnail grid with file names and an upload tile (QC Inspection Report). */
+  gallery?: boolean;
 }) {
   const [uploading, setUploading] = useState(false);
   const [lbIndex, setLbIndex] = useState<number | null>(null);
@@ -6520,10 +5931,10 @@ function MilestoneAttachmentSlot({
           </div>
         )}
         {matches.length > 0 ? (
-          <div className="mb-2 grid grid-cols-3 gap-2">
+          <div className={cn("mb-2 grid gap-2", gallery ? "grid-cols-[repeat(auto-fill,minmax(96px,1fr))]" : "grid-cols-3")}>
             {matches.map((att: any, i: number) => (
+              <figure key={att.id} className="m-0 min-w-0">
               <AttachmentThumb
-                key={att.id}
                 att={att}
                 onClick={() => {
                   const t = att.content_type || "";
@@ -6540,14 +5951,21 @@ function MilestoneAttachmentSlot({
                   }
                 }}
               />
+              {gallery && <figcaption className="mt-1 truncate text-[11px] text-ink-secondary">{att.file_name}</figcaption>}
+              </figure>
             ))}
+            {gallery && !archived && <GalleryUploadTile label={uploadLabel || "Upload"} isUploading={uploading} onFiles={uploadFiles} />}
+          </div>
+        ) : gallery && !archived ? (
+          <div className="mb-2 grid grid-cols-[repeat(auto-fill,minmax(96px,1fr))] gap-2">
+            <GalleryUploadTile label={uploadLabel || "Upload"} isUploading={uploading} onFiles={uploadFiles} />
           </div>
         ) : !compact ? (
           <div className="mb-2 rounded-md border border-dashed border-border bg-bg/30 px-3 py-2 text-[11px] text-ink-muted">
             {emptyLabel || `No ${label.toLowerCase()} yet.`}
           </div>
         ) : null}
-        {!archived && (
+        {!archived && !gallery && (
           <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-[11px] font-semibold text-ink hover:border-accent/40">
             <Upload size={12} />
             {uploading
