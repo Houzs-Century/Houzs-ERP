@@ -28,6 +28,16 @@ The fabric COST ledger and per-context price tiers. Backs the Fabric Converter t
 - Sofa tier is `PRICE_1`..`PRICE_4` (3 = Half Leather, 4 = Full Leather); bedframe tier stops at `PRICE_3` and the UI offers only 1 / 2. `fabric_library` (POS selling tier) stays at PRICE_3: the 2990 POS has no PRICE_4 add-on.
 - A `description` PATCH must also update the mirrored `fabric_colours.label` — the colour name a salesperson actually sees comes from the selling-library mirror, not from the tracking row.
 
+## Renaming a code
+
+The screen shows the code as fixed text. A rename is a script, because the same string is also the price-tier join on order lines (`variants.fabricCode`), the colour inside a stock bucket (`variant_key`), an entry in a Model's fabric pool, a product request's fabric and — as its series — `variants.fabricId` and the key of an item KPI rule.
+
+- List the pairs in `backend/scripts/data/fabric-code-renames.json`, then run `rename-fabric-codes.mjs` through "Run a backend script on production" with `BATCH=<name>` (plan first; apply needs `CONFIRM="RENAME <name>"`). One transaction, one company; a re-run is inert.
+- The new code is `SERIES-NN`, and one list renames into ONE series. The row id follows the code, because the CSV import derives the id from it.
+- A whole old series moves at once. Its `fabric_library` row is switched off and kept; the new series takes its tier. Series on different tiers, or with item KPI rules that pay different amounts, are refused: one series has one tier and one rule.
+- Model pools get the new COLOUR codes, never the series id: the 2990 POS reads the pool as colour ids.
+- Refused, not rewritten: an open cart or quote, a queued AutoCount push, `product_fabrics` rows. Audit logs, revisions and scan samples keep the old code.
+
 ## Gotchas
 
 - A second company's fabric can land in the cost ledger while its series/colour cannot yet register in the shared selling library — it is not POS-pickable for that company until the fabric-library key is redesigned to be per-company.
@@ -39,3 +49,4 @@ The fabric COST ledger and per-context price tiers. Backs the Fabric Converter t
 - `backend/src/scm/routes/fabric-tracking.ts` — main API surface.
 - `backend/src/scm/lib/companyScope.ts` — company scoping helpers.
 - `backend/scripts/lib/non-fabric-code.mjs` — the parity copy of the `NON_FABRIC_HEAD` rule.
+- `backend/scripts/rename-fabric-codes.mjs`, `backend/scripts/lib/fabric-code-rename.mjs` — the code rename; `lib/colour-carriers.mjs` lists every place a code is stored.
