@@ -5,28 +5,22 @@
 // rules that make the report are the server's (backend/src/scm/lib/
 // event-commission.ts).
 //
-// THE SUMMARY (owner 2026-11-12: 「这个export 出来我要看到total sales commission
-// 多少， drop sales upsales commission 多少，补开单的多少」): every sen of a report
-// sits on exactly one line, so the lines add up to its total —
-//   Fair commission       this range's fairs (by SO date: the orders opened in
-//                         it), less the upsales / drops inside them;
-//   No fair               by SO date, the orders opened in it with no fair, at
-//                         their own brand's rate (owner 2026-11-12: 「全部列出来，
-//                         没有展会的标 No fair，要算佣金」 — Finance leaves out the
-//                         ones that should not earn with Don't count);
-//   Upsales / drop sales  the effect of the range's upsales and drops;
-//   Late bills (补开单)    an order sold at a fair that had ended before the range
-//                         and keyed in it (「上个月展会卖、这个月才开单」), all of it;
-//   Earlier orders        an earlier order reaching 30% here, or cancelled;
-//   Closed months         what changed for a closed month's orders;
-//   Moved from last month what the month before moved here (「这个算下个月」).
-// The page's earlier-orders table follows the Earlier line (owner 2026-11-12):
-// only orders that reached 30% or were cancelled, their price changes left to
-// the Upsales / Drop sales table (earlierShownOf).
+// THE CARDS (owner 2026-11-13: 「卡的顺序和下面的table的顺序要一样」, 「这两个total
+// 不是应该一样？」): one card per table that adds to the total, in the tables'
+// order, each its table's total, together the report's total — the orders opened
+// in the range (by fair: the fairs starting in it), the earlier orders that reached
+// 30% or were cancelled, the closed months' adjustments, what last month moved
+// here, Finance's own lines, and the earlier orders' upsales / drop sales. The
+// range's own upsales / drops are inside the first table's commission: their table
+// has no card. The export (「排一排做好看一点」) is the same: a summary of the cards,
+// with what the first one holds inside it — its orders with no fair, their upsales
+// / drop sales, its 补开单 (owner 2026-11-12: 「我要看到 … drop sales upsales
+// commission 多少，补开单的多少」) — as "of which" lines, then each table in the
+// page's order under its own title.
 // An order Finance marked (「这张单不要算」 / 「这个算下个月」) earns nothing here;
 // what the mark took out is listed apart, not in the total. A price change
-// Finance left out (「这次改价不算」) is not on the Upsales / drop sales line and
-// the order earns on the rest — what it left out is listed apart the same way.
+// Finance left out (「这次改价不算」) moves no commission and the order earns on the
+// rest — what it left out is listed apart the same way.
 // ----------------------------------------------------------------------------
 
 import { guardFormula } from '../../lib/csv';
@@ -35,7 +29,7 @@ import type {
   CommissionFairRow, CommissionManualLine, CommissionMarkedOrder, CommissionMarkInfo, CommissionMonthAdjustment, CommissionSoRow, EventCommission,
 } from '../../vendor/scm/lib/event-queries';
 import { fmtDateOrDash, fmtDayMonthRange } from '../../vendor/shared/format';
-import { AMOUNT_COLUMN, type ReportSheet, type SheetRow, type SheetTable, type SheetValue } from '../../vendor/scm/lib/report-sheet';
+import { AMOUNT_COLUMN, sheetText, type ReportSheet, type SheetColumn, type SheetRow, type SheetTable, type SheetValue } from '../../vendor/scm/lib/report-sheet';
 
 export const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
 export const monthOf = (day: string, shift = 0): { from: string; to: string } => {
@@ -82,14 +76,14 @@ export const NOT_COUNTED: Record<NonNullable<CommissionChange['notCounted']>, st
 export const LEFT_OUT_NOTE = 'left out by Finance, not counted';
 
 /* The words each basis puts on the page. */
-export const BASIS_WORDS: Record<CommissionBasis, { toggle: string; part1: string; part1Empty: string; part2: string; part2Empty: string; inRange: string; earlier: string }> = {
+export const BASIS_WORDS: Record<CommissionBasis, { toggle: string; part1: string; card1: string; part1Empty: string; part2: string; part2Empty: string; inRange: string; earlier: string }> = {
   fair: {
-    toggle: 'By fair', part1: 'Fairs starting in the range', part1Empty: 'No fair starts in this range.',
+    toggle: 'By fair', part1: 'Fairs starting in the range', card1: 'Fairs starting in the range', part1Empty: 'No fair starts in this range.',
     part2: 'Earlier fairs — reached 30% or cancelled in the range', part2Empty: 'No order of an earlier fair reached 30% or was cancelled in this range.',
     inRange: 'Fairs in the range', earlier: 'Earlier fairs',
   },
   so_date: {
-    toggle: 'By SO date', part1: 'Orders opened in the range (SO date)', part1Empty: 'No order with a fair was opened in this range.',
+    toggle: 'By SO date', part1: 'Orders opened in the range (SO date)', card1: 'Orders opened in the range', part1Empty: 'No order with a fair was opened in this range.',
     part2: 'Earlier orders — reached 30% or cancelled in the range', part2Empty: 'No earlier order reached 30% or was cancelled in this range.',
     inRange: 'Orders opened in the range', earlier: 'Earlier orders',
   },
@@ -188,7 +182,9 @@ export const brandsOf = (r: EventCommission | undefined): string[] => {
 export const forBrand = (r: EventCommission, brand: string): EventCommission => {
   if (!brand) return r;
   const fairs = r.fairs.filter((f) => brandOfFair(f) === brand);
-  const adjustments = r.adjustments.filter((a) => fairLines(a.fairName).brand === brand);
+  /* An earlier line's brand: its fair's, read off the name; with no fair, its order's — so the cards add up under one brand too. */
+  const placeBrand = new Map([...earlierOf(r), ...changedOf(r)].map((o) => [o.docNo, brandOfOrder(o)]));
+  const adjustments = r.adjustments.filter((a) => (fairLines(a.fairName).brand ?? placeBrand.get(a.docNo) ?? null) === brand);
   const earlierOrders = earlierOf(r).filter((o) => brandOfOrder(o) === brand);
   const changedOrders = changedOf(r).filter((o) => brandOfOrder(o) === brand);
   const monthAdjustments = monthAdjOf(r).filter((a) => brandOfOrder(a) === brand);
@@ -211,113 +207,90 @@ export const forBrand = (r: EventCommission, brand: string): EventCommission => 
   };
 };
 
-/* ── The summary: each sen on one line ────────────────────────────────────── */
+/* ── The cards over the tables (owner 2026-11-13) ─────────────────────────────
+   「卡的顺序和下面的table的顺序要一样」 and 「这两个total不是应该一样？」: one card per
+   table that adds to the total, in the tables' order, each the total of its
+   table — together the report's total:
+     Orders opened in the range   (by fair: Fairs starting in the range) — its
+                                  orders' commission, their own upsales / drops
+                                  and 补开单 inside it;
+     Earlier orders               reaching 30% here, or cancelled;
+     Closed months — adjustments  what changed for a closed month's orders;
+     Moved from last month        what the month before moved here;
+     Added by Finance             Finance's own lines;
+     Upsales / Drop sales — earlier orders
+                                  the changes of orders opened before the range,
+                                  which no table above holds.
+   The upsales / drops of the orders opened in the range have a table of their
+   own, with no card: they are inside the first table's commission already. */
 
-export type SummaryKey = 'fair' | 'noFair' | 'changes' | 'late' | 'earlier' | 'monthAdj' | 'deferredIn' | 'manual';
 /** The server's "No fair" rows (by SO date, an order with no fair) carry an id below 0. */
 export const isNoFair = (f: Pick<CommissionFairRow, 'id'>): boolean => f.id < 0;
-/** `manual` — Finance's own lines — is there only on a report that has some. */
-export type CommissionSummary = Record<Exclude<SummaryKey, 'manual'>, number> & { manual?: number; totalSen: number };
-export const SUMMARY_LABEL: Record<SummaryKey, string> = {
-  fair: 'Fair commission', noFair: 'No fair', changes: 'Upsales / drop sales', late: 'Late bills (补开单)', earlier: 'Earlier orders',
-  monthAdj: 'Closed months — adjustments', deferredIn: 'Moved from last month', manual: 'Added by Finance',
-};
-export const SUMMARY_HINT: Record<SummaryKey, string> = {
-  fair: 'what the orders earned, before their upsales / drop sales',
-  noFair: 'orders opened in the range with no fair, at the rate of their own brand (bed frames alone: the VP brand)',
-  changes: 'the effect of the upsales and drop sales, at the brand rate',
-  late: 'sold at a fair that had ended before the range, keyed in it',
-  earlier: 'earlier orders that reached 30% here, or were cancelled',
-  monthAdj: 'what changed for a closed month\'s orders',
+
+/** The upsales / drop sales of the orders opened in the range: inside the first table's commission. */
+export const changesInRangeOf = (r: EventCommission): CommissionChangedOrder[] => changedOf(r).filter((o) => o.part === 'range');
+/** Those of the earlier orders: added to the total on their own. */
+export const changesEarlierOf = (r: EventCommission): CommissionChangedOrder[] => changedOf(r).filter((o) => o.part === 'earlier');
+
+/** The words of the tables a card heads, and of the cards. */
+export const TITLE = { monthAdj: 'Closed months — adjustments', deferredIn: 'Moved from last month', manual: 'Added by Finance' } as const;
+export const HINT = {
   deferredIn: 'what last month moved here',
   manual: 'amounts Finance typed on an order for this month, at the order\'s own rate',
-};
-export const SUMMARY_ORDER: SummaryKey[] = ['fair', 'noFair', 'changes', 'late', 'earlier', 'monthAdj', 'deferredIn'];
-/** The summary lines of one report: Finance's own line last, on a report that has some. */
-export const summaryKeysOf = (r: EventCommission): SummaryKey[] => (manualOf(r).length > 0 ? [...SUMMARY_ORDER, 'manual'] : SUMMARY_ORDER);
+} as const;
+/** "Upsales / Drop sales — earlier orders": the two changes tables, by who they belong to. */
+export const changesTitle = (whose: string): string => `Upsales / Drop sales — ${whose.toLowerCase()}`;
 
-/** One order's commission on this report, split over the summary lines. */
-export type OrderLine = {
-  docNo: string; ref: string | null; fairName: string; brand: string | null; salesperson: string | null; soDate: string | null;
-  goodsSen: number | null; paidPct: number | null; reachedOn: string | null;
-  split: Record<SummaryKey, number>;
-  totalSen: number;
-  /** Its marks — the order not counted or moved, a price change left out — and
-      what they took out of this report together. */
-  marks: CommissionMarkInfo[];
-  markedSen: number;
-};
-/** An order's marks in the export's one cell. */
-const marksText = (l: OrderLine): string => l.marks.map(markWords).join('; ');
+/** "1 order", "426 orders". */
+export const countText = (n: number, unit: string): string => `${n.toLocaleString('en-MY')} ${unit}${n === 1 ? '' : 's'}`;
 
-/** Every order on the report, once, its commission split over the summary
-    lines; the lines' sums are the summary and add up to the report's total. */
-export function orderLines(r: EventCommission): OrderLine[] {
-  const late = lateOf(r);
-  const effect = new Map(changedOf(r).map((o) => [o.docNo, o]));
-  const lines = new Map<string, OrderLine>();
-  const zero = (): Record<SummaryKey, number> => ({ fair: 0, noFair: 0, changes: 0, late: 0, earlier: 0, monthAdj: 0, deferredIn: 0, manual: 0 });
-  const lineOf = (docNo: string, init: () => Omit<OrderLine, 'split' | 'totalSen' | 'marks' | 'markedSen'>): OrderLine => {
-    let l = lines.get(docNo);
-    if (!l) {
-      l = { ...init(), split: zero(), totalSen: 0, marks: [], markedSen: 0 };
-      lines.set(docNo, l);
-    }
-    return l;
-  };
-  const add = (l: OrderLine, key: SummaryKey, sen: number) => { l.split[key] += sen; l.totalSen += sen; };
-  const placeLine = (o: { docNo: string; ref?: string | null; fairName: string; brand: string | null; salesperson: string | null; soDate?: string | null }) =>
-    () => ({ docNo: o.docNo, ref: o.ref ?? null, fairName: o.fairName, brand: brandOfOrder(o), salesperson: o.salesperson, soDate: o.soDate ?? null, goodsSen: null, paidPct: null, reachedOn: null });
+export type CardKey = 'inRange' | 'earlier' | 'monthAdj' | 'deferredIn' | 'manual' | 'earlierChanges';
+export type CommissionCard = { key: CardKey; label: string; sen: number; count: string };
 
-  for (const f of r.fairs) {
-    for (const s of f.sos) {
-      const l = lineOf(s.docNo, () => ({
-        docNo: s.docNo, ref: s.ref ?? null, fairName: f.name, brand: brandOfFair(f), salesperson: s.salesperson, soDate: s.soDate,
-        goodsSen: s.goodsSen, paidPct: s.paidPct, reachedOn: s.reachedOn,
-      }));
-      if (late.has(s.docNo)) { add(l, 'late', s.commissionSen); continue; }
-      const e = effect.get(s.docNo);
-      const inside = e && e.part === 'range' ? e.effectSen : 0;
-      add(l, 'changes', inside);
-      add(l, isNoFair(f) ? 'noFair' : 'fair', s.commissionSen - inside);
-    }
+/** The cards, in the tables' order. The first two and the last are always there; the
+    others only when their table is. Their figures add up to the report's total. */
+export function cardsOf(r: EventCommission): CommissionCard[] {
+  const words = BASIS_WORDS[basisOf(r)];
+  const sos = r.fairs.flatMap((f) => f.sos);
+  const earlier = earlierShownOf(r);
+  const monthAdj = monthAdjOf(r);
+  const moved = deferredInOf(r);
+  const manual = manualOf(r);
+  const later = changesEarlierOf(r);
+  const cards: CommissionCard[] = [
+    {
+      key: 'inRange', label: words.card1, sen: sum(sos, (s) => s.commissionSen),
+      count: basisOf(r) === 'fair' ? `${countText(r.fairs.length, 'fair')} · ${countText(sos.length, 'order')}` : countText(sos.length, 'order'),
+    },
+    { key: 'earlier', label: words.earlier, sen: sum(earlier, (o) => o.commissionSen), count: countText(earlier.length, 'order') },
+  ];
+  if (monthAdj.length > 0) {
+    cards.push({
+      key: 'monthAdj', label: TITLE.monthAdj, sen: sum(monthAdj, (a) => a.adjustmentSen),
+      count: `${countText(monthAdj.length, 'order')} · ${[...new Set(monthAdj.map((a) => monthLabel(a.month)))].join(', ')}`,
+    });
   }
-  const earlierByDoc = new Map<string, number>();
-  for (const a of r.adjustments) earlierByDoc.set(a.docNo, (earlierByDoc.get(a.docNo) ?? 0) + a.commissionSen);
-  const earlierPlace = new Map(earlierOf(r).map((o) => [o.docNo, o]));
-  for (const [docNo, sen] of earlierByDoc) {
-    const place = earlierPlace.get(docNo) ?? r.adjustments.find((a) => a.docNo === docNo)!;
-    const l = lineOf(docNo, placeLine({ ...place, brand: 'brand' in place ? place.brand : null }));
-    if (late.has(docNo)) { add(l, 'late', sen); continue; }
-    const e = effect.get(docNo);
-    const inside = e && e.part === 'earlier' ? e.effectSen : 0;
-    add(l, 'changes', inside);
-    add(l, 'earlier', sen - inside);
-  }
-  for (const a of monthAdjOf(r)) {
-    const l = lineOf(a.docNo, placeLine(a));
-    add(l, late.has(a.docNo) ? 'late' : 'monthAdj', a.adjustmentSen);
-  }
-  for (const d of deferredInOf(r)) add(lineOf(d.docNo, placeLine(d)), 'deferredIn', d.commissionSen);
-  for (const m of manualOf(r)) add(lineOf(m.docNo, placeLine(m)), 'manual', m.commissionSen);
-  for (const m of markedOf(r)) {
-    const l = lineOf(m.docNo, placeLine(m));
-    l.marks.push(m.mark);
-    l.markedSen += m.commissionSen;
-  }
-  return [...lines.values()].sort((a, b) => (a.fairName < b.fairName ? -1 : a.fairName > b.fairName ? 1 : a.docNo < b.docNo ? -1 : 1));
+  if (moved.length > 0) cards.push({ key: 'deferredIn', label: TITLE.deferredIn, sen: sum(moved, (d) => d.commissionSen), count: countText(moved.length, 'order') });
+  if (manual.length > 0) cards.push({ key: 'manual', label: TITLE.manual, sen: sum(manual, (m) => m.commissionSen), count: countText(manual.length, 'line') });
+  cards.push({ key: 'earlierChanges', label: changesTitle(words.earlier), sen: sum(later, (o) => o.effectSen), count: countText(later.length, 'order') });
+  return cards;
 }
 
-/** The report on the summary lines; they add up to its total. */
-export function summaryOf(r: EventCommission): CommissionSummary {
-  const lines = orderLines(r);
-  const out: CommissionSummary = { fair: 0, noFair: 0, changes: 0, late: 0, earlier: 0, monthAdj: 0, deferredIn: 0, totalSen: 0 };
-  const keys = summaryKeysOf(r);
-  for (const l of lines) {
-    for (const k of keys) out[k] = (out[k] ?? 0) + l.split[k];
-    out.totalSen += l.totalSen;
-  }
-  return out;
+/** What the first table holds inside it, for the export's summary (owner 2026-11-12:
+    「这个export 出来我要看到 … drop sales upsales commission 多少，补开单的多少」): its
+    orders with no fair, their upsales / drop sales, its 补开单. Each is part of the
+    first card already — "of which", not added again. */
+export function insideFirstOf(r: EventCommission): Array<{ label: string; sen: number; count: string }> {
+  const late = lateOf(r);
+  const noFair = r.fairs.filter(isNoFair).flatMap((f) => f.sos);
+  const changes = changesInRangeOf(r);
+  const lateRows = r.fairs.flatMap((f) => f.sos).filter((s) => late.has(s.docNo));
+  return [
+    ...(noFair.length > 0 ? [{ label: 'of which No fair', sen: sum(noFair, (s) => s.commissionSen), count: countText(noFair.length, 'order') }] : []),
+    { label: 'of which upsales / drop sales', sen: sum(changes, (o) => o.effectSen), count: countText(changes.length, 'order') },
+    /* In English: the PDF's Chinese face has no 补开单, and refused the whole export over it. */
+    { label: 'of which late bills', sen: sum(lateRows, (s) => s.commissionSen), count: countText(lateRows.length, 'order') },
+  ];
 }
 
 /** Part 1's orders not yet at 30% (owner 2026-11-12: 「below deposit 另外分开」):
@@ -328,91 +301,219 @@ export const belowDepositOf = (r: EventCommission): BelowDepositRow[] =>
     .filter((s) => s.reachedOn == null && !s.mark)
     .map((s) => ({ ...s, fair: f, neededSen: Math.max(0, Math.ceil(s.totalSen * 0.3) - s.paidSen) })));
 
-/* ── CSV and the Excel / PDF sheet ─────────────────────────────────────────── */
+/* ── The Excel / PDF sheet and the CSV ─────────────────────────────────────────
+   Owner 2026-11-13: 「export 出来的顺便排一排做好看一点」. The summary (the cards, the
+   first card's "of which" lines under it), then each table the page shows, in the
+   page's order, under its own title: its order numbers down the side, names and
+   dates read left to right, the figures right, a total at its foot. The tables
+   not in the total come last and say so. */
 
 const percentText = (p: number | null): string => (p == null ? '' : `${p}%`);
+const rateText = (p: number | null | undefined): SheetValue => (p == null ? null : `${p}%`);
+const left = (label: string, width?: number): SheetColumn => ({ label, kind: 'text', align: 'left', ...(width ? { width } : {}) });
+const right = (label: string): SheetColumn => ({ label, kind: 'text', align: 'right' });
+const row = (label: string, cells: SheetValue[], depth = 0): SheetRow => ({ kind: 'row', depth, label, cells });
+const foot = (label: string, cells: SheetValue[]): SheetRow => ({ kind: 'total', depth: 0, label, cells });
+/** A column summed for the foot, else left blank there. */
+const footCells = <T,>(columns: Array<((x: T) => number) | null>, rows: readonly T[]): SheetValue[] =>
+  columns.map((pick) => (pick ? sum(rows, pick) : ''));
+const brandText = (o: { brand: string | null; fairName: string }): SheetValue => brandOfOrder(o) ?? null;
+/** An upsale / drop's state in a few words, as the row on the page reads it. */
+const changeNote = (o: CommissionChangedOrder): string => (o.mark ? markWords(o.mark)
+  : o.reachedOn == null && !o.oldOrder ? 'not yet 30%'
+    : o.changeMark && o.effectSen === 0 ? 'not counted' : '');
 
-/** The summary lines, then one row per order with its split. */
-export const eventCommissionCsv = (r: EventCommission): string => {
-  const esc = (v: string | number | null) => `"${guardFormula(String(v ?? '')).replace(/"/g, '""')}"`;
-  const row = (cells: Array<string | number | null>) => cells.map(esc).join(',');
-  const s = summaryOf(r);
-  const keys = summaryKeysOf(r);
-  const lines = [row(['Summary', 'RM'])];
-  for (const k of keys) lines.push(row([SUMMARY_LABEL[k], fmtRm(s[k] ?? 0)]));
-  lines.push(row(['Total', fmtRm(s.totalSen)]), '');
-  lines.push(row(['Order', 'Ref No.', 'Fair', 'Brand', 'Salesperson', 'SO date', 'Goods', 'Paid %', '30% reached',
-    ...keys.map((k) => SUMMARY_LABEL[k]), 'Commission', 'Marked', 'Not paid here']));
-  for (const l of orderLines(r)) {
-    lines.push(row([
-      l.docNo, l.ref, l.fairName, l.brand, l.salesperson, l.soDate, l.goodsSen == null ? '' : fmtRm(l.goodsSen), percentText(l.paidPct), l.reachedOn,
-      ...keys.map((k) => fmtRm(l.split[k])), fmtRm(l.totalSen), marksText(l), l.marks.length > 0 ? fmtRm(l.markedSen) : '',
-    ]));
-  }
-  lines.push('', row(['Total', '', '', '', '', '', '', '', '', ...keys.map((k) => fmtRm(s[k] ?? 0)), fmtRm(s.totalSen), '', '']));
-  return `${lines.join('\n')}\n`;
-};
+/** The orders of the first table, one row each: as the SO list reads, plus the rate. */
+function ordersTable(title: string, rows: Array<CommissionSoRow & { fair: CommissionFairRow }>): SheetTable {
+  const brand = (o: CommissionSoRow & { fair: CommissionFairRow }) => (isNoFair(o.fair) ? o.fair.brand?.toUpperCase() ?? null : fairPlace(o.fair).brand);
+  return {
+    title, labelHeader: 'Order',
+    columns: [
+      left('Ref No.', 12), left('SO date', 11), left('Brand', 11), left('Fair', 44), left('Salesperson', 14),
+      AMOUNT_COLUMN('Goods'), right('Rate'), right('Paid %'), left('30% reached', 12), AMOUNT_COLUMN('Commission'), left('Marked', 26),
+    ],
+    rows: [
+      ...rows.map((o) => row(o.docNo, [
+        o.ref ?? null, dayText(o.soDate), brand(o), o.fair.name, o.salesperson ?? null,
+        o.goodsSen, rateText(o.fair.ratePct), percentText(o.paidPct), o.reachedOn ? dayText(o.reachedOn) : 'not yet', o.commissionSen,
+        o.mark ? markWords(o.mark) : '',
+      ])),
+      foot(`Total · ${countText(rows.length, 'order')}`, footCells<CommissionSoRow>([null, null, null, null, null, (o) => o.goodsSen, null, null, null, (o) => o.commissionSen, null], rows)),
+    ],
+  };
+}
 
-export const RULE_NOTE = 'An order earns its goods (no delivery or service) × the fair\'s brand rate once 30% of the order is paid. Upsales and drop sales count from 1/9/2026 (1 September – 19 October read from each order\'s modification history), each in the month it happened, at the fair\'s brand rate; one Finance left out (Don\'t count change) moves no commission and the order earns on the rest. A price wiped to 0 and typed again is no change (typed again at another figure, the difference counts that day). A late bill (补开单) is an order keyed in the range for a fair that had ended before it. By SO date, an order with no fair earns at its own brand\'s rate from 1/10/2026; one opened before then earns only on its upsales and drop sales, whatever has been paid, and cancelled from 1/10/2026 it gives back its goods × that rate (under Earlier orders, in the month it was cancelled). A line added by Finance is an amount of goods typed on an order for one month, at the order\'s own rate.';
+/** A table of upsales / drop sales, each order once, as the page's. */
+function changesTable(title: string, rows: CommissionChangedOrder[]): SheetTable {
+  return {
+    title, labelHeader: 'Order',
+    columns: [
+      left('Last change', 11), left('Ref No.', 12), left('Brand', 11), left('Salesperson', 14),
+      AMOUNT_COLUMN('Original'), AMOUNT_COLUMN('Latest'), AMOUNT_COLUMN('Amended'), right('Rate'), AMOUNT_COLUMN('Commission effect'), left('Note', 26),
+    ],
+    rows: [
+      ...rows.map((o) => row(o.docNo, [
+        dayText(o.lastChange), o.ref ?? null, brandText(o), o.salesperson ?? null,
+        o.originalSen, o.latestSen, o.amendedSen, rateText(o.ratePct), o.effectSen, changeNote(o),
+      ])),
+      foot(`Total · ${countText(rows.length, 'order')}`, footCells<CommissionChangedOrder>([null, null, null, null, (o) => o.originalSen, (o) => o.latestSen, (o) => o.amendedSen, null, (o) => o.effectSen, null], rows)),
+    ],
+  };
+}
 
-/** The report as the owner asked to export it: the summary, the fairs (by fair),
-    then every order once with its commission split over the summary lines. */
+/** The report as the page shows it, for Excel and PDF (and the CSV). */
 export function eventCommissionSheet(r: EventCommission, period: string, brand: string): ReportSheet {
   const byFair = basisOf(r) === 'fair';
   const words = BASIS_WORDS[basisOf(r)];
-  const text = (v: string | number | null | undefined): SheetValue => (v == null || v === '' ? null : String(v));
-  const s = summaryOf(r);
-  const keys = summaryKeysOf(r);
-  const summary: SheetTable = {
-    columns: [AMOUNT_COLUMN('Commission')],
+  const cards = cardsOf(r);
+  const tables: SheetTable[] = [];
+
+  /* The summary: the cards, the first one's "of which" under it, the total. */
+  const inside = insideFirstOf(r);
+  tables.push({
+    title: 'Summary',
+    columns: [left('Orders', 24), AMOUNT_COLUMN('Commission')],
     rows: [
-      ...keys.map((k): SheetRow => ({ kind: 'row', depth: 0, label: SUMMARY_LABEL[k], cells: [s[k] ?? 0] })),
-      { kind: 'total', depth: 0, label: 'Total commission', cells: [s.totalSen] },
+      ...cards.flatMap((c) => [
+        row(c.label, [c.count, c.sen]),
+        ...(c.key === 'inRange' ? inside.map((o) => ({ kind: 'memo' as const, depth: 1, label: o.label, cells: [o.count, o.sen] })) : []),
+      ]),
+      foot('Total commission', ['', r.totals.totalSen]),
     ],
-  };
-  const tables: SheetTable[] = [summary];
+  });
+
+  /* 1 — the orders opened in the range; by fair, its fairs first. */
+  const listed = r.fairs.flatMap((f) => f.sos.map((s) => ({ ...s, fair: f })));
   if (byFair) {
+    /* A server before 2026-11-12 sent no goods per fair: the typed figures stand in, on the rows and in the total alike. */
+    const goodsOf = (f: CommissionFairRow) => f.goodsSen ?? (f.totalSalesRm == null ? null : Math.round(f.totalSalesRm * 100));
+    const timesRateOf = (f: CommissionFairRow) => f.estimateSen ?? (f.estimateRm == null ? null : Math.round(f.estimateRm * 100));
     tables.push({
-      columns: [
-        { label: 'Dates', kind: 'text' }, { label: 'Rate', kind: 'text' },
-        AMOUNT_COLUMN('Total sales'), AMOUNT_COLUMN('Estimate'), { label: 'Orders', kind: 'text' }, AMOUNT_COLUMN('Commission'),
-      ],
+      title: words.part1, labelHeader: 'Fair',
+      columns: [left('Dates', 14), right('Rate'), AMOUNT_COLUMN('Goods'), AMOUNT_COLUMN('Goods × rate'), right('Orders'), AMOUNT_COLUMN('Commission')],
       rows: [
-        ...r.fairs.map((f): SheetRow => ({
-          kind: 'row', depth: 0, label: f.name,
-          cells: [
-            fmtDayMonthRange(f.startDate, f.endDate), f.ratePct == null ? 'no rate card' : `${f.ratePct}%`,
-            f.goodsSen ?? (f.totalSalesRm == null ? null : Math.round(f.totalSalesRm * 100)),
-            f.estimateSen ?? (f.estimateRm == null ? null : Math.round(f.estimateRm * 100)),
-            String(f.sos.length), f.payableSen,
-          ],
-        })),
-        { kind: 'total', depth: 0, label: words.inRange, cells: [null, null, sum(r.fairs, (f) => f.goodsSen ?? 0), sum(r.fairs, (f) => f.estimateSen ?? 0), null, r.totals.payableSen] },
+        ...r.fairs.map((f) => row(f.name, [
+          fmtDayMonthRange(f.startDate, f.endDate), f.ratePct == null ? 'no rate card' : `${f.ratePct}%`,
+          goodsOf(f), timesRateOf(f),
+          String(f.sos.length), f.payableSen,
+        ])),
+        foot(`Total · ${countText(r.fairs.length, 'fair')}`, ['', '', sum(r.fairs, (f) => goodsOf(f) ?? 0), sum(r.fairs, (f) => timesRateOf(f) ?? 0), String(listed.length), r.totals.payableSen]),
+      ],
+    });
+    tables.push(ordersTable(`${words.part1} — their orders`, listed));
+  } else tables.push(ordersTable(words.part1, listed));
+
+  /* 2 — the earlier orders: reaching 30% or cancelled. */
+  const earlier = earlierShownOf(r);
+  tables.push({
+    title: words.part2, labelHeader: 'Order',
+    columns: [left('Date', 11), left('What', 22), left('Ref No.', 12), left('Brand', 11), left('Salesperson', 14), AMOUNT_COLUMN('Original'), right('Rate'), AMOUNT_COLUMN('Commission'), left('Marked', 26)],
+    rows: [
+      ...earlier.map((o) => row(o.docNo, [
+        dayText(o.lastDate), whatOf(o), o.ref ?? null, brandText(o), o.salesperson ?? null, o.originalSen, rateText(o.ratePct), o.commissionSen, o.mark ? markWords(o.mark) : '',
+      ])),
+      foot(`Total · ${countText(earlier.length, 'order')}`, footCells<CommissionEarlierOrder>([null, null, null, null, null, (o) => o.originalSen, null, (o) => o.commissionSen, null], earlier)),
+    ],
+  });
+
+  /* 3 — what changed for a closed month's orders, with the goods and rate its Now is worked on. */
+  const monthAdj = monthAdjOf(r);
+  if (monthAdj.length > 0) {
+    tables.push({
+      title: TITLE.monthAdj, labelHeader: 'Order',
+      columns: [left('Month', 9), left('Ref No.', 12), left('Brand', 11), left('Salesperson', 14), AMOUNT_COLUMN('Goods'), right('Rate'), AMOUNT_COLUMN('Paid'), AMOUNT_COLUMN('Now'), AMOUNT_COLUMN('Adjustment')],
+      rows: [
+        ...monthAdj.map((a) => row(a.docNo, [
+          monthLabel(a.month), a.ref ?? null, brandText(a), a.salesperson ?? null, a.goodsSen ?? null, rateText(a.ratePct), a.wasSen, a.nowSen, a.adjustmentSen,
+        ])),
+        foot(`Total · ${countText(monthAdj.length, 'order')}`, footCells<CommissionMonthAdjustment>([null, null, null, null, (a) => a.goodsSen ?? 0, null, (a) => a.wasSen, (a) => a.nowSen, (a) => a.adjustmentSen], monthAdj)),
       ],
     });
   }
-  const lines = orderLines(r);
-  tables.push({
-    columns: [
-      { label: 'Ref No.', kind: 'text' }, { label: 'Fair', kind: 'text' }, { label: 'Salesperson', kind: 'text' }, AMOUNT_COLUMN('Goods'), { label: 'Paid %', kind: 'text' },
-      ...keys.map((k) => AMOUNT_COLUMN(SUMMARY_LABEL[k])), AMOUNT_COLUMN('Commission'), { label: 'Marked', kind: 'text' },
-    ],
-    rows: [
-      ...lines.map((l): SheetRow => ({
-        kind: 'row', depth: 0, label: l.docNo,
-        cells: [text(l.ref), l.fairName, text(l.salesperson), l.goodsSen, text(percentText(l.paidPct)), ...keys.map((k) => l.split[k]), l.totalSen, text(marksText(l))],
-      })),
-      { kind: 'total', depth: 0, label: 'Every order', cells: [null, null, null, null, null, ...keys.map((k) => s[k] ?? 0), s.totalSen, null] },
-    ],
-  });
+
+  /* 4 — what the month before moved here. */
+  const moved = deferredInOf(r);
+  if (moved.length > 0) {
+    tables.push({
+      title: TITLE.deferredIn, labelHeader: 'Order',
+      columns: [left('From month', 10), left('Ref No.', 12), left('Brand', 11), left('Reason', 44), left('Salesperson', 14), AMOUNT_COLUMN('Commission')],
+      rows: [
+        ...moved.map((d) => row(d.docNo, [monthLabel(d.fromMonth), d.ref ?? null, brandText(d), d.mark.reason ?? '', d.salesperson ?? null, d.commissionSen])),
+        foot(`Total · ${countText(moved.length, 'order')}`, footCells<CommissionDeferredIn>([null, null, null, null, null, (d) => d.commissionSen], moved)),
+      ],
+    });
+  }
+
+  /* 5 — Finance's own lines. */
+  const manual = manualOf(r);
+  if (manual.length > 0) {
+    tables.push({
+      title: TITLE.manual, labelHeader: 'Order',
+      columns: [left('Ref No.', 12), left('Brand', 11), left('Salesperson', 14), left('Reason', 44), left('Added by', 24), AMOUNT_COLUMN('Goods'), right('Rate'), AMOUNT_COLUMN('Commission')],
+      rows: [
+        ...manual.map((m) => row(m.docNo, [m.ref ?? null, brandText(m), m.salesperson ?? null, m.line.reason ?? '', m.line.addedBy ?? '', m.goodsSen, rateText(m.ratePct), m.commissionSen])),
+        foot(`Total · ${countText(manual.length, 'line')}`, footCells<CommissionManualLine>([null, null, null, null, null, (m) => m.goodsSen, null, (m) => m.commissionSen], manual)),
+      ],
+    });
+  }
+
+  /* 6 — the earlier orders' upsales / drop sales (the last card); 7 — those inside the first table. */
+  tables.push(changesTable(changesTitle(words.earlier), changesEarlierOf(r)));
+  const inRange = changesInRangeOf(r);
+  if (inRange.length > 0) tables.push(changesTable(`${changesTitle(words.card1)} (inside ${words.card1}, not added again)`, inRange));
+
+  /* Not in the total: the orders under 30%, and what Finance's marks took out. */
+  const below = belowDepositOf(r);
+  if (below.length > 0) {
+    tables.push({
+      title: 'Below 30% paid (not in the total)', labelHeader: 'Order',
+      columns: [left('SO date', 11), left('Ref No.', 12), left('Brand', 11), left('Salesperson', 14), AMOUNT_COLUMN('Sales'), AMOUNT_COLUMN('Paid'), right('Paid %'), AMOUNT_COLUMN('To pay for 30%')],
+      rows: [
+        ...below.map((o) => row(o.docNo, [dayText(o.soDate), o.ref ?? null, isNoFair(o.fair) ? o.fair.brand?.toUpperCase() ?? null : fairPlace(o.fair).brand, o.salesperson ?? null, o.totalSen, o.paidSen, percentText(o.paidPct), o.neededSen])),
+        foot(`Total · ${countText(below.length, 'order')}`, footCells<BelowDepositRow>([null, null, null, null, (o) => o.totalSen, (o) => o.paidSen, null, (o) => o.neededSen], below)),
+      ],
+    });
+  }
+  const marked = markedOf(r);
+  if (marked.length > 0) {
+    tables.push({
+      title: 'Marked — not paid here (not in the total)', labelHeader: 'Order',
+      columns: [left('Mark', 26), left('Ref No.', 12), left('Brand', 11), left('Reason', 44), left('Salesperson', 14), AMOUNT_COLUMN('Not paid here')],
+      rows: [
+        ...marked.map((m) => row(m.docNo, [markWords(m.mark), m.ref ?? null, brandText(m), m.mark.reason ?? '', m.salesperson ?? null, m.commissionSen])),
+        foot(`Total · ${countText(marked.length, 'mark')}`, footCells<CommissionMarkedOrder>([null, null, null, null, null, (m) => m.commissionSen], marked)),
+      ],
+    });
+  }
+
   return {
     title: 'Event commission',
     subtitle: `${period} · ${words.toggle.toLowerCase()} · ${brand || 'all brands'} · total ${fmtRm(r.totals.totalSen)} · RM`,
-    meta: [{ label: 'Period', value: period }, { label: 'View', value: words.toggle }],
+    meta: [{ label: 'Period', value: period }, { label: 'View', value: words.toggle }, { label: 'Brand', value: brand || 'All brands' }],
     tables,
-    notes: [RULE_NOTE],
+    notes: [RULE_NOTE.replace(' (补开单)', '')],
+    fmt: fmtRm,
   };
 }
+
+/** The same sheet as a CSV: each table under its title, its heading, its rows, a blank line. */
+export const eventCommissionCsv = (r: EventCommission, period = '', brand = ''): string => {
+  const sheet = eventCommissionSheet(r, period, brand);
+  const esc = (v: string) => `"${guardFormula(v).replace(/"/g, '""')}"`;
+  const line = (cells: string[]) => cells.map(esc).join(',');
+  const out = [line([sheet.title]), line([sheet.subtitle]), ''];
+  for (const t of sheet.tables) {
+    if (t.title) out.push(line([t.title]));
+    out.push(line([t.labelHeader ?? '', ...t.columns.map((c) => c.label)]));
+    /* Nothing is a blank cell here: a dash would read as a formula to the guard. */
+    for (const rw of t.rows) out.push(line([rw.label, ...t.columns.map((c, i) => { const v = rw.cells[i]; return v == null || v === '' ? '' : sheetText(c, v, fmtRm); })]));
+    out.push('');
+  }
+  for (const n of sheet.notes ?? []) out.push(line([n]));
+  return `${out.join('\n')}\n`;
+};
+
+export const RULE_NOTE = 'An order earns its goods (no delivery or service) × the fair\'s brand rate once 30% of the order is paid. Upsales and drop sales count from 1/9/2026 (1 September – 19 October read from each order\'s modification history), each in the month it happened, at the fair\'s brand rate; one Finance left out (Don\'t count change) moves no commission and the order earns on the rest. A price wiped to 0 and typed again is no change (typed again at another figure, the difference counts that day). A late bill (补开单) is an order keyed in the range for a fair that had ended before it. By SO date, an order with no fair earns at its own brand\'s rate from 1/10/2026; one opened before then earns only on its upsales and drop sales, whatever has been paid, and cancelled from 1/10/2026 it gives back its goods × that rate (under Earlier orders, in the month it was cancelled). A line added by Finance is an amount of goods typed on an order for one month, at the order\'s own rate.';
 
 /** A fair's dates as a sort key: start, end, venue, organizer, brand — the
     fairs at one place and time sit together (owner 2026-11-12). */

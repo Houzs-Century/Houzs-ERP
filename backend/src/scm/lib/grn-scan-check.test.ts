@@ -128,3 +128,29 @@ describe('a set row on the check screen (DO-2610-01)', () => {
     expect(review.lines.map((l) => [l.poItemId, l.read?.itemCode])).toEqual([['a2', 'DSL 8075(28")-2+1'], ['aL', 'DSL 8075(28")-2+1']]);
   });
 });
+
+describe('DO-2611-037: the card follows the paper, and a row keeps its printed PO', () => {
+  const ln = (itemCode: string, description: string, poNo: string | null) => ({ itemCode, barcode: null, description, qty: 1, poNo, rack: null });
+  const paper = [
+    ln('1007-(Q)', 'CODY BEDFRAME (5FT) PC151-14', 'HC-PO-2610-399'),
+    ln('5567-1A(RHF)', 'SOFA 5567 1A(RHF)', 'HC-PO-2610-197'),
+    ln('5536-1NA', 'SOFA 5536 1NA COVE-05', 'HC-PO-2610-103'),
+  ];
+  const doc = { supplierName: 'HOOKKA', poNo: null, doNo: 'DO-2611-037', deliveryDate: null, lines: paper };
+  const ol = (poItemId: string, poNumber: string, itemCode: string): OpenPoLine => ({ poItemId, poId: poNumber, poNumber, supplierId: 's1', itemCode, materialName: null, supplierSku: `HOK-${itemCode}`, remaining: 1, locationCode: 'KL' });
+  const lines = [ol('cody', 'HC-PO-2610-399', '1007-(Q)'), ol('5540r', 'HC-PO-2610-197', '5540-1A(RHF)'), ol('5536', 'HC-PO-2610-103', '5536-1NA')];
+  const m = {
+    picks: [{ poItemId: '5536', qty: 1 }, { poItemId: 'cody', qty: 1 }], racks: {}, rackQty: {},
+    rowOf: { cody: paper[0], '5536': paper[2] },
+    unmatched: [{ line: paper[1], reason: 'not_on_po', candidatePoItemIds: [] }],
+  } as unknown as GrnMatchResult;
+  const r = buildReview(doc, 's1', m, [], lines, '2026-11-13');
+
+  test('rows come in the order the delivery order prints them', () => {
+    expect(r.lines.map((l) => l.read?.itemCode)).toEqual(['1007-(Q)', '5567-1A(RHF)', '5536-1NA']);
+  });
+
+  test('an unmatched row starts on the open PO it prints', () => {
+    expect(r.lines[1]).toMatchObject({ poItemId: null, poNumber: 'HC-PO-2610-197' });
+  });
+});

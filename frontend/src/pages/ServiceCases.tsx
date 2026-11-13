@@ -129,6 +129,7 @@ import { defaultBrandingForCompany, HOUZS_COMPANY_CODE } from "../lib/branding";
 import { resolutionRoute, isStageActive, assrSubStatus, assrSubStatusAddsInfo, assrSubStatusLabel, ASSR_STAGES, ASSR_SUB_STATUSES } from "../vendor/scm/lib/assr/stages";
 import { ASSR_ISSUE_CATEGORIES, ASSR_NOTE_AUDIENCES, assrNoteIsCustomerVisible, assrMergedPoText, missingCaseFields, type AssrNoteAudience } from "../vendor/scm/lib/assr/case-fields";
 import { AssrOrderPoLine } from "../components/AssrOrderPoLine";
+import { AssrExchangePoPanel } from "../components/AssrExchangePoPanel";
 import { ASSR_STAGE_LABEL } from "../vendor/scm/lib/assr-stage-labels";
 import { ANOTHER_RETURN_HINT } from "../vendor/scm/lib/assr/returns";
 import type {
@@ -4051,6 +4052,7 @@ function DetailContent({
                 Resolution, which now only holds supplier handling). */}
             <div className="mt-2 border-t border-border-subtle pt-2">
               <AssrOrderPoLine row={c} />
+              <AssrExchangePoPanel caseRow={c} />
               <InlineEdit
                 label="PO No"
                 value={c.po_no}

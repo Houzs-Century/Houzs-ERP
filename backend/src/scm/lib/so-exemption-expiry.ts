@@ -11,3 +11,15 @@ export function exemptionExpirySeed(
   if (stored) return null;
   return nextDeliveryDate || null;
 }
+
+/* The "Sales Exemption Expiry Date" an SO shows: the frozen original, else the
+   AutoCount book's expiry, else the current customer_delivery_date. The SAME
+   chain as frontend/src/lib/so-exemption-expiry.ts (the column on the board and
+   the SO list), so the Overdue rule (derivePlanningState) reads what staff see. */
+export function soExemptionExpiryOf(header: {
+  sales_exemption_expiry: string | null | undefined;
+  ac_sales_exemption_expiry: string | null | undefined;
+  customer_delivery_date: string | null | undefined;
+}): string | null {
+  return header.sales_exemption_expiry || header.ac_sales_exemption_expiry || header.customer_delivery_date || null;
+}

@@ -5,6 +5,7 @@ export const SCM_HANDOFF_KEYS = [
   "crFromNotePicks",
   "doFromSoPicks",
   "drFromDoPicks",
+  "exchangePoSeed",
   "grnFromPoPicks",
   "grnNewDraft",
   "pcrFromOrderPicks",

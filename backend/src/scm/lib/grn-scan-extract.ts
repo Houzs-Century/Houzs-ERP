@@ -62,13 +62,71 @@ export function emptyScanNote(parsed: GrnExtracted | null): string {
   return blank ? NOTE_UNREADABLE : NOTE_NO_LINES;
 }
 
+// The model call itself failed (an Anthropic 5xx such as 2026-11-13's 503
+// "credential validation failed", a timeout, a network error): nothing was read,
+// and nothing is wrong with the paper. The scan fails so it can be read again.
+export const NOTE_READ_FAILED =
+  'The reading service did not answer this time. This is a fault on our side, not your paper. Press Read again.';
+
+/** A read that stopped before the end of the delivery order. */
+export function partialReadNote(linesRead: number, pagesRead: number | null, pageCount: number | null): string {
+  const pages = pagesRead != null && pageCount != null && pageCount > 1 ? ` Read ${pagesRead} of ${pageCount} pages.` : '';
+  return `This delivery order is long and the read stopped before the end.${pages} ${linesRead} line${linesRead === 1 ? '' : 's'} read: check the rest against the paper and add any line that is missing.`;
+}
+
 export type GrnExtractCall = {
   parsed: GrnExtracted | null;
   errorMsg: string | null;
   timedOut: boolean;
   claudeText: string;
   cacheHit: boolean;
+  // The answer hit max_tokens: `parsed` holds only the lines before the cut.
+  truncated: boolean;
 };
+
+/**
+ * The lines an answer cut off at max_tokens still carries: every complete line
+ * object before the cut, with the header. Null when not even the header parses.
+ */
+export function salvageTruncatedJson(text: string): GrnExtracted | null {
+  const start = text.indexOf('{');
+  if (start < 0) return null;
+  const body = text.slice(start);
+  // Walk back over closing braces: the first prefix that closes as JSON is the
+  // last complete line. Bounded so a huge broken answer cannot spin.
+  let tries = 0;
+  for (let i = body.lastIndexOf('}'); i > 0 && tries < 400; i = body.lastIndexOf('}', i - 1), tries += 1) {
+    for (const tail of [']}', '}']) {
+      try {
+        return normalizeGrnExtract(JSON.parse(body.slice(0, i + 1) + tail));
+      } catch { /* try a shorter prefix */ }
+    }
+  }
+  // Cut before the first line closed: keep the header alone.
+  const head = body.split('"lines"')[0].trimEnd().replace(/,$/, '');
+  try { return normalizeGrnExtract(JSON.parse(`${head}}`)); } catch { return null; }
+}
+
+/**
+ * One delivery order read page by page, as one read: the header from the first
+ * page that has one (page 1; continuation pages repeat it), every page's lines
+ * in page order. A page that failed adds nothing and is counted out.
+ */
+export function mergePageReads(pages: Array<GrnExtracted | null>): { parsed: GrnExtracted | null; pagesRead: number } {
+  const read = pages.filter((p): p is GrnExtracted => p != null);
+  if (read.length === 0) return { parsed: null, pagesRead: 0 };
+  const first = <K extends 'supplierName' | 'poNo' | 'doNo' | 'deliveryDate'>(k: K): GrnExtracted[K] => read.find((p) => p[k] != null)?.[k] ?? null;
+  return {
+    parsed: {
+      supplierName: first('supplierName'),
+      poNo: first('poNo'),
+      doNo: first('doNo'),
+      deliveryDate: first('deliveryDate'),
+      lines: read.flatMap((p) => p.lines),
+    },
+    pagesRead: read.length,
+  };
+}
 
 const GR_SYSTEM_PROMPT = `You extract structured data from photos or PDFs of supplier DELIVERY ORDER documents (also called "D/O" or "Delivery Note") sent to a Malaysian furniture retailer. These are typically computer-generated, clean printed documents.
 
@@ -102,8 +160,11 @@ RULES:
 - qty counts SETS / UNITS, never component pieces or cartons. Furniture delivery orders often print a "Set" (or "Unit") column AND a piece breakdown such as "1 HB + 2 Divan" with a "Total Qty" of 3. That row delivered ONE set: use the Set column (1), never the piece total (3).
 - A row's poNo is ONLY a purchase order number printed on that row: labelled "PO" / "P.O.", or in a Remark column with no label, shaped like our numbers with PO inside ("2990-PO-2609-046", "HC-PO-2609-148"). Never put an SO / sales order / REF / Our SO number there, and never copy the header P.O. No into a row. Transcribe it exactly as printed. No PO on the row -> null.
 - A supplier's header field called "Purchase Order No" can hold their own reference such as "S/O 1878": read it as printed in poNo, and still read each row's own PO.
-- A row's rack is ONLY a short location the receiving warehouse wrote BY HAND (pen) beside the row, usually in the left margin: a letter L or R followed by numbers, e.g. "R7-2", "L8-1", "R:11-2", "L-19-2". Transcribe it as written; after the L or R it is only digits and separators, so a mark that looks like a letter there is a digit (a handwritten 6 often looks like "b"). If a value is crossed out and another is written beside it, use the one NOT crossed out. If one rack is written with a bracket or line spanning several rows, give every row under that bracket the same rack. Never take a printed code, a SO / PO / REF number, a tick or a quantity mark as a rack. No handwritten rack beside the row -> null.
+- A row's rack is ONLY a short location the receiving warehouse wrote BY HAND (pen) beside the row, usually in the left margin: a letter L or R followed by numbers, e.g. "R7-2", "L8-1", "L9.1", "L12.1", "R:11-2", "L-19-2". It goes in "rack" only, never in poNo, itemCode or description. Transcribe it as written; after the L or R it is only digits and separators, so a mark that looks like a letter there is a digit (a handwritten 6 often looks like "b"). If a value is crossed out and another is written beside it, use the one NOT crossed out. If one rack is written with a bracket or line spanning several rows, give every row under that bracket the same rack. Never take a printed code, a SO / PO / REF number, a tick or a quantity mark as a rack. No handwritten rack beside the row -> null.
 - Ignore sub-total / total / remarks / signature rows — only real product lines go in "lines".
+- A delivery order printed over several pages is ONE document: read the header once (from page 1) and put the lines of EVERY page into "lines", in order.
+- A row's description is its product name line AND its spec line (fabric / colour code, size, divan, leg, gap, heights, special), joined with a space, e.g. "CODY BEDFRAME (5FT) (152X190CM) PC151-14 / DIVAN 8\" + NO LEG / GAP 12\" / T.Heights 20\"". The spec is what tells two lines of the same model apart, so never drop it. Leave out other free text. Never repeat the header per row.
+- When a row prints our sales order as "SO: HC-SO-..." (not the supplier's own "Our SO"), end its description with it, e.g. " SO: HC-SO-2609-316". It finds the order when the row's PO is missing.
 - Never invent a P.O. No, D.O. No or code you cannot read; use null.`;
 
 // Defensive coercion — the model occasionally omits a field or returns the
@@ -164,6 +225,7 @@ export async function callClaudeGrExtract(
   let parsed: GrnExtracted | null = null;
   let claudeText = '';
   let cacheHit = false;
+  let truncated = false;
 
   try {
     const resp = await recordAi(usage, anthropicFetchWithRetry({
@@ -177,6 +239,9 @@ export async function callClaudeGrExtract(
       },
       body: JSON.stringify({
         model: CLAUDE_MODEL,
+        // Not raised: more output would outlast the 110s abort (and the 3-minute
+        // stale-job reaper). A long DO that hits the cap is salvaged below and
+        // then read page by page (grn-scan-pages.ts).
         max_tokens: 8192,
         // temperature=0 — deterministic OCR so a wrong read is a reproducible
         // bug, not a flaky lottery (same rule as the SO scanner).
@@ -216,10 +281,16 @@ export async function callClaudeGrExtract(
         cacheHit = (parsedResp.usage?.cache_read_input_tokens ?? 0) > 0;
         const firstText = parsedResp.content?.find((b) => b.type === 'text')?.text ?? '';
         claudeText = stripJsonFences(firstText);
-        try {
-          parsed = normalizeGrnExtract(JSON.parse(claudeText));
-        } catch (e) {
-          errorMsg = `Claude returned invalid JSON: ${(e as Error).message}. Raw: ${claudeText.slice(0, 300)}`;
+        if (parsedResp.stop_reason === 'max_tokens') {
+          truncated = true;
+          parsed = salvageTruncatedJson(claudeText);
+          if (!parsed) errorMsg = 'Claude stopped at max_tokens before any line could be read.';
+        } else {
+          try {
+            parsed = normalizeGrnExtract(JSON.parse(claudeText));
+          } catch (e) {
+            errorMsg = `Claude returned invalid JSON: ${(e as Error).message}. Raw: ${claudeText.slice(0, 300)}`;
+          }
         }
       }
     }
@@ -232,7 +303,7 @@ export async function callClaudeGrExtract(
     }
   }
 
-  return { parsed, errorMsg, timedOut, claudeText, cacheHit };
+  return { parsed, errorMsg, timedOut, claudeText, cacheHit, truncated };
 }
 
 // Few-shot pool for GR: the latest operator-reviewed delivery-order extractions

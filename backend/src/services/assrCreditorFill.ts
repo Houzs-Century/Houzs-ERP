@@ -1,6 +1,6 @@
 import type { Env } from "../types";
 import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
-import { applyErpSupplierNames, attachOrderPurchaseOrders, itemsWithLivePo, poKey, supplierPickerResults } from "./assrOrderPos";
+import { applyErpSupplierNames, attachOrderPurchaseOrders, attachExchangePurchaseOrders, itemsWithLivePo, poKey, supplierPickerResults } from "./assrOrderPos";
 import { resolveCreditorForCase } from "./stockItems";
 
 /** HC-0130: a PO raised after the case was created never reached the Supplier.
@@ -68,4 +68,12 @@ export async function pickedSupplierName(env: Env, code: string, companyId: numb
   const [erp] = await showErpSupplierNames(env, [{ creditor_code: code, company_id: companyId } as Record<string, unknown>], null);
   if (erp.creditor_name !== undefined) return (erp.creditor_name as string | null) ?? null;
   return cr ? cr.company_name ?? null : undefined;
+}
+
+/** `exchange_pos` — the case's OWN exchange purchase orders (scm.purchase_orders
+ *  .assr_case_id), the env wrapper of attachExchangePurchaseOrders. Company-scoped
+ *  and fail-soft; the D1 test env has no scm, so it is skipped there. */
+export async function attachExchangePosEnv(env: Env, rows: Array<Record<string, any>>) {
+  for (const r of rows) r.exchange_pos = [];
+  if (isSupabaseConfigured(env)) await attachExchangePurchaseOrders(getSupabaseService(env), rows);
 }

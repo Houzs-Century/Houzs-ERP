@@ -8,7 +8,7 @@ vi.mock('../lib/scan-gr-check', async (orig) => ({
   ...(await orig<typeof import('../lib/scan-gr-check')>()),
   fetchSupplierSkus: vi.fn(async () => [{ code: 'A1', name: 'Mattress Q' }, { code: 'PILLOW-1', name: 'Pillow' }]),
 }));
-const { ScanGrnCheckCard } = await import('./ScanGrnCheckCard');
+const { ScanGrnCheckCard, rackCellOptions } = await import('./ScanGrnCheckCard');
 
 const line = { key: 'k1', poItemId: null, poNumber: null, gift: null, qty: 2, rack: 'R11-2', suggested: false, read: { itemCode: 'T1MA', description: 'Mattress', qty: 2, poNo: null } };
 const review: GrnReview = { v: 2, supplierId: 's1', supplierRead: 'DIGLANT', doNo: 'DO-1', deliveryDate: '2026-11-03', notes: null, lines: [line] };
@@ -91,5 +91,19 @@ describe('the row dropdowns', () => {
     expect(isOddDate('2026-03-11', '2026-11-04')).toBe(true);
     expect(isOddDate('2026-11-03', '2026-11-04')).toBe(false);
     expect(isOddDate(null, '2026-11-04')).toBe(false);
+  });
+});
+
+describe('rack cell options', () => {
+  const racks = [{ rack: 'Rack L8.1' }, { rack: 'Rack L16.1' }];
+  it('labels each shelf without the "Rack " prefix, so a narrow list is readable', () => {
+    expect(rackCellOptions(null, racks).options.map((o) => o.label)).toEqual(['L8.1', 'L16.1']);
+  });
+  it('a rack read off the paper shows as the shelf it names', () => {
+    expect(rackCellOptions('L16.1', racks)).toEqual({ value: 'Rack L16.1', options: [{ value: 'Rack L8.1', label: 'L8.1' }, { value: 'Rack L16.1', label: 'L16.1' }] });
+  });
+  it('a mark that names no shelf stays as read', () => {
+    expect(rackCellOptions('X', racks).value).toBe('X');
+    expect(rackCellOptions('X', racks).options[0]).toEqual({ value: 'X', label: 'X' });
   });
 });

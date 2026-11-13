@@ -15,18 +15,21 @@ export const BOUNDARY_MODEL = 'claude-haiku-4-5';
 
 export type PageChunk = { startPage: number; endPage: number };
 
+const docNoKey = (v: unknown): string | null => (typeof v === 'string' && v.trim() !== '' ? v.replace(/[^A-Za-z0-9]/g, '').toUpperCase() : null);
+
 const BOUNDARY_PROMPT = `You receive a PDF that may bundle several separate supplier documents (delivery orders, delivery notes, invoices) one after another.
 
 Return ONLY where each document starts and ends. Do not read line items.
 
-Output valid JSON only: {"chunks": [{"startPage": 1, "endPage": 2}, {"startPage": 3, "endPage": 3}]}
+Output valid JSON only: {"chunks": [{"startPage": 1, "endPage": 2, "docNo": "DO-2611-037"}, {"startPage": 3, "endPage": 3, "docNo": "DO-2611-040"}]}
 
 Rules:
 - Pages are numbered from 1.
 - One chunk = one document. A document continued over several pages ("Page 1 of 2", "Page 2 of 2", same document number) is one chunk.
 - A new chunk starts when the document number changes, or the supplier letterhead changes.
 - Cover every page exactly once; the last chunk ends on the last page.
-- If the whole PDF is one document, return one chunk covering every page.`;
+- If the whole PDF is one document, return one chunk covering every page.
+- docNo is the document number printed on that chunk's first page (D.O. No / Invoice No), else null.`;
 
 /** The chunks to scan for a PDF of `pageCount` pages, from the model's answer.
  *  Anything that does not cover every page exactly once, in order, falls back
@@ -39,11 +42,17 @@ export function planChunks(answer: unknown, pageCount: number): PageChunk[] {
   if (!Array.isArray(raw) || raw.length === 0) return whole;
   const chunks: PageChunk[] = [];
   let next = 1;
+  let lastDocNo: string | null = null;
   for (const c of raw) {
     const start = Number((c as { startPage?: unknown }).startPage);
     const end = Number((c as { endPage?: unknown }).endPage);
     if (!Number.isInteger(start) || !Number.isInteger(end) || start !== next || end < start || end > pageCount) return whole;
-    chunks.push({ startPage: start, endPage: end });
+    // Pages that carry the same document number are one document printed over
+    // several pages (Hookka DO-2611-037, 3 pages): never split them apart.
+    const docNo = docNoKey((c as { docNo?: unknown }).docNo);
+    if (docNo && docNo === lastDocNo) chunks[chunks.length - 1].endPage = end;
+    else chunks.push({ startPage: start, endPage: end });
+    lastDocNo = docNo;
     next = end + 1;
   }
   return next === pageCount + 1 ? chunks : whole;

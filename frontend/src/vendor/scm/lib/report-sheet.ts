@@ -29,6 +29,13 @@ export type SheetColumn = {
   /** A heading the column shares with the columns beside it (the Cash Flow's month over
       Settlement | Deposit): side by side, the same heading prints once, above them all. */
   group?: string;
+  /** Read left to right — a name, a date, a note: heading and cells flush left (the
+      Event Commission's order lists, owner 2026-11-13: 「export 出来…做好看一点」).
+      Right when absent, as every figure. */
+  align?: 'left' | 'right';
+  /** Its width in Excel characters where an amount's is too narrow (a fair's name);
+      never narrower than the column already is. */
+  width?: number;
 };
 /** sen for an amount column, one-decimal % for a pct column, a string for text; null prints a dash. */
 export type SheetValue = number | string | null;
@@ -40,7 +47,15 @@ export type SheetRow = {
       covered cells are null). A Cash Flow line not split, across a month's two columns. */
   spans?: Partial<Record<number, number>>;
 };
-export type SheetTable = { columns: SheetColumn[]; rows: SheetRow[] };
+export type SheetTable = {
+  columns: SheetColumn[];
+  rows: SheetRow[];
+  /** A section's own title, on a row above its header — one sheet holding several
+      tables reads which is which. Absent: the header is the table's first row. */
+  title?: string;
+  /** The name column's heading ("Order"); blank when absent. */
+  labelHeader?: string;
+};
 
 /** The screen's totals-below rule on a file (owner 2026-11-05: Excel and PDF the same
     way): a group below the top level whose rows follow it is open — its figures move to

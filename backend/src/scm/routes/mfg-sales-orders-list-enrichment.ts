@@ -48,6 +48,8 @@ import { soDeliverableRemaining } from './delivery-orders-mfg';
 import { normCategory } from '../lib/so-readiness';
 import { chunkIn } from '../lib/paginate-all';
 import { todayMyt } from '../lib/my-time';
+import { loadAcExemptionExpiryByDoc } from '../lib/ac-exemption-expiry';
+import { soExemptionExpiryOf } from '../lib/so-exemption-expiry';
 import {
   assembleSoListMrpEnrichment,
   type EnrichmentHeader,
@@ -102,14 +104,18 @@ mfgSalesOrdersListEnrichment.get('/list-mrp-enrichment', async (c) => {
       amended_delivery_date?: string | null; amendedDeliveryDate?: string | null;
       customer_delivery_date?: string | null; customerDeliveryDate?: string | null;
       processing_date?: string | null; processingDate?: string | null;
+      sales_exemption_expiry?: string | null; salesExemptionExpiry?: string | null;
+      linked_ac_docno?: string | null; linkedAcDocno?: string | null;
     }>(docNos, (batch, from, to) => {
       let q = sb.from('mfg_sales_orders')
-        .select('doc_no, status, delivery_state, amended_delivery_date, customer_delivery_date, processing_date')
+        .select('doc_no, status, delivery_state, amended_delivery_date, customer_delivery_date, processing_date, sales_exemption_expiry, linked_ac_docno')
         .in('doc_no', batch);
       q = applySoScope(q, scopeIds);
       return scopeToCompany(q, c).order('doc_no').range(from, to);
     });
     if (error) return c.json({ error: 'enrichment_failed', reason: error.message }, 500);
+    // The AutoCount expiry, as the list column shows it: it can decide Overdue (derivePlanningState).
+    const acExpiryByDoc = await loadAcExemptionExpiryByDoc(sb, c, data);
     for (const r of data) {
       const override = r.deliveryState ?? r.delivery_state ?? null;
       const amendedDD = r.amendedDeliveryDate ?? r.amended_delivery_date ?? null;
@@ -119,6 +125,11 @@ mfgSalesOrdersListEnrichment.get('/list-mrp-enrichment', async (c) => {
         status: r.status ?? null,
         storedOverride: override,
         effectiveDD: amendedDD ?? customerDD,
+        salesExemptionExpiry: soExemptionExpiryOf({
+          sales_exemption_expiry: r.salesExemptionExpiry ?? r.sales_exemption_expiry ?? null,
+          ac_sales_exemption_expiry: acExpiryByDoc.get(r.doc_no) ?? null,
+          customer_delivery_date: customerDD,
+        }),
       });
     }
   }
@@ -144,6 +155,8 @@ mfgSalesOrdersListEnrichment.get('/list-mrp-enrichment', async (c) => {
       return q.order('doc_no').range(from, to);
     });
     if (error) return c.json({ error: 'enrichment_failed', reason: error.message }, 500);
+    // The AutoCount expiry, as the list column shows it: it can decide Overdue (derivePlanningState).
+    const acExpiryByDoc = await loadAcExemptionExpiryByDoc(sb, c, data);
     for (const r of data) {
       items.push({ id: r.id, doc_no: r.doc_no, item_group: r.item_group, item_code: r.item_code, stock_status: r.stock_status, cancelled: r.cancelled, warehouse_id: r.warehouse_id });
       readyItems.push({ id: r.id, doc_no: r.doc_no, item_group: r.item_group, item_code: r.item_code, stock_status: r.stock_status, cancelled: r.cancelled, qty: r.qty, allocated_batch_no: r.allocated_batch_no });

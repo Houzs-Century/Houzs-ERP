@@ -103,7 +103,7 @@ describe("isShipReady keeps every case that legitimately ships", () => {
 
 describe("Delivery Planning reads the same gate", () => {
   const base = { storedOverride: null, status: "CONFIRMED", delivered: 0, remaining: 0,
-                 effectiveDD: "2026-09-01", today: "2026-08-14" };
+                 effectiveDD: "2026-09-01", salesExemptionExpiry: null, today: "2026-08-14" };
 
   test("an empty SO is NOT queued for scheduling", () => {
     const state = derivePlanningState({ ...base, readiness: summariseReadiness([]) });
