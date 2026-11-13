@@ -13,6 +13,7 @@ import { api } from "../api/client";
 import { cn } from "../lib/utils";
 import { clearBrandLogoCache } from "../lib/branding";
 import { shareLinkMenuItems } from "./project-maintenance/shareLinks";
+import { VenueManagerRow } from "./project-maintenance/VenueManagerRow";
 import {
   useLocalities,
   distinctCountries,
@@ -455,26 +456,6 @@ function VenueManager() {
   const [sizeField, setSizeField] = useState("");
   const [adding, setAdding] = useState(false);
   const [expanded, setExpanded] = useState(false);
-  /* Inline name edit (owner 2026-11-12) — "add on button edit, so ak boleh edit
-     dekat sini je". The Edit menu item flips the name cell into an input,
-     committed with the same patch() the state/size cells already use. */
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [editingName, setEditingName] = useState("");
-
-  function startEdit(v: VenueRow) {
-    setEditingId(v.id);
-    setEditingName(v.name);
-  }
-  async function saveEdit(v: VenueRow) {
-    const next = editingName.trim();
-    if (!next) {
-      toast.error("Venue name cannot be empty");
-      return;
-    }
-    if (next !== v.name) await patch(v.id, { name: next });
-    setEditingId(null);
-    setEditingName("");
-  }
 
   const localities = useLocalities();
   const localityRows = localities.data ?? [];
@@ -522,7 +503,7 @@ function VenueManager() {
     }
   }
 
-  async function remove(v: VenueRow) {
+  async function remove(v: { id: number; name: string }) {
     if (
       !(await dialog.confirm({
         title: "Remove venue",
@@ -642,98 +623,16 @@ function VenueManager() {
           ? q.data?.data ?? []
           : (q.data?.data ?? []).slice(0, PICKER_PREVIEW_ROWS)
         ).map((v) => (
-          <li
+          <VenueManagerRow
             key={v.id}
-            className="flex items-center justify-between gap-3 px-3 py-2"
-          >
-            <div className="min-w-0 flex-1">
-              {editingId === v.id ? (
-                <div className="flex items-center gap-1.5">
-                  <input
-                    value={editingName}
-                    onChange={(e) => setEditingName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") saveEdit(v);
-                      if (e.key === "Escape") {
-                        setEditingId(null);
-                        setEditingName("");
-                      }
-                    }}
-                    autoFocus
-                    className="h-8 min-w-0 flex-1 rounded-md border border-accent bg-surface px-2 text-[13px] font-medium outline-none focus:ring-2 focus:ring-primary/15"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => saveEdit(v)}
-                    className="rounded bg-accent px-2 py-1 font-mono text-[8.5px] font-semibold uppercase text-white"
-                  >
-                    Save
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditingId(null);
-                      setEditingName("");
-                    }}
-                    className="rounded border border-border px-2 py-1 font-mono text-[8.5px] font-semibold uppercase text-ink-muted hover:text-ink"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              ) : (
-                <div className="text-[13px] font-medium text-ink">{v.name}</div>
-              )}
-              {/* Redundant gray state under the name removed (Houzs 2026-06-24)
-                  — the state <select> to the right already shows it; owner
-                  flagged the double-render as clutter. */}
-            </div>
-            {/* Inline state re-pick — same maintenance-only source
-                (my_localities) as the Add form's StatePicker. No `(legacy)`
-                fallback: a value not in the seeded set shows blank, forcing
-                the operator to pick a legit state or add it via the
-                Localities Maintenance UI first. */}
-            <div className="w-56">
-              <StatePicker
-                value={v.state || ""}
-                onChange={(next) => {
-                  if (next !== (v.state || "")) {
-                    patch(v.id, { state: next || null });
-                  }
-                }}
-              />
-            </div>
-            {/* Inline size edit (mig 0222). Free text, committed on blur — not on
-                every keystroke — so the operator can type "12,000 sqft" without a
-                PATCH per character. key includes the saved value so a reload after
-                save re-seeds defaultValue. */}
-            <input
-              key={`size-${v.id}-${v.size ?? ""}`}
-              defaultValue={v.size ?? ""}
-              onBlur={(e) => {
-                const next = e.target.value.trim();
-                if (next !== (v.size ?? "")) patch(v.id, { size: next || null });
-              }}
-              placeholder="size"
-              className="h-8 w-28 min-w-0 rounded-md border border-border bg-surface px-2 text-[12px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
-            />
-            <RowActionsMenu
-              items={[
-                {
-                  type: "action",
-                  icon: Pencil,
-                  label: "Edit",
-                  onClick: () => startEdit(v),
-                },
-                {
-                  type: "action",
-                  icon: Trash2,
-                  label: "Remove",
-                  danger: true,
-                  onClick: () => remove(v),
-                },
-              ]}
-            />
-          </li>
+            v={v}
+            onPatch={(id, body) => {
+              void patch(id, body);
+            }}
+            onRemove={(vv) => {
+              void remove(vv);
+            }}
+          />
         ))}
       </ul>
       <ExpandToggle
