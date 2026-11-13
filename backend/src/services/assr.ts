@@ -18,6 +18,7 @@ import { getActiveStaffToken } from "./caseTracking";
 import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
 import { assrVisibilityPredicateSql } from "./assrVisibility";
 import { attachOrderPosAndFill } from "./assrCreditorFill";
+import { attachExchangePurchaseOrders } from "./assrOrderPos";
 import { attachOrderDeliveryDates } from "./assrOrderDos";
 
 // ── Types ─────────────────────────────────────────────────────
@@ -774,7 +775,7 @@ export async function getAssrDetail(env: Env, id: number) {
   // SCM fallback) so the detail page's DO field also fills for cases
   // whose hand-entered delivery_order was never set — which is nearly
   // all of them.
-  await Promise.all([attachDeliveryOrders(env, [caseRow]).then(() => attachOrderDeliveryDates(env, [caseRow])), attachOrderPos(env, [caseRow])]);
+  await Promise.all([attachDeliveryOrders(env, [caseRow]).then(() => attachOrderDeliveryDates(env, [caseRow])), attachOrderPos(env, [caseRow]), attachExchangePos(env, [caseRow])]);
 
   const items = await env.DB.prepare(
     `SELECT * FROM assr_items WHERE assr_id = ? ORDER BY id`
@@ -2045,6 +2046,17 @@ export async function listAssrCases(env: Env, f: ListAssrFilters) {
 /** `order_pos` — see services/assrOrderPos.ts. No scm in the D1 test env. */
 async function attachOrderPos(env: Env, rows: Array<Record<string, unknown>>) {
   if (isSupabaseConfigured(env)) await attachOrderPosAndFill(env, rows);
+}
+
+/** `exchange_pos` — the REAL purchase orders raised FROM this case for a
+    one-to-one exchange (scm.purchase_orders.assr_case_id, set by the PO create
+    handler). Distinct from order_pos (the SO's POs, read-only): these are the
+    case's own exchange documents and the entry into PO -> GRN -> purchase
+    return / purchase invoice. Company-scoped and fail-soft like order_pos; the
+    D1 test env has no scm, so it is skipped there. See services/assrOrderPos.ts. */
+async function attachExchangePos(env: Env, rows: Array<Record<string, unknown>>) {
+  for (const r of rows) r.exchange_pos = [];
+  if (isSupabaseConfigured(env)) await attachExchangePurchaseOrders(getSupabaseService(env), rows);
 }
 
 /** Attach live DO numbers as `do_numbers` on each row. The case table's own

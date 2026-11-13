@@ -1056,6 +1056,27 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
   const supabase = c.get('supabase');
   const user = c.get('user');
 
+  /* Exchange PO link (owner 2026-11-13): a service case doing a one-to-one
+     exchange raises a REAL purchase order from the case. The case stamps its id
+     here so the case detail can show the PO (services/assr.ts attachExchangePos)
+     and it is never confused with the SO-derived read-only order_pos. Optional —
+     a normal PO carries no assrCaseId. The case must be in the active company:
+     the PO is stamped company_id = activeCompanyId(c) and the case read back is
+     company-scoped, so a cross-company stamp would silently never show. */
+  let assrCaseId: number | null = null;
+  if (body.assrCaseId != null && body.assrCaseId !== '') {
+    const n = Number(body.assrCaseId);
+    if (!Number.isInteger(n) || n <= 0) return c.json({ error: 'assr_case_invalid' }, 400);
+    const { data: caseRow, error: caseErr } = await supabase
+      .schema('public').from('assr_cases').select('company_id').eq('id', n).maybeSingle();
+    if (caseErr) return c.json({ error: 'assr_case_lookup_failed', reason: caseErr.message }, 500);
+    if (!caseRow) return c.json({ error: 'assr_case_not_found' }, 404);
+    if (Number((caseRow as { company_id: number | null }).company_id) !== (activeCompanyId(c) ?? -1)) {
+      return c.json({ error: 'assr_case_other_company' }, 409);
+    }
+    assrCaseId = n;
+  }
+
   /* PO/MRP only from CONFIRMED orders — a PO line sourced from an SO (carries a
      soItemId, e.g. the From-SO / MRP convert POSTing here) may only be raised
      when that SO is committed (CONFIRMED or beyond). Resolve every referenced
@@ -1224,6 +1245,12 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
   };
   // Optional poDate, else today in Malaysia (the column's UTC now() default is a day early before 08:00).
   headerInsert.po_date = body.poDate || todayMyt();
+  /* Service-case exchange link — ONLY on the key when set, so an ordinary PO
+     never sends assr_case_id. That keeps PO creation working the instant this
+     code is live even if PostgREST has not yet reloaded the new column (the
+     migration NOTIFYs it, but the deploy order is not guaranteed); only an
+     exchange PO, raised from the new case button, depends on the column. */
+  if (assrCaseId != null) headerInsert.assr_case_id = assrCaseId;
 
   /* Doc-no collision retry (2026-07-14): two buyers cutting a PO in the same
      company + YYMM both read the same max and mint the same po_number; without a

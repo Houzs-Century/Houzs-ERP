@@ -71,6 +71,36 @@ export function assrMergedPoText(row: unknown): string {
   return assrMergedPos(row).map((p) => p.po_number).join(" · ");
 }
 
+/**
+ * "Exchange PO" — the REAL purchase orders raised FROM a service case for a
+ * one-to-one exchange (scm.purchase_orders.assr_case_id), attached by
+ * services/assr.ts as `exchange_pos`. Unlike `order_pos` (the SALES ORDER's
+ * POs, read-only) and `po_no` (the number-only legacy service PO), these are
+ * real documents — the entry into PO -> GRN -> purchase return / invoice.
+ */
+export type AssrExchangePo = { id: string; po_number: string; status: string };
+
+export function assrExchangePos(row: unknown): AssrExchangePo[] {
+  const r = (row ?? {}) as Record<string, unknown>;
+  const raw = r.exchange_pos ?? r.exchangePos;
+  if (!Array.isArray(raw)) return [];
+  const out: AssrExchangePo[] = [];
+  for (const p of raw as Array<Record<string, unknown> | null>) {
+    const id = p?.id;
+    const num = p?.po_number ?? p?.poNumber;
+    const status = p?.status;
+    if (typeof id === "string" && id && typeof num === "string" && num) {
+      out.push({ id, po_number: num, status: typeof status === "string" ? status : "" });
+    }
+  }
+  return out;
+}
+
+/** The exchange POs as "PO1 · PO2"; "" when the case has none. */
+export function assrExchangePoText(row: unknown): string {
+  return assrExchangePos(row).map((p) => p.po_number).join(" · ");
+}
+
 /** Canonical form for the dedupe above: upper-case, drop whitespace, and strip
  *  a leading company-code prefix ("HC-", "2990-") when what remains is itself a
  *  PO number, so a prefixed order PO and its bare-typed twin compare equal.

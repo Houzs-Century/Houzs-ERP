@@ -129,6 +129,8 @@ import { defaultBrandingForCompany, HOUZS_COMPANY_CODE } from "../lib/branding";
 import { resolutionRoute, isStageActive, assrSubStatus, assrSubStatusAddsInfo, assrSubStatusLabel, ASSR_STAGES, ASSR_SUB_STATUSES } from "../vendor/scm/lib/assr/stages";
 import { ASSR_ISSUE_CATEGORIES, ASSR_NOTE_AUDIENCES, assrNoteIsCustomerVisible, assrMergedPoText, missingCaseFields, type AssrNoteAudience } from "../vendor/scm/lib/assr/case-fields";
 import { AssrOrderPoLine } from "../components/AssrOrderPoLine";
+import { AssrExchangePoLine } from "../components/AssrExchangePoLine";
+import { writeScmHandoff } from "../lib/scmHandoffStorage";
 import { ASSR_STAGE_LABEL } from "../vendor/scm/lib/assr-stage-labels";
 import { ANOTHER_RETURN_HINT } from "../vendor/scm/lib/assr/returns";
 import type {
@@ -3185,6 +3187,7 @@ function DetailContent({
   toast: ReturnType<typeof useToast>;
 }) {
   const dialog = useDialog();
+  const navigate = useNavigate();
   const detail = useQuery<AssrDetail>("/api/assr/:",
     () => api.get(`/api/assr/${id}`),
     [id]
@@ -4051,28 +4054,59 @@ function DetailContent({
                 Resolution, which now only holds supplier handling). */}
             <div className="mt-2 border-t border-border-subtle pt-2">
               <AssrOrderPoLine row={c} />
+              <AssrExchangePoLine row={c} />
               <InlineEdit
                 label="PO No"
                 value={c.po_no}
                 onSave={(v) => patch({ po_no: v })}
               />
-              {!c.po_no && c.creditor_code && c.stage !== "completed" && (
-                <button
-                  onClick={async () => {
-                    try {
-                      const res = await api.post<{ po_no: string }>(`/api/assr/${id}/generate-po`);
-                      toast.success(`Generated ${res.po_no}`);
-                      detail.reload();
-                      onUpdated();
-                    } catch (e: any) {
-                      toast.error(e?.message || "Failed to generate PO");
-                    }
-                  }}
-                  className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-accent hover:underline"
-                >
-                  <Plus size={12} /> Auto-generate PO number
-                </button>
-              )}
+              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+                {!c.po_no && c.creditor_code && c.stage !== "completed" && (
+                  <button
+                    onClick={async () => {
+                      try {
+                        const res = await api.post<{ po_no: string }>(`/api/assr/${id}/generate-po`);
+                        toast.success(`Generated ${res.po_no}`);
+                        detail.reload();
+                        onUpdated();
+                      } catch (e: any) {
+                        toast.error(e?.message || "Failed to generate PO");
+                      }
+                    }}
+                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-accent hover:underline"
+                  >
+                    <Plus size={12} /> Auto-generate PO number
+                  </button>
+                )}
+                {/* Raise a REAL exchange purchase order from this case (one-to-one
+                    exchange): seed the New-PO form with this case's item + a link
+                    back to the case, let the purchaser set supplier / warehouse /
+                    price and save. The saved PO carries assr_case_id and returns
+                    here as an "Exchange PO". */}
+                {c.item_code && c.stage !== "completed" && c.stage !== "voided" && (
+                  <button
+                    onClick={() => {
+                      writeScmHandoff("poNewDraft", {
+                        notes: `Exchange PO for service case ${c.assr_no || id}`,
+                        lines: [{
+                          rid: `assr-${id}-${Date.now()}`,
+                          materialKind: "mfg_product",
+                          itemCode: c.item_code,
+                          materialName: (c as { item_name?: string }).item_name || c.item_code,
+                          notes: "",
+                          qty: 1,
+                          unitPriceSen: 0,
+                          variants: {},
+                        }],
+                      });
+                      navigate(`/scm/purchase-orders/new?fromAssrCase=${id}`);
+                    }}
+                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-accent hover:underline"
+                  >
+                    <Plus size={12} /> Raise exchange PO
+                  </button>
+                )}
+              </div>
             </div>
           </PanelSection>
 

@@ -64,7 +64,7 @@ import {
 import {
   ASSR_ISSUE_CATEGORIES as ISSUE_CATEGORY_OPTIONS,
   missingCaseFields,
-  ASSR_NOTE_AUDIENCES, assrOrderPoText,
+  ASSR_NOTE_AUDIENCES, assrOrderPoText, assrExchangePoText,
   type AssrNoteAudience as NoteAudience,
 } from "../vendor/scm/lib/assr/case-fields";
 import "./mobile.css";
@@ -1366,6 +1366,7 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
                     <div style={{ fontSize: 11, color: GREY, lineHeight: 1.4, margin: "6px 0 2px" }}>{ANOTHER_RETURN_HINT}</div>
                   )}
                   <KV label="Order PO" value={assrOrderPoText(c) || "—"} mono />
+                  {assrExchangePoText(c) && <KV label="Exchange PO" value={assrExchangePoText(c)} mono />}
                   <KV label="PO No" value={(poNo ? [String(poNo)] : []).concat(relatedPOs.map((p) => String(get(p, "docNo", "doc_no") ?? "")).filter(Boolean)).join(", ") || "—"} mono />
                 </EditableAcc>
               </>

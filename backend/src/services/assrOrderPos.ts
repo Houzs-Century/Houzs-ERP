@@ -50,6 +50,58 @@ export async function attachOrderPurchaseOrders(
   );
 }
 
+/* Exchange POs (owner 2026-11-13) — the REAL purchase orders raised FROM a
+   service case for a one-to-one exchange, linked by scm.purchase_orders
+   .assr_case_id (stamped by the PO create handler). Attached as `exchange_pos`,
+   the twin of order_pos but the case's OWN documents and the entry into
+   PO -> GRN -> purchase return / purchase invoice. Scoped to each case's own
+   company; fail-soft so the case still loads. */
+export type AssrExchangePo = { id: string; po_number: string; status: string };
+
+export async function attachExchangePurchaseOrders(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  rows: Array<Record<string, unknown>>,
+): Promise<void> {
+  const byCompany = new Map<number, Array<Record<string, unknown>>>();
+  for (const r of rows) {
+    r.exchange_pos = [];
+    const cid = Number(r.company_id);
+    const id = Number(r.id);
+    if (!Number.isInteger(cid) || cid <= 0 || !Number.isInteger(id) || id <= 0) continue;
+    const group = byCompany.get(cid) ?? [];
+    group.push(r);
+    byCompany.set(cid, group);
+  }
+  await Promise.all(
+    [...byCompany].map(async ([cid, group]) => {
+      try {
+        const ids = group.map((r) => Number(r.id));
+        const res = await sb
+          .from("purchase_orders")
+          .select("id, po_number, status, assr_case_id")
+          .eq("company_id", cid)
+          .in("assr_case_id", ids);
+        if (res.error || !res.data) return;
+        type Po = { id: string | null; po_number: string | null; status: string | null; assr_case_id: number | null };
+        const byCase = new Map<number, AssrExchangePo[]>();
+        for (const p of res.data as Po[]) {
+          if (!p.id || !p.po_number || p.assr_case_id == null) continue;
+          const list = byCase.get(Number(p.assr_case_id)) ?? [];
+          list.push({ id: String(p.id), po_number: p.po_number, status: p.status ?? "" });
+          byCase.set(Number(p.assr_case_id), list);
+        }
+        for (const [, list] of byCase) {
+          list.sort((a, b) => a.po_number.localeCompare(b.po_number, undefined, { numeric: true }));
+        }
+        for (const r of group) r.exchange_pos = byCase.get(Number(r.id)) ?? [];
+      } catch {
+        /* fail-soft: the case still loads with exchange_pos = [] */
+      }
+    }),
+  );
+}
+
 /* HC-0130 — the supplier on the PO raised from the case item's SO line
    (SO line -> purchase_order_items.so_item_id -> purchase_orders.supplier),
    so the Solution step's SUPPLIER fills itself. CANCELLED POs are skipped;

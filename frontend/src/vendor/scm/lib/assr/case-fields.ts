@@ -78,6 +78,7 @@ export const ASSR_ISSUE_CATEGORIES = [
    copy (backend routes/assr_print.ts) reads the same value as the screens. */
 export {
   assrOrderPos, assrOrderPoText, assrMergedPos, assrMergedPoText, type AssrOrderPo,
+  assrExchangePos, assrExchangePoText, type AssrExchangePo,
 } from "../../../shared/assr-case-pos";
 
 /** The PO detail page is scoped to the tab's ACTIVE company while Service Cases
