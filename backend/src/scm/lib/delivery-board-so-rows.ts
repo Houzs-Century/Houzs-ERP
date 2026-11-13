@@ -10,6 +10,7 @@ import { summariseReadiness } from './so-readiness';
 import { readinessRowFields } from './so-readiness-row';
 import { deriveArrangementStage } from './arrangement-stage';
 import { effectiveSoDelivery } from '../shared';
+import { soExemptionExpiryOf } from './so-exemption-expiry';
 import { computeReleaseGate } from '../../services/agents/release-gate';
 import { pickDisplayCrew } from '../routes/delivery-planning-fields';
 import { stateToRegionsFromConfig, FALLBACK_DEFAULT_REGION, type Region, type RegionConfig } from './delivery-board-regions';
@@ -57,7 +58,7 @@ export type SoRowCtx = {
   deriveState: (input: {
     storedOverride: string | null | undefined; status: string | null | undefined;
     readiness: { isShipReady: boolean }; delivered: number; remaining: number;
-    effectiveDD: string | null | undefined; today: string;
+    effectiveDD: string | null | undefined; salesExemptionExpiry: string | null; today: string;
   }) => DeliveryState;
   daysLeft: (fromISO: string, toISO: string | null | undefined) => number | null;
 };
@@ -104,8 +105,13 @@ export function assembleSoOrders(soRows: SoHeaderRow[], m: SoBoardMaps, x: SoRow
        derivePlanningState(). A manual override stored on the SO header wins; else
        compute live. */
     const stored = r.delivery_state ?? null;
+    const frozenExpiry = r.salesExemptionExpiry ?? r.sales_exemption_expiry ?? null;
+    // The "Sales Exemption Expiry Date" column's value (frontend sxeDateOf for an SO row).
+    const salesExemptionExpiry = soExemptionExpiryOf({
+      sales_exemption_expiry: frozenExpiry, ac_sales_exemption_expiry: m.acExpiryByDoc.get(docNo) ?? null, customer_delivery_date: customerDD,
+    });
     const state: DeliveryState = x.deriveState({
-      storedOverride: stored, status, readiness, delivered, remaining, effectiveDD, today: x.today,
+      storedOverride: stored, status, readiness, delivered, remaining, effectiveDD, salesExemptionExpiry, today: x.today,
     });
 
     /* Region(s) for this SO = its customer-STATE bucket(s) from the config
@@ -182,7 +188,7 @@ export function assembleSoOrders(soRows: SoHeaderRow[], m: SoBoardMaps, x: SoRow
       // dates
       so_date: r.so_date ?? null,
       // ORIGINAL date (never overwritten); sales_exemption_expiry = frozen original, shown in the SXE column via soExemptionExpiryOf (owner 2026-10-22).
-      customer_delivery_date: customerDD, sales_exemption_expiry: r.salesExemptionExpiry ?? r.sales_exemption_expiry ?? null,
+      customer_delivery_date: customerDD, sales_exemption_expiry: frozenExpiry,
       // Amendment dates: the customer's requested new date and the date WE
       // confirmed. The Original column above is unchanged.
       amend_date_from_customer: amendDateFromCustomer,

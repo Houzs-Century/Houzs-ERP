@@ -91,12 +91,14 @@ export type EnrichmentItem = {
 };
 
 /** The per-doc header inputs `derivePlanningState` needs that are NOT
- *  MRP-derived (status, the manual delivery_state override, and the effective
- *  delivery date). Read once from the base table by the route. */
+ *  MRP-derived (status, the manual delivery_state override, the effective
+ *  delivery date and the sales exemption expiry). Read once from the base table by the route. */
 export type EnrichmentHeader = {
   status: string | null;
   storedOverride: string | null;
   effectiveDD: string | null;
+  /** The SO's "Sales Exemption Expiry Date" (soExemptionExpiryOf): past it, Overdue. */
+  salesExemptionExpiry: string | null;
 };
 
 /**
@@ -165,6 +167,7 @@ export function assembleSoListMrpEnrichment(input: {
       delivered: delivered.get(docNo) ?? 0,
       remaining: remaining.get(docNo) ?? 0,
       effectiveDD: hdr?.effectiveDD ?? null,
+      salesExemptionExpiry: hdr?.salesExemptionExpiry ?? null,
       today,
     });
     const ru = readyUnion.get(docNo);
