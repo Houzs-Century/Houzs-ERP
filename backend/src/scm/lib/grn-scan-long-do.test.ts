@@ -16,7 +16,7 @@ import { hasLines } from '../routes/scan-check-shared';
 import type { AiUsageTag } from '../../services/aiUsage';
 
 const usage = { env: {}, feature: 'scan_gr', model: 'test', companyId: 1, userId: 1, waitUntil: null } as unknown as AiUsageTag;
-const header = { supplierName: 'HOOKKA INDUSTRIES SDN BHD', poNo: null, doNo: 'DO-2611-037', deliveryDate: '2026-11-11' };
+const header: Omit<GrnExtracted, 'lines'> = { supplierName: 'HOOKKA INDUSTRIES SDN BHD', poNo: null, doNo: 'DO-2611-037', deliveryDate: '2026-11-11' };
 const line = (n: number, rack: string | null = null): GrnExtractedLine => ({
   itemCode: `BF-${n}`, barcode: null, description: `Bedframe ${n}`, qty: 1, poNo: `HC-PO-2611-0${n}`, rack,
 });
