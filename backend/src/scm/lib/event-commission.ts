@@ -706,8 +706,17 @@ export function buildEventCommission(input: {
      amount here, but its upsales and drop sales do, in the month they happen, at
      its brand's rate, whatever it has been paid (owner 2026-11-13: 「旧的单upsale？
      应该要算吧」 … 做 — his September sheet paid them and took off their drop
-     sales). Its price changes only: no 30% line, no cancellation, and never an
-     order opened in the range. Under "No fair" like the others. */
+     sales). Its price changes only: no 30% line, and never an order opened in
+     the range. Under "No fair" like the others.
+     Cancelled, it gives back what it was paid on (owner 2026-11-13, 「要扣」 —
+     his own October file took the August order HC-SO-013367 off, this page
+     took nothing): its goods on the day it was cancelled, at its brand's rate,
+     whatever it had been paid — its own amount was paid before this page, on
+     the owner's sheets, and a deposit a few sen short of 30% was paid on like
+     any other. It is listed with the earlier orders, so Finance can leave one
+     out (Don't count). The month's changes before that day count as on any
+     other; from that day, none. From October 2026 only: September was settled
+     on the owner's sheet. */
   const oldNoFair = (so: CommissionSo): boolean => basis === 'so_date' && so.projectId == null && so.soDate != null && so.soDate < NO_FAIR_FROM;
   const changesOnly = new Set(input.sos.filter(oldNoFair).map((so) => so.docNo));
   const noFairBrands = [...new Set(input.sos.filter((so) => noFair(so) || oldNoFair(so)).map(brandOf))].sort();
@@ -868,12 +877,15 @@ export function buildEventCommission(input: {
        since is live again. */
     const cancelled = so.status === 'CANCELLED' ? cancelOf.get(so.docNo) ?? null : null;
     if (so.status === 'CANCELLED' && cancelled == null) continue; // cancelled, day unknown: never earned here
-    /* An old order with no fair: its changes only — and none once it is
-       cancelled in the range, the month's changes go with it. */
     const only = changesOnly.has(so.docNo);
-    if (only && cancelled != null && cancelled <= to) continue;
     const reached = reachedOn(so.totalSen, pays);
     const earned = reached != null && (cancelled == null || reached < cancelled);
+    /* A cancellation takes back what the order had earned. An old order with
+       no fair gives back from October 2026, whatever it had been paid; one
+       cancelled before then stays out whole, the month's changes with it, as
+       it was. */
+    const givesBack = cancelled != null && (only ? cancelled >= NO_FAIR_FROM : earned);
+    if (only && cancelled != null && cancelled <= to && !givesBack) continue;
     const base = { docNo: so.docNo, fairId: f.id, fairName: f.name, salesperson: so.salesperson };
     if (!only && earned && reached! >= from && reached! <= to) {
       const goods = goodsOn(so, chs, reached!);
@@ -893,7 +905,7 @@ export function buildEventCommission(input: {
         ...(v.uncounted ? { uncounted: true as const, ...(moves !== 0 ? { uncountedSen: moves } : {}) } : {}),
       });
     }
-    if (!only && earned && cancelled != null && cancelled >= from && cancelled <= to) {
+    if (givesBack && cancelled != null && cancelled >= from && cancelled <= to) {
       /* Taken back: what it earned — its goods less the changes left out. */
       const goods = goodsOn(so, chs, cancelled);
       const had = earnedOn(goods, uncountedGoods(so, chs, cancelled), rate);

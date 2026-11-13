@@ -276,4 +276,36 @@ describe('an old order with no fair — its upsales and drop sales count', () =>
     expect(JSON.stringify(res.body)).not.toContain('HC-SO-011153');
     expect(res.body.totals.totalSen).toBe(280_00);
   });
+
+  /* Owner 2026-11-13 (「要扣」): the August order HC-SO-013367, half paid, cancelled
+     on 12 October with no price change — his own file took it off, the page did
+     not even read it. (Round figures here, not the order's own.) */
+  test('one cancelled in the range is read too, though its price never changed, and gives back what it was paid on', async () => {
+    const t = tables();
+    t.mfg_sales_orders.push({
+      ...order('HC-SO-013367', '2026-08-26'), status: 'CANCELLED', mattress_sofa_sen: 10_000_00, local_total_sen: 10_000_00, total_revenue_sen: 10_000_00,
+    });
+    t.mfg_sales_order_payments.push({ so_doc_no: 'HC-SO-013367', company_id: CO, paid_at: '2026-08-26', amount_sen: 5_000_00 });
+    t.mfg_so_status_changes.push({ doc_no: 'HC-SO-013367', to_status: 'CANCELLED', created_at: '2026-10-12T06:41:51Z' });
+    const res = await run(eventCommissionHandler, {
+      ...ctx(fakeSb(t), { query: { from: '2026-10-01', to: '2026-10-31', basis: 'so_date' } }),
+      env: { DB: { prepare: () => ({ bind: () => ({ all: async () => ({ results: [AKEMI_CARD] }) }) }) } },
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.adjustments).toMatchObject([
+      { docNo: 'HC-SO-013238', kind: 'upsale', commissionSen: 280_00 },
+      { docNo: 'HC-SO-013367', fairName: 'No fair', date: '2026-10-12', kind: 'cancelled', goodsSen: 10_000_00, commissionSen: -1_400_00 },
+    ]);
+    expect(res.body.earlierOrders.find((o: Row) => o.docNo === 'HC-SO-013367')).toMatchObject({
+      brand: 'AKEMI', venue: 'MID VALLEY', status: 'CANCELLED', events: [{ date: '2026-10-12', kind: 'cancelled' }], originalSen: 10_000_00, commissionSen: -1_400_00,
+    });
+    expect(res.body.fairs).toEqual([]);
+    expect(res.body.totals.totalSen).toBe(280_00 - 1_400_00);
+    /* By fair it has no fair: not read. */
+    const byFair = await run(eventCommissionHandler, {
+      ...ctx(fakeSb(t), { query: { from: '2026-10-01', to: '2026-10-31' } }),
+      env: { DB: { prepare: () => ({ bind: () => ({ all: async () => ({ results: [] }) }) }) } },
+    });
+    expect(JSON.stringify(byFair.body)).not.toContain('HC-SO-013367');
+  });
 });

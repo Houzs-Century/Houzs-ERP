@@ -146,10 +146,12 @@ async function liveReport(c: any, companyId: number, from: string, to: string, b
   });
   if (partTwoRead.error) return fail(c, 'orders', partTwoRead.error.message);
   /* …and an older order with no fair whose price changed in the range: its
-     upsales and drop sales count (owner 2026-11-13). */
+     upsales and drop sales count (owner 2026-11-13) — or that was cancelled in
+     it: it gives back what it was paid on (owner 2026-11-13, 「要扣」). */
   const changedInRange = new Set((chIn.data ?? []).map((r) => r.so_doc_no));
+  const cancelledInRange = new Set((cancelIn.data ?? []).map((r) => r.doc_no));
   const twoRows = basis === 'so_date'
-    ? partTwoRead.data.filter((s) => s.project_id != null || (dayOf(s.so_date) ?? '') >= NO_FAIR_FROM || changedInRange.has(s.doc_no))
+    ? partTwoRead.data.filter((s) => s.project_id != null || (dayOf(s.so_date) ?? '') >= NO_FAIR_FROM || changedInRange.has(s.doc_no) || cancelledInRange.has(s.doc_no))
     : partTwoRead.data;
 
   /* The fairs the rest needs: by fair, the earlier fairs of those orders (started

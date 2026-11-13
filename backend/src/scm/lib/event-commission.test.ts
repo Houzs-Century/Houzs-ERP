@@ -391,15 +391,78 @@ describe('by SO date, an old order with no fair — its upsales and drop sales c
     expect(oct.adjustments.map((a) => [a.docNo, a.kind, a.commissionSen])).toEqual([['HC-SO-013473', 'upsale', 5_72]]);
   });
 
-  it('cancelled in the range: the month\'s changes go with it, and nothing is taken back', () => {
-    const r = buildEventCommission({
-      ...OCT, basis: 'so_date', fairs: [], ratePctByBrand: RATES,
+  /* Owner 2026-11-13 (「要扣」): his own October file took the August order
+     HC-SO-013367 off when it was cancelled; the page took nothing. */
+  describe('cancelled — it gives back what it was paid on', () => {
+    const cancelledOld = {
+      basis: 'so_date' as const, fairs: [], ratePctByBrand: RATES,
       sos: [old({ status: 'CANCELLED' })],
-      payments: [{ docNo: 'HC-SO-013238', paidAt: '2026-08-28', amountSen: 12_000_00 }],
       changes: [priced('HC-SO-013238', '2026-10-03T03:00:00Z', 10_000_00, 12_000_00)],
       cancels: [{ docNo: 'HC-SO-013238', at: '2026-10-18T02:00:00Z' }],
+      /* A third of it paid in August. */
+      payments: [{ docNo: 'HC-SO-013238', paidAt: '2026-08-28', amountSen: 4_000_00 }],
+    };
+
+    it('its goods on the day it was cancelled, at its brand\'s rate; the month\'s changes before that day count', () => {
+      const r = buildEventCommission({ ...OCT, ...cancelledOld });
+      expect(r.adjustments.map((a) => [a.docNo, a.fairName, a.date, a.kind, a.goodsSen, a.commissionSen, a.beforeReach])).toEqual([
+        ['HC-SO-013238', 'No fair', '2026-10-03', 'upsale', 2_000_00, 280_00, false],
+        ['HC-SO-013238', 'No fair', '2026-10-18', 'cancelled', 12_000_00, -1_680_00, false],
+      ]);
+      /* One row in the earlier orders: what it was before the month's upsale, taken back. */
+      expect(r.earlierOrders).toMatchObject([{
+        docNo: 'HC-SO-013238', fairName: 'No fair', brand: 'AKEMI', lastDate: '2026-10-18',
+        events: [{ date: '2026-10-03', kind: 'upsale' }, { date: '2026-10-18', kind: 'cancelled' }],
+        originalSen: 10_000_00, latestSen: 12_000_00, amendedSen: 2_000_00, commissionSen: -1_400_00,
+      }]);
+      /* Cancelled by the end of the range: not an upsale to list. */
+      expect(r.changedOrders).toEqual([]);
+      expect(r.fairs).toEqual([]);
+      expect(r.totals.totalSen).toBe(-1_400_00);
     });
-    expect([r.adjustments, r.earlierOrders, r.changedOrders]).toEqual([[], [], []]);
+
+    it('whatever it had been paid — its own amount was paid before this page: a deposit 40 sen short of 30%, or none on record', () => {
+      const lines = (payments: CommissionPayment[]) =>
+        buildEventCommission({ ...OCT, ...cancelledOld, payments }).adjustments.map((a) => [a.kind, a.commissionSen]);
+      expect(lines([{ docNo: 'HC-SO-013238', paidAt: '2026-08-28', amountSen: 3_599_60 }])).toEqual([['upsale', 280_00], ['cancelled', -1_680_00]]);
+      expect(lines([])).toEqual([['upsale', 280_00], ['cancelled', -1_680_00]]);
+    });
+
+    it('a change after it is cancelled moves nothing; the month after, nothing at all; by fair, never', () => {
+      /* Someone edits the cancelled order in November: today's goods are 12,500. */
+      const late = { ...cancelledOld, changes: [...cancelledOld.changes, priced('HC-SO-013238', '2026-11-02T03:00:00Z', 12_000_00, 12_500_00)] };
+      const sos = [old({ status: 'CANCELLED', goodsSen: 12_500_00, totalSen: 12_500_00 })];
+      const oct = buildEventCommission({ ...OCT, ...late, sos });
+      expect(oct.adjustments.map((a) => [a.kind, a.goodsSen, a.commissionSen])).toEqual([['upsale', 2_000_00, 280_00], ['cancelled', 12_000_00, -1_680_00]]);
+      const nov = buildEventCommission({ from: '2026-11-01', to: '2026-11-30', ...late, sos });
+      expect([nov.adjustments, nov.earlierOrders, nov.changedOrders]).toEqual([[], [], []]);
+      expect(buildEventCommission({ ...OCT, ...cancelledOld, basis: 'fair' }).adjustments).toEqual([]);
+    });
+
+    it('a price change Finance left out is not taken back either', () => {
+      const r = buildEventCommission({
+        ...OCT, ...cancelledOld,
+        changes: withUncountedChanges(cancelledOld.changes, [{ id: 'm1', docNo: 'HC-SO-013238', kind: 'exclude_change', month: '2026-10', reason: null, markedBy: 'Finance', markedAt: '2026-11-13T00:00:00Z' }]),
+      });
+      expect(r.adjustments.map((a) => [a.kind, a.commissionSen])).toEqual([['upsale', 0], ['cancelled', -1_400_00]]);
+      expect(r.totals.totalSen).toBe(-1_400_00);
+    });
+
+    it('cancelled before October 2026: nothing, as it was — September was settled on the owner\'s sheet', () => {
+      const sep = { ...cancelledOld, changes: [priced('HC-SO-013238', '2026-09-03T03:00:00Z', 10_000_00, 12_000_00)], cancels: [{ docNo: 'HC-SO-013238', at: '2026-09-18T02:00:00Z' }] };
+      const inSep = buildEventCommission({ from: '2026-09-01', to: '2026-09-30', ...sep });
+      expect([inSep.adjustments, inSep.earlierOrders, inSep.changedOrders]).toEqual([[], [], []]);
+      const inOct = buildEventCommission({ ...OCT, ...sep });
+      expect([inOct.adjustments, inOct.earlierOrders, inOct.changedOrders]).toEqual([[], [], []]);
+    });
+
+    it('cancelled in October, looked at for September: its September changes count as before', () => {
+      const r = buildEventCommission({
+        from: '2026-09-01', to: '2026-09-30', ...cancelledOld,
+        changes: [priced('HC-SO-013238', '2026-09-20T03:00:00Z', 10_000_00, 12_000_00)],
+      });
+      expect(r.adjustments.map((a) => [a.kind, a.commissionSen])).toEqual([['upsale', 280_00]]);
+    });
   });
 });
 
