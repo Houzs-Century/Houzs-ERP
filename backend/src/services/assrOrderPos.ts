@@ -140,12 +140,12 @@ export async function orderSupplierCode(
   return so ? { code: so, source: "so" } : null;
 }
 
-/* HC-0228: a 'po' / 'so' creditor_code is an ERP supplier code (scm.suppliers),
-   but the case reads its name from the AutoCount `creditors` mirror, which can
-   hold ANOTHER company under the same code (400-H004: ERP Hookka Industries,
-   AutoCount Hao Hua Furniture). Those rows show the ERP supplier instead.
-   Manual / auto picks came from the creditors list and keep its name.
-   Supplier-return trips on the same code follow the case. Fail-soft. */
+/* HC-0228: service cases name their supplier from the ERP list (scm.suppliers).
+   The SQL reads join the AutoCount `creditors` mirror, which can hold ANOTHER
+   company under the same code (400-H004: ERP Hookka Industries, AutoCount Hao Hua
+   Furniture). A code the ERP list does not have (MAN-xxxx, old AutoCount-only
+   codes) keeps the creditors name. Supplier-return trips on the same code follow
+   the case. Fail-soft. */
 export async function applyErpSupplierNames(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sb: any,
@@ -155,7 +155,7 @@ export async function applyErpSupplierNames(
   const byCompany = new Map<number, Array<Record<string, unknown>>>();
   for (const r of rows) {
     const cid = Number(r.company_id);
-    if ((r.creditor_source !== "po" && r.creditor_source !== "so") || typeof r.creditor_code !== "string" || !r.creditor_code || !Number.isInteger(cid) || cid <= 0) continue;
+    if (typeof r.creditor_code !== "string" || !r.creditor_code || !Number.isInteger(cid) || cid <= 0) continue;
     byCompany.set(cid, [...(byCompany.get(cid) ?? []), r]);
   }
   await Promise.all([...byCompany].map(async ([cid, group]) => {
@@ -178,15 +178,36 @@ export async function applyErpSupplierNames(
   }));
 }
 
-/* HC-0228, for GROUP BY reports: PO/SO-filled cases group apart from AutoCount
-   picks on the same code (and per company, as suppliers are), and come out as
-   creditor_source / company_id so applyErpSupplierNames can name them. */
-export function erpSupplierGroupSql(a: string, companyCol: string): { source: string; company: string } {
-  const erp = `${a}creditor_source IN ('po', 'so')`;
-  return { source: `CASE WHEN ${erp} THEN 'po' END`, company: `CASE WHEN ${erp} THEN ${companyCol} END` };
+type PickerHit = { creditor_code: string; company_name: string | null; phone1: string | null };
+
+/* HC-0228: the service-case supplier picker. ERP suppliers of the caller's
+   companies first, then creditors hits whose code the ERP list does not have, so
+   400-H004 is offered as Hookka Industries only. The ERP list is small (63 on
+   prod), so it is read whole and searched here. Read error -> creditors hits. */
+export async function supplierPickerResults(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  companyIds: number[],
+  q: string,
+  creditorHits: PickerHit[],
+): Promise<PickerHit[]> {
+  try {
+    const res = await sb.from("suppliers").select("code, name, phone").in("company_id", companyIds);
+    if (res.error) return creditorHits;
+    const all = (res.data ?? []) as Array<{ code: string; name: string | null; phone: string | null }>;
+    const erpCodes = new Set(all.map((s) => s.code));
+    const erp = all
+      .filter((s) => !q || [s.code, s.name].some((v) => String(v ?? "").toLowerCase().includes(q)))
+      .map((s) => ({ creditor_code: s.code, company_name: s.name, phone1: s.phone ?? null }));
+    return [...erp, ...creditorHits.filter((h) => !erpCodes.has(h.creditor_code))]
+      .sort((a, b) => String(a.company_name ?? "").localeCompare(String(b.company_name ?? "")))
+      .slice(0, 20);
+  } catch {
+    return creditorHits;
+  }
 }
 
-export const poKey = (companyId: unknown, docNo: unknown, itemCode: unknown) => `${Number(companyId)}|${docNo}|${itemCode}`;
+export const poKey =(companyId: unknown, docNo: unknown, itemCode: unknown) => `${Number(companyId)}|${docNo}|${itemCode}`;
 
 /* Batched: which (company, SO, item) triples have a non-cancelled PO raised for
    that SO line. 3 reads per company, whatever the number of cases. Read error

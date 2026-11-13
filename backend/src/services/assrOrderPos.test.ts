@@ -4,7 +4,7 @@
 // ORDER lines. Pinned through a minimal fake PostgREST client, the same shape
 // as scm/lib/so-converted-po.test.ts, because the D1 test harness has no scm.
 import { describe, expect, test } from 'vitest';
-import { applyErpSupplierNames, attachOrderPurchaseOrders, orderPoSupplierCode, orderSupplierCode } from './assrOrderPos';
+import { applyErpSupplierNames, attachOrderPurchaseOrders, supplierPickerResults, orderPoSupplierCode, orderSupplierCode } from './assrOrderPos';
 
 type Row = Record<string, unknown>;
 
@@ -225,10 +225,39 @@ describe('applyErpSupplierNames', () => {
     expect(trips.map((t) => t.creditor_name)).toEqual(['HOOKKA INDUSTRIES SDN. BHD.', 'X']);
   });
 
-  test('a manual or older auto pick keeps the AutoCount creditor name', async () => {
+  test('a hand or auto pick shows the ERP supplier too; a code the ERP lacks keeps its name', async () => {
     const manual = { ...hh, creditor_source: 'manual' };
     const auto = { ...hh, creditor_source: 'auto' };
-    await applyErpSupplierNames(sb(), [manual, auto], null);
-    expect([manual.creditor_name, auto.creditor_name]).toEqual(['HAO HUA FURNITURE ', 'HAO HUA FURNITURE ']);
+    const man = { creditor_code: 'MAN-0001', creditor_name: 'WALK-IN REPAIRER', creditor_source: 'manual', company_id: HOUZS };
+    await applyErpSupplierNames(sb(), [manual, auto, man], null);
+    expect([manual.creditor_name, auto.creditor_name, man.creditor_name]).toEqual(['HOOKKA INDUSTRIES SDN. BHD.', 'HOOKKA INDUSTRIES SDN. BHD.', 'WALK-IN REPAIRER']);
+  });
+});
+
+describe('supplierPickerResults', () => {
+  const sb = () => fakeSb({
+    suppliers: [
+      { code: '400-H004', name: 'HOOKKA INDUSTRIES SDN. BHD.', phone: '+601161333173', company_id: HOUZS },
+      { code: '400-H003', name: 'HOOKKA MANUFACTURING SDN. BHD.', phone: null, company_id: HOUZS },
+      { code: '400-Z999', name: 'HOOKKA OTHER COMPANY', phone: null, company_id: CO_2990 },
+    ],
+  });
+  const hits = [
+    { creditor_code: '400-H004', company_name: 'HAO HUA FURNITURE ', phone1: '+6075564463' },
+    { creditor_code: 'MAN-0001', company_name: 'HAPPY REPAIRS', phone1: null },
+  ];
+
+  test('offers the ERP supplier, never the AutoCount company on the same code, plus AutoCount-only codes', async () => {
+    const out = await supplierPickerResults(sb(), [HOUZS], 'h', hits);
+    expect(out.map((r) => [r.creditor_code, r.company_name])).toEqual([
+      ['MAN-0001', 'HAPPY REPAIRS'],
+      ['400-H004', 'HOOKKA INDUSTRIES SDN. BHD.'],
+      ['400-H003', 'HOOKKA MANUFACTURING SDN. BHD.'],
+    ]);
+  });
+
+  test('searches ERP code and name, stays in the caller companies', async () => {
+    expect((await supplierPickerResults(sb(), [HOUZS], '400-h003', [])).map((r) => r.creditor_code)).toEqual(['400-H003']);
+    expect(await supplierPickerResults(sb(), [HOUZS], 'other company', [])).toEqual([]);
   });
 });

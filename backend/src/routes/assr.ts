@@ -69,7 +69,8 @@ import { overviewFilter, withOverviewFilter } from "./lib/assr-overview-filter";
 import { todayMyt } from "../scm/lib/my-time";
 import { assrExportShowsCost, buildAssrCasesCsv } from "./lib/assr-export-csv";
 import { caseCompanySql, showErpSupplierNames } from "../services/assrCreditorFill";
-import { erpSupplierGroupSql } from "../services/assrOrderPos";
+import { supplierPickerResults } from "../services/assrOrderPos";
+import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
 
 /* The context the extracted handlers below receive. They are exported so the
    route tests can drive them directly; the shape is exactly what app.get/post
@@ -992,8 +993,11 @@ app.get("/creditors/search", requireServiceCaseAccess(), async (c) => {
       LIMIT 20`
   )
     .bind(like, like)
-    .all();
-  return c.json({ results: rows.results ?? [] });
+    .all<{ creditor_code: string; company_name: string | null; phone1: string | null }>();
+  const hits = rows.results ?? [];
+  const ids = assrCompanyIds(c);
+  if (!isSupabaseConfigured(c.env) || !ids?.length) return c.json({ results: hits });
+  return c.json({ results: await supplierPickerResults(getSupabaseService(c.env), ids, q, hits) });
 });
 
 app.post("/creditors/create", requirePermission("service_cases.write"), async (c) => {
@@ -1063,11 +1067,10 @@ app.get("/by-creditor", requirePermission("service_cases.read"), async (c) => {
   const visC = vis("c.");
   const visBare = vis("assr_cases.");
 
-  const g = erpSupplierGroupSql("c.", caseCompanySql(c.env, "c."));
+  const coCol = caseCompanySql(c.env, "c.");
   const grouped = await c.env.DB.prepare(
     `SELECT c.creditor_code,
-            ${g.source} AS creditor_source,
-            ${g.company} AS company_id,
+            ${coCol} AS company_id,
             cr.company_name AS creditor_name,
             cr.email        AS creditor_email,
             cr.phone1       AS creditor_phone,
@@ -1082,7 +1085,7 @@ app.get("/by-creditor", requirePermission("service_cases.read"), async (c) => {
        LEFT JOIN creditors cr ON cr.creditor_code = c.creditor_code
       WHERE c.archived_at IS NULL
         AND c.creditor_code IS NOT NULL${coC}${visC.sql}
-      GROUP BY c.creditor_code, ${g.source}, ${g.company}, cr.company_name, cr.email, cr.phone1
+      GROUP BY c.creditor_code, ${coCol}, cr.company_name, cr.email, cr.phone1
       ORDER BY total DESC, creditor_name ASC`
   )
     .bind(...visC.binds)
@@ -2479,11 +2482,10 @@ app.get("/metrics", requirePermission("service_cases.read"), async (c) => {
   // Creditor performance (within window). Joined against the
   // creditors mirror via a.creditor_code rather than the old
   // suppliers table — creditor is now the source of truth.
-  const gp = erpSupplierGroupSql("a.", caseCompanySql(c.env, "a."));
+  const coColA = caseCompanySql(c.env, "a.");
   const creditorPerf = await c.env.DB.prepare(
     `SELECT a.creditor_code as creditor_code,
-            ${gp.source} as creditor_source,
-            ${gp.company} as company_id,
+            ${coColA} as company_id,
             cr.company_name as creditor_name,
             COUNT(DISTINCT a.id) as total_cases,
             SUM(CASE WHEN a.stage = 'completed' THEN 1 ELSE 0 END) as closed_cases,
@@ -2500,7 +2502,7 @@ app.get("/metrics", requirePermission("service_cases.read"), async (c) => {
        LEFT JOIN creditors cr ON cr.creditor_code = a.creditor_code
       WHERE a.creditor_code IS NOT NULL
         ${sinceFor("a.")}${coA}${visA.sql}
-      GROUP BY a.creditor_code, ${gp.source}, ${gp.company}, cr.company_name
+      GROUP BY a.creditor_code, ${coColA}, cr.company_name
       ORDER BY total_cases DESC
       LIMIT 15`
   )
@@ -2725,7 +2727,7 @@ app.get("/metrics/drill", requirePermission("service_cases.read"), async (c) => 
   const rows = await c.env.DB.prepare(
     `SELECT ${distinct} c.id, c.assr_no, c.customer_name, c.stage, c.priority,
             c.complained_date, c.deadline_at, c.issue_category, c.complaint_issue, c.resolution_method,
-            c.creditor_code, c.creditor_source, ${caseCompanySql(c.env, "c.")} AS company_id,
+            c.creditor_code, ${caseCompanySql(c.env, "c.")} AS company_id,
             cr.company_name AS creditor_name,
             (julianday('now') - julianday(c.complained_date)) AS age_days,
             CASE WHEN c.deadline_at IS NOT NULL AND datetime('now') > c.deadline_at
@@ -2765,7 +2767,7 @@ app.post("/:id/generate-po", requirePermission("service_cases.manage"), async (c
      statement joins. */
   const poCoSql = assrCompanySql(c, "c.company_id");
   const existing = await c.env.DB.prepare(
-    `SELECT c.po_no, c.creditor_code, c.creditor_source, ${caseCompanySql(c.env, "c.")} AS company_id, cr.company_name AS creditor_name
+    `SELECT c.po_no, c.creditor_code, ${caseCompanySql(c.env, "c.")} AS company_id, cr.company_name AS creditor_name
        FROM assr_cases c
        LEFT JOIN creditors cr ON cr.creditor_code = c.creditor_code
       WHERE c.id = ?${poCoSql}`
