@@ -67,6 +67,21 @@ try {
   console.log('');
   console.log('Scans with no supplier found:');
   for (const r of lost) console.log(`${r.at} | ${r.ext || '?'} | ${r.review_state}/${r.status} | ${r.note}`);
+
+  // Per supplier, what the matcher said about the scans it could not fully tie.
+  const notes = await sql`
+    SELECT coalesce(s.name, '?') AS supplier, to_char(j.created_at AT TIME ZONE 'Asia/Kuala_Lumpur', 'MM-DD HH24:MI') AS at,
+           j.review_state, jsonb_array_length(coalesce(j.review->'lines', '[]'::jsonb))::int AS lines,
+           (SELECT count(*) FROM jsonb_array_elements(coalesce(j.review->'lines', '[]'::jsonb)) e WHERE e->>'poItemId' IS NOT NULL)::int AS tied,
+           left(regexp_replace(coalesce(j.error, ''), '\s+', ' ', 'g'), 160) AS note
+      FROM scm.scan_jobs j
+      JOIN scm.suppliers s ON s.id::text = j.review->>'supplierId'
+     WHERE j.document_type = 'GR' AND j.created_at >= now() - make_interval(days => ${DAYS})
+       AND s.name NOT ILIKE 'HOOKKA%'
+     ORDER BY 1, j.created_at`;
+  console.log('');
+  console.log('Other suppliers, each scan: when | state | lines tied/read | note');
+  for (const r of notes) console.log(`${r.supplier.slice(0, 14)} | ${r.at} | ${r.review_state} | ${r.tied}/${r.lines} | ${r.note}`);
 } finally {
   await sql.end();
 }
