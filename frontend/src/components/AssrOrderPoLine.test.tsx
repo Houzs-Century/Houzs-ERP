@@ -183,18 +183,19 @@ describe("where Order PO appears", () => {
     expect(po).toBeGreaterThan(kv);
   });
 
-  test("desktop detail: the Exchange PO line sits between Order PO and the editable PO No", () => {
+  test("desktop detail: the Exchange PO panel sits between Order PO and the editable PO No", () => {
     const order = desktop.indexOf("<AssrOrderPoLine row={c} />");
-    const exchange = desktop.indexOf("<AssrExchangePoLine row={c} />");
+    const panel = desktop.indexOf("<AssrExchangePoPanel caseRow={c} />");
     const edit = desktop.indexOf('label="PO No"');
-    expect(exchange).toBeGreaterThan(order);
-    expect(edit).toBeGreaterThan(exchange);
+    expect(panel).toBeGreaterThan(order);
+    expect(edit).toBeGreaterThan(panel);
   });
 
-  test("desktop detail: the Raise exchange PO button seeds the New-PO form and links the case", () => {
-    expect(desktop).toContain("Raise exchange PO");
-    expect(desktop).toContain("/scm/purchase-orders/new?fromAssrCase=${id}");
-    expect(desktop).toContain('writeScmHandoff("poNewDraft"');
+  test("the Exchange PO panel seeds the New-PO form and links the case", () => {
+    const panel = code("src/components/AssrExchangePoPanel.tsx");
+    expect(panel).toContain("Raise exchange PO");
+    expect(panel).toContain("/scm/purchase-orders/new?fromAssrCase=${caseRow.id}");
+    expect(panel).toContain('writeScmHandoff("poNewDraft"');
   });
 
   test("mobile: Exchange PO shown read-only between Order PO and PO No", () => {

@@ -1,6 +1,6 @@
 import type { Env } from "../types";
 import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
-import { attachOrderPurchaseOrders, itemsWithLivePo, poKey } from "./assrOrderPos";
+import { attachOrderPurchaseOrders, attachExchangePurchaseOrders, itemsWithLivePo, poKey } from "./assrOrderPos";
 import { resolveCreditorForCase } from "./stockItems";
 
 /** HC-0130: a PO raised after the case was created never reached the Supplier.
@@ -30,4 +30,12 @@ export async function fillCreditorFromNewPo(env: Env, rows: Array<Record<string,
 export async function attachOrderPosAndFill(env: Env, rows: Array<Record<string, any>>) {
   await attachOrderPurchaseOrders(getSupabaseService(env), rows);
   await fillCreditorFromNewPo(env, rows);
+}
+
+/** `exchange_pos` — the case's OWN exchange purchase orders (scm.purchase_orders
+ *  .assr_case_id), the env wrapper of attachExchangePurchaseOrders. Company-scoped
+ *  and fail-soft; the D1 test env has no scm, so it is skipped there. */
+export async function attachExchangePosEnv(env: Env, rows: Array<Record<string, any>>) {
+  for (const r of rows) r.exchange_pos = [];
+  if (isSupabaseConfigured(env)) await attachExchangePurchaseOrders(getSupabaseService(env), rows);
 }
