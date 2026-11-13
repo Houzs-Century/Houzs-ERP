@@ -72,6 +72,12 @@ export async function jsonBody(c: { req: { json(): Promise<unknown> } }): Promis
 }
 export const idsOf = (body: unknown): string[] => (Array.isArray((body as { ids?: unknown } | null)?.ids) ? ((body as { ids: unknown[] }).ids).filter((x): x is string => typeof x === 'string') : []);
 
+/** A kept read worth reusing for the same file: it read at least one line. */
+export const hasLines = (review: unknown): boolean => {
+  const lines = (review as { lines?: unknown } | null)?.lines;
+  return Array.isArray(lines) && lines.length > 0;
+};
+
 type UploadOpts = {
   /** What a copy reused from an earlier read of the same file carries for this new scan. */
   scannedToday: <T extends object>(review: T) => T;
@@ -129,8 +135,10 @@ export async function handleUpload(c: CheckContext, opts: UploadOpts): Promise<R
     // A failed look-up only costs a fresh read, never a wrong one.
     if (priorErr) console.warn('[scan check] earlier-read look-up failed, reading afresh:', priorErr.message);
     const found = priorErr ? null : (prior as { review: { v?: number } | null; error: string | null } | null);
-    // A read kept in an older shape is read again rather than reused.
-    const seen = found?.review?.v === opts.reviewVersion ? found : null;
+    // A read kept in an older shape is read again rather than reused, and so is
+    // one with no lines: an empty read is a failed or doubtful one, and reusing
+    // it made every re-upload of DO-2611-037 come back empty (2026-11-13).
+    const seen = found?.review?.v === opts.reviewVersion && hasLines(found.review) ? found : null;
     const { data, error } = await svc.from('scan_jobs').insert({
       status: seen ? 'done' : 'queued', document_type: opts.documentType, review_state: seen ? 'pending' : 'reading', batch_id: batchId,
       review: seen?.review ? opts.scannedToday(seen.review) : null, error: seen ? seen.error : null, file_hash: fileHash,

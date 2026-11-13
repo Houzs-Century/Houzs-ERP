@@ -39,7 +39,10 @@ lists only what differs for GR.
 The desktop modal no longer drafts straight from the scan. `POST /check/upload` takes any
 number of files; a PDF of several pages is split into its documents (`lib/scan-split.ts`:
 a Haiku call says where each starts, `planChunks` keeps the file whole unless the answer
-covers every page once, in order). Each document is a `scan_jobs` row with `batch_id` and
+covers every page once, in order; adjacent chunks with the same `docNo` stay one document).
+A failed read call fails the row (`NOTE_READ_FAILED`, Read again), never an empty read; an answer cut
+at max_tokens keeps its lines and a multi-page PDF is re-read page by page into one read
+(`lib/grn-scan-pages.ts`, header from page 1); a kept read with no lines is never reused. Each document is a `scan_jobs` row with `batch_id` and
 `review_state` `reading -> pending -> created | discarded`; the runner keeps the read +
 match as `review` (`lib/grn-scan-check.ts` `buildReview`) instead of drafting. `GET /pending`
 returns the caller's own `reading`/`pending` rows (14 days) with suppliers, open PO lines,
