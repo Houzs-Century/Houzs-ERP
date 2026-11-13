@@ -339,6 +339,7 @@ export async function loadSoBoardMapsRest(
   const poLockedDocs = await soPoLockedMany(sb, display ? docNos : []); lap('dp-po-locked');
   const poNosRes = await input.poNosByDocP; // "PO No." column (lib/planning-po-nos.ts), kicked off right after soRows
   if ('err' in poNosRes) throw poNosRes.err; lap('dp-po-nos');
-  const acExpiryByDoc = await loadAcExemptionExpiryByDoc(sb, c, display ? soRows : []); lap('dp-ac-exemption');
+  // Read for counts_only too: the expiry decides Overdue (derivePlanningState), so the tab counts need it.
+  const acExpiryByDoc = await loadAcExemptionExpiryByDoc(sb, c, soRows); lap('dp-ac-exemption');
   return { ok: { liveBalanceByDoc, ...items, deliveredByDoc, remainingByDoc, ...dos, ...stops, ...crew, poLockedDocs, poNosByDoc: poNosRes.ok, acExpiryByDoc } };
 }

@@ -29,9 +29,10 @@
 //   - PENDING_SCHEDULE — ready to ship (summariseReadiness.isShipReady — every
 //                        MAIN line READY, and the SO actually HAS lines) but not
 //                        yet fully delivered.
-//   - OVERDUE          — NOT ready AND today >= EFFECTIVE delivery date (owner
-//                        rule 2026-11-10: the delivery day has arrived or passed
-//                        and the goods are still not ready).
+//   - OVERDUE          — the Sales Exemption Expiry (the last date the
+//                        salesperson promised) has passed, ready or not (owner
+//                        2026-11-13); or NOT ready AND today >= EFFECTIVE
+//                        delivery date (owner 2026-11-10).
 //   - PENDING_DELIVERY — NOT ready and the delivery day is still ahead.
 // A manual override stored on the SO header (delivery_state) wins when present.
 //
@@ -147,8 +148,14 @@ function daysBetween(fromISO: string, toISO: string | null | undefined): number 
                           == 0 once any qty has shipped.
      · PENDING_SCHEDULE — ready to ship (summariseReadiness.isShipReady) but not
                           yet fully delivered.
-     · OVERDUE          — NOT ready AND today >= EFFECTIVE delivery date.
+     · OVERDUE          — salesExemptionExpiry < today, whatever the readiness
+                          or the amended date (owner 2026-11-13); or NOT ready
+                          AND today >= EFFECTIVE delivery date.
      · PENDING_DELIVERY — NOT ready and the delivery day is still ahead.
+
+   `salesExemptionExpiry` is the value the board's "Sales Exemption Expiry Date"
+   column shows (soExemptionExpiryOf, lib/so-exemption-expiry.ts); every caller
+   passes it, so the board, its counts, the SO list and the agent agree.
 
    `readiness` carries ONLY the ship gate — narrowed so no caller can reach for
    isMainReady, vacuously true on a line-less SO (BUG-HISTORY 2026-08-14, #2186).
@@ -160,15 +167,20 @@ export function derivePlanningState(input: {
   delivered: number;
   remaining: number;
   effectiveDD: string | null | undefined;
+  salesExemptionExpiry: string | null;
   today: string;
 }): DeliveryState {
-  const { storedOverride, status, readiness, delivered, remaining, effectiveDD, today } = input;
+  const { storedOverride, status, readiness, delivered, remaining, effectiveDD, salesExemptionExpiry, today } = input;
   const stored = storedOverride ?? null;
   /* Delivered beats a manual override: an order moved early into Pending
      Schedule must still leave the queue once it is handed over. */
   const st = String(status ?? '').toUpperCase();
   if (st === 'DELIVERED' || (delivered > 0 && remaining <= 0)) return 'DELIVERED';
   if (stored && (DELIVERY_STATES as string[]).includes(stored)) return stored as DeliveryState;
+
+  // The promised date has passed: Overdue until staff move it (the override above).
+  const expiry = salesExemptionExpiry ? salesExemptionExpiry.slice(0, 10) : null;
+  if (expiry && expiry < today) return 'OVERDUE';
 
   /* "Ready to ship" gate — see summariseReadiness.isShipReady. The narrowed
      parameter type above is what now keeps the wrong flag out of reach. */

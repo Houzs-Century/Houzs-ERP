@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { exemptionExpirySeed } from './so-exemption-expiry';
+import { exemptionExpirySeed, soExemptionExpiryOf } from './so-exemption-expiry';
 
 describe('exemptionExpirySeed — the original delivery date, written once (BUG-51)', () => {
   it('seeds the first delivery date an order carries', () => {
@@ -15,5 +15,14 @@ describe('exemptionExpirySeed — the original delivery date, written once (BUG-
   it('nothing to seed when no delivery date arrives', () => {
     expect(exemptionExpirySeed(null, null)).toBeNull();
     expect(exemptionExpirySeed(null, '')).toBeNull();
+  });
+});
+
+describe('soExemptionExpiryOf — the column value the Overdue rule reads (same chain as the frontend)', () => {
+  it('frozen original, then the AutoCount book, then the delivery date', () => {
+    expect(soExemptionExpiryOf({ sales_exemption_expiry: '2026-10-26', ac_sales_exemption_expiry: '2026-12-31', customer_delivery_date: '2026-11-27' })).toBe('2026-10-26');
+    expect(soExemptionExpiryOf({ sales_exemption_expiry: null, ac_sales_exemption_expiry: '2026-12-31', customer_delivery_date: '2026-11-27' })).toBe('2026-12-31');
+    expect(soExemptionExpiryOf({ sales_exemption_expiry: '', ac_sales_exemption_expiry: null, customer_delivery_date: '2026-11-27' })).toBe('2026-11-27');
+    expect(soExemptionExpiryOf({ sales_exemption_expiry: null, ac_sales_exemption_expiry: null, customer_delivery_date: null })).toBeNull();
   });
 });
