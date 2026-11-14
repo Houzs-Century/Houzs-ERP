@@ -78,6 +78,7 @@ import {
 import { useDrivers } from '../../vendor/scm/lib/drivers-queries';
 import { useLorries } from '../../vendor/scm/lib/lorries-queries';
 import { useAuth } from '../../auth/AuthContext';
+import { useScmAreaReadable } from '../../auth/endpointAccess';
 import { canOperateDeliveryOrders } from '../../auth/salesAccess';
 
 /* The sends that name a date with Confirm / Amend; a Service Case job has its own. */
@@ -180,8 +181,12 @@ export const DeliveryPlanning = () => {
   /* Option lists for the Driver / Lorry inline selects + the bulk value control.
      Active-only (the pickers offer current crew); an existing off-list assignment
      stays selectable via the cell's fallback <option>. */
-  const { data: drivers = [] } = useDrivers();
-  const { data: lorries = [] } = useLorries();
+  /* The Fleet master is scm.transportation.drivers; a Last Mile viewer (the
+     driver run-sheet reads this board on scm.transportation.last_mile) does not
+     hold it, so the lists are not asked for: they could only 403. */
+  const fleetReadable = useScmAreaReadable('scm.transportation.drivers');
+  const { data: drivers = [] } = useDrivers({ enabled: fleetReadable });
+  const { data: lorries = [] } = useLorries({ enabled: fleetReadable });
 
   /* Convert a set of SOs → DOs (single row or the bulk selection). Skips SOs
      with no deliverable remaining (already fully delivered); reports the result

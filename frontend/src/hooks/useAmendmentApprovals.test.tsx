@@ -1,8 +1,9 @@
 /* The sidebar's red counts (hooks/useAmendmentApprovals.ts). Pinned: a page
    load costs ONE combined request, not one per count; each answer lands under
    that count's own key, so a writer invalidating it re-reads just that count;
-   a count the server could not answer shows no badge; a backend without the
-   combined route falls back to the per-count reads. */
+   a count the server could not answer shows no badge WITHOUT a second direct
+   read; the amendment counts are asked only of their approvers; a backend
+   without the combined route falls back to the per-count reads. */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
@@ -17,7 +18,13 @@ vi.mock("../auth/AuthContext", () => ({
 }));
 vi.mock("./useItSupportConnected", () => ({ useItSupportConnected: () => false }));
 
-const { useApprovalBadgeCounts, AMENDMENT_APPROVALS_KEY } = await import("./useAmendmentApprovals");
+const { useApprovalBadgeCounts, AMENDMENT_APPROVALS_KEY, PO_AMENDMENT_APPROVALS_KEY } = await import("./useAmendmentApprovals");
+
+/** An SO lane approver and the PO amendment approver: both amendment counts are theirs. */
+function grantAmendmentApprovers() {
+  perms.add("scm.amendment.approve_lines");
+  perms.add("scm.po_amendment.approve");
+}
 const { resetVisiblePollForTests } = await import("../lib/visiblePoll");
 
 function wrap(client: QueryClient) {
@@ -41,6 +48,7 @@ afterEach(() => {
 
 describe("sidebar counts", () => {
   test("one combined request answers every count, under each count's own key", async () => {
+    grantAmendmentApprovers();
     apiGet.mockImplementation(async (path: string) => {
       if (path.startsWith("/api/badge-counts")) {
         return { counts: { "amendment-approvals": 3, "po-amendment-approvals": null } };
@@ -50,19 +58,20 @@ describe("sidebar counts", () => {
     const { result } = renderHook(() => useApprovalBadgeCounts(), { wrapper: wrap(client) });
 
     await waitFor(() => expect(result.current["amendment-approvals"]).toBe(3));
-    // Nobody here holds the other gates, so only the two open counts are asked
-    // for. The one the server could not answer gets one direct try of its own
-    // (it fails here too) and shows no badge; the answered one costs nothing more.
-    await waitFor(() => expect(apiGet).toHaveBeenCalledTimes(2));
+    // The one the server could not answer (its gate refused) shows no badge and
+    // is NOT re-asked directly: that second read collected the same 403 on every
+    // page load (production, 7 days: 919 for the PO count).
+    await waitFor(() => expect(client.getQueryData(PO_AMENDMENT_APPROVALS_KEY)).toEqual({ count: 0 }));
+    await new Promise((r) => setTimeout(r, 20));
     expect(apiGet.mock.calls.map((c) => c[0])).toEqual([
       "/api/badge-counts?sources=amendment-approvals,po-amendment-approvals",
-      "/api/scm/po-amendments/pending-count",
     ]);
     expect(result.current["po-amendment-approvals"]).toBe(0);
     expect(client.getQueryData(AMENDMENT_APPROVALS_KEY)).toEqual({ count: 3 });
   });
 
   test("a writer invalidating one count re-reads that count alone", async () => {
+    grantAmendmentApprovers();
     apiGet.mockImplementation(async (path: string) => {
       if (path.startsWith("/api/badge-counts")) {
         return { counts: { "amendment-approvals": 3, "po-amendment-approvals": 0 } };
@@ -89,12 +98,22 @@ describe("sidebar counts", () => {
     const { result } = renderHook(() => useApprovalBadgeCounts(), { wrapper: wrap(client) });
     await waitFor(() => expect(result.current["payment-requests-waiting"]).toBe(4));
     expect(result.current["finance-todo"]).toBe(1);
-    expect(apiGet).toHaveBeenCalledWith(
-      "/api/badge-counts?sources=amendment-approvals,po-amendment-approvals,payment-requests-waiting,finance-todo",
-    );
+    expect(apiGet).toHaveBeenCalledWith("/api/badge-counts?sources=payment-requests-waiting,finance-todo");
+  });
+
+  test("the amendment counts are asked only of someone who can approve one", async () => {
+    perms.add("scm.so_cancel.approve_l1");
+    apiGet.mockResolvedValue({ counts: { "amendment-approvals": 2 } });
+    const { result } = renderHook(() => useApprovalBadgeCounts(), { wrapper: wrap(client) });
+    await waitFor(() => expect(result.current["amendment-approvals"]).toBe(2));
+    // A cancellation approver signs in the SO queue; nobody here approves POs,
+    // so the PO count (an area-guarded endpoint that would 403) is never asked.
+    expect(apiGet.mock.calls.map((c) => c[0])).toEqual(["/api/badge-counts?sources=amendment-approvals"]);
+    expect(result.current["po-amendment-approvals"]).toBe(0);
   });
 
   test("without the combined route, each count falls back to its own read", async () => {
+    grantAmendmentApprovers();
     apiGet.mockImplementation(async (path: string) => {
       if (path.startsWith("/api/badge-counts")) throw Object.assign(new Error("Not Found"), { status: 404 });
       if (path === "/api/scm/so-amendments/pending-count") return { count: 5 };

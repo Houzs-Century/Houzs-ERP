@@ -13,6 +13,7 @@ import { api } from "../api/client";
 import { downloadAllPagesCSV } from "../lib/csv";
 import { formatPhone } from "../vendor/shared/phone";
 import { useAuth } from "../auth/AuthContext";
+import { useCanListUsers } from "../auth/endpointAccess";
 import { usePageAccess } from "../auth/PageGuard";
 import { canSeeSoloOrganizer } from "../auth/salesAccess";
 import { salesOrderProjectName, type SoloMaskProject } from "./projects/soloOrganizerMask";
@@ -785,8 +786,11 @@ export function EntryPanel({
   // Sales-person picker. Defaults to the logged-in user (admins keying
   // an entry on behalf of a rep change this). Falls back gracefully if
   // /api/users is forbidden for the role — the picker simply hides.
+  const canListTeam = useCanListUsers();
   const usersQ = useQuery<{ users: Array<{ id: number; name: string | null; email: string }> }>("/api/users#tolerant",
-    () => api.get<{ users: Array<{ id: number; name: string | null; email: string }> }>("/api/users").catch(() => ({ users: [] }))
+    () => api.get<{ users: Array<{ id: number; name: string | null; email: string }> }>("/api/users").catch(() => ({ users: [] })),
+    [],
+    { enabled: canListTeam },
   );
 
   // Brand list — same source the projects + sales-team modules use.

@@ -11,6 +11,7 @@ import { SearchScopeHint } from "../components/SearchScopeHint";
 import { useSearchResultTransition } from "../hooks/useServerSearch";
 import { booleanPreference, useIdentityPreference } from "../hooks/useIdentityPreference";
 import { useAuth } from "../auth/AuthContext";
+import { useCanListUsers, useScmAreaReadable } from "../auth/endpointAccess";
 import { isSalesNonDirector, isSalesDirectorUser, canLogSalesEntry, canCreateEvent, quickActionAccess } from "../auth/salesAccess";
 import { NewProjectSheet } from "./MobileNewProject";
 import { capability } from "../auth/capabilities";
@@ -857,11 +858,13 @@ function ProjectDetailView({
   // Reference-data for the write forms. All best-effort (retry:false): a rep
   // whose token lacks the perm gets 403 → empty list → the select just shows
   // the current value with no options, never crashes.
+  const canListTeam = useCanListUsers();
+  const fleetReadable = useScmAreaReadable("scm.transportation.drivers");
   const picUsersQ = useQuery({
     queryKey: ["mobile-pms-pic-users"],
     queryFn: () => api.get<{ users: PicUser[] }>(`/api/users?department=${encodeURIComponent("Sales")}`),
     staleTime: 5 * 60_000,
-    enabled: canWrite,
+    enabled: canWrite && canListTeam,
     retry: false,
   });
   const picUsers = picUsersQ.data?.users ?? [];
@@ -898,8 +901,9 @@ function ProjectDetailView({
     queryKey: ["mobile-pms-lorries"],
     queryFn: () => api.get<{ lorries: Lorry[] }>(`/api/scm/lorries`),
     staleTime: 5 * 60_000,
-    // Only feeds the Setup & Dismantle crew editor — skip when it's hidden.
-    enabled: canWrite && canSetupDismantle,
+    // Only feeds the Setup & Dismantle crew editor — skip when it's hidden, and
+    // when the Fleet area (scmAreaGuard scm.transportation.drivers) would 403.
+    enabled: canWrite && canSetupDismantle && fleetReadable,
     retry: false,
   });
   const lorries = lorriesQ.data?.lorries ?? [];

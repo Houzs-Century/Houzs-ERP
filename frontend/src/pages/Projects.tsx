@@ -81,6 +81,7 @@ import { ExhibitionSalesTable } from "./projects/ExhibitionSalesTable";
 import { useFocusFromUrl } from "../hooks/useFocusFromUrl";
 import { useStickyFilters } from "../hooks/useStickyFilters";
 import { useAuth } from "../auth/AuthContext";
+import { useCanListUsers, useScmAreaReadable } from "../auth/endpointAccess";
 import { usePageAccess } from "../auth/PageGuard";
 import { isSalesStaff, isDirectorUser, isSalesDirectorUser, canCreateEvent, canSeeSoloOrganizer, canLogSalesEntry, canWriteProjectFinance } from "../auth/salesAccess";
 import { readProjectAccess, projectAccessUnresolved, holdsChecklistApproval } from "../auth/projectAccess";
@@ -1882,9 +1883,13 @@ function ProjectDetailContent({
   const notOpenedByRep = notOpenedByRepId(billsQ.data?.persons ?? []);
   // Users list — fetched once per open panel, reused for owner pickers
   // in the logistics section, checklist add form, and reassign dropdowns.
+  // GET /api/users is users.read (or a Sales Director); anyone else got a 403
+  // per panel open, and the pickers were empty either way.
+  const canListTeam = useCanListUsers();
   const usersQ = useQuery<{ id: number; name: string }[]>("/api/users#unwrapped",
     () => api.get<any>("/api/users").then((r: any) => r.users ?? r.data ?? r ?? []),
-    []
+    [],
+    { enabled: canListTeam },
   );
   const users = usersQ.data ?? [];
   // Defect action timeline (owner 2026-07-29) — who may stamp Ongoing/Done on
@@ -1934,7 +1939,8 @@ function ProjectDetailContent({
   // and the PIC-save brand gate is brand-relaxed for Sales-dept members.
   const picUsersQ = useQuery<{ users: Array<{ id: number; name: string | null; email: string; phone?: string | null }> }>("/api/users?department=:",
     () => api.get(`/api/users?department=${encodeURIComponent("Sales")}`),
-    []
+    [],
+    { enabled: canListTeam },
   );
   const picUsers = picUsersQ.data?.users ?? [];
   const checklist = detail.data?.checklist ?? [];
@@ -2378,9 +2384,13 @@ function ProjectTeamSection({
   // Sales-attending picker — gated on projects.write, role-filtered to
   // sales_person. Brand-relaxed (owner: Option A): lists ALL active
   // Sales Persons regardless of brand. See GET /api/projects/sales-rep-options.
+  // The endpoint is requirePermission("projects.write") — the same key the
+  // comment above names; without it the read could only 403.
+  const { can: canRep } = useAuth();
   const repsQ = useQuery<{ data: SalesRepBrief[]; others?: StaffBrief[] }>("/api/projects/sales-rep-options",
     () => api.get(`/api/projects/sales-rep-options`),
-    []
+    [],
+    { enabled: canRep("projects.write") },
   );
   // Alphabetical by NAME (owner 2026-07-28) — was code order (SR-004, SR-005…);
   // the SR-xxx code is just a stable id and does NOT need to be renumbered.
@@ -6388,6 +6398,7 @@ function LogisticsCrewSection({
   // already plain language: api.client throws HttpError whose `.message` is
   // humanHttpMessage(status, body).
   const [refError, setRefError] = useState<string | null>(null);
+  const fleetReadable = useScmAreaReadable("scm.transportation.drivers");
   useEffect(() => {
     let live = true;
     const fail = (e: unknown) => {
@@ -6402,6 +6413,12 @@ function LogisticsCrewSection({
       .get<{ data: CrewMember[] }>("/api/fleet/staff")
       .then((r) => { if (live) setCrew(r.data ?? []); })
       .catch(fail);
+    /* The Fleet master (lorries, outsource drivers / helpers) sits behind
+       scmAreaGuard("scm.transportation.drivers"). Without that area the reads
+       are not made at all: they could only 403 (production, 7 days: 135 refused
+       lorry reads from 20 users), and the lorry 403 used to put a permission
+       error over the in-house crew pickers that had loaded fine. */
+    if (!fleetReadable) return () => { live = false; };
     api
       .get<{ lorries: { plate: string }[] }>("/api/scm/lorries")
       .then((r) => { if (live) setLorryOptions((r.lorries ?? []).map((l) => l.plate).filter(Boolean)); })
@@ -6420,7 +6437,7 @@ function LogisticsCrewSection({
       .then((r) => { if (live) setFleetHelpers(outsourceOnly(r.helpers ?? []).map(helperToCrew)); })
       .catch(() => { if (live) setFleetHelpers([]); });
     return () => { live = false; };
-  }, []);
+  }, [fleetReadable]);
   const isType = (u: CrewMember, kind: string) =>
     (u.role_name || "").toLowerCase() === kind || (u.user_type || "").toLowerCase() === kind;
   const drivers = useMemo(

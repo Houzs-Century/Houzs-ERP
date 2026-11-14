@@ -8,6 +8,7 @@ import { uploadAssrAttachment } from "../lib/assrAttachmentUpload";
 import { UploadDropZone, clipboardFiles, useStrayFileDropGuard } from "../lib/uploadDropZone";
 import { loadThumbFirst } from "../lib/imagePipeline";
 import { useAuth } from "../auth/AuthContext";
+import { useCanListUsers } from "../auth/endpointAccess";
 import { isSalesStaff, isSalesNonDirector } from "../auth/salesAccess";
 import { capability } from "../auth/capabilities";
 import { MobileVirtualList } from "./MobileVirtualList";
@@ -247,7 +248,7 @@ function useLookupSlugs(kind: string, fallback: readonly string[]): string[] {
 type PicUser = { id: number; name: string; department_name?: string };
 function useAssignableUsers(): PicUser[] {
   const { data } = useQuery({
-    queryKey: ["mobile-assr-users"],
+    queryKey: ["mobile-assr-users"], enabled: useCanListUsers(),
     queryFn: () =>
       api
         .get<any>("/api/users")
