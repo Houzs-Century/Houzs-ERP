@@ -411,6 +411,15 @@ export function FleetDay() {
             <DateField value={date} onChange={(iso) => setParam('date', iso || null)} className="border-0 bg-transparent px-1 py-1 text-center text-[12.5px] font-semibold text-ink" />
             <button type="button" aria-label="Next day" onClick={() => { setParam('date', shiftDate(date, 1)); }} className="px-2 py-1.5 text-ink-secondary hover:bg-surface-2"><ChevronRight size={16} /></button>
           </div>
+          {date !== todayMY() && (
+            <button
+              type="button"
+              onClick={() => setParam('date', null)}
+              className="rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[12px] font-semibold text-ink-secondary hover:bg-surface-2"
+            >
+              Today
+            </button>
+          )}
           <Button variant="secondary" icon={<Printer size={14} />} onClick={() => goPrint()} disabled={trips.length === 0}>
             Print all run-sheets
           </Button>
