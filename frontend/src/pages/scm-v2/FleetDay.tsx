@@ -297,6 +297,9 @@ export function FleetDay() {
   // Malaysian wall-clock for the "Live · h:mm AM/PM" header, via the shared pure
   // formatter (no locale date API — keeps audit:date-format clean).
   const liveTime = clockMY(new Date().toISOString()) ?? '';
+  // "Today" header button: always shown, inert (disabled + greyed) when the board
+  // is already on today, so the control never disappears (owner 2026-11-14).
+  const onToday = date === todayMY();
 
   // Own fleet (in-house, always pinned) above outsourced (shown only on a day it
   // carries drops — owner rule 2026-11-01).
@@ -411,15 +414,17 @@ export function FleetDay() {
             <DateField value={date} onChange={(iso) => setParam('date', iso || null)} className="border-0 bg-transparent px-1 py-1 text-center text-[12.5px] font-semibold text-ink" />
             <button type="button" aria-label="Next day" onClick={() => { setParam('date', shiftDate(date, 1)); }} className="px-2 py-1.5 text-ink-secondary hover:bg-surface-2"><ChevronRight size={16} /></button>
           </div>
-          {date !== todayMY() && (
-            <button
-              type="button"
-              onClick={() => setParam('date', null)}
-              className="rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[12px] font-semibold text-ink-secondary hover:bg-surface-2"
-            >
-              Today
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => setParam('date', null)}
+            disabled={onToday}
+            aria-label="Jump to today"
+            className={`rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[12px] font-semibold ${
+              onToday ? 'cursor-default text-ink-muted opacity-60' : 'text-ink-secondary hover:bg-surface-2'
+            }`}
+          >
+            Today
+          </button>
           <Button variant="secondary" icon={<Printer size={14} />} onClick={() => goPrint()} disabled={trips.length === 0}>
             Print all run-sheets
           </Button>
