@@ -8,6 +8,8 @@
  * that file stays under its size ceiling. Colours are local literals, as
  * elsewhere in the mobile tree (there is no shared mobile palette module).
  */
+import { useOptimisticChoice } from "../hooks/useOptimisticChoice";
+
 const INK_SEC = "#3f463a";
 const BROWN = "#a16a2e";
 const BROWN_SOFT = "#f6efd9";
@@ -28,10 +30,11 @@ export function LegOwnerToggle({
   label: string;
   options: ReadonlyArray<LegOwnerOption>;
   current: unknown;
-  onPick: (value: string | null) => void;
+  onPick: (value: string | null) => Promise<boolean>;
   disabled: boolean;
 }) {
-  const cur = String(current ?? "");
+  const choice = useOptimisticChoice(current == null || current === "" ? null : String(current));
+  const cur = choice.shownValue ?? "";
   return (
     <>
       <div className="fld-l" style={{ marginTop: 10, marginBottom: 8 }}>{label}</div>
@@ -41,7 +44,11 @@ export function LegOwnerToggle({
           return (
             <button
               key={o.v}
-              onClick={() => { if (!disabled) onPick(on ? null : o.v); }}
+              onClick={() => {
+                if (disabled) return;
+                const nextValue = on ? null : o.v;
+                void choice.choose(nextValue, () => onPick(nextValue));
+              }}
               disabled={disabled}
               style={{
                 flex: 1, height: 40, borderRadius: 10, cursor: disabled ? "default" : "pointer", fontFamily: "inherit",

@@ -6,6 +6,8 @@
 // Kept out of ServiceCases.tsx, which is at its size ceiling.
 import type { ReactElement } from "react";
 import { cn } from "../../lib/utils";
+import { useOptimisticChoice } from "../../hooks/useOptimisticChoice";
+import { writeFailedAs } from "../../vendor/scm/lib/mutation-error";
 import { InlineEdit } from "../InlineEdit";
 import { PICKUP_STATUS_OPTIONS, pickupTrackingLabel } from "../../vendor/scm/lib/assr-pickup-tracking";
 import { CaseSection } from "./CaseSection";
@@ -38,6 +40,16 @@ export const PICKUP_BY_OPTIONS = [
 ] as const;
 
 export function PickupTrackingFields({ c, patch }: PickupTrackingFieldsProps): ReactElement {
+  const pickupBy = useOptimisticChoice(c.pickup_by ?? null);
+  const savePickupBy = async (value: string | null): Promise<boolean> => {
+    try {
+      await patch({ pickup_by: value });
+      return true;
+    } catch (error) {
+      writeFailedAs("Couldn't save Pickup By")(error);
+      return false;
+    }
+  };
   return (
     <>
       <CaseSection title="1. Pickup Details" badge={null} icon={null} action={null} isCollapsible={false}>
@@ -48,10 +60,13 @@ export function PickupTrackingFields({ c, patch }: PickupTrackingFieldsProps): R
               <button
                 key={option.value}
                 type="button"
-                onClick={() => patch({ pickup_by: c.pickup_by === option.value ? null : option.value })}
+                onClick={() => {
+                  const nextValue = pickupBy.shownValue === option.value ? null : option.value;
+                  void pickupBy.choose(nextValue, () => savePickupBy(nextValue));
+                }}
                 className={cn(
                   "min-h-[36px] rounded-md border px-3 py-1.5 text-[12px] font-semibold transition-colors",
-                  c.pickup_by === option.value
+                  pickupBy.shownValue === option.value
                     ? "border-primary bg-primary-soft text-primary"
                     : "border-border bg-surface text-ink-secondary hover:border-primary/40",
                 )}
@@ -88,7 +103,7 @@ export function PickupTrackingFields({ c, patch }: PickupTrackingFieldsProps): R
             onSave={(value) => patch({ actual_pickup_at: value })}
           />
         </div>
-        {c.pickup_by === "customer" && !c.actual_pickup_at && (
+        {pickupBy.shownValue === "customer" && !c.actual_pickup_at && (
           <LogisticsConfirmedNote requested={c.customer_pickup_at} confirmed={c.sched_pickup_date} />
         )}
       </CaseSection>

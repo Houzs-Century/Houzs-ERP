@@ -732,17 +732,17 @@ function CaseDetail({ id, onBack, onRaiseExchangePo }: { id: number; onBack: () 
   const refetch = () => qc.invalidateQueries({ queryKey: ["mobile-assr-detail", id] });
   // A single mutual-exclusion guard keeps every write serial: no double
   // submits while a PATCH / transition / upload is in flight.
-  const runWrite = async (fn: () => Promise<void>, failTitle: string) => {
-    if (busy) return;
+  const runWrite = async (fn: () => Promise<void>, failTitle: string): Promise<boolean> => {
+    if (busy) return false;
     setBusy(true);
     try {
       await fn();
       refetch();
       // Prefix key MUST match the list query (["mobile-assr-list-paged", …]);
       // "mobile-assr-list" is not a prefix of it, so it never invalidated.
-      qc.invalidateQueries({ queryKey: ["mobile-assr-list-paged"] });
+      qc.invalidateQueries({ queryKey: ["mobile-assr-list-paged"] }); return true;
     } catch (e: any) {
-      await notify({ title: failTitle, body: e?.message || "Please try again.", tone: "error" });
+      await notify({ title: failTitle, body: e?.message || "Please try again.", tone: "error" }); return false;
     } finally {
       setBusy(false);
     }
