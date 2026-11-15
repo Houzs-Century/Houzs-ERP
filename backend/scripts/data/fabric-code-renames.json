@@ -1,0 +1,21 @@
+{
+  "EMBRACE-2026-11-13": {
+    "note": "Owner 2026-11-13: each EMBRACE fabric's code becomes the EM number its description already leads with, and the thirteen are one series, EM.",
+    "companyId": 2,
+    "pairs": [
+      { "from": "KN01", "to": "EM-09" },
+      { "from": "KN02", "to": "EM-13" },
+      { "from": "KN03", "to": "EM-10" },
+      { "from": "KN04", "to": "EM-12" },
+      { "from": "KN05", "to": "EM-11" },
+      { "from": "KN06", "to": "EM-01" },
+      { "from": "KN07", "to": "EM-02" },
+      { "from": "KN08", "to": "EM-04" },
+      { "from": "KN09", "to": "EM-03" },
+      { "from": "KN10", "to": "EM-08" },
+      { "from": "KN11", "to": "EM-06" },
+      { "from": "KN12", "to": "EM-07" },
+      { "from": "KN13", "to": "EM-05" }
+    ]
+  }
+}

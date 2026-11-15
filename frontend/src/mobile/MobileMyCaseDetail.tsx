@@ -121,7 +121,7 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-export function MobileMyCaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
+export function MobileMyCaseDetail({ id, onBack }: { id: number; onBack: () => void; onRaiseExchangePo?: () => void }) {
   const qc = useQueryClient();
   const notify = useNotify();
   const [comment, setComment] = useState("");

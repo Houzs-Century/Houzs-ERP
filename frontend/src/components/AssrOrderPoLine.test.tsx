@@ -3,7 +3,8 @@ import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { AssrOrderPoLine } from "./AssrOrderPoLine";
-import { assrMergedPos, assrMergedPoText, assrOrderPoHref, assrOrderPos, assrOrderPoText } from "../vendor/scm/lib/assr/case-fields";
+import { AssrExchangePoLine } from "./AssrExchangePoLine";
+import { assrMergedPos, assrMergedPoText, assrOrderPoHref, assrOrderPos, assrOrderPoText, assrExchangePos, assrExchangePoText } from "../vendor/scm/lib/assr/case-fields";
 
 /* "Order PO" on a service case — the supplier purchase orders raised from the
  * case's SALES ORDER (server field `order_pos`, backend services/assrOrderPos.ts).
@@ -100,6 +101,49 @@ describe("AssrOrderPoLine (desktop case detail)", () => {
   });
 });
 
+/* "Exchange PO" — the REAL purchase orders raised FROM a case for a one-to-one
+ * exchange (server field `exchange_pos`, scm.purchase_orders.assr_case_id). A
+ * third, distinct fact from order_pos and po_no, read through the same shared
+ * reader and the entry into PO -> GRN -> purchase return / purchase invoice. */
+const EXCHANGE_CASE = {
+  company_id: 1,
+  exchange_pos: [
+    { id: "ex-po-1", po_number: "HC-PO-009001", status: "DRAFT" },
+    { id: "ex-po-2", po_number: "HC-PO-009002", status: "SUBMITTED" },
+  ],
+};
+
+describe("assrExchangePos / assrExchangePoText", () => {
+  test("reads the server's snake_case field, keeping status", () => {
+    expect(assrExchangePos(EXCHANGE_CASE)).toEqual(EXCHANGE_CASE.exchange_pos);
+    expect(assrExchangePoText(EXCHANGE_CASE)).toBe("HC-PO-009001 · HC-PO-009002");
+  });
+
+  test("reads a camelCased payload too; absent/malformed reads as none", () => {
+    expect(assrExchangePos({ exchangePos: [{ id: "x", poNumber: "HC-PO-1" }] }))
+      .toEqual([{ id: "x", po_number: "HC-PO-1", status: "" }]);
+    expect(assrExchangePos({ exchange_pos: null })).toEqual([]);
+    expect(assrExchangePos(null)).toEqual([]);
+    expect(assrExchangePos({ exchange_pos: [{ id: "a" }, { po_number: "no-id" }, "junk"] })).toEqual([]);
+    // never confused with order_pos or po_no
+    expect(assrExchangePoText({ order_pos: [{ id: "a", po_number: "HC-PO-1" }], po_no: "SVC-1" })).toBe("");
+  });
+});
+
+describe("AssrExchangePoLine (desktop case detail)", () => {
+  test("each exchange PO is a link to its PO page in the case's company, with its status", () => {
+    render(<AssrExchangePoLine row={EXCHANGE_CASE} />);
+    expect(screen.getByText("Exchange PO")).toBeTruthy();
+    expect(screen.getByText("HC-PO-009001").closest("a")?.getAttribute("href")).toBe("/scm/purchase-orders/ex-po-1?company=1");
+    expect(screen.getByText("(DRAFT)")).toBeTruthy();
+  });
+
+  test("no exchange PO renders nothing (not a dash)", () => {
+    const { container } = render(<AssrExchangePoLine row={{ company_id: 1, exchange_pos: [] }} />);
+    expect(container.firstChild).toBeNull();
+  });
+});
+
 /* The two screens are 8,800 and 3,400 lines and cannot be mounted without a
  * router, a query client and the whole detail fetch — same reason as
  * case-fields.canonical.test.ts. What must hold is WHERE they read it. */
@@ -137,5 +181,36 @@ describe("where Order PO appears", () => {
     const po = mobile.indexOf('<KV label="PO No"');
     expect(kv).toBeGreaterThan(-1);
     expect(po).toBeGreaterThan(kv);
+  });
+
+  test("desktop detail: the Exchange PO panel sits between Order PO and the editable PO No", () => {
+    const order = desktop.indexOf("<AssrOrderPoLine row={c} />");
+    const panel = desktop.indexOf("<AssrExchangePoPanel caseRow={c} />");
+    const edit = desktop.indexOf('label="PO No"');
+    expect(panel).toBeGreaterThan(order);
+    expect(edit).toBeGreaterThan(panel);
+  });
+
+  test("the Exchange PO panel seeds the New-PO form and links the case", () => {
+    const panel = code("src/components/AssrExchangePoPanel.tsx");
+    expect(panel).toContain("Raise exchange PO");
+    expect(panel).toContain("/scm/purchase-orders/new?fromAssrCase=${caseRow.id}");
+    expect(panel).toContain('writeScmHandoff("poNewDraft"');
+  });
+
+  test("mobile: the Exchange PO row sits between Order PO and PO No; display + raise live in its module", () => {
+    const order = mobile.indexOf('<KV label="Order PO"');
+    const row = mobile.indexOf("<MobileExchangePoRow c={c} onRaise={onRaiseExchangePo} />");
+    const po = mobile.indexOf('<KV label="PO No"');
+    expect(row).toBeGreaterThan(order);
+    expect(po).toBeGreaterThan(row);
+    const rowSrc = code("src/mobile/MobileExchangePoRow.tsx");
+    expect(rowSrc).toContain("assrExchangePoText(c)");
+    expect(rowSrc).toContain("Raise exchange PO");
+    expect(rowSrc).toContain('writeScmHandoff("exchangePoSeed"');
+    const create = code("src/mobile/MobilePurchaseDocNew.tsx");
+    expect(create).toContain("readScmHandoff");
+    expect(create).toContain("exchangePoSeed");
+    expect(create).toContain("assrCaseId: exchangeCaseId");
   });
 });

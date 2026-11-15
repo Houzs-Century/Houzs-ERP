@@ -359,6 +359,14 @@ export type MonthAdjustmentRow = {
   /** That month recalculated today. */
   nowSen: number;
   adjustmentSen: number;
+  /** What Now is worked on (owner 2026-11-13, 「我看不到goods amount和rate」): the
+      goods the recalculated month pays the order on — its own goods once it has
+      30%, the goods of its counted earlier lines (reaching 30%: its goods; an
+      upsale or drop sale: the change; a cancellation: less its goods), Finance's
+      own lines — and its rate. Absent when the month pays it on nothing; the
+      rate stays where its place has one. */
+  goodsSen?: number;
+  ratePct?: number | null;
 };
 
 /** A closed month as the adjustments need it: what it paid each order, and the
@@ -388,9 +396,28 @@ const totalsOf = (t: Omit<EventCommissionReport['totals'], 'totalSen'>): EventCo
   ...t, totalSen: t.payableSen + t.adjustmentsSen + t.monthAdjustmentsSen + t.deferredInSen + (t.manualSen ?? 0),
 });
 
+/** The goods a month's report pays each order on, and the order's rate (see
+ *  MonthAdjustmentRow.goodsSen). An order a mark takes out of the month, a line
+ *  before 30% and a change left out pay on nothing. */
+export function goodsAndRateOf(r: EventCommissionReport): Map<string, { goodsSen: number; ratePct: number | null }> {
+  const out = new Map<string, { goodsSen: number; ratePct: number | null }>();
+  const takenOut = new Set(r.marked.filter((m) => m.mark.kind !== 'exclude_change').map((m) => m.docNo));
+  const put = (doc: string, goods: number, rate: number | null) => {
+    if (takenOut.has(doc)) return;
+    const had = out.get(doc);
+    out.set(doc, { goodsSen: (had?.goodsSen ?? 0) + goods, ratePct: had?.ratePct ?? rate });
+  };
+  const leftOut = new Map(r.changedOrders.filter((o) => o.part === 'range').map((o) => [o.docNo, o.uncountedGoodsSen ?? 0]));
+  for (const f of r.fairs) for (const so of f.sos) if (so.reachedOn != null && !so.mark) put(so.docNo, so.goodsSen - (leftOut.get(so.docNo) ?? 0), f.ratePct);
+  const rateOf = new Map([...r.earlierOrders, ...r.changedOrders].map((o) => [o.docNo, o.ratePct]));
+  for (const a of r.adjustments) if (!a.beforeReach && !a.uncounted) put(a.docNo, a.goodsSen, rateOf.get(a.docNo) ?? null);
+  for (const m of r.manualLines ?? []) put(m.docNo, m.goodsSen, m.ratePct);
+  return out;
+}
+
 /** Each closed month's commission per order, recalculated today (`live`, by
  *  month), against what it paid — as closed plus what later months carried for
- *  it. Only the orders that moved. */
+ *  it. Only the orders that moved, each with the goods and rate Now is worked on. */
 export function monthAdjustmentsOf(closed: readonly ClosedMonthPaid[], live: ReadonlyMap<string, EventCommissionReport>): MonthAdjustmentRow[] {
   const rows: MonthAdjustmentRow[] = [];
   for (const k of closed) {
@@ -402,19 +429,24 @@ export function monthAdjustmentsOf(closed: readonly ClosedMonthPaid[], live: Rea
       for (const c of m.carried) if (c.month === k.month) was[c.docNo] = (was[c.docNo] ?? 0) + c.sen;
     }
     const nowPaid = paidByOrder(now);
-    const where = new Map<string, Omit<MonthAdjustmentRow, 'month' | 'docNo' | 'wasSen' | 'nowSen' | 'adjustmentSen'>>();
+    const worked = goodsAndRateOf(now);
+    const where = new Map<string, Omit<MonthAdjustmentRow, 'month' | 'docNo' | 'wasSen' | 'nowSen' | 'adjustmentSen' | 'goodsSen'>>();
     for (const f of now.fairs) for (const so of f.sos) {
-      where.set(so.docNo, { fairId: f.id, fairName: f.name, brand: f.brand, salesperson: so.salesperson, customer: so.customer, ref: so.ref, soDate: so.soDate, status: so.status });
+      where.set(so.docNo, { fairId: f.id, fairName: f.name, brand: f.brand, salesperson: so.salesperson, customer: so.customer, ref: so.ref, soDate: so.soDate, status: so.status, ratePct: f.ratePct });
     }
     for (const o of [...now.earlierOrders, ...(now.manualLines ?? [])]) {
-      if (!where.has(o.docNo)) where.set(o.docNo, { fairId: o.fairId, fairName: o.fairName, brand: o.brand, salesperson: o.salesperson, customer: o.customer, ref: o.ref, soDate: o.soDate, status: o.status });
+      if (!where.has(o.docNo)) where.set(o.docNo, { fairId: o.fairId, fairName: o.fairName, brand: o.brand, salesperson: o.salesperson, customer: o.customer, ref: o.ref, soDate: o.soDate, status: o.status, ratePct: o.ratePct });
     }
     for (const doc of new Set([...Object.keys(was), ...Object.keys(nowPaid)])) {
       const w = was[doc] ?? 0;
       const n = nowPaid[doc] ?? 0;
       if (w === n) continue;
       const at = where.get(doc) ?? { fairId: null, fairName: '', brand: null, salesperson: null, customer: null, ref: null, soDate: null };
-      rows.push({ month: k.month, docNo: doc, ...at, wasSen: w, nowSen: n, adjustmentSen: n - w });
+      const g = worked.get(doc);
+      rows.push({
+        month: k.month, docNo: doc, ...at, wasSen: w, nowSen: n, adjustmentSen: n - w,
+        ...(g ? { goodsSen: g.goodsSen, ratePct: g.ratePct ?? at.ratePct ?? null } : {}),
+      });
     }
   }
   return rows.sort((a, b) => (a.month < b.month ? -1 : a.month > b.month ? 1 : a.docNo < b.docNo ? -1 : 1));

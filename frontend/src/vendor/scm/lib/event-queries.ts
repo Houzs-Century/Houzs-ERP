@@ -224,6 +224,10 @@ export type CommissionMonthAdjustment = {
   /** That month recalculated today. */
   nowSen: number;
   adjustmentSen: number;
+  /** The goods Now is worked on and the rate (owner 2026-11-13: 「我看不到goods amount和rate」) —
+      absent when the month pays the order on nothing, and on rows made before. */
+  goodsSen?: number;
+  ratePct?: number | null;
 };
 /** An order Finance marked, with the commission the mark took out of this report. */
 export type CommissionMarkedOrder = CommissionOrderPlace & { mark: CommissionMarkInfo; commissionSen: number };

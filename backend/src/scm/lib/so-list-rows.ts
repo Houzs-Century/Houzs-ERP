@@ -37,6 +37,7 @@ import { unionSoLineChips } from './source-po-trace';
 import { warehouseLabel } from './warehouse-label';
 import { soDeliverableRemaining, computeSoLifecycle, soCurrentDocNo, soLineShippedSources } from '../routes/delivery-orders-mfg';
 import { derivePlanningState } from '../routes/delivery-planning';
+import { soExemptionExpiryOf } from './so-exemption-expiry';
 import { soReopenable } from './so-reopen';
 
 export type SoListRow = { doc_no?: string } & Record<string, unknown>;
@@ -475,6 +476,12 @@ export async function buildSoListRows(
         delivered: dDelivered,
         remaining: dRemaining,
         effectiveDD,
+        // The list's own "Sales Exemption Expiry Date" value: the board reads the same chain.
+        salesExemptionExpiry: soExemptionExpiryOf({
+          sales_exemption_expiry: (r as Record<string, unknown>).sales_exemption_expiry as string | null ?? null,
+          ac_sales_exemption_expiry: acExemptionByDoc.get(docNo) ?? null,
+          customer_delivery_date: (r as Record<string, unknown>).customer_delivery_date as string | null ?? null,
+        }),
         today: planningToday,
       });
       /* First-item branding source (PR #266; catalog-resolved + mains-first). */

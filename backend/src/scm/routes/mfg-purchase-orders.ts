@@ -1221,6 +1221,8 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
     /* PR #97 — AutoCount Purchase Location at create time.
        PR #157 — now required (see validation above). */
     purchase_location_id: purchaseLocationId,
+    // Service-case exchange link; key OMITTED for an ordinary PO so create works even before PostgREST reloads the new column (owner 2026-11-13).
+    ...(Number.isInteger(Number(body.assrCaseId)) && Number(body.assrCaseId) > 0 ? { assr_case_id: Number(body.assrCaseId) } : {}),
   };
   // Optional poDate, else today in Malaysia (the column's UTC now() default is a day early before 08:00).
   headerInsert.po_date = body.poDate || todayMyt();

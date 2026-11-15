@@ -92,7 +92,7 @@ describe("assembleSoListMrpEnrichment", () => {
     ["l1", [{ po: "PO-9", qty: 1, kind: "po" }]],
   ]);
   const headers = new Map<string, EnrichmentHeader>([
-    ["SO-1", { status: "CONFIRMED", storedOverride: null, effectiveDD: "2099-01-01" }],
+    ["SO-1", { status: "CONFIRMED", storedOverride: null, effectiveDD: "2099-01-01", salesExemptionExpiry: null }],
   ]);
   /* SO-1 is PROCESSED and its mattress line is pooled — the gates are open, so
      these cases exercise the promotion arm exactly as before 2026-08-30. */
@@ -138,7 +138,7 @@ describe("assembleSoListMrpEnrichment", () => {
       derivePlanningState({
         storedOverride: null, status: "CONFIRMED",
         readiness: { isShipReady: exp.isShipReady },
-        delivered: 0, remaining: 1, effectiveDD: "2099-01-01", today: "2026-08-18",
+        delivered: 0, remaining: 1, effectiveDD: "2099-01-01", salesExemptionExpiry: null, today: "2026-08-18",
       }),
     );
     expect(out.planningState).toBe("PENDING_SCHEDULE"); // ready → scheduled
@@ -177,7 +177,7 @@ describe("assembleSoListMrpEnrichment — C16 payload key-set parity", () => {
       categoryByCode: new Map<string, string>(),
       readyByItem: new Map<string, ReadySourceChip[]>(),
       fullyShippedItemIds: new Set<string>(),
-      headers: new Map<string, EnrichmentHeader>([["SO-1", { status: "CONFIRMED", storedOverride: null, effectiveDD: null }]]),
+      headers: new Map<string, EnrichmentHeader>([["SO-1", { status: "CONFIRMED", storedOverride: null, effectiveDD: null, salesExemptionExpiry: null }]]),
       delivered: new Map<string, number>(),
       remaining: new Map<string, number>(),
       today: "2026-08-18",

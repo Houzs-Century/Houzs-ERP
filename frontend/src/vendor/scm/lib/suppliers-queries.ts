@@ -1208,6 +1208,11 @@ export function useCreatePurchaseOrder() {
           after the operator confirms to raise a PO beyond what the SO still needs.
           Mirrors confirmShortStock. Only the New-PO-from-SO flow sends it. */
       confirmOverConvert?: boolean;
+      /** Service-case exchange link (owner 2026-11-13). Set only when the New-PO
+          form was opened from a service case (?fromAssrCase=); the server stamps
+          scm.purchase_orders.assr_case_id so the case shows this exchange PO.
+          Omitted for every ordinary PO. */
+      assrCaseId?: number | null;
     }) =>
       authedFetch<{ id: string; poNumber: string }>(`/mfg-purchase-orders`,
         idempotentInit(idempotencyKey, {
