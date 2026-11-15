@@ -732,17 +732,17 @@ function CaseDetail({ id, onBack, onRaiseExchangePo }: { id: number; onBack: () 
   const refetch = () => qc.invalidateQueries({ queryKey: ["mobile-assr-detail", id] });
   // A single mutual-exclusion guard keeps every write serial: no double
   // submits while a PATCH / transition / upload is in flight.
-  const runWrite = async (fn: () => Promise<void>, failTitle: string): Promise<boolean> => {
-    if (busy) return false;
+  const runWrite = async (fn: () => Promise<void>, failTitle: string) => {
+    if (busy) return;
     setBusy(true);
     try {
       await fn();
       refetch();
       // Prefix key MUST match the list query (["mobile-assr-list-paged", …]);
       // "mobile-assr-list" is not a prefix of it, so it never invalidated.
-      qc.invalidateQueries({ queryKey: ["mobile-assr-list-paged"] }); return true;
+      qc.invalidateQueries({ queryKey: ["mobile-assr-list-paged"] });
     } catch (e: any) {
-      await notify({ title: failTitle, body: e?.message || "Please try again.", tone: "error" }); return false;
+      await notify({ title: failTitle, body: e?.message || "Please try again.", tone: "error" });
     } finally {
       setBusy(false);
     }
@@ -753,6 +753,11 @@ function CaseDetail({ id, onBack, onRaiseExchangePo }: { id: number; onBack: () 
     runWrite(async () => {
       await api.patch(`/api/assr/${id}`, body);
     }, failTitle);
+  const patchLegOwner = async (body: Record<string, string | null>, failTitle: string): Promise<boolean> => {
+    let isSaved = false;
+    await runWrite(async () => { await api.patch(`/api/assr/${id}`, body); isSaved = true; }, failTitle);
+    return isSaved;
+  };
 
   const addNote = useMutation({
     mutationFn: (payload: { note: string; category: NoteAudience }) =>
@@ -1048,7 +1053,7 @@ function CaseDetail({ id, onBack, onRaiseExchangePo }: { id: number; onBack: () 
             {/* Inspect by — own team routes the visit to the HC Delivery sheet. */}
             <LegOwnerToggle label="Inspect by" current={get(c, "inspectionBy", "inspection_by")} disabled={dis}
               options={[{ v: "own", label: "Own team" }, { v: "supplier", label: "Supplier" }]}
-              onPick={(v) => patchCase({ inspection_by: v }, "Couldn't save inspect-by")} />
+              onPick={(v) => patchLegOwner({ inspection_by: v }, "Couldn't save inspect-by")} />
             {/* QC issue photos — on-receipt evidence, same category as the
                 desktop Verification card (receipt_evidence). */}
             <PhotoGrid
@@ -1093,7 +1098,7 @@ function CaseDetail({ id, onBack, onRaiseExchangePo }: { id: number; onBack: () 
             <MobileSectionHead title="1. Pickup Details" badge={null} />{/* Pickup by: own team ('customer') collects, syncing the PICKUP leg to the sheet. */}
             <LegOwnerToggle label="Pickup by" current={get(c, "pickupBy", "pickup_by")} disabled={dis}
               options={[{ v: "customer", label: "Own team pickup" }, { v: "supplier", label: "Supplier direct" }]}
-              onPick={(v) => patchCase({ pickup_by: v }, "Couldn't save pickup-by")} />
+              onPick={(v) => patchLegOwner({ pickup_by: v }, "Couldn't save pickup-by")} />
             <EditRow label="Pickup status" type="select" options={pickupTrackingOptions(PICKUP_STATUS_OPTIONS)} value={get(c, "pickupStatus", "pickup_status")} busy={busy} disabled={dis} onSave={(v) => patchCase({ pickup_status: v }, "Couldn't save pickup status")} />
             <EditRow label="Scheduled pickup date (ETA)" type="date" value={get(c, "customerPickupAt", "customer_pickup_at")} busy={busy} disabled={dis} onSave={(v) => patchCase({ customer_pickup_at: v }, "Couldn't save pickup date")} />
             {get(c, "pickupBy", "pickup_by") === "customer" && !get(c, "actualPickupAt", "actual_pickup_at") && <div style={{ fontSize: 11.5, color: MUTED, margin: "0 2px 10px" }}>{logisticsConfirmedText(get(c, "customerPickupAt", "customer_pickup_at"), get(c, "schedPickupDate", "sched_pickup_date"))}</div>}
@@ -1126,7 +1131,7 @@ function CaseDetail({ id, onBack, onRaiseExchangePo }: { id: number; onBack: () 
             {/* Delivery by — own team delivers, syncing the DELIVERY leg to the sheet on the DO date. */}
             <LegOwnerToggle label="Delivery by" current={get(c, "deliveryBy", "delivery_by")} disabled={dis}
               options={[{ v: "own", label: "Own team" }, { v: "supplier", label: "Supplier" }]}
-              onPick={(v) => patchCase({ delivery_by: v }, "Couldn't save delivery-by")} />
+              onPick={(v) => patchLegOwner({ delivery_by: v }, "Couldn't save delivery-by")} />
             <EditRow label="DO date" type="date" value={get(c, "doDate", "do_date")} busy={busy} disabled={dis} onSave={(v) => patchCase({ do_date: v }, "Couldn't save DO date")} />
             {get(c, "deliveryBy", "delivery_by") === "own" && <div style={{ fontSize: 11.5, color: MUTED, margin: "0 2px 10px" }}>{logisticsConfirmedText(get(c, "doDate", "do_date"), get(c, "schedDeliveryDate", "sched_delivery_date"))}</div>}
             <EditRow label="Ref No." value={get(c, "refNo", "ref_no")} mono busy={busy} disabled={dis} onSave={(v) => patchCase({ ref_no: v }, "Couldn't save Ref No")} />
