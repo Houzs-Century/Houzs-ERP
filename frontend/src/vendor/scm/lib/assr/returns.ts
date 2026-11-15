@@ -20,6 +20,8 @@ export interface SupplierReturn {
   ref_no?: string | null;
   /** YYYY-MM-DD — sent to the factory/supplier. */
   pickup_at: string | null;
+  /** YYYY-MM-DD — the date the supplier expects to send it back (ETA). */
+  expected_return_at?: string | null;
   /** YYYY-MM-DD — back from the factory/supplier. */
   returned_at: string | null;
   /** 'pass' | 'fail' | 'na' — did the returned item pass on receipt. */
@@ -47,6 +49,18 @@ export function currentRound<
   const live = rows.filter((r) => !r.archived_at);
   if (!live.length) return null;
   return live.reduce((a, b) => (b.round_no > a.round_no ? b : a));
+}
+
+/** The trip the trip tabs show: the one picked while it is still live, else the current trip. */
+export function shownRound<
+  T extends { id: number; round_no: number; archived_at?: string | null },
+>(rows: readonly T[], pickedId: number | null): T | null {
+  return rows.find((r) => r.id === pickedId && !r.archived_at) ?? currentRound(rows);
+}
+
+/** Short tab title for a trip, e.g. "Trip #2". */
+export function tripTabLabel(roundNo: number): string {
+  return `Trip #${roundNo}`;
 }
 
 /** The number the NEXT trip would take — highest EXISTING number (archived

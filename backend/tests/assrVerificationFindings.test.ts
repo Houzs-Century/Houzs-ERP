@@ -89,13 +89,18 @@ describe('Verification findings fields (HC-0133)', () => {
     expect((await readRow(id)).next_action).toBe('Pickup for service');
   });
 
+  test('pending with takes whatever the staff typed', async () => {
+    const id = await createCase();
+    expect((await patch(id, { pending_with: 'Logistic Team' })).status).toBe(200);
+    expect((await readRow(id)).pending_with).toBe('Logistic Team');
+  });
+
   test('notes on a case that does not exist answer 404', async () => {
     expect((await patch(999999, { next_action: 'x' })).status).toBe(404);
   });
 
   test.each([
-    [{ pending_with: 'sales' }],
-    [{ pending_with: 'Supplier' }],
+    [{ pending_with: 42 }],
     [{ inspection_findings: 42 }],
   ])('refuses %j with 400 and writes nothing', async (body) => {
     const id = await createCase();

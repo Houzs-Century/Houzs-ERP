@@ -18,6 +18,7 @@ import type { Context } from "hono";
 import type { Env } from "../types";
 import { transitionStage, logActivity, type Stage } from "./assr";
 import { mintDocumentRef, voidDocumentRef } from "./documentRefs";
+import { utcNowText } from "../lib/utc-now-text";
 
 // Each trip's own document number, SVC-RTN-YYMM-NNNN (owner 2026-09-24): the
 // company-wide registry, so it is unique, restarts monthly (MYT) and is voided,
@@ -30,11 +31,24 @@ export const SUPPLIER_RETURN_REF = {
 
 export interface SupplierReturnInput {
   pickup_at?: string | null;
+  expected_return_at?: string | null;
   returned_at?: string | null;
   qc_result?: string | null;
   creditor_code?: string | null;
   reason?: string | null;
   note?: string | null;
+}
+
+const SUPPLIER_RETURN_DATE_FIELDS = ["pickup_at", "expected_return_at", "returned_at"] as const;
+
+/** Why a trip PATCH body is refused, or null when it is fine. Dates are YYYY-MM-DD or null. */
+export function supplierReturnPatchError(body: SupplierReturnInput): string | null {
+  for (const field of SUPPLIER_RETURN_DATE_FIELDS) {
+    const value = body[field];
+    if (value != null && !(typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)))
+      return `${field} must be a YYYY-MM-DD date`;
+  }
+  return null;
 }
 
 /** The current (latest) trip = highest round_no among non-archived rows. Pure,
@@ -205,7 +219,7 @@ export async function patchSupplierReturn(
   roundId: number,
   input: SupplierReturnInput,
 ): Promise<boolean> {
-  const allowed = ["pickup_at", "returned_at", "qc_result", "creditor_code", "reason", "note"] as const;
+  const allowed = ["pickup_at", "expected_return_at", "returned_at", "qc_result", "creditor_code", "reason", "note"] as const;
   const sets: string[] = [];
   const binds: unknown[] = [];
   for (const k of allowed) {
@@ -215,8 +229,8 @@ export async function patchSupplierReturn(
     }
   }
   if (!sets.length) return false;
-  sets.push("updated_at = datetime('now')");
-  binds.push(roundId, assrId);
+  sets.push("updated_at = ?");
+  binds.push(utcNowText(), roundId, assrId);
   const r = await env.DB.prepare(
     `UPDATE assr_supplier_returns SET ${sets.join(", ")} WHERE id = ? AND assr_id = ? AND archived_at IS NULL`
   )
@@ -270,10 +284,10 @@ export async function archiveSupplierReturn(
     .bind(roundId, assrId)
     .first<{ ref_no: string | null }>();
   const r = await env.DB.prepare(
-    `UPDATE assr_supplier_returns SET archived_at = datetime('now'), updated_at = datetime('now')
+    `UPDATE assr_supplier_returns SET archived_at = ?, updated_at = ?
       WHERE id = ? AND assr_id = ? AND archived_at IS NULL`
   )
-    .bind(roundId, assrId)
+    .bind(utcNowText(), utcNowText(), roundId, assrId)
     .run();
   if (r.meta.changes > 0) {
     if (trip?.ref_no) {
@@ -306,6 +320,8 @@ export async function patchSupplierReturnRoute(c: Ctx) {
   const roundId = parseInt(c.req.param("roundId") ?? "", 10);
   if (isNaN(id) || isNaN(roundId)) return c.json({ error: "Invalid ID" }, 400);
   const body = await c.req.json<SupplierReturnInput>().catch(() => ({}) as SupplierReturnInput);
+  const invalid = supplierReturnPatchError(body);
+  if (invalid) return c.json({ error: invalid }, 400);
   const ok = await patchSupplierReturn(c.env, id, roundId, body);
   return ok ? c.json({ ok: true }) : c.json({ error: "Not found" }, 404);
 }

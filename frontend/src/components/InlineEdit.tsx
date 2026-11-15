@@ -20,9 +20,11 @@ interface Props {
      the same field reads two different ways on one screen. Defaults to the
      raw value, so callers with already-readable options need not pass it. */
   optionLabel?: (value: string) => string;
+  /** The surrounding section header already names the field. */
+  isLabelHidden?: boolean;
 }
 
-export function InlineEdit({ label, value, type = "text", onSave, placeholder, textarea, options, optionLabel }: Props) {
+export function InlineEdit({ label, value, type = "text", onSave, placeholder, textarea, options, optionLabel, isLabelHidden }: Props) {
   const [draft, setDraft] = useState<string>(value == null ? "" : String(value));
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -54,9 +56,14 @@ export function InlineEdit({ label, value, type = "text", onSave, placeholder, t
   );
 
   return (
-    <div>
-      <div className="mb-1.5 flex items-center justify-between">
-        <label className="text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
+    <div className={cn(isLabelHidden && "relative")}>
+      <div
+        className={cn(
+          "flex items-center justify-between",
+          isLabelHidden ? "pointer-events-none absolute -top-2 right-2 z-10 gap-1 rounded bg-surface px-1" : "mb-1.5",
+        )}
+      >
+        <label className={cn("text-[10px] font-semibold uppercase tracking-wider text-ink-muted", isLabelHidden && "sr-only")}>
           {label}
         </label>
         {status === "saving" && (
@@ -98,12 +105,12 @@ export function InlineEdit({ label, value, type = "text", onSave, placeholder, t
         />
       ) : (
         type === "date" ? (
-          // Dates carry an explicit Save button (Nico 2026-08-20): blur/picker
-          // auto-commit stays, but the button makes saving visible — and is the
-          // retry handle when a commit fails. Shown only while draft ≠ saved.
+          // Dates save on a calendar pick or on blur. The Save button (Nico
+          // 2026-08-20) is the retry handle, so it shows only after a failed save:
+          // shown on every unsaved edit it popped up beside a date already saved.
           <div className="flex items-center gap-2">
             <DateField className={inputClass} value={draft} placeholder={placeholder} onChange={setDraft} onBlur={() => commit()} fullWidth/>
-            {draft !== (value == null ? "" : String(value)) && status !== "saving" && (
+            {status === "error" && draft !== (value == null ? "" : String(value)) && (
               <button
                 type="button"
                 onClick={() => commit()}
