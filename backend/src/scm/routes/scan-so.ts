@@ -59,6 +59,7 @@ import { applySlipTotalToUnpricedLines } from '../lib/scan-slip-total';
 import { scanTimer } from '../lib/scan-timing';
 import { scanCatalogSkus, type CatalogSku, type ScanCatalogRow } from '../lib/scan-catalog-skus';
 import { buildScanLineVariants } from '../lib/scan-line-variants';
+import { resolveSlipAddress } from '../lib/scan-address-lookup';
 import { readSlipWithAliases } from '../lib/scan-field-aliases';
 import { ttlCached } from '../lib/ttl-cache';
 import { keepScanFile, linkScanFiles } from '../lib/scan-files';
@@ -2842,36 +2843,17 @@ async function postProcessSlip(
     .map((p) => normalizeSlipPhone(p))
     .filter((p): p is string => p !== null);
 
-  // Address via Google Geocoding (GOOGLE_MAPS_API_KEY). The LLM mis-parses
-  // Malaysian areas (it put Melawati at Ampang/Selangor 68000 — it's KL/Setapak
-  // ~53100), so when geocoding succeeds we PREFER its state/city/postcode over
-  // the LLM guess. Fail-soft: no key / network error / no result -> keep the LLM
-  // parse untouched. The geocoded STATE is seeded into addressStateMatch so the
-  // validateSlip pass below still snaps it to the catalog states list (and
-  // clears it if the geocoder ever returns a non-catalog state).
+  // Postcode is the driver. A postcode written on the slip that the localities
+  // master knows wins, and its city/state come from that master row (HC-0190:
+  // the map lookup put orders in the wrong town, e.g. Bukit Tunku KL vs Kulim).
+  // Google Geocoding (GOOGLE_MAPS_API_KEY) only fills in when the slip has no
+  // usable postcode. The seeded STATE still goes through validateSlip below.
+  // Fail-soft: no key / network error / no result -> keep the LLM parse.
   try {
-    const geo = await geocodeAddress(parsed.address, googleMapsApiKey);
-    if (geo) {
-      // Postcode is the driver: seed it first, then resolve city/state from the
-      // SAME my_localities row that postcode maps to (the cascade the form uses),
-      // so the seeded city/state are consistent with the postcode and selectable
-      // in the form's dropdowns. Fall back to Google's components only when no
-      // localities row matches the resolved postcode.
-      let city = geo.city;
-      let state = geo.state;
-      if (geo.postcode) {
-        parsed.postcode = geo.postcode;
-        const loc = await localityForPostcode(sb, geo.postcode);
-        if (loc) {
-          if (loc.city) city = loc.city;
-          if (loc.state) state = loc.state;
-        }
-      }
-      if (state) {
-        parsed.addressStateMatch = { value: state, confidence: 0.95, reason: 'Google geocode' };
-      }
-      if (city) parsed.city = city;
-    }
+    await resolveSlipAddress(parsed, {
+      findLocality: (postcode) => localityForPostcode(sb, postcode),
+      geocode: (address) => geocodeAddress(address, googleMapsApiKey),
+    });
   } catch {
     /* fail-soft — keep the LLM address parse */
   }
