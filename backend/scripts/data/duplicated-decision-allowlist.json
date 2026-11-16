@@ -1829,6 +1829,11 @@
       "check": "D2",
       "key": "DELIVERY,LINES,LINE_ADDREMOVE,PRICE ~ DELIVERY,LINES,PRICE",
       "why": "DELIBERATELY 3 vs 4. The 4-lane set is every approval lane; the 3-lane set is the desks an admin may move a row TO (ChangeApproverButton TARGET_LANES) and the PATCH /lane body validator. LINE_ADDREMOVE is auto-assigned at submit and shares the Sales Director desk with PRICE, so it is never a manual target (offering it would list the Sales Director twice). The difference is the rule, not drift."
+    },
+    {
+      "check": "D2",
+      "key": "ACCOUNT,AMOUNT (RM),DESCRIPTION ~ ACCOUNT,AMOUNT (RM),DESCRIPTION,EVENT",
+      "why": "TWO DIFFERENT TABLES OF ONE AP BILL'S LINES. ApInvoiceForm.tsx LINE_COLUMNS heads the lines being typed, and a line can name the event its money is for (owner 2026-09-30, 5a), so the form has an Event column; ap-bill-pdf.ts heads the printed bill, which prints the account, description and amount and never the event. Column headings only: a divergence changes what a heading reads, never what is saved, posted or paid."
     }
   ]
 }
