@@ -266,5 +266,5 @@ export function buildCaseTimeline(activity: readonly TimelineActivity[], options
       isEscalation: entry.action === "escalated",
     });
   }
-  return { rows, hiddenCount: inAudience.length - visible.length };
+  return { rows: rows.reverse(), hiddenCount: inAudience.length - visible.length };
 }
