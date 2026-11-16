@@ -17,7 +17,7 @@
                            Projects team's schedule_remark). */
 import { scopeToAllowedCompanies, allowedCompaniesSql } from './companyScope';
 import { dateOrNull } from './date-coerce';
-import { assrLegGuardSql, ASSR_LEG_TIME_COL, ASSR_LEG_MSG_COL, ASSR_LEG_REMARK_COL, ASSR_STATUS_PICK_SOURCE, ASSR_ACTUAL_COL, ASSR_CANCELLED_COL } from './assr-board-scope';
+import { assrLegGuardSql, ASSR_LEG_TIME_COL, ASSR_LEG_MSG_COL, ASSR_LEG_REMARK_COL, ASSR_LEG_AMEND_REASON_COL, ASSR_STATUS_PICK_SOURCE, ASSR_ACTUAL_COL, ASSR_CANCELLED_COL } from './assr-board-scope';
 import { logActivity } from '../../services/assr';
 import { todayMyt } from './my-time';
 
@@ -65,12 +65,15 @@ export async function scheduleDpDate(c: Ctx, sb: Sb, id: string, scheduleDate: s
    whitelisted by the caller (the route) before this runs; the board sends one cell at a time. */
 export async function writeNonSoFields(
   c: Ctx, sb: Sb, type: 'dp' | 'assr' | 'project', id: string,
-  fields: { deliveryMessageStatus?: string | null; timeRange?: string | null; remark?: string | null; jobKind?: keyof typeof ASSR_LEG_TIME_COL },
+  fields: { deliveryMessageStatus?: string | null; timeRange?: string | null; remark?: string | null; amendReason?: string | null; jobKind?: keyof typeof ASSR_LEG_TIME_COL },
 ): Promise<EditResult> {
-  const { deliveryMessageStatus, timeRange, remark, jobKind } = fields;
+  const { deliveryMessageStatus, timeRange, remark, amendReason, jobKind } = fields;
   if (type === 'project') return writeProjectRemark(c, id, remark);
-  if (deliveryMessageStatus === undefined && timeRange === undefined && remark === undefined) {
-    return { status: 400, body: { error: 'no_changes', reason: 'Only the delivery message status, time slot and remarks are editable here.' } };
+  // amendReason is a Service-Case-only per-leg field; a DP manual job has no
+  // amend reason, so it never counts as a change for a DP row.
+  const assrOnlyChange = type === 'assr' && amendReason !== undefined;
+  if (deliveryMessageStatus === undefined && timeRange === undefined && remark === undefined && !assrOnlyChange) {
+    return { status: 400, body: { error: 'no_changes', reason: 'Only the delivery message status, time slot, remarks and amend reason are editable here.' } };
   }
   const msg = deliveryMessageStatus === '' ? null : deliveryMessageStatus;
   const note = remark === '' ? null : remark;
@@ -103,6 +106,7 @@ export async function writeNonSoFields(
     if (deliveryMessageStatus !== undefined) { sets.push(`${ASSR_LEG_MSG_COL[jobKind]} = ?`); binds.push(msg); }
     if (timeRange !== undefined) { sets.push(`${ASSR_LEG_TIME_COL[jobKind]} = ?`); binds.push(timeRange === '' ? null : timeRange); }
     if (remark !== undefined) { sets.push(`${ASSR_LEG_REMARK_COL[jobKind]} = ?`); binds.push(note); }
+    if (amendReason !== undefined) { sets.push(`${ASSR_LEG_AMEND_REASON_COL[jobKind]} = ?`); binds.push(amendReason === '' ? null : amendReason); }
     const res = await c.env.DB.prepare(
       `UPDATE assr_cases SET ${sets.join(', ')}, updated_at = datetime('now')
         WHERE id = ? AND archived_at IS NULL`,

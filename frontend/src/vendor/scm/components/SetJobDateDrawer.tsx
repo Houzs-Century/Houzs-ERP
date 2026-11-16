@@ -24,7 +24,9 @@ import { X } from 'lucide-react';
 import { Button } from '../../../components/Button';
 import {
   useScheduleDelivery,
+  useUpdateDeliveryFields,
   assrJobKindLabel,
+  AMEND_REASONS,
   type PlanningOrder,
 } from '../lib/delivery-planning-queries';
 import { useNotify } from './NotifyDialog';
@@ -35,6 +37,7 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 export function SetJobDateDrawer({ order, onClose }: { order: PlanningOrder; onClose: () => void }) {
   const sched = useScheduleDelivery();
+  const updateFields = useUpdateDeliveryFields();
   const notify = useNotify();
 
   /* The date Logistics confirmed (amended_delivery_date). Not confirmed yet: the
@@ -43,10 +46,17 @@ export function SetJobDateDrawer({ order, onClose }: { order: PlanningOrder; onC
   const requested = (order.customer_delivery_date ?? '').slice(0, 10);
   const [date, setDate] = useState(current || requested);
 
-  const legLabel = assrJobKindLabel(order.job_kind);
-  const dirty = date !== current;
+  /* The reason this leg's date moved (owner 2026-11-16) — the same preset list the
+     board's Amend Reason column offers; free text already on the leg is kept. */
+  const currentReason = order.amend_reason ?? '';
+  const [reason, setReason] = useState(currentReason);
 
-  const save = (value: string | null) => {
+  const legLabel = assrJobKindLabel(order.job_kind);
+  const busy = sched.isPending || updateFields.isPending;
+  const dirty = date !== current || reason !== currentReason;
+
+  // The date write (also used by "Clear date"); owns the success toast + close.
+  const saveDate = (value: string | null) => {
     sched.mutate(
       {
         type: 'assr',
@@ -56,7 +66,7 @@ export function SetJobDateDrawer({ order, onClose }: { order: PlanningOrder; onC
       },
       {
         onSuccess: () => {
-          notify({
+          void notify({
             title: value ? 'Date set' : 'Date cleared',
             body: value
               ? `${order.ref ?? 'This job'} — ${legLabel} on ${value}. Assign a lorry and crew on the board.`
@@ -66,6 +76,33 @@ export function SetJobDateDrawer({ order, onClose }: { order: PlanningOrder; onC
         },
         onError: (err) => notify({
           title: 'Could not save the date',
+          body: err instanceof Error ? err.message : 'Something went wrong.',
+          tone: 'error',
+        }),
+      },
+    );
+  };
+
+  /* Save: record the per-leg amend reason FIRST (so a failure surfaces before the
+     date moves), then the date. Reason-only change closes with its own toast. */
+  const saveAll = () => {
+    const dateVal = date || null;
+    const reasonVal = reason || null;
+    const dateChanged = dateVal !== (current || null);
+    const reasonChanged = reasonVal !== (currentReason || null);
+    if (!dateChanged && !reasonChanged) return;
+    const afterReason = () => {
+      if (dateChanged) { saveDate(dateVal); return; }
+      void notify({ title: 'Reason saved', body: `${order.ref ?? 'This job'} — ${legLabel}.` });
+      onClose();
+    };
+    if (!reasonChanged) { afterReason(); return; }
+    updateFields.mutate(
+      { type: 'assr', id: String(order.assr_id ?? ''), jobKind: order.job_kind ?? undefined, amendReason: reasonVal },
+      {
+        onSuccess: afterReason,
+        onError: (err) => notify({
+          title: 'Could not save the reason',
           body: err instanceof Error ? err.message : 'Something went wrong.',
           tone: 'error',
         }),
@@ -94,7 +131,7 @@ export function SetJobDateDrawer({ order, onClose }: { order: PlanningOrder; onC
               className={styles.searchInput}
               style={{ width: '100%' }}
               value={date}
-              disabled={sched.isPending}
+              disabled={busy}
               onChange={(iso) => setDate(iso)}
             />
           </label>
@@ -102,19 +139,43 @@ export function SetJobDateDrawer({ order, onClose }: { order: PlanningOrder; onC
             This is the date the fleet is booked for. Clearing it takes the job
             back to Pending Schedule.
           </div>
+
+          <label style={{ display: 'block', marginTop: 'var(--space-3)' }}>
+            <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>Amend / reschedule reason</div>
+            <select
+              className={styles.searchInput}
+              style={{ width: '100%' }}
+              value={reason}
+              disabled={busy}
+              onChange={(e) => setReason(e.target.value)}
+            >
+              <option value="">—</option>
+              {/* Keep any free-text reason already on the leg selectable. */}
+              {currentReason && !(AMEND_REASONS as readonly string[]).includes(currentReason)
+                ? <option value={currentReason}>{currentReason}</option>
+                : null}
+              {AMEND_REASONS.map((r) => (
+                <option key={r} value={r}>{r}</option>
+              ))}
+            </select>
+          </label>
+          <div style={{ marginTop: 'var(--space-1)', fontSize: 'var(--fs-11)', color: 'var(--c-muted, var(--hz-c-ink-muted))' }}>
+            Why this job's date is moving. Recorded on the case; also editable in the
+            board's Amend Reason column.
+          </div>
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--space-3)', padding: 'var(--space-4)' }}>
           {/* Clearing is its own action rather than "save an empty field": an
               operator emptying the box and pressing Save should not have to
               wonder whether that meant anything. */}
-          <Button variant="ghost" onClick={() => save(null)} disabled={sched.isPending || !current}>
+          <Button variant="ghost" onClick={() => saveDate(null)} disabled={busy || !current}>
             Clear date
           </Button>
           <div style={{ display: 'flex', gap: 'var(--space-3)' }}>
             <Button variant="ghost" onClick={onClose}>Cancel</Button>
-            <Button variant="primary" onClick={() => save(date || null)} disabled={sched.isPending || !dirty}>
-              {sched.isPending ? 'Saving…' : 'Save date'}
+            <Button variant="primary" onClick={saveAll} disabled={busy || !dirty}>
+              {busy ? 'Saving…' : 'Save'}
             </Button>
           </div>
         </div>

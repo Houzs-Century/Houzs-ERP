@@ -90,7 +90,7 @@ import { activeCompanyId, scopeToCompany, scopeToAllowedCompanies, companyCodeMa
 /* Service-Case rows on this board are company-scoped (owner ruling 2026-08-21).
    Both statements live in ONE module, with the reasoning, so the predicate is
    assertable and cannot be re-derived by hand here. */
-import { assrBoardLocation, assrLegGuardSql, assrLegOpen, ASSR_BOARD_LEGS, ASSR_CONFIRMED_COL, assrBoardLegs, assrCaseClosed, ASSR_LEG_TIME_COL, ASSR_LEG_MSG_COL, ASSR_LEG_REMARK_COL } from '../lib/assr-board-scope'; import { overlayAssrChatState } from '../lib/assr-arrangement-message';
+import { assrBoardLocation, assrLegGuardSql, assrLegOpen, ASSR_BOARD_LEGS, ASSR_CONFIRMED_COL, assrBoardLegs, assrCaseClosed, ASSR_LEG_TIME_COL, ASSR_LEG_MSG_COL, ASSR_LEG_REMARK_COL, ASSR_LEG_AMEND_REASON_COL } from '../lib/assr-board-scope'; import { overlayAssrChatState } from '../lib/assr-arrangement-message';
 import { logActivity, attachDeliveryOrders } from '../../services/assr';
 import { orderDoNumbers } from '../../services/assrOrderDos';
 import { recordSoAudit, type FieldChange } from '../lib/so-audit';
@@ -447,7 +447,10 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           customer_delivery_date: leg.requested, sales_exemption_expiry: null,
           amend_date_from_customer: null,
           amended_delivery_date: leg.confirmed,
-          amend_reason: null, amend_reason_from_customer: null,
+          // Per-leg amend / reschedule reason (mig 20261116T1000) — the reason this
+          // leg's date moved, mirroring the SO header's amend_reason. The board's
+          // Amend Reason column and the Set-job-date drawer write it.
+          amend_reason: a[ASSR_LEG_AMEND_REASON_COL[leg.jobKind]] ?? null, amend_reason_from_customer: null,
           effective_delivery_date: legDate,
           processing_date: legDate,
           /* Synthetic job row — its so_doc_no is a ROW KEY, not a real SO doc
@@ -1263,6 +1266,7 @@ deliveryPlanning.patch('/:type/:id/fields', async (c) => {
       deliveryMessageStatus: p.deliveryMessageStatus as string | null | undefined,
       timeRange: p.timeRange as string | null | undefined,
       remark: p.dpRemark as string | null | undefined,
+      amendReason: p.amendReason as string | null | undefined,
       jobKind: p.jobKind as 'customer_pickup' | 'delivery' | 'inspection' | undefined,
     });
     return c.json(r.body, r.status);
