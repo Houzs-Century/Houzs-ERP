@@ -152,6 +152,9 @@ export type Env = {
   // DEV-42 lorry GPS (scm/lib/velocity-poll.ts). Either unset -> the poll is a no-op.
   VELOCITY_REFRESH_TOKEN?: string;
   VELOCITY_CUSTOMER_ID?: string;
+  // HC-0050 lorry GPS from iTrack (scm/lib/itrack-poll.ts). Either unset -> the poll is a no-op.
+  ITRACK_ACCOUNT?: string;
+  ITRACK_PASSWORD?: string;
   // Email (Resend). Leave RESEND_API_KEY unset to run in no-op mode —
   // send() will log + skip, never throw.
   RESEND_API_KEY?: string;

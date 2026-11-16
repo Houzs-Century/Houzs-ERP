@@ -86,7 +86,11 @@ export async function pollVelocity(env: Env): Promise<{ skipped?: true; devices?
     `/api/mobile/kinesis/device-live-positions/?customer=${encodeURIComponent(customer)}&useUTC`,
     { method: 'POST', headers: { Authorization: `Bearer ${token}` } },
   );
-  const fixes = parseDevices(body);
+  return storeFixes(env, parseDevices(body));
+}
+
+/** Insert tracker fixes into scm.lorry_positions, matched to a lorry by normalized plate. Shared by every GPS vendor poll. */
+export async function storeFixes(env: Env, fixes: VelocityFix[]): Promise<{ devices: number; stored: number; unmatched: string[] }> {
   if (!fixes.length) return { devices: 0, stored: 0, unmatched: [] };
 
   const { results: lorries } = await env.DB
