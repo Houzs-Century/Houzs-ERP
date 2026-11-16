@@ -14,7 +14,7 @@ vi.mock('../../services/assr', () => ({
   saveAttachment: (...a: unknown[]) => saveAttachment(...a),
   logActivity: (...a: unknown[]) => logActivity(...a),
 }));
-const notifyServiceCaseResponsible = vi.fn(async () => undefined);
+const notifyServiceCaseResponsible = vi.fn(async (..._a: unknown[]) => undefined);
 vi.mock('../../services/assrNotify', () => ({ notifyServiceCaseResponsible: (...a: unknown[]) => notifyServiceCaseResponsible(...a) }));
 const claimPodPhotos = vi.fn();
 vi.mock('./pod-photo-claim', async (orig) => ({ ...(await orig<Record<string, unknown>>()), claimPodPhotos: (...a: unknown[]) => claimPodPhotos(...a) }));

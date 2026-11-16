@@ -46,8 +46,7 @@ import {
   companyCodeMap,
   type CompanyScopeCtx,
 } from "../scm/lib/companyScope";
-import { createCaseForDeliveryIssue } from "../scm/lib/delivery-issue";
-import { getSupabaseService } from "../db/supabase";
+import { officeCreateFromDeliveryIssue } from "../scm/lib/delivery-issue";
 import { hasPermission } from "../services/permissions";
 import { subtreeUserIds } from "../services/orgScope";
 /* Row-level case visibility + the creditor strip. Lives in services/ so the
@@ -1682,25 +1681,9 @@ app.post(
     customer_email?: string | null;
     service_category?: string | string[] | null;
     assigned_to?: number | null;
-    // Office "Create service case" from a crew POD delivery report (owner
-    // 2026-11-16). When set, the case is built ENTIRELY from that report row —
-    // its SO/DO, the delivery-issue complaint, and the POD photos — and linked
-    // back to it; the generic intake fields above are ignored. Kept on this
-    // endpoint (same service-case create gate) so no new route is added.
-    delivery_issue_id?: string;
   }>();
-
-  if (typeof body.delivery_issue_id === "string" && body.delivery_issue_id.trim()) {
-    const actorUserId = Number((c as any).get?.("userId")) || null;
-    const r = await createCaseForDeliveryIssue(
-      getSupabaseService(c.env),
-      c,
-      body.delivery_issue_id.trim(),
-      actorUserId,
-    );
-    if (!r.ok) return c.json({ error: r.error, reason: r.reason }, r.status);
-    return c.json({ id: r.caseId, assr_no: r.assrNo, issue: r.issue }, 201);
-  }
+  const fromIssue = await officeCreateFromDeliveryIssue(c, (body as Record<string, unknown>).delivery_issue_id, Number((c as any).get?.("userId")) || null);
+  if (fromIssue) return c.json(fromIssue.body, fromIssue.status);
 
   // Owner ruling (2026-07): Issue Category is REQUIRED and must be enforced
   // server-side, not only by the FE button gate — the server previously

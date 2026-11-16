@@ -15,6 +15,7 @@
 import type { Context } from 'hono';
 import type { Env, Variables } from '../env';
 import { scopeToAllowedCompanies, activeCompanyId, type CompanyScopeCtx } from './companyScope';
+import { getSupabaseService } from '../../db/supabase';
 import { claimPodPhotos, doStopContext, jobStopContext } from './pod-photo-claim';
 import { createAssrCase, saveAttachment, logActivity } from '../../services/assr';
 import { notifyServiceCaseResponsible } from '../../services/assrNotify';
@@ -242,6 +243,24 @@ export async function createCaseForDeliveryIssue(
   }
 
   return { ok: true, caseId: assr.id, assrNo: assr.assr_no, issue: linked as DeliveryIssueRow };
+}
+
+/** The office create as reached from POST /api/assr: when the request body
+ *  carries a `delivery_issue_id`, open the case from that crew report and return
+ *  the 201 payload (or the error status/body); null when there is no id, so the
+ *  generic case-create path continues. Keeping it on that endpoint, behind its
+ *  existing service-case create gate, is what avoids a new route. */
+export async function officeCreateFromDeliveryIssue(
+  c: DeliveryIssueCaseCtx,
+  rawId: unknown,
+  actorUserId: number | null,
+): Promise<{ status: 201 | 404 | 409 | 500; body: Record<string, unknown> } | null> {
+  const id = typeof rawId === 'string' ? rawId.trim() : '';
+  if (!id) return null;
+  const r = await createCaseForDeliveryIssue(getSupabaseService(c.env), c, id, actorUserId);
+  return r.ok
+    ? { status: 201, body: { id: r.caseId, assr_no: r.assrNo, issue: r.issue } }
+    : { status: r.status, body: { error: r.error, reason: r.reason } };
 }
 
 export type DeliveryIssueFilter = {
