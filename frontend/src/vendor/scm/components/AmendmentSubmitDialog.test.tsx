@@ -111,6 +111,7 @@ describe('describeLanePreview', () => {
         LINES: { lineCount: 0, headerKeys: [] },
         DELIVERY: { lineCount: 0, headerKeys: ['customerDeliveryDate', 'postcode'] },
         PRICE: { lineCount: 0, headerKeys: [] },
+        LINE_ADDREMOVE: { lineCount: 0, headerKeys: [] },
       },
     })).toEqual([{ lane: 'DELIVERY', text: 'Delivery Date, Postcode' }]);
   });
@@ -122,6 +123,7 @@ describe('describeLanePreview', () => {
         LINES: { lineCount: 0, headerKeys: [] },
         DELIVERY: { lineCount: 0, headerKeys: [] },
         PRICE: { lineCount: 1, headerKeys: [] },
+        LINE_ADDREMOVE: { lineCount: 0, headerKeys: [] },
       },
     })).toEqual([{ lane: 'PRICE', text: '1 line change' }]);
   });

@@ -19,16 +19,38 @@ const activity = (action: string, created_at: string, extra: Partial<TimelineAct
 const keyUpdates: TimelineOptions = { filter: "all", shouldShowDetails: false, salesAgent: null, userNames: new Map() };
 
 describe("buildCaseTimeline", () => {
-  test("lists rows oldest first even when the API sends newest first", () => {
-    const newestFirst = [
-      activity("stage_change", "2026-10-22T03:20:00Z", { to_value: "pending_supplier_pickup" }),
+  test("lists rows newest first even when the API sends oldest first (HC-0233)", () => {
+    const oldestFirst = [
       activity("created", "2026-10-20T02:15:00Z", { note: "Backrest bracket obstructing the zipper" }),
+      activity("stage_change", "2026-10-22T03:20:00Z", { to_value: "pending_supplier_pickup" }),
+      activity("note", "2026-10-21T09:00:00Z", { note: "Called customer", category: "service" }),
     ];
 
-    const { rows } = buildCaseTimeline(newestFirst, keyUpdates);
+    const { rows } = buildCaseTimeline(oldestFirst, keyUpdates);
 
-    expect(rows.map((row) => row.status?.label)).toEqual(["Case Created", "Pickup / Return"]);
-    expect(rows[0].remarks).toBe("Backrest bracket obstructing the zipper");
+    expect(rows.map((row) => row.status?.label)).toEqual(["Pickup / Return", "Note", "Case Created"]);
+    expect(rows[2].remarks).toBe("Backrest bracket obstructing the zipper");
+  });
+
+  test("puts the later-saved row first when two share a timestamp", () => {
+    const first = activity("note", "2026-10-21T09:00:00Z", { note: "First", category: "service" });
+    const second = activity("note", "2026-10-21T09:00:00Z", { note: "Second", category: "service" });
+
+    const { rows } = buildCaseTimeline([second, first], keyUpdates);
+
+    expect(rows.map((row) => row.remarks)).toEqual(["Second", "First"]);
+  });
+
+  test("keeps a merged upload row in its place among newer rows", () => {
+    const entries = [
+      activity("attachment_added", "2026-10-22T03:00:00Z", { to_value: "a.jpg" }),
+      activity("attachment_added", "2026-10-22T03:01:00Z", { to_value: "b.jpg" }),
+      activity("note", "2026-10-22T04:00:00Z", { note: "Sent to supplier", category: "service" }),
+    ];
+
+    const { rows } = buildCaseTimeline(entries, keyUpdates);
+
+    expect(rows.map((row) => row.remarks)).toEqual(["Sent to supplier", "2 photos uploaded"]);
   });
 
   test("hides system detail rows by default and counts them", () => {
@@ -41,7 +63,7 @@ describe("buildCaseTimeline", () => {
 
     const timeline = buildCaseTimeline(entries, keyUpdates);
 
-    expect(timeline.rows.map((row) => row.remarks)).toEqual(["", "Called customer"]);
+    expect(timeline.rows.map((row) => row.remarks)).toEqual(["Called customer", ""]);
     expect(timeline.hiddenCount).toBe(2);
   });
 
@@ -51,7 +73,7 @@ describe("buildCaseTimeline", () => {
     const timeline = buildCaseTimeline(entries, { ...keyUpdates, shouldShowDetails: true });
 
     expect(timeline.rows).toHaveLength(2);
-    expect(timeline.rows[1]).toMatchObject({ status: null, remarks: "Phone changed" });
+    expect(timeline.rows[0]).toMatchObject({ status: null, remarks: "Phone changed" });
     expect(timeline.hiddenCount).toBe(0);
   });
 
@@ -84,8 +106,8 @@ describe("buildCaseTimeline", () => {
     const { rows } = buildCaseTimeline(entries, keyUpdates);
 
     expect(rows.map((row) => [row.by, row.remarks])).toEqual([
-      ["Farra", "1 photo uploaded"],
       ["Customer", "1 photo uploaded"],
+      ["Farra", "1 photo uploaded"],
     ]);
   });
 
@@ -108,7 +130,7 @@ describe("buildCaseTimeline", () => {
 
     const { rows } = buildCaseTimeline(entries, keyUpdates);
 
-    expect(rows.map((row) => row.remarks)).toEqual(["1 photo uploaded (evidence)", "1 file uploaded (delivery pod)"]);
+    expect(rows.map((row) => row.remarks)).toEqual(["1 file uploaded (delivery pod)", "1 photo uploaded (evidence)"]);
   });
 
   test("folds Google Form photo imports into the upload row", () => {

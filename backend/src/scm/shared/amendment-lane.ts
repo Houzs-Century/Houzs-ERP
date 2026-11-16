@@ -49,7 +49,7 @@
 
 import { isServiceLine } from './service-sku';
 
-export type AmendmentLane = 'LINES' | 'DELIVERY' | 'PRICE';
+export type AmendmentLane = 'LINES' | 'DELIVERY' | 'PRICE' | 'LINE_ADDREMOVE';
 
 /** Companies whose SO amendments carve a price-only line into the PRICE lane.
  *  Keyed on companies.code, never the numeric id — ids drift between prod /
@@ -57,11 +57,24 @@ export type AmendmentLane = 'LINES' | 'DELIVERY' | 'PRICE';
  *  the same reason). */
 export const PRICE_LANE_COMPANY_CODES: ReadonlySet<string> = new Set(['2990', 'HOUZS']);
 
-/** Flat permission key that approves a given lane (services/permissions.ts). */
+/** Companies whose SO amendments carve an ADD or REMOVE of a whole PRODUCT line
+ *  into the LINE_ADDREMOVE lane — signed by the Sales Director, not the Purchaser
+ *  (owner 2026-11-16: adding or cancelling a product on the order is a sales
+ *  decision; a spec / colour / quantity change on an existing line still signs
+ *  with the Purchaser on LINES). Same two companies as the price carve-out today,
+ *  kept as its own set so the two rules can move apart. Keyed on companies.code,
+ *  never the numeric id. */
+export const ADD_REMOVE_LANE_COMPANY_CODES: ReadonlySet<string> = new Set(['2990', 'HOUZS']);
+
+/** Flat permission key that approves a given lane (services/permissions.ts). The
+ *  LINE_ADDREMOVE lane reuses the Sales Director's own key — the same desk signs
+ *  a price change and a line add/cancel, so no new grant is needed (Peter / Kris
+ *  already hold it on both companies). */
 export const LANE_APPROVE_KEY: Record<AmendmentLane, string> = {
   LINES: 'scm.amendment.approve_lines',
   DELIVERY: 'scm.amendment.approve_delivery',
   PRICE: 'scm.amendment.approve_price',
+  LINE_ADDREMOVE: 'scm.amendment.approve_price',
 };
 
 /** Human label used in audit rows + API refusal messages. */
@@ -69,6 +82,7 @@ export const LANE_LABEL: Record<AmendmentLane, string> = {
   LINES: 'product lines',
   DELIVERY: 'delivery / customer info',
   PRICE: 'price',
+  LINE_ADDREMOVE: 'add / cancel a product line',
 };
 
 /* Header payloadKey → lane. Every CONTROLLED key in so-field-policy MUST have a
@@ -178,9 +192,17 @@ export function splitAmendmentByLane<L>(
    *  spec half (no price) to LINES, the price half to PRICE. `null` = not such
    *  a line. Only asked on a price-lane company. */
   splitPrice: (line: L) => { spec: L; price: L } | null,
+  /** owner 2026-11-16 — an ADD or REMOVE of a whole PRODUCT line routes to the
+   *  LINE_ADDREMOVE lane (Sales Director) instead of LINES on an
+   *  ADD_REMOVE_LANE_COMPANY_CODES company. Like LINES it raises the follow-up PO;
+   *  unlike PRICE it is a whole-line change, never price-only. REQUIRED so the
+   *  carve-out is never a silent default — a caller without it passes
+   *  `() => false` and `false`, and the split is exactly the behaviour it had. */
+  lineIsAddRemove: (line: L) => boolean,
+  addRemoveLaneEnabled: boolean,
 ): LaneSplit<L> {
   const mk = () => ({ headerChanges: {} as Record<string, string | null>, headerKeys: [] as string[], lines: [] as L[] });
-  const perLane: LaneSplit<L>['perLane'] = { LINES: mk(), DELIVERY: mk(), PRICE: mk() };
+  const perLane: LaneSplit<L>['perLane'] = { LINES: mk(), DELIVERY: mk(), PRICE: mk(), LINE_ADDREMOVE: mk() };
 
   /* A Processing Date REMOVAL takes the Delivery Date clear with it onto LINES
      (owner 2026-09-30: the Purchaser signs it). Split across two desks, each half
@@ -200,6 +222,15 @@ export function splitAmendmentByLane<L>(
   }
   for (const line of lines) {
     let lane = classifyLine(lineIdentity(line));
+    // An ADD or REMOVE of a whole PRODUCT line is the Sales Director's, not the
+    // Purchaser's (owner 2026-11-16). It still needs the follow-up PO, so it is
+    // its own lane, never PRICE. Checked before the price carve-out, though an
+    // ADD / REMOVE is never price-only. Service lines are already DELIVERY and
+    // never reach this branch, so a service add/cancel stays with Logistics.
+    if (lane === 'LINES' && addRemoveLaneEnabled && lineIsAddRemove(line)) {
+      perLane.LINE_ADDREMOVE.lines.push(line);
+      continue;
+    }
     // A price-only product-line change is Finance's, not the Purchaser's, on a
     // price-lane company: the sell price carries nothing for the PO to follow.
     // Service lines are already DELIVERY and never reach this branch.
@@ -213,7 +244,7 @@ export function splitAmendmentByLane<L>(
     perLane[lane].lines.push(line);
   }
 
-  const lanes = (['LINES', 'DELIVERY', 'PRICE'] as AmendmentLane[]).filter(
+  const lanes = (['LINES', 'DELIVERY', 'PRICE', 'LINE_ADDREMOVE'] as AmendmentLane[]).filter(
     (l) => perLane[l].headerKeys.length > 0 || perLane[l].lines.length > 0,
   );
   return { lanes, perLane };

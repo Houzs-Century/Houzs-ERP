@@ -92,7 +92,7 @@ export function CaseTimeline({ activity, salesAgent, userNames, canEdit, compose
 
   useEffect(() => {
     const scrollBox = scrollBoxRef.current;
-    if (scrollBox) scrollBox.scrollTop = scrollBox.scrollHeight;
+    if (scrollBox) scrollBox.scrollTop = 0;
   }, [rows.length]);
 
   return (

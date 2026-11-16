@@ -20,7 +20,7 @@
 
 import { splitAmendmentByLane, type LaneSplit, type AmendmentLane } from '../shared/amendment-lane';
 import { catalogCategoriesByCode } from './validate-item-codes';
-import { amendmentLinePriceOnly, splitPriceFromSpec, type NoopCheckLine, type StoredLine } from './amendment-noop-lines';
+import { amendmentLinePriceOnly, lineIsAddRemove, splitPriceFromSpec, type NoopCheckLine, type StoredLine } from './amendment-noop-lines';
 
 /** A submitted line, from the caller's payload — the same shape the no-op drop
  *  reads, because the price-lane carve-out compares the SAME requested fields
@@ -43,6 +43,9 @@ export async function resolveAmendmentLaneSplit<L extends LaneResolvableLine>(
    *  price carve-out is never a silent default — the caller reads the ACTIVE
    *  company code and decides. */
   priceLaneEnabled: boolean,
+  /** True only on an ADD_REMOVE_LANE_COMPANY_CODES company. Required for the same
+   *  reason: the add/cancel carve-out is never a silent default. */
+  addRemoveLaneEnabled: boolean,
 ): Promise<LaneSplit<L> | null> {
   const referencedIds = [...new Set(lines
     .map((l) => l.salesOrderItemId)
@@ -81,6 +84,8 @@ export async function resolveAmendmentLaneSplit<L extends LaneResolvableLine>(
       const stored = l.salesOrderItemId ? storedById.get(l.salesOrderItemId) : undefined;
       return stored ? splitPriceFromSpec(l, stored) : null;
     },
+    (l) => lineIsAddRemove(l),
+    addRemoveLaneEnabled,
   );
 }
 
@@ -96,5 +101,5 @@ export function summarizeLaneSplit<L>(split: LaneSplit<L>): LaneSplitSummary {
     lineCount: split.perLane[lane].lines.length,
     headerKeys: [...split.perLane[lane].headerKeys],
   });
-  return { lanes: [...split.lanes], perLane: { LINES: one('LINES'), DELIVERY: one('DELIVERY'), PRICE: one('PRICE') } };
+  return { lanes: [...split.lanes], perLane: { LINES: one('LINES'), DELIVERY: one('DELIVERY'), PRICE: one('PRICE'), LINE_ADDREMOVE: one('LINE_ADDREMOVE') } };
 }

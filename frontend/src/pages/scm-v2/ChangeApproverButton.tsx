@@ -18,9 +18,16 @@ import { usePrompt } from "../../vendor/scm/components/PromptDialog";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { humanApiError } from "../../vendor/scm/lib/authed-fetch";
 import { useChangeAmendmentLane } from "../../vendor/scm/lib/so-amendment-queries";
-import { soAmendmentApprover, AMENDMENT_APPROVER_LABEL, SO_AMENDMENT_LANE_APPROVE_PERM } from "../../vendor/scm/lib/amendment-approver";
+import { soAmendmentApprover, AMENDMENT_APPROVER_LABEL } from "../../vendor/scm/lib/amendment-approver";
 
+/* The desks an admin may move an open row TO — one per approver; these are the
+   only values the server's PATCH /lane accepts. */
 export type AmendmentLaneKey = "LINES" | "DELIVERY" | "PRICE";
+/* Lanes a row can currently BE on. LINE_ADDREMOVE (owner 2026-11-16) is a valid
+   "from" an admin may move out of, but not a separate manual target — it shares
+   the Sales Director's desk with PRICE, so offering it would list "Sales
+   Director" twice; a mis-routed add/cancel is moved to the Purchaser instead. */
+type FromLane = AmendmentLaneKey | "LINE_ADDREMOVE";
 
 export type ReassignableAmendment = {
   id: string;
@@ -29,15 +36,16 @@ export type ReassignableAmendment = {
   lane?: string | null;
 };
 
-const LANES = Object.keys(SO_AMENDMENT_LANE_APPROVE_PERM) as AmendmentLaneKey[];
+const TARGET_LANES: AmendmentLaneKey[] = ["LINES", "DELIVERY", "PRICE"];
 
 export const CHANGE_APPROVER_NOTE_TOO_SHORT = "Say why the approver is changing — the new desk reads it.";
 
 /** The desks an open lane row can be moved to, or [] when the caller may not. */
 export function changeApproverTargets(a: ReassignableAmendment | null | undefined, isSuperAdmin: boolean): AmendmentLaneKey[] {
   if (!a || !isSuperAdmin || a.status !== "REQUESTED") return [];
-  if (a.lane !== "LINES" && a.lane !== "DELIVERY" && a.lane !== "PRICE") return [];
-  return LANES.filter((l) => l !== a.lane);
+  const from = a.lane as FromLane | null | undefined;
+  if (from !== "LINES" && from !== "DELIVERY" && from !== "PRICE" && from !== "LINE_ADDREMOVE") return [];
+  return TARGET_LANES.filter((l) => l !== from);
 }
 
 const deskOf = (lane: AmendmentLaneKey) => AMENDMENT_APPROVER_LABEL[soAmendmentApprover(lane)];
