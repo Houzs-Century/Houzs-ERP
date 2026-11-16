@@ -73,7 +73,7 @@ const readCandidates = (db, lock) => db`
    WHERE p.company_id = ${CO}
      AND l.archived_at IS NULL AND l.kind = 'income' AND l.category = 'sales' AND l.auto_source IS NULL
      AND EXISTS (SELECT 1 FROM sales_entries s WHERE s.project_id = l.project_id AND s.archived_at IS NULL AND s.status <> 'void')
-     ${ONLY.length ? db`AND l.project_id = ANY(${db.array(ONLY)})` : db``}
+     ${ONLY.length ? db`AND l.project_id = ANY(${db.array(ONLY)}::bigint[])` : db``}
    ORDER BY l.project_id, l.id
    ${lock ? db`FOR UPDATE OF l` : db``}`;
 
@@ -88,7 +88,7 @@ const readFairs = async (db, ids) => {
               FROM project_finance_lines a WHERE a.project_id = p.id AND a.auto_source IS NOT NULL) AS auto,
            (SELECT pf.total_sales::float8 FROM project_finance pf WHERE pf.project_id = p.id) AS "cachedTotal"
       FROM projects p
-     WHERE p.company_id = ${CO} AND p.id = ANY(${db.array(ids)})
+     WHERE p.company_id = ${CO} AND p.id = ANY(${db.array(ids)}::bigint[])
      ORDER BY p.id`;
   return new Map(rows.map((r) => [r.id, r]));
 };
@@ -159,7 +159,7 @@ async function main() {
         }
         /* Read back inside the transaction, as the fresh connection will after it. */
         const after = await readFairs(tx, archive.map((r) => r.projectId));
-        const gone = await tx`SELECT id::int AS id FROM project_finance_lines WHERE id = ANY(${tx.array(archive.map((r) => r.lineId))}) AND archived_at IS NOT NULL`;
+        const gone = await tx`SELECT id::int AS id FROM project_finance_lines WHERE id = ANY(${tx.array(archive.map((r) => r.lineId))}::bigint[]) AND archived_at IS NOT NULL`;
         const j = judge(before, after, new Set(gone.map((g) => g.id)), archive.map((r) => r.lineId));
         printJudged(j);
         if (!j.ok) throw new Error('the read-back is not what was meant');
@@ -174,7 +174,7 @@ async function main() {
     const check = postgres(process.env.DATABASE_URL, { max: 1, prepare: false });
     try {
       const after = await readFairs(check, picked.map((r) => r.projectId));
-      const gone = await check`SELECT id::int AS id FROM project_finance_lines WHERE id = ANY(${check.array(picked.map((r) => r.lineId))}) AND archived_at IS NOT NULL`;
+      const gone = await check`SELECT id::int AS id FROM project_finance_lines WHERE id = ANY(${check.array(picked.map((r) => r.lineId))}::bigint[]) AND archived_at IS NOT NULL`;
       const j = judge(before, after, new Set(gone.map((g) => g.id)), picked.map((r) => r.lineId));
       say('Verified on a fresh connection:');
       printJudged(j);
