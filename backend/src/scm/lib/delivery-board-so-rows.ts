@@ -58,7 +58,7 @@ export type SoRowCtx = {
   deriveState: (input: {
     storedOverride: string | null | undefined; status: string | null | undefined;
     readiness: { isShipReady: boolean }; delivered: number; remaining: number;
-    effectiveDD: string | null | undefined; salesExemptionExpiry: string | null; today: string;
+    effectiveDD: string | null | undefined; amendedDD: string | null | undefined; salesExemptionExpiry: string | null; today: string;
   }) => DeliveryState;
   daysLeft: (fromISO: string, toISO: string | null | undefined) => number | null;
 };
@@ -111,7 +111,7 @@ export function assembleSoOrders(soRows: SoHeaderRow[], m: SoBoardMaps, x: SoRow
       sales_exemption_expiry: frozenExpiry, ac_sales_exemption_expiry: m.acExpiryByDoc.get(docNo) ?? null, customer_delivery_date: customerDD,
     });
     const state: DeliveryState = x.deriveState({
-      storedOverride: stored, status, readiness, delivered, remaining, effectiveDD, salesExemptionExpiry, today: x.today,
+      storedOverride: stored, status, readiness, delivered, remaining, effectiveDD, amendedDD, salesExemptionExpiry, today: x.today,
     });
 
     /* Region(s) for this SO = its customer-STATE bucket(s) from the config
