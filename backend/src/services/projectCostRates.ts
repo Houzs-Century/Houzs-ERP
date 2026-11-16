@@ -106,8 +106,19 @@ export async function recomputeAutoCostLines(
   )
     .bind(projectId)
     .first<{ sales: number; cogs: number }>();
+  /* The bills keyed as sales entries are sales too, as the event P&L (eventPnlBatch.ts) and the
+     Total Sales rollup (syncFinanceRollup) count them. Read from the typed lines alone, a fair whose
+     sales are only its bills had its auto commission / transport / merchandise purged on the next
+     ledger edit — taking them out of Finance's P&L (2026-11-16: 8 June fairs, once their duplicate
+     typed sales line is archived). */
+  const entries = await env.DB.prepare(
+    `SELECT COALESCE(SUM(amount), 0) AS sales FROM sales_entries
+      WHERE project_id = ? AND archived_at IS NULL AND status != 'void'`,
+  )
+    .bind(projectId)
+    .first<{ sales: number }>();
 
-  const sales = Number(sums?.sales ?? 0);
+  const sales = Number(sums?.sales ?? 0) + Number(entries?.sales ?? 0);
   const cogs = Number(sums?.cogs ?? 0);
 
   if (sales <= 0) {
