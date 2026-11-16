@@ -128,7 +128,6 @@
   box-shadow: inset 0 -2px 0 var(--hz-c-border);
 }
 .num {
-  text-align: right;
   /* Numeric cells switch to the tabular money font so column edges stay
      aligned across rows regardless of digit width. */
   font-family: var(--font-money, ui-monospace, monospace);
@@ -197,6 +196,7 @@
 .variantDescCell {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: var(--space-2);
 }
 .variantBranch { color: var(--hz-c-ink-muted); font-weight: 700; }
@@ -310,7 +310,7 @@
 .childTable thead th {
   /* Nested detail header — stays light (no fill, muted ink) but takes the
      sample's brand tracking so parent and child headers read as one system. */
-  text-align: left;
+  text-align: center;
   font-size: var(--fs-10, 10px);
   font-weight: 700;
   letter-spacing: 0.18em;
@@ -319,6 +319,7 @@
   padding: var(--space-2) var(--space-3);
 }
 .childTable tbody td {
+  text-align: center;
   padding: 5px var(--space-3);
   border-top: 1px solid var(--hz-c-border);
   color: var(--hz-c-ink);

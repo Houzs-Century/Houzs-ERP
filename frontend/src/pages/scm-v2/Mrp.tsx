@@ -787,14 +787,14 @@ export const Mrp = () => {
       },
     },
     {
-      key: 'warehouse', label: 'Warehouse', width: '150px',
+      key: 'warehouse', label: 'Warehouse', width: '150px', align: 'center',
       getValue: (g) => g.warehouseCode ?? g.warehouseName ?? '',
       render: (g) => (g.warehouseCode
         ? <span className={styles.whTag} title={g.warehouseName ?? undefined}>{g.warehouseCode}</span>
         : <span className={styles.whNone}>—</span>),
     },
     {
-      key: 'itemCode', label: isSofa ? 'Sales Order' : 'Item Code', width: '160px',
+      key: 'itemCode', label: isSofa ? 'Sales Order' : 'Item Code', width: '160px', align: 'center',
       getValue: (g) => g.itemCode,
       render: (g) => <span className={styles.codeCell}>{g.itemCode}</span>,
     },
@@ -806,7 +806,7 @@ export const Mrp = () => {
        the first SO doc no + "+N" when shared, with the full list in the drilldown. */
     ...(!isSofa
       ? [{
-          key: 'soNo', label: 'Sales Order', width: '150px',
+          key: 'soNo', label: 'Sales Order', width: '150px', align: 'center',
           getValue: (g: ModelGroup) =>
             [...new Set(g.variants.flatMap((v) => v.lines.map((l) => l.soDocNo)))].join(', '),
           render: (g: ModelGroup) => {
@@ -825,7 +825,7 @@ export const Mrp = () => {
       // column — it stretched to the longest line and absorbed every other
       // column's resize. A fixed width + `whitespace-normal` wraps the text and
       // stops the row from running off the right edge (owner 2026-09-11).
-      width: '360px', className: 'whitespace-normal break-words align-top',
+      width: '360px', align: 'center', className: 'whitespace-normal break-words align-top',
       getValue: (g) => g.description ?? '',
       render: (g) => {
         const named = g.variants.some((v) => v.variantKey !== '');
@@ -840,11 +840,11 @@ export const Mrp = () => {
         );
       },
     },
-    { key: 'qtyNeeded', label: 'Qty Needed', width: '120px', align: 'right', className: styles.num, getValue: (g) => g.qtyNeeded, render: (g) => fmtQty(g.qtyNeeded) },
-    { key: 'stock', label: 'Stock', width: '110px', align: 'right', className: styles.num, getValue: (g) => g.stock, render: (g) => fmtQty(g.stock) },
-    { key: 'poOutstanding', label: 'PO Outstanding', width: '150px', align: 'right', className: styles.num, getValue: (g) => g.poOutstanding, render: (g) => g.poOutstanding || '—' },
+    { key: 'qtyNeeded', label: 'Qty Needed', width: '120px', align: 'center', className: styles.num, getValue: (g) => g.qtyNeeded, render: (g) => fmtQty(g.qtyNeeded) },
+    { key: 'stock', label: 'Stock', width: '110px', align: 'center', className: styles.num, getValue: (g) => g.stock, render: (g) => fmtQty(g.stock) },
+    { key: 'poOutstanding', label: 'PO Outstanding', width: '150px', align: 'center', className: styles.num, getValue: (g) => g.poOutstanding, render: (g) => g.poOutstanding || '—' },
     {
-      key: 'shortage', label: 'Shortage', width: '120px', align: 'right', className: styles.num,
+      key: 'shortage', label: 'Shortage', width: '120px', align: 'center', className: styles.num,
       getValue: (g) => g.shortage,
       render: (g) => (g.shortage > 0 ? <span className={styles.shortNum}>{g.shortage}</span> : '—'),
     },
@@ -855,19 +855,19 @@ export const Mrp = () => {
        together beside Warehouse; "—" when no line carries that date. */
     {
       key: 'processingDate', label: 'Processing Date', group: 'Logistics',
-      width: '150px', defaultHidden: true, exportFormat: 'date',
+      width: '150px', align: 'center', defaultHidden: true, exportFormat: 'date',
       getValue: (g) => groupEarliestDate(g, 'processing') ?? '',
       render: (g) => fmtDate(groupEarliestDate(g, 'processing')),
     },
     {
       key: 'soDate', label: 'SO Date', group: 'Logistics',
-      width: '130px', defaultHidden: true, exportFormat: 'date',
+      width: '130px', align: 'center', defaultHidden: true, exportFormat: 'date',
       getValue: (g) => groupEarliestDate(g, 'soDate') ?? '',
       render: (g) => fmtDate(groupEarliestDate(g, 'soDate')),
     },
     {
       key: 'deliveryDate', label: 'Delivery Date', group: 'Logistics',
-      width: '140px', defaultHidden: true, exportFormat: 'date',
+      width: '140px', align: 'center', defaultHidden: true, exportFormat: 'date',
       getValue: (g) => groupEarliestDate(g, 'delivery') ?? '',
       render: (g) => fmtDate(groupEarliestDate(g, 'delivery')),
     },
