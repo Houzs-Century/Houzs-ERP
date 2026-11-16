@@ -44,6 +44,7 @@
 
 import type { SupabaseClient as SupabaseClientGeneric } from '@supabase/supabase-js';
 import { recordSlipAliases, slipAliasPairs } from './scan-field-aliases';
+import { HEADER_FIELDS, LINE_FIELDS, changedFields, j } from './scan-slip-fields';
 
 // getSupabaseService is schema-parameterised (db:{schema:'scm'}), so the bare
 // SupabaseClient type does not accept it. Same loosened alias scan-so.ts uses.
@@ -166,9 +167,10 @@ const codeMatch = (v: unknown): CodeMatch | null => {
 };
 
 /* The SO carries the phone as +60<national significant digits> (the create
-   core normalises it); ExtractedSlip.phones holds the bare national digits
-   (postProcessSlip). Strip the prefix back off so an untouched phone inverts
-   to exactly the string the extraction produced and contributes no diff. */
+   core normalises it); ExtractedSlip.phones is the raw read as written (e.g.
+   "012-345 6789"). Strip the prefix so the inverted blob holds bare digits.
+   That is not the raw string, so only a compare against the draft baseline
+   (same inversion on both sides) can tell an untouched phone from an edited one. */
 function unprefixPhone(v: unknown): string | null {
   const t = text(v);
   if (t === null || t === SHELL_PHONE) return null;
@@ -432,6 +434,115 @@ export function buildCorrectedSlipFromSo(
 }
 
 // ---------------------------------------------------------------------------
+// Draft baseline: what the pipeline left on the draft, so a later confirm can
+// tell a person's change from the pipeline's own (E.164 phone, geocoded
+// postcode, catalog snaps, withheld deposit, dropped dates).
+// ---------------------------------------------------------------------------
+
+async function readSoDraft(
+  svc: SupabaseClient,
+  docNo: string,
+): Promise<{ header: SoHeaderSnapshot | null; items: SoItemSnapshot[] }> {
+  const [{ data: headerRow }, { data: itemRows }] = await Promise.all([
+    svc.from('mfg_sales_orders').select(SO_HEADER_COLS).eq('doc_no', docNo).maybeSingle(),
+    svc
+      .from('mfg_sales_order_items')
+      .select(SO_ITEM_COLS)
+      .eq('doc_no', docNo)
+      // Same ordering the SO detail read uses — line_no is the persisted
+      // listing order (migration 0165); pre-0165 rows fall back to created_at.
+      .order('line_no', { ascending: true, nullsFirst: false })
+      .order('created_at', { ascending: true }),
+  ]);
+  return {
+    header: (headerRow as SoHeaderSnapshot | null) ?? null,
+    items: (itemRows as SoItemSnapshot[] | null) ?? [],
+  };
+}
+
+/**
+ * Store the draft's own shape (after every automatic write) on the sample.
+ * Never throws: a failed snapshot must not fail the scan job. The sample then
+ * has no baseline and is reviewed the old way.
+ */
+export async function snapshotDraftBaseline(
+  svc: SupabaseClient,
+  sampleId: string,
+  docNo: string,
+): Promise<void> {
+  try {
+    const { data: sample, error: readErr } = await svc
+      .from('so_scan_samples')
+      .select('extracted')
+      .eq('id', sampleId)
+      .maybeSingle();
+    if (readErr) throw new Error(readErr.message);
+    const extracted = (sample as { extracted?: unknown } | null)?.extracted;
+    if (extracted == null) return;
+    const { header, items } = await readSoDraft(svc, docNo);
+    const baseline = buildCorrectedSlipFromSo(extracted, header, items);
+    if (baseline === null) return;
+    const { error: writeErr } = await svc.from('so_scan_samples').update({ draft_baseline: baseline }).eq('id', sampleId);
+    if (writeErr) throw new Error(writeErr.message);
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('[scan-sample-review] draft baseline snapshot failed (non-fatal):', { sampleId, docNo }, (e as Error).message);
+  }
+}
+
+const asRecord = (v: unknown): Record<string, unknown> | null =>
+  v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+const ISO_DATE =/^\d{4}-\d{2}-\d{2}$/;
+const asLines = (v: unknown): Array<Record<string, unknown>> =>
+  Array.isArray(v) ? (v as Array<Record<string, unknown>>) : [];
+
+/**
+ * `extracted` with only the fields a person changed on the draft: a field of
+ * `final` is taken only when it differs from `baseline` (the draft as the
+ * pipeline left it). Pure; none of the inputs is mutated.
+ *
+ * Lines pair by index when the counts match. Otherwise a final line pairs with
+ * the baseline line carrying the same non-empty rawText; a line that cannot be
+ * paired unambiguously is taken from `final` as it is.
+ */
+export function keepPersonChanges(
+  extracted: Record<string, unknown>,
+  baseline: Record<string, unknown>,
+  final: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...extracted };
+  const rawDate = extracted.deliveryDate;
+  for (const [key] of HEADER_FIELDS) {
+    if (j(final[key]) === j(baseline[key])) continue;
+    // A person filling a date the slip did not carry is not an AI miss.
+    if (key === 'deliveryDate' && !(typeof rawDate === 'string' && ISO_DATE.test(rawDate))) continue;
+    out[key] = final[key];
+  }
+
+  const extractedLines = asLines(extracted.lines);
+  const baselineLines = asLines(baseline.lines);
+  const finalLines = asLines(final.lines);
+  const sameCount = baselineLines.length === finalLines.length;
+  const byRawText = (lines: Array<Record<string, unknown>>, line: Record<string, unknown>): Record<string, unknown> | null => {
+    const raw = typeof line.rawText === 'string' ? line.rawText : '';
+    if (raw === '') return null;
+    const hits = lines.filter((l) => l.rawText === raw);
+    return hits.length === 1 ? (hits[0] ?? null) : null;
+  };
+  const rawCountMatches = extractedLines.length === baselineLines.length;
+  out.lines = finalLines.map((finalLine, i) => {
+    const baseLine = sameCount ? (baselineLines[i] ?? null) : byRawText(baselineLines, finalLine);
+    if (baseLine === null) return finalLine;
+    const rawLine = rawCountMatches ? (extractedLines[baselineLines.indexOf(baseLine)] ?? null) : byRawText(extractedLines, baseLine);
+    if (rawLine === null) return finalLine;
+    const kept: Record<string, unknown> = { ...rawLine };
+    for (const [key] of LINE_FIELDS) if (j(finalLine[key]) !== j(baseLine[key])) kept[key] = finalLine[key];
+    return kept;
+  });
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 
 /**
  * Called on a DRAFT -> CONFIRMED transition. If this SO came from a background
@@ -495,11 +606,41 @@ export async function noteScanDraftAccepted(
     //    times the SO is re-confirmed (DRAFT -> CONFIRMED -> ON_HOLD -> ...).
     const { data: sample } = await svc
       .from('so_scan_samples')
-      .select('extracted, status')
+      .select('extracted, status, draft_baseline')
       .eq('id', sampleId)
       .maybeSingle();
-    const s = sample as { extracted?: unknown; status?: string | null } | null;
+    const s = sample as { extracted?: unknown; status?: string | null; draft_baseline?: unknown } | null;
     if (!s || s.status !== SAMPLE_EXTRACTED || s.extracted == null) return;
+
+    // 3b. With a baseline, a correction is only what differs from the draft as
+    //     the pipeline left it. A fair/venue pick or a pipeline transform is not
+    //     one, so a draft only touched that way lands ACCEPTED.
+    const baseline = asRecord(s.draft_baseline);
+    const extractedBlob = asRecord(s.extracted);
+    if (baseline && extractedBlob) {
+      const { header, items } = await readSoDraft(svc, docNo);
+      const final = buildCorrectedSlipFromSo(extractedBlob, header, items);
+      if (final === null) return;
+      const kept = keepPersonChanges(extractedBlob, baseline, final);
+      if (changedFields(extractedBlob, kept).length === 0) {
+        await svc
+          .from('so_scan_samples')
+          .update({ corrected: s.extracted, status: SAMPLE_ACCEPTED })
+          .eq('id', sampleId)
+          .eq('status', SAMPLE_EXTRACTED);
+        return;
+      }
+      await svc
+        .from('so_scan_samples')
+        .update({ corrected: kept, status: SAMPLE_CORRECTED })
+        .eq('id', sampleId)
+        .eq('status', SAMPLE_EXTRACTED);
+      const keptCompanyId = Number(col(header, 'company_id'));
+      if (Number.isInteger(keptCompanyId) && keptCompanyId > 0) {
+        await recordSlipAliases(svc, keptCompanyId, slipAliasPairs(extractedBlob, kept));
+      }
+      return;
+    }
 
     // 4a. Unchanged — promote EXTRACTED -> ACCEPTED, carrying `extracted`
     //     across verbatim. Unchanged behaviour, deliberately untouched: this

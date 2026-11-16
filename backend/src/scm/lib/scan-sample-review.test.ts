@@ -13,8 +13,10 @@ import {
   noteScanDraftAccepted,
   buildCorrectedSlipFromSo,
   alignSoLinesToSlip,
+  keepPersonChanges,
   CARRIED_NOT_INVERTED,
 } from './scan-sample-review';
+import { changedFields } from './scan-slip-fields';
 
 type Row = Record<string, any>;
 
@@ -376,5 +378,95 @@ describe('noteScanDraftAccepted — DRAFT -> CONFIRMED is the operator verdict',
     const { svc, updates } = fakeSvc(world.tables, { throwOn: 'so_scan_samples' });
     await expect(noteScanDraftAccepted(svc, DOC)).resolves.toBeUndefined();
     expect(updates.length).toBe(0);
+  });
+});
+
+// ── Draft baseline: only what a person changed counts ──────────────────────
+
+const rawSlip = (): Row => extractedSlip({
+  phones: ['012-694 5676'], city: 'shah alam', postcode: '40460',
+  depositRm: 1500, deliveryDate: 'before 20/12',
+  addressStateMatch: { value: 'Selangor', confidence: 0.9, reason: 'read' },
+});
+const pipelineHeader = (over: Row = {}): Row => soHeader({
+  phone: '+60126945676', city: 'Shah Alam', postcode: '40470', customer_state: 'Selangor',
+  deposit_sen: 0, customer_delivery_date: null, ...over,
+});
+const baselineOf = (raw: Row): Row => buildCorrectedSlipFromSo(raw, pipelineHeader(), [soItem()]) as Row;
+const finalOf = (raw: Row, header: Row, items: Row[] = [soItem()]): Row =>
+  buildCorrectedSlipFromSo(raw, header, items) as Row;
+
+describe('keepPersonChanges — pipeline transforms are not corrections', () => {
+  test('a draft only given a fair pick has no difference from the raw read', () => {
+    const raw = rawSlip();
+    const kept = keepPersonChanges(raw, baselineOf(raw), finalOf(raw, pipelineHeader()));
+    expect(changedFields(raw, kept)).toEqual([]);
+  });
+
+  test('pipeline-only differences (phone format, postcode, city, withheld deposit) give no difference', () => {
+    const raw = rawSlip();
+    // the draft really does differ from the raw read on these fields
+    expect(changedFields(raw, baselineOf(raw))).toEqual(expect.arrayContaining(['Phone', 'Postcode', 'Deposit']));
+    const kept = keepPersonChanges(raw, baselineOf(raw), baselineOf(raw));
+    expect(changedFields(raw, kept)).toEqual([]);
+  });
+
+  test('a real phone digit change gives exactly Phone', () => {
+    const raw = rawSlip();
+    const kept = keepPersonChanges(raw, baselineOf(raw), finalOf(raw, pipelineHeader({ phone: '+60126945677' })));
+    expect(changedFields(raw, kept)).toEqual(['Phone']);
+  });
+
+  test('a bedframe line change gives exactly that line field', () => {
+    const raw = rawSlip();
+    const kept = keepPersonChanges(raw, baselineOf(raw), finalOf(raw, pipelineHeader(), [soItem({ item_code: 'BC-Q' })]));
+    expect(changedFields(raw, kept)).toEqual(['Product code']);
+    expect(((kept.lines as Row[])[0].skuMatch as Row).code).toBe('BC-Q');
+  });
+
+  test('a delivery date filled from text the slip did not carry as a date is not a correction', () => {
+    const raw = rawSlip();
+    const kept = keepPersonChanges(raw, baselineOf(raw), finalOf(raw, pipelineHeader({ customer_delivery_date: '2026-12-20' })));
+    expect(changedFields(raw, kept)).toEqual([]);
+  });
+
+  test('inputs are not mutated', () => {
+    const raw = rawSlip();
+    const baseline = baselineOf(raw);
+    const final = finalOf(raw, pipelineHeader({ phone: '+60126945677' }));
+    const snapshot = JSON.stringify([raw, baseline, final]);
+    keepPersonChanges(raw, baseline, final);
+    expect(JSON.stringify([raw, baseline, final])).toBe(snapshot);
+  });
+});
+
+describe('noteScanDraftAccepted — with a draft baseline', () => {
+  const baselineWorld = (header: Row) => {
+    const raw = rawSlip();
+    const world = scanWorld({
+      audit: [
+        { id: 1, so_doc_no: DOC, action: 'CREATE', source: 'web' },
+        { id: 2, so_doc_no: DOC, action: 'UPDATE_HEADER', source: 'web' },
+      ],
+      header,
+    });
+    Object.assign(world.tables.so_scan_samples[0], { extracted: raw, draft_baseline: baselineOf(raw) });
+    return { raw, world };
+  };
+
+  test('a fair pick only lands ACCEPTED with corrected = extracted', async () => {
+    const { raw, world } = baselineWorld(pipelineHeader());
+    const { svc, updates } = fakeSvc(world.tables);
+    await noteScanDraftAccepted(svc, DOC);
+    expect(updates[0].patch.status).toBe('ACCEPTED');
+    expect(updates[0].patch.corrected).toBe(raw);
+  });
+
+  test('a real phone change lands CONFIRMED with only the phone moved', async () => {
+    const { raw, world } = baselineWorld(pipelineHeader({ phone: '+60126945677' }));
+    const { svc, updates } = fakeSvc(world.tables);
+    await noteScanDraftAccepted(svc, DOC);
+    expect(updates[0].patch.status).toBe('CONFIRMED');
+    expect(changedFields(raw, updates[0].patch.corrected)).toEqual(['Phone']);
   });
 });

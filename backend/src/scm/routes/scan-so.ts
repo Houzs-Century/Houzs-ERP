@@ -59,6 +59,7 @@ import { applySlipTotalToUnpricedLines } from '../lib/scan-slip-total';
 import { scanTimer } from '../lib/scan-timing';
 import { scanCatalogSkus, type CatalogSku, type ScanCatalogRow } from '../lib/scan-catalog-skus';
 import { readSlipWithAliases } from '../lib/scan-field-aliases';
+import { snapshotDraftBaseline } from '../lib/scan-sample-review';
 import { ttlCached } from '../lib/ttl-cache';
 import { keepScanFile, linkScanFiles } from '../lib/scan-files';
 import { variantNotAllowedSentence } from '../lib/allowed-options-check';
@@ -1822,6 +1823,7 @@ async function distillSalespersonRules(
     .select('extracted, corrected')
     .not('corrected', 'is', null)
     .eq('status', SAMPLE_CORRECTED)
+    .not('draft_baseline', 'is', null)
     .ilike('salesperson', ilikeExact(rep))
     .order('created_at', { ascending: false })
     .limit(50);
@@ -1946,6 +1948,7 @@ async function distillGlobalAliases(
     .select('extracted, corrected')
     .not('corrected', 'is', null)
     .eq('status', SAMPLE_CORRECTED)
+    .not('draft_baseline', 'is', null)
     .order('created_at', { ascending: false })
     .limit(80);
   if (selErr) {
@@ -2057,6 +2060,7 @@ async function distillGlobalRules(
     .select('extracted, corrected')
     .not('corrected', 'is', null)
     .eq('status', SAMPLE_CORRECTED)
+    .not('draft_baseline', 'is', null)
     .order('created_at', { ascending: false })
     .limit(80);
   if (selErr) {
@@ -2170,6 +2174,7 @@ export async function distillAllSalespersonRules(
     .select('salesperson')
     .not('corrected', 'is', null)
     .eq('status', SAMPLE_CORRECTED)
+    .not('draft_baseline', 'is', null)
     .not('salesperson', 'is', null)
     .order('created_at', { ascending: false })
     .range(from, to));
@@ -4021,6 +4026,7 @@ async function runScanJob(
       if (shellNote) {
         // Write both the SO-specific and generic link column (same doc_no for SO).
         await linked;
+        if (sampleId) await snapshotDraftBaseline(svc, sampleId, docNo);
         await Promise.all([
           touch({ status: 'done', so_doc_no: docNo, linked_doc_no: docNo, error: shellNote }),
           postScanNotice(env, {
@@ -4034,7 +4040,7 @@ async function runScanJob(
       }
       // Past the shell paths, a null parse has already returned above — narrow
       // `parsed` to non-null for the receipt-payment pass (defensive fallback).
-      if (!parsed) { await linked; await touch({ status: 'done', so_doc_no: docNo, linked_doc_no: docNo }); return; }
+      if (!parsed) { await linked; if (sampleId) await snapshotDraftBaseline(svc, sampleId, docNo); await touch({ status: 'done', so_doc_no: docNo, linked_doc_no: docNo }); return; }
       // Payments from receipt OCR — one ledger row per classified payment
       // receipt, via the SAME recordSoPaymentRow core the interactive route
       // uses. GUARD: never fail the job — the DRAFT stands; a failure only
@@ -4074,6 +4080,7 @@ async function runScanJob(
         paymentNote ??= 'Draft created; the payment could not be recorded — please add it on the order.';
       }
       await linked;
+      if (sampleId) await snapshotDraftBaseline(svc, sampleId, docNo);
       // Private "your scan is a draft now" notice. Duplicate/payment caveats
       // ride in the body + bump it to WARNING so it stands out.
       const noticeExtras = [

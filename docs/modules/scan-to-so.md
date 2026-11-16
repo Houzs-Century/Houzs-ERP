@@ -46,6 +46,7 @@ Lives in the `scm` Postgres schema, reached under `/api/scm/scan-so/*`.
 
 ## Rules that must not break
 
+- A correction is what a person changed on the draft, compared with `so_scan_samples.draft_baseline` (the draft after the pipeline's own phone, postcode and catalog fixes). Pipeline transforms and the fair pick never count; a scan without a baseline keeps the old compare, and the distillers skip those rows.
 - The learning pool has two different readers with different needs: the
   **distillers** mine only `status = CONFIRMED` (the diff teaches the
   rules); the **few-shot pool** ranks (never filters) on `corrected IS NOT

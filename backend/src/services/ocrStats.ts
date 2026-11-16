@@ -9,7 +9,10 @@ import type { Env } from "../types";
 import { getDb } from "../db/client";
 import { mytMonthRangeUtc } from "./agent-console";
 import { CLAUDE_MODEL } from "../scm/lib/scan-ocr";
+import { changedFields, LINES_CHANGED } from "../scm/lib/scan-slip-fields";
 import { SCAN_DOCUMENT_TYPES, SCAN_DOCUMENT_TYPE_LABEL, isScanDocumentType } from "../scm/lib/scan-document-type";
+
+export { changedFields, LINES_CHANGED };
 
 export type ScanOutcome = "pending" | "failed" | "discarded" | "clean" | "corrected" | "awaiting" | "imported";
 
@@ -51,60 +54,6 @@ export function classifyScan(r: ScanRow): { outcome: ScanOutcome; detail: string
     return { outcome: "corrected", detail: fields.length ? fields.join(", ") : null };
   }
   return { outcome: "awaiting", detail: null };
-}
-
-const HEADER_FIELDS: Array<[string, string]> = [
-  ["customerName", "Customer name"],
-  ["addressLine1", "Address"],
-  ["address", "Address"],
-  ["city", "City"],
-  ["postcode", "Postcode"],
-  ["addressStateMatch", "State"],
-  ["phones", "Phone"],
-  ["customerSoRef", "Customer ref"],
-  ["customerTypeMatch", "Customer type"],
-  ["buildingTypeMatch", "Building type"],
-  ["paymentMethodMatch", "Payment method"],
-  ["bankMatch", "Bank"],
-  ["approvalCode", "Approval code"],
-  ["depositRm", "Deposit"],
-  ["deliveryDate", "Delivery date"],
-];
-const LINE_FIELDS: Array<[string, string]> = [
-  ["skuMatch", "Product code"],
-  ["qtyGuess", "Qty"],
-  ["fabricMatch", "Fabric code"],
-  ["specialsMatch", "Special order"],
-];
-export const LINES_CHANGED = "Line added/removed";
-
-const j = (v: unknown) => JSON.stringify(v ?? null);
-const asObj = (v: unknown): Record<string, unknown> | null =>
-  v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
-
-/**
- * Which fields the operator changed, read from a CONFIRMED sample.
- * buildCorrectedSlipFromSo (scm/lib/scan-sample-review.ts) overwrites only the
- * keys whose value moved, so a key-by-key compare is the diff.
- */
-export function changedFields(extracted: unknown, corrected: unknown): string[] {
-  const ai = asObj(extracted);
-  const op = asObj(corrected);
-  if (!ai || !op) return [];
-  const out = new Set<string>();
-  for (const [key, label] of HEADER_FIELDS) if (j(ai[key]) !== j(op[key])) out.add(label);
-  const aiLines = Array.isArray(ai.lines) ? (ai.lines as Array<Record<string, unknown>>) : [];
-  const opLines = Array.isArray(op.lines) ? (op.lines as Array<Record<string, unknown>>) : [];
-  if (aiLines.length !== opLines.length) {
-    // ponytail: with a line added or removed the per-line fields are not compared;
-    // pairing lines would need alignSoLinesToSlip's matching, add it if this hides misses.
-    out.add(LINES_CHANGED);
-  } else {
-    // Compared as sorted lists so the review's line re-ordering is not a change.
-    const col = (lines: Array<Record<string, unknown>>, key: string) => lines.map((l) => j(asObj(l)?.[key])).sort().join("|");
-    for (const [key, label] of LINE_FIELDS) if (col(aiLines, key) !== col(opLines, key)) out.add(label);
-  }
-  return [...out];
 }
 
 // ── Report ───────────────────────────────────────────────────────────────────
