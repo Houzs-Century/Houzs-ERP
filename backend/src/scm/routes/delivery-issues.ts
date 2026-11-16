@@ -60,8 +60,6 @@ doDeliveryIssues.post('/:id/delivery-issue', async (c) => {
       doNumber: h.do_number,
       soDocNo: h.so_doc_no,
       job: null,
-      caseDocNo: h.so_doc_no || h.do_number || h.id,
-      where: [h.do_number, h.so_doc_no ? `(SO ${h.so_doc_no})` : null].filter(Boolean).join(' ') || 'a delivery order',
     }, parsed.value);
     if (!r.ok) return c.json({ error: r.error, reason: r.reason }, r.status);
     return c.json({ issue: r.issue }, 201);
@@ -103,7 +101,6 @@ jobDeliveryIssues.post('/:sourceType/:sourceId/:leg/issue', async (c) => {
   const loaded = await loadJob(c, job.sourceType, job.sourceId, job.leg);
   if (!loaded.ok) return c.json({ error: loaded.error, reason: loaded.reason }, loaded.status);
   const row = loaded.row;
-  const docRef = String((job.sourceType === 'assr' ? row.assr_no : job.sourceType === 'project' ? row.code : row.dp_no) ?? job.sourceId);
   // A service-case leg's SO is the case's doc_no; a project / DP job has none.
   const soDocNo = job.sourceType === 'assr' && row.doc_no ? String(row.doc_no) : null;
   try {
@@ -113,8 +110,6 @@ jobDeliveryIssues.post('/:sourceType/:sourceId/:leg/issue', async (c) => {
       doNumber: null,
       soDocNo,
       job,
-      caseDocNo: soDocNo ?? docRef,
-      where: `${job.leg} job ${docRef}${soDocNo ? ` (SO ${soDocNo})` : ''}`,
     }, parsed.value);
     if (!r.ok) return c.json({ error: r.error, reason: r.reason }, r.status);
     return c.json({ issue: r.issue }, 201);
