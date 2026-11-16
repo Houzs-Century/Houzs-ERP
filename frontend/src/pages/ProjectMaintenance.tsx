@@ -14,6 +14,7 @@ import { cn } from "../lib/utils";
 import { clearBrandLogoCache } from "../lib/branding";
 import { shareLinkMenuItems } from "./project-maintenance/shareLinks";
 import { VenueManagerRow } from "./project-maintenance/VenueManagerRow";
+import { OrganizerManagerRow } from "./project-maintenance/OrganizerManagerRow";
 import {
   useLocalities,
   distinctCountries,
@@ -241,6 +242,16 @@ function OrganizerManager() {
     }
   }
 
+  async function patch(id: number, body: Record<string, unknown>) {
+    try {
+      await api.patch(`/api/projects/organizers/${id}`, body);
+      toast.success("Organizer updated");
+      q.reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Something went wrong. Please try again.");
+    }
+  }
+
   async function remove(o: OrganizerRow) {
     if (
       !(await dialog.confirm({
@@ -296,23 +307,12 @@ function OrganizerManager() {
           ? q.data?.data ?? []
           : (q.data?.data ?? []).slice(0, PICKER_PREVIEW_ROWS)
         ).map((o) => (
-          <li
+          <OrganizerManagerRow
             key={o.id}
-            className="flex items-center justify-between gap-3 px-3 py-2"
-          >
-            <span className="flex-1 text-[13px] font-medium text-ink">{o.name}</span>
-            <RowActionsMenu
-              items={[
-                {
-                  type: "action",
-                  icon: Trash2,
-                  label: "Remove",
-                  danger: true,
-                  onClick: () => remove(o),
-                },
-              ]}
-            />
-          </li>
+            o={o}
+            onPatch={(id, body) => void patch(id, body)}
+            onRemove={() => void remove(o)}
+          />
         ))}
       </ul>
       <ExpandToggle

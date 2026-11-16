@@ -277,6 +277,8 @@ dataset = "houzs_erp_metrics"
 #                          with its own credential so DASHBOARD_API_KEY never
 #                          needs rotating.
 #   GOOGLE_MAPS_API_KEY  — used by the planner geocoder (Phase 2)
+#   ITRACK_ACCOUNT, ITRACK_PASSWORD — HC-0050 iTrack lorry GPS login
+#                          (scm/lib/itrack-poll.ts). Unset = no-op.
 #   RESEND_API_KEY       — transactional email (see src/services/email.ts).
 #                          If unset the email service silently no-ops so
 #                          deploys never break on missing keys.

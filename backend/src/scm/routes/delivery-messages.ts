@@ -114,6 +114,9 @@ export async function sendDeliveryMessageForDocs(
 ): Promise<SendDeliveryMessagesResult> {
   const sb = c.get('supabase');
   const user = c.get('user') as { id?: string } | null;
+  // Who pressed Send (HC-0232): Connect alerts this person if WhatsApp does not
+  // deliver. `user` above is the pinned system staff id, shared by every caller.
+  const sentByEmail = c.get('houzsUser')?.email;
 
   // The message fields, straight off the SO header (the board's own source).
   // Address columns feed the Postage kind only; the rest read nothing extra.
@@ -227,7 +230,11 @@ export async function sendDeliveryMessageForDocs(
       automation: KIND_AUTOMATION[kind],
       // Headline fields FIRST so this kind's own variables win on any overlap
       // (driver_info sets client_delivery_date itself); both ride on the one send.
-      extra: { ...buildSyncHeadline(first, phone, payloadDate(effectiveSoDelivery(first as SoDeliveryDateRow))), ...perKind.attributes },
+      extra: {
+        ...buildSyncHeadline(first, phone, payloadDate(effectiveSoDelivery(first as SoDeliveryDateRow))),
+        ...perKind.attributes,
+        ...(sentByEmail ? { sent_by_email: sentByEmail } : {}),
+      },
       resetConversation: OPENER_KINDS.has(kind),
     };
     // ONE message per customer phone and company. buildDeliveryFollowUp shows

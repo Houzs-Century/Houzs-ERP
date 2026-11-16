@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { BillExtraction, ExtractedBill } from './payment-voucher-queries';
-import { isNotABill, repeatsOf, voucherLinesOf } from './bill-pile-sort';
+import { claimEvidenceOf, isClaimForm, isNotABill, repeatsOf, voucherLinesOf } from './bill-pile-sort';
 
 const ex = (over: Partial<BillExtraction>): BillExtraction => ({
   vendorName: null, vendorRegNo: null, documentKind: 'receipt', invoiceNumber: null, invoiceDate: null, dueDate: null,
@@ -32,5 +32,43 @@ describe('bill-pile-sort', () => {
     expect(voucherLinesOf(ex({ severalReceipts: true, totalSen: 5778, lines }), 'X')).toEqual(lines);
     expect(voucherLinesOf(ex({ totalSen: 5778, lines }), 'X')).toEqual([{ description: 'Mugs · Lamp', amountSen: 5778 }]);
     expect(voucherLinesOf(ex({ totalSen: 100 }), 'SHOP 1')).toEqual([{ description: 'SHOP 1', amountSen: 100 }]);
+  });
+
+  /* Owner 2026-11-16 (已经有 claim form 还是会读错就不应该): Elise's claim form —
+     16 rows, RM 5,494.66, its receipts behind it — was set aside as a listing. */
+  it('a claim form whose rows add up to its total is the claim; a listing without them is not', () => {
+    const rows = [{ description: '21 Oct IKEA Table Lamp', amountSen: 166915 }, { description: '21 Oct Haier Dust Mite Vacuum', amountSen: 35488 }];
+    const form = ex({ documentKind: 'summary', totalSen: 202403, lines: rows });
+    expect(isClaimForm(form)).toBe(true);
+    expect(isNotABill(form)).toBe(false);
+    expect(voucherLinesOf(form, 'X')).toEqual(rows);
+    /* A row whose amount was not read leaves the rows short: still a listing. */
+    const short = ex({ documentKind: 'summary', totalSen: 202403, lines: [rows[0]!, { description: 'Haier', amountSen: null }] });
+    expect(isClaimForm(short)).toBe(false);
+    expect(isNotABill(short)).toBe(true);
+    expect(isClaimForm(ex({ documentKind: 'summary', totalSen: 342729 }))).toBe(false);
+    expect(isClaimForm(ex({ documentKind: 'receipt', totalSen: 202403, lines: rows }))).toBe(false);
+  });
+
+  it("a claim form's rows take the receipts at their amounts; its file's other pages go with it; other files' receipts stay", () => {
+    const form = bill(0, { documentKind: 'summary', totalSen: 55524, lines: [
+      { description: 'Vacuum', amountSen: 35488 }, { description: 'Soundbar', amountSen: 15036 }, { description: 'Lamp', amountSen: 5000 },
+    ] });
+    const source: Record<number, string> = { 0: 'elise', 1: 'elise', 2: 'elise', 3: 'elise', 4: 'tnb', 5: 'shop' };
+    const ev = claimEvidenceOf([
+      form,
+      bill(1, { totalSen: 15036 }),
+      bill(2, { totalSen: 35488 }),
+      bill(3, { totalSen: 999 }),
+      bill(4, { totalSen: 12000 }),
+      bill(5, { totalSen: 5000 }),
+    ], (i) => source[i]!);
+    expect([...ev.entries()].sort(([a], [b]) => a - b)).toEqual([
+      [1, { claim: 0, row: 2 }],
+      [2, { claim: 0, row: 1 }],
+      [3, { claim: 0, row: null }],
+      [5, { claim: 0, row: 3 }],
+    ]);
+    expect(claimEvidenceOf([bill(1, { totalSen: 15036 }), bill(2, { totalSen: 15036 })], () => 'same').size).toBe(0);
   });
 });

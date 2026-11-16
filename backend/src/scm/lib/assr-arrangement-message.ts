@@ -124,6 +124,8 @@ export async function sendAssrArrangement(
 
   const sb = c.get('supabase');
   const userId = c.get('houzsUser')?.id ?? null;
+  // Who pressed Send (HC-0232): Connect alerts this person if WhatsApp does not deliver.
+  const sentByEmail = c.get('houzsUser')?.email;
   const callbackUrl = chatCallbackUrl(c.env);
 
   for (const { key, assrNo, leg } of legs) {
@@ -137,6 +139,7 @@ export async function sendAssrArrangement(
 
     const extra: Record<string, string> = { service_job: ASSR_LEG_CUSTOMER_LABEL[leg], assr_leg: leg, ref_2: String(row.doc_no ?? ''), assr_no: assrNo };
     if (driverInfo) Object.assign(extra, kindAttributes('driver_info', {}, date, 0, { driverInfo }).attributes);
+    if (sentByEmail) extra.sent_by_email = sentByEmail;
     const contact = buildDeliveryFollowUp(
       phone,
       String(row.customer_name ?? ''),

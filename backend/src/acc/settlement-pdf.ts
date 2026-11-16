@@ -36,7 +36,7 @@ export type PdfToCsvResult = { ok: true; csv: string } | { ok: false; reason: st
 
 /* ── MD5, because Web Crypto does not carry it and the PDF key needs it ────── */
 
-function md5(input: Uint8Array): Uint8Array {
+export function md5(input: Uint8Array): Uint8Array {
   const S = [
     7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
     5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
