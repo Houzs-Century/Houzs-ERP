@@ -32,6 +32,7 @@ import crypto from 'node:crypto';
 import zlib from 'node:zlib';
 import postgres from 'postgres';
 import { AUGUST_DESCRIPTION, SPLIT_FAIRS, planSplitFairs } from './lib/split-month-fairs.mjs';
+import { pgIdArray } from './lib/pg-id-list.mjs';
 
 const PHRASE = 'ADD AUGUST PART OF SPLIT FAIRS';
 const MODE = String(process.env.MODE || 'plan').trim().toLowerCase();
@@ -73,7 +74,7 @@ const readFairs = (db, lock) => db`
          (SELECT COUNT(*)::int FROM scm.journal_entry_lines jl JOIN scm.accounts a ON a.company_id = jl.company_id AND a.account_code = jl.account_code
            WHERE jl.project_id = p.id AND a.pms_row = 'commission') AS "bookedCommission"
     FROM projects p
-   WHERE p.company_id = ${CO} AND p.id = ANY(${db.array(IDS)}::bigint[]) AND p.archived_at IS NULL
+   WHERE p.company_id = ${CO} AND p.id = ANY(${pgIdArray(IDS)}::bigint[]) AND p.archived_at IS NULL
    ORDER BY p.id
    ${lock ? db`FOR UPDATE OF p` : db``}`;
 const sen = (rm) => Math.round(Number(rm ?? 0) * 100);
@@ -110,6 +111,8 @@ async function main() {
   const sql = postgres(process.env.DATABASE_URL, { max: 1, prepare: false });
   let done = [];
   let before = null;
+  /* Set once the apply's transaction is kept: a failure after it is the re-read's, not the write's. */
+  let written = false;
   try {
     say(`add-august-part-split-fairs   company ${CO}   mode ${APPLY ? 'APPLY' : 'PLAN'}`);
     try {
@@ -165,6 +168,7 @@ async function main() {
       if (done.length > 0) say(`\nRehearsal passed and was rolled back — nothing written. To write: MODE=apply CONFIRM="${PHRASE}"`);
       return;
     }
+    written = true;
     say(`\n   completed: ${done.length} fair(s)`);
     const check = postgres(process.env.DATABASE_URL, { max: 1, prepare: false });
     try {
@@ -174,7 +178,7 @@ async function main() {
       if (!j.ok) process.exitCode = 1;
     } finally { await check.end(); }
   } catch (e) {
-    console.error(`${String(e?.message ?? e).slice(0, 300)} — nothing was kept.`);
+    console.error(`${String(e?.message ?? e).slice(0, 300)} — ${written ? 'the change IS written; only the re-read failed: check the rows by hand' : 'nothing was kept'}.`);
     process.exitCode = 1;
   } finally {
     await sql.end();
