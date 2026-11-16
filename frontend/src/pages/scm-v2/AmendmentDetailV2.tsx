@@ -139,7 +139,7 @@ const stageIndexOf = (status: string): number => {
 /* Two-lane rework (2026-07-27): a LANE amendment is ONE signature — its whole
    life is Requested → Applied (SO_APPROVED as terminal). The legacy 4-stage
    chain above stays for pre-rework (lane NULL) rows. */
-export type SoAmendmentLaneValue = "LINES" | "DELIVERY" | "PRICE";
+export type SoAmendmentLaneValue = "LINES" | "DELIVERY" | "PRICE" | "LINE_ADDREMOVE";
 const LANE_STAGES: Stage[] = [
   { key: "REQUESTED", label: "Requested" },
   { key: "APPLIED", label: "Applied" },
@@ -155,6 +155,7 @@ export const LANE_TITLE: Record<SoAmendmentLaneValue, string> = {
   LINES: `Product lines · ${AMENDMENT_APPROVER_LABEL[soAmendmentApprover("LINES")]}`,
   DELIVERY: `Delivery · ${AMENDMENT_APPROVER_LABEL[soAmendmentApprover("DELIVERY")]}`,
   PRICE: `Price · ${AMENDMENT_APPROVER_LABEL[soAmendmentApprover("PRICE")]}`,
+  LINE_ADDREMOVE: `Add / cancel line · ${AMENDMENT_APPROVER_LABEL[soAmendmentApprover("LINE_ADDREMOVE")]}`,
 };
 
 /* Hero accent dot per status tone — the dark hero can't use the light-surface
@@ -481,7 +482,7 @@ export function AmendmentDetailV2() {
   /* Lane rework: 'LINES' | 'DELIVERY' | 'PRICE' (2990 price-only) on post-rework
      rows; NULL keeps the legacy supplier-confirmed two-gate UI below untouched. */
   const lane: SoAmendmentLaneValue | null =
-    amendment?.lane === "LINES" || amendment?.lane === "DELIVERY" || amendment?.lane === "PRICE"
+    amendment?.lane === "LINES" || amendment?.lane === "DELIVERY" || amendment?.lane === "PRICE" || amendment?.lane === "LINE_ADDREMOVE"
       ? amendment.lane : null;
   /* The follow-up PO Amendments this amendment auto-raised when its LINES lane
      applied (the purchaser's second signature). REJECTED here = "PO not
@@ -719,6 +720,11 @@ export function AmendmentDetailV2() {
             + "is workable. The Sales Order is revised at once (the current version is snapshotted "
             + "into Revisions), and a follow-up PO Amendment is raised for you to confirm the "
             + "purchase-order side. This cannot be undone."
+          : lane === "LINE_ADDREMOVE"
+            ? "Adding or cancelling a product line changes what the customer ordered. The Sales "
+              + "Order is revised at once (the current version is snapshotted into Revisions), and a "
+              + "follow-up PO Amendment is raised for the purchaser to confirm the supplier side. "
+              + "This cannot be undone."
           : lane === "DELIVERY"
             ? "This applies the delivery changes to the Sales Order at once (the current version "
               + "is snapshotted into Revisions). The purchase order is not touched. This cannot be undone."
@@ -1022,7 +1028,7 @@ export function AmendmentDetailV2() {
                 <AmendmentRoutingBlock kinds={allFieldKinds} />
                 <p className="mt-3 border-t border-border-subtle pt-2 text-[11px] leading-relaxed text-ink-muted">
                   {lane
-                    ? "This request was auto-routed at submission: product-line changes go to Purchasing, delivery changes to Logistics. One signature from this lane's approver applies it; who approved and when is recorded on the Sales Order history."
+                    ? "This request was auto-routed at submission: a spec / colour / quantity change goes to Purchasing; adding or cancelling a product line, and a price-only change, go to the Sales Director; delivery changes go to Logistics. One signature from this lane's approver applies it; who approved and when is recorded on the Sales Order history."
                     : "Advisory routing — it shows who is responsible for what. Any authorized approver applies the whole amendment in one signature; who approved and when is recorded on the Sales Order history."}
                 </p>
               </AsideCard>
@@ -1092,8 +1098,9 @@ export function AmendmentDetailV2() {
                       {approveSo.isPending
                         ? "Applying…"
                         : lane === "LINES" ? "Approve product changes"
-                          : lane === "PRICE" ? "Approve price change"
-                            : "Approve delivery changes"}
+                          : lane === "LINE_ADDREMOVE" ? "Approve add / cancel line"
+                            : lane === "PRICE" ? "Approve price change"
+                              : "Approve delivery changes"}
                     </Button>
                   )}
                   {status === "REQUESTED" && !canApproveLane && (
@@ -1114,7 +1121,7 @@ export function AmendmentDetailV2() {
                       was not touched.
                     </p>
                   )}
-                  {status === "SO_APPROVED" && lane === "LINES" && (
+                  {status === "SO_APPROVED" && (lane === "LINES" || lane === "LINE_ADDREMOVE") && (
                     <div className="space-y-2">
                       {poFollowUps.length === 0 && (
                         <p className="text-[12px] text-ink-muted">

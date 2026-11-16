@@ -13,6 +13,7 @@ import {
   laneIsOpen,
   LANE_APPROVE_KEY,
   PRICE_LANE_COMPANY_CODES,
+  ADD_REMOVE_LANE_COMPANY_CODES,
 } from './amendment-lane';
 import { soAmendableHeaderKeys } from './so-field-policy';
 
@@ -102,12 +103,14 @@ describe('splitAmendmentByLane', () => {
   // every caller before the 2026-09-21 PRICE lane).
   const noPrice = () => false;
   const noSplit = () => null;
+  // No add/cancel-line carve-out: the behaviour before the 2026-11-16 lane.
+  const noAddRemove = () => false;
 
   it('splits a mixed submission into both lanes (proc date rides LINES)', () => {
     const split = splitAmendmentByLane<L>(
       { customerDeliveryDate: '2026-08-01', processingDate: '2026-07-30' },
       [{ id: 'a', code: 'PC151-01' }, { id: 'b', code: 'SVC-DELIVERY' }],
-      byCode, noPrice, false, noSplit,
+      byCode, noPrice, false, noSplit, noAddRemove, false,
     );
     expect(split.lanes).toEqual(['LINES', 'DELIVERY']);
     expect(split.perLane.LINES.lines.map((l) => l.id)).toEqual(['a']);
@@ -119,7 +122,7 @@ describe('splitAmendmentByLane', () => {
   });
 
   it('a product-only submission yields only LINES', () => {
-    const split = splitAmendmentByLane<L>({}, [{ id: 'a', code: 'PC151-01' }], byCode, noPrice, false, noSplit);
+    const split = splitAmendmentByLane<L>({}, [{ id: 'a', code: 'PC151-01' }], byCode, noPrice, false, noSplit, noAddRemove, false);
     expect(split.lanes).toEqual(['LINES']);
     expect(split.perLane.DELIVERY.lines).toEqual([]);
     expect(split.perLane.DELIVERY.headerKeys).toEqual([]);
@@ -129,7 +132,7 @@ describe('splitAmendmentByLane', () => {
     const split = splitAmendmentByLane<L>(
       { customerDeliveryDate: '2026-08-01', processingDate: '2026-07-30' },
       [],
-      byCode, noPrice, false, noSplit,
+      byCode, noPrice, false, noSplit, noAddRemove, false,
     );
     expect(split.lanes).toEqual(['LINES', 'DELIVERY']);
     expect(split.perLane.LINES.headerKeys).toEqual(['processingDate']);
@@ -143,7 +146,7 @@ describe('splitAmendmentByLane', () => {
     const split = splitAmendmentByLane<L>(
       { processingDate: null, customerDeliveryDate: null },
       [],
-      byCode, noPrice, false, noSplit,
+      byCode, noPrice, false, noSplit, noAddRemove, false,
     );
     expect(split.lanes).toEqual(['LINES']);
     expect(split.perLane.LINES.headerChanges).toEqual({ processingDate: null, customerDeliveryDate: null });
@@ -151,7 +154,7 @@ describe('splitAmendmentByLane', () => {
   });
 
   it('a Delivery Date clear without a Processing Date removal still signs with Logistic', () => {
-    const split = splitAmendmentByLane<L>({ customerDeliveryDate: null }, [], byCode, noPrice, false, noSplit);
+    const split = splitAmendmentByLane<L>({ customerDeliveryDate: null }, [], byCode, noPrice, false, noSplit, noAddRemove, false);
     expect(split.lanes).toEqual(['DELIVERY']);
   });
 
@@ -159,7 +162,7 @@ describe('splitAmendmentByLane', () => {
     const split = splitAmendmentByLane<L>(
       { address1: '12 Jalan Baru', replacementDisposal: 'Old sofa 1pc' },
       [],
-      byCode, noPrice, false, noSplit,
+      byCode, noPrice, false, noSplit, noAddRemove, false,
     );
     expect(split.lanes).toEqual(['DELIVERY']);
   });
@@ -172,7 +175,7 @@ describe('splitAmendmentByLane', () => {
     const split = splitAmendmentByLane<LG>(
       {},
       [{ id: 'a', code: '9028-L(RHF)', group: 'sofa' }, { id: 'b', code: 'DISPOSE', group: 'service' }],
-      (l) => ({ itemCode: l.code, itemGroup: l.group }), () => false, false, noSplit,
+      (l) => ({ itemCode: l.code, itemGroup: l.group }), () => false, false, noSplit, noAddRemove, false,
     );
     expect(split.lanes).toEqual(['LINES', 'DELIVERY']);
     expect(split.perLane.LINES.lines.map((l) => l.id)).toEqual(['a']);
@@ -189,7 +192,7 @@ describe('splitAmendmentByLane', () => {
     const split = splitAmendmentByLane<L>(
       {},
       [{ id: 'a', code: 'PC151-01' }, { id: 'p', code: 'JAGER-(K)' }],
-      byCode, priceOnly, true, noSplit,
+      byCode, priceOnly, true, noSplit, noAddRemove, false,
     );
     expect(split.lanes).toEqual(['LINES', 'PRICE']);
     expect(split.perLane.LINES.lines.map((l) => l.id)).toEqual(['a']);
@@ -200,7 +203,7 @@ describe('splitAmendmentByLane', () => {
     const split = splitAmendmentByLane<L>(
       {},
       [{ id: 'p', code: 'JAGER-(K)' }],
-      byCode, () => true, false, noSplit,
+      byCode, () => true, false, noSplit, noAddRemove, false,
     );
     expect(split.lanes).toEqual(['LINES']);
     expect(split.perLane.PRICE.lines).toEqual([]);
@@ -210,7 +213,7 @@ describe('splitAmendmentByLane', () => {
     const split = splitAmendmentByLane<L>(
       {},
       [{ id: 's', code: 'SVC-DELIVERY' }],
-      byCode, () => true, true, noSplit,
+      byCode, () => true, true, noSplit, noAddRemove, false,
     );
     expect(split.lanes).toEqual(['DELIVERY']);
     expect(split.perLane.PRICE.lines).toEqual([]);
@@ -220,12 +223,49 @@ describe('splitAmendmentByLane', () => {
     const split = splitAmendmentByLane<L>(
       { processingDate: '2026-07-30' },
       [{ id: 'p', code: 'JAGER-(K)' }],
-      byCode, () => true, true, noSplit,
+      byCode, () => true, true, noSplit, noAddRemove, false,
     );
     expect(split.lanes).toEqual(['LINES', 'PRICE']);
     expect(split.perLane.LINES.headerKeys).toEqual(['processingDate']);
     expect(split.perLane.LINES.lines).toEqual([]);
     expect(split.perLane.PRICE.lines.map((l) => l.id)).toEqual(['p']);
+  });
+
+  // ── LINE_ADDREMOVE lane (owner 2026-11-16) ─────────────────────────────────
+  // Adding or cancelling a whole PRODUCT line signs with the Sales Director, not
+  // the Purchaser, on an enabled company. A spec/qty change on a staying line and
+  // a service add/cancel are unaffected. `lineIsAddRemove` is proven against the
+  // real changeType in amendment-noop-lines.test.ts; here it is the toggle input.
+  it('carves a product ADD / REMOVE into LINE_ADDREMOVE when enabled', () => {
+    const isAddRemove = (l: L) => l.id === 'add' || l.id === 'rm';
+    const split = splitAmendmentByLane<L>(
+      {},
+      [{ id: 'spec', code: 'PC151-01' }, { id: 'add', code: 'HAPPI.S' }, { id: 'rm', code: 'FENRIR-(Q)' }],
+      byCode, noPrice, false, noSplit, isAddRemove, true,
+    );
+    expect(split.lanes).toEqual(['LINES', 'LINE_ADDREMOVE']);
+    expect(split.perLane.LINES.lines.map((l) => l.id)).toEqual(['spec']);
+    expect(split.perLane.LINE_ADDREMOVE.lines.map((l) => l.id)).toEqual(['add', 'rm']);
+  });
+
+  it('keeps an ADD / REMOVE on LINES when the add/cancel lane is OFF', () => {
+    const split = splitAmendmentByLane<L>(
+      {},
+      [{ id: 'add', code: 'HAPPI.S' }],
+      byCode, noPrice, false, noSplit, () => true, false,
+    );
+    expect(split.lanes).toEqual(['LINES']);
+    expect(split.perLane.LINE_ADDREMOVE.lines).toEqual([]);
+  });
+
+  it('a SERVICE line add/cancel stays DELIVERY, never LINE_ADDREMOVE (service wins first)', () => {
+    const split = splitAmendmentByLane<L>(
+      {},
+      [{ id: 's', code: 'SVC-DELIVERY' }],
+      byCode, noPrice, false, noSplit, () => true, true,
+    );
+    expect(split.lanes).toEqual(['DELIVERY']);
+    expect(split.perLane.LINE_ADDREMOVE.lines).toEqual([]);
   });
 });
 
@@ -261,11 +301,20 @@ describe('lane state machine', () => {
     expect(LANE_APPROVE_KEY.LINES).toBe('scm.amendment.approve_lines');
     expect(LANE_APPROVE_KEY.DELIVERY).toBe('scm.amendment.approve_delivery');
     expect(LANE_APPROVE_KEY.PRICE).toBe('scm.amendment.approve_price');
+    // Add / cancel a product line reuses the Sales Director's own key — the same
+    // desk signs a price change and a line add/cancel (owner 2026-11-16).
+    expect(LANE_APPROVE_KEY.LINE_ADDREMOVE).toBe('scm.amendment.approve_price');
   });
 });
 
 describe('PRICE_LANE_COMPANY_CODES', () => {
   it('routes a price-only change to the price approver on BOTH companies (owner 2026-09-25: HOUZS joins 2990)', () => {
     expect([...PRICE_LANE_COMPANY_CODES].sort()).toEqual(['2990', 'HOUZS']);
+  });
+});
+
+describe('ADD_REMOVE_LANE_COMPANY_CODES', () => {
+  it('routes an add/cancel-line change to the Sales Director on BOTH companies (owner 2026-11-16)', () => {
+    expect([...ADD_REMOVE_LANE_COMPANY_CODES].sort()).toEqual(['2990', 'HOUZS']);
   });
 });

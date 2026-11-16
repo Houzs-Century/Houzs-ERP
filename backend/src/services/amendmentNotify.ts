@@ -89,13 +89,14 @@ function shortReason(reason: string | null | undefined): string {
 
 /* ── SO amendments ───────────────────────────────────────────────────────── */
 
-export type SoAmendmentLane = "LINES" | "DELIVERY" | "PRICE";
+export type SoAmendmentLane = "LINES" | "DELIVERY" | "PRICE" | "LINE_ADDREMOVE";
 
 /** Lane wording for the notice copy. */
 const LANE_NOTICE_LABEL: Record<SoAmendmentLane, string> = {
   LINES: "product lines",
   DELIVERY: "delivery / customer info",
   PRICE: "price",
+  LINE_ADDREMOVE: "add / cancel a product line",
 };
 
 /** Permission key that signs each lane. MUST stay identical to the gate's own
@@ -107,6 +108,9 @@ const LANE_APPROVE_PERM: Record<SoAmendmentLane, string> = {
   LINES: "scm.amendment.approve_lines",
   DELIVERY: "scm.amendment.approve_delivery",
   PRICE: "scm.amendment.approve_price",
+  // Add / cancel a product line signs with the Sales Director — same key as a
+  // price change (owner 2026-11-16), so the notice reaches the same desk.
+  LINE_ADDREMOVE: "scm.amendment.approve_price",
 };
 
 export async function notifySoAmendmentRaised(

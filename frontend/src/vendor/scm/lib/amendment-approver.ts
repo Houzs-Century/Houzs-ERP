@@ -19,9 +19,11 @@ export type AmendmentApprover = 'PURCHASER' | 'LOGISTIC' | 'FINANCE' | 'LEGACY';
 export function soAmendmentApprover(lane: string | null | undefined): AmendmentApprover {
   if (lane === 'LINES') return 'PURCHASER';
   if (lane === 'DELIVERY') return 'LOGISTIC';
-  // PRICE lane (owner 2026-09-21): a 2990 price-only change signs with Finance
-  // (Kris), not the Purchaser. See backend/src/scm/shared/amendment-lane.ts.
-  if (lane === 'PRICE') return 'FINANCE';
+  // PRICE lane (owner 2026-09-21): a price-only change signs with the Sales
+  // Director (the FINANCE badge's label), not the Purchaser. LINE_ADDREMOVE (owner
+  // 2026-11-16): adding or cancelling a whole product line is the same desk's.
+  // See backend/src/scm/shared/amendment-lane.ts.
+  if (lane === 'PRICE' || lane === 'LINE_ADDREMOVE') return 'FINANCE';
   return 'LEGACY';
 }
 
@@ -32,10 +34,13 @@ export const PO_AMENDMENT_APPROVER: AmendmentApprover = 'PURCHASER';
  *  (backend/src/scm/shared/amendment-lane.ts). The SO amendment detail + mobile
  *  sheet gate their approve / reject buttons on it, so a button never shows to a
  *  desk the server would refuse. */
-export const SO_AMENDMENT_LANE_APPROVE_PERM: Record<'LINES' | 'DELIVERY' | 'PRICE', string> = {
+export const SO_AMENDMENT_LANE_APPROVE_PERM: Record<'LINES' | 'DELIVERY' | 'PRICE' | 'LINE_ADDREMOVE', string> = {
   LINES: 'scm.amendment.approve_lines',
   DELIVERY: 'scm.amendment.approve_delivery',
   PRICE: 'scm.amendment.approve_price',
+  // Add / cancel a whole product line signs with the Sales Director — the same
+  // key as a price change (owner 2026-11-16).
+  LINE_ADDREMOVE: 'scm.amendment.approve_price',
 };
 
 export const AMENDMENT_APPROVER_LABEL: Record<AmendmentApprover, string> = {

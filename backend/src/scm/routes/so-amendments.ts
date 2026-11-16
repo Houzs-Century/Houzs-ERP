@@ -104,7 +104,7 @@ type AmendmentForWrite = {
 
 /** Lane of a loaded row — narrowed to the known lane values, else legacy. */
 const laneOf = (a: AmendmentForWrite): AmendmentLane | null =>
-  a.lane === 'LINES' || a.lane === 'DELIVERY' || a.lane === 'PRICE' ? a.lane : null;
+  a.lane === 'LINES' || a.lane === 'DELIVERY' || a.lane === 'PRICE' || a.lane === 'LINE_ADDREMOVE' ? a.lane : null;
 
 /* People a RESOLVED amendment is news to (owner 2026-09-02): the person who
    raised it, and the salesperson whose Sales Order it changes. Both are
@@ -441,6 +441,9 @@ soAmendments.get('/pending-count', async (c) => {
   if (holdsHouzsPermLiterally(c, LANE_APPROVE_KEY.LINES)) lanes.push('LINES');
   if (holdsHouzsPermLiterally(c, LANE_APPROVE_KEY.DELIVERY)) lanes.push('DELIVERY');
   if (holdsHouzsPermLiterally(c, LANE_APPROVE_KEY.PRICE)) lanes.push('PRICE');
+  // LINE_ADDREMOVE reuses the Sales Director's price key, so the same holder sees
+  // both — count it as its own lane so the badge is not under-stated.
+  if (holdsHouzsPermLiterally(c, LANE_APPROVE_KEY.LINE_ADDREMOVE)) lanes.push('LINE_ADDREMOVE');
   const legacy = holdsHouzsPermLiterally(c, 'scm.amendment.approve_so');
   /* Cancellations sit in this queue too since owner 2026-09-24 (「当有 SO request
      cancel bill - 需要在 SO amendment 出现」), so the badge over it counts them
@@ -1056,14 +1059,18 @@ export async function approveSoCommandHandler(c: any, sb: any, lap: (step: strin
   if (!updated) return c.json({ error: 'amendment_version_conflict' }, 409);
   lap('status');
 
-  /* Two-lane rework — the LINES lane's PO leg: raise the follow-up PO
+  /* Two-lane rework — the product-line lanes' PO leg: raise the follow-up PO
      Amendment(s) INSIDE this same transaction (runScmPgCommand), so the SO
      revision and the purchaser's to-do commit or roll back together. The
      purchaser confirms them in PO Amendments (their second signature), where
-     the apply is reviseBoundPo scoped to that one PO. DELIVERY lane and legacy
-     rows never reach this: DELIVERY never touches a PO, legacy uses approve-po. */
+     the apply is reviseBoundPo scoped to that one PO. BOTH LINES (spec / qty)
+     and LINE_ADDREMOVE (a product line added / cancelled, signed by the Sales
+     Director — owner 2026-11-16) carry changes the supplier must follow, so both
+     raise the follow-up; raisePoFollowUps filters to the PO-relevant lines, so a
+     half with nothing for the PO raises nothing. DELIVERY lane and legacy rows
+     never reach this: DELIVERY never touches a PO, legacy uses approve-po. */
   let poFollowUps: Awaited<ReturnType<typeof raisePoFollowUps>> = { followUps: [], warnings: [] };
-  if (lane === 'LINES') {
+  if (lane === 'LINES' || lane === 'LINE_ADDREMOVE') {
     poFollowUps = await raisePoFollowUps(sb, c, {
       soAmendmentId: amendment.id,
       soAmendmentNo: amendment.amendment_no ?? '',
@@ -1586,13 +1593,14 @@ soAmendments.patch('/:id/flag-lane', async (c) => {
   if (!loaded.ok) return c.json({ error: 'not_found' }, 404);
   const lane = laneOf(loaded.amendment);
   if (!lane) return c.json(LEGACY_HAS_NO_DESK, 409);
-  // The PRICE lane has no "other desk" — a price-only change is Finance's alone
-  // (owner 2026-09-21), approved or rejected in place. Handover is the
-  // LINES<->DELIVERY move; a price amendment is never passed on.
-  if (lane === 'PRICE') {
+  // The Sales Director's lanes have no "other desk" — a price-only change (owner
+  // 2026-09-21) and a product line add/cancel (owner 2026-11-16) are the Sales
+  // Director's alone, approved or rejected in place. Handover is the
+  // LINES<->DELIVERY move; neither is ever passed on.
+  if (lane === 'PRICE' || lane === 'LINE_ADDREMOVE') {
     return c.json({
       error: 'price_lane_no_handover',
-      reason: "A price amendment is the Sales Director's to approve or reject — it cannot be passed to another desk.",
+      reason: "This amendment is the Sales Director's to approve or reject — it cannot be passed to another desk.",
     }, 409);
   }
   if (!hasHouzsPerm(c, LANE_APPROVE_KEY[lane])) {

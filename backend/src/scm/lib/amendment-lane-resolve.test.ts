@@ -57,7 +57,7 @@ describe('resolveAmendmentLaneSplit', () => {
     const split = await resolveAmendmentLaneSplit(makeSb(rows()), 'HC-SO-1', 1, {}, [
       { salesOrderItemId: 'li-dispose' },
       { salesOrderItemId: 'li-bed' },
-    ], false);
+    ], false, false);
     expect(split).not.toBeNull();
     expect(split!.lanes).toEqual(['LINES', 'DELIVERY']);
     expect(split!.perLane.DELIVERY.lines).toEqual([{ salesOrderItemId: 'li-dispose' }]);
@@ -68,7 +68,7 @@ describe('resolveAmendmentLaneSplit', () => {
     const split = await resolveAmendmentLaneSplit(makeSb(rows()), 'HC-SO-1', 1, {}, [
       { newItemCode: 'TRANSPORTATION CHARGES' },
       { newItemCode: 'CODY-(Q)' },
-    ], false);
+    ], false, false);
     expect(split!.perLane.DELIVERY.lines).toEqual([{ newItemCode: 'TRANSPORTATION CHARGES' }]);
     expect(split!.perLane.LINES.lines).toEqual([{ newItemCode: 'CODY-(Q)' }]);
   });
@@ -76,20 +76,20 @@ describe('resolveAmendmentLaneSplit', () => {
   it('never reads another company\'s catalogue row', async () => {
     const split = await resolveAmendmentLaneSplit(makeSb(rows()), 'HC-SO-1', 2, {}, [
       { newItemCode: 'TRANSPORTATION CHARGES' },
-    ], false);
+    ], false, false);
     expect(split!.lanes).toEqual(['LINES']);
   });
 
   it('reads line identities from THIS order only — a line id on another order is unknown, so LINES', async () => {
     const split = await resolveAmendmentLaneSplit(makeSb(rows()), 'HC-SO-1', 1, {}, [
       { salesOrderItemId: 'li-other-order' },
-    ], false);
+    ], false, false);
     expect(split!.lanes).toEqual(['LINES']);
   });
 
   it('routes header keys through the lane table alongside the lines', async () => {
     const split = await resolveAmendmentLaneSplit(makeSb(rows()), 'HC-SO-1', 1,
-      { customerDeliveryDate: '2026-10-01', processingDate: '2026-09-20' }, [], false);
+      { customerDeliveryDate: '2026-10-01', processingDate: '2026-09-20' }, [], false, false);
     expect(split!.perLane.DELIVERY.headerKeys).toEqual(['customerDeliveryDate']);
     expect(split!.perLane.LINES.headerKeys).toEqual(['processingDate']);
   });
@@ -97,16 +97,16 @@ describe('resolveAmendmentLaneSplit', () => {
   it('answers null when either read fails, never an empty identity', async () => {
     expect(await resolveAmendmentLaneSplit(makeSb(rows(), 'mfg_sales_order_items'), 'HC-SO-1', 1, {}, [
       { salesOrderItemId: 'li-dispose' },
-    ], false)).toBeNull();
+    ], false, false)).toBeNull();
     expect(await resolveAmendmentLaneSplit(makeSb(rows(), 'mfg_products'), 'HC-SO-1', 1, {}, [
       { newItemCode: 'TRANSPORTATION CHARGES' },
-    ], false)).toBeNull();
+    ], false, false)).toBeNull();
   });
 
   it('asks the catalogue nothing when no line is added', async () => {
     const split = await resolveAmendmentLaneSplit(makeSb(rows(), 'mfg_products'), 'HC-SO-1', 1, {}, [
       { salesOrderItemId: 'li-bed' },
-    ], false);
+    ], false, false);
     expect(split!.lanes).toEqual(['LINES']);
   });
 });
@@ -115,7 +115,7 @@ describe('resolveAmendmentLaneSplit — PRICE lane (2990, owner 2026-09-21)', ()
   it('carves a price-only change on a product line into PRICE when enabled', async () => {
     const split = await resolveAmendmentLaneSplit(makeSb(rows()), 'HC-SO-1', 2, {}, [
       { salesOrderItemId: 'li-bed', changeType: 'SPEC', newUnitPriceSen: 0 },
-    ], true);
+    ], true, false);
     expect(split!.lanes).toEqual(['PRICE']);
     expect(split!.perLane.PRICE.lines).toEqual([{ salesOrderItemId: 'li-bed', changeType: 'SPEC', newUnitPriceSen: 0 }]);
   });
@@ -123,7 +123,7 @@ describe('resolveAmendmentLaneSplit — PRICE lane (2990, owner 2026-09-21)', ()
   it('splits a SKU swap that also moves the price: the swap on LINES keeps the price, the price goes to PRICE (DEV-70)', async () => {
     const split = await resolveAmendmentLaneSplit(makeSb(rows()), 'HC-SO-1', 2, {}, [
       { salesOrderItemId: 'li-bed', changeType: 'SPEC', newItemCode: 'CODY-(Q)', newQty: 2, newUnitPriceSen: 0 },
-    ], true);
+    ], true, false);
     expect(split!.lanes).toEqual(['LINES', 'PRICE']);
     expect(split!.perLane.LINES.lines).toEqual([
       { salesOrderItemId: 'li-bed', changeType: 'SPEC', newItemCode: 'CODY-(Q)', newQty: 2, newUnitPriceSen: null, newDiscountSen: null },
@@ -136,7 +136,7 @@ describe('resolveAmendmentLaneSplit — PRICE lane (2990, owner 2026-09-21)', ()
   it('a spec change that resends the unchanged price is not split', async () => {
     const split = await resolveAmendmentLaneSplit(makeSb(rows()), 'HC-SO-1', 2, {}, [
       { salesOrderItemId: 'li-bed', changeType: 'SPEC', newItemCode: 'CODY-(Q)', newUnitPriceSen: 25000 },
-    ], true);
+    ], true, false);
     expect(split!.lanes).toEqual(['LINES']);
     expect(split!.perLane.LINES.lines[0].newUnitPriceSen).toBe(25000);
   });
@@ -144,7 +144,7 @@ describe('resolveAmendmentLaneSplit — PRICE lane (2990, owner 2026-09-21)', ()
   it('only the discount moving with the spec: the price half carries the discount alone', async () => {
     const split = await resolveAmendmentLaneSplit(makeSb(rows()), 'HC-SO-1', 2, {}, [
       { salesOrderItemId: 'li-bed', changeType: 'SPEC', newQty: 2, newUnitPriceSen: 25000, newDiscountSen: 5000 },
-    ], true);
+    ], true, false);
     expect(split!.lanes).toEqual(['LINES', 'PRICE']);
     expect(split!.perLane.PRICE.lines[0]).toMatchObject({ newUnitPriceSen: null, newDiscountSen: 5000, newQty: null });
   });
@@ -152,7 +152,7 @@ describe('resolveAmendmentLaneSplit — PRICE lane (2990, owner 2026-09-21)', ()
   it('is OFF when the price lane is not enabled: a SKU swap with a price stays whole on LINES', async () => {
     const split = await resolveAmendmentLaneSplit(makeSb(rows()), 'HC-SO-1', 1, {}, [
       { salesOrderItemId: 'li-bed', changeType: 'SPEC', newItemCode: 'CODY-(Q)', newUnitPriceSen: 0 },
-    ], false);
+    ], false, false);
     expect(split!.lanes).toEqual(['LINES']);
     expect(split!.perLane.LINES.lines[0].newUnitPriceSen).toBe(0);
   });
@@ -160,21 +160,56 @@ describe('resolveAmendmentLaneSplit — PRICE lane (2990, owner 2026-09-21)', ()
   it('a service line stays DELIVERY even when only its price moved', async () => {
     const split = await resolveAmendmentLaneSplit(makeSb(rows()), 'HC-SO-1', 2, {}, [
       { salesOrderItemId: 'li-dispose', changeType: 'SPEC', newUnitPriceSen: 5000 },
-    ], true);
+    ], true, false);
     expect(split!.lanes).toEqual(['DELIVERY']);
   });
 
   it('is OFF when the price lane is not enabled: a price-only change stays LINES', async () => {
     const split = await resolveAmendmentLaneSplit(makeSb(rows()), 'HC-SO-1', 1, {}, [
       { salesOrderItemId: 'li-bed', changeType: 'SPEC', newUnitPriceSen: 0 },
-    ], false);
+    ], false, false);
     expect(split!.lanes).toEqual(['LINES']);
   });
 
   it('an ADD is never price-only — it is a whole new line, classified by its code', async () => {
     const split = await resolveAmendmentLaneSplit(makeSb(rows()), 'HC-SO-1', 2, {}, [
       { newItemCode: 'CODY-(Q)', changeType: 'ADD', newUnitPriceSen: 0 },
-    ], true);
+    ], true, false);
+    expect(split!.lanes).toEqual(['LINES']);
+  });
+});
+
+describe('resolveAmendmentLaneSplit — LINE_ADDREMOVE lane (owner 2026-11-16)', () => {
+  it('carves a product ADD and a product REMOVE into LINE_ADDREMOVE when enabled', async () => {
+    const split = await resolveAmendmentLaneSplit(makeSb(rows()), 'HC-SO-1', 1, {}, [
+      { newItemCode: 'CODY-(Q)', changeType: 'ADD' },
+      { salesOrderItemId: 'li-bed', changeType: 'REMOVE' },
+    ], false, true);
+    expect(split!.lanes).toEqual(['LINE_ADDREMOVE']);
+    expect(split!.perLane.LINE_ADDREMOVE.lines).toEqual([
+      { newItemCode: 'CODY-(Q)', changeType: 'ADD' },
+      { salesOrderItemId: 'li-bed', changeType: 'REMOVE' },
+    ]);
+  });
+
+  it('a spec/qty change on a STAYING line still signs with the Purchaser on LINES', async () => {
+    const split = await resolveAmendmentLaneSplit(makeSb(rows()), 'HC-SO-1', 1, {}, [
+      { salesOrderItemId: 'li-bed', changeType: 'QTY', newQty: 3 },
+    ], false, true);
+    expect(split!.lanes).toEqual(['LINES']);
+  });
+
+  it('a SERVICE line removal stays DELIVERY, never LINE_ADDREMOVE', async () => {
+    const split = await resolveAmendmentLaneSplit(makeSb(rows()), 'HC-SO-1', 1, {}, [
+      { salesOrderItemId: 'li-dispose', changeType: 'REMOVE' },
+    ], false, true);
+    expect(split!.lanes).toEqual(['DELIVERY']);
+  });
+
+  it('keeps an ADD / REMOVE on LINES when the add/cancel lane is OFF for the company', async () => {
+    const split = await resolveAmendmentLaneSplit(makeSb(rows()), 'HC-SO-1', 1, {}, [
+      { newItemCode: 'CODY-(Q)', changeType: 'ADD' },
+    ], false, false);
     expect(split!.lanes).toEqual(['LINES']);
   });
 });
@@ -182,13 +217,14 @@ describe('resolveAmendmentLaneSplit — PRICE lane (2990, owner 2026-09-21)', ()
 describe('summarizeLaneSplit', () => {
   it('reports counts and header keys per lane, not the lines themselves', async () => {
     const split = await resolveAmendmentLaneSplit(makeSb(rows()), 'HC-SO-1', 1,
-      { customerDeliveryDate: '2026-10-01' }, [{ salesOrderItemId: 'li-bed' }, { newItemCode: 'TRANSPORTATION CHARGES' }], false);
+      { customerDeliveryDate: '2026-10-01' }, [{ salesOrderItemId: 'li-bed' }, { newItemCode: 'TRANSPORTATION CHARGES' }], false, false);
     expect(summarizeLaneSplit(split!)).toEqual({
       lanes: ['LINES', 'DELIVERY'],
       perLane: {
         LINES: { lineCount: 1, headerKeys: [] },
         DELIVERY: { lineCount: 1, headerKeys: ['customerDeliveryDate'] },
         PRICE: { lineCount: 0, headerKeys: [] },
+        LINE_ADDREMOVE: { lineCount: 0, headerKeys: [] },
       },
     });
   });
