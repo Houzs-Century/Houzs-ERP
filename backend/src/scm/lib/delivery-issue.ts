@@ -1,15 +1,20 @@
 /* "Delivered with issue" — the crew reports a problem at POD (damaged, missing
    part, wrong item or colour, customer refused part, other), with photos. The
    delivery itself is NOT blocked: the DO / job is still recorded delivered; this
-   adds a scm.delivery_issues row and opens an After-Sales Service case linked to
-   the SO and the DO, with the photos on the case.
+   adds a scm.delivery_issues row with the crew's photos kept on the POD.
 
-   The routes (scm/routes/delivery-issues.ts) prove WHO may report on WHICH
-   delivery (company scope + the crew's own job); this file does the work once
-   that is proven. */
+   Owner 2026-11-16: the crew no longer opens the Service Case — the OFFICE does,
+   from the DO / SO screen. So reportDeliveryIssue only records the report (no
+   case, no service-case permission); createCaseForDeliveryIssue is the office
+   action that opens the case and files the POD photos onto it.
+
+   The report routes (scm/routes/delivery-issues.ts) prove WHO may report on
+   WHICH delivery (company scope + the crew's own job); the office create is
+   gated on the service-case create gate where it is mounted (routes/assr.ts).
+   This file does the work once that is proven. */
 import type { Context } from 'hono';
 import type { Env, Variables } from '../env';
-import { scopeToAllowedCompanies, activeCompanyId } from './companyScope';
+import { scopeToAllowedCompanies, activeCompanyId, type CompanyScopeCtx } from './companyScope';
 import { claimPodPhotos, doStopContext, jobStopContext } from './pod-photo-claim';
 import { createAssrCase, saveAttachment, logActivity } from '../../services/assr';
 import { notifyServiceCaseResponsible } from '../../services/assrNotify';
@@ -64,10 +69,6 @@ export type DeliveryIssueTarget = {
   doNumber: string | null;
   soDocNo: string | null;
   job: { sourceType: 'dp' | 'project' | 'assr'; sourceId: string; leg: string } | null;
-  /** The document the Service Case is raised against (the SO, else the job's own document). */
-  caseDocNo: string;
-  /** "DO-2410-0001 (SO HC-SO-001234)" — for the complaint text. */
-  where: string;
 };
 
 export type DeliveryIssueRow = {
@@ -89,9 +90,14 @@ export type DeliveryIssueRow = {
 };
 
 
-/* Records the issue and opens the Service Case. Order matters so a failure is
-   retryable without a duplicate case: the issue row goes in first (no case yet);
-   a failed case create deletes it again; only then is the case linked. */
+type Res<T> = { data: T | null; error: { message: string } | null };
+
+/* Records the crew's report. Claims the photos (which promotes the pending
+   slip uploads so the reaper leaves the R2 objects alone — so the photos
+   persist on the POD / DO even though no case holds them yet) and inserts one
+   scm.delivery_issues row. It does NOT open a Service Case and needs no
+   service-case permission: the office opens the case later from the DO / SO
+   screen (createCaseForDeliveryIssue). */
 export async function reportDeliveryIssue(c: Ctx, target: DeliveryIssueTarget, issue: ParsedDeliveryIssue):
   Promise<{ ok: true; issue: DeliveryIssueRow } | { ok: false; status: 400 | 500; error: string; reason: string }> {
   const sb = c.get('supabase');
@@ -106,7 +112,6 @@ export async function reportDeliveryIssue(c: Ctx, target: DeliveryIssueTarget, i
   // company-scoped reads below and on the office screens can find the row.
   const companyId = target.companyId ?? activeCompanyId(c) ?? null;
 
-  type Res<T> = { data: T | null; error: { message: string } | null };
   const { data: insertedRow, error: insErr } = (await sb.from('delivery_issues').insert({
     company_id: companyId,
     delivery_order_id: target.deliveryOrderId,
@@ -119,35 +124,93 @@ export async function reportDeliveryIssue(c: Ctx, target: DeliveryIssueTarget, i
     note: issue.note,
     photo_keys: photoKeys,
     reported_by: me,
-  }).select('id').single()) as Res<{ id: string }>;
+  }).select('*').single()) as Res<DeliveryIssueRow>;
   if (insErr || !insertedRow) return { ok: false, status: 500, error: 'save_failed', reason: insErr ? insErr.message : 'The issue was not saved.' };
-  const issueId = insertedRow.id;
+  return { ok: true, issue: insertedRow };
+}
+
+/** The office context for createCaseForDeliveryIssue: company scope + env. The
+ *  caller passes the supabase client and the actor explicitly, so this works
+ *  from the ASSR router (getSupabaseService, no c.get('supabase')) as well as
+ *  from an scm route. */
+export type DeliveryIssueCaseCtx = CompanyScopeCtx & { env: Env };
+
+/* The OFFICE opens the Service Case from a crew delivery report (owner
+   2026-11-16). The crew's photos already live on the POD
+   (delivery_issues.photo_keys, kept alive by claimPodPhotos' promote); this
+   reads them back and files them on the new case. It runs the four steps the
+   old crew auto-path ran — create the case, file the photos, link the report
+   row, notify the PIC — and deliberately NOTHING MORE: the customer "case
+   received" WhatsApp the generic POST /api/assr sends is not part of this, the
+   auto-path never sent one, and the office must not spring a new customer
+   message by moving the create here.
+     The report row already exists, so order is simpler than the old insert-
+   then-create: a failed createAssrCase leaves the report unlinked for a clean
+   retry; a create that then fails to link reports the case number so the office
+   does not open a second one. */
+export async function createCaseForDeliveryIssue(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the scm PostgREST client, untyped like every route helper
+  sb: any,
+  c: DeliveryIssueCaseCtx,
+  issueId: string,
+  actorUserId: number | null,
+): Promise<
+  | { ok: true; caseId: number; assrNo: string; issue: DeliveryIssueRow }
+  | { ok: false; status: 404 | 409 | 500; error: string; reason: string }
+> {
+  const { data: row, error: loadErr } = (await scopeToAllowedCompanies(
+    sb.from('delivery_issues').select('*').eq('id', issueId),
+    c,
+  ).maybeSingle()) as Res<DeliveryIssueRow>;
+  if (loadErr) return { ok: false, status: 500, error: 'load_failed', reason: loadErr.message };
+  if (!row) return { ok: false, status: 404, error: 'not_found', reason: 'This delivery report could not be found.' };
+  if (row.assr_case_id != null) {
+    return { ok: false, status: 409, error: 'already_linked',
+      reason: `A service case${row.assr_no ? ` (${row.assr_no})` : ''} was already opened for this report.` };
+  }
+
+  // Reconstruct the case document and the complaint "where" from the stored row
+  // (the report route's own target is long gone by now). A DO / assr-leg report
+  // carries the SO / DO; a project / DP job report has only its source id.
+  const caseDocNo = row.so_doc_no || row.do_number || row.source_id || '';
+  const where = row.delivery_order_id
+    ? ([row.do_number, row.so_doc_no ? `(SO ${row.so_doc_no})` : null].filter(Boolean).join(' ') || 'a delivery order')
+    : `${row.leg ?? 'delivery'} job ${row.source_id ?? ''}${row.so_doc_no ? ` (SO ${row.so_doc_no})` : ''}`.trim();
+
+  // The crew member who reported it — a best-effort name for the complaint text.
+  let reporterName: string | null = null;
+  if (row.reported_by != null) {
+    try {
+      const u = await c.env.DB.prepare('SELECT name FROM users WHERE id = ?')
+        .bind(row.reported_by).first<{ name: string | null }>();
+      reporterName = u?.name ?? null;
+    } catch { /* the name is optional in the complaint */ }
+  }
 
   let assr: { id: number; assr_no: string };
   try {
     assr = await createAssrCase(c.env, {
-      doc_no: target.caseDocNo,
+      doc_no: caseDocNo,
       items: [],
-      complaint_issue: deliveryIssueComplaint(target.where, issue.kinds, issue.note, c.get('houzsUser')?.name ?? null),
+      complaint_issue: deliveryIssueComplaint(where, row.kinds, row.note, reporterName),
       issue_category: DELIVERY_ISSUE_CATEGORY,
-      delivery_order: target.doNumber,
-      created_by: me ?? undefined,
+      delivery_order: row.do_number,
+      created_by: actorUserId ?? undefined,
       // The SO's own company wins inside createAssrCase; this is the fallback
       // for a job whose document is not an order (a project, a DP job).
-      company_id: companyId ?? undefined,
+      company_id: row.company_id ?? undefined,
     });
   } catch (e) {
-    // company-scope: the row this request inserted a moment ago, by its own id
-    await scopeToAllowedCompanies(sb.from('delivery_issues').delete().eq('id', issueId), c);
-    return { ok: false, status: 500, error: 'case_failed', reason: `The service case could not be opened: ${(e as Error).message}. Nothing was saved; try again.` };
+    return { ok: false, status: 500, error: 'case_failed',
+      reason: `The service case could not be opened: ${(e as Error).message}. The report is still here; try again.` };
   }
 
-  // Photos on the case (complaint photos: what the office and the next crew see).
+  // The crew's POD photos, filed on the case as complaint photos.
   try {
-    for (const key of photoKeys) await saveAttachment(c.env, assr.id, key, null, 'image/jpeg', 'complaint', me);
-    if (photoKeys.length) {
+    for (const key of row.photo_keys) await saveAttachment(c.env, assr.id, key, null, 'image/jpeg', 'complaint', actorUserId);
+    if (row.photo_keys.length) {
       await logActivity(c.env, assr.id, 'attachment_added', null, 'Delivery issue',
-        `Delivery crew added ${photoKeys.length} photo${photoKeys.length === 1 ? '' : 's'} at POD`, me,
+        `Delivery crew's ${row.photo_keys.length} POD photo${row.photo_keys.length === 1 ? '' : 's'} filed on the case`, actorUserId,
         { category: 'service', source_channel: 'app' });
     }
   } catch (e) {
@@ -160,26 +223,25 @@ export async function reportDeliveryIssue(c: Ctx, target: DeliveryIssueTarget, i
   ).select('*').single();
   if (linkErr || !linked) {
     return { ok: false, status: 500, error: 'link_failed',
-      reason: `Service case ${assr.assr_no} was opened, but the delivery was not linked to it. Tell the office the case number; do not report again.` };
+      reason: `Service case ${assr.assr_no} was opened, but the delivery report was not linked to it. Note the case number; do not create it again.` };
   }
 
   // The case's PIC hears about it like any new case (best-effort, never throws).
   try {
-    // company-scope: the case this request just created, by its own id
-    const row = await c.env.DB.prepare(
-      `SELECT assigned_to, assigned_to_2, sales_agent, customer_name FROM assr_cases WHERE id = ?`,
+    const picRow = await c.env.DB.prepare(
+      'SELECT assigned_to, assigned_to_2, sales_agent, customer_name FROM assr_cases WHERE id = ?',
     ).bind(assr.id).first<{ assigned_to: number | null; assigned_to_2: number | null; sales_agent: string | null; customer_name: string | null }>();
-    if (row) {
+    if (picRow) {
       await notifyServiceCaseResponsible(c.env, {
-        reason: 'created', assrNo: assr.assr_no, customerName: row.customer_name,
-        userIds: [row.assigned_to, row.assigned_to_2], agentNames: [row.sales_agent],
+        reason: 'created', assrNo: assr.assr_no, customerName: picRow.customer_name,
+        userIds: [picRow.assigned_to, picRow.assigned_to_2], agentNames: [picRow.sales_agent],
       });
     }
   } catch (e) {
     console.warn(`[delivery-issue] notify failed for ${assr.assr_no}:`, (e as Error).message);
   }
 
-  return { ok: true, issue: linked as DeliveryIssueRow };
+  return { ok: true, caseId: assr.id, assrNo: assr.assr_no, issue: linked as DeliveryIssueRow };
 }
 
 export type DeliveryIssueFilter = {
