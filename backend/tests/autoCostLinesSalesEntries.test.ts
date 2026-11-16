@@ -1,4 +1,3 @@
-// @vitest-project light
 /**
  * The auto commission / transport / merchandise lines are worked on a fair's
  * sales — its typed sales lines AND the bills keyed as sales entries, as the

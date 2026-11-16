@@ -1,4 +1,3 @@
-// @vitest-project light
 /* Which typed sales line repeats a fair's bills (2026-11-16): project 70 read
    RM 501,070 on the Project Overview — its 31 bills (RM 250,535) plus the align
    pass's typed "sales" line of the same amount. Only that exact shape is archived. */
