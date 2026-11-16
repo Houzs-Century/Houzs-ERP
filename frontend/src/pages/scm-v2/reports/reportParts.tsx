@@ -75,9 +75,10 @@ export function ReportToolbar({ children, label = 'Report tools' }: { children: 
  *  report's sheet — the screen as shown. PDF opens the preview (with its own
  *  Download and Print); Print prints that same PDF. The builders load on the
  *  press, so a report that never exports never downloads them. */
-export function ReportExports({ sheet, fileBase, onLayout, layoutOn = false, onPdf }: {
-  /** The sheet as shown, or null while there is nothing to export. */
-  sheet: () => ReportSheet | null;
+export function ReportExports({ sheet, fileBase, onLayout, layoutOn = false, onPdf, onExcel }: {
+  /** The sheet as shown, or null while there is nothing to export. Not read for a
+   *  format the report makes itself (`onExcel`, `onPdf`). */
+  sheet?: () => ReportSheet | null;
   /** The file name without its extension: pnl-2026-10-01-to-2026-10-29. */
   fileBase: string;
   onLayout?: () => void;
@@ -85,16 +86,19 @@ export function ReportExports({ sheet, fileBase, onLayout, layoutOn = false, onP
   /** A report that keeps its own paper (the Corrections' builder): PDF and
    *  Print call it, with the preview or the print action. */
   onPdf?: (action: 'preview' | 'print') => Promise<void>;
+  /** A report that makes its own workbook (Event Commission asks who it is for first). */
+  onExcel?: () => void;
 }) {
   const excel = async () => {
-    const sh = sheet();
+    if (onExcel) { onExcel(); return; }
+    const sh = sheet?.();
     if (!sh) return;
     const { downloadReportXlsx } = await import('../../../vendor/scm/lib/report-sheet-xlsx');
     await downloadReportXlsx(sh, `${fileBase}.xlsx`);
   };
   const pdf = async (action: 'preview' | 'print') => {
     if (onPdf) { await onPdf(action); return; }
-    const sh = sheet();
+    const sh = sheet?.();
     if (!sh) return;
     const { generateReportPdf } = await import('../../../vendor/scm/lib/report-sheet-pdf');
     await generateReportPdf(sh, { fileName: `${fileBase}.pdf`, action });

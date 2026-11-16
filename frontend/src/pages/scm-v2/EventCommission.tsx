@@ -73,9 +73,11 @@ import { periodLabel } from './reports/statementColumns';
 import { useReportRange } from './reports/useReportRange';
 import {
   BASIS_WORDS, HINT, LEFT_OUT_NOTE, NOT_COUNTED, RULE_NOTE, TITLE, amt, amtRm, belowDepositOf, brandsOf, cardsOf, changesEarlierOf, changesInRangeOf, changesTitle,
-  deferredInOf, isNoFair, earlierShownOf, eventCommissionCsv, eventCommissionSheet, fairPlace, fairSortKey, fmtRm, forBrand, manualOf, markWords, markedOf, monthAdjOf,
-  markMonthOf, monthLabel, monthOf, myt, nextMonthOf, sum, whatOf, wholeMonthOf, type BelowDepositRow,
+  deferredInOf, isNoFair, earlierShownOf, eventCommissionCsv, fairPlace, fairSortKey, fmtRm, forBrand, manualOf, markWords, markedOf, monthAdjOf,
+  markMonthOf, monthLabel, monthOf, myt, nextMonthOf, salespeopleOf, soListOf, sum, whatOf, wholeMonthOf, type BelowDepositRow, type SoListRow,
 } from './eventCommissionModel';
+import { ecFileBase, ecMeta, ecSections, ecSheets, ecSubtitle, type EcInput, type EcWho, type ShownTables } from './eventCommissionExport';
+import { EventCommissionExportDialog, useEcTables, type EcFormat } from './EventCommissionExportDialog';
 import ec from './EventCommission.module.css';
 
 const downloadText = (name: string, text: string) => {
@@ -87,6 +89,8 @@ const downloadText = (name: string, text: string) => {
 };
 
 const num = (text: string) => <span className="tabular-nums">{text}</span>;
+/** A rate or a share as the export writes it: "13%". */
+const pctText = (p: number | null | undefined): string | null => (p == null ? null : `${p}%`);
 
 /** An order number opens the sales order (owner 2026-11-12: 不能 right click 开新
     视窗): a plain click in the app's own tab strip, with Back; a right-click,
@@ -142,7 +146,7 @@ const MarkCell = ({ docNo, mark, ctl }: { docNo: string; mark?: CommissionMarkIn
   );
 };
 const markColumn = <R extends { docNo: string; mark?: CommissionMarkInfo }>(ctl: MarkCtl): Column<R> => ({
-  key: 'actions', label: 'Actions', width: '210px', description: "Don't count this order, or pay it next month (Finance).",
+  key: 'actions', label: 'Actions', exportLabel: 'Marked', width: '210px', description: "Don't count this order, or pay it next month (Finance).",
   render: (r) => <MarkCell docNo={r.docNo} mark={r.mark} ctl={ctl} />, getValue: (r) => (r.mark ? markWords(r.mark) : ''),
 });
 
@@ -165,7 +169,7 @@ const ChangeMarkCell = ({ row, ctl }: { row: CommissionChangedOrder; ctl: MarkCt
   );
 };
 const changeMarkColumn = (ctl: MarkCtl): Column<CommissionChangedOrder> => ({
-  key: 'actions', label: 'Actions', width: '145px',
+  key: 'actions', label: 'Actions', exportLabel: 'Marked', width: '145px',
   description: "Leave this order's upsales / drop sales of the month out of the commission; its original amount still counts (Finance).",
   render: (o) => <ChangeMarkCell row={o} ctl={ctl} />, getValue: (o) => (o.changeMark ? markWords(o.changeMark) : ''),
 });
@@ -191,7 +195,7 @@ const refColumn = <R extends { ref?: string | null }>(hidden = false): Column<R>
 });
 const soDateColumn = <R extends { soDate?: string | null }>(hidden: boolean): Column<R> => ({
   key: 'soDate', label: 'SO date', width: '95px', defaultHidden: hidden,
-  render: (r) => <span className="whitespace-nowrap">{fmtDateOrDash(r.soDate ?? null)}</span>, getValue: (r) => r.soDate ?? null,
+  render: (r) => <span className="whitespace-nowrap">{fmtDateOrDash(r.soDate ?? null)}</span>, getValue: (r) => r.soDate ?? null, exportFormat: 'date',
 });
 const statusColumn = <R extends { status?: string }>(): Column<R> => ({
   key: 'status', label: 'Status', width: '110px', defaultHidden: true, render: (r) => r.status ?? '—', getValue: (r) => r.status ?? null,
@@ -216,31 +220,31 @@ const fairColumns = (): Column<CommissionFairRow>[] => [
   {
     key: 'rate', label: 'Rate', align: 'right', width: '70px',
     render: (f) => (f.ratePct == null ? <span className="text-ink-muted">no rate card</span> : num(`${f.ratePct}%`)),
-    getValue: (f) => f.ratePct,
+    getValue: (f) => f.ratePct, exportValue: (f) => pctText(f.ratePct),
   },
   {
     key: 'totalSales', label: 'Total sales', align: 'right', width: '120px', description: "Its orders' goods (no delivery or service), every order that is not a draft, held or cancelled.",
-    render: (f) => num(amt(goodsOf(f))), getValue: (f) => goodsOf(f), exportValue: (f) => goodsOf(f) / 100,
+    render: (f) => num(amt(goodsOf(f))), getValue: (f) => goodsOf(f), exportValue: (f) => goodsOf(f) / 100, exportFormat: 'money',
     total: (rows) => num(amt(sum(rows, goodsOf))),
   },
   {
     key: 'estimate', label: 'Estimate', align: 'right', width: '110px', description: 'Total sales × the rate.',
-    render: (f) => num(amt(estimateOf(f))), getValue: (f) => estimateOf(f), exportValue: (f) => estimateOf(f) / 100,
+    render: (f) => num(amt(estimateOf(f))), getValue: (f) => estimateOf(f), exportValue: (f) => estimateOf(f) / 100, exportFormat: 'money',
     total: (rows) => num(amt(sum(rows, estimateOf))),
   },
   {
     key: 'eventSales', label: 'Event page total sales', align: 'right', width: '120px', defaultHidden: true, description: "The Total Sales typed on the event page.",
-    render: (f) => num(amtRm(f.totalSalesRm)), getValue: (f) => f.totalSalesRm,
+    render: (f) => num(amtRm(f.totalSalesRm)), getValue: (f) => f.totalSalesRm, exportFormat: 'money',
   },
   {
     key: 'orders', label: 'Orders', align: 'right', width: '70px',
-    render: (f) => num(f.sos.length ? String(f.sos.length) : '–'), getValue: (f) => f.sos.length,
+    render: (f) => num(f.sos.length ? String(f.sos.length) : '–'), getValue: (f) => f.sos.length, exportFormat: 'number',
     total: (rows) => num(String(sum(rows, (f) => f.sos.length))),
   },
   {
     key: 'commission', label: 'Commission', align: 'right', width: '120px', description: 'What its orders earned: goods × rate, once 30% of the order is paid.',
     render: (f) => <span className="font-semibold tabular-nums">{amt(f.payableSen)}</span>, getValue: (f) => f.payableSen,
-    exportValue: (f) => f.payableSen / 100,
+    exportValue: (f) => f.payableSen / 100, exportFormat: 'money',
     total: (rows) => num(fmtRm(sum(rows, (f) => f.payableSen))),
   },
 ];
@@ -270,25 +274,25 @@ const orderMoneyColumns = <R extends CommissionSoRow>(rateOf: (s: R) => number |
   {
     key: 'sales', label: 'Sales', align: 'right', description: 'The order total: its goods plus delivery and service. Paid % is of this.',
     render: (s) => num(fmtRm(s.totalSen)), getValue: (s) => s.totalSen,
-    exportValue: (s) => s.totalSen / 100, total: (rows) => num(fmtRm(sum(rows, (s) => s.totalSen))),
+    exportValue: (s) => s.totalSen / 100, exportFormat: 'money', total: (rows) => num(fmtRm(sum(rows, (s) => s.totalSen))),
   },
   {
     key: 'goods', label: 'Goods', align: 'right', description: 'What earns commission: the order without delivery or service.',
     render: (s) => num(fmtRm(s.goodsSen)), getValue: (s) => s.goodsSen,
-    exportValue: (s) => s.goodsSen / 100, total: (rows) => num(fmtRm(sum(rows, (s) => s.goodsSen))),
+    exportValue: (s) => s.goodsSen / 100, exportFormat: 'money', total: (rows) => num(fmtRm(sum(rows, (s) => s.goodsSen))),
   },
   /* The rate the commission is worked at, beside the goods it is worked on (owner 2026-11-13). */
   {
     key: 'rate', label: 'Rate', align: 'right', width: '60px', description: "The fair's brand rate; an order with no fair: its own brand's. Commission = Goods × Rate once 30% is paid.",
-    render: (s) => { const rate = rateOf(s); return rate == null ? <span className="text-ink-muted">–</span> : num(`${rate}%`); }, getValue: (s) => rateOf(s),
+    render: (s) => { const rate = rateOf(s); return rate == null ? <span className="text-ink-muted">–</span> : num(`${rate}%`); }, getValue: (s) => rateOf(s), exportValue: (s) => pctText(rateOf(s)),
   },
   {
     key: 'paid', label: 'Paid', align: 'right', render: (s) => num(fmtRm(s.paidSen)), getValue: (s) => s.paidSen,
-    exportValue: (s) => s.paidSen / 100, total: (rows) => num(fmtRm(sum(rows, (s) => s.paidSen))),
+    exportValue: (s) => s.paidSen / 100, exportFormat: 'money', total: (rows) => num(fmtRm(sum(rows, (s) => s.paidSen))),
   },
   {
     key: 'paidPct', label: 'Paid · % of order', align: 'right', description: 'Paid ÷ the order total. Commission is earned once it reaches 30%.',
-    render: (s) => <span className={cn('tabular-nums', s.paidPct < 30 && 'text-ink-muted')}>{s.paidPct}%</span>, getValue: (s) => s.paidPct,
+    render: (s) => <span className={cn('tabular-nums', s.paidPct < 30 && 'text-ink-muted')}>{s.paidPct}%</span>, getValue: (s) => s.paidPct, exportValue: (s) => pctText(s.paidPct),
     total: (rows) => {
       const total = sum(rows, (s) => s.totalSen);
       return num(total > 0 ? `${(Math.round((sum(rows, (s) => s.paidSen) / total) * 1000) / 10).toFixed(1)}%` : '–');
@@ -297,7 +301,7 @@ const orderMoneyColumns = <R extends CommissionSoRow>(rateOf: (s: R) => number |
   {
     key: 'reached', label: '30% reached',
     render: (s) => (s.reachedOn ? <span className="whitespace-nowrap">{fmtDateOrDash(s.reachedOn)}</span> : <span className="text-ink-muted">not yet</span>),
-    getValue: (s) => s.reachedOn ?? '',
+    getValue: (s) => s.reachedOn ?? '', exportFormat: 'date',
   },
   {
     key: 'commission', label: 'Commission', align: 'right',
@@ -308,7 +312,7 @@ const orderMoneyColumns = <R extends CommissionSoRow>(rateOf: (s: R) => number |
       </span>
     ),
     getValue: (s) => s.commissionSen,
-    exportValue: (s) => s.commissionSen / 100, total: (rows) => num(fmtRm(sum(rows, (s) => s.commissionSen))),
+    exportValue: (s) => s.commissionSen / 100, exportFormat: 'money', total: (rows) => num(fmtRm(sum(rows, (s) => s.commissionSen))),
   },
 ];
 /* Last, after the mark: a wide cell that would push the mark off the screen. */
@@ -321,7 +325,7 @@ const changesColumn = <R extends CommissionSoRow>(): Column<R> => ({
 const orderColumns = (ctl: MarkCtl, ratePct: number | null): Column<CommissionSoRow>[] => [
   { key: 'order', label: 'Order', render: (o) => <OrderLink docNo={o.docNo} />, getValue: (o) => o.docNo },
   refColumn<CommissionSoRow>(),
-  { key: 'soDate', label: 'SO date', render: (s) => <span className="whitespace-nowrap">{fmtDateOrDash(s.soDate)}</span>, getValue: (s) => s.soDate },
+  { key: 'soDate', label: 'SO date', render: (s) => <span className="whitespace-nowrap">{fmtDateOrDash(s.soDate)}</span>, getValue: (s) => s.soDate, exportFormat: 'date' },
   { key: 'salesperson', label: 'Salesperson', render: (s) => s.salesperson ?? '—', getValue: (s) => s.salesperson },
   { key: 'customer', label: 'Customer', render: (s) => s.customer ?? '—', getValue: (s) => s.customer },
   statusColumn<CommissionSoRow>(),
@@ -330,8 +334,15 @@ const orderColumns = (ctl: MarkCtl, ratePct: number | null): Column<CommissionSo
   changesColumn<CommissionSoRow>(),
 ];
 
+/* The columns a fair's orders show, for the export while no fair is open: a hidden
+   table under the same id reads them (its buttons are never drawn). */
+const IDLE_CTL: MarkCtl = { canMark: false, month: null, busy: false, mark: () => undefined, undo: () => undefined };
+const FAIR_ORDER_COLUMNS = orderColumns(IDLE_CTL, null);
+
 /** A fair opened: one line on what its orders came to, then the orders. */
-const FairOrders = ({ fair, ctl }: { fair: CommissionFairRow; ctl: MarkCtl }) => {
+const FairOrders = ({ fair, ctl, onShownColumnsChange }: {
+  fair: CommissionFairRow; ctl: MarkCtl; onShownColumnsChange: (columns: Column<CommissionSoRow>[]) => void;
+}) => {
   const columns = useMemo(() => orderColumns(ctl, fair.ratePct), [ctl, fair.ratePct]);
   if (fair.sos.length === 0) return <div className="pl-6 text-[12px] text-ink-muted">No orders at this fair yet.</div>;
   const reached = fair.sos.filter((s) => s.reachedOn).length;
@@ -341,14 +352,14 @@ const FairOrders = ({ fair, ctl }: { fair: CommissionFairRow; ctl: MarkCtl }) =>
         <span className="font-semibold text-ink">{fair.sos.length} order{fair.sos.length === 1 ? '' : 's'}</span>
         {' · '}{reached} reached 30%{' · '}commission <span className="font-semibold tabular-nums text-ink">RM {fmtRm(fair.payableSen)}</span>
       </div>
-      <DataTable<CommissionSoRow> tableId="event-commission-orders" embedded freezeHeight="off" columns={columns} rows={fair.sos} getRowKey={(s) => s.docNo} />
+      <DataTable<CommissionSoRow> tableId="event-commission-orders" embedded freezeHeight="off" columns={columns} rows={fair.sos} getRowKey={(s) => s.docNo}
+        onShownColumnsChange={onShownColumnsChange} />
     </div>
   );
 };
 
 /* By SO date: one row per order, its fair as columns (owner 2026-11-12: 「by SO
    date 应该是 SO list，不要分 by fair」). */
-type SoListRow = CommissionSoRow & { fair: CommissionFairRow };
 const soListColumns = (ctl: MarkCtl): Column<SoListRow>[] => {
   /* "No fair": its own brand, the venue typed on the order. */
   const placeOf = (o: SoListRow) => (isNoFair(o.fair) ? { brand: o.fair.brand?.toUpperCase() ?? null, organizer: null, venue: o.venue ?? null, state: null } : fairPlace(o.fair));
@@ -383,17 +394,17 @@ const historyTag = (on: boolean) => (on ? <span className="ml-1.5 rounded bg-sur
 const orderPlace = (o: { fairName: string; brand: string | null; organizer: string | null; venue: string | null; state: string | null }) =>
   fairPlace({ name: o.fairName, brand: o.brand, organizer: o.organizer, venue: o.venue, state: o.state });
 const moneyColumns = <R extends { originalSen: number; latestSen: number; amendedSen: number }>(): Column<R>[] => [
-  { key: 'original', label: 'Original', align: 'right', width: '95px', description: 'The order before the range\'s upsales / drop sales.', render: (o) => num(fmtRm(o.originalSen)), getValue: (o) => o.originalSen, exportValue: (o) => o.originalSen / 100 },
-  { key: 'latest', label: 'Latest', align: 'right', width: '95px', description: 'The order at the end of the range.', render: (o) => num(fmtRm(o.latestSen)), getValue: (o) => o.latestSen, exportValue: (o) => o.latestSen / 100 },
+  { key: 'original', label: 'Original', align: 'right', width: '95px', description: 'The order before the range\'s upsales / drop sales.', render: (o) => num(fmtRm(o.originalSen)), getValue: (o) => o.originalSen, exportValue: (o) => o.originalSen / 100, exportFormat: 'money' },
+  { key: 'latest', label: 'Latest', align: 'right', width: '95px', description: 'The order at the end of the range.', render: (o) => num(fmtRm(o.latestSen)), getValue: (o) => o.latestSen, exportValue: (o) => o.latestSen / 100, exportFormat: 'money' },
   {
     key: 'amended', label: 'Amended', align: 'right', width: '95px', description: 'Latest − Original.',
-    render: (o) => amendedCell(o.amendedSen), getValue: (o) => o.amendedSen, exportValue: (o) => o.amendedSen / 100,
+    render: (o) => amendedCell(o.amendedSen), getValue: (o) => o.amendedSen, exportValue: (o) => o.amendedSen / 100, exportFormat: 'money',
     total: (rows) => amendedCell(sum(rows, (o) => o.amendedSen)),
   },
 ];
 
 const earlierColumns = (ctl: MarkCtl): Column<CommissionEarlierOrder>[] => [
-  { key: 'date', label: 'Date', width: '85px', render: (o) => <span className="whitespace-nowrap">{fmtDateOrDash(o.lastDate)}</span>, getValue: (o) => o.lastDate },
+  { key: 'date', label: 'Date', width: '85px', render: (o) => <span className="whitespace-nowrap">{fmtDateOrDash(o.lastDate)}</span>, getValue: (o) => o.lastDate, exportFormat: 'date' },
   { key: 'what', label: 'What', width: '150px', render: (o) => <span className="whitespace-normal">{whatOf(o)}</span>, getValue: (o) => whatOf(o) },
   { key: 'order', label: 'Order', width: '140px', render: (o) => <OrderLink docNo={o.docNo} />, getValue: (o) => o.docNo },
   refColumn<CommissionEarlierOrder>(true),
@@ -405,20 +416,20 @@ const earlierColumns = (ctl: MarkCtl): Column<CommissionEarlierOrder>[] => [
   {
     key: 'original', label: 'Original', align: 'right', width: '95px',
     description: 'The order before the range\'s upsales / drop sales — what reaching 30% earns on, or what a cancellation takes back. Its price changes are in the Upsales / Drop sales table.',
-    render: (o) => num(fmtRm(o.originalSen)), getValue: (o) => o.originalSen, exportValue: (o) => o.originalSen / 100,
+    render: (o) => num(fmtRm(o.originalSen)), getValue: (o) => o.originalSen, exportValue: (o) => o.originalSen / 100, exportFormat: 'money',
   },
-  { key: 'rate', label: 'Rate', align: 'right', width: '60px', render: (o) => (o.ratePct == null ? <span className="text-ink-muted">–</span> : num(`${o.ratePct}%`)), getValue: (o) => o.ratePct },
+  { key: 'rate', label: 'Rate', align: 'right', width: '60px', render: (o) => (o.ratePct == null ? <span className="text-ink-muted">–</span> : num(`${o.ratePct}%`)), getValue: (o) => o.ratePct, exportValue: (o) => pctText(o.ratePct) },
   {
     key: 'commission', label: 'Commission', align: 'right', width: '105px', description: 'Reaching 30% here: the original amount × the rate. Cancelled here: − what it had earned. Its upsales / drop sales are not in it — they are in the Upsales / Drop sales table.',
     render: (o) => <span className={cn('font-semibold tabular-nums', o.commissionSen < 0 && 'text-err')}>{fmtRm(o.commissionSen)}</span>,
-    getValue: (o) => o.commissionSen, exportValue: (o) => o.commissionSen / 100,
+    getValue: (o) => o.commissionSen, exportValue: (o) => o.commissionSen / 100, exportFormat: 'money',
     total: (rows) => num(fmtRm(sum(rows, (o) => o.commissionSen))),
   },
   markColumn<CommissionEarlierOrder>(ctl),
 ];
 
 const changedColumns = (ctl: MarkCtl): Column<CommissionChangedOrder>[] => [
-  { key: 'lastChange', label: 'Last change', width: '90px', render: (o) => <span className="whitespace-nowrap">{fmtDateOrDash(o.lastChange)}{historyTag(o.fromHistory)}</span>, getValue: (o) => o.lastChange },
+  { key: 'lastChange', label: 'Last change', width: '90px', render: (o) => <span className="whitespace-nowrap">{fmtDateOrDash(o.lastChange)}{historyTag(o.fromHistory)}</span>, getValue: (o) => o.lastChange, exportFormat: 'date' },
   { key: 'order', label: 'Order', width: '140px', render: (o) => <OrderLink docNo={o.docNo} />, getValue: (o) => o.docNo },
   refColumn<CommissionChangedOrder>(),
   soDateColumn<CommissionChangedOrder>(true),
@@ -427,7 +438,7 @@ const changedColumns = (ctl: MarkCtl): Column<CommissionChangedOrder>[] => [
   customerColumn<CommissionChangedOrder>(),
   statusColumn<CommissionChangedOrder>(),
   ...moneyColumns<CommissionChangedOrder>(),
-  { key: 'rate', label: 'Rate', align: 'right', width: '60px', render: (o) => (o.ratePct == null ? <span className="text-ink-muted">–</span> : num(`${o.ratePct}%`)), getValue: (o) => o.ratePct },
+  { key: 'rate', label: 'Rate', align: 'right', width: '60px', render: (o) => (o.ratePct == null ? <span className="text-ink-muted">–</span> : num(`${o.ratePct}%`)), getValue: (o) => o.ratePct, exportValue: (o) => pctText(o.ratePct) },
   {
     key: 'effect', label: 'Commission effect', align: 'right', width: '120px',
     description: 'Amended × the fair\'s brand rate, once the order has 30% paid; an old order with no fair (opened before October 2026): always. An order opened in the range: already inside its commission above, not added again.',
@@ -438,14 +449,14 @@ const changedColumns = (ctl: MarkCtl): Column<CommissionChangedOrder>[] => [
         : o.changeMark && o.effectSen === 0
           ? <span className="text-ink-muted">not counted</span>
           : <span className={cn('tabular-nums', o.effectSen < 0 && 'text-err')}>{fmtRm(o.effectSen)}</span>),
-    getValue: (o) => o.effectSen, exportValue: (o) => o.effectSen / 100,
+    getValue: (o) => o.effectSen, exportValue: (o) => o.effectSen / 100, exportFormat: 'money',
     total: (rows) => num(fmtRm(sum(rows, (o) => o.effectSen))),
   },
   changeMarkColumn(ctl),
 ];
 
 const MONTH_ADJ_COLUMNS: Column<CommissionMonthAdjustment>[] = [
-  { key: 'month', label: 'Month', width: '85px', description: 'The closed month this belongs to.', render: (a) => <span className="whitespace-nowrap">{monthLabel(a.month)}</span>, getValue: (a) => a.month },
+  { key: 'month', label: 'Month', width: '85px', description: 'The closed month this belongs to.', render: (a) => <span className="whitespace-nowrap">{monthLabel(a.month)}</span>, getValue: (a) => a.month, exportValue: (a) => monthLabel(a.month) },
   { key: 'order', label: 'Order', width: '140px', render: (a) => <OrderLink docNo={a.docNo} />, getValue: (a) => a.docNo },
   /* Ref No. here too, as on every other order table (owner 2026-11-12: 「这个没有reference no. 吗？」). */
   refColumn<CommissionMonthAdjustment>(),
@@ -458,29 +469,29 @@ const MONTH_ADJ_COLUMNS: Column<CommissionMonthAdjustment>[] = [
   {
     key: 'goods', label: 'Goods', align: 'right', width: '100px', description: 'The goods that month pays the order on today: its own goods once it had 30%, or the goods of its earlier lines (reaching 30%, an upsale or drop sale, a cancellation).',
     render: (a) => (a.goodsSen == null ? <span className="text-ink-muted">–</span> : num(fmtRm(a.goodsSen))), getValue: (a) => a.goodsSen ?? null,
-    exportValue: (a) => (a.goodsSen == null ? null : a.goodsSen / 100), total: (rows) => num(fmtRm(sum(rows, (a) => a.goodsSen ?? 0))),
+    exportValue: (a) => (a.goodsSen == null ? null : a.goodsSen / 100), exportFormat: 'money', total: (rows) => num(fmtRm(sum(rows, (a) => a.goodsSen ?? 0))),
   },
   {
     key: 'rate', label: 'Rate', align: 'right', width: '60px', description: 'Now = Goods × Rate.',
-    render: (a) => (a.ratePct == null ? <span className="text-ink-muted">–</span> : num(`${a.ratePct}%`)), getValue: (a) => a.ratePct ?? null,
+    render: (a) => (a.ratePct == null ? <span className="text-ink-muted">–</span> : num(`${a.ratePct}%`)), getValue: (a) => a.ratePct ?? null, exportValue: (a) => pctText(a.ratePct),
   },
   {
     key: 'was', label: 'Paid', align: 'right', width: '95px', description: 'What that month paid for the order: as it was closed, plus adjustments paid since.',
-    render: (a) => num(amt(a.wasSen)), getValue: (a) => a.wasSen, exportValue: (a) => a.wasSen / 100,
+    render: (a) => num(amt(a.wasSen)), getValue: (a) => a.wasSen, exportValue: (a) => a.wasSen / 100, exportFormat: 'money',
   },
   {
     key: 'now', label: 'Now', align: 'right', width: '95px', description: 'That month recalculated today.',
-    render: (a) => num(amt(a.nowSen)), getValue: (a) => a.nowSen, exportValue: (a) => a.nowSen / 100,
+    render: (a) => num(amt(a.nowSen)), getValue: (a) => a.nowSen, exportValue: (a) => a.nowSen / 100, exportFormat: 'money',
   },
   {
     key: 'adjustment', label: 'Adjustment', align: 'right', width: '110px', description: 'Now − Paid: paid in this month.',
-    render: (a) => amendedCell(a.adjustmentSen), getValue: (a) => a.adjustmentSen, exportValue: (a) => a.adjustmentSen / 100,
+    render: (a) => amendedCell(a.adjustmentSen), getValue: (a) => a.adjustmentSen, exportValue: (a) => a.adjustmentSen / 100, exportFormat: 'money',
     total: (rows) => amendedCell(sum(rows, (a) => a.adjustmentSen)),
   },
 ];
 
 const DEFERRED_COLUMNS: Column<CommissionDeferredIn>[] = [
-  { key: 'month', label: 'From month', width: '90px', render: (d) => monthLabel(d.fromMonth), getValue: (d) => d.fromMonth },
+  { key: 'month', label: 'From month', width: '90px', render: (d) => monthLabel(d.fromMonth), getValue: (d) => d.fromMonth, exportValue: (d) => monthLabel(d.fromMonth) },
   { key: 'order', label: 'Order', width: '140px', render: (d) => <OrderLink docNo={d.docNo} />, getValue: (d) => d.docNo },
   refColumn<CommissionDeferredIn>(),
   ...hideState(placeColumns<CommissionDeferredIn>(orderPlace, { brand: '85px', organizer: '115px', venue: '150px', state: '100px' })),
@@ -489,7 +500,7 @@ const DEFERRED_COLUMNS: Column<CommissionDeferredIn>[] = [
   {
     key: 'commission', label: 'Commission', align: 'right', width: '110px',
     render: (d) => (d.markedAgain ? <span className="text-ink-muted">{markWords(d.markedAgain)}</span> : <span className="font-semibold tabular-nums">{fmtRm(d.commissionSen)}</span>),
-    getValue: (d) => d.commissionSen, exportValue: (d) => d.commissionSen / 100, total: (rows) => num(fmtRm(sum(rows, (d) => d.commissionSen))),
+    getValue: (d) => d.commissionSen, exportValue: (d) => d.commissionSen / 100, exportFormat: 'money', total: (rows) => num(fmtRm(sum(rows, (d) => d.commissionSen))),
   },
 ];
 
@@ -502,21 +513,21 @@ const BELOW_COLUMNS: Column<BelowDepositRow>[] = [
   customerColumn<BelowDepositRow>(),
   {
     key: 'goods', label: 'Goods', align: 'right', width: '100px', render: (o) => num(fmtRm(o.goodsSen)), getValue: (o) => o.goodsSen,
-    exportValue: (o) => o.goodsSen / 100, total: (rows) => num(fmtRm(sum(rows, (o) => o.goodsSen))),
+    exportValue: (o) => o.goodsSen / 100, exportFormat: 'money', total: (rows) => num(fmtRm(sum(rows, (o) => o.goodsSen))),
   },
   {
     key: 'total', label: 'Order total', align: 'right', width: '100px', render: (o) => num(fmtRm(o.totalSen)), getValue: (o) => o.totalSen,
-    exportValue: (o) => o.totalSen / 100, total: (rows) => num(fmtRm(sum(rows, (o) => o.totalSen))),
+    exportValue: (o) => o.totalSen / 100, exportFormat: 'money', total: (rows) => num(fmtRm(sum(rows, (o) => o.totalSen))),
   },
   {
     key: 'paid', label: 'Paid', align: 'right', width: '95px', render: (o) => num(fmtRm(o.paidSen)), getValue: (o) => o.paidSen,
-    exportValue: (o) => o.paidSen / 100, total: (rows) => num(fmtRm(sum(rows, (o) => o.paidSen))),
+    exportValue: (o) => o.paidSen / 100, exportFormat: 'money', total: (rows) => num(fmtRm(sum(rows, (o) => o.paidSen))),
   },
-  { key: 'paidPct', label: 'Paid · % of order', align: 'right', width: '90px', render: (o) => num(`${o.paidPct}%`), getValue: (o) => o.paidPct },
+  { key: 'paidPct', label: 'Paid · % of order', align: 'right', width: '90px', render: (o) => num(`${o.paidPct}%`), getValue: (o) => o.paidPct, exportValue: (o) => pctText(o.paidPct) },
   {
     key: 'owed', label: 'Owed for 30%', align: 'right', width: '105px', description: 'What is still to be paid before the order reaches 30% of its total.',
     render: (o) => <span className="font-semibold tabular-nums">{fmtRm(o.neededSen)}</span>, getValue: (o) => o.neededSen,
-    exportValue: (o) => o.neededSen / 100, total: (rows) => num(fmtRm(sum(rows, (o) => o.neededSen))),
+    exportValue: (o) => o.neededSen / 100, exportFormat: 'money', total: (rows) => num(fmtRm(sum(rows, (o) => o.neededSen))),
   },
 ];
 
@@ -530,7 +541,7 @@ const markedColumns = (ctl: MarkCtl): Column<CommissionMarkedOrder>[] => [
   { key: 'by', label: 'Marked by', width: '110px', render: (m) => m.mark.markedBy ?? '—', getValue: (m) => m.mark.markedBy },
   {
     key: 'commission', label: 'Not paid here', align: 'right', width: '110px', description: 'What the mark took out of this range: what the order would have earned, or what the price change left out would have moved.',
-    render: (m) => num(amt(m.commissionSen)), getValue: (m) => m.commissionSen, exportValue: (m) => m.commissionSen / 100,
+    render: (m) => num(amt(m.commissionSen)), getValue: (m) => m.commissionSen, exportValue: (m) => m.commissionSen / 100, exportFormat: 'money',
     total: (rows) => num(fmtRm(sum(rows, (m) => m.commissionSen))),
   },
   {
@@ -559,13 +570,13 @@ const manualColumns = (ctl: LineCtl): Column<CommissionManualLine>[] => [
   {
     key: 'goods', label: 'Goods', align: 'right', width: '105px', description: 'The amount Finance typed: more than 0 adds commission, less than 0 takes it back.',
     render: (m) => <span className={cn('tabular-nums', m.goodsSen < 0 && 'text-err')}>{fmtRm(m.goodsSen)}</span>, getValue: (m) => m.goodsSen,
-    exportValue: (m) => m.goodsSen / 100, total: (rows) => num(fmtRm(sum(rows, (m) => m.goodsSen))),
+    exportValue: (m) => m.goodsSen / 100, exportFormat: 'money', total: (rows) => num(fmtRm(sum(rows, (m) => m.goodsSen))),
   },
-  { key: 'rate', label: 'Rate', align: 'right', width: '60px', render: (m) => (m.ratePct == null ? <span className="text-ink-muted">–</span> : num(`${m.ratePct}%`)), getValue: (m) => m.ratePct },
+  { key: 'rate', label: 'Rate', align: 'right', width: '60px', render: (m) => (m.ratePct == null ? <span className="text-ink-muted">–</span> : num(`${m.ratePct}%`)), getValue: (m) => m.ratePct, exportValue: (m) => pctText(m.ratePct) },
   {
     key: 'commission', label: 'Commission', align: 'right', width: '105px', description: 'Goods × the order\'s own rate: its fair\'s brand, or with no fair its own brand\'s card.',
     render: (m) => <span className={cn('font-semibold tabular-nums', m.commissionSen < 0 && 'text-err')}>{fmtRm(m.commissionSen)}</span>, getValue: (m) => m.commissionSen,
-    exportValue: (m) => m.commissionSen / 100, total: (rows) => num(fmtRm(sum(rows, (m) => m.commissionSen))),
+    exportValue: (m) => m.commissionSen / 100, exportFormat: 'money', total: (rows) => num(fmtRm(sum(rows, (m) => m.commissionSen))),
   },
   { key: 'reason', label: 'Reason', width: '210px', render: (m) => m.line.reason ?? '—', getValue: (m) => m.line.reason },
   { key: 'by', label: 'Added by', width: '105px', render: (m) => m.line.addedBy ?? '—', getValue: (m) => m.line.addedBy },
@@ -814,7 +825,7 @@ export const EventCommissionTab = () => {
     },
   }), [canMark, month, adding, removing, askConfirm, removeLine]);
   const manualCols = useMemo(() => manualColumns(lineCtl), [lineCtl]);
-  const soList = useMemo<SoListRow[]>(() => (r ? r.fairs.flatMap((f) => f.sos.map((s) => ({ ...s, fair: f }))) : []), [r]);
+  const soList = useMemo<SoListRow[]>(() => (r ? soListOf(r) : []), [r]);
   const earlierRows = r ? earlierShownOf(r) : [];
   const monthAdjRows = r ? monthAdjOf(r) : [];
   const deferredRows = r ? deferredInOf(r) : [];
@@ -828,6 +839,44 @@ export const EventCommissionTab = () => {
   useReportSubtitle(range.usable ? `${period} · ${words.toggle.toLowerCase()} · ${brandNow || 'all brands'}` : 'Pick dates.');
   const fileBase = `event-commission-${byFair ? 'by-fair' : 'by-so-date'}${brandNow ? `-${brandNow.toLowerCase()}` : ''}-${range.from}-${range.to}`;
 
+  /* The export (owner 2026-11-16: 「就是多个选项让我选，可以total，可以单独」): who it is for,
+     asked in a dialog; each table with the columns it shows and the rows its column
+     filters leave (「通常根据我tab的header就行了」). */
+  const tables = useEcTables();
+  const [exporting, setExporting] = useState<EcFormat | null>(null);
+  const people = useMemo(() => (r ? salespeopleOf(r) : []), [r]);
+  const runExport = async (format: EcFormat, who: EcWho): Promise<void> => {
+    if (!r) return;
+    /* A fair's orders as one list: the order and its fair first, then the columns an open fair shows. */
+    const soByKey = new Map(soListCols.map((c) => [c.key, c]));
+    const fairOrderKeys = tables.fairOrderKeys() ?? FAIR_ORDER_COLUMNS.filter((c) => !c.defaultHidden).map((c) => c.key);
+    const shown: ShownTables = {
+      fairs: tables.shown('fairs', fairCols),
+      fairOrders: {
+        columns: ['order', 'fair', ...fairOrderKeys.filter((k) => k !== 'order' && k !== 'fair')].flatMap((k) => soByKey.get(k) ?? []),
+        rowKeys: null, filters: null,
+      },
+      orders: tables.shown('orders', soListCols),
+      earlier: tables.shown('earlier', earlierCols),
+      monthAdj: tables.shown('monthAdj', MONTH_ADJ_COLUMNS),
+      movedIn: tables.shown('movedIn', DEFERRED_COLUMNS),
+      manual: tables.shown('manual', manualCols),
+      changesEarlier: tables.shown('changesEarlier', changedCols),
+      changesInRange: tables.shown('changesInRange', changedCols),
+      below: tables.shown('below', BELOW_COLUMNS),
+      marked: tables.shown('marked', markedCols),
+    };
+    const input: EcInput = { report: r, period, brand: brandNow, shown, who };
+    const name = ecFileBase(fileBase, who);
+    if (format === 'excel') {
+      const { downloadEcXlsx } = await import('./eventCommissionXlsx');
+      await downloadEcXlsx(ecSheets(input), `${name}.xlsx`);
+      return;
+    }
+    const { generateEcPdf } = await import('./eventCommissionPdf');
+    await generateEcPdf(ecSections(input), { meta: ecMeta(input), subtitle: ecSubtitle(input), fileName: `${name}.pdf`, action: format === 'print' ? 'print' : 'preview' });
+  };
+
   /* A card per table, in the tables' order, each its table's total (owner 2026-11-13:
      「卡的顺序和下面的table的顺序要一样」, 「这两个total不是应该一样？」). */
   const tiles: ReportTile[] = r ? [
@@ -839,7 +888,8 @@ export const EventCommissionTab = () => {
     <>
       <ReportHeaderActions>
         {full && range.usable && <MonthCloseAction r={full} range={range} />}
-        <ReportExports sheet={() => (r ? eventCommissionSheet(r, period, brandNow) : null)} fileBase={fileBase} />
+        <ReportExports fileBase={fileBase} onExcel={() => { if (r) setExporting('excel'); }}
+          onPdf={async (action) => { if (r) setExporting(action === 'print' ? 'print' : 'pdf'); }} />
         <ReportMore items={[
           { label: 'CSV', disabled: !r, onClick: () => { if (r) downloadText(`${fileBase}.csv`, eventCommissionCsv(r, period, brandNow)); } },
           ...(canMark ? [{ label: 'Add a line (Finance)', onClick: () => setAddOpen(true) }] : []),
@@ -874,11 +924,11 @@ export const EventCommissionTab = () => {
           {r.fairs.length === 0 ? <p className={ec.empty}>{words.part1Empty}</p> : byFair ? (
             <>
               <DataTable<CommissionFairRow>
-                tableId="event-commission-fairs" exportName={`event-commission-fairs-${range.from}-${range.to}`} freezeHeight="screen"
+                tableId="event-commission-fairs" {...tables.tell('fairs')} exportName={`event-commission-fairs-${range.from}-${range.to}`} freezeHeight="screen"
                 columns={fairCols} rows={showIdle ? [...active, ...idle] : active} getRowKey={(f) => f.id}
                 emptyLabel="Every fair in this range has no orders yet."
                 onRowClick={(f) => toggle(String(f.id))}
-                expandable={{ render: (f) => <FairOrders fair={f} ctl={ctl} />, rowKey: (f) => String(f.id), expandedIds: open, onExpandedChange: setOpen }}
+                expandable={{ render: (f) => <FairOrders fair={f} ctl={ctl} onShownColumnsChange={tables.tell('fairOrders').onShownColumnsChange} />, rowKey: (f) => String(f.id), expandedIds: open, onExpandedChange: setOpen }}
               />
               {idle.length > 0 && (
                 <button type="button" className={ec.idle} aria-expanded={showIdle} onClick={() => setShowIdle((v) => !v)}>
@@ -889,7 +939,7 @@ export const EventCommissionTab = () => {
             </>
           ) : (
             <DataTable<SoListRow>
-              tableId="event-commission-so-list" exportName={`event-commission-orders-${range.from}-${range.to}`} freezeHeight="screen"
+              tableId="event-commission-so-list" {...tables.tell('orders')} exportName={`event-commission-orders-${range.from}-${range.to}`} freezeHeight="screen"
               columns={soListCols} rows={soList} getRowKey={(o) => o.docNo}
             />
           )}
@@ -900,7 +950,7 @@ export const EventCommissionTab = () => {
         <Card title={words.part2} hint="one row per order · their upsales / drop sales are in the Upsales / Drop sales table · amounts in RM">
           {earlierRows.length === 0 ? <p className={ec.empty}>{words.part2Empty}</p> : (
             <DataTable<CommissionEarlierOrder>
-              tableId="event-commission-earlier-orders" exportName={`event-commission-earlier-${range.from}-${range.to}`} freezeHeight="screen"
+              tableId="event-commission-earlier-orders" {...tables.tell('earlier')} exportName={`event-commission-earlier-${range.from}-${range.to}`} freezeHeight="screen"
               columns={earlierCols} rows={earlierRows} getRowKey={(o) => o.docNo}
             />
           )}
@@ -910,7 +960,7 @@ export const EventCommissionTab = () => {
       {r && monthAdjRows.length > 0 && (
         <Card title={TITLE.monthAdj} hint="what changed for a closed month's orders after it closed · paid in this month · amounts in RM">
           <DataTable<CommissionMonthAdjustment>
-            tableId="event-commission-month-adjustments" exportName={`event-commission-month-adjustments-${range.from}-${range.to}`} freezeHeight="screen"
+            tableId="event-commission-month-adjustments" {...tables.tell('monthAdj')} exportName={`event-commission-month-adjustments-${range.from}-${range.to}`} freezeHeight="screen"
             columns={MONTH_ADJ_COLUMNS} rows={monthAdjRows} getRowKey={(a) => `${a.month}-${a.docNo}`}
           />
         </Card>
@@ -919,7 +969,7 @@ export const EventCommissionTab = () => {
       {r && deferredRows.length > 0 && (
         <Card title={TITLE.deferredIn} hint={`${HINT.deferredIn} (「这个算下个月」) · paid in this month · amounts in RM`}>
           <DataTable<CommissionDeferredIn>
-            tableId="event-commission-moved-in" exportName={`event-commission-moved-in-${range.from}-${range.to}`} freezeHeight="screen"
+            tableId="event-commission-moved-in" {...tables.tell('movedIn')} exportName={`event-commission-moved-in-${range.from}-${range.to}`} freezeHeight="screen"
             columns={DEFERRED_COLUMNS} rows={deferredRows} getRowKey={(d) => `${d.fromMonth}-${d.docNo}`}
           />
         </Card>
@@ -933,7 +983,7 @@ export const EventCommissionTab = () => {
           )}
           {manualRows.length > 0 && (
             <DataTable<CommissionManualLine>
-              tableId="event-commission-finance-lines" exportName={`event-commission-finance-lines-${range.from}-${range.to}`} freezeHeight="screen"
+              tableId="event-commission-finance-lines" {...tables.tell('manual')} exportName={`event-commission-finance-lines-${range.from}-${range.to}`} freezeHeight="screen"
               columns={manualCols} rows={manualRows} getRowKey={(m) => m.line.id}
             />
           )}
@@ -945,7 +995,7 @@ export const EventCommissionTab = () => {
       {r && !month && manualRows.length > 0 && (
         <Card title={TITLE.manual} hint={`${HINT.manual} · amounts in RM`}>
           <DataTable<CommissionManualLine>
-            tableId="event-commission-finance-lines" exportName={`event-commission-finance-lines-${range.from}-${range.to}`} freezeHeight="screen"
+            tableId="event-commission-finance-lines" {...tables.tell('manual')} exportName={`event-commission-finance-lines-${range.from}-${range.to}`} freezeHeight="screen"
             columns={manualCols} rows={manualRows} getRowKey={(m) => m.line.id}
           />
         </Card>
@@ -956,7 +1006,7 @@ export const EventCommissionTab = () => {
           hint={`each order once, its final amount in the range · added to the total (the last card)${canMark ? " · Finance: Don't count change leaves the price change out, the original amount still counts" : ''}`}>
           {changesEarlier.length === 0 ? <p className={ec.empty}>No upsale or drop sale on an earlier order in this range.</p> : (
             <DataTable<CommissionChangedOrder>
-              tableId="event-commission-changes-earlier" exportName={`event-commission-upsales-drops-earlier-${range.from}-${range.to}`} freezeHeight="screen"
+              tableId="event-commission-changes-earlier" {...tables.tell('changesEarlier')} exportName={`event-commission-upsales-drops-earlier-${range.from}-${range.to}`} freezeHeight="screen"
               columns={changedCols} rows={changesEarlier} getRowKey={(o) => o.docNo}
             />
           )}
@@ -967,7 +1017,7 @@ export const EventCommissionTab = () => {
         <Card title={changesTitle(words.card1)}
           hint={`each order once, its final amount in the range · already inside ${words.card1} above, not added again${canMark ? " · Finance: Don't count change leaves the price change out, the original amount still counts" : ''}`}>
           <DataTable<CommissionChangedOrder>
-            tableId="event-commission-changes-in-range" exportName={`event-commission-upsales-drops-in-range-${range.from}-${range.to}`} freezeHeight="screen"
+            tableId="event-commission-changes-in-range" {...tables.tell('changesInRange')} exportName={`event-commission-upsales-drops-in-range-${range.from}-${range.to}`} freezeHeight="screen"
             columns={changedCols} rows={changesInRange} getRowKey={(o) => o.docNo}
           />
         </Card>
@@ -976,7 +1026,7 @@ export const EventCommissionTab = () => {
       {r && belowRows.length > 0 && (
         <Card title="Below 30% paid" hint="these orders earn nothing until 30% of the order is paid · amounts in RM">
           <DataTable<BelowDepositRow>
-            tableId="event-commission-below-deposit" exportName={`event-commission-below-30-${range.from}-${range.to}`} freezeHeight="screen"
+            tableId="event-commission-below-deposit" {...tables.tell('below')} exportName={`event-commission-below-30-${range.from}-${range.to}`} freezeHeight="screen"
             columns={BELOW_COLUMNS} rows={belowRows} getRowKey={(o) => o.docNo}
           />
         </Card>
@@ -985,12 +1035,22 @@ export const EventCommissionTab = () => {
       {r && markedRows.length > 0 && (
         <Card title="Marked — not paid here" hint="Finance's marks: not counted, a price change left out, or paid next month · not in the total above · amounts in RM">
           <DataTable<CommissionMarkedOrder>
-            tableId="event-commission-marked" exportName={`event-commission-marked-${range.from}-${range.to}`} freezeHeight="screen"
+            tableId="event-commission-marked" {...tables.tell('marked')} exportName={`event-commission-marked-${range.from}-${range.to}`} freezeHeight="screen"
             columns={markedCols} rows={markedRows} getRowKey={(m) => m.mark.id}
           />
         </Card>
       )}
       {r && <p className={ec.notes}>{RULE_NOTE}</p>}
+      {/* What a fair's orders show, read while no fair is open. */}
+      {byFair && (
+        <div hidden>
+          <DataTable<CommissionSoRow> tableId="event-commission-orders" embedded freezeHeight="off" columns={FAIR_ORDER_COLUMNS} rows={[]} getRowKey={(s) => s.docNo}
+            onShownColumnsChange={tables.tell('fairOrders', 'fairOrdersProbe').onShownColumnsChange} />
+        </div>
+      )}
+      {exporting && r && (
+        <EventCommissionExportDialog format={exporting} people={people} onClose={() => setExporting(null)} onExport={(who) => runExport(exporting, who)} />
+      )}
     </>
   );
 };
