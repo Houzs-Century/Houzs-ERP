@@ -362,6 +362,73 @@ describe('the bill pile', () => {
     expect(takePvFiles().map((f) => f.name)).toEqual(['summary.pdf', 'slip.pdf', 'grab1.pdf', 'grab2.pdf', 'shopee.pdf']);
   });
 
+  /* Owner 2026-11-16 (已经有 claim form 还是会读错就不应该): Elise's claim PDF — a
+     claim form of 16 rows, RM 5,494.66, its receipts behind it — read whole came
+     back "summary / listing", set aside, with nothing to open. A claim form whose
+     rows add up to its total IS the claim: its rows are the voucher's lines and
+     the receipts it lists go with it, never as more lines. */
+  const claimRows = [
+    { description: '21 Oct IKEA Table Lamp - Blasverk + Halgatt', amountSen: 166915 },
+    { description: '21 Oct Haier Dust Mite Vacuum', amountSen: 35488 },
+    { description: '18 Oct Ogawa Foot Massager', amountSen: 28529 },
+  ];
+  const asKind = (b: ExtractedBill, documentKind: string): ExtractedBill =>
+    (b.ok ? { ...b, extraction: { ...b.extraction, documentKind } } : b) as ExtractedBill;
+  type Landed = { billPrefill: { extraction: { totalSen: number | null; lines: unknown } } };
+
+  test('a claim form read whole is the claim: its rows are the voucher lines, its file rides along', async () => {
+    landedState = null;
+    answers({ 'Elise_Claim.pdf': asKind(readBill(0, { vendorName: 'Elise', totalSen: 230932, lines: claimRows }, null), 'summary') });
+    draw();
+    fireEvent.change(screen.getByLabelText('Add bill files'), { target: { files: [pdf('Elise_Claim.pdf')] } });
+    fireEvent.click(screen.getByText('Read 1 bill(s)'));
+    await readDone(1);
+    await waitFor(() => expect(screen.getByText('Open as voucher')).toBeTruthy());
+    expect(screen.queryByText('Set aside — not bills')).toBeNull();
+    expect(screen.getByText("Claim form — its 3 row(s) are the voucher's lines")).toBeTruthy();
+
+    fireEvent.click(screen.getByText('Open as voucher'));
+    await waitFor(() => expect(screen.getByText('NEW PAGE')).toBeTruthy());
+    expect((landedState as Landed).billPrefill.extraction.totalSen).toBe(230932);
+    expect((landedState as Landed).billPrefill.extraction.lines).toEqual(claimRows);
+    expect(takePvFiles().map((f) => f.name)).toEqual(['Elise_Claim.pdf']);
+  });
+
+  test('a claim PDF split by page: the form is the claim; its receipts and its other pages go with it, never as lines', async () => {
+    landedState = null;
+    splitPdfPages.mockResolvedValueOnce(['elise p1.pdf', 'elise p2.pdf', 'elise p3.pdf', 'elise p4.pdf', 'elise p5.pdf'].map(pdf));
+    answers({
+      'elise p1.pdf': asKind(readBill(0, { vendorName: 'Elise', totalSen: 230932, lines: claimRows }, null), 'summary'),
+      'elise p2.pdf': asKind(readBill(0, { vendorName: 'IKANO HANDEL', invoiceNumber: 'S362260085873', totalSen: 166915 }, null), 'receipt'),
+      'elise p3.pdf': asKind(readBill(0, { vendorName: 'HAIER', invoiceNumber: 'H-1', totalSen: 35488 }, null), 'receipt'),
+      'elise p4.pdf': asKind(readBill(0, { vendorName: 'SHOPEE', invoiceNumber: 'O-9', totalSen: 1234 }, null), 'receipt'),
+      'elise p5.pdf': asKind(readBill(0, { vendorName: 'OGAWA', invoiceNumber: 'OG-1', totalSen: 28529 }, null), 'receipt'),
+    });
+    draw();
+    fireEvent.change(screen.getByLabelText('Add bill files'), { target: { files: [pdf('elise.pdf')] } });
+    fireEvent.click(screen.getByLabelText('Split elise.pdf into one bill per page'));
+    await waitFor(() => expect(screen.getByText('Read 5 bill(s)')).toBeTruthy());
+    fireEvent.click(screen.getByText('Read 5 bill(s)'));
+    await readDone(5);
+
+    await waitFor(() => expect(screen.getByText('Set aside — not bills')).toBeTruthy());
+    expect(screen.getByText(/receipt for row 1 of the claim \(bill 1\)/)).toBeTruthy();
+    expect(screen.getByText(/receipt for row 2 of the claim/)).toBeTruthy();
+    expect(screen.getByText(/receipt for row 3 of the claim/)).toBeTruthy();
+    expect(screen.getByText(/page of the claim's file, on no row \(bill 1\)/)).toBeTruthy();
+    expect(screen.getByText(/a claim form's pages go with it/)).toBeTruthy();
+    expect(screen.getByText(/the receipts for 3 of 3 rows are in the pile/)).toBeTruthy();
+    /* Only the form is a receipt — the pages behind it add no lines. */
+    expect(screen.getAllByText('Open as voucher')).toHaveLength(1);
+    fireEvent.click(screen.getByText('Tick every receipt'));
+    expect(screen.getByText(/Open ticked as ONE voucher \(3 lines, RM 2,309\.32\)/)).toBeTruthy();
+
+    fireEvent.click(screen.getByText('Open as voucher'));
+    await waitFor(() => expect(screen.getByText('NEW PAGE')).toBeTruthy());
+    expect((landedState as Landed).billPrefill.extraction.lines).toEqual(claimRows);
+    expect(takePvFiles().map((f) => f.name)).toEqual(['elise p1.pdf', 'elise p2.pdf', 'elise p3.pdf', 'elise p4.pdf', 'elise p5.pdf']);
+  });
+
   test('"It is a bill" brings a set-aside page back as a receipt', async () => {
     answers({
       'slip.pdf': { ...readBill(0, { vendorName: 'TNB', invoiceNumber: 'X1', totalSen: 5000 }, null), extraction: { ...(readBill(0, { vendorName: 'TNB', invoiceNumber: 'X1', totalSen: 5000 }, null) as Extract<ExtractedBill, { ok: true }>).extraction, documentKind: 'payment_proof' } } as ExtractedBill,

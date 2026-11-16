@@ -53,6 +53,9 @@
 // a bank transfer slip, a summary page, or a page repeating a receipt already
 // in the pile (same number, same total) is SET ASIDE — kept, attachable to the
 // ticked voucher as evidence, never a line. The person can overrule it.
+// A claim form that itemises the claim (owner 2026-11-16) is the opposite: it
+// IS the bill — its rows are the lines — and the receipts it lists are set
+// aside as its evidence, riding along whenever it is opened.
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
@@ -66,7 +69,7 @@ import { BillMatchesNote } from '../../vendor/scm/components/RequestBill';
 import type { EventSuggestion } from '../../vendor/scm/lib/event-queries';
 import { stashPvFiles } from '../../vendor/scm/lib/pv-file-handoff';
 import { splitPdfPages } from '../../vendor/scm/lib/pdf-split-request';
-import { NOT_A_BILL_LABEL, isNotABill, repeatsOf, voucherLinesOf } from '../../vendor/scm/lib/bill-pile-sort';
+import { NOT_A_BILL_LABEL, claimEvidenceOf, isClaimForm, isNotABill, repeatsOf, voucherLinesOf } from '../../vendor/scm/lib/bill-pile-sort';
 import type { AiReadStage } from '../../vendor/scm/lib/ai-read-job';
 import { clearPile, getPile, pileKey, updatePile, usePile, type PileState } from '../../vendor/scm/lib/bill-pile-store';
 import { getActiveCompanySnapshot, subscribeActiveCompany } from '../../lib/activeCompany';
@@ -287,19 +290,52 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
      printed vendor name so two TNB bills still sit together. */
   const okBills = useMemo(() => (results ?? []).filter((b): b is Extract<ExtractedBill, { ok: true }> => b.ok), [results]);
   /* The three heaps: receipts (grouped below), and the set-aside pages — not
-     a bill, or a repeat of a receipt already in the pile (bill-pile-sort.ts). */
-  const { receipts, setAside, asideWhy } = useMemo(() => {
+     a bill, a repeat of a receipt already in the pile, or a receipt a claim
+     form in the pile lists (bill-pile-sort.ts). */
+  const { receipts, setAside, asideWhy, evidence } = useMemo(() => {
     const counted = okBills.filter((b) => !isNotABill(b.extraction) || treatAsBill.has(b.index));
     const repeats = repeatsOf(counted);
+    /* The file a bill was cut from: a page split off a PDF keeps its PDF's id
+       (`<rid>-p<n>`, splitPdf), so the claim form's own pages are told apart. */
+    const sourceOf = (index: number): string => (billGroups[index]?.[0] ?? `bill-${index}`).replace(/-p\d+$/, '');
+    const ev = claimEvidenceOf(counted.filter((b) => !repeats.has(b.index) && !treatAsBill.has(b.index)), sourceOf);
     const why = new Map<number, string>();
     for (const b of okBills) {
       if (treatAsBill.has(b.index)) continue;
       const of = repeats.get(b.index);
+      const forClaim = ev.get(b.index);
       if (isNotABill(b.extraction)) why.set(b.index, NOT_A_BILL_LABEL[b.extraction.documentKind] ?? 'not a bill');
       else if (of != null) why.set(b.index, `repeats bill ${of + 1} — same number and total, likely its next page`);
+      else if (forClaim) {
+        why.set(b.index, forClaim.row != null
+          ? `receipt for row ${forClaim.row} of the claim (bill ${forClaim.claim + 1})`
+          : `page of the claim's file, on no row (bill ${forClaim.claim + 1})`);
+      }
     }
-    return { receipts: okBills.filter((b) => !why.has(b.index)), setAside: okBills.filter((b) => why.has(b.index)), asideWhy: why };
-  }, [okBills, treatAsBill]);
+    return { receipts: okBills.filter((b) => !why.has(b.index)), setAside: okBills.filter((b) => why.has(b.index)), asideWhy: why, evidence: ev };
+  }, [okBills, treatAsBill, billGroups]);
+  /* A claim form's evidence pages, by index — they ride along whenever the form is opened. */
+  const evidenceOf = (index: number): number[] =>
+    setAside.filter((s) => evidence.get(s.index)?.claim === index).map((s) => s.index);
+  /* The pages a bill opens with: its own, and its receipts' when it is a claim form, in pile order. */
+  const filesOf = (indices: number[]) => {
+    const all = [...new Set(indices.flatMap((i) => [i, ...evidenceOf(i)]))].sort((x, y) => x - y);
+    return { indices: all, files: all.flatMap((i) => billFiles[i] ?? []) };
+  };
+  /* What a claim form says under it: its rows are the lines, and how many of
+     them have their receipt in the pile. */
+  const claimNote = (b: Extract<ExtractedBill, { ok: true }>): string | null => {
+    if (!isClaimForm(b.extraction)) return null;
+    const rows = b.extraction.lines.map((l, i) => ({ row: i + 1, amountSen: l.amountSen })).filter((r) => r.amountSen != null && r.amountSen > 0);
+    const head = `Claim form — its ${rows.length} row(s) are the voucher's lines`;
+    const covered = new Set([...evidence.values()].filter((e) => e.claim === b.index && e.row != null).map((e) => e.row));
+    if (covered.size === 0) return head;
+    const missing = rows.filter((r) => !covered.has(r.row));
+    const none = missing.length > 0
+      ? ` · no receipt for ${missing.slice(0, 4).map((r) => `row ${r.row} (${fmtRm(r.amountSen)})`).join(', ')}${missing.length > 4 ? ` and ${missing.length - 4} more` : ''}`
+      : '';
+    return `${head} · the receipts for ${rows.length - missing.length} of ${rows.length} rows are in the pile${none}`;
+  };
   const groups = useMemo(() => {
     const map = new Map<string, { label: string; supplierId: string | null; bills: Array<Extract<ExtractedBill, { ok: true }>> }>();
     for (const b of receipts) {
@@ -372,7 +408,9 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
     const lines = tickedLines;
     const first = tickedBills[0]!;
     const dates = tickedBills.map((b) => b.extraction.invoiceDate).filter((d): d is string => !!d).sort();
-    markOpened([...tickedBills, ...tickedAside].map((b) => b.index));
+    /* A ticked claim form brings its receipts' pages even when they are not ticked. */
+    const pages = filesOf([...tickedBills, ...tickedAside].map((b) => b.index));
+    markOpened(pages.indices);
     openVoucher(
       {
         ...first.extraction,
@@ -386,7 +424,7 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
       },
       /* Every ticked receipt's pages and every ticked set-aside page (the
          slips, the summary), in pile order — the voucher carries all its evidence. */
-      { lines, memory: null, files: [...tickedBills, ...tickedAside].sort((x, y) => x.index - y.index).flatMap((b) => billFiles[b.index] ?? []) },
+      { lines, memory: null, files: pages.files },
     );
   };
 
@@ -398,12 +436,13 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
     }));
     /* One vendor per group by construction, so the first bill's memory IS the
        group's. */
-    markOpened(g.bills.map((b) => b.index));
+    const pages = filesOf(g.bills.map((b) => b.index));
+    markOpened(pages.indices);
     openVoucher(
       { ...first.extraction, invoiceNumber: g.bills.map((b) => b.extraction.invoiceNumber).filter(Boolean).join(', ') || null },
       /* Every member bill's pages, in bill order — the ONE voucher carries the
          whole statement's evidence. */
-      { lines, memory: first.memory, files: g.bills.flatMap((b) => billFiles[b.index] ?? []) },
+      { lines, memory: first.memory, files: pages.files },
     );
   };
 
@@ -556,15 +595,18 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
                           </Button>
                         ) : split ? (
                           <span style={{ display: 'inline-flex', gap: 6 }}>
-                            <Button variant="secondary" size="sm" disabled={busy} onClick={() => { markOpened([b.index]); openVoucher(b.extraction, { memory: b.memory, files: billFiles[b.index] ?? [], eventSuggestions: b.eventSuggestions ?? [] }); }}>
+                            <Button variant="secondary" size="sm" disabled={busy} onClick={() => { const pages = filesOf([b.index]); markOpened(pages.indices); openVoucher(b.extraction, { memory: b.memory, files: pages.files, eventSuggestions: b.eventSuggestions ?? [] }); }}>
                               Open as voucher
                             </Button>
-                            <Button variant="ghost" size="sm" onClick={() => { markOpened([b.index]); openBill(b.extraction, g.supplierId, billFiles[b.index] ?? []); }} disabled={busy}>
+                            <Button variant="ghost" size="sm" onClick={() => { const pages = filesOf([b.index]); markOpened(pages.indices); openBill(b.extraction, g.supplierId, pages.files); }} disabled={busy}>
                               Open as bill
                             </Button>
                           </span>
                         ) : <span />}
                       </div>
+                      {claimNote(b) && (
+                        <div style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>{claimNote(b)}</div>
+                      )}
                       {(b.extraction.totalSen == null || b.extraction.sstSen != null || b.extraction.vendorRegNo) && (
                         <div style={{ display: 'flex', gap: 'var(--space-3)', fontSize: 'var(--fs-12)', color: 'var(--fg-muted)', flexWrap: 'wrap' }}>
                           {b.extraction.vendorRegNo && <span>Reg. no {b.extraction.vendorRegNo}</span>}
@@ -599,12 +641,13 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
                           Open as ONE voucher ({g.bills.length} lines)
                         </Button>
                         <Button variant="ghost" size="sm" disabled={busy} onClick={() => {
-                          markOpened(g.bills.map((b) => b.index));
+                          const pages = filesOf(g.bills.map((b) => b.index));
+                          markOpened(pages.indices);
                           const first = g.bills[0]!;
                           openBill(
                             { ...first.extraction, invoiceNumber: g.bills.map((b) => b.extraction.invoiceNumber).filter(Boolean).join(', ') || null },
                             g.supplierId,
-                            g.bills.flatMap((b) => billFiles[b.index] ?? []),
+                            pages.files,
                             g.bills.map((b) => ({
                               description: [g.label, b.extraction.invoiceNumber].filter(Boolean).join(' '),
                               amountSen: b.extraction.totalSen,
@@ -625,7 +668,7 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
               <div className={styles.cardHeader}>
                 <h2 className={styles.cardTitle}>Set aside — not bills</h2>
                 <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
-                  {setAside.length} page(s) · never a line{ap ? '' : ' · tick one to attach it to the ONE voucher as evidence'}
+                  {setAside.length} page(s) · never a line{ap ? '' : ' · tick one to attach it to the ONE voucher as evidence'}{evidence.size > 0 ? " · a claim form's pages go with it" : ''}
                 </span>
               </div>
               <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
