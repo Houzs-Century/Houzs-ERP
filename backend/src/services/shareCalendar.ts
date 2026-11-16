@@ -53,6 +53,7 @@ type EventRow = {
   start_date: string | null;
   end_date: string | null;
   name: string | null;
+  event_type: string | null;
 };
 
 /** One floorplan file, as the link holder sees it. No key, no uploader. */
@@ -86,24 +87,37 @@ const PLAN_TITLE_LIKE: Record<PlanKind, string> = {
 
 const LIVE = `lower(status) = 'confirmed' AND archived_at IS NULL`;
 
+/**
+ * The organizer the external link holder is allowed to see. A SOLO show's
+ * organizer is the mall-management company, and the owner's rule is that it is
+ * never named to the brand or contractor — every solo event reads the literal
+ * "Solo", even when the field is blank. An Exhibition (or any other type) names
+ * its own organizer. Applied HERE, in the service, so the real name is dropped
+ * before the response is built and never leaves the worker to the public link.
+ */
+export function shareOrganizer(eventType: string | null, organizer: string | null): string | null {
+  return (eventType ?? "").trim().toLowerCase() === "solo" ? "Solo" : organizer;
+}
+
 /** The party's confirmed, live events, oldest first. */
 export async function listShareEvents(env: Env, scope: ShareScope): Promise<ShareEvent[]> {
   // company-scope: intentionally cross-company — a pre-auth public route has no
   // session and no companyContext; the tenant boundary is the token's party
   // (`scope`), and only confirmed, non-archived, whitelisted columns leave.
   const rows = await env.DB.prepare(
-    `SELECT id, brand, organizer, state, venue, booth_no, start_date, end_date, name
-       FROM projects
-      WHERE ${scope.column} = ?
-        AND ${LIVE}
-      ORDER BY start_date`
+    `SELECT p.id, p.brand, p.organizer, p.state, p.venue, p.booth_no, p.start_date, p.end_date, p.name, et.name AS event_type
+       FROM projects p
+       LEFT JOIN project_event_types et ON et.id = p.event_type_id
+      WHERE p.${scope.column} = ?
+        AND lower(p.status) = 'confirmed' AND p.archived_at IS NULL
+      ORDER BY p.start_date`
   )
     .bind(scope.value)
     .all<EventRow>();
   return rows.results.map((r) => ({
     eventId: r.id,
     brand: r.brand,
-    organizer: r.organizer,
+    organizer: shareOrganizer(r.event_type, r.organizer),
     state: r.state,
     venue: r.venue,
     boothNo: r.booth_no,
@@ -401,7 +415,7 @@ export async function listShareExportRows(env: Env, scope: ShareScope, withSales
       endDate: r.end_date,
       venue: r.venue,
       state: r.state,
-      organizer: r.organizer,
+      organizer: shareOrganizer(r.event_type, r.organizer),
       brand: r.brand,
       eventType: r.event_type,
       boothNo: r.booth_no,

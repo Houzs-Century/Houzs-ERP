@@ -613,9 +613,10 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
                           className={`block w-full truncate bg-[#0F766E] px-1.5 py-[3px] text-left text-[9.5px] font-semibold leading-tight text-white hover:bg-[#0c5f59] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
                             seg.roundL ? "rounded-l-md" : ""
                           } ${seg.roundR ? "rounded-r-md" : ""}`}
-                          title={`${label(seg.e)}${booth ? " — Booth " + booth : ""} — tap for details`}
+                          title={`${label(seg.e)}${seg.e.organizer ? " — " + seg.e.organizer : ""}${booth ? " — Booth " + booth : ""} — tap for details`}
                         >
                           {label(seg.e)}
+                          {seg.e.organizer ? ` · ${seg.e.organizer}` : ""}
                           {booth ? ` · Booth ${booth}` : ""}
                         </button>
                       </div>

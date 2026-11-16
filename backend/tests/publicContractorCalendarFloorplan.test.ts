@@ -249,6 +249,25 @@ describe("public contractor calendar — unfilled floorplan", () => {
     expect(exportLog).toEqual([]);
   });
 
+  test("a Solo show hides its organizer behind the word 'Solo'; a non-Solo event still names its own", async () => {
+    // A Solo event whose organizer is the mall management — never named to the
+    // contractor (owner: "for all solo only mention solo").
+    projects.push({
+      id: 20, contractor: MINE, status: "Confirmed", archived_at: null, brand: "AKEMI",
+      organizer: "SUNWAY MALL MANAGEMENT", state: "SELANGOR", event_type: "Solo",
+      venue: "SUNWAY PYRAMID", booth_no: "LG", start_date: "2026-09-15", end_date: "2026-09-18", name: null, size_sqm: 20,
+    });
+    // The list: the Solo event reads "Solo"; event 7 (ROADSHOW) keeps HOMELOVE.
+    const list = (await (await get(`/${TOKEN}`)).json()) as { events: Array<{ eventId: number; organizer: string | null }> };
+    const org = Object.fromEntries(list.events.map((e) => [e.eventId, e.organizer]));
+    expect(org[20]).toBe("Solo");
+    expect(org[7]).toBe("HOMELOVE");
+    // The export masks it too — the mall name never reaches the sheet.
+    const exp = (await (await get(`/${TOKEN}/export?month=2026-09`)).json()) as { rows: Array<{ venue: string; organizer: string | null }> };
+    expect(exp.rows.find((r) => r.venue === "SUNWAY PYRAMID")?.organizer).toBe("Solo");
+    expect(JSON.stringify(exp.rows)).not.toContain("SUNWAY MALL MANAGEMENT");
+  });
+
   test("an unknown or revoked token gets the same 404 on every route", async () => {
     const bad = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
     for (const p of [`/${bad}`, `/${bad}/events/7/floorplan`, `/${bad}/events/7/floorplan/t700`, `/${bad}/export`]) {
