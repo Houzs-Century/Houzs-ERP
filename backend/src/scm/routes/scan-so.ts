@@ -257,6 +257,8 @@ type Catalog = {
   // validateSlip resolves a line's model from skuMatch.code and keeps only a
   // matched special the model actually allows (else it would render "retired").
   specialsByModelSku: Map<string, Set<string>>;
+  // SKU code → its BEDFRAME Model's total_heights pool (null = unrestricted).
+  totalHeightsByModelSku: Map<string, string[] | null>;
   sofaSizes: string[];
   sofaLegHeights: string[];
   // BEDFRAME variant pools from the SAME Products -> Maintenance master the SO
@@ -464,8 +466,8 @@ async function loadCatalogFresh(sb: SupabaseClient, db: D1Database, companyId?: 
     // map so validateSlip keeps only a special the line's model actually allows.
     paginateAll((from, to) => sb
       .from('product_models')
-      .select('model_code, allowed_options')
-      .eq('category', 'SOFA')
+      .select('model_code, category, allowed_options')
+      .in('category', ['SOFA', 'BEDFRAME'])
       .range(from, to)),
     // The venue master (public.project_venues, ACTIVE) — env.DB, not `sb`.
     loadVenueNames(db),
@@ -552,10 +554,21 @@ async function loadCatalogFresh(sb: SupabaseClient, db: D1Database, companyId?: 
   // (uppercased for case-insensitive lookup). allowed_options is jsonb; PostgREST
   // may return it camelCased — dual-read either casing.
   const specialsByModelCode = new Map<string, Set<string>>();
+  // model_code → the BEDFRAME Model's total_heights pool (null = unrestricted).
+  const totalHeightsByModelCode = new Map<string, string[] | null>();
   for (const row of (modRes.data as Array<Record<string, unknown>> | null) ?? []) {
     const modelCode = (row.modelCode ?? row.model_code) as string | undefined;
     if (!modelCode) continue;
-    const opts = (row.allowedOptions ?? row.allowed_options) as { specials?: unknown } | null;
+    const opts = (row.allowedOptions ?? row.allowed_options) as
+      { specials?: unknown; total_heights?: unknown; totalHeights?: unknown } | null;
+    if (row.category === 'BEDFRAME') {
+      const pool = opts?.totalHeights ?? opts?.total_heights;
+      totalHeightsByModelCode.set(
+        modelCode.toUpperCase(),
+        Array.isArray(pool) ? pool.filter((v): v is string => typeof v === 'string') : null,
+      );
+      continue;
+    }
     const list = Array.isArray(opts?.specials) ? (opts!.specials as unknown[]) : [];
     const set = new Set<string>();
     for (const v of list) if (typeof v === 'string' && v.trim() !== '') set.add(v.toUpperCase());
@@ -570,9 +583,15 @@ async function loadCatalogFresh(sb: SupabaseClient, db: D1Database, companyId?: 
     const allowed = specialsByModelCode.get(s.baseModel.toUpperCase());
     if (allowed) specialsByModelSku.set(s.code.toUpperCase(), allowed);
   }
+  const totalHeightsByModelSku = new Map<string, string[] | null>();
+  for (const s of skus) {
+    if (!s.baseModel) continue;
+    const pool = totalHeightsByModelCode.get(s.baseModel.toUpperCase());
+    if (pool !== undefined) totalHeightsByModelSku.set(s.code.toUpperCase(), pool);
+  }
 
   return {
-    skus, fabrics, specials, specialsByModelSku,
+    skus, fabrics, specials, specialsByModelSku, totalHeightsByModelSku,
     sofaSizes, sofaLegHeights, legHeights, divanHeights, gaps,
     options, venues: venueNames, states, citiesByState, postcodesByStateCity,
   };
@@ -3560,7 +3579,12 @@ function buildDraftSoBodyFromSlip(
     // The sofa leg picker renders sofaLegHeights while the bedframe one renders
     // legHeights, but BOTH write the same `legHeight` key (SoLineCard) — so the
     // pool is chosen by the line's category, not by the key.
-    const variants = buildScanLineVariants(l, cat, sku != null, catalog);
+    const variants = buildScanLineVariants(l, {
+      category: cat,
+      skuCode: sku?.code ?? null,
+      pools: catalog,
+      totalHeights: sku ? catalog.totalHeightsByModelSku.get(sku.code.toUpperCase()) ?? null : null,
+    });
     // Owner 2026-07-04: a scan line must equal a DESKTOP manual line — itemGroup =
     // the SKU's REAL category (not 'others'), and bedframe/sofa carry the fabric
     // COLOUR + special-order add-ons the OCR read, keyed exactly as the New SO form

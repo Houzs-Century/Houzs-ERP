@@ -1,4 +1,5 @@
 import { computeTotalHeight } from '../shared/total-height';
+import { isTotalHeightAllowed } from './allowed-options-check';
 
 export interface ScanVariantPools {
   sofaSizes: string[];
@@ -76,18 +77,23 @@ function snapInchesToMaintPool(inches: number, pool: string[]): string | null {
 /* The variants blob of a drafted scan line. See buildDraftSoBodyFromSlip for the
    owner rules behind each axis; `category` is the matched SKU's lowercase
    category ('others' for an unmatched line). */
+export interface ScanLineVariantContext {
+  category: string;
+  skuCode: string | null;
+  pools: ScanVariantPools;
+  /** The line Model's total_heights pool; null or empty means unrestricted. */
+  totalHeights: string[] | null;
+}
+
 export function buildScanLineVariants(
   line: ScanLineVariantInput,
-  category: string,
-  hasSku: boolean,
-  pools: ScanVariantPools,
+  { category: cat, skuCode, pools, totalHeights }: ScanLineVariantContext,
 ): Record<string, unknown> {
   const variants: Record<string, unknown> = {};
-  const cat = category;
   // The sofa leg picker renders sofaLegHeights while the bedframe one renders
   // legHeights, but BOTH write the same `legHeight` key (SoLineCard) — so the
   // pool is chosen by the line's category, not by the key.
-  if (hasSku) {
+  if (skuCode != null) {
     const legPool = cat === 'sofa' ? pools.sofaLegHeights : pools.legHeights;
     if (line.divanHeightInches != null) {
       const snapped = snapInchesToMaintPool(line.divanHeightInches, pools.divanHeights);
@@ -127,8 +133,12 @@ export function buildScanLineVariants(
   }
   // Bedframe Total Height (HC-0190): the editor derives it from divan + leg +
   // gap, so a scanned line carries it too and is priced with its surcharge at
-  // create time. Empty (no axis set) and non-bedframe lines get no key.
+  // create time. Empty (no axis set) and non-bedframe lines get no key. A total
+  // the Model's pool refuses is left off (same rule as the save gate), so the scan
+  // can never trip variant_not_allowed / total_height; the operator gets it on save.
   const totalHeight = computeTotalHeight(cat, variants);
-  if (totalHeight) variants.totalHeight = totalHeight;
+  if (totalHeight && isTotalHeightAllowed(totalHeights, skuCode ?? '', totalHeight)) {
+    variants.totalHeight = totalHeight;
+  }
   return variants;
 }
