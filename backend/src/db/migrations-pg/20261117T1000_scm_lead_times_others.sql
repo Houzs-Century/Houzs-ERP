@@ -9,7 +9,7 @@
 -- record, so each table drops whatever CHECK mentions category (one line, as
 -- pg-migrate splits on ";\n") and adds a named one.
 --
--- REVERSAL (only once no 'others' row exists in either table):
+-- REVERSAL: (only once no 'others' row exists in either table)
 --   ALTER TABLE scm.mrp_category_lead_times DROP CONSTRAINT mrp_category_lead_times_category_check;
 --   ALTER TABLE scm.mrp_category_lead_times ADD CONSTRAINT mrp_category_lead_times_category_check CHECK (category IN ('sofa', 'bedframe', 'mattress', 'accessory', 'service'));
 --   ALTER TABLE scm.mrp_supplier_category_lead_times DROP CONSTRAINT mrp_supplier_category_lead_times_category_check;
