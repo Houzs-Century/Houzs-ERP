@@ -106,7 +106,7 @@ export const ASSR_LEG_REMARK_COL = {
   customer_pickup: 'pickup_remark', inspection: 'inspection_remark', delivery: 'delivery_remark',
 } as const;
 
-/** The amend / reschedule reason a Service Case keeps per leg (mig 20261116T1000),
+/** The amend / reschedule reason a Service Case keeps per leg (mig 20261116T1010),
  *  mirroring the SO header's amend_reason: the reason THIS leg's date moved. The
  *  board's Amend Reason column and the Set-job-date drawer write it; recorded only. */
 export const ASSR_LEG_AMEND_REASON_COL = {

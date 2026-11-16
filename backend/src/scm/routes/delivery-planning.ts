@@ -447,7 +447,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           customer_delivery_date: leg.requested, sales_exemption_expiry: null,
           amend_date_from_customer: null,
           amended_delivery_date: leg.confirmed,
-          // Per-leg amend / reschedule reason (mig 20261116T1000) — the reason this
+          // Per-leg amend / reschedule reason (mig 20261116T1010) — the reason this
           // leg's date moved, mirroring the SO header's amend_reason. The board's
           // Amend Reason column and the Set-job-date drawer write it.
           amend_reason: a[ASSR_LEG_AMEND_REASON_COL[leg.jobKind]] ?? null, amend_reason_from_customer: null,
