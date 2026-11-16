@@ -32,6 +32,15 @@ describe("buildCaseTimeline", () => {
     expect(rows[2].remarks).toBe("Backrest bracket obstructing the zipper");
   });
 
+  test("puts the later-saved row first when two share a timestamp", () => {
+    const first = activity("note", "2026-10-21T09:00:00Z", { note: "First", category: "service" });
+    const second = activity("note", "2026-10-21T09:00:00Z", { note: "Second", category: "service" });
+
+    const { rows } = buildCaseTimeline([second, first], keyUpdates);
+
+    expect(rows.map((row) => row.remarks)).toEqual(["Second", "First"]);
+  });
+
   test("keeps a merged upload row in its place among newer rows", () => {
     const entries = [
       activity("attachment_added", "2026-10-22T03:00:00Z", { to_value: "a.jpg" }),
