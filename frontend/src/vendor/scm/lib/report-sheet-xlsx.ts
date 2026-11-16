@@ -42,8 +42,8 @@ export const kindStyle = (kind: SheetRowKind): Partial<Cell & object> => {
 };
 
 const figure = (col: SheetColumn, v: number | string | null, style: object): Cell => {
-  if (v === null) return { value: '-', type: String, align: 'right', color: SOFT, ...style };
-  if (typeof v === 'string' || col.kind === 'text') return { value: String(v), type: String, ...style };
+  if (v === null) return { value: '-', type: String, align: col.align ?? 'right', color: SOFT, ...style };
+  if (typeof v === 'string' || col.kind === 'text') return { value: String(v), type: String, ...(col.align ? { align: col.align } : {}), ...style };
   if (col.kind === 'pct') return { value: v / 100, type: Number, format: PCT_FORMAT, align: 'right', color: SOFT, ...style };
   return { value: v / 100, type: Number, format: AMOUNT_FORMAT, align: 'right', ...style };
 };
@@ -72,12 +72,13 @@ const headerCell = (label: string, align: 'left' | 'center' | 'right'): Cell =>
     month over Settlement | Deposit), the headings merged over their columns on a first row
     and the columns' own names under them — a column without a heading stands both rows tall. */
 export function headerRows(t: SheetTable): Row[] {
-  if (!t.columns.some((c) => c.group)) return [[headerCell('', 'left'), ...t.columns.map((c) => headerCell(c.label, 'right'))]];
-  const top: Row = [{ ...headerCell('', 'left'), rowSpan: 2 }];
+  const name = t.labelHeader ?? '';
+  if (!t.columns.some((c) => c.group)) return [[headerCell(name, 'left'), ...t.columns.map((c) => headerCell(c.label, c.align ?? 'right'))]];
+  const top: Row = [{ ...headerCell(name, 'left'), rowSpan: 2 }];
   const under: Row = [null];
   t.columns.forEach((c, i) => {
-    if (!c.group) { top.push({ ...headerCell(c.label, 'right'), rowSpan: 2 }); under.push(null); return; }
-    under.push(headerCell(c.label, 'right'));
+    if (!c.group) { top.push({ ...headerCell(c.label, c.align ?? 'right'), rowSpan: 2 }); under.push(null); return; }
+    under.push(headerCell(c.label, c.align ?? 'right'));
     if (t.columns[i - 1]?.group === c.group) { top.push(null); return; }
     let n = 1;
     while (t.columns[i + n]?.group === c.group) n += 1;
@@ -99,6 +100,7 @@ export function sheetMatrix(given: ReportSheet): SheetData {
   ];
   sheet.tables.forEach((t) => {
     rows.push([]);
+    if (t.title) rows.push([{ value: t.title, type: String, fontWeight: 'bold', fontSize: 12, span: width }]);
     rows.push(...headerRows(t));
     for (const r of t.rows) rows.push(rowCells(r, t.columns));
   });
@@ -112,7 +114,12 @@ export function sheetMatrix(given: ReportSheet): SheetData {
 /** The column widths: the name column wide, an amount column, a % column narrower. */
 export const columnWidths = (sheet: ReportSheet): Array<{ width: number }> => {
   const widest = sheet.tables.reduce((best, t) => (t.columns.length > best.length ? t.columns : best), [] as SheetColumn[]);
-  return [{ width: LABEL_WIDTH }, ...widest.map((c) => ({ width: c.kind === 'pct' ? PCT_WIDTH : AMOUNT_WIDTH }))];
+  const out = [{ width: LABEL_WIDTH }, ...widest.map((c) => ({ width: c.kind === 'pct' ? PCT_WIDTH : AMOUNT_WIDTH }))];
+  /* A column asked wider — by any of the tables sharing it — is that wide. */
+  for (const t of sheet.tables) {
+    t.columns.forEach((c, i) => { if (c.width != null) out[i + 1] = { width: Math.max(out[i + 1]?.width ?? AMOUNT_WIDTH, c.width) }; });
+  }
+  return out;
 };
 
 /** Excel forbids / \ ? * [ ] : in a sheet's name and more than 31 characters. */
@@ -126,7 +133,7 @@ export async function downloadReportXlsx(sheet: ReportSheet, fileName: string): 
     sheet: sheetName(sheet.title),
     columns: columnWidths(sheet),
     /* The title, the subtitle, a blank and the first table's header stay put; so does the name column. */
-    stickyRowsCount: 3 + headRowsOf(sheet),
+    stickyRowsCount: 3 + (sheet.tables[0]?.title ? 1 : 0) + headRowsOf(sheet),
     stickyColumnsCount: 1,
   });
 }

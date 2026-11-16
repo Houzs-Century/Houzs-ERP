@@ -141,7 +141,7 @@ SELECT
   (SELECT coalesce(json_agg(t), '[]'::json) FROM po_nos t) AS po_nos,
   (SELECT coalesce(json_agg(t ORDER BY t.doc_no), '[]'::json) FROM (
      SELECT doc_no, expiry_date FROM public.sales_orders
-      WHERE $2::boolean AND doc_no IN (SELECT jsonb_array_elements_text($6::text::jsonb))
+      WHERE doc_no IN (SELECT jsonb_array_elements_text($6::text::jsonb))
         AND ($7::text::jsonb IS NULL OR company_id IN (SELECT jsonb_array_elements_text($7::text::jsonb)::bigint))) t) AS ac`;
 
 export type BoardHead = {
@@ -297,7 +297,8 @@ export async function loadSoBoardMapsSql(
     if (!companyOrder.includes(cid)) companyOrder.push(cid);
     pairs.push([String(r.doc_no), cid]);
   }
-  const linkedAc = linkedAcDocByDoc(soRows);
+  // Every row, counts_only too: the expiry decides Overdue (derivePlanningState).
+  const linkedAc = linkedAcDocByDoc(input.soRows);
   /* JSON text for the $n::text::jsonb placeholders of BOARD_DATA_SQL (pinned by
      delivery-board-sql.test.ts: no bare $n::jsonb in either statement). */
   const docsJson = JSON.stringify(docNos);

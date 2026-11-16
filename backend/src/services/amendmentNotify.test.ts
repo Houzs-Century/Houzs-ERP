@@ -131,10 +131,18 @@ describe('amendment notice audience', () => {
     });
     expect(posted[0].userIds).toEqual([46]);
 
+    posted.length = 0;
+    // An add/cancel-line lane reaches the SAME Sales Director key (owner 2026-11-16).
+    await notifySoAmendmentRaised(fakeEnv(), {
+      amendmentNo: '2990-SO-1/A4', soDocNo: '2990-SO-1', lane: 'LINE_ADDREMOVE', companyId: 2,
+    });
+    expect(posted[0].userIds).toEqual([46]);
+
     // And the two tables agree, key for key.
     expect(LANE_APPROVE_KEY.LINES).toBe('scm.amendment.approve_lines');
     expect(LANE_APPROVE_KEY.DELIVERY).toBe('scm.amendment.approve_delivery');
     expect(LANE_APPROVE_KEY.PRICE).toBe('scm.amendment.approve_price');
+    expect(LANE_APPROVE_KEY.LINE_ADDREMOVE).toBe('scm.amendment.approve_price');
   });
 
   it('never notifies the wildcard (owner / IT admin) roles', async () => {

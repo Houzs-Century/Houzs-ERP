@@ -88,6 +88,10 @@ export const CARRIERS = [
   { table: 'scm.so_amendment_lines', kind: 'variants', col: 'new_variants', live: true },
   { table: 'scm.po_amendment_lines', kind: 'variants', col: 'new_variants', live: true },
 
+  // a product request's fabric becomes the PC Order line's fabricCode on approval,
+  // and a save checks it against the Fabric Converter (routes/product-requests.ts)
+  { table: 'scm.product_request_lines', kind: 'col', col: 'fabric_code', live: true },
+
   // a queued push would replay the retired colour into AutoCount
   { table: 'scm.autocount_outbox', kind: 'blob', col: 'payload', live: true },
 

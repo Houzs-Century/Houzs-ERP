@@ -14,6 +14,7 @@ import {
   supplierOfPrintedPo,
   normalizeCode,
   pickBySpec,
+  markedNotReceived,
   normalizeSupplierName,
   resolvePrintedPo,
   resolveScannedSupplier,
@@ -1000,5 +1001,79 @@ describe('a delivery order across seven POs and three warehouses (NICE FUTURE 20
     expect(nameMatchItem('AKEMI BULWARK MATTRESS', akemi)).toBe('AKB1');
     expect(nameMatchItem('AKEMI BULWARK PILLOW', akemi)).toBe('AKB2');
     expect(nameMatchItem('AKEMI BULWARK', akemi)).toBeNull();
+  });
+});
+
+describe('Hookka DO-2611-037: two lines of one model on a PO, and a row with no PO', () => {
+  const hok = (poItemId: string, poNumber: string, supplierSku: string, description2: string, soDocNo: string | null = null) =>
+    line({ poItemId, poNumber, supplierId: 'sup-hok', itemCode: supplierSku.replace(/^HOK-/, ''), supplierSku, remaining: 1, description2, soDocNo });
+  const cody03 = hok('cody-03', 'HC-PO-2610-399', 'HOK-1007-(Q)', 'PC151-03 / DIVAN 8" + NO LEG / GAP 12" / T.Heights 20"');
+  const cody14 = hok('cody-14', 'HC-PO-2610-399', 'HOK-1007-(Q)', 'PC151-14 / DIVAN 8" + NO LEG / GAP 12" / T.Heights 20"');
+
+  test('each CODY row takes the PO line of the fabric it prints', () => {
+    const rows = [
+      scan({ itemCode: '1007-(Q)', poNo: 'HC-PO-2610-399', description: 'CODY BEDFRAME (5FT) (152X190CM) PC151-14 / DIVAN 8" + NO LEG / GAP 12" / T.Heights 20"' }),
+      scan({ itemCode: '1007-(Q)', poNo: 'HC-PO-2610-399', description: 'CODY BEDFRAME (5FT) (152X190CM) PC151-03 / DIVAN 8" + NO LEG / GAP 12" / T.Heights 20"' }),
+    ];
+    const res = matchGrnScanToPoLines(null, rows, [cody03, cody14], [], 'sup-hok');
+    expect(res.picks).toEqual(expect.arrayContaining([{ poItemId: 'cody-14', qty: 1 }, { poItemId: 'cody-03', qty: 1 }]));
+    expect(res.unmatched).toEqual([]);
+  });
+
+  test('without the fabric line the row stays for a person to choose', () => {
+    const res = matchGrnScanToPoLines(null, [scan({ itemCode: '1005-(Q)', poNo: 'HC-PO-2610-399', description: 'CODY BEDFRAME (5FT) (152X190CM)' })], [cody03, cody14], [], 'sup-hok');
+    expect(res.picks).toEqual([]);
+  });
+
+  test('no PO printed: our SO number on the row picks that order\'s line', () => {
+    const mine = hok('5530-316', 'HC-PO-2609-317', '5530-L(RHF)', 'BO315-21 / SEAT 28 / LEG 6"', 'HC-SO-2609-316');
+    const other = hok('5530-154', 'HC-PO-2610-154', '5530-L(RHF)', 'BO315-01 / SEAT 28 / LEG 4"', 'HC-SO-2610-020');
+    const res = matchGrnScanToPoLines(null, [scan({ itemCode: '5530-L(RHF)', description: 'SOFA 5530 L(RHF) BO315-21 / Size: 28 / 6" LEG SO: HC-SO-2609-316' })], [mine, other], [], 'sup-hok');
+    expect(res.picks).toEqual([{ poItemId: '5530-316', qty: 1 }]);
+  });
+});
+
+describe('an X where the rack goes: not received (owner 2026-11-13, DO-2611-037)', () => {
+  const pillow = line({ poItemId: 'pillow', poNumber: 'HC-PO-2610-172', supplierId: 'sup-hok', itemCode: 'LONG PILLOW', supplierSku: 'HOK-LONG PILLOW', remaining: 3 });
+  test('an X row is never received, a rack row is', () => {
+    const res = matchGrnScanToPoLines(null, [
+      scan({ itemCode: 'LONG PILLOW', poNo: 'HC-PO-2610-172', rack: 'X' }),
+      scan({ itemCode: 'LONG PILLOW', poNo: 'HC-PO-2610-172', rack: ' x ' }),
+      scan({ itemCode: 'LONG PILLOW', poNo: 'HC-PO-2610-172', rack: 'L16.1' }),
+    ], [pillow], [], 'sup-hok');
+    expect(res.picks).toEqual([{ poItemId: 'pillow', qty: 1 }]);
+    expect(res.unmatched.map((u) => u.reason)).toEqual(['not_received', 'not_received']);
+  });
+  test('only a lone X counts', () => {
+    expect(['X', 'x', '×', '✗'].every(markedNotReceived)).toBe(true);
+    expect(['XL1.2', 'L9.1', '', null].some(markedNotReceived)).toBe(false);
+  });
+});
+
+describe('the pieces-of-an-SO fallback keeps to the model and size the row prints (DO-2611-037, 2026-11-13)', () => {
+  const so = (poItemId: string, poNumber: string, supplierSku: string, soDocNo: string) =>
+    line({ poItemId, poNumber, supplierId: 'sup-hok', itemCode: supplierSku.replace(/^HOK-/, ''), supplierSku, remaining: 1, soDocNo });
+  const sl = (itemCode: string, poNo: string, soNo: string) => scan({ itemCode, poNo, description: `ROW SO: ${soNo}` });
+
+  test('a CODY row never takes a CELENE line of its SO', () => {
+    const celene = so('celene', 'HC-PO-2611-024', 'HOK-2038(A)-(Q)', 'HC-SO-2610-355');
+    expect(setLinesBySo(sl('1007-(Q)', 'HC-PO-2611-024', 'HC-SO-2610-355'), [celene])).toBeNull();
+  });
+
+  test('a (Q) row never takes the (SS) line of the same model', () => {
+    const ss = so('ss', 'HC-PO-2611-026', 'HOK-1007-(SS)', 'HC-SO-2610-296');
+    expect(setLinesBySo(sl('1007-(Q)', 'HC-PO-2611-026', 'HC-SO-2610-296'), [ss])).toBeNull();
+    const q = so('q', 'HC-PO-2611-026', 'HOK-1007-(Q)', 'HC-SO-2610-296');
+    expect(setLinesBySo(sl('1007-(Q)', 'HC-PO-2611-026', 'HC-SO-2610-296'), [ss, q])?.lines.map((l) => l.poItemId)).toEqual(['q']);
+  });
+
+  test('a sofa row never takes the square pillows of its SO', () => {
+    const pillow = line({ poItemId: 'pil', poNumber: 'HC-PO-2610-103', supplierId: 'sup-hok', itemCode: 'SQUARE PILLOW', supplierSku: 'HOK-SQUARE PILLOW', remaining: 4, soDocNo: 'HC-SO-011159' });
+    expect(setLinesBySo(sl('5536-1A(LHF)', 'HC-PO-2610-103', 'HC-SO-011159'), [pillow])).toBeNull();
+  });
+
+  test('a set row still takes its own model\'s pieces (Dorsettloft DSL8051)', () => {
+    const p1 = line({ poItemId: 'p1', poNumber: 'HC-PO-1', supplierId: 's', itemCode: '8051-1S', remaining: 1, soDocNo: 'HC-SO-013339' });
+    expect(setLinesBySo(scan({ itemCode: 'DSL8051(30")', description: '*HC-SO-013339 - 1 SEATER' }), [p1])?.lines.map((l) => l.poItemId)).toEqual(['p1']);
   });
 });

@@ -148,13 +148,16 @@ export function SearchableSelect({
   // FILTERING stays over the full list; only what reaches the DOM is capped.
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return options;
+    // Just opened, the search still holds the current label: every option. A
+    // label built from parts ("HOK-2009(A)-(SS) · PC151-18") is in no option's
+    // search text, so filtering on it said "No match" (DO-2611-037).
+    if (!q || search === selectedLabel) return options;
     return options.filter((o) =>
       o.search !== undefined
         ? o.search.toLowerCase().includes(q)
         : o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q),
     );
-  }, [options, search]);
+  }, [options, search, selectedLabel]);
 
   // How many of `filtered` are rendered. Rewound whenever the term or the open
   // state changes — DURING RENDER, not in an effect, so no frame ever shows the

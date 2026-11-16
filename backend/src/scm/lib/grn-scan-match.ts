@@ -108,7 +108,8 @@ export type UnmatchedScanLine = {
   //   not_on_po     — the row's PO is known but nothing on it is this item
   //                   (a free gift, or an item ordered on another PO).
   //   colour_not_on_po — the item is on the PO, but not in the colour printed.
-  reason: 'no_open_po_line' | 'ambiguous' | 'nothing_remaining' | 'po_not_open' | 'no_po_number' | 'not_on_po' | 'colour_not_on_po';
+  //   not_received  — the warehouse wrote X beside the row: it did not arrive.
+  reason: 'no_open_po_line' | 'ambiguous' | 'nothing_remaining' | 'po_not_open' | 'no_po_number' | 'not_on_po' | 'colour_not_on_po' | 'not_received';
   // When ambiguous, the candidate PO lines we refused to guess between.
   candidatePoItemIds: string[];
 };
@@ -150,9 +151,17 @@ export type GrnMatchResult = {
   // poItemId -> rack as written -> the qty its rows put on that rack, so split
   // rows of one line go to their own racks.
   rackQty: Record<string, Record<string, number>>;
+  // poItemId -> the first delivery-order row that line was received from, so the
+  // check card lists rows in the paper's order (DO-2611-037 showed matched rows last).
+  rowOf: Record<string, ScannedGrnLine>;
   // The open POs the delivery order named (header or rows), resolved.
   namedPos: string[];
 };
+
+/** The warehouse's X beside a row, written where the rack goes: not received. */
+export function markedNotReceived(rack: string | null | undefined): boolean {
+  return /^\s*[xX×✕✖✗✘]\s*$/.test(rack ?? '');
+}
 
 // Normalise a code/number for comparison: uppercase, drop every non-alnum char.
 // "HC-PO-2609-166" -> "HCPO2609166"; "9050-2B(RHF)" -> "90502BRHF";
@@ -374,7 +383,9 @@ export function matchGrnScanToPoLines(
   // Identical lines (one per customer order) take a row's qty in PO line order.
   const rackOf = new Map<string, string | null>(); // null = rows disagreed
   const rackQty: Record<string, Record<string, number>> = {};
+  const rowOf: Record<string, ScannedGrnLine> = {};
   const noteRack = (poItemId: string, row: ScannedGrnLine, qty: number): void => {
+    rowOf[poItemId] ??= row;
     const r = (row.rack ?? '').trim();
     if (!r) return;
     const prev = rackOf.get(poItemId);
@@ -402,6 +413,8 @@ export function matchGrnScanToPoLines(
 
   for (const sl of scannedLines) {
     if (!(sl.qty > 0)) continue; // a zero/blank qty line carries nothing to receive
+    // An X where the rack goes means it did not arrive (owner 2026-11-13, DO-2611-037).
+    if (markedNotReceived(sl.rack)) { unmatched.push({ line: sl, reason: 'not_received', candidatePoItemIds: [] }); continue; }
     scannedCount += 1;
 
     let anchorPo: string | null = null;
@@ -507,10 +520,13 @@ export function matchGrnScanToPoLines(
       }
       continue;
     }
-    const hit = hitList.length === 1 ? hitList[0] : pickBySpec(sl.description, hitList);
+    // Same model on several POs and the row prints no PO, but our SO number
+    // (Hookka DO-2611-037 printed "PO: HC-" blank, "SO: HC-SO-2609-316"): that SO's lines.
+    const ofSo = hitList.length > 1 && anchorPo === null ? setLinesBySo(sl, hitList)?.lines ?? hitList : hitList;
+    const hit = ofSo.length === 1 ? ofSo[0] : pickBySpec(sl.description, ofSo);
     if (!hit) {
       // Ambiguous — refuse to guess which PO line this delivery row clears.
-      unmatched.push({ line: sl, reason: 'ambiguous', candidatePoItemIds: hitList.map((l) => l.poItemId) });
+      unmatched.push({ line: sl, reason: 'ambiguous', candidatePoItemIds: ofSo.map((l) => l.poItemId) });
       continue;
     }
     const remaining = remainingById.get(hit.poItemId) ?? 0;
@@ -597,6 +613,7 @@ export function matchGrnScanToPoLines(
     soMatches,
     racks: refused ? {} : Object.fromEntries([...rackOf].filter((e): e is [string, string] => e[1] !== null)),
     rackQty: refused ? {} : Object.fromEntries(Object.entries(rackQty).filter(([id]) => picks.some((p) => p.poItemId === id))),
+    rowOf: refused ? {} : rowOf,
     namedPos: [...anchoredPos],
   };
 }
@@ -667,6 +684,10 @@ const soKeys = (v: string | null | undefined): string[] =>
     .map((m) => m[1].replace(/-/g, '').replace(/^0+/, ''))
     .filter((k) => k.length >= 4);
 
+/** The size or hand a code ends with, "1007-(Q)" -> "Q", "5536-1A(LHF)" -> "LHF"; else null. */
+const codeSuffix = (code: string | null | undefined): string | null =>
+  /\(([A-Z]{1,3})\)\s*$/i.exec((code ?? '').trim())?.[1]?.toUpperCase() ?? null;
+
 /**
  * The PO lines a delivery-order row delivers as one set: the row prints one of
  * our SO numbers ("*HC-SO-013339", or "*SO-011717" without the company prefix)
@@ -683,7 +704,15 @@ export function setLinesBySo(row: ScannedGrnLine, poLines: OpenPoLine[]): { soDo
   const models = new Set([...(row.itemCode ?? '').matchAll(/(\d{4,})/g)].map((m) => m[1]));
   // Our code can name the model (BANGGAU-2A(LHF)) where the supplier's holds the number (DSL8075-2A(LHF)).
   const ofModel = ofSo.filter((l) => [/^(\d{4,})/.exec(l.itemCode)?.[1], /(\d{4,})/.exec(l.supplierSku ?? '')?.[1]].some((n) => n !== undefined && models.has(n)));
-  return { soDocNo: [...docs][0] as string, lines: ofModel.length > 0 ? ofModel : ofSo };
+  // A row that prints a model takes only that model's pieces, in its size or hand:
+  // Hookka DO-2611-037's CODY 1007-(Q) took a CELENE 2038 line, a 1007-(SS) line and
+  // four SQUARE PILLOWs of its SO once its own line was received (2026-11-13).
+  if (models.size > 0) {
+    const want = codeSuffix(row.itemCode);
+    const lines = want === null ? ofModel : ofModel.filter((l) => [l.itemCode, l.supplierSku].some((c) => codeSuffix(c) === want));
+    return lines.length > 0 ? { soDocNo: [...docs][0] as string, lines } : null;
+  }
+  return { soDocNo: [...docs][0] as string, lines: ofSo };
 }
 
 const PO_STATUS_WHY: Record<string, string> = {
@@ -749,6 +778,7 @@ const UNMATCHED_WHY: Record<UnmatchedScanLine['reason'], (l: ScannedGrnLine, all
   no_po_number: () => 'no PO printed on the row',
   not_on_po: () => 'not on the PO',
   colour_not_on_po: () => 'its colour is on no open PO line',
+  not_received: () => 'the warehouse marked it X: not received',
 };
 
 const scanLineLabel = (l: ScannedGrnLine): string =>

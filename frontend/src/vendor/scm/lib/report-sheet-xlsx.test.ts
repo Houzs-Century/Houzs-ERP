@@ -130,3 +130,37 @@ describe('columns under a heading — the Cash Flow\'s Settlement | Deposit (own
     expect(grid[6]).toEqual(['TAXATION', 50, 0.025, 50]);
   });
 });
+
+/* Several tables on one sheet, each a section (owner 2026-11-13, the Event Commission's
+   export: 「排一排做好看一点」): its title on a row above its header, the name column
+   headed, a text column flush left, a wide one as wide as asked. */
+describe('sections — a title, a headed name column, text read left to right', () => {
+  const sections: ReportSheet = {
+    title: 'Event commission', subtitle: 'October 2026', meta: [],
+    tables: [
+      { title: 'Summary', columns: [{ label: 'Orders', kind: 'text' }, { label: 'Commission', kind: 'amount' }],
+        rows: [{ kind: 'row', depth: 0, label: 'Orders opened in the range', cells: ['2 orders', 140_00] }] },
+      { title: 'Orders opened in the range', labelHeader: 'Order',
+        columns: [{ label: 'Fair', kind: 'text', align: 'left', width: 40 }, { label: 'Commission', kind: 'amount' }],
+        rows: [{ kind: 'row', depth: 0, label: 'HC-SO-2610-001', cells: ['KL [AKEMI] BIGHOME @ MID VALLEY', 140_00] }, { kind: 'row', depth: 0, label: 'HC-SO-2610-002', cells: [null, 0] }] },
+    ],
+  };
+
+  it('puts each title on its own row over its header, heads the name column, and keeps a left column left', () => {
+    const m = sheetMatrix(sections);
+    expect(m[3]).toEqual([{ value: 'Summary', type: String, fontWeight: 'bold', fontSize: 12, span: 3 }]);
+    expect(m[4]!.map((c) => c?.value)).toEqual(['', 'Orders', 'Commission']);
+    expect(m[7]![0]).toMatchObject({ value: 'Orders opened in the range', fontWeight: 'bold' });
+    expect(m[8]!.map((c) => c?.value)).toEqual(['Order', 'Fair', 'Commission']);
+    expect(m[8]![1]).toMatchObject({ align: 'left' });
+    expect(m[9]![1]).toMatchObject({ value: 'KL [AKEMI] BIGHOME @ MID VALLEY', align: 'left' });
+    expect(m[10]![1]).toMatchObject({ value: '-', align: 'left' });
+    expect(m[10]![2]).toMatchObject({ value: 0, align: 'right' });
+  });
+
+  it('makes a column as wide as any table sharing it asks, never narrower', () => {
+    expect(columnWidths(sections)).toEqual([{ width: 46 }, { width: 40 }, { width: 14 }]);
+    expect(columnWidths({ ...sections, tables: [{ ...sections.tables[1]!, columns: [{ label: 'Rate', kind: 'text', width: 6 }, { label: 'Commission', kind: 'amount' }] }] }))
+      .toEqual([{ width: 46 }, { width: 14 }, { width: 14 }]);
+  });
+});

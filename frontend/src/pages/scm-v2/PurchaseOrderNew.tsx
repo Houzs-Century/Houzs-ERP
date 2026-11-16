@@ -499,6 +499,11 @@ export const PurchaseOrderNew = () => {
      rule the SO copy applies, so auto-pricing does not silently re-cost it. */
   const [searchParams] = useSearchParams();
   const copyFrom = searchParams.get('copyFrom');
+  /* Opened from a service case (?fromAssrCase=<id>): the case page already
+     seeded supplier/line via the poNewDraft handoff above; this only carries the
+     case id into the create body so the server stamps assr_case_id and the case
+     shows this exchange PO (services/assr.ts attachExchangePos). */
+  const fromAssrCase = searchParams.get('fromAssrCase');
   const copySource = usePurchaseOrderDetail(copyFrom);
   const copyApplied = useRef(false);
   useEffect(() => {
@@ -813,6 +818,7 @@ export const PurchaseOrderNew = () => {
       purchaseLocationId,
       items,
       asDraft,
+      assrCaseId: fromAssrCase ? Number(fromAssrCase) : undefined,
     };
 
     /* Over-convert soft-warn -> confirm -> replay (mirror of the confirmShortStock

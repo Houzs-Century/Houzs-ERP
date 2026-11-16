@@ -54,6 +54,8 @@ import { effectiveSoDelivery } from '../../scm/shared';
 import { summariseReadiness, type ReadinessLine } from '../../scm/lib/so-readiness';
 import { resolveLineCategories } from '../../scm/lib/so-readiness-category';
 import { derivePlanningState, type DeliveryState } from '../../scm/routes/delivery-planning';
+import { loadAcExemptionExpiryByDoc } from '../../scm/lib/ac-exemption-expiry';
+import { soExemptionExpiryOf } from '../../scm/lib/so-exemption-expiry';
 import { soDeliverableRemaining } from '../../scm/routes/delivery-orders-mfg';
 import { readAgentSetting, type ConfigParamRule } from '../agent-console';
 import {
@@ -194,7 +196,7 @@ type SoHeaderRow = {
   status: string | null; delivery_state: string | null;
   customer_state: string | null; customer_country: string | null;
   customer_delivery_date: string | null; amended_delivery_date: string | null;
-  processing_date: string | null;
+  processing_date: string | null; sales_exemption_expiry: string | null; linked_ac_docno: string | null;
   local_total_sen: number | null;
 };
 
@@ -208,7 +210,7 @@ async function loadDeliverySnapshot(sb: any): Promise<DeliverySnapshot> {
      delivery_state / amended_delivery_date are NOT in the payment-totals view). */
   const { data: soRowsRaw, error: soErr } = await paginateAll<SoHeaderRow>((from, to) =>
     sb.from('mfg_sales_orders')
-      .select('doc_no, debtor_code, debtor_name, status, delivery_state, customer_state, customer_country, customer_delivery_date, amended_delivery_date, processing_date, local_total_sen')
+      .select('doc_no, debtor_code, debtor_name, status, delivery_state, customer_state, customer_country, customer_delivery_date, amended_delivery_date, processing_date, sales_exemption_expiry, linked_ac_docno, local_total_sen')
       .neq('status', 'DRAFT')
       .neq('status', 'CANCELLED')
       .order('customer_delivery_date', { ascending: true, nullsFirst: false })
@@ -269,6 +271,12 @@ async function loadDeliverySnapshot(sb: any): Promise<DeliverySnapshot> {
     remainingByDoc.set(line.docNo, (remainingByDoc.get(line.docNo) ?? 0) + line.remaining);
   }
 
+  /* The AutoCount exemption expiry, as the board's column shows it: it can decide
+     Overdue (derivePlanningState). Unresolved company context = no company filter,
+     like every read in this cross-company job; a mirror blip degrades to the
+     frozen original / delivery date. */
+  const acExpiryByDoc = await loadAcExemptionExpiryByDoc(sb, { get: () => undefined }, soRows);
+
   const pool: PoolSo[] = soRows.map((r) => {
     const docNo = s(r.doc_no);
     const readiness = summariseReadiness(linesByDoc.get(docNo) ?? []);
@@ -280,6 +288,9 @@ async function loadDeliverySnapshot(sb: any): Promise<DeliverySnapshot> {
       delivered: deliveredByDoc.get(docNo) ?? 0,
       remaining: remainingByDoc.get(docNo) ?? 0,
       effectiveDD,
+      salesExemptionExpiry: soExemptionExpiryOf({
+        sales_exemption_expiry: r.sales_exemption_expiry, ac_sales_exemption_expiry: acExpiryByDoc.get(docNo) ?? null, customer_delivery_date: r.customer_delivery_date,
+      }),
       today,
     });
     const regions = stateToRegions(regionCfg, r.customer_state, r.customer_country);

@@ -98,3 +98,20 @@ describe('the printed table', () => {
     expect(printedTable(monthly).headRows).toEqual([['', '累计 08/2026 – 09/2026', '09/2026']]);
   });
 });
+
+describe('sections — a title over the header, a headed name column, text read left to right (owner 2026-11-13)', () => {
+  it('prints the title across the table on a row above the header and heads the name column; a left column stays left', () => {
+    const t: SheetTable = {
+      title: 'Closed months — adjustments', labelHeader: 'Order',
+      columns: [{ label: 'Month', kind: 'text', align: 'left' }, { label: 'Adjustment', kind: 'amount' }],
+      rows: [{ kind: 'row', depth: 0, label: 'HC-SO-2609-213', cells: ['2026/09', 557_44] }],
+    };
+    const p = printedTable(t);
+    expect(p.headRows).toEqual([
+      [{ content: 'Closed months — adjustments', colSpan: 3, styles: { halign: 'left' } }],
+      ['Order', 'Month', 'Adjustment'],
+    ]);
+    expect(p.printed.map((c) => c.align ?? 'right')).toEqual(['left', 'right']);
+    expect(p.body).toEqual([['HC-SO-2609-213', '2026/09', '557.44']]);
+  });
+});

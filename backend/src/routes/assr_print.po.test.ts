@@ -53,8 +53,8 @@ async function print(variant: 'office' | 'supplier' | 'customer', query = '') {
 describe('ASSR print — PO No (BUG-91)', () => {
   it('prints the SO Order PO when the case has no service po_no', async () => {
     detail.current = caseWith({ order_pos: [{ id: 'u1', po_number: 'HC-PO-009918' }] });
-    expect(await print('office')).toMatch(/PO No<\/div><div class="vc mono">HC-PO-009918</);
-    expect(await print('supplier')).toMatch(/PO Number<\/div><div class="v">HC-PO-009918</);
+    expect(await print('office')).toMatch(/PO No<\/div><div class="vc mono"><span class="doc-code">HC-PO-009918</);
+    expect(await print('supplier')).toMatch(/PO Number<\/div><div class="v"><span class="doc-code">HC-PO-009918</);
   });
 
   it('prints Order PO and service PO together, deduped like the list column', async () => {
@@ -62,12 +62,12 @@ describe('ASSR print — PO No (BUG-91)', () => {
       order_pos: [{ id: 'u1', po_number: 'HC-PO-009122' }, { id: 'u2', po_number: 'HC-PO-009918' }],
       po_no: 'PO-009918',
     });
-    expect(await print('office')).toContain('HC-PO-009122 · HC-PO-009918<');
+    expect(await print('office')).toContain('<span class="doc-code">HC-PO-009122</span> · <span class="doc-code">HC-PO-009918</span><');
   });
 
   it('still prints a hand-typed service PO alone, and a dash when there is none', async () => {
     detail.current = caseWith({ po_no: 'SVC-PO-0042' });
-    expect(await print('office')).toMatch(/PO No<\/div><div class="vc mono">SVC-PO-0042</);
+    expect(await print('office')).toMatch(/PO No<\/div><div class="vc mono"><span class="doc-code">SVC-PO-0042</);
     detail.current = caseWith({});
     expect(await print('office')).toMatch(/PO No<\/div><div class="vc mono">—</);
   });

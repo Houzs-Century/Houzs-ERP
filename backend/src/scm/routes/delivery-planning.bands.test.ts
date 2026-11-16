@@ -9,7 +9,11 @@
 // for each key; it is data, not a guess. Regenerate it the same way whenever the
 // fixture changes. Regenerated 2026-11-10 with the current handler for the
 // Overdue-from-the-delivery-day rule: SO-OPEN-2 (due in 2 days) is now
-// PENDING_DELIVERY, nothing else moved.
+// PENDING_DELIVERY, nothing else moved. Regenerated 2026-11-13 for the Sales
+// Exemption Expiry rule: SO-OPEN-OLD, SO-EDGE-15 and SO-AMEND-NEAR (ready, their
+// expiry - the original delivery date - already past) move from PENDING_SCHEDULE
+// to OVERDUE, so they lose the Pending Schedule stamp and arrangement_stage; the
+// counts go PENDING_SCHEDULE 8 -> 5, OVERDUE 0 -> 3. Nothing else moved.
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import before from './__fixtures__/dp-board-before.json';

@@ -3,6 +3,7 @@
 One line per open item: what — waiting on — since. Delete the line when it is done. Older items were dropped on 2026-09-15; they are in tag `archive/docs-2026-09-15`.
 
 ## Waiting on owner
+- The GitHub Actions secret `ANTHROPIC_API_KEY` is rejected by Anthropic (401 invalid x-api-key, run 43420961221), so model-calling tools in `run-script.yml` cannot run; the Worker's own key works. Owner re-enters a current key in GitHub repo secrets (since 2026-11-13).
 - STOCK WORK ON HOLD (owner 2026-11-11: "don't touch stock; someone else checks"). Nothing below may be applied until that person signs off:
   - Half-done documents, `repair-half-done-documents-2026-11.mjs` (PLAN run 42965040246, refusals 0): HC-GRN-2609-118 (IN +1 8030-2A(LHF), linked to HC-DO-2610-329's uncosted OUT), HC-GRN-2610-045 (IN +1 each 8030-1A(LHF) / 8030-2A(RHF), lots closed at once; the cancel-then-repost bug, fixed for the future by #5645), HC-DO-2610-319 (5 units OUT, LOADED since 2026-10-22 with no OUT; confirm the goods really left). `DOC_NOS=` limits a run (#5654)
   - HC-DO-2610-419 ELEPHANE-(K) @ BALAKONG: repair ends movements -1 / open lots 0 because the 2026-08-29 AutoCount opening row was -1; finance confirms that opening before applying
@@ -10,6 +11,7 @@ One line per open item: what — waiting on — since. Delete the line when it i
   - DO source-PO / rack stamp backfill (`stamp-do-shipped-from.mjs`): never applied for either company; nightly retry covers new DOs only
   - Company 1 uncosted hard-bound lines (#5614 check, run 42832277079): ~301 uncosted, 15 on no-PO lots, 13 another-PO at a different price; new shipments cost from the bound PO since #5619
   - Company 2 spec drift left after #5617: JAGER-(K), MAKOTO RC(S)-FVI OLIVE, TRION-(K) at KL (`check-variant-key-drift.mjs`)
+- 2990-SO-2610-061 prints `EM-02 Sand (ALTA-13)` on its two sofa lines, but EM-02's supplier code is ALTA-02 (ALTA-13 is the colour the lines were changed FROM): a stored `variants.fabricSupplierCode` appears to outlive a fabric change on the SO line. Correct the two lines, count the other lines whose stored supplier code differs from the Fabric Converter, and stop the save keeping it — owner — 2026-11-13
 - Staging DB is shared by every `staging-preview/*` deploy, so a preview's migrations land in staging's tracker before review (5 service-case rows on 2026-11-10; 3 retired in fix/staging-rehearsal). Decide: previews deploy with `skip_migrate`, or keep it and retire each renamed cut — owner — 2026-11-11
 - Delivery Planning SQL board: after the PR merges, set `DP_BOARD_SOURCE = "shadow"` (wrangler.toml), let `scm.delivery_board_shadow_runs` collect a few days, explain every difference, then switch to `"sql"` — owner / dev — 2026-11-10
 - HC-SO-2609-299: is the Taman Akasig delivery address right? It geocodes oddly on the Last Mile map — owner — 2026-11-08

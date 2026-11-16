@@ -91,6 +91,17 @@ export function storedLineRemark(cur: Pick<StoredLine, 'remark' | 'variants'>): 
   return v && typeof v === 'object' && typeof v.remark === 'string' ? v.remark.trim() : '';
 }
 
+/** True when the line ADDS a whole new product line or REMOVES an existing one
+ *  — a change to WHICH products are on the order, as opposed to a spec / colour /
+ *  quantity / price edit on a line that stays. The LINE_ADDREMOVE lane carve-out
+ *  (shared/amendment-lane.ts) keys on this: an add/cancel of a PRODUCT line signs
+ *  with the Sales Director. The service-vs-product split is the classifier's job,
+ *  so this answers only about the change TYPE. */
+export function lineIsAddRemove(l: NoopCheckLine): boolean {
+  const type = String(l.changeType ?? '').toUpperCase();
+  return type === 'ADD' || type === 'REMOVE';
+}
+
 /** True when the line asks for a value that differs from the stored line. */
 export function amendmentLineIsNoop(l: NoopCheckLine, cur: StoredLine): boolean {
   const type = String(l.changeType ?? '').toUpperCase();

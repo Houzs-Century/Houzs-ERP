@@ -520,7 +520,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
      life is REQUESTED → applied. The legacy chain keys below stay for
      pre-rework (lane null) rows only. */
   const amendmentLane =
-    openAmendment?.lane === "LINES" || openAmendment?.lane === "DELIVERY" || openAmendment?.lane === "PRICE"
+    openAmendment?.lane === "LINES" || openAmendment?.lane === "DELIVERY" || openAmendment?.lane === "PRICE" || openAmendment?.lane === "LINE_ADDREMOVE"
       ? openAmendment.lane : null;
   const canApproveLane =
     amendmentLane != null
@@ -620,6 +620,8 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
       title: `Approve ${amendmentLane ? "amendment" : "SO revision"} for ${docNo}?`,
       body: amendmentLane === "LINES"
         ? "Check with the supplier BEFORE approving — your signature records the change is workable. The Sales Order is revised at once and a follow-up PO Amendment is raised for you to confirm in PO Amendments. This cannot be undone."
+        : amendmentLane === "LINE_ADDREMOVE"
+          ? "Adding or cancelling a product line changes what the customer ordered. The Sales Order is revised at once and a follow-up PO Amendment is raised for the purchaser to confirm the supplier side. This cannot be undone."
         : amendmentLane === "DELIVERY" || amendmentLane === "PRICE"
           ? `This applies the ${amendmentLane === "PRICE" ? "price change" : "delivery changes"} to the Sales Order at once (the current version is snapshotted into Revisions). The purchase order is not touched. This cannot be undone.`
           : "This applies the supplier-confirmed changes: the Sales Order is re-derived and the current version is snapshotted into Revisions. This cannot be undone.",
@@ -892,7 +894,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                     className="money"
                     style={{ border: "1px solid var(--hz-dk-primary-line, #bcdcd7)", background: "var(--hz-c-primary-soft)", color: "var(--hz-c-primary)", fontFamily: "inherit", fontSize: 12, fontWeight: 700, borderRadius: 9, padding: "9px 11px", cursor: "pointer", opacity: busy ? 0.5 : 1 }}
                   >
-                    {busy ? "Working…" : amendmentLane === "LINES" ? "Approve product changes" : amendmentLane === "PRICE" ? "Approve price change" : "Approve delivery changes"}
+                    {busy ? "Working…" : amendmentLane === "LINES" ? "Approve product changes" : amendmentLane === "LINE_ADDREMOVE" ? "Approve add / cancel line" : amendmentLane === "PRICE" ? "Approve price change" : "Approve delivery changes"}
                   </button>
                 )}
                 {amendmentLane != null && openAmendment.status === "REQUESTED" && !canApproveLane && (
