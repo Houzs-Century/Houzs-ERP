@@ -24,7 +24,7 @@ import { soAmendableHeaderFields } from '../shared/so-field-policy';
 import { resolveAmendmentLaneSplit, summarizeLaneSplit } from '../lib/amendment-lane-resolve';
 import { dropNoopAmendmentLines, type NoopCheckLine } from '../lib/amendment-noop-lines';
 import { LINE_BUILD_ERRORS } from '../lib/amendment-lines';
-import { PRICE_LANE_COMPANY_CODES } from '../shared/amendment-lane';
+import { PRICE_LANE_COMPANY_CODES, ADD_REMOVE_LANE_COMPANY_CODES } from '../shared/amendment-lane';
 
 const AMENDABLE_HEADER_FIELDS: Record<string, string> = soAmendableHeaderFields();
 
@@ -82,8 +82,10 @@ soAmendmentLanePreview.post('/:docNo/amendments/lane-preview', async (c) => {
   if (!noopSplit) return c.json(LINE_BUILD_ERRORS.unreadable, 500);
   // Price-lane carve-out is 2990's alone (owner 2026-09-21). Read the ACTIVE
   // company code, not the id — ids drift between environments.
-  const priceLaneEnabled = PRICE_LANE_COMPANY_CODES.has(c.get('companyCode') ?? '');
-  const split = await resolveAmendmentLaneSplit(sb, docNo, activeCompanyId(c), headerChanges, noopSplit.kept, priceLaneEnabled);
+  const companyCode = c.get('companyCode') ?? '';
+  const priceLaneEnabled = PRICE_LANE_COMPANY_CODES.has(companyCode);
+  const addRemoveLaneEnabled = ADD_REMOVE_LANE_COMPANY_CODES.has(companyCode);
+  const split = await resolveAmendmentLaneSplit(sb, docNo, activeCompanyId(c), headerChanges, noopSplit.kept, priceLaneEnabled, addRemoveLaneEnabled);
   if (!split) return c.json(LINE_BUILD_ERRORS.unreadable, 500);
   return c.json({ ...summarizeLaneSplit(split), droppedNoopLines: noopSplit.dropped.length });
 });

@@ -24,10 +24,13 @@ describe('routeField', () => {
     expect(r.department).toBe('Logistics');
   });
 
-  it('routes SKU/qty/line to processing and price/supplier to delivery-commercial', () => {
+  it('routes SKU/qty to processing; add/cancel-line, price and supplier to delivery-commercial', () => {
     expect(routeField('SPEC').type).toBe('PROCESSING');
     expect(routeField('QTY').type).toBe('PROCESSING');
-    expect(routeField('LINE').type).toBe('PROCESSING');
+    // owner 2026-11-16: adding or cancelling a whole product line is the Sales
+    // Director's, not Production / Design's.
+    expect(routeField('LINE').type).toBe('DELIVERY_COMMERCIAL');
+    expect(routeField('LINE').department).toBe('Sales Director');
     expect(routeField('PRICE').type).toBe('DELIVERY_COMMERCIAL');
     expect(routeField('PRICE').department).toBe('Sales Director');
     expect(routeField('COST').department).toBe('Finance');
