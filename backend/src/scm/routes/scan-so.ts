@@ -60,6 +60,7 @@ import { scanTimer } from '../lib/scan-timing';
 import { scanCatalogSkus, type CatalogSku, type ScanCatalogRow } from '../lib/scan-catalog-skus';
 import { readSlipWithAliases } from '../lib/scan-field-aliases';
 import { snapshotDraftBaseline, LEARNING_POOL_BASELINE_FILTER } from '../lib/scan-sample-review';
+import { isDroppedBlankLine } from '../lib/scan-slip-fields';
 import { ttlCached } from '../lib/ttl-cache';
 import { keepScanFile, linkScanFiles } from '../lib/scan-files';
 import { variantNotAllowedSentence } from '../lib/allowed-options-check';
@@ -3594,7 +3595,7 @@ function buildDraftSoBodyFromSlip(
     // MATCHED line keeps its resolved SKU name + variants (scan-parity). The raw
     // text is intentionally NOT carried onto the line (standing clean-remark
     // rule); the slip photo on the SO detail is the operator's reference.
-    if (!sku && !rawText) continue;
+    if (isDroppedBlankLine(l.rawText, sku !== undefined)) continue;
     const name = sku ? (sku.name ?? '').trim() : '';
     // Owner (said many times): the line REMARK must stay CLEAN -- do NOT stuff
     // the raw slip text / fabric code / specials / OCR notes into it. The

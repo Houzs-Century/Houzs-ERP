@@ -18,6 +18,7 @@ import {
   CARRIED_NOT_INVERTED,
 } from './scan-sample-review';
 import { changedFields } from './scan-slip-fields';
+import { slipAliasPairs } from './scan-field-aliases';
 
 type Row = Record<string, any>;
 
@@ -591,5 +592,23 @@ describe('snapshotDraftBaseline', () => {
     expect(writes).toHaveLength(1);
     expect(writes[0].table).toBe('so_scan_samples');
     expect(writes[0].patch.draft_baseline).toEqual(buildCorrectedSlipFromSo(raw, pipelineHeader({ company_id: 1 }), itemsBedPillow()));
+  });
+});
+
+describe('keepPersonChanges — blank raw line plus a catalog-snapped SKU line', () => {
+  test('a qty edit on another line gives exactly Qty and no alias for the snapped line', () => {
+    const blank = slipLine({ rawText: '', skuMatch: null });
+    const snapped = slipLine({ rawText: 'bed k', skuMatch: { code: 'bk-x', confidence: 0.6, reason: 'keyword' } });
+    const pillow = slipLine({ rawText: 'pillow', skuMatch: { code: 'PL', confidence: 0.9, reason: 'keyword' } });
+    const raw = slip2({ lines: [blank, snapped, pillow] });
+    // the baseline path rebuilds from the extraction without the lines the pipeline dropped
+    const stripped = { ...raw, lines: [snapped, pillow] };
+    const baseline = buildCorrectedSlipFromSo(stripped, pipelineHeader(), itemsBedPillow()) as Row;
+    const final = buildCorrectedSlipFromSo(stripped, pipelineHeader(), [
+      soItem({ item_code: 'BK', line_no: 0 }), soItem({ item_code: 'PL', qty: 2, line_no: 1 }),
+    ]) as Row;
+    const kept = keepPersonChanges(raw, baseline, final);
+    expect(changedFields(raw, kept)).toEqual(['Qty']);
+    expect(JSON.stringify(slipAliasPairs(raw, kept))).not.toContain('bk-x');
   });
 });

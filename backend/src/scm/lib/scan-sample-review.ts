@@ -44,7 +44,7 @@
 
 import type { SupabaseClient as SupabaseClientGeneric } from '@supabase/supabase-js';
 import { recordSlipAliases, slipAliasPairs } from './scan-field-aliases';
-import { HEADER_FIELDS, LINE_FIELDS, asObj, changedFields } from './scan-slip-fields';
+import { HEADER_FIELDS, LINE_FIELDS, asObj, changedFields, isDroppedBlankLine } from './scan-slip-fields';
 
 // getSupabaseService is schema-parameterised (db:{schema:'scm'}), so the bare
 // SupabaseClient type does not accept it. Same loosened alias scan-so.ts uses.
@@ -483,7 +483,8 @@ export async function snapshotDraftBaseline(
     if (draft.error !== null || draft.header === null) {
       throw new Error(draft.error ?? 'draft header not found');
     }
-    const baseline = buildCorrectedSlipFromSo(extracted, draft.header, draft.items);
+    const rawBlob = asObj(extracted);
+    const baseline = rawBlob === null ? null : buildCorrectedSlipFromSo(withoutDroppedBlankLines(rawBlob), draft.header, draft.items);
     if (baseline === null) throw new Error('baseline could not be built from the extraction');
     const { error: writeErr } = await svc.from('so_scan_samples').update({ draft_baseline: baseline }).eq('id', sampleId);
     if (writeErr) throw new Error(writeErr.message);
@@ -516,6 +517,16 @@ function canonical(v: unknown): string {
     return x ?? null;
   };
   return JSON.stringify(sorted(v));
+}
+
+/* The catalog is not known here, so a raw SKU code stands in for "has a catalog SKU". */
+const isDroppedRawLine = (l: Record<string, unknown>): boolean =>
+  isDroppedBlankLine(l.rawText, asObj(l.skuMatch)?.code != null);
+
+/* The extraction without the blank lines the draft builder skips, so the draft's
+   lines and the slip's lines have the same length when aligned. Baseline path only. */
+function withoutDroppedBlankLines(extracted: Record<string, unknown>): Record<string, unknown> {
+  return { ...extracted, lines: asLines(extracted.lines).filter((l) => !isDroppedRawLine(l)) };
 }
 
 /* The one line of `lines` carrying this non-empty rawText, or null when there
@@ -562,8 +573,7 @@ export function keepPersonChanges(
   const finalLines = asLines(final.lines);
   if (canonical(baselineLines) === canonical(finalLines)) return out;
 
-  const isBlankRawLine = (l: Record<string, unknown>): boolean =>
-    (typeof l.rawText !== 'string' || l.rawText.trim() === '') && asObj(l.skuMatch)?.code == null;
+  const isBlankRawLine = isDroppedRawLine;
   const keptLines = finalLines.map((finalLine) => {
     const baseLine = uniqueByRawText(baselineLines, finalLine.rawText);
     const rawLine = baseLine === null ? null : uniqueByRawText(extractedLines, baseLine.rawText);
@@ -641,7 +651,7 @@ export async function noteScanDraftAccepted(
         console.warn('[scan-sample-review] draft unreadable, sample left as is:', { sampleId, docNo }, draft.error ?? 'no header');
         return;
       }
-      const final = buildCorrectedSlipFromSo(extractedBlob, draft.header, draft.items);
+      const final = buildCorrectedSlipFromSo(withoutDroppedBlankLines(extractedBlob), draft.header, draft.items);
       if (final === null) return;
       const kept = keepPersonChanges(extractedBlob, baseline, final);
       if (changedFields(extractedBlob, kept).length === 0) {

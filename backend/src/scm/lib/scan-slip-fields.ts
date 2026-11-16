@@ -31,6 +31,15 @@ export const asObj = (v: unknown): Record<string, unknown> | null =>
   v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
 
 /**
+ * The draft builder (routes/scan-so.ts buildDraftSoBodyFromSlip) skips a slip
+ * line that has neither a catalog SKU nor any raw text. The correction capture
+ * uses the same test so its line counts match the draft's.
+ */
+export function isDroppedBlankLine(rawText: unknown, hasCatalogSku: boolean): boolean {
+  return !hasCatalogSku && (typeof rawText === "string" ? rawText : "").trim() === "";
+}
+
+/**
  * Which fields the operator changed, read from a CONFIRMED sample.
  * buildCorrectedSlipFromSo (scm/lib/scan-sample-review.ts) overwrites only the
  * keys whose value moved, so a key-by-key compare is the diff.
