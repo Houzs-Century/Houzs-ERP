@@ -87,16 +87,23 @@ const PLAN_TITLE_LIKE: Record<PlanKind, string> = {
 
 const LIVE = `lower(status) = 'confirmed' AND archived_at IS NULL`;
 
+// Types whose organizer is the mall-management company: never named to the
+// external link holder (owner). A Solo / Cash & Carry event reads its own type
+// label instead of the organizer.
+const SHARE_MASKED_TYPES = new Set(["solo", "cash & carry"]);
+
 /**
- * The organizer the external link holder is allowed to see. A SOLO show's
- * organizer is the mall-management company, and the owner's rule is that it is
- * never named to the brand or contractor — every solo event reads the literal
- * "Solo", even when the field is blank. An Exhibition (or any other type) names
- * its own organizer. Applied HERE, in the service, so the real name is dropped
- * before the response is built and never leaves the worker to the public link.
+ * The organizer the external link holder is allowed to see. A SOLO or
+ * CASH & CARRY show's organizer is the mall-management company, and the owner's
+ * rule is that it is never named to the brand or contractor — those events read
+ * their own type label ("Solo", "Cash & Carry") instead, even when the field is
+ * blank. An Exhibition (or any other type) names its own organizer. Applied
+ * HERE, in the service, so the real name is dropped before the response is built
+ * and never leaves the worker to the public link.
  */
 export function shareOrganizer(eventType: string | null, organizer: string | null): string | null {
-  return (eventType ?? "").trim().toLowerCase() === "solo" ? "Solo" : organizer;
+  const type = (eventType ?? "").trim();
+  return SHARE_MASKED_TYPES.has(type.toLowerCase()) ? type : organizer;
 }
 
 /** The party's confirmed, live events, oldest first. */
