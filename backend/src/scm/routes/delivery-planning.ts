@@ -147,11 +147,16 @@ function daysBetween(fromISO: string, toISO: string | null | undefined): number 
      · DELIVERED        — status DELIVERED, or every deliverable line remaining
                           == 0 once any qty has shipped.
      · PENDING_SCHEDULE — ready to ship (summariseReadiness.isShipReady) but not
-                          yet fully delivered.
-     · OVERDUE          — salesExemptionExpiry < today, whatever the readiness
-                          or the amended date (owner 2026-11-13); or NOT ready
-                          AND today >= EFFECTIVE delivery date.
-     · PENDING_DELIVERY — NOT ready and the delivery day is still ahead.
+                          yet fully delivered, whatever the dates.
+     · OVERDUE          — NOT ready and the day it should be delivered has come
+                          (owner 2026-11-17: "Overdue = the date has come but the
+                          stock is not complete"). That day is the customer's
+                          amended date, else the Sales Exemption Expiry (the
+                          original promise), else the effective date. Not the
+                          current customer_delivery_date alone: the HC Delivery
+                          sheet's Overdue tab pushes it to today+3 every morning,
+                          so it never comes (41 of 49 Overdue rows on 2026-11-16).
+     · PENDING_DELIVERY — NOT ready and that day is still ahead.
 
    `salesExemptionExpiry` is the value the board's "Sales Exemption Expiry Date"
    column shows (soExemptionExpiryOf, lib/so-exemption-expiry.ts); every caller
@@ -167,10 +172,11 @@ export function derivePlanningState(input: {
   delivered: number;
   remaining: number;
   effectiveDD: string | null | undefined;
+  amendedDD: string | null | undefined;
   salesExemptionExpiry: string | null;
   today: string;
 }): DeliveryState {
-  const { storedOverride, status, readiness, delivered, remaining, effectiveDD, salesExemptionExpiry, today } = input;
+  const { storedOverride, status, readiness, delivered, remaining, effectiveDD, amendedDD, salesExemptionExpiry, today } = input;
   const stored = storedOverride ?? null;
   /* Delivered beats a manual override: an order moved early into Pending
      Schedule must still leave the queue once it is handed over. */
@@ -178,17 +184,13 @@ export function derivePlanningState(input: {
   if (st === 'DELIVERED' || (delivered > 0 && remaining <= 0)) return 'DELIVERED';
   if (stored && (DELIVERY_STATES as string[]).includes(stored)) return stored as DeliveryState;
 
-  // The promised date has passed: Overdue until staff move it (the override above).
-  const expiry = salesExemptionExpiry ? salesExemptionExpiry.slice(0, 10) : null;
-  if (expiry && expiry < today) return 'OVERDUE';
-
   /* "Ready to ship" gate — see summariseReadiness.isShipReady. The narrowed
      parameter type above is what now keeps the wrong flag out of reach. */
   if (readiness.isShipReady) return 'PENDING_SCHEDULE';
 
-  // NOT ready. OVERDUE once the EFFECTIVE delivery date (amended ?? original) is today
-  // or past (owner 2026-11-10). The SQL board path must mirror `daysLeft <= 0`.
-  const daysLeft = daysBetween(today, effectiveDD ?? null);
+  // NOT ready. OVERDUE once the day it should be delivered is today or past.
+  const due = amendedDD || salesExemptionExpiry || effectiveDD || null;
+  const daysLeft = daysBetween(today, due ? due.slice(0, 10) : null);
   return daysLeft != null && daysLeft <= 0 ? 'OVERDUE' : 'PENDING_DELIVERY';
 }
 

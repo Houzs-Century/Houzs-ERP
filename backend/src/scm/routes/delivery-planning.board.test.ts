@@ -472,7 +472,7 @@ describe('GET /delivery-planning — the SO header read pages on a total order',
 /* Owner 2026-10-26: right-click "Move to Pending Schedule" arranges an order before
    its goods are ready; once it is delivered it must still leave the queue. */
 describe('derivePlanningState — a manual Pending Schedule', () => {
-  const base = { status: 'CONFIRMED', readiness: { isShipReady: false }, effectiveDD: '2026-10-26', salesExemptionExpiry: null, today: '2026-10-26' };
+  const base = { status: 'CONFIRMED', readiness: { isShipReady: false }, effectiveDD: '2026-10-26', amendedDD: null, salesExemptionExpiry: null, today: '2026-10-26' };
   it('puts a not-ready (even overdue) order in Pending Schedule', () => {
     expect(derivePlanningState({ ...base, storedOverride: null, delivered: 0, remaining: 1 })).toBe('OVERDUE');
     expect(derivePlanningState({ ...base, storedOverride: 'PENDING_SCHEDULE', delivered: 0, remaining: 1 })).toBe('PENDING_SCHEDULE');
@@ -485,7 +485,7 @@ describe('derivePlanningState — a manual Pending Schedule', () => {
 /* Owner 2026-11-10: an order is Overdue only once its delivery day has arrived,
    not 3 days early. The SQL board path must mirror `daysLeft <= 0`. */
 describe('derivePlanningState — Overdue starts on the delivery day', () => {
-  const notReady = { storedOverride: null, status: 'CONFIRMED', readiness: { isShipReady: false }, delivered: 0, remaining: 1, salesExemptionExpiry: null, today: '2026-11-10' };
+  const notReady = { storedOverride: null, status: 'CONFIRMED', readiness: { isShipReady: false }, delivered: 0, remaining: 1, amendedDD: null, salesExemptionExpiry: null, today: '2026-11-10' };
   it('due in 3 days and not ready is Pending Delivery', () => {
     expect(derivePlanningState({ ...notReady, effectiveDD: '2026-11-13' })).toBe('PENDING_DELIVERY');
     expect(derivePlanningState({ ...notReady, effectiveDD: '2026-11-11' })).toBe('PENDING_DELIVERY');
@@ -507,36 +507,36 @@ describe('derivePlanningState — Overdue starts on the delivery day', () => {
   });
 });
 
-/* Owner 2026-11-13: past the Sales Exemption Expiry (the last date the salesperson
-   promised), an undelivered order is Overdue, ready or not and whatever date it was
-   amended to (HC-SO-012900: expiry 2026-10-26, amended to 2026-11-27). Staff move it
-   to Pending Schedule with the manual override, which still wins; Delivered beats all. */
-describe('derivePlanningState — the Sales Exemption Expiry has passed', () => {
-  const o = { storedOverride: null, status: 'IN_PRODUCTION', readiness: { isShipReady: false }, delivered: 0, remaining: 1, effectiveDD: '2026-11-27', today: '2026-11-13' };
-  it('not ready, amended to a later date: Overdue', () => {
+/* Owner 2026-11-17: ready goes to Pending Schedule whatever the dates; Overdue is
+   NOT ready once the day it should be delivered has come. That day is the
+   customer's amended date, else the Sales Exemption Expiry, never the current
+   customer date alone (the HC Delivery sheet pushes it to today+3 every morning).
+   HC-SO-012900: expiry 2026-10-26, amended 2026-11-27, date pushed to 2026-11-19. */
+describe('derivePlanningState: Overdue is not ready on or past the due day', () => {
+  const o = { storedOverride: null, status: 'IN_PRODUCTION', readiness: { isShipReady: false }, delivered: 0, remaining: 1, effectiveDD: '2026-11-19', amendedDD: null, today: '2026-11-17' };
+  it('not ready, the original promise passed, the date only pushed by the sheet: Overdue', () => {
     expect(derivePlanningState({ ...o, salesExemptionExpiry: '2026-10-26' })).toBe('OVERDUE');
   });
-  it('ready: Overdue', () => {
-    expect(derivePlanningState({ ...o, readiness: { isShipReady: true }, salesExemptionExpiry: '2026-10-26' })).toBe('OVERDUE');
+  it('ready: Pending Schedule, even with the promise passed', () => {
+    expect(derivePlanningState({ ...o, readiness: { isShipReady: true }, salesExemptionExpiry: '2026-10-26' })).toBe('PENDING_SCHEDULE');
   });
-  it('the expiry day itself is not past yet', () => {
-    expect(derivePlanningState({ ...o, salesExemptionExpiry: '2026-11-13' })).toBe('PENDING_DELIVERY');
+  it('not ready, the customer moved it to a later day: Pending Delivery until that day', () => {
+    expect(derivePlanningState({ ...o, amendedDD: '2026-11-27', effectiveDD: '2026-11-27', salesExemptionExpiry: '2026-10-26' })).toBe('PENDING_DELIVERY');
+    expect(derivePlanningState({ ...o, amendedDD: '2026-11-17', effectiveDD: '2026-11-17', salesExemptionExpiry: '2026-10-26' })).toBe('OVERDUE');
   });
-  it('moved to Pending Schedule by staff: Pending Schedule', () => {
+  it('the due day itself counts', () => {
+    expect(derivePlanningState({ ...o, salesExemptionExpiry: '2026-11-17' })).toBe('OVERDUE');
+    expect(derivePlanningState({ ...o, salesExemptionExpiry: '2026-11-18' })).toBe('PENDING_DELIVERY');
+  });
+  it('moved to Pending Schedule by staff: stays', () => {
     expect(derivePlanningState({ ...o, storedOverride: 'PENDING_SCHEDULE', salesExemptionExpiry: '2026-10-26' })).toBe('PENDING_SCHEDULE');
   });
   it('delivered: Delivered', () => {
     expect(derivePlanningState({ ...o, delivered: 1, remaining: 0, salesExemptionExpiry: '2026-10-26' })).toBe('DELIVERED');
-    expect(derivePlanningState({ ...o, status: 'DELIVERED', storedOverride: 'PENDING_SCHEDULE', salesExemptionExpiry: '2026-10-26' })).toBe('DELIVERED');
   });
-  it('expiry ahead and the delivery day not reached: unchanged', () => {
-    expect(derivePlanningState({ ...o, salesExemptionExpiry: '2026-12-01' })).toBe('PENDING_DELIVERY');
-    expect(derivePlanningState({ ...o, readiness: { isShipReady: true }, salesExemptionExpiry: '2026-12-01' })).toBe('PENDING_SCHEDULE');
-  });
-  it('no expiry: the delivery-day rule only', () => {
+  it('no expiry and no amendment: the effective date', () => {
     expect(derivePlanningState({ ...o, salesExemptionExpiry: null })).toBe('PENDING_DELIVERY');
-    expect(derivePlanningState({ ...o, effectiveDD: '2026-11-13', salesExemptionExpiry: null })).toBe('OVERDUE');
-    expect(derivePlanningState({ ...o, readiness: { isShipReady: true }, effectiveDD: '2026-11-01', salesExemptionExpiry: null })).toBe('PENDING_SCHEDULE');
+    expect(derivePlanningState({ ...o, effectiveDD: '2026-11-17', salesExemptionExpiry: null })).toBe('OVERDUE');
   });
   it('reads a timestamp expiry by its date', () => {
     expect(derivePlanningState({ ...o, salesExemptionExpiry: '2026-11-12T00:00:00.000Z' })).toBe('OVERDUE');
@@ -546,7 +546,7 @@ describe('derivePlanningState — the Sales Exemption Expiry has passed', () => 
 /* The board feeds derivePlanningState the value its "Sales Exemption Expiry Date"
    column shows (frozen original -> AutoCount book -> delivery date), and the tab
    counts (counts_only, which skips the display-only reads) see the same expiry. */
-describe('GET /delivery-planning — past the Sales Exemption Expiry is Overdue, counts too', () => {
+describe('GET /delivery-planning — not ready past the due day is Overdue, ready is Pending Schedule, counts too', () => {
   const row = (docNo: string, extra: Row): Row => ({
     doc_no: docNo, company_id: 1, debtor_code: 'C1', debtor_name: 'A Customer', status: 'IN_PRODUCTION', delivery_state: null,
     customer_state: 'Selangor', customer_country: 'Malaysia', customer_delivery_date: '2026-12-20', sales_exemption_expiry: null,
@@ -560,12 +560,13 @@ describe('GET /delivery-planning — past the Sales Exemption Expiry is Overdue,
     const sb = fakeSb({
       warehouses: [],
       mfg_sales_orders: [
-        row('SO-AC', { linked_ac_docno: 'SO-000900', amended_delivery_date: '2026-11-27' }), // book expiry passed, amended later
+        row('SO-AC', { linked_ac_docno: 'SO-000900' }), // book expiry passed, date pushed later, not ready
+        row('SO-AMENDED', { sales_exemption_expiry: '2026-10-26', amended_delivery_date: '2026-11-27' }), // customer moved it later
         row('SO-READY', { sales_exemption_expiry: '2026-10-26', customer_delivery_date: '2026-11-27' }), // ready, expiry passed
         row('SO-MOVED', { sales_exemption_expiry: '2026-10-26', delivery_state: 'PENDING_SCHEDULE' }), // staff moved it
         row('SO-AHEAD', { sales_exemption_expiry: '2026-12-01', customer_delivery_date: '2026-12-01' }), // nothing passed
       ],
-      mfg_sales_order_items: [line('SO-AC', 'PENDING'), line('SO-READY', 'READY'), line('SO-MOVED', 'PENDING'), line('SO-AHEAD', 'PENDING')],
+      mfg_sales_order_items: [line('SO-AC', 'PENDING'), line('SO-AMENDED', 'PENDING'), line('SO-READY', 'READY'), line('SO-MOVED', 'PENDING'), line('SO-AHEAD', 'PENDING')],
       delivery_order_items: [],
       delivery_orders: [],
       sales_orders: [{ doc_no: 'SO-000900', company_id: 1, expiry_date: '2026-10-26' }],
@@ -592,12 +593,12 @@ describe('GET /delivery-planning — past the Sales Exemption Expiry is Overdue,
   it('rows: Overdue past the expiry the column shows; a staff move still wins', async () => {
     const body = await run('');
     const byDoc = Object.fromEntries((body.orders ?? []).map((o) => [o.so_doc_no, o.delivery_state]));
-    expect(byDoc).toEqual({ 'SO-AC': 'OVERDUE', 'SO-READY': 'OVERDUE', 'SO-MOVED': 'PENDING_SCHEDULE', 'SO-AHEAD': 'PENDING_DELIVERY' });
+    expect(byDoc).toEqual({ 'SO-AC': 'OVERDUE', 'SO-AMENDED': 'PENDING_DELIVERY', 'SO-READY': 'PENDING_SCHEDULE', 'SO-MOVED': 'PENDING_SCHEDULE', 'SO-AHEAD': 'PENDING_DELIVERY' });
   });
 
   it('counts_only counts the same rows as Overdue', async () => {
     const body = await run('?counts_only=1');
-    expect(body.counts_by_region?.ALL).toMatchObject({ OVERDUE: 2, PENDING_SCHEDULE: 1, PENDING_DELIVERY: 1 });
+    expect(body.counts_by_region?.ALL).toMatchObject({ OVERDUE: 1, PENDING_SCHEDULE: 2, PENDING_DELIVERY: 2 });
   });
 });
 

@@ -97,6 +97,8 @@ export type EnrichmentHeader = {
   status: string | null;
   storedOverride: string | null;
   effectiveDD: string | null;
+  /** The customer's amended delivery date, when there is one. */
+  amendedDD: string | null;
   /** The SO's "Sales Exemption Expiry Date" (soExemptionExpiryOf): past it, Overdue. */
   salesExemptionExpiry: string | null;
 };
@@ -167,6 +169,7 @@ export function assembleSoListMrpEnrichment(input: {
       delivered: delivered.get(docNo) ?? 0,
       remaining: remaining.get(docNo) ?? 0,
       effectiveDD: hdr?.effectiveDD ?? null,
+      amendedDD: hdr?.amendedDD ?? null,
       salesExemptionExpiry: hdr?.salesExemptionExpiry ?? null,
       today,
     });
