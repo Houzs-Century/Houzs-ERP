@@ -20,8 +20,8 @@
 -- record and stays pickable no matter what happens to the employee account.
 -- Nothing else in the trigger changes from 20261029T1700.
 --
--- REVERSAL (run by hand to undo): restore 20261029T1700's body — drop the
---   `AND in_house IS NOT FALSE` clause from both disable branches below.
+-- REVERSAL: restore 20261029T1700's body — drop the `AND in_house IS NOT
+--   FALSE` clause from both disable branches below (run by hand to undo).
 --
 -- CREATE OR REPLACE below is independent of migration order (it only redefines a
 -- function); re-stamped to 20261113T1600 at merge time to sort after the tree.
