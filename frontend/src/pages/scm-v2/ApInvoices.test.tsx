@@ -260,21 +260,68 @@ describe('raising an AP invoice', () => {
     draw();
     fireEvent.click(screen.getByText('New AP bill'));
     const d = dialog();
-    const amountHead = within(d).getByText('Amount (RM)');
-    expect([...amountHead.parentElement!.children].map((c) => c.textContent)).toEqual(['Account', 'Description', 'Amount (RM)', 'Event', '']);
+    const header = within(d).getByText('Amount (RM)').closest('[role="row"]')!;
+    expect([...header.children].map((c) => c.textContent)).toEqual(['Account', 'Description', 'Amount (RM)', 'Event', '']);
 
     fireEvent.keyDown(within(d).getByLabelText('line 1 amount'), { key: 'Insert' });
     expect(within(d).getByLabelText('line 2 amount')).toBeTruthy();
     const landed = document.activeElement as HTMLElement | null;
     expect(landed?.getAttribute('role')).toBe('combobox');
-    expect(landed?.closest('tr')?.getAttribute('data-line')).toBe('2');
+    expect(landed?.closest('[data-line]')?.getAttribute('data-line')).toBe('2');
 
     fireEvent.keyDown(within(d).getByLabelText('line 2 amount'), { key: 'Enter' });
     expect(within(d).getByLabelText('line 3 amount')).toBeTruthy();
-    expect((document.activeElement as HTMLElement | null)?.closest('tr')?.getAttribute('data-line')).toBe('3');
+    expect((document.activeElement as HTMLElement | null)?.closest('[data-line]')?.getAttribute('data-line')).toBe('3');
 
     fireEvent.click(within(d).getByLabelText('remove line 3'));
     expect(within(d).queryByLabelText('line 3 amount')).toBeNull();
+  });
+
+  /* Owner 2026-11-16 (这里的gap 可以给我自己调吗 · 指着的时候要显示指着那个column的detail):
+     a header's right edge drags its column, the width is that person's for
+     every bill after until Reset, and each cell shows its whole text on hover. */
+  test("a column's edge drags its width, kept for the next bill until Reset; every cell shows its whole text on hover", () => {
+    window.localStorage.removeItem('fin-ap-cw');
+    draw();
+    fireEvent.click(screen.getByText('New AP bill'));
+    const tracks = () => (within(dialog()).getByLabelText('line 1 description').closest('[role="row"]') as HTMLElement).style.gridTemplateColumns;
+    expect(tracks()).toBe('minmax(160px,24%) minmax(160px,30%) 130px minmax(160px,1fr) 24px');
+
+    /* The Description edge, 80px to the right of the 300px it is drawn at (jsdom draws nothing, so the width is given). */
+    const header = within(dialog()).getByText('Amount (RM)').closest('[role="row"]') as HTMLElement;
+    vi.spyOn(within(header).getAllByRole('columnheader')[1]!, 'getBoundingClientRect').mockReturnValue({ width: 300 } as DOMRect);
+    const edges = within(header).getAllByTitle('Drag to resize · double-click to fit');
+    expect(edges).toHaveLength(4);
+    fireEvent.mouseDown(edges[1]!, { button: 0, clientX: 500 });
+    fireEvent.mouseMove(window, { clientX: 580 });
+    fireEvent.mouseUp(window);
+    expect(tracks()).toBe('minmax(160px,24%) 380px 130px minmax(160px,1fr) 24px');
+    expect(JSON.parse(window.localStorage.getItem('fin-ap-cw') ?? 'null')).toEqual([null, 380, null, null, null]);
+
+    /* The next bill opens at the width set; Reset gives the defaults back. */
+    fireEvent.click(within(dialog()).getByText('Cancel'));
+    fireEvent.click(screen.getByText('New AP bill'));
+    expect(tracks()).toBe('minmax(160px,24%) 380px 130px minmax(160px,1fr) 24px');
+    fireEvent.click(within(dialog()).getByText('Reset column widths'));
+    expect(tracks()).toBe('minmax(160px,24%) minmax(160px,30%) 130px minmax(160px,1fr) 24px');
+    expect(window.localStorage.getItem('fin-ap-cw')).toBeNull();
+    expect(within(dialog()).queryByText('Reset column widths')).toBeNull();
+
+    /* Hover: the description as it reads (capitals), the amount, the account and the event in full. */
+    const d = dialog();
+    fireEvent.change(within(d).getByLabelText('line 1 description'), { target: { value: 'Transport fee for event setup - dismantle @ Johor' } });
+    expect(within(d).getByLabelText('line 1 description').getAttribute('title')).toBe('TRANSPORT FEE FOR EVENT SETUP - DISMANTLE @ JOHOR');
+    setAmount('line 1 amount', '1300');
+    expect(within(d).getByLabelText('line 1 amount').getAttribute('title')).toBe('RM 1,300.00');
+    const accountBox = within(d).getAllByRole('combobox').find((el) => (el as HTMLInputElement).placeholder.includes('account this line'))!;
+    fireEvent.focus(accountBox);
+    fireEvent.mouseDown(screen.getByText('900-A002 · SERVICE FEE'));
+    expect(accountBox.getAttribute('title')).toBe('900-A002 · SERVICE FEE');
+    const eventBox = within(d).getByLabelText('line 1 event') as HTMLInputElement;
+    fireEvent.focus(eventBox);
+    fireEvent.mouseDown(screen.getByText(/^Pulau Pinang \[AKEMI\] MLE @ PWCC/));
+    expect(eventBox.getAttribute('title')).toMatch(/^Pulau Pinang \[AKEMI\] MLE @ PWCC · .+ · booth F1$/);
+    expect(eventBox.getAttribute('title')).toBe(eventBox.value);
   });
 });
 
