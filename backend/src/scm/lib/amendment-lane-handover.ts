@@ -36,7 +36,7 @@ export type LaneHandoverVerdict =
   | { ok: true; toLane: AmendmentLane }
   | { ok: false; status: 409 | 500; error: string; reason: string };
 
-export const DESK: Record<AmendmentLane, string> = { LINES: 'Purchaser', DELIVERY: 'Logistic', PRICE: 'Sales Director' };
+export const DESK: Record<AmendmentLane, string> = { LINES: 'Purchaser', DELIVERY: 'Logistic', PRICE: 'Sales Director', LINE_ADDREMOVE: 'Sales Director' };
 
 export const otherLane = (lane: AmendmentLane): AmendmentLane => (lane === 'LINES' ? 'DELIVERY' : 'LINES');
 

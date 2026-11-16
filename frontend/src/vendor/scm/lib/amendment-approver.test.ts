@@ -13,6 +13,9 @@ describe('who signs an amendment', () => {
     expect(soAmendmentApprover('LINES')).toBe('PURCHASER');
     expect(soAmendmentApprover('DELIVERY')).toBe('LOGISTIC');
     expect(soAmendmentApprover('PRICE')).toBe('FINANCE');
+    // Add / cancel a product line signs with the Sales Director too (owner
+    // 2026-11-16) — the FINANCE badge's label is "Sales Director".
+    expect(soAmendmentApprover('LINE_ADDREMOVE')).toBe('FINANCE');
     expect(soAmendmentApprover(null)).toBe('LEGACY');
     expect(soAmendmentApprover(undefined)).toBe('LEGACY');
   });
@@ -30,6 +33,7 @@ describe('who signs an amendment', () => {
       LINES: 'scm.amendment.approve_lines',
       DELIVERY: 'scm.amendment.approve_delivery',
       PRICE: 'scm.amendment.approve_price',
+      LINE_ADDREMOVE: 'scm.amendment.approve_price',
     });
   });
 

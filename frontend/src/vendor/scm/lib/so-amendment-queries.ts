@@ -237,7 +237,7 @@ export const usePoRevisions = (poId: string | null) => useQuery({
    Read-only on the server; a POST only because the payload is the draft. Not
    cached across drafts: the key carries the lines and header keys, so editing
    the draft re-asks. */
-export type AmendmentLane = 'LINES' | 'DELIVERY' | 'PRICE';
+export type AmendmentLane = 'LINES' | 'DELIVERY' | 'PRICE' | 'LINE_ADDREMOVE';
 export type AmendmentLanePreview = {
   lanes: AmendmentLane[];
   perLane: Record<AmendmentLane, { lineCount: number; headerKeys: string[] }>;

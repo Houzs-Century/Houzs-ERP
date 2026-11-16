@@ -43,7 +43,7 @@ const FIELD_ROUTING: Record<AmendmentFieldKind, { type: AmendmentType; departmen
   SPEC:     { type: 'PROCESSING',          department: 'Production / Design' },
   VARIANT:  { type: 'PROCESSING',          department: 'Production / Design' },
   QTY:      { type: 'PROCESSING',          department: 'Production / Design' },
-  LINE:     { type: 'PROCESSING',          department: 'Production / Design' },
+  LINE:     { type: 'DELIVERY_COMMERCIAL', department: 'Sales Director' },
   PRICE:    { type: 'DELIVERY_COMMERCIAL', department: 'Sales Director' },
   COST:     { type: 'DELIVERY_COMMERCIAL', department: 'Finance' },
   DELIVERY: { type: 'DELIVERY_COMMERCIAL', department: 'Logistics' },
