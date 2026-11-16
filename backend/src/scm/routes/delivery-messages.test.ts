@@ -28,10 +28,11 @@ const ENV = {
 };
 
 /** The subset of the Hono context the sender reads; cast to its param type. */
-function ctx(sb: ReturnType<typeof fakeSb>, activeCompanyId: number) {
+function ctx(sb: ReturnType<typeof fakeSb>, activeCompanyId: number, houzsUser?: { id: number; email?: string }) {
   const store: Record<string, unknown> = {
     supabase: sb,
     user: { id: 'u1' },
+    houzsUser,
     companyId: activeCompanyId,
     allowedCompanyIds: [1, 2],
     companies: COMPANIES,
@@ -107,6 +108,15 @@ describe('sendDeliveryMessageForDocs — company routing', () => {
     expect(res.sent).toHaveLength(1);
     expect(posted).toHaveLength(1);
     expect(posted[0]!.attributes.company_code).toBe('HOUZS');
+  });
+
+  // HC-0232: Connect alerts whoever pressed Send when WhatsApp does not deliver.
+  it('carries the sender email as sent_by_email, and omits it when unknown', async () => {
+    const posted = stubFetch();
+    await sendDeliveryMessageForDocs(ctx(fakeSb(tables()), 1, { id: 7, email: 'syu.houzs@gmail.com' }), ['HC-SO-001'], 'delivery', {});
+    await sendDeliveryMessageForDocs(ctx(fakeSb(tables()), 1), ['HC-SO-001'], 'delivery', {});
+    expect(posted[0]!.attributes.sent_by_email).toBe('syu.houzs@gmail.com');
+    expect(posted[1]!.attributes).not.toHaveProperty('sent_by_email');
   });
 });
 
