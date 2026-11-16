@@ -488,7 +488,8 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
 
             {/* Delivered with issue — reported problems, then the form. */}
             <div className="fld-l" style={{ margin: "18px 0 8px" }}>Problem with this delivery?</div>
-            <MobileDeliveryIssues issues={reportedIssues} />
+            {/* The crew reports; the office opens the case from the DO / SO screen. */}
+            <MobileDeliveryIssues issues={reportedIssues} canCreateCase={false} />
             {!cancelled && canComplete && (
               !issueOn ? (
                 <button type="button" className="btn-ghost" onClick={() => setIssueOn(true)} style={{ width: "100%", color: "var(--red)", borderColor: "var(--red)" }}>

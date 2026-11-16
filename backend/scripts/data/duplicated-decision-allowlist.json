@@ -2,6 +2,11 @@
   "reviewed": [
     {
       "check": "D1",
+      "key": "SERVICE_CASES.CREATE,SERVICE_CASES.MANAGE,SERVICE_CASES.WRITE|backend/src/routes/assr.ts frontend/src/vendor/scm/lib/delivery-issue-queries.ts",
+      "why": "THE SERVICE-CASE CREATE PERMISSIONS, mirrored across the FE/BE boundary. routes/assr.ts is the ENFORCED gate — requireServiceCaseAccess / requireAnyPermission decide who may open or write a case; delivery-issue-queries.ts SERVICE_CASE_CREATE_PERMS only decides whether the 'Create service case' button shows on the delivery-issue card. They cannot share a module across the boundary. The FE set is narrower than the full server gate (which also admits any company grantee / director), so a divergence can only HIDE the button from someone who may still create the case from the Service Cases page, never grant access. Cost of divergence is a shown or hidden button, never access."
+    },
+    {
+      "check": "D1",
       "key": "CUSTOMER_COMMENT,NOTE,SALES_COMMENT|backend/src/routes/assr.ts frontend/src/vendor/scm/lib/assr/timeline.ts",
       "why": "THE ASSR COMMENT ACTIONS, read for two different jobs. routes/assr.ts ARCHIVABLE_ACTIONS is the server's rule for which timeline rows staff may archive; timeline.ts COMMENT_ACTIONS is how the case timeline groups rows under Remarks. A new comment action has to be added to both only if it should be both archivable and shown as a remark, which are separate decisions. Cost of divergence is a row filed under the wrong timeline heading, never a lost or wrongly archived row (the server list is the one that guards archiving)."
     },
@@ -1824,6 +1829,11 @@
       "check": "D2",
       "key": "DELIVERY,LINES,LINE_ADDREMOVE,PRICE ~ DELIVERY,LINES,PRICE",
       "why": "DELIBERATELY 3 vs 4. The 4-lane set is every approval lane; the 3-lane set is the desks an admin may move a row TO (ChangeApproverButton TARGET_LANES) and the PATCH /lane body validator. LINE_ADDREMOVE is auto-assigned at submit and shares the Sales Director desk with PRICE, so it is never a manual target (offering it would list the Sales Director twice). The difference is the rule, not drift."
+    },
+    {
+      "check": "D2",
+      "key": "ACCOUNT,AMOUNT (RM),DESCRIPTION ~ ACCOUNT,AMOUNT (RM),DESCRIPTION,EVENT",
+      "why": "TWO DIFFERENT TABLES OF ONE AP BILL'S LINES. ApInvoiceForm.tsx LINE_COLUMNS heads the lines being typed, and a line can name the event its money is for (owner 2026-09-30, 5a), so the form has an Event column; ap-bill-pdf.ts heads the printed bill, which prints the account, description and amount and never the event. Column headings only: a divergence changes what a heading reads, never what is saved, posted or paid."
     }
   ]
 }

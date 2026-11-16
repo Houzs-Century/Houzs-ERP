@@ -1,7 +1,8 @@
 // ----------------------------------------------------------------------------
 // useColumnWidths — the resizable columns of a Finance grid that is not a
 // DataTable (the owner's redesign, batch 6 §1.3: Journal entries, General
-// ledger, Merchant charges, Collection). Every row of the grid is a CSS grid on
+// ledger, Merchant charges, Collection; and the AP invoice form's lines, owner
+// 2026-11-16, where a cell is a text box). Every row of the grid is a CSS grid on
 // the same track list; a header edge is dragged to resize its column, and a
 // double-click fits it to what it holds. Columns marked `fit` (numbers, dates,
 // entry numbers) are never dragged narrower than their contents. The widths a
@@ -63,6 +64,20 @@ export function gridMinWidth(defaults: readonly string[], widths: Widths | null,
   return px.reduce((a, b) => a + b, 0) + (px.length - 1) * gap + ROW_PADDING;
 }
 
+/** How wide a text box's text is, padding and border included, in layout px.
+    A form grid's box is only as wide as its column, so the box's own size
+    would make a double-click fit to nothing; its text is what the column holds. */
+function inputTextWidth(el: HTMLInputElement): number {
+  const ctx = document.createElement('canvas').getContext('2d');
+  if (!ctx) return 0;
+  const cs = window.getComputedStyle(el);
+  ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+  /* data-upper shows typed text in capitals (index.css); its placeholder stays as written. */
+  const text = el.value ? (cs.textTransform === 'uppercase' ? el.value.toUpperCase() : el.value) : el.placeholder;
+  const px = (v: string) => parseFloat(v) || 0;
+  return ctx.measureText(text).width + px(cs.paddingLeft) + px(cs.paddingRight) + px(cs.borderLeftWidth) + px(cs.borderRightWidth);
+}
+
 /** How wide column `i`'s widest single-column cell is, in layout px. */
 function contentWidth(root: HTMLElement, i: number, scale: number): number {
   let w = 0;
@@ -73,12 +88,17 @@ function contentWidth(root: HTMLElement, i: number, scale: number): number {
       const span = m ? Number(m[1]) : 1;
       if (col === i && span === 1) {
         const target = ch.querySelector<HTMLElement>('[data-cw-lbl]') ?? ch;
-        try {
-          const range = document.createRange();
-          range.selectNodeContents(target);
-          const cw = range.getBoundingClientRect().width / scale;
-          if (cw > w) w = cw;
-        } catch { /* no layout (tests) */ }
+        const box = target.querySelector<HTMLInputElement>('input[type="text"], input:not([type])');
+        if (box) {
+          w = Math.max(w, inputTextWidth(box));
+        } else {
+          try {
+            const range = document.createRange();
+            range.selectNodeContents(target);
+            const cw = range.getBoundingClientRect().width / scale;
+            if (cw > w) w = cw;
+          } catch { /* no layout (tests) */ }
+        }
       }
       col += span;
       if (col > i) break;

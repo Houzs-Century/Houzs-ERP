@@ -214,7 +214,8 @@ export function MobileJobStop({ jobRef, seq, onBack, onDone }: {
                 </button>
               </div>
             )}
-            <MobileDeliveryIssues issues={issuesQ.data} />
+            {/* The crew reports; the office opens the case from the DO / SO screen. */}
+            <MobileDeliveryIssues issues={issuesQ.data} canCreateCase={false} />
             {(step === "arrived" || done) && (
               !issueOn ? (
                 <button type="button" className="btn-ghost" onClick={() => setIssueOn(true)} style={{ width: "100%", marginTop: 12, color: "var(--red)", borderColor: "var(--red)" }}>
