@@ -34,6 +34,7 @@ import crypto from 'node:crypto';
 import zlib from 'node:zlib';
 import postgres from 'postgres';
 import { pickDuplicateSalesLines } from './lib/duplicate-fair-sales.mjs';
+import { pgIdArray } from './lib/pg-id-list.mjs';
 
 const PHRASE = 'ARCHIVE DUPLICATE FAIR SALES LINES';
 const MODE = String(process.env.MODE || 'plan').trim().toLowerCase();
@@ -73,7 +74,7 @@ const readCandidates = (db, lock) => db`
    WHERE p.company_id = ${CO}
      AND l.archived_at IS NULL AND l.kind = 'income' AND l.category = 'sales' AND l.auto_source IS NULL
      AND EXISTS (SELECT 1 FROM sales_entries s WHERE s.project_id = l.project_id AND s.archived_at IS NULL AND s.status <> 'void')
-     ${ONLY.length ? db`AND l.project_id = ANY(${db.array(ONLY)}::bigint[])` : db``}
+     ${ONLY.length ? db`AND l.project_id = ANY(${pgIdArray(ONLY)}::bigint[])` : db``}
    ORDER BY l.project_id, l.id
    ${lock ? db`FOR UPDATE OF l` : db``}`;
 
@@ -88,7 +89,7 @@ const readFairs = async (db, ids) => {
               FROM project_finance_lines a WHERE a.project_id = p.id AND a.auto_source IS NOT NULL) AS auto,
            (SELECT pf.total_sales::float8 FROM project_finance pf WHERE pf.project_id = p.id) AS "cachedTotal"
       FROM projects p
-     WHERE p.company_id = ${CO} AND p.id = ANY(${db.array(ids)}::bigint[])
+     WHERE p.company_id = ${CO} AND p.id = ANY(${pgIdArray(ids)}::bigint[])
      ORDER BY p.id`;
   return new Map(rows.map((r) => [r.id, r]));
 };
@@ -126,6 +127,8 @@ async function main() {
   const sql = postgres(process.env.DATABASE_URL, { max: 1, prepare: false });
   let picked = [];
   let before = null;
+  /* Set once the apply's transaction is kept: a failure after it is the re-read's, not the write's. */
+  let written = false;
   try {
     say(`archive-duplicate-fair-sales-lines   company ${CO}   mode ${APPLY ? 'APPLY' : 'PLAN'}${ONLY.length ? `   fairs ${ONLY.join(',')}` : ''}`);
     try {
@@ -159,7 +162,7 @@ async function main() {
         }
         /* Read back inside the transaction, as the fresh connection will after it. */
         const after = await readFairs(tx, archive.map((r) => r.projectId));
-        const gone = await tx`SELECT id::int AS id FROM project_finance_lines WHERE id = ANY(${tx.array(archive.map((r) => r.lineId))}::bigint[]) AND archived_at IS NOT NULL`;
+        const gone = await tx`SELECT id::int AS id FROM project_finance_lines WHERE id = ANY(${pgIdArray(archive.map((r) => r.lineId))}::bigint[]) AND archived_at IS NOT NULL`;
         const j = judge(before, after, new Set(gone.map((g) => g.id)), archive.map((r) => r.lineId));
         printJudged(j);
         if (!j.ok) throw new Error('the read-back is not what was meant');
@@ -170,18 +173,19 @@ async function main() {
       if (picked.length > 0) say(`\nRehearsal passed and was rolled back — nothing written. To write: MODE=apply CONFIRM="${PHRASE}"`);
       return;
     }
+    written = true;
     say(`\n   archived: ${picked.length} line(s)`);
     const check = postgres(process.env.DATABASE_URL, { max: 1, prepare: false });
     try {
       const after = await readFairs(check, picked.map((r) => r.projectId));
-      const gone = await check`SELECT id::int AS id FROM project_finance_lines WHERE id = ANY(${check.array(picked.map((r) => r.lineId))}::bigint[]) AND archived_at IS NOT NULL`;
+      const gone = await check`SELECT id::int AS id FROM project_finance_lines WHERE id = ANY(${pgIdArray(picked.map((r) => r.lineId))}::bigint[]) AND archived_at IS NOT NULL`;
       const j = judge(before, after, new Set(gone.map((g) => g.id)), picked.map((r) => r.lineId));
       say('Verified on a fresh connection:');
       printJudged(j);
       if (!j.ok) process.exitCode = 1;
     } finally { await check.end(); }
   } catch (e) {
-    console.error(`${String(e?.message ?? e).slice(0, 300)} — nothing was kept.`);
+    console.error(`${String(e?.message ?? e).slice(0, 300)} — ${written ? 'the change IS written; only the re-read failed: check the rows by hand' : 'nothing was kept'}.`);
     process.exitCode = 1;
   } finally {
     await sql.end();
