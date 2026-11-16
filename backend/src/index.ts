@@ -168,6 +168,7 @@ import { brandShare } from "./routes/brandShare";
 import { drainEmailOutbox } from "./services/email";
 import { backfillOutboundMessageIds } from "./lib/mail-threading";
 import { pollVelocity } from "./scm/lib/velocity-poll";
+import { pollItrack } from "./scm/lib/itrack-poll";
 import { runMailAckEscalation } from "./lib/mail-acks";
 import { runClientErrorDigest } from "./services/clientErrors";
 import { runSlaEscalation } from "./services/assrEscalation";
@@ -785,6 +786,14 @@ export default {
             if (!r.skipped) console.log(`[cron velocity] ${JSON.stringify(r)}`);
           })
           .catch((e) => console.error("[cron velocity]", e instanceof Error ? e.message : e))
+      );
+      // HC-0050: same, from iTrack (no-op until ITRACK_ACCOUNT + ITRACK_PASSWORD are set).
+      ctx.waitUntil(
+        pollItrack(env)
+          .then((r) => {
+            if (!r.skipped) console.log(`[cron itrack] ${JSON.stringify(r)}`);
+          })
+          .catch((e) => console.error("[cron itrack]", e instanceof Error ? e.message : e))
       );
       // AutoCount inbound SO pull (incremental, checkpoint-driven). getSince()
       // fetches every SO modified since the stored pull_checkpoint and upserts
