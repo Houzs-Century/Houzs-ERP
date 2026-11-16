@@ -464,11 +464,14 @@ async function loadCatalogFresh(sb: SupabaseClient, db: D1Database, companyId?: 
     // SOFA Models — allowed_options.specials is the per-model ON/OFF authority
     // for which specials each model offers. Used to build the SKU→allowed-codes
     // map so validateSlip keeps only a special the line's model actually allows.
-    paginateAll((from, to) => sb
-      .from('product_models')
-      .select('model_code, category, allowed_options')
-      .in('category', ['SOFA', 'BEDFRAME'])
-      .range(from, to)),
+    paginateAll((from, to) => {
+      let q = sb
+        .from('product_models')
+        .select('model_code, category, allowed_options')
+        .in('category', ['SOFA', 'BEDFRAME']);
+      if (companyId != null) q = q.eq('company_id', companyId);
+      return q.order('model_code').range(from, to);
+    }),
     // The venue master (public.project_venues, ACTIVE) — env.DB, not `sb`.
     loadVenueNames(db),
   ]);
