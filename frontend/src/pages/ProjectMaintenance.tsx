@@ -241,6 +241,26 @@ function OrganizerManager() {
     }
   }
 
+  async function rename(o: OrganizerRow) {
+    const next = await dialog.prompt({
+      title: "Rename organizer",
+      message: "Existing projects keep the name they were saved with.",
+      defaultValue: o.name,
+      placeholder: "Organizer name…",
+      confirmLabel: "Save",
+      required: true,
+    });
+    const trimmed = (next ?? "").trim();
+    if (!trimmed || trimmed === o.name) return;
+    try {
+      await api.patch(`/api/projects/organizers/${o.id}`, { name: trimmed });
+      toast.success("Organizer renamed");
+      q.reload();
+    } catch (e: any) {
+      toast.error(e?.message || "Something went wrong. Please try again.");
+    }
+  }
+
   async function remove(o: OrganizerRow) {
     if (
       !(await dialog.confirm({
@@ -303,6 +323,12 @@ function OrganizerManager() {
             <span className="flex-1 text-[13px] font-medium text-ink">{o.name}</span>
             <RowActionsMenu
               items={[
+                {
+                  type: "action",
+                  icon: Pencil,
+                  label: "Edit",
+                  onClick: () => rename(o),
+                },
                 {
                   type: "action",
                   icon: Trash2,
