@@ -44,7 +44,7 @@
 
 import type { SupabaseClient as SupabaseClientGeneric } from '@supabase/supabase-js';
 import { recordSlipAliases, slipAliasPairs } from './scan-field-aliases';
-import { HEADER_FIELDS, LINE_FIELDS, changedFields, j } from './scan-slip-fields';
+import { HEADER_FIELDS, LINE_FIELDS, asObj, changedFields } from './scan-slip-fields';
 
 // getSupabaseService is schema-parameterised (db:{schema:'scm'}), so the bare
 // SupabaseClient type does not accept it. Same loosened alias scan-so.ts uses.
@@ -442,8 +442,8 @@ export function buildCorrectedSlipFromSo(
 async function readSoDraft(
   svc: SupabaseClient,
   docNo: string,
-): Promise<{ header: SoHeaderSnapshot | null; items: SoItemSnapshot[] }> {
-  const [{ data: headerRow }, { data: itemRows }] = await Promise.all([
+): Promise<{ header: SoHeaderSnapshot | null; items: SoItemSnapshot[]; error: string | null }> {
+  const [{ data: headerRow, error: headerErr }, { data: itemRows, error: itemsErr }] = await Promise.all([
     svc.from('mfg_sales_orders').select(SO_HEADER_COLS).eq('doc_no', docNo).maybeSingle(),
     svc
       .from('mfg_sales_order_items')
@@ -454,10 +454,19 @@ async function readSoDraft(
       .order('line_no', { ascending: true, nullsFirst: false })
       .order('created_at', { ascending: true }),
   ]);
+  const failure = (headerErr ?? itemsErr) as { message?: string } | null;
   return {
     header: (headerRow as SoHeaderSnapshot | null) ?? null,
     items: (itemRows as SoItemSnapshot[] | null) ?? [],
+    error: failure ? (failure.message ?? 'read failed') : null,
   };
+}
+
+export interface SnapshotDraftBaselineArgs {
+  sampleId: string;
+  docNo: string;
+  /** The raw read exactly as it was stored on the sample. */
+  extracted: unknown;
 }
 
 /**
@@ -467,21 +476,15 @@ async function readSoDraft(
  */
 export async function snapshotDraftBaseline(
   svc: SupabaseClient,
-  sampleId: string,
-  docNo: string,
+  { sampleId, docNo, extracted }: SnapshotDraftBaselineArgs,
 ): Promise<void> {
   try {
-    const { data: sample, error: readErr } = await svc
-      .from('so_scan_samples')
-      .select('extracted')
-      .eq('id', sampleId)
-      .maybeSingle();
-    if (readErr) throw new Error(readErr.message);
-    const extracted = (sample as { extracted?: unknown } | null)?.extracted;
-    if (extracted == null) return;
-    const { header, items } = await readSoDraft(svc, docNo);
-    const baseline = buildCorrectedSlipFromSo(extracted, header, items);
-    if (baseline === null) return;
+    const draft = await readSoDraft(svc, docNo);
+    if (draft.error !== null || draft.header === null) {
+      throw new Error(draft.error ?? 'draft header not found');
+    }
+    const baseline = buildCorrectedSlipFromSo(extracted, draft.header, draft.items);
+    if (baseline === null) throw new Error('baseline could not be built from the extraction');
     const { error: writeErr } = await svc.from('so_scan_samples').update({ draft_baseline: baseline }).eq('id', sampleId);
     if (writeErr) throw new Error(writeErr.message);
   } catch (e) {
@@ -490,20 +493,55 @@ export async function snapshotDraftBaseline(
   }
 }
 
-const asRecord = (v: unknown): Record<string, unknown> | null =>
-  v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
-const ISO_DATE =/^\d{4}-\d{2}-\d{2}$/;
+/* Learning pool filter for the distillers. Rows with a baseline were judged
+   against the draft the pipeline left; rows from the interactive confirm route
+   never get one, so rows created from the day this shipped are kept too. Older
+   baseline-less CONFIRMED rows carry pipeline transforms as "corrections". */
+export const LEARNING_POOL_CLEAN_SINCE = '2026-11-16T16:00:00.000Z';
+export const LEARNING_POOL_BASELINE_FILTER = `draft_baseline.not.is.null,created_at.gte.${LEARNING_POOL_CLEAN_SINCE}`;
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const asLines = (v: unknown): Array<Record<string, unknown>> =>
   Array.isArray(v) ? (v as Array<Record<string, unknown>>) : [];
+
+/* Key-order independent: a jsonb round trip reorders object keys. */
+function canonical(v: unknown): string {
+  const sorted = (x: unknown): unknown => {
+    if (Array.isArray(x)) return x.map(sorted);
+    if (x && typeof x === 'object') {
+      return Object.fromEntries(
+        Object.entries(x as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([k, val]) => [k, sorted(val)]),
+      );
+    }
+    return x ?? null;
+  };
+  return JSON.stringify(sorted(v));
+}
+
+/* The one line of `lines` carrying this non-empty rawText, or null when there
+   is none or it is not unique. rawText is the only provenance a draft line
+   keeps of its slip line; anything else would be a guess. */
+function uniqueByRawText(
+  lines: Array<Record<string, unknown>>,
+  rawText: unknown,
+): Record<string, unknown> | null {
+  if (typeof rawText !== 'string' || rawText.trim() === '') return null;
+  const hits = lines.filter((l) => l.rawText === rawText);
+  return hits.length === 1 ? (hits[0] ?? null) : null;
+}
 
 /**
  * `extracted` with only the fields a person changed on the draft: a field of
  * `final` is taken only when it differs from `baseline` (the draft as the
- * pipeline left it). Pure; none of the inputs is mutated.
+ * pipeline left it). Pure; none of the inputs is mutated. Compares are
+ * key-order independent.
  *
- * Lines pair by index when the counts match. Otherwise a final line pairs with
- * the baseline line carrying the same non-empty rawText; a line that cannot be
- * paired unambiguously is taken from `final` as it is.
+ * Line changes are judged baseline vs final only: if no line moved, the raw
+ * lines are returned verbatim (the pipeline drops blank raw lines, so counts
+ * against the raw read differ on an untouched draft). Otherwise a final line is
+ * tied to its baseline and raw line only through a unique non-empty rawText;
+ * a line that cannot be tied that way has no slip provenance and is taken from
+ * `final` as it is. Lines are never paired by position.
  */
 export function keepPersonChanges(
   extracted: Record<string, unknown>,
@@ -513,7 +551,7 @@ export function keepPersonChanges(
   const out: Record<string, unknown> = { ...extracted };
   const rawDate = extracted.deliveryDate;
   for (const [key] of HEADER_FIELDS) {
-    if (j(final[key]) === j(baseline[key])) continue;
+    if (canonical(final[key]) === canonical(baseline[key])) continue;
     // A person filling a date the slip did not carry is not an AI miss.
     if (key === 'deliveryDate' && !(typeof rawDate === 'string' && ISO_DATE.test(rawDate))) continue;
     out[key] = final[key];
@@ -522,23 +560,20 @@ export function keepPersonChanges(
   const extractedLines = asLines(extracted.lines);
   const baselineLines = asLines(baseline.lines);
   const finalLines = asLines(final.lines);
-  const sameCount = baselineLines.length === finalLines.length;
-  const byRawText = (lines: Array<Record<string, unknown>>, line: Record<string, unknown>): Record<string, unknown> | null => {
-    const raw = typeof line.rawText === 'string' ? line.rawText : '';
-    if (raw === '') return null;
-    const hits = lines.filter((l) => l.rawText === raw);
-    return hits.length === 1 ? (hits[0] ?? null) : null;
-  };
-  const rawCountMatches = extractedLines.length === baselineLines.length;
-  out.lines = finalLines.map((finalLine, i) => {
-    const baseLine = sameCount ? (baselineLines[i] ?? null) : byRawText(baselineLines, finalLine);
-    if (baseLine === null) return finalLine;
-    const rawLine = rawCountMatches ? (extractedLines[baselineLines.indexOf(baseLine)] ?? null) : byRawText(extractedLines, baseLine);
-    if (rawLine === null) return finalLine;
+  if (canonical(baselineLines) === canonical(finalLines)) return out;
+
+  const isBlankRawLine = (l: Record<string, unknown>): boolean =>
+    (typeof l.rawText !== 'string' || l.rawText.trim() === '') && asObj(l.skuMatch)?.code == null;
+  const keptLines = finalLines.map((finalLine) => {
+    const baseLine = uniqueByRawText(baselineLines, finalLine.rawText);
+    const rawLine = baseLine === null ? null : uniqueByRawText(extractedLines, baseLine.rawText);
+    if (baseLine === null || rawLine === null || uniqueByRawText(finalLines, finalLine.rawText) === null) return finalLine;
     const kept: Record<string, unknown> = { ...rawLine };
-    for (const [key] of LINE_FIELDS) if (j(finalLine[key]) !== j(baseLine[key])) kept[key] = finalLine[key];
+    for (const [key] of LINE_FIELDS) if (canonical(finalLine[key]) !== canonical(baseLine[key])) kept[key] = finalLine[key];
     return kept;
   });
+  // The blank raw lines the pipeline dropped are not an operator removal.
+  out.lines = [...keptLines, ...extractedLines.filter(isBlankRawLine)];
   return out;
 }
 
@@ -578,26 +613,9 @@ export async function noteScanDraftAccepted(
     if (!jobRow) return;
     // postgres.js camelCases columns; PostgREST does not. Dual-read is the
     // house rule (same shape as scan-so.ts's job serializer).
-    const j = jobRow as { sampleId?: string | null; sample_id?: string | null };
-    const sampleId = j.sampleId ?? j.sample_id ?? null;
+    const jobIds = jobRow as { sampleId?: string | null; sample_id?: string | null };
+    const sampleId = jobIds.sampleId ?? jobIds.sample_id ?? null;
     if (!sampleId) return;
-
-    // 2. Did a human change anything before confirming? The scan job's own
-    //    writes are excluded by action (CREATE) and by source: the pipeline
-    //    tags its payment rows source='automation' (scan-so.ts), operator
-    //    writes default to 'web'.
-    //    `source IS NULL` must count as an EDIT: a bare .neq('source',...)
-    //    resolves to NULL for those rows and Postgres drops them from the
-    //    result, which would read a genuine edit as "no edits" and label a
-    //    corrected slip ACCEPTED. Unknown provenance fails toward not learning.
-    const { data: edits } = await svc
-      .from('mfg_so_audit_log')
-      .select('id')
-      .eq('so_doc_no', docNo)
-      .not('action', 'in', NON_EDIT_ACTIONS)
-      .or('source.is.null,source.neq.automation')
-      .limit(1);
-    const wasEdited = Array.isArray(edits) && edits.length > 0;
 
     // 3. Read the sample. Filtering on status='EXTRACTED' is the double-confirm
     //    guard: if the interactive path already confirmed this sample, or a
@@ -615,11 +633,15 @@ export async function noteScanDraftAccepted(
     // 3b. With a baseline, a correction is only what differs from the draft as
     //     the pipeline left it. A fair/venue pick or a pipeline transform is not
     //     one, so a draft only touched that way lands ACCEPTED.
-    const baseline = asRecord(s.draft_baseline);
-    const extractedBlob = asRecord(s.extracted);
+    const baseline = asObj(s.draft_baseline);
+    const extractedBlob = asObj(s.extracted);
     if (baseline && extractedBlob) {
-      const { header, items } = await readSoDraft(svc, docNo);
-      const final = buildCorrectedSlipFromSo(extractedBlob, header, items);
+      const draft = await readSoDraft(svc, docNo);
+      if (draft.error !== null || draft.header === null) {
+        console.warn('[scan-sample-review] draft unreadable, sample left as is:', { sampleId, docNo }, draft.error ?? 'no header');
+        return;
+      }
+      const final = buildCorrectedSlipFromSo(extractedBlob, draft.header, draft.items);
       if (final === null) return;
       const kept = keepPersonChanges(extractedBlob, baseline, final);
       if (changedFields(extractedBlob, kept).length === 0) {
@@ -635,12 +657,29 @@ export async function noteScanDraftAccepted(
         .update({ corrected: kept, status: SAMPLE_CORRECTED })
         .eq('id', sampleId)
         .eq('status', SAMPLE_EXTRACTED);
-      const keptCompanyId = Number(col(header, 'company_id'));
+      const keptCompanyId = Number(col(draft.header, 'company_id'));
       if (Number.isInteger(keptCompanyId) && keptCompanyId > 0) {
         await recordSlipAliases(svc, keptCompanyId, slipAliasPairs(extractedBlob, kept));
       }
       return;
     }
+
+    // 2. Did a human change anything before confirming? The scan job's own
+    //    writes are excluded by action (CREATE) and by source: the pipeline
+    //    tags its payment rows source='automation' (scan-so.ts), operator
+    //    writes default to 'web'.
+    //    `source IS NULL` must count as an EDIT: a bare .neq('source',...)
+    //    resolves to NULL for those rows and Postgres drops them from the
+    //    result, which would read a genuine edit as "no edits" and label a
+    //    corrected slip ACCEPTED. Unknown provenance fails toward not learning.
+    const { data: edits } = await svc
+      .from('mfg_so_audit_log')
+      .select('id')
+      .eq('so_doc_no', docNo)
+      .not('action', 'in', NON_EDIT_ACTIONS)
+      .or('source.is.null,source.neq.automation')
+      .limit(1);
+    const wasEdited = Array.isArray(edits) && edits.length > 0;
 
     // 4a. Unchanged — promote EXTRACTED -> ACCEPTED, carrying `extracted`
     //     across verbatim. Unchanged behaviour, deliberately untouched: this
@@ -763,8 +802,8 @@ export async function notePiScanAccepted(
     // Fail toward NOT learning: a read blip must never be read as "not a scan"
     // AND must never risk mislabelling a sample. Bail on any error.
     if (jobErr || !jobRow) return;
-    const j = jobRow as { sampleId?: string | null; sample_id?: string | null };
-    const sampleId = j.sampleId ?? j.sample_id ?? null;
+    const jobIds = jobRow as { sampleId?: string | null; sample_id?: string | null };
+    const sampleId = jobIds.sampleId ?? jobIds.sample_id ?? null;
     if (!sampleId) return;
 
     // 2. Did a human edit the draft before confirming? The PI's own audit trail
