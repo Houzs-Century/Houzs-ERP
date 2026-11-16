@@ -128,7 +128,6 @@
   box-shadow: inset 0 -2px 0 var(--hz-c-border);
 }
 .num {
-  text-align: center;
   /* Numeric cells switch to the tabular money font so column edges stay
      aligned across rows regardless of digit width. */
   font-family: var(--font-money, ui-monospace, monospace);
