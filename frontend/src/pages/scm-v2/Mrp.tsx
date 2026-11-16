@@ -91,7 +91,7 @@ type View = string;
 
 // Lead-time maintenance shows the four orderable categories (Service excluded,
 // mirroring the MRP tabs). Commander 2026-06-18 — moved here from SO Maintenance.
-const MRP_LEAD_CATEGORIES: LeadCategory[] = ['sofa', 'bedframe', 'mattress', 'accessory'];
+const MRP_LEAD_CATEGORIES: LeadCategory[] = ['sofa', 'bedframe', 'mattress', 'accessory', 'others'];
 
 /* LeadTimesDialog (Commander 2026-06-18, moved from SO Maintenance) — per-
    category "order N days early". When you Proceed PO, the PO delivery date is

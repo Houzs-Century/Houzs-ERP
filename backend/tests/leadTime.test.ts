@@ -90,6 +90,17 @@ describe("base cascade — (warehouse, category) -> (NULL, category) -> 0", () =
     expect(resolveLeadDays(base, NO_OVERRIDES, NO_BUFFERS, { warehouseId: WH_PG, category: "SOFA" }).total).toBe(14);
   });
 
+  test("a group outside the five reads the 'others' row (2990-0063)", async () => {
+    const withOthers = await baseFrom([{ warehouse_id: null, category: "others", lead_days: 10 }]);
+    expect(resolveLeadDays(withOthers, NO_OVERRIDES, NO_BUFFERS, { warehouseId: WH_PG, category: "DINING" }).total).toBe(10);
+    expect(resolveLeadDays(withOthers, NO_OVERRIDES, NO_BUFFERS, { warehouseId: WH_PG, category: "sofa" }).total).toBe(0);
+  });
+
+  test("a supplier's 'others' override covers its dining / carpet lines", async () => {
+    const ov = await overridesFrom([{ supplier_id: SUP_A, category: "others", lead_days: 21 }]);
+    expect(resolveLeadDays(base, ov, NO_BUFFERS, { warehouseId: null, category: "CARPET", supplierId: SUP_A }).total).toBe(21);
+  });
+
   test("a null category contributes 0 rather than throwing", () => {
     expect(resolveLeadDays(base, NO_OVERRIDES, NO_BUFFERS, { warehouseId: WH_PG, category: null }).total).toBe(0);
   });

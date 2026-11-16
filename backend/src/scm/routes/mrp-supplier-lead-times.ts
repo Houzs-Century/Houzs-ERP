@@ -67,7 +67,7 @@ mrpSupplierLeadTimes.get('/', async (c) => {
   if (error) return c.json({ error: 'fetch_failed', reason: error.message }, 500);
 
   const leadTimes: Record<Category, number | null> = {
-    sofa: null, bedframe: null, mattress: null, accessory: null, service: null,
+    sofa: null, bedframe: null, mattress: null, accessory: null, service: null, others: null,
   };
   for (const r of (data ?? []) as DbRow[]) {
     if ((CATEGORIES as readonly string[]).includes(r.category)) {

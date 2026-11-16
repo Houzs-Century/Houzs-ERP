@@ -59,10 +59,10 @@
 // make the agent unexplainable.
 // ----------------------------------------------------------------------------
 
-/** The five fixed lead-time categories. Mirrors scm.mrp_category_lead_times'
+/** The fixed lead-time categories. Mirrors scm.mrp_category_lead_times'
     CHECK constraint and the frontend's LEAD_CATEGORIES. A line's category is
-    its item_group, matched lowercase. */
-export const LEAD_CATEGORIES = ['sofa', 'bedframe', 'mattress', 'accessory', 'service'] as const;
+    its item_group, matched lowercase; any other group reads as 'others'. */
+export const LEAD_CATEGORIES = ['sofa', 'bedframe', 'mattress', 'accessory', 'service', 'others'] as const;
 export type LeadCategory = (typeof LEAD_CATEGORIES)[number];
 
 /* A Sofa Accessory (group fabric_accessory, owner 2026-09-14) is ordered on the
@@ -71,7 +71,10 @@ export type LeadCategory = (typeof LEAD_CATEGORIES)[number];
    later by giving it its own row; until then one number governs both. */
 const leadCategoryOf = (category: string | null): string => {
   const cat = (category ?? '').toLowerCase();
-  return cat === 'fabric_accessory' ? 'sofa' : cat;
+  if (cat === 'fabric_accessory') return 'sofa';
+  /* Dining, carpet, bedlines, diffuser … share one 'others' number (2990-0063).
+     No row set = 0, the same as before this bucket existed. */
+  return cat && !(LEAD_CATEGORIES as readonly string[]).includes(cat) ? 'others' : cat;
 };
 
 /** The owner's manual base table, loaded once per request.
