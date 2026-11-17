@@ -119,6 +119,7 @@ import { loadRegionConfig, stateToRegionsFromConfig, FALLBACK_DEFAULT_REGION, ty
 import { assembleSoOrders } from '../lib/delivery-board-so-rows';
 import { formatCaseAddress } from '../shared/assr-case-address';
 import { boardSourceOf, loadBoardHead, kickOffRestBoardReads, loadBoardMaps, scheduleBoardShadow } from '../lib/delivery-board-source';
+import { projectBoardAddress } from '../lib/project-venue-join';
 
 export const deliveryPlanning = new Hono<{ Bindings: Env; Variables: Variables }>();
 deliveryPlanning.use('*', supabaseAuth);
@@ -673,10 +674,12 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     const projRows = projR.ok;
 
     for (const p of (projRows.results ?? [])) {
-      const stateRegions = stateToRegionsFromConfig(regionCfg, p.state, null);
+      // The project's own State wins; its venue master's fills a blank one.
+      const projState = p.state ?? p.venue_state ?? null;
+      const stateRegions = stateToRegionsFromConfig(regionCfg, projState, null);
       const primaryRegion = stateRegions[0] ?? FALLBACK_DEFAULT_REGION;
       const regionSet = new Set<Region>(stateRegions);
-      const address = p.venue_address ?? p.venue ?? null;
+      const address = projectBoardAddress(p.venue_address ?? p.venue ?? null, p.venue_city, p.venue_postcode);
       const partyName = p.venue ?? p.name ?? null;
 
       // One row per SET window; job type reuses the DP SETUP/DISMANTLE vocabulary
@@ -739,7 +742,8 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           po_locked: false,
           days_left: daysBetween(today, leg.date),
           address,
-          postcode: null,
+          // From the venue master the project picked (lib/project-venue-join.ts).
+          postcode: p.venue_postcode ?? null,
           building_type: null,
           possession_date: null,
           house_type: null,
@@ -771,7 +775,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           warehouse_id: null,
           warehouse_code: null,
           warehouse_name: null,
-          customer_state: p.state ?? null, customer_country: null, // not on Last Mile (SO-only)
+          customer_state: projState, customer_country: null, // not on Last Mile (SO-only)
           delivered_qty: 0,
           remaining_qty: 0,
           // Show the crew PMS assigned to this window (read-only on the board) —

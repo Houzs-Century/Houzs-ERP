@@ -18,17 +18,20 @@ import {
   type Warehouse,
   type WarehouseType,
 } from '../lib/inventory-queries';
-import {
-  useLocalities,
-  distinctCountries,
-  citiesInState,
-  postcodesInCity,
-} from '../lib/localities-queries';
-import { StatePicker } from './StatePicker';
+import { useLocalities, distinctCountries } from '../lib/localities-queries';
+import { AddressTripleFields, type AddressTripleClasses } from './AddressTripleFields';
 import { useNotify } from './NotifyDialog';
 import styles from '../../../pages/scm-v2/Suppliers.module.css';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
+
+/* The drawer's own field look, for the shared State / City / Postcode trio. */
+const TRIPLE_CLASSES: AddressTripleClasses = {
+  field: styles.tripleField,
+  label: styles.eyebrow,
+  select: styles.searchInput,
+  input: styles.searchInput,
+};
 
 /* Ordered for the dropdown — most-used first. Labels are the display text, the
    value is the enum literal stored in scm.warehouses.type (mig 0171). */
@@ -81,14 +84,6 @@ export const WarehouseFormDrawer = ({
   const localities = useLocalities();
   const localityRows = localities.data ?? [];
   const countries = useMemo(() => distinctCountries(localityRows), [localityRows]);
-  const cities = useMemo(
-    () => (form.state ? citiesInState(localityRows, form.state) : []),
-    [localityRows, form.state],
-  );
-  const postcodes = useMemo(
-    () => (form.state && form.city ? postcodesInCity(localityRows, form.state, form.city) : []),
-    [localityRows, form.state, form.city],
-  );
 
   const done = () => { onSaved?.(); onClose(); };
 
@@ -176,8 +171,7 @@ export const WarehouseFormDrawer = ({
               Country picked first (from seeded my_localities set — no free-
               text). State uses shared StatePicker component — MY default,
               Others expander for CN/SG, search across all. Picking State
-              back-derives Country when Country was blank/mismatched. City
-              + Postcode are still local cascades scoped to the picked state.
+              back-derives Country when Country was blank/mismatched.
               NO `(legacy)` fallbacks — a state not in my_localities must
               first be added via the Localities Maintenance UI. */}
           <label style={{ display: 'block', marginBottom: 'var(--space-3)' }}>
@@ -193,50 +187,20 @@ export const WarehouseFormDrawer = ({
               {countries.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
           </label>
-          <label style={{ display: 'block', marginBottom: 'var(--space-3)' }}>
-            <div className={styles.eyebrow}>State</div>
-            <StatePicker
-              country={form.country ?? ''}
-              value={form.state ?? ''}
-              onChange={(nextState, derivedCountry) => setForm((s) => ({
-                ...s,
-                state: nextState,
-                country: derivedCountry ?? s.country,
-                city: '',
-                postcode: '',
-              }))}
-            />
-          </label>
-          {form.state && (
-            <label style={{ display: 'block', marginBottom: 'var(--space-3)' }}>
-              <div className={styles.eyebrow}>City</div>
-              <select className={styles.searchInput} style={{ width: '100%' }}
-                value={form.city ?? ''}
-                disabled={cities.length === 0}
-                onChange={(e) => setForm((s) => ({ ...s, city: e.target.value, postcode: '' }))}
-              >
-                <option value="">
-                  {cities.length === 0 ? 'No cities seeded for this state' : '— pick city —'}
-                </option>
-                {cities.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </label>
-          )}
-          {form.state && form.city && (
-            <label style={{ display: 'block', marginBottom: 'var(--space-3)' }}>
-              <div className={styles.eyebrow}>Postcode</div>
-              <select className={styles.searchInput} style={{ width: '100%' }}
-                value={form.postcode ?? ''}
-                disabled={postcodes.length === 0}
-                onChange={(e) => setForm((s) => ({ ...s, postcode: e.target.value }))}
-              >
-                <option value="">
-                  {postcodes.length === 0 ? 'No postcodes seeded for this city' : '— pick postcode —'}
-                </option>
-                {postcodes.map((p) => <option key={p} value={p}>{p}</option>)}
-              </select>
-            </label>
-          )}
+          {/* State / City / Postcode — the Sales Order's controls and cascade
+              (owner 2026-11-17: every DP job carries Postcode + City + State, and
+              a TRANSFER takes them from here). Postcode is always shown; picking
+              or typing one fills City and State back. */}
+          <AddressTripleFields
+            country={form.country}
+            value={{ state: form.state, city: form.city, postcode: form.postcode }}
+            onChange={(next, derivedCountry) => setForm((s) => ({
+              ...s,
+              ...next,
+              country: derivedCountry ?? s.country,
+            }))}
+            classes={TRIPLE_CLASSES}
+          />
           {/* ── Type (mig 0171) ───────────────────────────────────────────
               5-bucket classification: warehouse / showroom / display / service
               / others. Owner 2026-07-22: SO reports and delivery routing bucket

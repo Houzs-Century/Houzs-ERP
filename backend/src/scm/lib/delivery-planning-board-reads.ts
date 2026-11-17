@@ -17,6 +17,7 @@ import { chunkIn, paginateAll } from './paginate-all';
 import { boardDeliverableByDoc } from './board-deliverable';
 import { scopeToAllowedCompanies } from './companyScope';
 import { assrBoardUnionSql } from './assr-board-scope';
+import { PROJECT_VENUE_COLS, PROJECT_VENUE_JOIN } from './project-venue-join';
 import type { DeliveryOrderExecRow } from '../routes/delivery-planning-fields';
 import type { Env, Variables } from '../env';
 
@@ -122,9 +123,11 @@ const PROJECT_UNION_SQL =
               p.setup_crew     AS setup_crew,
               p.dismantle_crew AS dismantle_crew,
               p.delivery_remark AS delivery_remark,
+              ${PROJECT_VENUE_COLS},
               sd.name  AS setup_driver_name,     sl.plate AS setup_lorry_plate,
               dd.name  AS dismantle_driver_name, dl.plate AS dismantle_lorry_plate
          FROM projects p
+         ${PROJECT_VENUE_JOIN}
          LEFT JOIN users   sd ON sd.id = p.setup_driver_user_id
          LEFT JOIN lorries sl ON sl.id = p.setup_lorry_id
          LEFT JOIN users   dd ON dd.id = p.dismantle_driver_user_id
@@ -211,6 +214,7 @@ export function kickOffSubBoardReads(
         venue: string | null; venue_address: string | null; state: string | null;
         setup_start_at: string | null; dismantle_start_at: string | null;
         setup_crew: string | null; dismantle_crew: string | null; delivery_remark: string | null;
+        venue_postcode: string | null; venue_city: string | null; venue_state: string | null;
         setup_driver_name: string | null; setup_lorry_plate: string | null;
         dismantle_driver_name: string | null; dismantle_lorry_plate: string | null;
       }>() } as const;
