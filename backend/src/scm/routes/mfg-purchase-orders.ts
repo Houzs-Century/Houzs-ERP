@@ -26,7 +26,7 @@ import { firstUnorderableSo, soNotOrderableResponse } from '../lib/source-docume
 import { soLinkItemMismatch, type SoSourceLine } from '../lib/so-link-item-identity';
 import { mountHoldRoute } from './document-hold-routes';
 import {
-  buildVariantSummary, pickComboMatch, spreadComboTotal,
+  buildVariantSummary, pickCostComboMatch, spreadComboTotal,
   splitSofaCode, sofaHeightKey, effectiveSoDelivery,
   type SofaComboRow, type SofaPriceTier,
 } from '../shared';
@@ -2015,7 +2015,9 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
     // old fallback let another Model's combo price become this set's cost).
     const rows = supplierCombos.filter((cmb) => (cmb.baseModel ?? '').toUpperCase() === baseModelU);
     if (rows.length === 0) continue; // no combo named for this Model → no combo
-    const match = pickComboMatch(
+    // The set's cost is the combo covering most of its pieces; a one-slot,
+    // several-code combo never prices cost (pickCostComboMatch).
+    const match = pickCostComboMatch(
       { baseModel: '', modules: members.map((m) => splitSofaCode(m.itemCode).sizeCode), customerId: null, tier, height },
       rows,
     );

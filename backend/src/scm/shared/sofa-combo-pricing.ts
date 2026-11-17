@@ -160,6 +160,27 @@ export function normalizeComboModules(
 }
 
 /**
+ * True when a combo is ONE slot that lists several codes, e.g.
+ * `[["2A(LHF)","2A(RHF)","L(LHF)","L(RHF)"]]`. Codes in a slot are
+ * alternatives for a single piece, so such a combo can only ever cover one
+ * piece of an order. Every one found in production (2026-11-17) carried the
+ * price of a whole set, which costing then charged to that single piece while
+ * the order's other pieces still added their own cost. A set needs one slot
+ * per piece; a single code in a single slot (`[["1S(P)"]]`) is a whole unit
+ * and stays valid.
+ */
+export function isOnePieceSetCombo(
+  raw: readonly (string | readonly string[])[] | readonly string[],
+): boolean {
+  const slots = normalizeComboModules(raw);
+  return slots.length === 1 && new Set(slots[0]).size > 1;
+}
+
+/** What a combo write says when it is refused for {@link isOnePieceSetCombo}. */
+export const ONE_PIECE_SET_COMBO_MESSAGE =
+  'Each piece of the set needs its own slot. One slot listing several codes would charge the whole set price to a single piece.';
+
+/**
  * Storage canonical form (mirrors HOOKKA's `canonicalSizes` in
  * src/api/routes/sofa-combos.ts). Applied on SAVE (API) so two equivalent
  * combos persist byte-identical `modules` JSON and therefore hash to the same
@@ -505,6 +526,29 @@ export function pickComboMatch(
   args: PickComboArgs,
   rows: readonly SofaComboRow[],
 ): ComboMatch | null {
+  return pickRankedComboMatch(args, rows, 'newest');
+}
+
+/**
+ * The COST side's pick: a set's cost is the combo that covers the most of its
+ * pieces, so within a scope the combo matching more pieces wins before any
+ * date tie-break. A newer combo for part of the set must not hide the set's
+ * own price: that is how a 2A + L order took the price of a corner set on its
+ * 2A alone and then added the L on top (2990-SO-2610-057). A one-slot,
+ * several-code combo ({@link isOnePieceSetCombo}) never prices cost.
+ */
+export function pickCostComboMatch(
+  args: PickComboArgs,
+  rows: readonly SofaComboRow[],
+): ComboMatch | null {
+  return pickRankedComboMatch(args, rows.filter((r) => !isOnePieceSetCombo(r.modules)), 'fullest');
+}
+
+function pickRankedComboMatch(
+  args: PickComboArgs,
+  rows: readonly SofaComboRow[],
+  prefer: 'newest' | 'fullest',
+): ComboMatch | null {
   const asOf = args.asOf ?? todayIso();
   const built = args.modules.map((m) => m.trim());
 
@@ -547,6 +591,7 @@ export function pickComboMatch(
     .filter((c) => c.p > 0)
     .sort((a, b) =>
       b.p - a.p ||
+      (prefer === 'fullest' ? b.subset.length - a.subset.length : 0) ||
       // Prefer the fullest matching package. A newer bare-sofa or two-piece
       // rule must not hide the saved four-piece package on a complete build.
       b.accessoryIds.length - a.accessoryIds.length ||
