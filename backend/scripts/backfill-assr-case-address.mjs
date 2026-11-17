@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /* Give existing service cases the Postcode / City / State of the Sales Order
    they were raised against (owner 2026-11-17: the case holds its address in the
-   SO's shape). Migration 20261117T2030_assr_case_address.sql created the 1:1
+   SO's shape). Migration 20261117T2200_assr_case_address.sql created the 1:1
    table empty; new cases and every SO No. correction fill it from the SO. This
    fills the old ones.
 
