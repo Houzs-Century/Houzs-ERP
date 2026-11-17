@@ -34,6 +34,7 @@ export const JOURNAL_SOURCES: readonly JournalSource[] = [
   { code: 'SETTLEADJ', label: 'Card statement charge' },
   { code: 'SETTLEBANK', label: 'Card payout' },
   { code: 'SETTLECARD', label: 'Card payments taken in by the bank' },
+  { code: 'SETTLEFOR', label: 'Another company\'s card sale' },
   { code: 'SETTLECHARGE', label: 'Payout bank charge' },
   { code: 'CASHUP', label: 'Daily close cash' },
   { code: 'STOCKADJ', label: 'Stock close' },

@@ -88,7 +88,9 @@ export function leadCategoryOptions(registry: ItemGroupRow[]): LeadCategoryOptio
   const out: LeadCategoryOption[] = [];
   for (const code of codes) {
     const row = reg.get(code);
-    if (code === 'SERVICE' || row?.is_active === false) continue;
+    // Others is added once, last, below: the registry has its own OTHERS group,
+    // and listing it too showed two rows for one stored key (2990-0063).
+    if (code === 'SERVICE' || code === OTHERS_LEAD_CATEGORY.toUpperCase() || row?.is_active === false) continue;
     const key = code.toLowerCase();
     if (!LEAD_CATEGORY_RE.test(key)) continue;
     out.push({ key, label: row?.name?.trim() || mfgCategoryLabel(code) });
