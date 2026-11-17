@@ -15,12 +15,8 @@ import { clearBrandLogoCache } from "../lib/branding";
 import { shareLinkMenuItems } from "./project-maintenance/shareLinks";
 import { VenueManagerRow } from "./project-maintenance/VenueManagerRow";
 import { OrganizerManagerRow } from "./project-maintenance/OrganizerManagerRow";
-import {
-  useLocalities,
-  distinctCountries,
-  citiesInState,
-} from "../vendor/scm/lib/localities-queries";
-import { StatePicker } from "../vendor/scm/components/StatePicker";
+import { AddressTripleFields } from "../vendor/scm/components/AddressTripleFields";
+import { VENUE_TRIPLE_CLASSES } from "./project-maintenance/VenueManagerRow";
 
 // ── Projects tab ─────────────────────────────────────────────
 // Lookup management for the project module: organizers, venues, and
@@ -457,14 +453,6 @@ function VenueManager() {
   const [adding, setAdding] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
-  const localities = useLocalities();
-  const localityRows = localities.data ?? [];
-  const knownCountries = useMemo(() => distinctCountries(localityRows), [localityRows]);
-  const cityOptions = useMemo(
-    () => (stateField ? citiesInState(localityRows, stateField) : []),
-    [localityRows, stateField],
-  );
-
   async function add() {
     const trimmed = name.trim();
     if (!trimmed) return;
@@ -534,15 +522,14 @@ function VenueManager() {
           - No `(legacy)` / free-text fallback — a value not in my_localities
             must be added via the Localities Maintenance UI first.
           - Country auto-fills from State via StatePicker's derivedCountry
-            callback. City + Postcode are optional and scoped to the picked
-            state. */}
+            callback. City + Postcode run the Sales Order cascade both ways. */}
       {/* grid-cols use minmax(0,1fr) on the name track and min-w-0 on every input
           so each field shrinks to its own fixed track instead of forcing its
           ~20ch intrinsic min-width. That intrinsic min-width was the postcode
           overflow the owner reported: a bare <input> in a fixed 110px grid cell
           keeps min-width:auto, refuses to shrink below its content box, and
           spills past the cell. min-w-0 lets it size to the track. */}
-      <div className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_170px_130px_120px_110px_110px_auto]">
+      <div className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_170px_150px_120px_110px_auto]">
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
@@ -550,49 +537,19 @@ function VenueManager() {
           placeholder="Venue name…"
           className="h-9 min-w-0 rounded-md border border-border bg-surface px-3 text-[12.5px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
         />
-        <StatePicker
-          value={stateField}
+        {/* State / City / Postcode in the Sales Order's controls (owner
+            2026-11-17): a postcode fills City and State back, and Country
+            follows the State. Delivery Planning reads them for SETUP / DISMANTLE. */}
+        <AddressTripleFields
+          country=""
+          value={{ state: stateField, city: cityField, postcode: postcodeField }}
           onChange={(next, derivedCountry) => {
-            setStateField(next);
-            if (derivedCountry && derivedCountry !== countryField) setCountryField(derivedCountry);
-            setCityField("");
+            setStateField(next.state);
+            setCityField(next.city);
+            setPostcodeField(next.postcode);
+            setCountryField(derivedCountry ?? "");
           }}
-        />
-        <select
-          value={countryField}
-          onChange={(e) => setCountryField(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && add()}
-          disabled={knownCountries.length === 0}
-          className="h-9 min-w-0 rounded-md border border-border bg-surface px-2 text-[12.5px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
-        >
-          <option value="">
-            {knownCountries.length === 0 ? "no countries" : "— country —"}
-          </option>
-          {knownCountries.map((c) => (
-            <option key={c} value={c}>{c}</option>
-          ))}
-        </select>
-        <select
-          value={cityField}
-          onChange={(e) => setCityField(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && add()}
-          disabled={!stateField || cityOptions.length === 0}
-          className="h-9 min-w-0 rounded-md border border-border bg-surface px-2 text-[12.5px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
-        >
-          <option value="">
-            {!stateField ? "pick state first" : cityOptions.length === 0 ? "no cities" : "— city —"}
-          </option>
-          {cityOptions.map((c) => (
-            <option key={c} value={c}>{c}</option>
-          ))}
-        </select>
-        <input
-          value={postcodeField}
-          onChange={(e) => setPostcodeField(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && add()}
-          inputMode="numeric"
-          placeholder="postcode"
-          className="h-9 min-w-0 rounded-md border border-border bg-surface px-3 text-[12.5px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
+          classes={VENUE_TRIPLE_CLASSES}
         />
         <input
           value={sizeField}

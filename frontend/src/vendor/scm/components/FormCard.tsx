@@ -67,6 +67,17 @@ export const FormField = ({ label, required, hint, span, children }: {
  *  to reach into another page's stylesheet for it — which is what the first
  *  draft of the 3PL rebuild did, referencing a `styles` binding that did not
  *  exist in that file at all. */
+/* The same look for a control that renders its own <label> (AddressPostcodeField,
+   AddressTripleFields) — one grid cell each, like a FormField. */
+export const FORM_FIELD_CLASSES = {
+  field: styles.field,
+  label: styles.fieldLabel,
+  select: styles.fieldSelect,
+  input: styles.fieldInput,
+  selectWrap: styles.selectWrap,
+  chevron: styles.selectChevron,
+} as const;
+
 export const FormInput = (props: React.InputHTMLAttributes<HTMLInputElement>) => (
   <input {...props} className={`${styles.fieldInput}${props.className ? ` ${props.className}` : ''}`} />
 );

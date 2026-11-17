@@ -21,7 +21,7 @@ Every form that captures a Malaysian-style address picks State, City and Postcod
 
 - The `pick*` functions (`pickState`/`pickCity`/`pickPostcode`) are pure and return the WHOLE triple, not just the changed field — write handlers must spread the entire result back into form state (or three `useState` atoms), never merge just one key.
 - A city or postcode that legibly spans multiple areas still resolves to exactly one stored row per state (the unique index forces this) — don't expect the table to disambiguate a real-world postcode that covers several neighbourhoods.
-- Supplier, Warehouse and Venue address forms deliberately do NOT use this cascade — they pick Country first (with State filtered by country) because they capture a different kind of address; this is a design difference, not a bug to unify.
+- Master forms (Warehouse, 3PL company, Venue) run this cascade through `AddressTripleFields` (State / City / Postcode in the Sales Order's controls) because Delivery Planning snapshots their Postcode + City + State; Warehouse keeps its Country picker in front and passes it as `country`.
 - `DeliveryOrderNewV2.tsx`'s address fields are still plain free-text inputs styled as pickers — the only editable delivery address in the tree that isn't catalog-validated. Converting it needs the owner's decision first, since a currently-saved value that isn't in the table would go blank on open.
 - Re-derive which forms use the cascade with `git grep -l "lib/address-cascade" -- frontend/src` rather than trusting a written list — it changes as forms are added.
 
