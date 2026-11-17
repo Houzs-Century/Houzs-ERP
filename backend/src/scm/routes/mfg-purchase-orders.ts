@@ -1986,7 +1986,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
     const { baseModel, sizeCode } = splitSofaCode(it.itemCode);
     /* Audit 2026-06-11 I-1 parity — the dash sniff was a legacy-vocabulary
        relic that skipped every canonical parens module (`1A(LHF)`) and the
-       1S/2S/3S whole-unit codes. pickComboMatch rejects non-matching sets
+       1S/2S/3S whole-unit codes. pickCostComboMatch rejects non-matching sets
        itself; only skip codes with no module token at all. */
     if (!sizeCode) continue; // bare model code → nothing to match
     const key = `${b.supplier_id}|${it.soDocNo}|${baseModel.toUpperCase()}`;
@@ -2015,8 +2015,6 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
     // old fallback let another Model's combo price become this set's cost).
     const rows = supplierCombos.filter((cmb) => (cmb.baseModel ?? '').toUpperCase() === baseModelU);
     if (rows.length === 0) continue; // no combo named for this Model → no combo
-    // The set's cost is the combo covering most of its pieces; a one-slot,
-    // several-code combo never prices cost (pickCostComboMatch).
     const match = pickCostComboMatch(
       { baseModel: '', modules: members.map((m) => splitSofaCode(m.itemCode).sizeCode), customerId: null, tier, height },
       rows,
