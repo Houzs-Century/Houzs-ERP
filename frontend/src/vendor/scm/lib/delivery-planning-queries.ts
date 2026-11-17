@@ -816,10 +816,15 @@ export function useUpdateDpOrder() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, ...body }: DpOrderPatch & { id: string }) =>
-      authedFetch<{ dpOrder: unknown }>(`/dp-orders/${id}`, {
+      authedFetch<{ dpOrder: unknown; tripStop?: { updated: boolean; failed: boolean; reason?: string } }>(`/dp-orders/${id}`, {
         method: 'PATCH', body: JSON.stringify(body),
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['delivery-planning'] }),
+    onSuccess: () => Promise.all([
+      qc.invalidateQueries({ queryKey: ['delivery-planning'] }),
+      // The job drawer (JobDetailPanel) reads the job and its row on their own keys.
+      qc.invalidateQueries({ queryKey: ['dp-order'] }),
+      qc.invalidateQueries({ queryKey: ['delivery-job'] }),
+    ]),
   });
 }
 

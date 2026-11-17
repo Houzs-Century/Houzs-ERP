@@ -50,6 +50,9 @@ import { splitHighlight } from '../lib/split-highlight';
 import { api } from '../../../api/client';
 import styles from '../../../pages/scm-v2/Suppliers.module.css';
 import { DateField } from "./DateField";
+import { PostcodeCascadeField } from './PostcodeCascadeField';
+import { useLocalities, resolvePostcode } from '../lib/localities-queries';
+import { knownPostcodeInText, DP_POSTCODE_REQUIRED_JOB_TYPES } from '../lib/postcode-in-address';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -172,6 +175,39 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
     setForm((s) => ({ ...s, [k]: v }));
 
   const src = sourceMeta(form.jobType);
+
+  /* A master that keeps its postcode only inside the address (HOOKKA
+     MANUFACTURING: "..., 47000 SUNGAI BULOH.") shows that postcode, and the
+     State / City it names, as soon as the address is on screen. Only an EMPTY
+     postcode / state / city is filled; the server applies the same rule. */
+  const locRows = useLocalities().data;
+  useEffect(() => {
+    if (!locRows?.length) return;
+    setForm((s) => {
+      let next = s;
+      const fill = (keys: { pc: 'postcode' | 'fromPostcode'; st: 'state' | 'fromState'; ci: 'city' | 'fromCity' }, lines: string[]) => {
+        if (next[keys.pc].trim()) return;
+        const pc = knownPostcodeInText(locRows, [...lines, next[keys.ci]]);
+        if (!pc) return;
+        const loc = resolvePostcode(locRows, pc);
+        next = {
+          ...next,
+          [keys.pc]: pc,
+          [keys.st]: next[keys.st].trim() || loc?.state || '',
+          [keys.ci]: next[keys.ci].trim() || loc?.city || '',
+        };
+      };
+      fill({ pc: 'postcode', st: 'state', ci: 'city' }, [s.address1, s.address2, s.address3, s.address4]);
+      fill({ pc: 'fromPostcode', st: 'fromState', ci: 'fromCity' }, [s.fromAddress1, s.fromAddress2]);
+      return next;
+    });
+  }, [locRows, form.address1, form.address2, form.address3, form.address4, form.fromAddress1, form.fromAddress2]);
+
+  /* The postcode is compulsory for the job types routed by region (owner
+     2026-11-17); a picked source may still carry one the server fills, so only
+     a manual job is stopped at the button. */
+  const postcodeRequired = !isSchedule && DP_POSTCODE_REQUIRED_JOB_TYPES.has(form.jobType);
+  const postcodeMissing = postcodeRequired && !form.postcode.trim();
 
   /* ── Schedule-mode pickers ───────────────────────────────────────────────
      Only fetched for the entry that needs them. SOs come from the paged list
@@ -914,10 +950,14 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
                   <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>From city</div>
                   <input className={styles.searchInput} style={inputStyle} value={form.fromCity} onChange={(e) => set('fromCity', e.target.value)} />
                 </label>
-                <label style={fieldRow}>
-                  <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>From postcode</div>
-                  <input className={styles.searchInput} style={inputStyle} value={form.fromPostcode} onChange={(e) => set('fromPostcode', e.target.value)} />
-                </label>
+                <div style={fieldRow}>
+                  <PostcodeCascadeField
+                    value={form.fromPostcode} state={form.fromState} city={form.fromCity}
+                    onPick={(t) => setForm((s) => ({ ...s, fromPostcode: t.postcode, fromState: t.state, fromCity: t.city }))}
+                    label="From postcode"
+                    classes={{ label: styles.eyebrow, select: styles.searchInput }}
+                  />
+                </div>
               </div>
               <label style={{ ...fieldRow, marginBottom: 0 }}>
                 <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>From state</div>
@@ -1044,10 +1084,21 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
               <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>City</div>
               <input className={styles.searchInput} style={inputStyle} value={form.city} onChange={(e) => set('city', e.target.value)} />
             </label>
-            <label style={fieldRow}>
-              <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>Postcode</div>
-              <input className={styles.searchInput} style={inputStyle} value={form.postcode} onChange={(e) => set('postcode', e.target.value)} />
-            </label>
+            <div style={fieldRow}>
+              <PostcodeCascadeField
+                value={form.postcode} state={form.state} city={form.city}
+                onPick={(t) => setForm((s) => ({ ...s, postcode: t.postcode, state: t.state, city: t.city }))}
+                label={<>Postcode{postcodeRequired && <span style={{ textTransform: 'none', color: 'var(--c-burnt)' }}> — required</span>}</>}
+                classes={{ label: styles.eyebrow, select: styles.searchInput }}
+              />
+              {postcodeMissing && (
+                <div role="alert" style={{ marginTop: 'var(--space-1)', fontSize: 'var(--fs-12)', color: 'var(--c-burnt)' }}>
+                  {form.source.trim()
+                    ? 'Pick the postcode, unless the source carries one.'
+                    : 'Pick the postcode, or write it in the address.'}
+                </div>
+              )}
+            </div>
           </div>
           <div style={row2}>
             <label style={fieldRow}>
@@ -1089,6 +1140,8 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
                 && !(form.destKind === 'saved' ? form.savedLocationId.trim()
                   : form.destKind === 'threepl' ? form.threeplCompanyId.trim()
                   : form.warehouseId.trim()))
+              /* A manual job with no postcode (none picked, none in the address). */
+              || (postcodeMissing && !form.source.trim())
               /* No address typed and no source the server could fill it from.
                  With a source picked the server decides and says why. */
               || (!isSchedule && !form.source.trim()

@@ -30,8 +30,8 @@ const ROOTS = ['pages/scm-v2', 'mobile', 'vendor/scm/components'];
 
 const NOT_AN_ADDRESS_FORM = new Map<string, string>([
   ['pages/scm-v2/SalesOrderMaintenance.tsx', 'the CRUD screen that EDITS the locality lists themselves'],
-  ['vendor/scm/components/NewDpOrderDrawer.tsx', 'shows a carried address read-only; nothing is typed'],
-  ['vendor/scm/components/EditDpOrderDrawer.tsx', 'edits a delivery-planning JOB address (venue / workshop / warehouse / outsourced 3PL / ad-hoc), free text like NewDpOrderDrawer — not the customer-address cascade, which would wrongly constrain an outsourced or cross-border drop-off'],
+  ['vendor/scm/components/NewDpOrderDrawer.tsx', 'a delivery-planning JOB address (venue / workshop / warehouse / outsourced 3PL / ad-hoc): Postcode is the shared picker and fills State / City back, but State stays typeable for an outsourced or cross-border drop-off'],
+  ['vendor/scm/components/EditDpOrderDrawer.tsx', 'edits a delivery-planning JOB address like NewDpOrderDrawer: the shared Postcode picker fills State / City back, State stays typeable for an outsourced or cross-border drop-off'],
 ]);
 
 const walk = (dir: string): string[] => readdirSync(dir).flatMap((name) => {
@@ -41,7 +41,7 @@ const walk = (dir: string): string[] => readdirSync(dir).flatMap((name) => {
 });
 
 const STATE_LABEL = /(text="State"|>State<)/;
-const POSTCODE_LABEL = /(text="Postcode"|>Postcode<|<AddressPostcodeField\b)/;
+const POSTCODE_LABEL = /(text="Postcode"|>Postcode<|<AddressPostcodeField\b|<PostcodeCascadeField\b)/;
 
 const forms = ROOTS.flatMap((r) => walk(join(SRC, r)))
   .map((p) => ({ rel: relative(SRC, p).replace(/\\/g, '/'), text: readFileSync(p, 'utf8') }))

@@ -274,7 +274,8 @@ export const DpOrders = () => {
       key: 'actions', label: '', width: '260px', disableSort: true,
       render: (r) => (
         <div style={{ display: 'inline-flex', gap: 4 }}>
-          {r.status === 'PENDING_SCHEDULE' && (
+          {/* A scheduled job's address can still be corrected; only its date is fixed. */}
+          {r.status !== 'CANCELLED' && (
             <Button variant="ghost" onClick={() => setEditing(r)}>
               <Pencil {...ICON} /><span>Edit…</span>
             </Button>
@@ -339,10 +340,8 @@ export const DpOrders = () => {
         }}
         resetFilters={{ active: searchTerm.trim() !== '' || statusChip !== 'all', onReset: () => { setSearchTerm(''); setStatusChip('all'); } }}
         contextMenu={(r) => [
-          ...(r.status === 'PENDING_SCHEDULE'
-            ? [{ label: 'Edit…', onClick: () => setEditing(r) },
-               { label: 'Schedule…', onClick: () => setScheduling(r) }]
-            : []),
+          ...(r.status !== 'CANCELLED' ? [{ label: 'Edit…', onClick: () => setEditing(r) }] : []),
+          ...(r.status === 'PENDING_SCHEDULE' ? [{ label: 'Schedule…', onClick: () => setScheduling(r) }] : []),
           ...(r.status !== 'CANCELLED'
             ? [{ label: 'Cancel job', onClick: () => void cancel(r), danger: true }]
             : []),

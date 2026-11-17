@@ -1,7 +1,6 @@
-export interface LocalityParts {
-  city: string | null;
-  state: string | null;
-}
+import { knownPostcodeInAddress, type KnownPostcode, type LocalityParts } from './postcode-from-address';
+
+export type { LocalityParts };
 
 export interface GeocodedParts extends LocalityParts {
   postcode: string | null;
@@ -32,28 +31,13 @@ function applyLocality(slip: SlipAddressFields, locality: LocalityParts, reason:
   if (locality.state) slip.addressStateMatch = { value: locality.state, confidence: 0.95, reason };
 }
 
-interface KnownPostcode {
-  postcode: string;
-  locality: LocalityParts;
-}
-
-async function knownPostcodeInAddress(address: string | null, lookups: AddressLookups): Promise<KnownPostcode | null> {
-  const candidates = [...new Set((address ?? '').match(/(?<!\d)\d{5}(?!\d)/g) ?? [])];
-  const known: KnownPostcode[] = [];
-  for (const postcode of candidates) {
-    const locality = await lookups.findLocality(postcode);
-    if (locality) known.push({ postcode, locality });
-  }
-  return known.length === 1 ? known[0] : null;
-}
-
 async function knownWrittenPostcode(slip: SlipAddressFields, lookups: AddressLookups): Promise<KnownPostcode | null> {
   const postcode = writtenPostcode(slip.postcode);
   if (postcode) {
     const locality = await lookups.findLocality(postcode);
     return locality ? { postcode, locality } : null;
   }
-  return knownPostcodeInAddress(slip.address, lookups);
+  return knownPostcodeInAddress(slip.address, (pc) => lookups.findLocality(pc));
 }
 
 export async function resolveSlipAddress(slip: SlipAddressFields, lookups: AddressLookups): Promise<void> {

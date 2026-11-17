@@ -1857,6 +1857,11 @@
     },
     {
       "check": "D1",
+      "key": "DELIVERY,INSPECTION,PICKUP,SERVICE,SUPPLIER_PICKUP,TRANSFER|backend/src/scm/shared/dp-postcode-rule.ts frontend/src/vendor/shared/dp-postcode-rule.ts",
+      "why": "A VENDORED TWIN, not a second decision: which DP job types need a destination postcode lives in backend/src/scm/shared/dp-postcode-rule.ts, copied byte-identical into frontend/src/vendor/shared so the DP forms can mark the field required. check-shared-mirrors.mjs compares the pair and fails on DIVERGED."
+    },
+    {
+      "check": "D1",
       "key": "DELIVERY,DISMANTLE,PICKUP,SERVICE,SETUP|backend/src/scm/routes/delivery-job-progress.ts backend/src/scm/routes/trips.ts",
       "why": "TWO DIFFERENT QUESTIONS keyed by the stop types: trips.ts stopType is the z.enum of stop types POST /trips/:id/stops accepts (the schema of a stop); delivery-job-progress.ts DP_PROJECT_PHASE maps a DP job type to the project phase its POD photos are filed under (setup / dismantle / service). A stop type missing from the photo map files no project photo; it never changes what a stop may be."
     }
