@@ -60,6 +60,7 @@ import { scanTimer } from '../lib/scan-timing';
 import { scanCatalogSkus, type CatalogSku, type ScanCatalogRow } from '../lib/scan-catalog-skus';
 import { buildScanLineVariants } from '../lib/scan-line-variants';
 import { resolveSlipAddress } from '../lib/scan-address-lookup';
+import { localityForPostcode } from '../lib/postcode-from-address';
 import { hasUnexpectedDigitCount, phoneDigitCountWarnings } from '../lib/scan-phone-check';
 import { readSlipWithAliases } from '../lib/scan-field-aliases';
 import { snapshotDraftBaseline, LEARNING_POOL_BASELINE_FILTER } from '../lib/scan-sample-review';
@@ -158,37 +159,6 @@ async function geocodeAddress(
     const postcode = pick('postal_code');
     if (!state && !city && !postcode) return null;
     return { state, city, postcode };
-  } catch {
-    return null;
-  }
-}
-
-// Postcode IS the driver (spec section 4): once the geocoder resolves a precise
-// 5-digit postcode, the city + state must come from the SAME my_localities row
-// the New SO form's cascade fills from that postcode — NOT from Google's own
-// (sometimes divergent) admin-area components. This snaps the seeded city/state
-// to the catalog's own postcode→city→state mapping so the form's dropdowns can
-// actually select them. Fail-soft: no postcode / no matching row / query error
-// → return null and let the Google components stand.
-async function localityForPostcode(
-  sb: SupabaseClient,
-  postcode: string | null | undefined,
-): Promise<{ city: string | null; state: string | null } | null> {
-  const pc = (postcode ?? '').replace(/[^\d]/g, '');
-  if (pc.length !== 5) return null;
-  try {
-    const { data, error } = await sb
-      .from('my_localities')
-      .select('city, state')
-      .eq('postcode', pc)
-      .limit(1)
-      .maybeSingle();
-    if (error || !data) return null;
-    const row = data as Record<string, unknown>;
-    const city = typeof row.city === 'string' && row.city.trim() !== '' ? row.city : null;
-    const state = typeof row.state === 'string' && row.state.trim() !== '' ? row.state : null;
-    if (!city && !state) return null;
-    return { city, state };
   } catch {
     return null;
   }

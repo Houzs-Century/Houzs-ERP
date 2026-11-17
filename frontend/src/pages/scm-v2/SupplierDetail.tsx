@@ -76,12 +76,11 @@ import {
   useLocalities,
   distinctCountries,
   citiesInState,
-  postcodesInCity,
-  postcodesInState,
   PAYMENT_TERMS_OPTIONS,
 } from '../../vendor/scm/lib/localities-queries';
 import { SgPostcodeField } from '../../vendor/scm/components/SgPostcodeField';
 import { StatePicker } from '../../vendor/scm/components/StatePicker';
+import { PostcodeCascadeField } from '../../vendor/scm/components/PostcodeCascadeField';
 import { composeSupplierSku, looksAmbiguous } from '../../vendor/scm/lib/supplier-sku-helpers';
 import { countModelessMatches, modelMatchesSearch } from '../../vendor/scm/lib/model-picker-search';
 import { parseSupplierCategories, displaySupplierCategories } from '../../vendor/scm/lib/supplier-categories';
@@ -2501,7 +2500,9 @@ const SupplierInfoCard = ({
             {/* Address — Country + State cascade (PR #47), plus Postcode
                 dropdown from scm.my_localities (2026-07-23). Picking State
                 back-derives Country the way the owner asked: pick State,
-                Country auto-fills. Postcode is filtered by State; Area
+                Country auto-fills. Picking a Postcode first fills State and
+                City back (the Sales Order picker, owner 2026-11-17), so a DP
+                supplier pickup can copy it; Area
                 (industrial estate name etc.) stays free-text — it's a
                 supplier-specific concept, not the my_localities city. */}
             <CountrySelect value={form.country} onChange={(v) => {
@@ -2525,7 +2526,7 @@ const SupplierInfoCard = ({
             </label>
             <EditField label="Area" value={form.area} onChange={(v) => setF('area', v)} />
             <CitySelect state={form.state} value={form.city} onChange={(v) => setF('city', v)} />
-            {form.country === 'Singapore' ? <SgPostcodeField value={form.postcode} onChange={(v) => setF('postcode', v)} onResolve={(r) => { setF('address', r.address); if (r.state && r.city) { setF('state', r.state); setF('city', r.city); } }} fieldClassName={styles.field} labelClassName={styles.fieldLabel} inputClassName={styles.fieldInput} /> : <PostcodeSelect state={form.state} city={form.city} value={form.postcode} onChange={(v) => setF('postcode', v)} />}
+            {form.country === 'Singapore' ? <SgPostcodeField value={form.postcode} onChange={(v) => setF('postcode', v)} onResolve={(r) => { setF('address', r.address); if (r.state && r.city) { setF('state', r.state); setF('city', r.city); } }} fieldClassName={styles.field} labelClassName={styles.fieldLabel} inputClassName={styles.fieldInput} /> : <PostcodeCascadeField value={form.postcode} state={form.state} city={form.city} label="Postcode" onPick={(t) => { setF('postcode', t.postcode); setF('state', t.state); setF('city', t.city); }} classes={{ field: styles.field, label: styles.fieldLabel, select: styles.fieldSelect, selectWrap: styles.selectWrap, chevron: styles.selectChevron, input: styles.fieldInput }} />}
             <EditField label="Billing Address" value={form.address} onChange={(v) => setF('address', v)} multiline />
             <EditField label="Notes" value={form.notes} onChange={(v) => setF('notes', v)} multiline />
           </div>
@@ -3724,41 +3725,6 @@ const CitySelect = ({
              '— Pick city —'}
           </option>
           {sortByText(list).map((c) => <option key={c} value={c}>{c}</option>)}
-        </select>
-        <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
-      </span>
-    </label>
-  );
-};
-
-/* PostcodeSelect — dropdown from scm.my_localities filtered by (state, city).
-   When city is empty, dedups postcodes across every city in the state so the
-   operator can still narrow. Disabled when no state is picked, or no seeded
-   postcodes for the (state[, city]) combination. */
-const PostcodeSelect = ({
-  state, city, value, onChange,
-}: { state: string; city: string; value: string; onChange: (v: string) => void }) => {
-  const localities = useLocalities();
-  const rows = localities.data ?? [];
-  const list = useMemo(() => {
-    if (!state) return [];
-    return city ? postcodesInCity(rows, state, city) : postcodesInState(rows, state);
-  }, [rows, state, city]);
-  const isEmpty = !localities.isLoading && list.length === 0;
-  return (
-    <label className={styles.field}>
-      <span className={styles.fieldLabel}>Postcode</span>
-      <span className={styles.selectWrap}>
-        <select className={styles.fieldSelect} value={value ?? ''}
-          disabled={localities.isLoading || !state || isEmpty}
-          onChange={(e) => onChange(e.target.value)}>
-          <option value="">
-            {localities.isLoading ? 'Loading…' :
-             !state ? 'Pick a state first' :
-             isEmpty ? 'No postcodes seeded' :
-             '— Pick postcode —'}
-          </option>
-          {list.map((p) => <option key={p} value={p}>{p}</option>)}
         </select>
         <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
       </span>

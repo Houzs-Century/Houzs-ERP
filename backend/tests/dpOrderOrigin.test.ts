@@ -57,7 +57,7 @@ const WAREHOUSE = { code: 'KL', name: 'KL Warehouse', location: 'Lot 12, Jalan B
 const THREEPL = { code: '3PL-003', name: 'MSJ TRANSPORT SDN BHD', contact_name: 'Rahman', contact_phone: '0127778888', office_phone: null, address: 'No 3, Jalan Perdagangan, Johor Bahru' };
 // A transfer needs a DESTINATION address; supply it by override so the origin is
 // the only thing resolved from the (shared) fake master row.
-const DEST = { address1: 'Dest street, KL' };
+const DEST = { address1: 'Dest street, KL', postcode: '50450' };
 
 describe('POST /dp-orders — a TRANSFER records its origin (from)', () => {
   test('origin picked as our warehouse fills the from_* columns', async () => {
@@ -98,7 +98,7 @@ describe('POST /dp-orders — a TRANSFER records its origin (from)', () => {
 
   test('a non-TRANSFER job never carries an origin', async () => {
     const { a, calls } = app(null);
-    const res = await send(a, { jobType: 'SETUP', overrides: { address1: 'Hall A, KLCC' } });
+    const res = await send(a, { jobType: 'SETUP', overrides: { address1: 'Hall A, KLCC', postcode: '50088' } });
     expect(res.status).toBe(201);
     const insert = insertOf(calls);
     expect(insert.from_name).toBeNull();

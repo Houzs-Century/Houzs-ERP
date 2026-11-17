@@ -9,6 +9,7 @@ import {
   jobKey, jobRefOf, LEG_LABEL, detailRows, str, hm, type JobRef, type JobResponse,
 } from "../../vendor/scm/lib/delivery-job";
 import { PodPhotoAlbum } from "./PodPhotoAlbum";
+import { DpJobDetails } from "./DpJobDetails";
 import { DoProofOfDeliveryCard, type DoPodFields } from "../../pages/scm-v2/DoProofOfDeliveryCard";
 
 /* The right-hand panel a single click opens on Delivery Planning, DP Orders,
@@ -154,7 +155,9 @@ function JobBody({ jobRef }: { jobRef: JobRef }) {
         </button>
       )}
       <Section title="Job">
-        {detailRows(ctx).map(([k, v]) => <Row key={k} k={k} v={v} />)}
+        {/* A DP job's State comes from its own row below, with the postcode. */}
+        {detailRows(ctx).filter(([k]) => !(jobRef.sourceType === "dp" && k === "State")).map(([k, v]) => <Row key={k} k={k} v={v} />)}
+        {jobRef.sourceType === "dp" && <DpJobDetails dpId={jobRef.sourceId} />}
         {Array.isArray(ctx.lines) && ctx.lines.length > 0 && (
           <div className="mt-2 text-[12.5px] text-ink-muted">{ctx.lines.length} item line{ctx.lines.length === 1 ? "" : "s"} on the transfer</div>
         )}

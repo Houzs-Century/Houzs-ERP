@@ -199,6 +199,9 @@ export function SearchableSelect({
         aria-expanded={menuOpen}
         aria-controls={menuOpen ? listId : undefined}
         aria-autocomplete="list"
+        /* A picker, not a form field: without this Chrome offers the user's saved
+           home addresses on a "Postcode" picker (owner 2026-11-17). */
+        autoComplete="off"
         aria-activedescendant={menuOpen && activeOption >= 0 ? optionId(activeOption) : undefined}
         // Closed → the selected label; open → the live search term.
         value={open ? search : selectedLabel}

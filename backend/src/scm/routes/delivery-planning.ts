@@ -117,6 +117,7 @@ import { pgrestIn } from '../lib/pgrest-in-list';
 import { stepClock } from '../../lib/step-timing';
 import { loadRegionConfig, stateToRegionsFromConfig, FALLBACK_DEFAULT_REGION, type Region, type RegionConfig } from '../lib/delivery-board-regions';
 import { assembleSoOrders } from '../lib/delivery-board-so-rows';
+import { fillDpRowsPostcode } from '../lib/postcode-from-address';
 import { boardSourceOf, loadBoardHead, kickOffRestBoardReads, loadBoardMaps, scheduleBoardShadow } from '../lib/delivery-board-source';
 
 export const deliveryPlanning = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -548,7 +549,11 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     const dpR = await dpResP; // kicked off up top; a read error re-throws into this try (logs, leaves the rest)
     if ('err' in dpR) throw dpR.err; lap('dp-dp-rows');
     const dpRes = dpR.ok;
-    for (const d of (dpRes.data ?? []) as Array<Record<string, unknown>>) {
+    const dpRows = (dpRes.data ?? []) as Array<Record<string, unknown>>;
+    // A job saved with its postcode only in the address text: show the postcode +
+    // state (and so its region) from my_localities. Read-only, no write.
+    await fillDpRowsPostcode(sb, dpRows);
+    for (const d of dpRows) {
       const dpState = (d.state as string | null) ?? null;
       const stateRegions = stateToRegionsFromConfig(regionCfg, dpState, null);
       const primaryRegion = stateRegions[0] ?? FALLBACK_DEFAULT_REGION;

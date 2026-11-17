@@ -78,6 +78,10 @@ export interface StopEnrichment {
   earliestTime: string | null;
   latestTime: string | null;
   accessNote: string | null;
+  /** The stop's postcode + state: off the SO, the DP job, or the postcode found
+   *  in the address text (scm/lib/postcode-from-address.ts). */
+  postcode: string | null;
+  state: string | null;
 }
 
 export interface DayStop {
@@ -91,6 +95,8 @@ export interface DayStop {
   earliest_time: string | null;
   latest_time: string | null;
   access_note: string | null;
+  postcode: string | null;
+  state: string | null;
   eta_offset_s: number | null;
   leg_distance_m: number | null;
   revenue_sen: number;
@@ -145,6 +151,7 @@ export interface AssembleInput {
 
 const EMPTY_ENRICH: StopEnrichment = {
   phone: null, houseType: null, earliestTime: null, latestTime: null, accessNote: null,
+  postcode: null, state: null,
 };
 
 function num(v: unknown): number {
@@ -210,6 +217,8 @@ export function assembleDayView(input: AssembleInput): { trips: DayTrip[] } {
         earliest_time: enrich.earliestTime,
         latest_time: enrich.latestTime,
         access_note: enrich.accessNote,
+        postcode: enrich.postcode,
+        state: enrich.state,
         eta_offset_s: s.eta_offset_s ?? null,
         leg_distance_m: s.leg_distance_m ?? null,
         revenue_sen: rev,
