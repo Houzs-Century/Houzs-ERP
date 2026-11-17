@@ -33,6 +33,7 @@ const FIXED: Record<string, JournalClass> = {
   SETTLEADJ: 'BANK',
   SETTLEBANK: 'BANK',
   SETTLECARD: 'BANK', // card payments a bank movement took in itself (owner 2026-11-17)
+  SETTLEFOR: 'BANK', // another company's card sale swiped on this terminal (owner 2026-11-17)
   STOCKADJ: 'GENERAL',
   MANUAL: 'GENERAL',
   SOCONV: 'GENERAL', // money moved from a cancelled order to a new one (docs/bugs/0927)
