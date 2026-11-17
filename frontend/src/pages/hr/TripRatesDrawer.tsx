@@ -10,6 +10,7 @@ import { ResizableDrawer } from "../../components/ResizableDrawer";
 import { useDialog } from "../../hooks/useDialog";
 import { useToast } from "../../hooks/useToast";
 import { formatDate } from "../../lib/utils";
+import { clock12 } from "../../lib/clock12";
 import { todayMY } from "../../vendor/shared/format";
 import { DateField } from "../../vendor/scm/components/DateField";
 import {
@@ -334,12 +335,12 @@ export function TripRatesDrawer({ onClose, onSaved }: { onClose: () => void; onS
               {form.tiers.map((t, i) => {
                 const setTier = (patch: Partial<Draft["tiers"][number]>) => edit((f) => ({ ...f, tiers: f.tiers.map((x, k) => (k === i ? { ...x, ...patch } : x)) }));
                 return (
-                  <div key={i} className="grid grid-cols-[1fr_90px_90px_20px] items-end gap-2 max-sm:grid-cols-2">
+                  <div key={i} className="grid grid-cols-[96px_90px_90px_20px] items-end justify-start gap-2 max-sm:grid-cols-2">
                     <Field label="Clock-out after">
                       <select className={cell} value={t.after} disabled={ro} onChange={(e) => setTier({ after: e.target.value })}>
                         {NIGHT_TIMES.map((x) => (
                           <option key={x} value={x}>
-                            {x}
+                            {clock12(x)}
                           </option>
                         ))}
                       </select>
@@ -351,7 +352,7 @@ export function TripRatesDrawer({ onClose, onSaved }: { onClose: () => void; onS
                       <input className={cell} value={t.helper} disabled={ro} inputMode="decimal" onChange={(e) => setTier({ helper: e.target.value })} />
                     </Field>
                     {!ro ? (
-                      <button type="button" className={`${removeBtn} mb-1.5`} aria-label={`Remove tier ${t.after}`} onClick={() => edit((f) => ({ ...f, tiers: f.tiers.filter((_, k) => k !== i) }))}>
+                      <button type="button" className={`${removeBtn} mb-1.5`} aria-label={`Remove tier ${clock12(t.after)}`} onClick={() => edit((f) => ({ ...f, tiers: f.tiers.filter((_, k) => k !== i) }))}>
                         <Trash2 size={11} />
                       </button>
                     ) : (

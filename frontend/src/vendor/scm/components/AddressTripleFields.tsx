@@ -19,7 +19,6 @@
 // out as three of its own cells. `classes` carries the host's CSS class names.
 // ----------------------------------------------------------------------------
 
-import { ChevronDown } from 'lucide-react';
 import { useMemo } from 'react';
 import { useLocalities, countryForState } from '../lib/localities-queries';
 import {
@@ -83,18 +82,16 @@ export const AddressTripleFields = ({
       </label>
       <label className={c.field}>
         <span className={c.label}>City</span>
-        <span className={c.selectWrap}>
-          <SearchableSelect
-            className={c.select}
-            ariaLabel="City"
-            value={value.city}
-            onChange={(next) => emit(pickCity(rows, value, next))}
-            disabled={disabled || loading}
-            placeholder={loading ? 'Loading…' : cityPlaceholder(value.state)}
-            options={sortByText(cities).map((x) => ({ value: x, label: x }))}
-          />
-          <ChevronDown size={14} strokeWidth={1.75} className={c.chevron} />
-        </span>
+        <SearchableSelect
+          chevron
+          className={c.select}
+          ariaLabel="City"
+          value={value.city}
+          onChange={(next) => emit(pickCity(rows, value, next))}
+          disabled={disabled || loading}
+          placeholder={loading ? 'Loading…' : cityPlaceholder(value.state)}
+          options={sortByText(cities).map((x) => ({ value: x, label: x }))}
+        />
       </label>
       <AddressPostcodeField
         country={effectiveCountry}

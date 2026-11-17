@@ -12,6 +12,7 @@ import type { DriverRow } from '../../../vendor/scm/lib/drivers-queries';
 import type { StopStatus } from '../../../vendor/scm/lib/delivery-stop-status';
 import { windowEndMinutes } from '../../../vendor/scm/lib/delivery-stop-status';
 import { jobRefOf, LEG_LABEL } from '../../../vendor/scm/lib/delivery-job';
+import { addressOnce } from '../../../vendor/scm/lib/address-once';
 import type { MapRoute, MapRouteStop, MapLatLng } from '../../../vendor/scm/lib/delivery-map-model';
 import {
   slotKindOf, slotLabelOf, slotSortKey, condenseWindow, runStatusOf, rollupRun, isLate, lateReason,
@@ -183,7 +184,7 @@ export function docRowVM(o: PlanningOrder, status: StopStatus, clock: DayClock, 
     ref: o.so_ref ?? null,
     customer: o.debtor_name ?? '',
     phone: o.phone ?? null,
-    address: o.address ?? null,
+    address: addressOnce(o.address) || null,
     region: o.region,
     salespersonId: o.salesperson_id ?? null,
     agent: o.agent ?? null,

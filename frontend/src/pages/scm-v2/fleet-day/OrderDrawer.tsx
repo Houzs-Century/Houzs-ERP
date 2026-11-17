@@ -285,7 +285,7 @@ export function OrderDrawer({
 
             {/* POD + timeline — an SO delivery's off its delivery order; a non-SO job's
                 off its own progress, with the same office upload as the job panel. */}
-            {jobRef && <JobBody key={jobKey(jobRef)} jobRef={jobRef} />}
+            {jobRef && <JobBody key={jobKey(jobRef)} jobRef={jobRef} inStopDrawer />}
             {doc.rowType === 'so' && (
               doc.latestLiveDoId ? (
                 pod.data?.deliveryOrder

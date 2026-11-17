@@ -64,6 +64,17 @@ export const windowLabel = (start: string | null, end: string | null): string | 
   return a ?? b;
 };
 
+/* Facts the Last Mile stop drawer already shows above the embedded job panel
+   (address, state, customer contact, the day itself). */
+const STOP_DRAWER_FACTS = new Set(["Address", "State", "Location", "Contact", "Date"]);
+
+/** The job panel's Job rows. A DP job's State comes from its own row (with the
+ *  postcode), and inside the Last Mile stop drawer the facts it already shows are
+ *  left out, so each is on screen once. */
+export function jobSectionRows(c: JobCtx, sourceType: string, inStopDrawer: boolean): Array<[string, string | null]> {
+  return detailRows(c).filter(([k]) => !(sourceType === "dp" && k === "State") && !(inStopDrawer && STOP_DRAWER_FACTS.has(k)));
+}
+
 /* What the crew needs to see, by job type (owner, 2026-10-08). */
 export function detailRows(c: JobCtx): Array<[string, string | null]> {
   const common: Array<[string, string | null]> = [
