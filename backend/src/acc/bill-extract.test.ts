@@ -52,6 +52,22 @@ describe('coerceBillJson', () => {
     expect(coerceBillJson({}).severalReceipts).toBe(false);
   });
 
+  /* Owner 2026-11-16 (已经有 claim form 还是会读错就不应该): a claim form's rows
+     are the claim's lines; its Total row is not one, so the rows add up to it. */
+  it("keeps a claim form's rows as its lines and drops its Total row", () => {
+    const out = coerceBillJson({ documentKind: 'summary', vendorName: 'Elise', totalRm: 2024.03, lines: [
+      { description: '21 Oct IKEA Table Lamp', amountRm: 1669.15 },
+      { description: '21 Oct Haier Dust Mite Vacuum', amountRm: 354.88 },
+      { description: 'Total', amountRm: 2024.03 },
+    ] });
+    expect(out.documentKind).toBe('summary');
+    expect(out.totalSen).toBe(202403);
+    expect(out.lines).toEqual([
+      { description: '21 Oct IKEA Table Lamp', amountSen: 166915 },
+      { description: '21 Oct Haier Dust Mite Vacuum', amountSen: 35488 },
+    ]);
+  });
+
   /* Owner 2026-10-02 (upload 后很多资料都没有填): a payment request fills its
      "What is it for" and the payee's bank from the paper — read as printed. */
   it('reads the one-line summary and the printed bank account; nothing printed is null', () => {

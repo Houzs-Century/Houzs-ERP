@@ -106,6 +106,13 @@ export const ASSR_LEG_REMARK_COL = {
   customer_pickup: 'pickup_remark', inspection: 'inspection_remark', delivery: 'delivery_remark',
 } as const;
 
+/** The amend / reschedule reason a Service Case keeps per leg (mig 20261116T1010),
+ *  mirroring the SO header's amend_reason: the reason THIS leg's date moved. The
+ *  board's Amend Reason column and the Set-job-date drawer write it; recorded only. */
+export const ASSR_LEG_AMEND_REASON_COL = {
+  customer_pickup: 'pickup_amend_reason', inspection: 'inspection_amend_reason', delivery: 'delivery_amend_reason',
+} as const;
+
 /* Stages AFTER each leg's own step (the HC sheet feed's rule): that leg is done. */
 const PAST_PICKUP = PAST_PICKUP_STAGES;
 const PAST_INSPECTION = new Set(['pending_supplier_pickup', ...PAST_PICKUP_STAGES]);
@@ -222,6 +229,9 @@ export function assrBoardUnionSql(c: CompanyScopeCtx, recentClosedSince: string)
               assr_cases.pickup_remark AS pickup_remark,
               assr_cases.inspection_remark AS inspection_remark,
               assr_cases.delivery_remark AS delivery_remark,
+              assr_cases.pickup_amend_reason AS pickup_amend_reason,
+              assr_cases.inspection_amend_reason AS inspection_amend_reason,
+              assr_cases.delivery_amend_reason AS delivery_amend_reason,
               assr_cases.closed_at     AS closed_at,
               assr_cases.archived_at   AS archived_at,
               assr_cases.delivery_message_status AS delivery_message_status,

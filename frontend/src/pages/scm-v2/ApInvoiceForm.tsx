@@ -32,7 +32,9 @@ import { DateField } from '../../vendor/scm/components/DateField';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import { fmtSen } from '../../vendor/shared/format';
+import { useColumnWidths, type ColumnWidthSpec } from './finance/useColumnWidths';
 import styles from './SalesOrderDetail.module.css';
+import grid from './ApInvoiceForm.module.css';
 
 /** projectId: the event the line's money is for (owner 2026-09-30, 5a) — null = none. */
 export type ApFormLine = { rid: number; description: string; debitAccountCode: string; amountSen: number; projectId: number | null };
@@ -156,13 +158,20 @@ export const formFromRequest = (
 };
 
 const soft: React.CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
-const th: React.CSSProperties = {
-  padding: '6px 8px', textAlign: 'left', fontSize: 'var(--fs-11)', fontWeight: 600, letterSpacing: '0.04em',
-  textTransform: 'uppercase', color: 'var(--fg-muted)', borderBottom: '1px solid var(--border-weak, #e3e1da)', whiteSpace: 'nowrap',
-};
-const td: React.CSSProperties = { padding: '6px 8px', verticalAlign: 'middle' };
-const right: React.CSSProperties = { textAlign: 'right', fontFamily: 'var(--font-mono)' };
 const iconBtn: React.CSSProperties = { border: 'none', background: 'none', cursor: 'pointer', color: 'var(--fg-muted)', padding: 2 };
+
+/* The lines' columns in the owner's order, and the tracks they open at (owner
+   2026-11-16: 这里的gap 可以给我自己调吗 — the account was wide while the
+   description and the event were cut). Account and Description are shares of
+   the form so a drag moves only the edge being dragged; the Event takes the
+   rest. Each person's drag is kept in this browser (fin-ap-cw) until "Reset
+   column widths". The last track is the remove button's. */
+const LINE_COLUMNS = ['Account', 'Description', 'Amount (RM)', 'Event'] as const;
+const LINE_WIDTHS: ColumnWidthSpec = {
+  defaults: ['minmax(160px,24%)', 'minmax(160px,30%)', '130px', 'minmax(160px,1fr)', '24px'],
+  min: [120, 120, 100, 120, 24],
+  gap: 12,
+};
 
 export const ApInvoiceForm = ({
   mode, initial, suppliers, suppliersLoading = false, lineAccounts, posted = false, paidSen = 0, saving, onSubmit, onCancel,
@@ -206,11 +215,12 @@ export const ApInvoiceForm = ({
   /* Insert adds a line and LANDS on it (owner: 按 Ins 直接加然后直接跳到那一行);
      Enter on an amount hops to the next line's account, adding one when
      there is none. The landing happens after React has drawn the row. */
-  const tableRef = useRef<HTMLTableElement>(null);
+  const linesRef = useRef<HTMLDivElement>(null);
+  const cw = useColumnWidths('ap', LINE_WIDTHS);
   const [landOn, setLandOn] = useState<number | null>(null);
   useEffect(() => {
     if (landOn == null) return;
-    const el = tableRef.current?.querySelector<HTMLInputElement>(`tr[data-line="${landOn}"] input[role="combobox"]`);
+    const el = linesRef.current?.querySelector<HTMLInputElement>(`[data-line="${landOn}"] input[role="combobox"]`);
     el?.focus();
     setLandOn(null);
   }, [landOn, v.lines]);
@@ -381,63 +391,67 @@ export const ApInvoiceForm = ({
         onUse={(id) => setV((prev) => ({ ...prev, lines: prev.lines.map((l) => ({ ...l, projectId: id })) }))} />
 
       {/* The lines, in the owner's order: account number, description, amount.
-          Insert anywhere in the table adds a line and lands on it. */}
-      <table ref={tableRef} style={{ width: '100%', borderCollapse: 'collapse' }}
-        onKeyDown={(e) => { if (e.key === 'Insert') { e.preventDefault(); addLine(true); } }}>
-        <thead>
-          <tr>
-            <th style={{ ...th, width: '34%' }}>Account</th>
-            <th style={th}>Description</th>
-            <th style={{ ...th, textAlign: 'right', width: 150 }}>Amount (RM)</th>
-            <th style={{ ...th, width: '24%' }}>Event</th>
-            <th style={{ ...th, width: 36 }} />
-          </tr>
-        </thead>
-        <tbody>
+          Insert anywhere in the lines adds a line and lands on it. A header's
+          right edge drags its column; a cell cut short shows its whole text
+          on hover (the account and the event pickers already do). */}
+      <div className={grid.scroll}>
+        <div ref={linesRef} role="table" aria-label="Bill lines" data-cw-root="ap" style={{ minWidth: cw.minWidth }}
+          onKeyDown={(e) => { if (e.key === 'Insert') { e.preventDefault(); addLine(true); } }}>
+          <div role="row" data-cw-row="" className={`${grid.row} ${grid.head}`} style={{ gridTemplateColumns: cw.template }}>
+            {LINE_COLUMNS.map((label, i) => (
+              <span key={label} role="columnheader" data-cw-cell={i} className={grid.headCell} style={i === 2 ? { textAlign: 'right' } : undefined}>
+                <span data-cw-lbl="" className={grid.headLabel}>{label}</span>
+                <span className={grid.resize} {...cw.handle(i)}><span className={grid.resizeLine} /></span>
+              </span>
+            ))}
+            <span role="columnheader" />
+          </div>
           {v.lines.map((l) => (
-            <tr key={l.rid} data-line={l.rid}>
-              <td style={td}>
+            <div key={l.rid} role="row" data-cw-row="" data-line={l.rid} className={grid.row} style={{ gridTemplateColumns: cw.template }}>
+              <div role="cell">
                 <AccountSelect accounts={lineAccounts} value={l.debitAccountCode} className={styles.fieldInput}
                   onChange={(code) => patchLine(l.rid, { debitAccountCode: code })} placeholder="— account this line charges —" />
-              </td>
-              <td style={td}>
+              </div>
+              <div role="cell">
                 <input data-upper className={styles.fieldInput} style={{ width: '100%' }} placeholder="Description" value={l.description} aria-label={`line ${l.rid} description`}
+                  title={l.description ? l.description.toUpperCase() : undefined}
                   onChange={(e) => patchLine(l.rid, { description: e.target.value })} />
-              </td>
-              <td style={td}>
+              </div>
+              <div role="cell">
                 <MoneyInput bare valueSen={l.amountSen} inputClassName={styles.fieldInput} selectOnFocus aria-label={`line ${l.rid} amount`}
-                  placeholder="0.00" style={{ width: '100%' }}
+                  placeholder="0.00" style={{ width: '100%' }} title={l.amountSen > 0 ? fmtSen(l.amountSen) : undefined}
                   onCommit={(sen) => patchLine(l.rid, { amountSen: sen ?? 0 })}
                   onKeyDown={(e) => { if (e.key === 'Enter') hopFrom(l.rid); }} />
-              </td>
+              </div>
               {/* The event last: the owner's typing order (account, description,
                   amount) stays unbroken; the header's picker usually sets it. */}
-              <td style={td}>
+              <div role="cell">
                 <EventSelect value={l.projectId} around={v.invoiceDate || null} className={styles.fieldInput} aria-label={`line ${l.rid} event`}
                   onChange={(id) => patchLine(l.rid, { projectId: id })} />
-              </td>
-              <td style={td}>
+              </div>
+              <div role="cell">
                 {v.lines.length > 1 && (
                   <button type="button" aria-label={`remove line ${l.rid}`} onClick={() => removeLine(l.rid)} style={iconBtn}>
                     <X size={14} strokeWidth={1.75} />
                   </button>
                 )}
-              </td>
-            </tr>
+              </div>
+            </div>
           ))}
-        </tbody>
-        <tfoot>
-          <tr style={{ borderTop: '1px solid var(--border-weak, #e3e1da)' }}>
-            <td colSpan={2} style={td}>
+          <div role="row" data-cw-row="" className={`${grid.row} ${grid.foot}`} style={{ gridTemplateColumns: cw.template }}>
+            <div role="cell" style={{ gridColumn: 'span 2' }}>
               <AddLineButton variant="ghost" onClick={() => addLine(true)} />
               <span style={{ ...soft, marginLeft: 'var(--space-3)' }}>Insert adds a line · Enter on an amount moves down</span>
-            </td>
-            <td style={{ ...td, ...right, fontWeight: 700, color: belowPaid ? 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' : undefined }}>Total {fmtSen(total)}</td>
-            <td />
-            <td />
-          </tr>
-        </tfoot>
-      </table>
+            </div>
+            <div role="cell" className={grid.total} style={belowPaid ? { color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' } : undefined}>Total {fmtSen(total)}</div>
+          </div>
+        </div>
+      </div>
+      {cw.custom && (
+        <div className={grid.resetRow}>
+          <button type="button" className={grid.resetLink} onClick={cw.reset}>Reset column widths</button>
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: 'var(--space-2)', justifyContent: 'flex-end', alignItems: 'center' }}>
         {belowPaid && <span style={{ fontSize: 'var(--fs-12)', color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' }}>The total cannot fall below the {fmtSen(paidSen)} already paid.</span>}

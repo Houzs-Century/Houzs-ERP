@@ -125,6 +125,7 @@ mfgSalesOrdersListEnrichment.get('/list-mrp-enrichment', async (c) => {
         status: r.status ?? null,
         storedOverride: override,
         effectiveDD: amendedDD ?? customerDD,
+        amendedDD,
         salesExemptionExpiry: soExemptionExpiryOf({
           sales_exemption_expiry: r.salesExemptionExpiry ?? r.sales_exemption_expiry ?? null,
           ac_sales_exemption_expiry: acExpiryByDoc.get(r.doc_no) ?? null,

@@ -29,8 +29,10 @@ vi.mock("../auth/salesAccess", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../auth/salesAccess")>()),
   canOperateDeliveryOrders: () => true,
 }));
+// canAny: () => false — the POD screen never offers "Create service case" (the
+// office opens the case from the DO / SO detail, owner 2026-11-16).
 vi.mock("../auth/AuthContext", () => ({
-  useAuth: () => ({ user: { id: "u-1" }, can: () => true, pageAccess: () => "write" }),
+  useAuth: () => ({ user: { id: "u-1" }, can: () => true, canAny: () => false, pageAccess: () => "write" }),
 }));
 vi.mock("../vendor/scm/lib/delivery-order-queries", async (importOriginal) => {
   const real = await importOriginal<typeof import("../vendor/scm/lib/delivery-order-queries")>();
@@ -63,7 +65,8 @@ beforeEach(() => {
   authedFetch.mockImplementation(async (url: string, init?: Init) => {
     if (url.endsWith("/delivery-issue")) {
       if (reportFails) throw new Error("Network down");
-      return { issue: { id: "iss-1", assr_no: "ASSR/2611-001" } };
+      // Reporting records the problem only — no service case (the office opens it).
+      return { issue: { id: "iss-1", assr_case_id: null, assr_no: null } };
     }
     if (url.endsWith("/delivery-issues")) return { issues: [] };
     if (init?.method === "PATCH") return { deliveryOrder: { id: "do-uuid-1", status: "DELIVERED" } };
@@ -146,5 +149,24 @@ describe("MobilePOD — delivered with issue", () => {
     fireEvent.click(screen.getByText("Confirm delivered →"));
     await waitFor(() => expect(onDone).toHaveBeenCalled());
     expect(posted("/delivery-issue")).toBeUndefined();
+  });
+
+  it("shows an already-reported problem but offers the crew no 'Create service case'", async () => {
+    // The office opens the case, not the crew — so the POD card never shows the button.
+    authedFetch.mockImplementation(async (url: string) => {
+      if (url.endsWith("/delivery-issues")) {
+        return { issues: [{
+          id: "iss-9", delivery_order_id: "do-uuid-1", do_number: "DO-2611-001", so_doc_no: "HC-SO-1",
+          source_type: null, source_id: null, leg: null, kinds: ["damaged"], note: "Leg cracked",
+          photo_keys: ["slips/a"], assr_case_id: null, assr_no: null, reported_by: 1, reported_at: "2026-11-16T02:00:00Z",
+        }] };
+      }
+      return {};
+    });
+    wrap();
+    const card = await screen.findByTestId("delivery-issues");
+    expect(within(card).getByText("Damaged")).toBeTruthy();
+    expect(within(card).getByText("Leg cracked")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Create service case" })).toBeNull();
   });
 });

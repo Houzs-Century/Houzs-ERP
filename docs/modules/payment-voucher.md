@@ -132,6 +132,12 @@ distinguished by `purpose`. Used by Finance/AP staff; desktop only.
   5 minutes is failed by the poll. The receipt read (`/scan-payment/extract`)
   goes the same way. The synchronous doors stay for old open tabs.
 - Every way out of the pile carries the bill's own pages through `pv-file-handoff.ts` (module stash, never `location.state`): Open as voucher, Open as AP invoice, and Open as bill / Open as ONE bill (New Purchase Invoice, which uploads them to `POST /purchase-invoices/:id/files` right after the create; a failed page is named in the result dialog, never un-saves the invoice).
+- The pile sorts what it read (`bill-pile-sort.ts`): a payment slip, a listing
+  without amounts and a page repeating a receipt (same number and total) are set
+  aside: evidence, never a line. A **claim form** whose rows carry amounts that
+  add up to its total IS the claim: its rows are the voucher's lines, and the
+  receipts it lists (by amount) and the other pages of its own file are set
+  aside as its evidence and open with it. "It is a bill" overrules any of it.
 - The pile lives in `bill-pile-store.ts` (one per company and per kind) while
   the tab lives (owner 2026-10-06): opening a bill and coming back finds the
   rest as read, each opened bill says so, and `BackToPile` on the AP Invoices,

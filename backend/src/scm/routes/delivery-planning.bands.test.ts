@@ -14,6 +14,8 @@
 // expiry - the original delivery date - already past) move from PENDING_SCHEDULE
 // to OVERDUE, so they lose the Pending Schedule stamp and arrangement_stage; the
 // counts go PENDING_SCHEDULE 8 -> 5, OVERDUE 0 -> 3. Nothing else moved.
+// Regenerated 2026-11-17 for "ready is Pending Schedule, Overdue is not ready on
+// or past the due day": those three go back to PENDING_SCHEDULE. Nothing else moved.
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import before from './__fixtures__/dp-board-before.json';
