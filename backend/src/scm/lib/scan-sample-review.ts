@@ -44,6 +44,7 @@
 
 import type { SupabaseClient as SupabaseClientGeneric } from '@supabase/supabase-js';
 import { recordSlipAliases, slipAliasPairs } from './scan-field-aliases';
+import { HEADER_FIELDS, LINE_FIELDS, asObj, changedFields, isDroppedBlankLine } from './scan-slip-fields';
 
 // getSupabaseService is schema-parameterised (db:{schema:'scm'}), so the bare
 // SupabaseClient type does not accept it. Same loosened alias scan-so.ts uses.
@@ -166,9 +167,10 @@ const codeMatch = (v: unknown): CodeMatch | null => {
 };
 
 /* The SO carries the phone as +60<national significant digits> (the create
-   core normalises it); ExtractedSlip.phones holds the bare national digits
-   (postProcessSlip). Strip the prefix back off so an untouched phone inverts
-   to exactly the string the extraction produced and contributes no diff. */
+   core normalises it); ExtractedSlip.phones is the raw read as written (e.g.
+   "012-345 6789"). Strip the prefix so the inverted blob holds bare digits.
+   That is not the raw string, so only a compare against the draft baseline
+   (same inversion on both sides) can tell an untouched phone from an edited one. */
 function unprefixPhone(v: unknown): string | null {
   const t = text(v);
   if (t === null || t === SHELL_PHONE) return null;
@@ -432,6 +434,160 @@ export function buildCorrectedSlipFromSo(
 }
 
 // ---------------------------------------------------------------------------
+// Draft baseline: what the pipeline left on the draft, so a later confirm can
+// tell a person's change from the pipeline's own (E.164 phone, geocoded
+// postcode, catalog snaps, withheld deposit, dropped dates).
+// ---------------------------------------------------------------------------
+
+async function readSoDraft(
+  svc: SupabaseClient,
+  docNo: string,
+): Promise<{ header: SoHeaderSnapshot | null; items: SoItemSnapshot[]; error: string | null }> {
+  const [{ data: headerRow, error: headerErr }, { data: itemRows, error: itemsErr }] = await Promise.all([
+    svc.from('mfg_sales_orders').select(SO_HEADER_COLS).eq('doc_no', docNo).maybeSingle(),
+    svc
+      .from('mfg_sales_order_items')
+      .select(SO_ITEM_COLS)
+      .eq('doc_no', docNo)
+      // Same ordering the SO detail read uses — line_no is the persisted
+      // listing order (migration 0165); pre-0165 rows fall back to created_at.
+      .order('line_no', { ascending: true, nullsFirst: false })
+      .order('created_at', { ascending: true }),
+  ]);
+  const failure = (headerErr ?? itemsErr) as { message?: string } | null;
+  return {
+    header: (headerRow as SoHeaderSnapshot | null) ?? null,
+    items: (itemRows as SoItemSnapshot[] | null) ?? [],
+    error: failure ? (failure.message ?? 'read failed') : null,
+  };
+}
+
+export interface SnapshotDraftBaselineArgs {
+  sampleId: string;
+  docNo: string;
+  /** The raw read exactly as it was stored on the sample. */
+  extracted: unknown;
+}
+
+/**
+ * Store the draft's own shape (after every automatic write) on the sample.
+ * Never throws: a failed snapshot must not fail the scan job. The sample then
+ * has no baseline and is reviewed the old way.
+ */
+export async function snapshotDraftBaseline(
+  svc: SupabaseClient,
+  { sampleId, docNo, extracted }: SnapshotDraftBaselineArgs,
+): Promise<void> {
+  try {
+    const draft = await readSoDraft(svc, docNo);
+    if (draft.error !== null || draft.header === null) {
+      throw new Error(draft.error ?? 'draft header not found');
+    }
+    const rawBlob = asObj(extracted);
+    const baseline = rawBlob === null ? null : buildCorrectedSlipFromSo(withoutDroppedBlankLines(rawBlob), draft.header, draft.items);
+    if (baseline === null) throw new Error('baseline could not be built from the extraction');
+    const { error: writeErr } = await svc.from('so_scan_samples').update({ draft_baseline: baseline }).eq('id', sampleId);
+    if (writeErr) throw new Error(writeErr.message);
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('[scan-sample-review] draft baseline snapshot failed (non-fatal):', { sampleId, docNo }, (e as Error).message);
+  }
+}
+
+/* Learning pool filter for the distillers. Rows with a baseline were judged
+   against the draft the pipeline left; rows from the interactive confirm route
+   never get one, so rows created from the day this shipped are kept too. Older
+   baseline-less CONFIRMED rows carry pipeline transforms as "corrections". */
+export const LEARNING_POOL_CLEAN_SINCE = '2026-11-16T16:00:00.000Z';
+export const LEARNING_POOL_BASELINE_FILTER = `draft_baseline.not.is.null,created_at.gte.${LEARNING_POOL_CLEAN_SINCE}`;
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const asLines = (v: unknown): Array<Record<string, unknown>> =>
+  Array.isArray(v) ? (v as Array<Record<string, unknown>>) : [];
+
+/* Key-order independent: a jsonb round trip reorders object keys. */
+function canonical(v: unknown): string {
+  const sorted = (x: unknown): unknown => {
+    if (Array.isArray(x)) return x.map(sorted);
+    if (x && typeof x === 'object') {
+      return Object.fromEntries(
+        Object.entries(x as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([k, val]) => [k, sorted(val)]),
+      );
+    }
+    return x ?? null;
+  };
+  return JSON.stringify(sorted(v));
+}
+
+/* The catalog is not known here, so a raw SKU code stands in for "has a catalog SKU". */
+const isDroppedRawLine = (l: Record<string, unknown>): boolean =>
+  isDroppedBlankLine(l.rawText, asObj(l.skuMatch)?.code != null);
+
+/* The extraction without the blank lines the draft builder skips, so the draft's
+   lines and the slip's lines have the same length when aligned. Baseline path only. */
+function withoutDroppedBlankLines(extracted: Record<string, unknown>): Record<string, unknown> {
+  return { ...extracted, lines: asLines(extracted.lines).filter((l) => !isDroppedRawLine(l)) };
+}
+
+/* The one line of `lines` carrying this non-empty rawText, or null when there
+   is none or it is not unique. rawText is the only provenance a draft line
+   keeps of its slip line; anything else would be a guess. */
+export function uniqueByRawText(
+  lines: Array<Record<string, unknown>>,
+  rawText: unknown,
+): Record<string, unknown> | null {
+  if (typeof rawText !== 'string' || rawText.trim() === '') return null;
+  const hits = lines.filter((l) => l.rawText === rawText);
+  return hits.length === 1 ? (hits[0] ?? null) : null;
+}
+
+/**
+ * `extracted` with only the fields a person changed on the draft: a field of
+ * `final` is taken only when it differs from `baseline` (the draft as the
+ * pipeline left it). Pure; none of the inputs is mutated. Compares are
+ * key-order independent.
+ *
+ * Line changes are judged baseline vs final only: if no line moved, the raw
+ * lines are returned verbatim (the pipeline drops blank raw lines, so counts
+ * against the raw read differ on an untouched draft). Otherwise a final line is
+ * tied to its baseline and raw line only through a unique non-empty rawText;
+ * a line that cannot be tied that way has no slip provenance and is taken from
+ * `final` as it is. Lines are never paired by position.
+ */
+export function keepPersonChanges(
+  extracted: Record<string, unknown>,
+  baseline: Record<string, unknown>,
+  final: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...extracted };
+  const rawDate = extracted.deliveryDate;
+  for (const [key] of HEADER_FIELDS) {
+    if (canonical(final[key]) === canonical(baseline[key])) continue;
+    // A person filling a date the slip did not carry is not an AI miss.
+    if (key === 'deliveryDate' && !(typeof rawDate === 'string' && ISO_DATE.test(rawDate))) continue;
+    out[key] = final[key];
+  }
+
+  const extractedLines = asLines(extracted.lines);
+  const baselineLines = asLines(baseline.lines);
+  const finalLines = asLines(final.lines);
+  if (canonical(baselineLines) === canonical(finalLines)) return out;
+
+  const isBlankRawLine = isDroppedRawLine;
+  const keptLines = finalLines.map((finalLine) => {
+    const baseLine = uniqueByRawText(baselineLines, finalLine.rawText);
+    const rawLine = baseLine === null ? null : uniqueByRawText(extractedLines, baseLine.rawText);
+    if (baseLine === null || rawLine === null || uniqueByRawText(finalLines, finalLine.rawText) === null) return finalLine;
+    const kept: Record<string, unknown> = { ...rawLine };
+    for (const [key] of LINE_FIELDS) if (canonical(finalLine[key]) !== canonical(baseLine[key])) kept[key] = finalLine[key];
+    return kept;
+  });
+  // The blank raw lines the pipeline dropped are not an operator removal.
+  out.lines = [...keptLines, ...extractedLines.filter(isBlankRawLine)];
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 
 /**
  * Called on a DRAFT -> CONFIRMED transition. If this SO came from a background
@@ -467,9 +623,56 @@ export async function noteScanDraftAccepted(
     if (!jobRow) return;
     // postgres.js camelCases columns; PostgREST does not. Dual-read is the
     // house rule (same shape as scan-so.ts's job serializer).
-    const j = jobRow as { sampleId?: string | null; sample_id?: string | null };
-    const sampleId = j.sampleId ?? j.sample_id ?? null;
+    const jobIds = jobRow as { sampleId?: string | null; sample_id?: string | null };
+    const sampleId = jobIds.sampleId ?? jobIds.sample_id ?? null;
     if (!sampleId) return;
+
+    // 3. Read the sample. Filtering on status='EXTRACTED' is the double-confirm
+    //    guard: if the interactive path already confirmed this sample, or a
+    //    previous transition already reviewed it, this matches 0 rows and does
+    //    nothing. That keeps a scan counted exactly once no matter how many
+    //    times the SO is re-confirmed (DRAFT -> CONFIRMED -> ON_HOLD -> ...).
+    const { data: sample } = await svc
+      .from('so_scan_samples')
+      .select('extracted, status, draft_baseline')
+      .eq('id', sampleId)
+      .maybeSingle();
+    const s = sample as { extracted?: unknown; status?: string | null; draft_baseline?: unknown } | null;
+    if (!s || s.status !== SAMPLE_EXTRACTED || s.extracted == null) return;
+
+    // 3b. With a baseline, a correction is only what differs from the draft as
+    //     the pipeline left it. A fair/venue pick or a pipeline transform is not
+    //     one, so a draft only touched that way lands ACCEPTED.
+    const baseline = asObj(s.draft_baseline);
+    const extractedBlob = asObj(s.extracted);
+    if (baseline && extractedBlob) {
+      const draft = await readSoDraft(svc, docNo);
+      if (draft.error !== null || draft.header === null) {
+        console.warn('[scan-sample-review] draft unreadable, sample left as is:', { sampleId, docNo }, draft.error ?? 'no header');
+        return;
+      }
+      const final = buildCorrectedSlipFromSo(withoutDroppedBlankLines(extractedBlob), draft.header, draft.items);
+      if (final === null) return;
+      const kept = keepPersonChanges(extractedBlob, baseline, final);
+      if (changedFields(extractedBlob, kept).length === 0) {
+        await svc
+          .from('so_scan_samples')
+          .update({ corrected: s.extracted, status: SAMPLE_ACCEPTED })
+          .eq('id', sampleId)
+          .eq('status', SAMPLE_EXTRACTED);
+        return;
+      }
+      await svc
+        .from('so_scan_samples')
+        .update({ corrected: kept, status: SAMPLE_CORRECTED })
+        .eq('id', sampleId)
+        .eq('status', SAMPLE_EXTRACTED);
+      const keptCompanyId = Number(col(draft.header, 'company_id'));
+      if (Number.isInteger(keptCompanyId) && keptCompanyId > 0) {
+        await recordSlipAliases(svc, keptCompanyId, slipAliasPairs(extractedBlob, kept));
+      }
+      return;
+    }
 
     // 2. Did a human change anything before confirming? The scan job's own
     //    writes are excluded by action (CREATE) and by source: the pipeline
@@ -487,19 +690,6 @@ export async function noteScanDraftAccepted(
       .or('source.is.null,source.neq.automation')
       .limit(1);
     const wasEdited = Array.isArray(edits) && edits.length > 0;
-
-    // 3. Read the sample. Filtering on status='EXTRACTED' is the double-confirm
-    //    guard: if the interactive path already confirmed this sample, or a
-    //    previous transition already reviewed it, this matches 0 rows and does
-    //    nothing. That keeps a scan counted exactly once no matter how many
-    //    times the SO is re-confirmed (DRAFT -> CONFIRMED -> ON_HOLD -> ...).
-    const { data: sample } = await svc
-      .from('so_scan_samples')
-      .select('extracted, status')
-      .eq('id', sampleId)
-      .maybeSingle();
-    const s = sample as { extracted?: unknown; status?: string | null } | null;
-    if (!s || s.status !== SAMPLE_EXTRACTED || s.extracted == null) return;
 
     // 4a. Unchanged — promote EXTRACTED -> ACCEPTED, carrying `extracted`
     //     across verbatim. Unchanged behaviour, deliberately untouched: this
@@ -622,8 +812,8 @@ export async function notePiScanAccepted(
     // Fail toward NOT learning: a read blip must never be read as "not a scan"
     // AND must never risk mislabelling a sample. Bail on any error.
     if (jobErr || !jobRow) return;
-    const j = jobRow as { sampleId?: string | null; sample_id?: string | null };
-    const sampleId = j.sampleId ?? j.sample_id ?? null;
+    const jobIds = jobRow as { sampleId?: string | null; sample_id?: string | null };
+    const sampleId = jobIds.sampleId ?? jobIds.sample_id ?? null;
     if (!sampleId) return;
 
     // 2. Did a human edit the draft before confirming? The PI's own audit trail

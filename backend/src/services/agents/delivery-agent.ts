@@ -288,6 +288,7 @@ async function loadDeliverySnapshot(sb: any): Promise<DeliverySnapshot> {
       delivered: deliveredByDoc.get(docNo) ?? 0,
       remaining: remainingByDoc.get(docNo) ?? 0,
       effectiveDD,
+      amendedDD: r.amended_delivery_date ?? null,
       salesExemptionExpiry: soExemptionExpiryOf({
         sales_exemption_expiry: r.sales_exemption_expiry, ac_sales_exemption_expiry: acExpiryByDoc.get(docNo) ?? null, customer_delivery_date: r.customer_delivery_date,
       }),

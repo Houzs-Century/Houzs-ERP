@@ -8,13 +8,17 @@
 // D1 side) and @cloudflare/vitest-pool-workers has no module mocking, so these
 // drive the lib directly through a hand-rolled PostgREST stand-in — the house
 // pattern (see dropship-batch.test.ts, companyScopeHardening.test.ts).
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import {
   noteScanDraftAccepted,
   buildCorrectedSlipFromSo,
   alignSoLinesToSlip,
+  keepPersonChanges,
+  snapshotDraftBaseline,
   CARRIED_NOT_INVERTED,
 } from './scan-sample-review';
+import { changedFields } from './scan-slip-fields';
+import { slipAliasPairs } from './scan-field-aliases';
 
 type Row = Record<string, any>;
 
@@ -376,5 +380,235 @@ describe('noteScanDraftAccepted — DRAFT -> CONFIRMED is the operator verdict',
     const { svc, updates } = fakeSvc(world.tables, { throwOn: 'so_scan_samples' });
     await expect(noteScanDraftAccepted(svc, DOC)).resolves.toBeUndefined();
     expect(updates.length).toBe(0);
+  });
+});
+
+// ── Draft baseline: only what a person changed counts ──────────────────────
+
+const rawSlip = (): Row => extractedSlip({
+  phones: ['012-694 5676'], city: 'shah alam', postcode: '40460',
+  depositRm: 1500, deliveryDate: 'before 20/12',
+  addressStateMatch: { value: 'Selangor', confidence: 0.9, reason: 'read' },
+});
+const pipelineHeader = (over: Row = {}): Row => soHeader({
+  phone: '+60126945676', city: 'Shah Alam', postcode: '40470', customer_state: 'Selangor',
+  deposit_sen: 0, customer_delivery_date: null, ...over,
+});
+const baselineOf = (raw: Row): Row => buildCorrectedSlipFromSo(raw, pipelineHeader(), [soItem()]) as Row;
+const finalOf = (raw: Row, header: Row, items: Row[] = [soItem()]): Row =>
+  buildCorrectedSlipFromSo(raw, header, items) as Row;
+
+describe('keepPersonChanges — pipeline transforms are not corrections', () => {
+  test('a draft only given a fair pick has no difference from the raw read', () => {
+    const raw = rawSlip();
+    const kept = keepPersonChanges(raw, baselineOf(raw), finalOf(raw, pipelineHeader()));
+    expect(changedFields(raw, kept)).toEqual([]);
+  });
+
+  test('pipeline-only differences (phone format, postcode, city, withheld deposit) give no difference', () => {
+    const raw = rawSlip();
+    // the draft really does differ from the raw read on these fields
+    expect(changedFields(raw, baselineOf(raw))).toEqual(expect.arrayContaining(['Phone', 'Postcode', 'Deposit']));
+    const kept = keepPersonChanges(raw, baselineOf(raw), baselineOf(raw));
+    expect(changedFields(raw, kept)).toEqual([]);
+  });
+
+  test('a real phone digit change gives exactly Phone', () => {
+    const raw = rawSlip();
+    const kept = keepPersonChanges(raw, baselineOf(raw), finalOf(raw, pipelineHeader({ phone: '+60126945677' })));
+    expect(changedFields(raw, kept)).toEqual(['Phone']);
+  });
+
+  test('a bedframe line change gives exactly that line field', () => {
+    const raw = rawSlip();
+    const kept = keepPersonChanges(raw, baselineOf(raw), finalOf(raw, pipelineHeader(), [soItem({ item_code: 'BC-Q' })]));
+    expect(changedFields(raw, kept)).toEqual(['Product code']);
+    expect(((kept.lines as Row[])[0].skuMatch as Row).code).toBe('BC-Q');
+  });
+
+  test('a delivery date filled from text the slip did not carry as a date is not a correction', () => {
+    const raw = rawSlip();
+    const kept = keepPersonChanges(raw, baselineOf(raw), finalOf(raw, pipelineHeader({ customer_delivery_date: '2026-12-20' })));
+    expect(changedFields(raw, kept)).toEqual([]);
+  });
+
+  test('inputs are not mutated', () => {
+    const raw = rawSlip();
+    const baseline = baselineOf(raw);
+    const final = finalOf(raw, pipelineHeader({ phone: '+60126945677' }));
+    const snapshot = JSON.stringify([raw, baseline, final]);
+    keepPersonChanges(raw, baseline, final);
+    expect(JSON.stringify([raw, baseline, final])).toBe(snapshot);
+  });
+});
+
+describe('noteScanDraftAccepted — with a draft baseline', () => {
+  const baselineWorld = (header: Row) => {
+    const raw = rawSlip();
+    const world = scanWorld({
+      audit: [
+        { id: 1, so_doc_no: DOC, action: 'CREATE', source: 'web' },
+        { id: 2, so_doc_no: DOC, action: 'UPDATE_HEADER', source: 'web' },
+      ],
+      header,
+    });
+    Object.assign(world.tables.so_scan_samples[0], { extracted: raw, draft_baseline: baselineOf(raw) });
+    return { raw, world };
+  };
+
+  test('a fair pick only lands ACCEPTED with corrected = extracted', async () => {
+    const { raw, world } = baselineWorld(pipelineHeader());
+    const { svc, updates } = fakeSvc(world.tables);
+    await noteScanDraftAccepted(svc, DOC);
+    expect(updates[0].patch.status).toBe('ACCEPTED');
+    expect(updates[0].patch.corrected).toBe(raw);
+  });
+
+  test('a real phone change lands CONFIRMED with only the phone moved', async () => {
+    const { raw, world } = baselineWorld(pipelineHeader({ phone: '+60126945677' }));
+    const { svc, updates } = fakeSvc(world.tables);
+    await noteScanDraftAccepted(svc, DOC);
+    expect(updates[0].patch.status).toBe('CONFIRMED');
+    expect(changedFields(raw, updates[0].patch.corrected)).toEqual(['Phone']);
+  });
+});
+
+// ── Reviewer cases: key order, line provenance, dropped blank lines ────────
+
+const jsonbRoundTrip = (v: unknown): unknown => Array.isArray(v) ? v.map(jsonbRoundTrip) : v && typeof v === 'object'
+  ? Object.fromEntries(Object.entries(v as Record<string, unknown>)
+    .sort(([a], [b]) => a.length - b.length || (a < b ? -1 : a > b ? 1 : 0))
+    .map(([k, x]) => [k, jsonbRoundTrip(x)]))
+  : v;
+
+const slip2 = (over: Row = {}): Row => rawSlip2(over);
+function rawSlip2(over: Row = {}): Row {
+  return extractedSlip({
+    phones: ['012-694 5676'], city: 'shah alam', postcode: '40460', depositRm: 1500, deliveryDate: 'before 20/12',
+    addressStateMatch: { value: 'Selangor', confidence: 0.9, reason: 'read' },
+    lines: [
+      slipLine({ rawText: 'bed k', skuMatch: { code: 'bk-x', confidence: 0.6, reason: 'keyword' } }),
+      slipLine({ rawText: 'pillow', skuMatch: { code: 'PL', confidence: 0.9, reason: 'keyword' } }),
+    ],
+    ...over,
+  });
+}
+const itemsBedPillow = (): Row[] => [soItem({ item_code: 'BK', line_no: 0 }), soItem({ item_code: 'PL', line_no: 1 })];
+
+describe('keepPersonChanges — reviewer cases', () => {
+  test('a baseline that came back from jsonb with reordered keys, untouched draft: no difference', () => {
+    const raw = slip2();
+    const header = pipelineHeader();
+    const baseline = jsonbRoundTrip(buildCorrectedSlipFromSo(raw, header, itemsBedPillow())) as Row;
+    const final = buildCorrectedSlipFromSo(raw, header, itemsBedPillow()) as Row;
+    expect(changedFields(raw, keepPersonChanges(raw, baseline, final))).toEqual([]);
+  });
+
+  test('delete one line and add another (same count): the added line has no slip provenance', () => {
+    const raw = slip2();
+    const baseline = buildCorrectedSlipFromSo(raw, pipelineHeader(), itemsBedPillow()) as Row;
+    const final = buildCorrectedSlipFromSo(raw, pipelineHeader(), [
+      soItem({ item_code: 'PL', line_no: 1 }), soItem({ item_code: 'MAT', line_no: 2 }),
+    ]) as Row;
+    const kept = keepPersonChanges(raw, baseline, final);
+    const lines = kept.lines as Row[];
+    const added = lines.find((l) => l.skuMatch?.code === 'MAT') as Row;
+    expect(added.rawText).toBe('');
+    expect(lines.some((l) => l.rawText === 'bed k')).toBe(false);
+    expect(changedFields(raw, kept)).toContain('Product code');
+  });
+
+  test('a blank raw line the pipeline dropped, untouched draft: no difference', () => {
+    const raw = slip2({ lines: [slipLine({ rawText: '', skuMatch: null }), ...(slip2().lines as Row[])] });
+    const items = itemsBedPillow();
+    const baseline = buildCorrectedSlipFromSo(raw, pipelineHeader(), items) as Row;
+    const final = buildCorrectedSlipFromSo(raw, pipelineHeader(), items) as Row;
+    const kept = keepPersonChanges(raw, baseline, final);
+    expect(changedFields(raw, kept)).toEqual([]);
+    expect(kept.lines).toBe(raw.lines);
+  });
+
+  test('a blank raw line plus one real line edit reports only that line field', () => {
+    const raw = slip2({ lines: [slipLine({ rawText: '', skuMatch: null }), slipLine({ rawText: 'bed k', skuMatch: { code: 'BK', confidence: 0.9, reason: 'keyword' } }), slipLine({ rawText: 'pillow', skuMatch: { code: 'PL', confidence: 0.9, reason: 'keyword' } })] });
+    const baseline = buildCorrectedSlipFromSo(raw, pipelineHeader(), itemsBedPillow()) as Row;
+    const final = buildCorrectedSlipFromSo(raw, pipelineHeader(), [soItem({ item_code: 'BK', line_no: 0 }), soItem({ item_code: 'PL', qty: 2, line_no: 1 })]) as Row;
+    expect(changedFields(raw, keepPersonChanges(raw, baseline, final))).toEqual(['Qty']);
+  });
+});
+
+describe('noteScanDraftAccepted — baseline from jsonb, snapped values untouched', () => {
+  test('geocoded state and snapped SKU untouched: ACCEPTED and no alias recorded', async () => {
+    const raw = slip2();
+    const world = scanWorld({ header: pipelineHeader(), items: itemsBedPillow(), audit: [
+      { id: 1, so_doc_no: DOC, action: 'CREATE', source: 'web' },
+      { id: 2, so_doc_no: DOC, action: 'UPDATE_HEADER', source: 'web' },
+    ] });
+    world.tables.mfg_sales_orders[0].customer_state = 'Johor';
+    Object.assign(world.tables.so_scan_samples[0], {
+      extracted: raw,
+      draft_baseline: jsonbRoundTrip(buildCorrectedSlipFromSo(raw, world.tables.mfg_sales_orders[0], itemsBedPillow())),
+    });
+    const { svc, updates } = fakeSvc(world.tables);
+    await noteScanDraftAccepted(svc, DOC);
+    expect(updates.map((u) => u.table)).toEqual(['so_scan_samples']);
+    expect(updates[0].patch.status).toBe('ACCEPTED');
+  });
+});
+
+describe('snapshotDraftBaseline', () => {
+  const stub = (headerError: boolean) => {
+    const writes: Row[] = [];
+    const svc = {
+      from: (table: string) => {
+        const q: Row = {
+          select: () => q, eq: () => q, order: () => q,
+          update: (patch: Row) => { writes.push({ table, patch }); return q; },
+          maybeSingle: () => Promise.resolve(headerError
+            ? { data: null, error: { message: 'boom' } }
+            : { data: pipelineHeader({ company_id: 1 }), error: null }),
+          then: (res: (v: Row) => unknown) => Promise.resolve(
+            table === 'mfg_sales_order_items' ? { data: itemsBedPillow(), error: null } : { data: null, error: null },
+          ).then(res),
+        };
+        return q;
+      },
+    };
+    return { svc: svc as never, writes };
+  };
+
+  test('a header read error writes nothing and logs with the sample and doc', async () => {
+    const { svc, writes } = stub(true);
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await snapshotDraftBaseline(svc, { sampleId: SAMPLE_ID, docNo: DOC, extracted: slip2() });
+    expect(writes).toEqual([]);
+    expect(spy).toHaveBeenCalledWith(expect.any(String), { sampleId: SAMPLE_ID, docNo: DOC }, 'boom');
+    spy.mockRestore();
+  });
+
+  test('the happy path writes the baseline built from the draft', async () => {
+    const { svc, writes } = stub(false);
+    const raw = slip2();
+    await snapshotDraftBaseline(svc, { sampleId: SAMPLE_ID, docNo: DOC, extracted: raw });
+    expect(writes).toHaveLength(1);
+    expect(writes[0].table).toBe('so_scan_samples');
+    expect(writes[0].patch.draft_baseline).toEqual(buildCorrectedSlipFromSo(raw, pipelineHeader({ company_id: 1 }), itemsBedPillow()));
+  });
+});
+
+describe('keepPersonChanges — blank raw line plus a catalog-snapped SKU line', () => {
+  test('a qty edit on another line gives exactly Qty and no alias for the snapped line', () => {
+    const blank = slipLine({ rawText: '', skuMatch: null });
+    const snapped = slipLine({ rawText: 'bed k', skuMatch: { code: 'bk-x', confidence: 0.6, reason: 'keyword' } });
+    const pillow = slipLine({ rawText: 'pillow', skuMatch: { code: 'PL', confidence: 0.9, reason: 'keyword' } });
+    const raw = slip2({ lines: [blank, snapped, pillow] });
+    // the baseline path rebuilds from the extraction without the lines the pipeline dropped
+    const stripped = { ...raw, lines: [snapped, pillow] };
+    const baseline = buildCorrectedSlipFromSo(stripped, pipelineHeader(), itemsBedPillow()) as Row;
+    const final = buildCorrectedSlipFromSo(stripped, pipelineHeader(), [
+      soItem({ item_code: 'BK', line_no: 0 }), soItem({ item_code: 'PL', qty: 2, line_no: 1 }),
+    ]) as Row;
+    const kept = keepPersonChanges(raw, baseline, final);
+    expect(changedFields(raw, kept)).toEqual(['Qty']);
+    expect(JSON.stringify(slipAliasPairs(raw, kept))).not.toContain('bk-x');
   });
 });

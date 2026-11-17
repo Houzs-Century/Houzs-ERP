@@ -2,6 +2,11 @@
   "reviewed": [
     {
       "check": "D1",
+      "key": "SERVICE_CASES.CREATE,SERVICE_CASES.MANAGE,SERVICE_CASES.WRITE|backend/src/routes/assr.ts frontend/src/vendor/scm/lib/delivery-issue-queries.ts",
+      "why": "THE SERVICE-CASE CREATE PERMISSIONS, mirrored across the FE/BE boundary. routes/assr.ts is the ENFORCED gate — requireServiceCaseAccess / requireAnyPermission decide who may open or write a case; delivery-issue-queries.ts SERVICE_CASE_CREATE_PERMS only decides whether the 'Create service case' button shows on the delivery-issue card. They cannot share a module across the boundary. The FE set is narrower than the full server gate (which also admits any company grantee / director), so a divergence can only HIDE the button from someone who may still create the case from the Service Cases page, never grant access. Cost of divergence is a shown or hidden button, never access."
+    },
+    {
+      "check": "D1",
       "key": "CUSTOMER_COMMENT,NOTE,SALES_COMMENT|backend/src/routes/assr.ts frontend/src/vendor/scm/lib/assr/timeline.ts",
       "why": "THE ASSR COMMENT ACTIONS, read for two different jobs. routes/assr.ts ARCHIVABLE_ACTIONS is the server's rule for which timeline rows staff may archive; timeline.ts COMMENT_ACTIONS is how the case timeline groups rows under Remarks. A new comment action has to be added to both only if it should be both archivable and shown as a remark, which are separate decisions. Cost of divergence is a row filed under the wrong timeline heading, never a lost or wrongly archived row (the server list is the one that guards archiving)."
     },
@@ -1723,7 +1728,7 @@
     {
       "check": "D1",
       "key": "ACCESSORY,BEDFRAME,MATTRESS,SOFA|frontend/src/pages/scm-v2/Mrp.tsx frontend/src/pages/scm-v2/ProcurementOverview.tsx",
-      "why": "TWO DIFFERENT QUESTIONS: Mrp.tsx lists the categories an MRP lead time can be SET for; ProcurementOverview.tsx MRP_CATEGORY maps the overview's upper-case category code to that setting's lower-case key so Apply writes the right row. DINING and OTHERS have no MRP setting, so the overview map stops at four on purpose."
+      "why": "TWO DIFFERENT QUESTIONS: Mrp.tsx lists the categories an MRP lead time can be SET for; ProcurementOverview.tsx MRP_CATEGORY maps the overview's upper-case category code to that setting's lower-case key so Apply writes the right row. The overview buckets by its own rule (procurementCategory: carpet, bedlines, diffuser count as ACCESSORY there, as 'others' for lead time), so Apply is offered only for the four whose bucket and lead-time row are the same thing."
     },
     {
       "check": "D1",
@@ -1824,6 +1829,31 @@
       "check": "D2",
       "key": "DELIVERY,LINES,LINE_ADDREMOVE,PRICE ~ DELIVERY,LINES,PRICE",
       "why": "DELIBERATELY 3 vs 4. The 4-lane set is every approval lane; the 3-lane set is the desks an admin may move a row TO (ChangeApproverButton TARGET_LANES) and the PATCH /lane body validator. LINE_ADDREMOVE is auto-assigned at submit and shares the Sales Director desk with PRICE, so it is never a manual target (offering it would list the Sales Director twice). The difference is the rule, not drift."
+    },
+    {
+      "check": "D2",
+      "key": "ACCOUNT,AMOUNT (RM),DESCRIPTION ~ ACCOUNT,AMOUNT (RM),DESCRIPTION,EVENT",
+      "why": "TWO DIFFERENT TABLES OF ONE AP BILL'S LINES. ApInvoiceForm.tsx LINE_COLUMNS heads the lines being typed, and a line can name the event its money is for (owner 2026-09-30, 5a), so the form has an Event column; ap-bill-pdf.ts heads the printed bill, which prints the account, description and amount and never the event. Column headings only: a divergence changes what a heading reads, never what is saved, posted or paid."
+    },
+    {
+      "check": "D1",
+      "key": "ACCESSORY,BEDFRAME,MATTRESS,OTHERS,SERVICE,SOFA|backend/src/scm/lib/lead-time.ts backend/src/scm/shared/so-branding-label.ts frontend/src/vendor/scm/lib/mrp-queries.ts frontend/src/vendor/shared/so-branding-label.ts",
+      "why": "TWO DIFFERENT QUESTIONS that happen to share six words: LEAD_CATEGORIES (lead-time.ts, mirrored in mrp-queries.ts because the browser cannot import the Worker lib; both pinned by the CHECK in 20261117T1000) are the lead-time rows a person can set; so-branding-label normBuckets group SO lines for the branding label. Adding a lead-time row must not change a label."
+    },
+    {
+      "check": "D2",
+      "key": "ACCESSORY,BEDFRAME,DINING,MATTRESS,OTHERS,SOFA ~ ACCESSORY,BEDFRAME,MATTRESS,OTHERS,SOFA",
+      "why": "Different questions: PROCUREMENT_CATEGORIES is the procurement overview's grouping (DINING is its own bucket there); MRP_LEAD_CATEGORIES is the lead-time rows shown in the MRP dialog, where dining reads the 'others' row (lead-time.ts leadCategoryOf)."
+    },
+    {
+      "check": "D2",
+      "key": "ACCESSORY,BEDFRAME,MATTRESS,OTHERS,SERVICE,SOFA ~ ACCESSORY,BEDFRAME,MATTRESS,OTHERS,SOFA",
+      "why": "Deliberate: MRP_LEAD_CATEGORIES is LEAD_CATEGORIES minus SERVICE, because a service line raises no purchase order, so its lead time is never shown for editing (same as the supplier page's filter)."
+    },
+    {
+      "check": "D2",
+      "key": "ACCESSORY,BEDFRAME,MATTRESS,OTHERS,SOFA ~ ACCESSORY,BEDFRAME,MATTRESS,SOFA",
+      "why": "Deliberate: Mrp.tsx lists every lead-time row a person can set, Others included (2990-0063); ProcurementOverview MRP_CATEGORY offers Apply only where the overview bucket equals one lead-time row, and the overview's OTHERS / DINING buckets do not line up with the 'others' row (carpet etc. sit under ACCESSORY there)."
     }
   ]
 }

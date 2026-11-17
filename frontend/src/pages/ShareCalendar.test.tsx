@@ -240,6 +240,15 @@ describe("ShareCalendar", () => {
     }
   });
 
+  it("shows the organizer on the calendar bar (the server has already masked Solo shows)", async () => {
+    window.history.pushState({}, "", `/c/${TOKEN}`);
+    fetchMock.mockImplementation((input: RequestInfo | URL) => serve(String(input)));
+    render(<ShareCalendar mode="contractor" />);
+    // The bar carries whatever organizer the server returned; the Solo -> "Solo"
+    // masking happens server-side, so the page simply shows the value.
+    expect(await screen.findByText(/HOMELOVE/)).toBeTruthy();
+  });
+
   it("shows a friendly message for an invalid or revoked link", async () => {
     window.history.pushState({}, "", `/b/${TOKEN}`);
     fetchMock.mockImplementation(() => json({ error: "unknown_link" }, 404));

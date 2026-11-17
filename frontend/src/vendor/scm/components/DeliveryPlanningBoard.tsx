@@ -417,10 +417,16 @@ function DeliveryDateEditCell({ order, onSchedule }: { order: PlanningOrder; onS
 }
 
 /* Amend Reason inline editor (owner 2026-09-22) — pick a preset reason or keep a
-   free-text one. SO rows only; writes amend_reason via useUpdateDeliveryFields. */
+   free-text one. SO rows AND service-case legs (owner 2026-11-16: a postponed
+   pickup / inspection / delivery needs its reason too); a DP job / project has no
+   amend reason. SO writes mfg_sales_orders.amend_reason; an ASSR leg writes its
+   own per-leg column (jobKind), both through useUpdateDeliveryFields. */
 function AmendReasonEditCell({ order, onUpdateFields }: { order: PlanningOrder; onUpdateFields: UpdateFieldsMutate }) {
   const { fields } = useContext(BoardPendingContext);
-  if (isAssr(order) || (isDp(order) && !order.trip_id) || isProject(order)) return <NotApplicable />;
+  if (isDp(order) || isProject(order)) return <NotApplicable />;
+  const target = isAssr(order)
+    ? { type: 'assr' as const, id: String(order.assr_id ?? ''), jobKind: order.job_kind ?? undefined }
+    : { type: 'so' as const, id: order.so_doc_no };
   const current = order.amend_reason ?? '';
   return (
     <select
@@ -432,7 +438,7 @@ function AmendReasonEditCell({ order, onUpdateFields }: { order: PlanningOrder; 
       onChange={(e) => {
         const next = e.target.value;
         if ((next || null) === (order.amend_reason ?? null)) return;
-        onUpdateFields({ type: 'so', id: order.so_doc_no, amendReason: next || null }, { onError: fieldNotSaved });
+        onUpdateFields({ ...target, amendReason: next || null }, { onError: fieldNotSaved });
       }}
     >
       <option value="">—</option>

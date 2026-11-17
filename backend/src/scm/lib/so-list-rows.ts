@@ -476,6 +476,7 @@ export async function buildSoListRows(
         delivered: dDelivered,
         remaining: dRemaining,
         effectiveDD,
+        amendedDD: amendedDDByDoc.get(docNo) ?? null,
         // The list's own "Sales Exemption Expiry Date" value: the board reads the same chain.
         salesExemptionExpiry: soExemptionExpiryOf({
           sales_exemption_expiry: (r as Record<string, unknown>).sales_exemption_expiry as string | null ?? null,

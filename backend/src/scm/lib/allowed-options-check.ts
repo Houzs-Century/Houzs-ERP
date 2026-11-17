@@ -163,6 +163,15 @@ const inPool = (pool: string[], value: string): boolean => {
   return pool.some((p) => foldForPool(p) === wanted);
 };
 
+/* The save gate's total_height rule, shared so a scan can pre-check the same
+   thing instead of tripping variant_not_allowed. DIVAN ONLY models are not
+   checked (see the gate below). */
+export const isTotalHeightAllowed = (
+  totalHeights: string[] | null | undefined,
+  productCode: string,
+  value: string,
+): boolean => !hasRestriction(totalHeights) || isDivanOnly(productCode) || inPool(totalHeights, value);
+
 /* Leg height carries TWO vocabularies for the same "no leg" build: the label
    "No Leg" that the Modular drawer lists, and the zero-inch glyph 0" that
    imported / legacy bedframe lines store (1,149 lines / 765 orders on prod,
@@ -322,14 +331,12 @@ export function checkAllowedOptions(
      summed to 8" and was refused (HC-SO-011153, 2026-09-15 12:18 MYT). The only
      way past was to pick a Gap the product does not have. Its divan and leg
      picks are still held to their own pools just above and below. */
-  if (v.totalHeight && hasRestriction(opts.total_heights)
-      && !isDivanOnly(product.code)
-      && !inPool(opts.total_heights, v.totalHeight)) {
+  if (v.totalHeight && !isTotalHeightAllowed(opts.total_heights, product.code, v.totalHeight)) {
     return {
       error: 'variant_not_allowed',
       field: 'total_height',
       value: v.totalHeight,
-      allowed: opts.total_heights,
+      allowed: opts.total_heights ?? [],
       derivedFrom: [
         { field: 'divan_height', value: v.divanHeight ?? '' },
         { field: 'leg_height',   value: v.legHeight ?? v.sofaLegHeight ?? '' },

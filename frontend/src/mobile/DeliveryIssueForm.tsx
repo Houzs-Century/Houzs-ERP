@@ -1,9 +1,13 @@
 import { useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ALLOWED_SLIP_MIMES } from "../vendor/scm/lib/slip";
 import { DELIVERY_ISSUE_KINDS, DELIVERY_ISSUE_MAX_PHOTOS, DELIVERY_ISSUE_NOTE_MAX, type DeliveryIssueKind } from "../vendor/scm/lib/delivery-issue-kinds";
 import {
-  deliveryIssueSummary, useDoDeliveryIssues, useSoDeliveryIssues, type DeliveryIssue, type DeliveryIssueDraft,
+  createServiceCaseForIssue, deliveryIssueSummary, invalidateDeliveryIssues, SERVICE_CASE_CREATE_PERMS,
+  useDoDeliveryIssues, useSoDeliveryIssues, type DeliveryIssue, type DeliveryIssueDraft,
 } from "../vendor/scm/lib/delivery-issue-queries";
+import { writeFailed } from "../vendor/scm/lib/mutation-error";
+import { useAuth } from "../auth/AuthContext";
 import { fmtDateTime } from "@2990s/shared";
 
 export const EMPTY_ISSUE_DRAFT: DeliveryIssueDraft = { kinds: [], note: "", photos: [] };
@@ -74,8 +78,22 @@ export function DeliveryIssueForm({ value, onChange, disabled }: {
   );
 }
 
-/** The issues already reported on this delivery, with their Service Case number. */
-export function MobileDeliveryIssues({ issues }: { issues: DeliveryIssue[] | undefined }) {
+/** The issues already reported on this delivery. The crew no longer opens the
+ *  case (owner 2026-11-16); an unlinked report shows "Create service case" only
+ *  to a user who may open cases (canCreateCase — the crew screens pass false),
+ *  which pulls the POD photos onto the new case. */
+export function MobileDeliveryIssues({ issues, canCreateCase }: {
+  issues: DeliveryIssue[] | undefined; canCreateCase: boolean;
+}) {
+  const qc = useQueryClient();
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const createCase = useMutation({
+    mutationFn: (issueId: string) => createServiceCaseForIssue(issueId),
+    onMutate: (issueId: string) => { setPendingId(issueId); },
+    onSettled: () => { setPendingId(null); },
+    onSuccess: () => { void invalidateDeliveryIssues(qc); },
+    onError: writeFailed,
+  });
   if (!issues?.length) return null;
   return (
     <div data-testid="delivery-issues" className="card" style={{ padding: 12, marginBottom: 12, borderLeft: "3px solid var(--red)" }}>
@@ -88,10 +106,25 @@ export function MobileDeliveryIssues({ issues }: { issues: DeliveryIssue[] | und
           {i.note && <div style={{ color: "var(--ink)", whiteSpace: "pre-wrap" }}>{i.note}</div>}
           <div style={{ fontSize: 11, color: "var(--mut)" }} className="tnum">
             {fmtDateTime(i.reported_at)}
-            {i.assr_no ? ` · Service case ${i.assr_no}` : " · Service case not linked"}
+            {i.assr_no ? ` · Service case ${i.assr_no}` : ""}
             {i.photo_keys.length ? ` · ${i.photo_keys.length} photo${i.photo_keys.length === 1 ? "" : "s"}` : ""}
             {i.do_number ? ` · ${i.do_number}` : ""}
           </div>
+          {!i.assr_no && canCreateCase && (
+            <button
+              type="button"
+              disabled={createCase.isPending}
+              onClick={() => createCase.mutate(i.id)}
+              style={{
+                marginTop: 6, borderRadius: 8, border: "1px solid var(--red)", background: "none",
+                color: "var(--red)", fontFamily: "inherit", fontSize: 12, fontWeight: 700,
+                padding: "6px 10px", cursor: createCase.isPending ? "default" : "pointer",
+                opacity: createCase.isPending ? 0.5 : 1,
+              }}
+            >
+              {pendingId === i.id ? "Creating…" : "Create service case"}
+            </button>
+          )}
         </div>
       ))}
     </div>
@@ -100,10 +133,12 @@ export function MobileDeliveryIssues({ issues }: { issues: DeliveryIssue[] | und
 
 /** Mobile DO detail (MobileModuleDetail) — desktop twin DoDeliveryIssuesCard. */
 export function MobileDoDeliveryIssues({ doId }: { doId: string | null | undefined }) {
-  return <MobileDeliveryIssues issues={useDoDeliveryIssues(doId).data} />;
+  const { canAny } = useAuth();
+  return <MobileDeliveryIssues issues={useDoDeliveryIssues(doId).data} canCreateCase={canAny(SERVICE_CASE_CREATE_PERMS)} />;
 }
 
 /** Mobile SO detail (MobileSODetail) — desktop twin SoDeliveryIssuesCard. */
 export function MobileSoDeliveryIssues({ docNo }: { docNo: string | null | undefined }) {
-  return <MobileDeliveryIssues issues={useSoDeliveryIssues(docNo).data} />;
+  const { canAny } = useAuth();
+  return <MobileDeliveryIssues issues={useSoDeliveryIssues(docNo).data} canCreateCase={canAny(SERVICE_CASE_CREATE_PERMS)} />;
 }

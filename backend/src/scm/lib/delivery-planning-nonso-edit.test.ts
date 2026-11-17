@@ -163,6 +163,40 @@ describe('writeNonSoFields (remarks)', () => {
   });
 });
 
+// Amend / reschedule reason (owner 2026-11-16): a service leg keeps its own reason
+// per leg, like the Time Slot and the Remark; a DP manual job has no amend reason.
+describe('writeNonSoFields (amend reason)', () => {
+  it('saves a service-case amend reason to the named leg column only', async () => {
+    const { c, runs } = fakeCtx();
+    const r = await writeNonSoFields(c, {}, 'assr', '7', { amendReason: 'Our strict quality control checks', jobKind: 'delivery' });
+    expect(r.status).toBe(200);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]!.sql).toContain('delivery_amend_reason = ?');
+    expect(runs[0]!.sql).not.toContain('pickup_amend_reason');
+    expect(runs[0]!.binds).toEqual(['Our strict quality control checks', 7]);
+  });
+
+  it('blanks an empty reason to null, and refuses one with no leg', async () => {
+    const { c, runs } = fakeCtx();
+    await writeNonSoFields(c, {}, 'assr', '7', { amendReason: '', jobKind: 'customer_pickup' });
+    expect(runs[0]!.sql).toContain('pickup_amend_reason = ?');
+    expect(runs[0]!.binds).toEqual([null, 7]);
+    expect((await writeNonSoFields(c, {}, 'assr', '7', { amendReason: 'x' })).status).toBe(400);
+  });
+
+  it('writes no status pick for a reason-only change', async () => {
+    const { c } = fakeCtx();
+    const { sb, rows } = fakeLog();
+    await writeNonSoFields(c, sb, 'assr', '7', { amendReason: 'Materials being temporarily out of stock', jobKind: 'inspection' });
+    expect(rows).toHaveLength(0);
+  });
+
+  it('is a no-op (400) on a DP job — a manual job has no amend reason', async () => {
+    const r = await writeNonSoFields({ get: () => undefined }, {}, 'dp', 'dp-1', { amendReason: 'x' });
+    expect(r.status).toBe(400);
+  });
+});
+
 /* The leg's delivered / cancelled date is the Malaysian day. 17:30 UTC on 9 Nov
    is 01:30 on 10 Nov in Malaysia; the UTC date stamped it the day before. */
 describe('writeAssrLegStatus (Malaysian date)', () => {

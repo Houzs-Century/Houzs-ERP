@@ -13,6 +13,7 @@ const row = (over: Partial<ScanRow>): ScanRow => ({
   sample_error: null,
   extracted: null,
   corrected: null,
+  draft_baseline: null,
   so_missing: false,
   ...over,
 });
@@ -55,6 +56,20 @@ describe("changedFields", () => {
   });
 });
 
+describe("buildOcrReport before/after", () => {
+  it("shows the draft value and the confirmed value when a baseline exists, names only without one", () => {
+    const ex = slip("A1", 1, { phones: ["012-345 6789"] });
+    const corrected = slip("B2", 1, { phones: ["0198765432"] });
+    const base = slip("A1", 1, { phones: ["123456789"] });
+    const withBase = row({ id: "a", sample_status: "CONFIRMED", extracted: ex, corrected, draft_baseline: base });
+    const noBase = row({ id: "b", sample_status: "CONFIRMED", extracted: ex, corrected });
+    const [a, b] = buildOcrReport("2026-10", "m", [withBase, noBase]).problems;
+    expect(a.changes).toEqual([{ field: "Phone", before: "0123456789", after: "0198765432" }]);
+    expect(a.detail).toBe("Phone, Product code");
+    expect(b.changes).toBeNull();
+  });
+});
+
 describe("buildOcrReport", () => {
   it("counts outcomes, accuracy, field misses and time per document type", () => {
     const rows = [
@@ -64,7 +79,8 @@ describe("buildOcrReport", () => {
       row({ id: "d", status: "queued" }),
       row({ id: "e", document_type: "PI", doc_no: "PI-9" }),
     ];
-    const r = buildOcrReport("2026-10", rows);
+    const r = buildOcrReport("2026-10", "claude-sonnet-5-5", rows);
+    expect(r.model).toBe("claude-sonnet-5-5");
     expect(r.docTypes.map((d) => d.documentType)).toEqual(["SO", "PI"]);
     const so = r.docTypes[0];
     expect(so).toMatchObject({ scans: 4, clean: 1, corrected: 1, failed: 1, pending: 1, accuracy: { clean: 1, reviewed: 2 } });

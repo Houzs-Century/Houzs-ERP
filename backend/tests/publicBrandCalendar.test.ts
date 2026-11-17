@@ -213,6 +213,31 @@ describe("public brand calendar", () => {
     expect(exportLog).toEqual([{ kind: "brand", subject: AKEMI, token: TOKEN, ip: "203.0.113.9", row_count: 1 }]);
   });
 
+  test("Solo and Cash & Carry hide their organizer behind the type label; other types still name their own", async () => {
+    // Solo and Cash & Carry carry the mall management in organizer — never named
+    // to the brand (owner: Solo and Cash & Carry read their type label instead).
+    projects.push(
+      { id: 20, brand: AKEMI, contractor: "DREAM ART", status: "Confirmed", archived_at: null,
+        organizer: "SUNWAY MALL MANAGEMENT", state: "SELANGOR", event_type: "Solo",
+        venue: "SUNWAY PYRAMID", booth_no: "LG", start_date: "2026-09-15", end_date: "2026-09-18", name: null, size_sqm: 20 },
+      { id: 21, brand: AKEMI, contractor: "DREAM ART", status: "Confirmed", archived_at: null,
+        organizer: "MID VALLEY MGT", state: "SELANGOR", event_type: "Cash & Carry",
+        venue: "GARDENS MALL", booth_no: "C1", start_date: "2026-09-19", end_date: "2026-09-21", name: null, size_sqm: 12 },
+    );
+    // The list: Solo -> "Solo", Cash & Carry -> "Cash & Carry"; event 7 (ROADSHOW) keeps HOMELOVE.
+    const list = (await (await get(`/${TOKEN}`)).json()) as { events: Array<{ eventId: number; organizer: string | null }> };
+    const org = Object.fromEntries(list.events.map((e) => [e.eventId, e.organizer]));
+    expect(org[20]).toBe("Solo");
+    expect(org[21]).toBe("Cash & Carry");
+    expect(org[7]).toBe("HOMELOVE");
+    // The export masks both too — neither mall name reaches the sheet.
+    const exp = (await (await get(`/${TOKEN}/export?month=2026-09`)).json()) as { rows: Array<{ venue: string; organizer: string | null }> };
+    expect(exp.rows.find((r) => r.venue === "SUNWAY PYRAMID")?.organizer).toBe("Solo");
+    expect(exp.rows.find((r) => r.venue === "GARDENS MALL")?.organizer).toBe("Cash & Carry");
+    expect(JSON.stringify(exp.rows)).not.toContain("SUNWAY MALL MANAGEMENT");
+    expect(JSON.stringify(exp.rows)).not.toContain("MID VALLEY MGT");
+  });
+
   test("an unknown token gets the same 404 on every route and never reaches projects", async () => {
     const bad = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
     for (const p of [`/${bad}`, `/${bad}/events/7`, `/${bad}/events/7/floorplan`, `/${bad}/export`, `/${bad}/floorplans`]) {

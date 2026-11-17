@@ -103,6 +103,14 @@ vi.mock('../../vendor/scm/lib/event-queries', async (importOriginal) => ({
   useRemoveCommissionLine: () => ({ mutate: removeLine, isPending: false }),
 }));
 vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({ useConfirm: () => confirmAsk, usePrompt: () => promptAsk }));
+/* The export's writers: what the page hands them is the test; the files themselves are eventCommissionExport.test.ts's. */
+const writers = vi.hoisted(() => ({ xlsx: vi.fn(async (..._a: unknown[]) => undefined), pdf: vi.fn(async (..._a: unknown[]) => undefined) }));
+vi.mock('./eventCommissionXlsx', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./eventCommissionXlsx')>()), downloadEcXlsx: (...a: unknown[]) => writers.xlsx(...a),
+}));
+vi.mock('./eventCommissionPdf', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./eventCommissionPdf')>()), generateEcPdf: (...a: unknown[]) => writers.pdf(...a),
+}));
 afterEach(() => { current = null; vi.useRealTimers(); sessionStorage.clear(); vi.clearAllMocks(); });
 
 import { MemoryRouter } from 'react-router-dom';
@@ -322,7 +330,7 @@ describe('the Event Commission tab', () => {
    2026-10-25: 这个header，table 要和 pv 那边一样能调整，能换位 / 这个点开排版好看一点.
    2026-10-26: 做宽一点 / brand, organizer, venue 全部一个column. */
 describe('the redesign (batch 6 §5.11)', () => {
-  test('Excel and PDF: the cards as the summary, then each table under its title in the page\'s order; the CSV sits under the header’s ⋯; an order number is a link', () => {
+  test('the CSV: the cards as the summary, then each table under its title in the page\'s order; it sits under the header’s ⋯; an order number is a link', () => {
     const sheet = eventCommissionSheet(REPORT, 'October 2026', '');
     expect(sheet.title).toBe('Event commission');
     expect(sheet.subtitle).toBe('October 2026 · by fair · all brands · total 153.00 · RM');
@@ -770,5 +778,45 @@ describe("Finance's own lines (owner 2026-11-13)", () => {
     expect(within(closedCard).queryByRole('button', { name: /Add a line/ })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'More' }));
     expect(screen.queryByRole('menuitem', { name: 'Add a line (Finance)' })).toBeNull();
+  });
+  test('Excel, PDF and Print first ask who the file is for — everyone, one salesperson, or each in turn — and each table gives the columns it shows', async () => {
+    renderTab(<EventCommissionTab />);
+    fireEvent.click(screen.getByRole('button', { name: 'Excel' }));
+    const excel = within(screen.getByRole('dialog', { name: 'Export to Excel' }));
+    expect(excel.getAllByRole('radio').map((r) => (r as HTMLInputElement).value)).toEqual(['all', 'one', 'each']);
+    fireEvent.click(excel.getByRole('radio', { name: /^One salesperson/ }));
+    expect(excel.getAllByRole('option').map((o) => o.textContent)).toEqual(['Ethan', 'Jason', 'Mayson']);
+    fireEvent.change(excel.getByRole('combobox', { name: 'Salesperson' }), { target: { value: 'Ethan' } });
+    /* A file that cannot be made says so, and the dialog stays open. */
+    writers.xlsx.mockRejectedValueOnce(new Error('the disk is full'));
+    fireEvent.click(excel.getByRole('button', { name: 'Export' }));
+    expect((await excel.findByRole('alert')).textContent).toBe('The file could not be made — the disk is full');
+    fireEvent.click(excel.getByRole('button', { name: 'Export' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    const [sheets, fileName] = writers.xlsx.mock.calls[1] as [Array<{ name: string; title: string; blocks: Array<{ columns: Array<{ label: string }> }> }>, string];
+    expect(fileName).toMatch(/^event-commission-by-fair-.*-ethan\.xlsx$/);
+    expect(sheets.map((x) => x.name)).toEqual(['Summary', 'Fairs', 'Fair orders', 'Upsales-drops in range']);
+    expect(sheets[0]!.title).toBe('Event commission — Ethan');
+    /* The fairs table's own columns as it shows them (the full name and the typed total are hidden there). */
+    expect(sheets[1]!.blocks[0]!.columns.map((c) => c.label)).toEqual(['Brand', 'Organizer', 'Venue', 'State', 'Dates', 'Rate', 'Total sales', 'Estimate', 'Orders', 'Commission']);
+    /* A fair's orders as one list: the order and its fair first; on his own pages, no Salesperson column. */
+    expect(sheets[2]!.blocks[0]!.columns.map((c) => c.label).slice(0, 4)).toEqual(['Order', 'Fair (full name)', 'Ref No.', 'SO date']);
+    expect(sheets[2]!.blocks[0]!.columns.map((c) => c.label)).not.toContain('Salesperson');
+
+    fireEvent.click(screen.getByRole('button', { name: 'PDF' }));
+    const pdf = within(screen.getByRole('dialog', { name: 'Export to PDF' }));
+    fireEvent.click(pdf.getByRole('radio', { name: /^Each salesperson/ }));
+    fireEvent.click(pdf.getByRole('button', { name: 'Export' }));
+    await waitFor(() => expect(writers.pdf).toHaveBeenCalledTimes(1));
+    const [sections, opts] = writers.pdf.mock.calls[0] as [Array<{ heading: string | null; newPage: boolean }>, { action: string; meta: Array<{ label: string; value: string }>; fileName: string }];
+    expect(sections.map((x) => [x.heading, x.newPage])).toEqual([[null, false], ['Ethan', true], ['Jason', true], ['Mayson', true]]);
+    expect(opts.action).toBe('preview');
+    expect(opts.fileName).toMatch(/-by-salesperson\.pdf$/);
+    expect(opts.meta).toContainEqual({ label: 'For', value: 'Each salesperson' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Print' }));
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Print' })).getByRole('button', { name: 'Print' }));
+    await waitFor(() => expect(writers.pdf).toHaveBeenCalledTimes(2));
+    expect((writers.pdf.mock.calls[1] as [unknown, { action: string; meta: unknown[] }])[1]).toMatchObject({ action: 'print', meta: expect.arrayContaining([{ label: 'For', value: 'Everyone' }]) });
   });
 });
