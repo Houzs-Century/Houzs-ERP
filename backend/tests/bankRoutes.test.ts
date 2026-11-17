@@ -1393,11 +1393,33 @@ describe('splitting one credit across several statements', () => {
     return { app, sb, line: detail.lines[0] };
   };
 
-  test('the upload works out which statements add up, and says so', async () => {
+  test('the upload works out which statements add up, and says so — and leaves it for a person', async () => {
     const { line } = await openSplit();
     expect(line.kind).toBe('PAYOUT_SPLIT');
     expect(line.split).toEqual([{ batchId: 1, amountSen: 728448 }, { batchId: 2, amountSen: 87106 }]);
     expect(line.note).toMatch(/2 of MBB's reports add up to RM 8,155\.54 exactly/);
+    /* Owner 2026-11-17 (A): amounts adding up are a guess; nobody's advice says so. */
+    expect(line.state).toBe('OPEN');
+  });
+
+  /* Owner 2026-11-17, A — auto with advice: when the acquirer's payment advice
+     names the days this credit pays, it is booked across the reports by itself. */
+  test('a credit the payment advice spells out over several reports is booked on upload', async () => {
+    const { app, sb } = harness({
+      ...SPLIT_WORLD,
+      acc_settlement_payouts: [{ id: 9, company_id: CO, acquirer_code: 'MBB', file_name: 'adv-0815.pdf', advice_date: '2026-08-15', net_sen: 815554 }],
+      acc_settlement_payout_batches: [
+        { id: 1, company_id: CO, payout_id: 9, batch_id: 1, settled_on: '2026-07-31', net_sen: 728448 },
+        { id: 2, company_id: CO, payout_id: 9, batch_id: 2, settled_on: '2026-08-08', net_sen: 87106 },
+      ],
+    });
+    const up = await (await upload(app, { content: ONE_CREDIT })).json() as any;
+    expect(up.autoMatched).toBe(1);
+    const line = (sb.tables.acc_bank_statement_lines as Row[])[0]!;
+    expect(line).toMatchObject({ kind: 'PAYOUT_SPLIT', state: 'POSTED' });
+    expect(String(line.note)).toMatch(/payment advice of 2026-08-15 says/);
+    const receipts = (sb.tables.acc_settlement_receipts as Row[]).map((r) => [r.batch_id, r.amount_sen, r.bank_line_id]);
+    expect(receipts).toEqual([[1, 728448, line.id], [2, 87106, line.id]]);
   });
 
   test('booking it writes one receipt per statement, each with its own entry', async () => {

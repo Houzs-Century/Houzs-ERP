@@ -478,6 +478,8 @@ export const bankUpload = guard(async (c) => {
 export type FreshDecision = {
   kind: string; acquirer_code: string | null; trading_date: string | null; merchant_no: string | null;
   matched_batch_id: number | null; split: Array<{ batchId: number; amountSen: number }> | null; note: string | null;
+  /** The acquirer's payment advice made this decision (acc/bank-match byAdvice). */
+  by_advice: boolean;
 };
 export function freshDecisions(
   lines: Array<Record<string, unknown>>,
@@ -498,7 +500,7 @@ export function freshDecisions(
   decisions.forEach((d, i) => {
     out.set(Number(open[i]!.id), {
       kind: d.kind, acquirer_code: d.acquirerCode, trading_date: d.tradingDate, merchant_no: d.merchantNo,
-      matched_batch_id: d.batchId, split: d.split.length > 0 ? d.split : null, note: d.clue,
+      matched_batch_id: d.batchId, split: d.split.length > 0 ? d.split : null, note: d.clue, by_advice: d.byAdvice,
     });
   });
   return out;
@@ -800,7 +802,10 @@ export async function applyMerchantAgreedMatches(
       return {
         id: Number(l.id), amountSen: Number(l.amount_sen ?? 0), kind: String(l.kind ?? ''),
         matchedBatchId: l.matched_batch_id == null ? null : Number(l.matched_batch_id),
-        split: Array.isArray(l.split) ? (l.split as unknown[]) : null,
+        split: Array.isArray(l.split)
+          ? (l.split as Array<{ batchId?: unknown; amountSen?: unknown }>).map((p) => ({ batchId: Number(p.batchId), amountSen: Number(p.amountSen) }))
+          : null,
+        byAdvice: l.by_advice === true,
         qr: qr ? { ready: qr.ready === true, jeNos: (qr.jeNos ?? []).map(String) } : null,
       };
     }),
@@ -826,7 +831,7 @@ export async function applyMerchantAgreedMatches(
       const booked = await postBankCredit(
         sb, companyId,
         { id: a.lineId, booked_on: bookedOn, reference: line.reference == null ? null : String(line.reference), statement_id: statementId },
-        [{ batchId: a.batchId, amountSen: a.amountSen }], null, actor,
+        a.allocations, null, actor,
       );
       if (!booked.ok) {
         const said = booked.body as { message?: unknown; reason?: unknown };

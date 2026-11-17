@@ -9,20 +9,28 @@
 //
 // So a person does ONE side, Merchant Recon, and the bank follows by itself
 // when its money agrees with the merchant report to the sen:
-//   QR    a day's DuitNow QR credit that is READY (acc/bank-match qrSalesFor:
-//         every QR line of its one report linked to its sale, every sale's live
-//         entry on this bank, none held by another line, the sales making the
-//         credit) is matched to those entries.
-//   CARD  a payout the matcher tied to exactly one report for exactly what that
-//         report is still owed, unsplit, is booked as Money received — what
-//         "Money received — all matched payouts" books with one press. A report is offered to the bank only once every line
-//         of it is confirmed (acc/bank loadPayableBatches), so this is a report
-//         the merchant side has finished.
+//   QR     a day's DuitNow QR credit that is READY (acc/bank-match qrSalesFor:
+//          every QR line of its one report linked to its sale, every sale's live
+//          entry on this bank, none held by another line, the sales making the
+//          credit) is matched to those entries.
+//   CARD   a payout the matcher tied to exactly one report for exactly what that
+//          report is still owed, unsplit, is booked as Money received — what
+//          "Money received — all matched payouts" books with one press. A report
+//          is offered to the bank only once every line of it is confirmed (acc/
+//          bank loadPayableBatches), so this is a report the merchant side has
+//          finished.
+//   SPLIT  one payout for several reports is booked across them only when the
+//          acquirer's payment advice says so (owner 2026-11-17: A, "auto with
+//          advice"): the payer's own list of the days it pays, each report paid
+//          exactly what it is still owed. Reports that merely ADD UP to the
+//          credit are a good guess, and a guess waits for a person.
 // Everything else stays for a person, as before: a different amount (a charge
-// the bank kept is one), a split, two reports that could fit, a line still to
-// link or confirm, a closed month. Pure: which lines, never how (scm/routes/accounting-bank.ts
-// applyMerchantAgreedMatches does it through the same doors a press uses).
+// the bank kept is one), two reports that could fit, a line still to link or
+// confirm, a closed month. Pure: which lines, never how (scm/routes/accounting-
+// bank.ts applyMerchantAgreedMatches does it through the doors a press uses).
 // ----------------------------------------------------------------------------
+
+export type AgreedShare = { batchId: number; amountSen: number };
 
 /** An OPEN bank credit with today's matcher decision and QR answer laid over it. */
 export type AgreedLine = {
@@ -30,7 +38,9 @@ export type AgreedLine = {
   amountSen: number;
   kind: string;
   matchedBatchId: number | null;
-  split: unknown[] | null;
+  split: AgreedShare[] | null;
+  /** The acquirer's payment advice made the decision (acc/bank-match byAdvice). */
+  byAdvice: boolean;
   qr: { ready: boolean; jeNos: string[] } | null;
 };
 
@@ -39,7 +49,7 @@ export type AgreedBatch = { id: number; outstandingSen: number };
 
 export type AgreedAction =
   | { kind: 'qr'; lineId: number; jeNos: string[] }
-  | { kind: 'payout'; lineId: number; batchId: number; amountSen: number };
+  | { kind: 'payout'; lineId: number; allocations: AgreedShare[] };
 
 /** The credits the merchant side already accounts for, in the order given. A
     report is paid by one credit here, and an entry claimed by one: a second
@@ -58,13 +68,26 @@ export function merchantAgreedActions(lines: readonly AgreedLine[], batches: rea
       out.push({ kind: 'qr', lineId: l.id, jeNos });
       continue;
     }
-    if (l.kind !== 'PAYOUT' || l.matchedBatchId == null) continue;
-    if ((l.split?.length ?? 0) > 0) continue;
-    const b = batchOf.get(l.matchedBatchId);
-    if (!b || b.outstandingSen !== l.amountSen) continue;
-    if (paidBatches.has(b.id)) continue;
-    paidBatches.add(b.id);
-    out.push({ kind: 'payout', lineId: l.id, batchId: b.id, amountSen: l.amountSen });
+    const shares = payoutShares(l, batchOf);
+    if (!shares || shares.some((s) => paidBatches.has(s.batchId))) continue;
+    for (const s of shares) paidBatches.add(s.batchId);
+    out.push({ kind: 'payout', lineId: l.id, allocations: shares });
   }
   return out;
+}
+
+/** The reports a payout pays and each one's share — or null when a person must say. */
+function payoutShares(l: AgreedLine, batchOf: ReadonlyMap<number, AgreedBatch>): AgreedShare[] | null {
+  const split = l.split ?? [];
+  if (l.kind === 'PAYOUT' && l.matchedBatchId != null && split.length === 0) {
+    const b = batchOf.get(l.matchedBatchId);
+    return b && b.outstandingSen === l.amountSen ? [{ batchId: b.id, amountSen: l.amountSen }] : null;
+  }
+  if (l.kind === 'PAYOUT_SPLIT' && l.byAdvice && split.length > 1) {
+    const exact = split.every((s) => batchOf.get(s.batchId)?.outstandingSen === s.amountSen);
+    const distinct = new Set(split.map((s) => s.batchId)).size === split.length;
+    const total = split.reduce((sum, s) => sum + s.amountSen, 0);
+    return exact && distinct && total === l.amountSen ? split.map((s) => ({ ...s })) : null;
+  }
+  return null;
 }
