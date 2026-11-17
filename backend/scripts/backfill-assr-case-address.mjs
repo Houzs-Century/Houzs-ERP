@@ -69,7 +69,8 @@ const CANDIDATES = `
     LEFT JOIN LATERAL (
          SELECT o.doc_no, o.postcode, o.city, o.customer_state
            FROM scm.mfg_sales_orders o
-          WHERE o.doc_no = c.doc_no OR o.linked_ac_docno = c.doc_no
+          WHERE o.company_id = c.company_id
+            AND (o.doc_no = c.doc_no OR o.linked_ac_docno = c.doc_no)
           ORDER BY (o.doc_no = c.doc_no) DESC
           LIMIT 1) so ON TRUE
    WHERE NOT EXISTS (SELECT 1 FROM public.assr_case_address a WHERE a.assr_id = c.id)
