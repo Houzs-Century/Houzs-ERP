@@ -127,6 +127,6 @@ describe('GET /mrp-supplier-lead-times — stays open (the supplier-page read)',
     expect(res.status).toBe(200);
     const body = (await res.json()) as { leadTimes: Record<string, number | null> };
     expect(body.leadTimes.sofa).toBe(3);
-    expect(body.leadTimes.bedframe).toBeNull();
+    expect(body.leadTimes.bedframe).toBeUndefined(); // not set = absent, never 0
   });
 });

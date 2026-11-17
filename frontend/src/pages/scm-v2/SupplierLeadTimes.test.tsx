@@ -10,9 +10,15 @@ vi.mock('../../vendor/scm/lib/authed-fetch', () => ({ authedFetch: (...a: unknow
 vi.mock('../../vendor/scm/lib/mutation-error', () => ({ writeFailed: () => {} }));
 vi.mock('../../vendor/scm/lib/mrp-queries', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../vendor/scm/lib/mrp-queries')>()),
-  // Base defaults so the rows can show "(default N)".
+  // The category list + base defaults come from GET /mrp-lead-times.
   useCategoryLeadTimes: () => ({
-    data: { leadTimes: { null: { sofa: 7, bedframe: 7, mattress: 0, accessory: 0, service: 0 } } },
+    data: {
+      categories: [
+        { key: 'sofa', label: 'Sofa' }, { key: 'bedframe', label: 'Bedframe' },
+        { key: 'carpet', label: 'Rugs' }, { key: 'others', label: 'Others' },
+      ],
+      leadTimes: { null: { sofa: 7, bedframe: 7, others: 10 } },
+    },
     isLoading: false,
   }),
 }));
@@ -33,60 +39,45 @@ function renderPanel() {
 describe('SupplierLeadTimes', () => {
   beforeEach(() => authedFetch.mockReset());
 
-  test('shows an override where set, and the default where not', async () => {
-    authedFetch.mockResolvedValueOnce({
-      leadTimes: { sofa: 20, bedframe: null, mattress: null, accessory: null },
-    });
+  const writes = () => authedFetch.mock.calls.filter(([, o]) => o && (o.method === 'PUT' || o.method === 'DELETE'));
+  const input = (label: string) => screen.getByLabelText(`${label} lead time in days`) as HTMLInputElement;
+  const saveButton = () => screen.getByRole('button', { name: /^save/i }) as HTMLButtonElement;
+
+  test('lists every category the server sends, a new one included, with what a blank box uses', async () => {
+    authedFetch.mockResolvedValueOnce({ leadTimes: { sofa: 20 } });
     renderPanel();
 
-    // sofa has an override -> "override set"; the input carries 20.
-    expect(await screen.findByText('override set')).toBeTruthy();
-    const sofaInput = screen.getByLabelText('sofa lead time override in days') as HTMLInputElement;
-    expect(sofaInput.value).toBe('20');
-
-    // bedframe is not overridden -> uses the default (7).
-    expect(screen.getByText('using default (7)')).toBeTruthy();
+    expect((await screen.findByLabelText('Sofa lead time in days') as HTMLInputElement).value).toBe('20');
+    expect(input('Rugs').value).toBe('');
+    expect(screen.getAllByText('Default: 7 days')).toHaveLength(2); // sofa + bedframe: the base number
+    expect(screen.getByText('Others: 10 days')).toBeTruthy(); // carpet: no base row, so Others
   });
 
-  test('saving a number PUTs the override; clearing it DELETEs', async () => {
-    authedFetch.mockResolvedValueOnce({
-      leadTimes: { sofa: null, bedframe: null, mattress: null, accessory: null },
-    });
+  test('one Save writes every changed row: a number PUTs, an emptied box DELETEs', async () => {
+    authedFetch.mockResolvedValueOnce({ leadTimes: { sofa: 20 } });
     renderPanel();
-    await screen.findByLabelText('sofa lead time override in days');
+    await screen.findByLabelText('Sofa lead time in days');
+    expect(saveButton().disabled).toBe(true); // nothing changed yet
 
-    // Type 12 into sofa and Save -> PUT with leadDays 12. (The write is followed
-    // by a refetch, so find the call that carries a method, not the last call.)
-    authedFetch.mockResolvedValue({ ok: true });
-    fireEvent.change(screen.getByLabelText('sofa lead time override in days'), { target: { value: '12' } });
-    const sofaRow = screen.getByLabelText('sofa lead time override in days').closest('label')!;
-    fireEvent.click(sofaRow.querySelector('button')!);
-    await waitFor(() => {
-      const write = authedFetch.mock.calls.find(([, o]) => o && (o.method === 'PUT' || o.method === 'DELETE'));
-      expect(write).toBeTruthy();
-      expect(write![0]).toBe('/mrp-supplier-lead-times');
-      expect(write![1].method).toBe('PUT');
-      expect(JSON.parse(write![1].body)).toEqual({ supplierId: SUP, category: 'sofa', leadDays: 12 });
-    });
+    authedFetch.mockResolvedValue({ ok: true, leadTimes: {} }); // the write, then the refetch
+    fireEvent.change(input('Sofa'), { target: { value: '' } });
+    fireEvent.change(input('Rugs'), { target: { value: '14' } });
+    expect(saveButton().textContent).toBe('Save 2 changes');
+    fireEvent.click(saveButton());
+
+    await waitFor(() => expect(writes()).toHaveLength(2));
+    const [del, put] = writes();
+    expect(del![1].method).toBe('DELETE');
+    expect(JSON.parse(del![1].body)).toEqual({ supplierId: SUP, category: 'sofa' });
+    expect(put![1].method).toBe('PUT');
+    expect(JSON.parse(put![1].body)).toEqual({ supplierId: SUP, category: 'carpet', leadDays: 14 });
   });
 
-  test('clearing an existing override DELETEs it (blank = use default)', async () => {
-    authedFetch.mockResolvedValueOnce({
-      leadTimes: { sofa: 20, bedframe: null, mattress: null, accessory: null },
-    });
+  test('typing the saved number back is not a change', async () => {
+    authedFetch.mockResolvedValueOnce({ leadTimes: { sofa: 20 } });
     renderPanel();
-    const sofaInput = await screen.findByLabelText('sofa lead time override in days');
-
-    authedFetch.mockResolvedValue({ ok: true });
-    fireEvent.change(sofaInput, { target: { value: '' } });
-    const sofaRow = sofaInput.closest('label')!;
-    fireEvent.click(sofaRow.querySelector('button')!);
-    await waitFor(() => {
-      const write = authedFetch.mock.calls.find(([, o]) => o && (o.method === 'PUT' || o.method === 'DELETE'));
-      expect(write).toBeTruthy();
-      expect(write![0]).toBe('/mrp-supplier-lead-times');
-      expect(write![1].method).toBe('DELETE');
-      expect(JSON.parse(write![1].body)).toEqual({ supplierId: SUP, category: 'sofa' });
-    });
+    await screen.findByLabelText('Sofa lead time in days');
+    fireEvent.change(input('Sofa'), { target: { value: '20' } });
+    expect(saveButton().disabled).toBe(true);
   });
 });

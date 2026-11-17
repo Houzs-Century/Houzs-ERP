@@ -4,8 +4,8 @@
 //
 // A row here REPLACES the (warehouse, category) base when the PO convert and the
 // MRP order-by hint resolve a line's lead days for THIS supplier + category —
-// highest priority (scm/lib/lead-time.ts). It is the same five fixed categories,
-// one non-negative integer each (days to order BEFORE the customer delivery
+// highest priority (scm/lib/lead-time.ts). Same categories as the base table
+// (every product category + Others), one non-negative integer each (days to order BEFORE the customer delivery
 // date), scoped per supplier and per company.
 //
 // A row's PRESENCE is the override; its ABSENCE means "use the base". So an
@@ -15,8 +15,8 @@
 //
 // Endpoints (all mounted under scm.procurement.mrp; the two WRITES are ALSO
 // config-write gated — see the PUT note below, same as the base /mrp-lead-times):
-//   GET    /?supplierId=<uuid> — { leadTimes: { sofa: n|null, … } } for one
-//                                supplier; null = not overridden (base applies)
+//   GET    /?supplierId=<uuid> — { leadTimes: { [category]: n } } for one
+//                                supplier; a category absent = not overridden
 //   PUT    /  — body { supplierId, category, leadDays } → upsert (config-write)
 //   DELETE /  — body { supplierId, category } → clear the override (config-write)
 // ----------------------------------------------------------------------------
@@ -26,32 +26,26 @@ import { z } from 'zod';
 import { supabaseAuth } from '../middleware/auth';
 import { canWriteScmConfig } from '../lib/houzs-perms';
 import { activeCompanyId, scopeToCompany } from '../lib/companyScope';
-import { LEAD_CATEGORIES, type LeadCategory } from '../lib/lead-time';
+import { LEAD_CATEGORY_RE, isSettableLeadCategory, loadLeadCategoryOptions } from '../lib/lead-time';
 import type { Env, Variables } from '../env';
 
 export const mrpSupplierLeadTimes = new Hono<{ Bindings: Env; Variables: Variables }>();
 mrpSupplierLeadTimes.use('*', supabaseAuth);
 
-/* The five categories have ONE home — LEAD_CATEGORIES in lib/lead-time.ts, the
-   same list the resolver and the base table use. Imported, not re-declared, so
-   this route cannot drift from them (duplicatedDecisionGate). */
-const CATEGORIES = LEAD_CATEGORIES;
-type Category = LeadCategory;
-
 const putSchema = z.object({
   supplierId: z.string().uuid(),
-  category: z.enum(CATEGORIES),
+  category: z.string().regex(LEAD_CATEGORY_RE),
   leadDays: z.number().int().min(0),
 });
 const deleteSchema = z.object({
   supplierId: z.string().uuid(),
-  category: z.enum(CATEGORIES),
+  category: z.string().regex(LEAD_CATEGORY_RE),
 });
 
 type DbRow = { supplier_id: string; category: string; lead_days: number };
 
-// GET /?supplierId= — one supplier's 5-category bucket. A category the owner has
-// NOT overridden is null (the base applies), NOT 0 — the two are different facts.
+// GET /?supplierId= — one supplier's overrides. A category the owner has
+// NOT overridden is absent (the base applies), NOT 0 — the two are different facts.
 mrpSupplierLeadTimes.get('/', async (c) => {
   const supplierId = c.req.query('supplierId');
   if (!supplierId) return c.json({ error: 'supplier_id_required' }, 400);
@@ -66,14 +60,9 @@ mrpSupplierLeadTimes.get('/', async (c) => {
   );
   if (error) return c.json({ error: 'fetch_failed', reason: error.message }, 500);
 
-  const leadTimes: Record<Category, number | null> = {
-    sofa: null, bedframe: null, mattress: null, accessory: null, service: null, others: null,
-  };
-  for (const r of (data ?? []) as DbRow[]) {
-    if ((CATEGORIES as readonly string[]).includes(r.category)) {
-      leadTimes[r.category as Category] = r.lead_days ?? 0;
-    }
-  }
+  // Only what is SET; a missing category means no override (the base applies).
+  const leadTimes: Record<string, number> = {};
+  for (const r of (data ?? []) as DbRow[]) leadTimes[r.category] = r.lead_days ?? 0;
   return c.json({ leadTimes });
 });
 
@@ -94,6 +83,12 @@ mrpSupplierLeadTimes.put('/', async (c) => {
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
   const parsed = putSchema.safeParse(body);
   if (!parsed.success) return c.json({ error: 'invalid_body', issues: parsed.error.issues }, 400);
+  try {
+    const options = await loadLeadCategoryOptions(c.get('supabase').from('acc_item_groups').select('code, name, is_active'));
+    if (!isSettableLeadCategory(options, parsed.data.category)) {
+      return c.json({ error: 'unknown_category', category: parsed.data.category }, 400);
+    }
+  } catch (e) { return c.json({ error: 'fetch_failed', reason: (e as Error).message }, 500); }
 
   const sb = c.get('supabase');
   const { error } = await sb

@@ -62,7 +62,7 @@ const get = (who: Who) => app(who).request('/mrp-lead-times', undefined, ENV);
 const VALID = { warehouseId: null, category: 'sofa', leadDays: 7 };
 
 beforeEach(() => {
-  tables = { mrp_category_lead_times: [] };
+  tables = { mrp_category_lead_times: [], acc_item_groups: [] };
   sb = fakeSb(tables);
 });
 
@@ -101,6 +101,32 @@ describe('GET /mrp-lead-times — stays open (the MRP order-by-date read)', () =
     expect(res.status).toBe(200);
     const body = (await res.json()) as { leadTimes: Record<string, Record<string, number>> };
     expect(body.leadTimes['null'].sofa).toBe(3);
+  });
+
+  /* 2990-0063: every product category gets a row, a new one included, with no
+     code change; Service stays out (no PO) and Others comes last. */
+  it('lists every product category, a newly registered one included', async () => {
+    tables.acc_item_groups = [{ code: 'OUTDOOR', name: 'Outdoor', is_active: true }, { code: 'CARPET', name: 'Rugs', is_active: true }];
+    const body = (await (await get(SALES)).json()) as { categories: Array<{ key: string; label: string }> };
+    const keys = body.categories.map((c) => c.key);
+    expect(keys).toEqual(expect.arrayContaining(['sofa', 'dining', 'fabric_accessory', 'carpet', 'outdoor']));
+    expect(keys).not.toContain('service');
+    expect(keys.at(-1)).toBe('others');
+    expect(body.categories.find((c) => c.key === 'carpet')?.label).toBe('Rugs');
+  });
+});
+
+describe('PUT /mrp-lead-times — only a listed category is stored', () => {
+  it('stores a newly registered category', async () => {
+    tables.acc_item_groups = [{ code: 'OUTDOOR', name: 'Outdoor', is_active: true }];
+    expect((await put(CONFIG_WRITER, { ...VALID, category: 'outdoor' })).status).toBe(200);
+    expect(tables.mrp_category_lead_times).toHaveLength(1);
+  });
+
+  it('refuses a category nobody sells, so a typo cannot park a number', async () => {
+    const res = await put(CONFIG_WRITER, { ...VALID, category: 'sofaa' });
+    expect(res.status).toBe(400);
+    expect(tables.mrp_category_lead_times).toHaveLength(0);
   });
 });
 

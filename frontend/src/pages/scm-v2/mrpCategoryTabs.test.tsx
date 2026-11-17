@@ -56,7 +56,7 @@ vi.mock('../../vendor/scm/lib/mrp-queries', async (importOriginal) => ({
     lastCategory = args.category;
     return { data: mrpData, isLoading: false, isError: false, error: null, refetch: () => {} };
   },
-  useCategoryLeadTimes: () => ({ data: { leadTimes: {} }, isLoading: false }),
+  useCategoryLeadTimes: () => ({ data: { categories: [], leadTimes: {} }, isLoading: false }),
   useUpdateCategoryLeadTime: () => ({ mutate: () => {}, isPending: false }),
   useRegenerateMrp: () => ({ mutate: () => {}, isPending: false }),
 }));

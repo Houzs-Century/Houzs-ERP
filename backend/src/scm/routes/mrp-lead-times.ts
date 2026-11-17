@@ -3,68 +3,65 @@
 // per-WAREHOUSE (Commander 2026-06-22, migration 0184 / SCM mig 0036).
 //
 // Backs the "Lead Times" dialog on the MRP page + feeds the MRP server's
-// order-by-date calc and the PO-from-SO delivery-date calc. Five fixed
-// categories, one integer each (days to order BEFORE the SO delivery date),
+// order-by-date calc and the PO-from-SO delivery-date calc. One integer per
+// product category (days to order BEFORE the SO delivery date), plus Others,
 // scoped by warehouse. `warehouse_id = NULL` = the GLOBAL DEFAULT; a warehouse
-// row overrides the global for that (warehouse, category). Lookup cascade
-// everywhere: (warehouse, category) → (NULL, category) → 0. See migrations
-// 0099 + 0184 (SCM mig 0036).
+// row overrides the global for that (warehouse, category). The lookup cascade
+// lives in lib/lead-time.ts. See migrations 0099 + 0184 (SCM mig 0036).
 //
 // Endpoints:
-//   GET /     — { leadTimes: { "null": {sofa,…}, "<wh-uuid>": {sofa,…} } }
+//   GET /     — { categories, leadTimes: { "null": {sofa,…}, "<wh-uuid>": {…} } }
 //               ("null" = the global-defaults bucket; one bucket per warehouse)
 //   PUT /     — body { warehouseId: string|null, category, leadDays } → upsert
 // ----------------------------------------------------------------------------
 
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import { supabaseAuth } from '../middleware/auth';
 import { canWriteScmConfig } from '../lib/houzs-perms';
 import { activeCompanyId, scopeToCompany } from '../lib/companyScope';
 import { bustProcurementOverview } from './procurement-overview';
-import { LEAD_CATEGORIES, type LeadCategory } from '../lib/lead-time';
+import { LEAD_CATEGORY_RE, isSettableLeadCategory, loadLeadCategoryOptions } from '../lib/lead-time';
 import type { Env, Variables } from '../env';
 
 export const mrpLeadTimes = new Hono<{ Bindings: Env; Variables: Variables }>();
 mrpLeadTimes.use('*', supabaseAuth);
 
-const CATEGORIES = LEAD_CATEGORIES;
-type Category = LeadCategory;
 const putSchema = z.object({
   // null = the GLOBAL DEFAULT bucket; a uuid = that warehouse's override.
   warehouseId: z.string().uuid().nullable(),
-  category: z.enum(CATEGORIES),
+  category: z.string().regex(LEAD_CATEGORY_RE),
   leadDays: z.number().int().min(0),
 });
 
 type DbRow = { warehouse_id: string | null; category: string; lead_days: number };
 
 // The global-defaults bucket lives under the string key "null"; each warehouse
-// under its uuid. Every bucket defaults its categories to 0.
+// under its uuid.
 const GLOBAL_KEY = 'null';
-const emptyBucket = (): Record<Category, number> => ({
-  sofa: 0, bedframe: 0, mattress: 0, accessory: 0, service: 0, others: 0,
-});
 
-// GET / — per-warehouse map { [warehouseKey]: { sofa, bedframe, … } }. The
-// global-defaults bucket is under "null"; missing categories default to 0.
+const categoryRegistry = (c: Context<{ Bindings: Env; Variables: Variables }>) =>
+  c.get('supabase').from('acc_item_groups').select('code, name, is_active');
+
+// GET / — { categories, leadTimes }. categories: every product category a lead
+// time can be set for, new ones included (2990-0063). leadTimes: per-warehouse
+// map { [warehouseKey]: { [category]: days } } holding only what is SET; a
+// missing category falls back (own -> sofa for a Sofa Accessory -> others -> 0,
+// see lib/lead-time.ts). The global-defaults bucket is under "null".
 mrpLeadTimes.get('/', async (c) => {
   const sb = c.get('supabase');
-  const { data, error } = await scopeToCompany(
-    sb
-      .from('mrp_category_lead_times')
-      .select('warehouse_id, category, lead_days'),
-    c,
-  );
-  if (error) return c.json({ error: 'fetch_failed', reason: error.message }, 500);
-  const leadTimes: Record<string, Record<Category, number>> = { [GLOBAL_KEY]: emptyBucket() };
-  for (const r of (data ?? []) as DbRow[]) {
-    if (!(CATEGORIES as readonly string[]).includes(r.category)) continue;
+  const [rows, categories] = await Promise.all([
+    scopeToCompany(sb.from('mrp_category_lead_times').select('warehouse_id, category, lead_days'), c),
+    loadLeadCategoryOptions(categoryRegistry(c)).catch((e: Error) => e),
+  ]);
+  if (rows.error) return c.json({ error: 'fetch_failed', reason: rows.error.message }, 500);
+  if (categories instanceof Error) return c.json({ error: 'fetch_failed', reason: categories.message }, 500);
+  const leadTimes: Record<string, Record<string, number>> = { [GLOBAL_KEY]: {} };
+  for (const r of (rows.data ?? []) as DbRow[]) {
     const key = r.warehouse_id ?? GLOBAL_KEY;
-    const bucket = (leadTimes[key] ??= emptyBucket());
-    bucket[r.category as Category] = r.lead_days ?? 0;
+    (leadTimes[key] ??= {})[r.category] = r.lead_days ?? 0;
   }
-  return c.json({ leadTimes });
+  return c.json({ categories, leadTimes });
 });
 
 // PUT / — upsert one (warehouse, category)'s lead days. warehouseId null = the
@@ -84,6 +81,12 @@ mrpLeadTimes.put('/', async (c) => {
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
   const parsed = putSchema.safeParse(body);
   if (!parsed.success) return c.json({ error: 'invalid_body', issues: parsed.error.issues }, 400);
+  let options;
+  try { options = await loadLeadCategoryOptions(categoryRegistry(c)); }
+  catch (e) { return c.json({ error: 'fetch_failed', reason: (e as Error).message }, 500); }
+  if (!isSettableLeadCategory(options, parsed.data.category)) {
+    return c.json({ error: 'unknown_category', category: parsed.data.category }, 400);
+  }
 
   const sb = c.get('supabase');
   const { error } = await sb
