@@ -49,6 +49,7 @@ import {
   settlementBatchReceived, settlementReceiptUndo,
   settlementMaintenance, settlementMaintenanceMerchant, settlementMaintenanceBank, settlementRematch,
 } from './accounting-settlement';
+import { settlementOtherCompanies, settlementRowSoldBy } from './accounting-settlement-sold-by';
 import {
   bankSetup, bankUpload, bankStatements, bankStatementDetail,
   bankRulesList, bankRuleCreate, bankRuleUpdate,
@@ -153,6 +154,9 @@ accounting.post('/settlement/rows/:id/confirm', settlementConfirmRow);
 accounting.post('/settlement/rows/confirm-together', settlementConfirmGroup);
 accounting.post('/settlement/rows/:id/unconfirm', settlementRowUnconfirm);
 accounting.post('/settlement/rows/:id/ignore', settlementIgnoreRow);
+/* Another company's sale swiped on this terminal (owner 2026-11-17: 2990's on Houzs's AEON). */
+accounting.get('/settlement/other-companies', settlementOtherCompanies);
+accounting.post('/settlement/rows/:id/sold-by', settlementRowSoldBy);
 /* "Not this" — release an unconfirmed line's match (owner 2026-11-03, batch 3 d2). */
 accounting.post('/settlement/rows/:id/release', settlementReleaseRow);
 /* "Find the sale" — the card payments the window could not offer (docs/bugs/0792). */

@@ -45,17 +45,19 @@ import { resolveRoles } from '../../acc/rules';
 import { loadLineMonth, loadLiveMonthLock } from '../../acc/bank';
 import { lockedRefusal } from '../../acc/bank-lock';
 import { bankFollowsMerchant, type BankFollows } from './accounting-bank';
+import { unmarkSoldBy } from '../../acc/settlement-sold-by';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
 /** The permission check the brief asks for at this end (the page checks at the
     other). One wrapper, so no handler in this file can be added without it. */
-const guard = (handler: (c: Ctx) => Promise<Response>) => async (c: Ctx): Promise<Response> => {
+export const settlementGuard = (handler: (c: Ctx) => Promise<Response>) => async (c: Ctx): Promise<Response> => {
   if (!hasHouzsPerm(c, 'scm.payment_voucher.post')) {
     return c.json({ error: "You don't have permission to reconcile acquirer settlements." }, 403);
   }
   return handler(c);
 };
+const guard = settlementGuard;
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -915,7 +917,7 @@ export const settlementBatchDetail = guard(async (c) => {
     /* Every credit recorded against this statement, and what is still out. */
     loadBatchReceipts(sb, co.companyId, batchId),
     sb.from('acc_settlement_rows')
-      .select('id, line_no, txn_date, ref, gross_sen, fee_sen, net_sen, bucket, match_reason, confirmed_at, posted_je_no, notes, matched_with_row_id, not_this, channel')
+      .select('id, line_no, txn_date, ref, gross_sen, fee_sen, net_sen, bucket, match_reason, confirmed_at, posted_je_no, notes, matched_with_row_id, not_this, channel, sold_by_company_id')
       .eq('batch_id', batchId).eq('company_id', co.companyId).order('line_no'),
   ]);
   const { data: batch, error: bErr } = batchRes;
@@ -1143,7 +1145,7 @@ export const settlementBatchDetail = guard(async (c) => {
    payout of exactly what the report is still owed now that every line of it is
    confirmed. Looked for around the report's first trading day. */
 type Sb = Parameters<typeof bankFollowsMerchant>[0];
-async function bankFollows(sb: Sb, companyId: number, batchIds: number[], actor: string | null): Promise<BankFollows> {
+export async function bankFollows(sb: Sb, companyId: number, batchIds: number[], actor: string | null): Promise<BankFollows> {
   const ids = [...new Set(batchIds.filter((n) => Number.isInteger(n) && n > 0))];
   if (ids.length === 0) return { matched: 0, jeNos: [], left: [] };
   const { data, error } = await sb.from('acc_settlement_batches').select('period_from').eq('company_id', companyId).in('id', ids);
@@ -1471,6 +1473,13 @@ export const settlementRowUnconfirm = guard(async (c) => {
   if (!co.ok) return c.json(co.refusal, 409);
   const rowId = Number(c.req.param('id'));
   if (!Number.isInteger(rowId)) return c.json({ error: 'bad_id' }, 400);
+  /* A line booked as another company's sale goes back through its own journal. */
+  const sold = await unmarkSoldBy(c.get('supabase'), co.companyId, rowId);
+  if (sold.ok) return c.json({ ok: true, ...(sold.jeNo ? { reversalJeNo: sold.jeNo } : {}) });
+  if (sold.status !== 'not_sold_by') {
+    const code = sold.status === 'not_found' ? 404 : sold.status === 'has_receipts' ? 409 : 500;
+    return c.json({ error: sold.status, message: sold.reason }, code);
+  }
   const r = await unconfirmSettlementRow(c.get('supabase'), co.companyId, rowId);
   if (!r.ok) {
     const code = r.status === 'not_found' ? 404
