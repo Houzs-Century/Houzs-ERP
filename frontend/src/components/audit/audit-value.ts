@@ -12,11 +12,17 @@ export const AUDIT_VALUE_MAX = 300;
 
 const isInlineImage = (s: string): boolean => /^data:image\//i.test(s.trim());
 
+/** A stored photo's object key ("so-items/HC-SO-013319/<uuid>/<uuid>.jpg"): the
+ *  History drawer read it out in full, which staff took for garbled text. */
+export const isStoredPhotoKey = (s: string): boolean =>
+  /^[a-z0-9_-]+(\/[^/\s]+)+\.(jpe?g|png|webp|gif|heic|heif)$/i.test(s.trim());
+
 /** The full text of a value (pictures masked), before any cut. */
 export function auditValueText(field: string, val: unknown, dict: AuditLabelDictionary): string {
   if (val === null || val === undefined || val === '') return '—';
   if (dict.moneyFields?.has(field) && typeof val === 'number') return fmtSen(val);
   if (typeof val === 'string' && isInlineImage(val)) return '[image]';
+  if (typeof val === 'string' && isStoredPhotoKey(val)) return '1 photo';
   if (typeof val === 'object') {
     return JSON.stringify(val, (_k, v: unknown) => (typeof v === 'string' && isInlineImage(v) ? '[image]' : v));
   }
