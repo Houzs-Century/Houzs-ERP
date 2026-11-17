@@ -5,7 +5,12 @@ const LOCALITIES: Record<string, LocalityParts> = {
   '09000': { city: 'Kulim', state: 'Kedah' },
   '50480': { city: 'Kuala Lumpur', state: 'Kuala Lumpur' },
   '14000': { city: 'Bukit Mertajam', state: 'Pulau Pinang' },
+  '06600': { city: 'Kuala Kedah', state: 'Kedah' },
 };
+
+function slipWithAddress(address: string): SlipAddressFields {
+  return { address, postcode: null, city: null, addressStateMatch: null };
+}
 
 function slipWith(postcode: string | null, city: string | null = null): SlipAddressFields {
   return { address: 'Bukit Tunku', postcode, city, addressStateMatch: null };
@@ -70,6 +75,46 @@ describe('resolveSlipAddress', () => {
     expect(slip.postcode).toBe('123');
     expect(slip.city).toBe('Kapar');
     expect(slip.addressStateMatch).toBeNull();
+  });
+
+  it('takesAKnownPostcodeWrittenInsideTheAddressWhenThePostcodeFieldIsEmpty', async () => {
+    const slip = slipWithAddress('Nurul ikan bakar, jalan kuala kedah, kota star, 06600 keda');
+    const lookups = lookupsReturning({ postcode: '50480', city: 'Kuala Lumpur', state: 'Kuala Lumpur' });
+
+    await resolveSlipAddress(slip, lookups);
+
+    expect(slip.postcode).toBe('06600');
+    expect(slip.city).toBe('Kuala Kedah');
+    expect(slip.addressStateMatch?.value).toBe('Kedah');
+    expect(lookups.geocode).not.toHaveBeenCalled();
+  });
+
+  it('ignoresAFiveDigitLotNumberThatIsNotAPostcode', async () => {
+    const slip = slipWithAddress('Lot 23961, Jalan Kuala Kedah 06600');
+
+    await resolveSlipAddress(slip, lookupsReturning(null));
+
+    expect(slip.postcode).toBe('06600');
+  });
+
+  it('usesTheMapLookupWhenTheAddressHoldsTwoKnownPostcodes', async () => {
+    const slip = slipWithAddress('09000 Kulim or 14000 Bukit Mertajam');
+    const lookups = lookupsReturning({ postcode: '14000', city: null, state: null });
+
+    await resolveSlipAddress(slip, lookups);
+
+    expect(lookups.geocode).toHaveBeenCalledOnce();
+    expect(slip.postcode).toBe('14000');
+  });
+
+  it('doesNotSearchTheAddressWhenAWrittenPostcodeIsUnknown', async () => {
+    const slip: SlipAddressFields = { address: 'Kulim 09000', postcode: '99999', city: null, addressStateMatch: null };
+    const lookups = lookupsReturning(null);
+
+    await resolveSlipAddress(slip, lookups);
+
+    expect(lookups.geocode).toHaveBeenCalledOnce();
+    expect(slip.postcode).toBe('99999');
   });
 
   it('usesGoogleCityAndStateWhenItsPostcodeIsNotInTheMaster', async () => {
