@@ -199,9 +199,9 @@ export function useRegenerateMrp() {
 
 /* ── Per-category lead times (Commander 2026-05-29), now per-WAREHOUSE
       (Commander 2026-06-22, migration 0184 / SCM mig 0036) ──────────────────── */
-export type LeadCategory = 'sofa' | 'bedframe' | 'mattress' | 'accessory' | 'service';
+export type LeadCategory = 'sofa' | 'bedframe' | 'mattress' | 'accessory' | 'service' | 'others';
 export type CategoryLeadTimes = Record<LeadCategory, number>;
-export const LEAD_CATEGORIES: LeadCategory[] = ['sofa', 'bedframe', 'mattress', 'accessory', 'service'];
+export const LEAD_CATEGORIES: LeadCategory[] = ['sofa', 'bedframe', 'mattress', 'accessory', 'service', 'others'];
 
 /* Per-warehouse lead-time map. The global-defaults bucket is under the key
    "null"; each warehouse under its uuid. A warehouse with no override yet has

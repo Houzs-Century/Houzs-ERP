@@ -22,13 +22,14 @@ import { supabaseAuth } from '../middleware/auth';
 import { canWriteScmConfig } from '../lib/houzs-perms';
 import { activeCompanyId, scopeToCompany } from '../lib/companyScope';
 import { bustProcurementOverview } from './procurement-overview';
+import { LEAD_CATEGORIES, type LeadCategory } from '../lib/lead-time';
 import type { Env, Variables } from '../env';
 
 export const mrpLeadTimes = new Hono<{ Bindings: Env; Variables: Variables }>();
 mrpLeadTimes.use('*', supabaseAuth);
 
-const CATEGORIES = ['sofa', 'bedframe', 'mattress', 'accessory', 'service'] as const;
-type Category = (typeof CATEGORIES)[number];
+const CATEGORIES = LEAD_CATEGORIES;
+type Category = LeadCategory;
 const putSchema = z.object({
   // null = the GLOBAL DEFAULT bucket; a uuid = that warehouse's override.
   warehouseId: z.string().uuid().nullable(),
@@ -39,10 +40,10 @@ const putSchema = z.object({
 type DbRow = { warehouse_id: string | null; category: string; lead_days: number };
 
 // The global-defaults bucket lives under the string key "null"; each warehouse
-// under its uuid. Every bucket defaults its 5 categories to 0.
+// under its uuid. Every bucket defaults its categories to 0.
 const GLOBAL_KEY = 'null';
 const emptyBucket = (): Record<Category, number> => ({
-  sofa: 0, bedframe: 0, mattress: 0, accessory: 0, service: 0,
+  sofa: 0, bedframe: 0, mattress: 0, accessory: 0, service: 0, others: 0,
 });
 
 // GET / — per-warehouse map { [warehouseKey]: { sofa, bedframe, … } }. The
