@@ -1654,11 +1654,11 @@ function HistoryCard({ docNo }: { docNo: string }) {
                               <span style={{ fontWeight: 700, color: "var(--mut)" }}>{HIST_FIELD_LABEL[ch.field] ?? ch.field}:</span>{" "}
                               {ch.from !== undefined && ch.from !== null && ch.from !== "" ? (
                                 <>
-                                  <span style={{ color: "var(--hz-c-err)", textDecoration: "line-through" }}>{histVal(ch.field, ch.from)}</span>
+                                  <span style={{ color: "var(--hz-c-err)", textDecoration: "line-through" }}>{ch.from_label ?? histVal(ch.field, ch.from)}</span>
                                   <span style={{ color: "var(--mut2)" }}>{" → "}</span>
                                 </>
                               ) : null}
-                              <span style={{ color: "var(--hz-c-primary-ink)", fontWeight: 600 }}>{histVal(ch.field, ch.to)}</span>
+                              <span style={{ color: "var(--hz-c-primary-ink)", fontWeight: 600 }}>{ch.to_label ?? histVal(ch.field, ch.to)}</span>
                             </div>
                           ))}
                         </div>

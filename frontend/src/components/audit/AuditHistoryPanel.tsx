@@ -28,8 +28,9 @@ import styles from './AuditHistoryPanel.module.css';
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
 
 /* One value: pictures read "[image]", long text is cut, the full text is the tooltip. */
-const AuditValue = ({ field, val, dict, className }: { field: string; val: unknown; dict: AuditLabelDictionary; className?: string }) => {
-  const full = auditValueText(field, val, dict);
+const AuditValue = ({ field, val, label, dict, className }: { field: string; val: unknown; label: string | undefined; dict: AuditLabelDictionary; className?: string }) => {
+  // A record id reads as the record's name when the server could resolve it.
+  const full = label ?? auditValueText(field, val, dict);
   const shown = auditValueShown(full);
   return <span className={className} title={shown === full ? undefined : full}>{shown}</span>;
 };
@@ -212,11 +213,11 @@ export const AuditHistoryPanel = memo(({
                                 <span className={styles.historyChangeDiff}>
                                   {ch.from !== undefined && ch.from !== null && ch.from !== '' ? (
                                     <>
-                                      <AuditValue className={styles.historyChangeFrom} field={ch.field} val={ch.from} dict={dict} />
+                                      <AuditValue className={styles.historyChangeFrom} field={ch.field} val={ch.from} label={ch.from_label} dict={dict} />
                                       <span className={styles.historyChangeArrow}>→</span>
                                     </>
                                   ) : null}
-                                  <AuditValue field={ch.field} val={ch.to} dict={dict} />
+                                  <AuditValue field={ch.field} val={ch.to} label={ch.to_label} dict={dict} />
                                 </span>
                               </div>
                             ))}

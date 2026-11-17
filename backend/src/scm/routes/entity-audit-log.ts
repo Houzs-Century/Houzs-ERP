@@ -32,6 +32,7 @@ import { isEntityType } from '../lib/entity-audit';
 import { scopeToCompany } from '../lib/companyScope';
 import { canViewScmFinance } from '../lib/houzs-perms';
 import { stripAuditFinance } from '../lib/finance-keys';
+import { labelAuditIds, type AuditLabelReader } from '../lib/audit-id-labels';
 
 export const entityAuditLog = new Hono<{ Bindings: Env; Variables: Variables }>();
 entityAuditLog.use('*', supabaseAuth);
@@ -95,7 +96,9 @@ entityAuditLog.get('/:entityType/:entityId', async (c) => {
      the row shape (same reason payment-audit-log.ts casts its own read). */
   const entries = (data ?? []) as unknown as Array<Record<string, unknown>>;
   if (!canViewScmFinance(c)) stripAuditFinance(entries);
-  return c.json({ entries });
+  // Record ids in a change read as names (lib/audit-id-labels).
+  const labelsFailed = await labelAuditIds(sb as unknown as AuditLabelReader, entries);
+  return c.json(labelsFailed.length ? { entries, labels_unavailable: labelsFailed } : { entries });
 });
 
 export default entityAuditLog;
