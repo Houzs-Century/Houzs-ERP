@@ -115,13 +115,13 @@ describe('purchase-order-pdf urgency badge', () => {
 describe('purchase-order-pdf amended note', () => {
   it('prints Amended on a revised PO', async () => {
     const { pdf, raw } = await render(header('2026-10-18', { revision: 2 }));
-    expect(raw).toContain('(Amended)');
+    expect(raw).toContain('(AMENDED)');
     expect(raw).toContain('HC-PO-2610-178_R1');
     if (process.env.AMENDED_PDF_OUT) writeFileSync(process.env.AMENDED_PDF_OUT, pdf);
   });
 
   it('prints nothing on an original PO', async () => {
-    expect((await render(header('2026-10-18', { revision: 1 }))).raw).not.toContain('Amended');
-    expect((await render(header('2026-10-18'))).raw).not.toContain('Amended');
+    expect((await render(header('2026-10-18', { revision: 1 }))).raw).not.toContain('AMENDED');
+    expect((await render(header('2026-10-18'))).raw).not.toContain('AMENDED');
   });
 });
