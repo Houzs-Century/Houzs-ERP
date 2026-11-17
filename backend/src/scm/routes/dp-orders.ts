@@ -866,7 +866,8 @@ async function moveStopToTrip(
   c: any, sb: any, stopId: string, newTripId: string,
 ): Promise<{ failed: boolean; reason?: string }> {
   try {
-    const { data: stops } = await sb.from('trip_stops').select('stop_no').eq('trip_id', newTripId);
+    const { data: stops, error: stopsErr } = await sb.from('trip_stops').select('stop_no').eq('trip_id', newTripId);
+    if (stopsErr) return { failed: true, reason: stopsErr.message };
     const nextStopNo = ((stops ?? []) as Array<{ stop_no?: number }>)
       .reduce((m: number, r: { stop_no?: number }) => Math.max(m, Number(r.stop_no ?? 0)), 0) + 1;
     const { error } = await scopeToAllowedCompanies(
