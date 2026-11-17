@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  leadCategoryOptions,
   loadLeadTimeBase,
   loadSupplierCategoryOverrides,
   resolveLeadDays,
@@ -304,5 +305,18 @@ describe("subtractCalendarDays", () => {
 
   test("an ISO timestamp is accepted and truncated to its date", () => {
     expect(subtractCalendarDays("2026-12-07T15:30:00Z", 1)).toBe("2026-12-06");
+  });
+});
+
+describe("leadCategoryOptions — one row per stored key (2990-0063)", () => {
+  test("the registry's own OTHERS group does not add a second Others row", () => {
+    const opts = leadCategoryOptions([
+      { code: "OTHERS", name: "OTHERS", is_active: true },
+      { code: "OUTDOOR", name: "Outdoor", is_active: true },
+    ]);
+    expect(opts.filter((o) => o.key === "others")).toEqual([{ key: "others", label: "Others" }]);
+    expect(opts.at(-1)?.key).toBe("others");
+    expect(new Set(opts.map((o) => o.key)).size).toBe(opts.length);
+    expect(opts.map((o) => o.key)).toContain("outdoor");
   });
 });
