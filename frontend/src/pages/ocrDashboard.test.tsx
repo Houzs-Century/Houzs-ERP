@@ -46,8 +46,10 @@ describe("OCR page", () => {
     expect(apiGet).toHaveBeenCalledWith("/api/admin/ocr?month=2026-09");
     expect(screen.getByText("not recorded")).toBeTruthy();
     expect(screen.getByRole("link", { name: "SO-2609-001" }).getAttribute("href")).toBe("/scm/sales-orders/SO-2609-001");
-    expect(screen.getByText("Supplier not matched")).toBeTruthy();
-    expect(screen.getByText("A1 → B2", { exact: false })).toBeTruthy();
+    expect(screen.getAllByText("Supplier not matched").length).toBeGreaterThan(0);
+    expect(screen.getByText("1 change")).toBeTruthy();
+    expect(screen.getByText("Line 1 Product code")).toBeTruthy();
+    expect(screen.getByText("A1")).toBeTruthy();
     expect(screen.getByText("none created")).toBeTruthy();
     expect(pct(9, 10)).toBe("90.0%");
   });

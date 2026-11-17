@@ -29,4 +29,17 @@ describe("correctionChanges", () => {
     ]);
     expect(correctionChanges(extracted, corrected, null)).toBeNull();
   });
+
+  it("names each removed and added line when the line count changed", () => {
+    const extracted = {
+      lines: [line("matt q", "MATT-Q", 1), line("matt s", "MATT-S", 2), line("protector", "PROT-S", 2)],
+    };
+    const operatorLine = { rawText: "", skuMatch: { code: "PROT-SS" }, qtyGuess: 1 };
+    const corrected = { lines: [line("matt q", "MATT-Q", 1), operatorLine] };
+    expect(correctionChanges(extracted, corrected, extracted)).toEqual([
+      { field: "Line removed", before: "MATT-S, qty 2", after: "(none)" },
+      { field: "Line removed", before: "PROT-S, qty 2", after: "(none)" },
+      { field: "Line added", before: "(none)", after: "PROT-SS, qty 1" },
+    ]);
+  });
 });
