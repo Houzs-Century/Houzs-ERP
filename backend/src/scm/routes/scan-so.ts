@@ -60,6 +60,7 @@ import { scanTimer } from '../lib/scan-timing';
 import { scanCatalogSkus, type CatalogSku, type ScanCatalogRow } from '../lib/scan-catalog-skus';
 import { buildScanLineVariants } from '../lib/scan-line-variants';
 import { resolveSlipAddress } from '../lib/scan-address-lookup';
+import { hasUnexpectedDigitCount, phoneDigitCountWarnings } from '../lib/scan-phone-check';
 import { readSlipWithAliases } from '../lib/scan-field-aliases';
 import { ttlCached } from '../lib/ttl-cache';
 import { keepScanFile, linkScanFiles } from '../lib/scan-files';
@@ -2861,14 +2862,10 @@ async function postProcessSlip(
   const warnings = validateSlip(parsed, catalog);
 
   // Phone plausibility (evidence 2026-07: the OCR dropped a doubled digit —
-  // "01137166720" read as "0113716720"): a Malaysian national-significant
-  // number (after the trunk 0 strip above) is 9-10 digits for mobiles and
-  // 8-9 for landlines. Anything under 9 or over 10 very likely lost/gained a
-  // digit — warn the operator so the form gets a second look.
+  // "01137166720" read as "0113716720"). The length depends on the prefix:
+  // 011/015 mobiles have 8 subscriber digits, other mobiles 7 (lib/scan-phone-check).
   for (const p of parsed.phones) {
-    if (!p.startsWith('+60')) continue; // the 9-10 rule is Malaysian; leave foreign numbers alone
-    const national = p.slice(3);
-    if (national.length < 9 || national.length > 10) {
+    if (hasUnexpectedDigitCount(p)) {
       warnings.push({
         field: 'phones',
         value: p,
@@ -3983,9 +3980,11 @@ async function runScanJob(
       await linked;
       // Private "your scan is a draft now" notice. Duplicate/payment caveats
       // ride in the body + bump it to WARNING so it stands out.
+      const phoneWarnings = phoneDigitCountWarnings(parsed?.phones ?? []);
       const noticeExtras = [
         dupDocNo ? `This looks like a possible duplicate of ${dupDocNo}.` : null,
         paymentNote,
+        ...phoneWarnings,
       ].filter(Boolean);
       await Promise.all([
         touch({
@@ -3996,7 +3995,7 @@ async function runScanJob(
         }),
         postScanNotice(env, {
           houzsUserId: job.houzsUserId,
-          category: dupDocNo || paymentNote ? 'WARNING' : 'GENERAL',
+          category: dupDocNo || paymentNote || phoneWarnings.length > 0 ? 'WARNING' : 'GENERAL',
           title: `Sales order saved — ${docNo}`,
           body: [`Your scan was saved as a draft. Open it from your Orders to review.`, ...noticeExtras].join(' '),
         }),
