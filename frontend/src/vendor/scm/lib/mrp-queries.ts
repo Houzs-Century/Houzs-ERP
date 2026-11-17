@@ -199,22 +199,45 @@ export function useRegenerateMrp() {
 
 /* ── Per-category lead times (Commander 2026-05-29), now per-WAREHOUSE
       (Commander 2026-06-22, migration 0184 / SCM mig 0036) ──────────────────── */
-export type LeadCategory = 'sofa' | 'bedframe' | 'mattress' | 'accessory' | 'service' | 'others';
-export type CategoryLeadTimes = Record<LeadCategory, number>;
-export const LEAD_CATEGORIES: LeadCategory[] = ['sofa', 'bedframe', 'mattress', 'accessory', 'service', 'others'];
+/* A lead-time category is a lower-cased product category. Open on purpose
+   (2990-0063): the server lists them from the catalogue, so a category added in
+   Products gets a lead-time row without a code change here. */
+export type LeadCategory = string;
+export type CategoryLeadTimes = Partial<Record<LeadCategory, number>>;
+export interface LeadCategoryOption { key: LeadCategory; label: string }
 
-/* Per-warehouse lead-time map. The global-defaults bucket is under the key
-   "null"; each warehouse under its uuid. A warehouse with no override yet has
-   no entry — callers fall back to the "null" bucket. */
+/* Per-warehouse lead-time map, SET values only. The global-defaults bucket is
+   under the key "null"; each warehouse under its uuid. */
 export const GLOBAL_LEAD_KEY = 'null';
 export type WarehouseLeadTimes = Record<string, CategoryLeadTimes>;
 
 export function useCategoryLeadTimes() {
   return useQuery({
     queryKey: ['mrp-lead-times'],
-    queryFn: () => authedFetch<{ leadTimes: WarehouseLeadTimes }>(`/mrp-lead-times`),
+    queryFn: () => authedFetch<{ categories: LeadCategoryOption[]; leadTimes: WarehouseLeadTimes }>(`/mrp-lead-times`),
     staleTime: 60_000,
   });
+}
+
+/* What a blank lead-time box falls back to, for the "When blank" column. Mirrors
+   resolveLeadDays (backend scm/lib/lead-time.ts): the category's own number,
+   then (Sofa Accessory only) Sofa's, then Others', else 0. `layers` are the
+   sources in priority order (e.g. supplier override, then base); the box being
+   edited is layers[0] for its own category, so that one is skipped. */
+export function leadFallbackLabel(
+  category: LeadCategory,
+  layers: Array<(c: LeadCategory) => number | undefined>,
+  labelOf: (c: LeadCategory) => string,
+  ownFallbackName: string,
+): string {
+  const own = layers.slice(1).map((l) => l(category)).find((n) => n !== undefined);
+  if (own !== undefined) return `${ownFallbackName}: ${own} days`;
+  const next = category === 'others' ? [] : category === 'fabric_accessory' ? ['sofa', 'others'] : ['others'];
+  for (const c of next) {
+    const n = layers.map((l) => l(c)).find((v) => v !== undefined);
+    if (n !== undefined) return `${labelOf(c)}: ${n} days`;
+  }
+  return '0 days';
 }
 
 export function useUpdateCategoryLeadTime() {

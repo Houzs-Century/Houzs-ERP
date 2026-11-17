@@ -59,22 +59,69 @@
 // make the agent unexplainable.
 // ----------------------------------------------------------------------------
 
-/** The fixed lead-time categories. Mirrors scm.mrp_category_lead_times'
-    CHECK constraint and the frontend's LEAD_CATEGORIES. A line's category is
-    its item_group, matched lowercase; any other group reads as 'others'. */
-export const LEAD_CATEGORIES = ['sofa', 'bedframe', 'mattress', 'accessory', 'service', 'others'] as const;
-export type LeadCategory = (typeof LEAD_CATEGORIES)[number];
+import { MFG_PRODUCT_CATEGORIES, mfgCategoryLabel } from '../shared/product-categories';
 
-/* A Sofa Accessory (group fabric_accessory, owner 2026-09-14) is ordered on the
-   sofa's purchase order, so it takes the SOFA lead days rather than a sixth
-   category row nobody has set (which would read as 0). Owner can still split it
-   later by giving it its own row; until then one number governs both. */
-const leadCategoryOf = (category: string | null): string => {
+/** A lead-time category is a product category code, lowercased ('sofa',
+    'dining', 'fabric_accessory', …), or 'others'. The list is open: a category
+    added later through scm.acc_register_item_group gets a row with no code
+    change (2990-0063). The tables' CHECK only pins the shape. */
+export type LeadCategory = string;
+export const OTHERS_LEAD_CATEGORY = 'others';
+export const LEAD_CATEGORY_RE = /^[a-z][a-z0-9_]{1,29}$/;
+
+export interface LeadCategoryOption { key: LeadCategory; label: string }
+type ItemGroupRow = { code: string; name: string | null; is_active: boolean | null };
+
+/**
+ * The categories a lead time can be set for, in display order: the product
+ * categories this build knows, then any the registry (scm.acc_item_groups) has
+ * gained since, then Others. Service is left out (a service line raises no PO);
+ * a registry group switched off is left out too. Pure: the caller reads the
+ * registry.
+ */
+export function leadCategoryOptions(registry: ItemGroupRow[]): LeadCategoryOption[] {
+  const reg = new Map(registry.map((r) => [r.code.toUpperCase(), r]));
+  const codes = [...MFG_PRODUCT_CATEGORIES as readonly string[]];
+  for (const r of [...reg.values()].sort((a, b) => (a.name ?? a.code).localeCompare(b.name ?? b.code))) {
+    if (!codes.includes(r.code.toUpperCase())) codes.push(r.code.toUpperCase());
+  }
+  const out: LeadCategoryOption[] = [];
+  for (const code of codes) {
+    const row = reg.get(code);
+    if (code === 'SERVICE' || row?.is_active === false) continue;
+    const key = code.toLowerCase();
+    if (!LEAD_CATEGORY_RE.test(key)) continue;
+    out.push({ key, label: row?.name?.trim() || mfgCategoryLabel(code) });
+  }
+  out.push({ key: OTHERS_LEAD_CATEGORY, label: 'Others' });
+  return out;
+}
+
+/** Read the registry and build the options. THROWS on a read error: an empty
+    list would hide every row the owner set. `query` is
+    sb.from('acc_item_groups').select('code, name, is_active'). */
+export async function loadLeadCategoryOptions(
+  query: PromiseLike<{ data: unknown; error: { message?: string } | null }>,
+): Promise<LeadCategoryOption[]> {
+  const { data, error } = await query;
+  if (error) throw new Error(`lead_categories_load_failed: ${error.message ?? 'unknown'}`);
+  return leadCategoryOptions((data ?? []) as ItemGroupRow[]);
+}
+
+/** May a lead time be stored under this key? A listed category, or service
+    (rows from before the list opened up). Anything else is refused so a typo
+    cannot park a number nobody will ever read. */
+export const isSettableLeadCategory = (options: LeadCategoryOption[], key: string): boolean =>
+  key === 'service' || options.some((o) => o.key === key);
+
+/* Where a line looks for its number, first hit wins: its own category, then
+   for a Sofa Accessory the sofa's (it is ordered on the sofa's PO, owner
+   2026-09-14), then Others (2990-0063). No category at all reads nothing (0). */
+const leadChainOf = (category: string | null): string[] => {
   const cat = (category ?? '').toLowerCase();
-  if (cat === 'fabric_accessory') return 'sofa';
-  /* Dining, carpet, bedlines, diffuser … share one 'others' number (2990-0063).
-     No row set = 0, the same as before this bucket existed. */
-  return cat && !(LEAD_CATEGORIES as readonly string[]).includes(cat) ? 'others' : cat;
+  if (!cat) return [];
+  if (cat === OTHERS_LEAD_CATEGORY) return [cat];
+  return cat === 'fabric_accessory' ? [cat, 'sofa', OTHERS_LEAD_CATEGORY] : [cat, OTHERS_LEAD_CATEGORY];
 };
 
 /** The owner's manual base table, loaded once per request.
@@ -203,13 +250,8 @@ export async function loadSupplierCategoryOverrides(
  * Cascade, unchanged from both originals: (warehouse, category) -> (NULL,
  * category) -> 0. A missing warehouse skips straight to the global bucket.
  */
-function baseLeadDays(base: LeadTimeBase, warehouseId: string | null, category: string | null): number {
-  const cat = leadCategoryOf(category);
-  return (
-    (warehouseId ? base.byWhCat.get(`${warehouseId}|${cat}`) : undefined) ??
-    base.byCat.get(cat) ??
-    0
-  );
+function baseLeadDays(base: LeadTimeBase, warehouseId: string | null, cat: string): number | undefined {
+  return (warehouseId ? base.byWhCat.get(`${warehouseId}|${cat}`) : undefined) ?? base.byCat.get(cat);
 }
 
 /**
@@ -221,10 +263,9 @@ function baseLeadDays(base: LeadTimeBase, warehouseId: string | null, category: 
 function overrideLeadDays(
   overrides: LeadOverrides,
   supplierId: string | null | undefined,
-  category: string | null,
+  cat: string,
 ): number | undefined {
   if (!supplierId) return undefined;
-  const cat = leadCategoryOf(category);
   return overrides.bySupplierCat.get(`${supplierId}|${cat}`);
 }
 
@@ -254,9 +295,11 @@ export function resolveLeadDays(
   buffers: LeadBuffers,
   input: LeadTimeInput,
 ): LeadTimeBreakdown {
-  const b =
-    overrideLeadDays(overrides, input.supplierId, input.category) ??
-    baseLeadDays(base, input.warehouseId, input.category);
+  let b = 0;
+  for (const cat of leadChainOf(input.category)) {
+    const hit = overrideLeadDays(overrides, input.supplierId, cat) ?? baseLeadDays(base, input.warehouseId, cat);
+    if (hit !== undefined) { b = hit; break; }
+  }
 
   const supplier = input.supplierCode
     ? safeBuffer(buffers.supplierBufferDays[input.supplierCode])
