@@ -1053,6 +1053,7 @@ export const sofaComboRecomposeHandler = async (c: AppContext) => {
   const companyId = activeCompanyId(c);
   const userId = c.get('user').id;
   const userName = c.get('user').user_metadata?.name ?? null;
+  const savedAt = new Date().toISOString();
 
   const tuples = new Map<string, Row[]>();
   for (const r of old) {
@@ -1076,6 +1077,7 @@ export const sofaComboRecomposeHandler = async (c: AppContext) => {
     notes: note,
     created_by: userId,
     created_by_name: userName,
+    created_at: savedAt,
   });
   const newest = [...tuples.values()].flatMap((tuple) => {
     const r = newestComboRow(tuple);
