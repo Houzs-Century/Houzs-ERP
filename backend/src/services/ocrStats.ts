@@ -8,8 +8,13 @@ import { sql } from "drizzle-orm";
 import type { Env } from "../types";
 import { getDb } from "../db/client";
 import { mytMonthRangeUtc } from "./agent-console";
-import { CLAUDE_MODEL } from "../scm/lib/scan-ocr";
+import { scanSoModel } from "../scm/lib/scan-ocr";
+import { changedFields, LINES_CHANGED } from "../scm/lib/scan-slip-fields";
+import { correctionChanges, type FieldChange } from "../scm/lib/scan-correction-detail";
 import { SCAN_DOCUMENT_TYPES, SCAN_DOCUMENT_TYPE_LABEL, isScanDocumentType } from "../scm/lib/scan-document-type";
+
+export { changedFields, LINES_CHANGED };
+export type { FieldChange };
 
 export type ScanOutcome = "pending" | "failed" | "discarded" | "clean" | "corrected" | "awaiting" | "imported";
 
@@ -26,6 +31,8 @@ export interface ScanRow {
   sample_error: string | null;
   extracted: unknown;
   corrected: unknown;
+  /** The draft as the scan built it; null on scans from before it was kept. */
+  draft_baseline: unknown;
   /** SO only: the draft this scan made no longer exists (deleted). */
   so_missing: boolean;
 }
@@ -51,60 +58,6 @@ export function classifyScan(r: ScanRow): { outcome: ScanOutcome; detail: string
     return { outcome: "corrected", detail: fields.length ? fields.join(", ") : null };
   }
   return { outcome: "awaiting", detail: null };
-}
-
-const HEADER_FIELDS: Array<[string, string]> = [
-  ["customerName", "Customer name"],
-  ["addressLine1", "Address"],
-  ["address", "Address"],
-  ["city", "City"],
-  ["postcode", "Postcode"],
-  ["addressStateMatch", "State"],
-  ["phones", "Phone"],
-  ["customerSoRef", "Customer ref"],
-  ["customerTypeMatch", "Customer type"],
-  ["buildingTypeMatch", "Building type"],
-  ["paymentMethodMatch", "Payment method"],
-  ["bankMatch", "Bank"],
-  ["approvalCode", "Approval code"],
-  ["depositRm", "Deposit"],
-  ["deliveryDate", "Delivery date"],
-];
-const LINE_FIELDS: Array<[string, string]> = [
-  ["skuMatch", "Product code"],
-  ["qtyGuess", "Qty"],
-  ["fabricMatch", "Fabric code"],
-  ["specialsMatch", "Special order"],
-];
-export const LINES_CHANGED = "Line added/removed";
-
-const j = (v: unknown) => JSON.stringify(v ?? null);
-const asObj = (v: unknown): Record<string, unknown> | null =>
-  v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
-
-/**
- * Which fields the operator changed, read from a CONFIRMED sample.
- * buildCorrectedSlipFromSo (scm/lib/scan-sample-review.ts) overwrites only the
- * keys whose value moved, so a key-by-key compare is the diff.
- */
-export function changedFields(extracted: unknown, corrected: unknown): string[] {
-  const ai = asObj(extracted);
-  const op = asObj(corrected);
-  if (!ai || !op) return [];
-  const out = new Set<string>();
-  for (const [key, label] of HEADER_FIELDS) if (j(ai[key]) !== j(op[key])) out.add(label);
-  const aiLines = Array.isArray(ai.lines) ? (ai.lines as Array<Record<string, unknown>>) : [];
-  const opLines = Array.isArray(op.lines) ? (op.lines as Array<Record<string, unknown>>) : [];
-  if (aiLines.length !== opLines.length) {
-    // ponytail: with a line added or removed the per-line fields are not compared;
-    // pairing lines would need alignSoLinesToSlip's matching, add it if this hides misses.
-    out.add(LINES_CHANGED);
-  } else {
-    // Compared as sorted lists so the review's line re-ordering is not a change.
-    const col = (lines: Array<Record<string, unknown>>, key: string) => lines.map((l) => j(asObj(l)?.[key])).sort().join("|");
-    for (const [key, label] of LINE_FIELDS) if (col(aiLines, key) !== col(opLines, key)) out.add(label);
-  }
-  return [...out];
 }
 
 // ── Report ───────────────────────────────────────────────────────────────────
@@ -133,6 +86,8 @@ export interface ProblemScan {
   docNo: string | null;
   outcome: "failed" | "corrected";
   detail: string | null;
+  /** Before/after per changed field; null when the scan has no draft snapshot. */
+  changes: FieldChange[] | null;
 }
 export interface OcrReport {
   month: string;
@@ -151,7 +106,7 @@ function percentile(sorted: number[], p: number): number {
 }
 
 /** Pure: rows (newest first) to the report. */
-export function buildOcrReport(month: string, rows: ScanRow[]): OcrReport {
+export function buildOcrReport(month: string, model: string, rows: ScanRow[]): OcrReport {
   const byType = new Map<string, DocTypeStats>();
   const secs = new Map<string, number[]>();
   const misses = new Map<string, number>();
@@ -170,6 +125,7 @@ export function buildOcrReport(month: string, rows: ScanRow[]): OcrReport {
       secs.set(t, []);
     }
     const { outcome, detail } = classifyScan(r);
+    const changes = outcome === "corrected" ? correctionChanges(r.extracted, r.corrected, r.draft_baseline) : null;
     s.scans++;
     s[outcome]++;
     if (outcome !== "pending") {
@@ -181,7 +137,7 @@ export function buildOcrReport(month: string, rows: ScanRow[]): OcrReport {
       for (const f of detail.split(", ")) misses.set(f, (misses.get(f) ?? 0) + 1);
     }
     if ((outcome === "failed" || outcome === "corrected") && problems.length < PROBLEM_LIMIT) {
-      problems.push({ id: r.id, at: iso(r.created_at), documentType: t, docNo: r.doc_no, outcome, detail });
+      problems.push({ id: r.id, at: iso(r.created_at), documentType: t, docNo: r.doc_no, outcome, detail, changes });
     }
   }
 
@@ -198,7 +154,7 @@ export function buildOcrReport(month: string, rows: ScanRow[]): OcrReport {
   const rank = (t: string) => (order.includes(t) ? order.indexOf(t) : order.length);
   return {
     month,
-    model: CLAUDE_MODEL,
+    model,
     docTypes: [...byType.values()].sort((a, b) => rank(a.documentType) - rank(b.documentType)),
     fieldMisses: {
       reviewed,
@@ -219,6 +175,7 @@ export async function loadOcrReport(env: Env, companyId: number, month: string):
            CASE WHEN s.status = 'FAILED' THEN s.extracted->>'error' END AS sample_error,
            CASE WHEN s.status = 'CONFIRMED' THEN s.extracted END AS extracted,
            CASE WHEN s.status = 'CONFIRMED' THEN s.corrected END AS corrected,
+           CASE WHEN s.status = 'CONFIRMED' THEN s.draft_baseline END AS draft_baseline,
            (j.document_type = 'SO' AND j.status = 'done' AND j.so_doc_no IS NOT NULL
              AND NOT EXISTS (SELECT 1 FROM scm.mfg_sales_orders so
                               WHERE so.doc_no = j.so_doc_no AND so.company_id = j.company_id)) AS so_missing
@@ -228,5 +185,5 @@ export async function loadOcrReport(env: Env, companyId: number, month: string):
        AND j.document_type NOT LIKE 'AI_%' -- AI reads (scm/lib/ai-read-jobs.ts) share the table; they are not scans
        AND j.created_at >= ${startIso}::timestamptz AND j.created_at < ${endIso}::timestamptz
      ORDER BY j.created_at DESC`);
-  return buildOcrReport(month, [...rows]);
+  return buildOcrReport(month, scanSoModel(env), [...rows]);
 }

@@ -27,8 +27,8 @@ const REPORT: OcrReport = {
   ],
   fieldMisses: { reviewed: 10, fields: [{ field: "Product code", count: 1 }] },
   problems: [
-    { id: "a", at: "2026-09-10T01:00:00.000Z", documentType: "SO", docNo: "SO-2609-001", outcome: "corrected", detail: "Product code" },
-    { id: "b", at: "2026-09-09T01:00:00.000Z", documentType: "PI", docNo: null, outcome: "failed", detail: "Supplier not matched" },
+    { id: "a", at: "2026-09-10T01:00:00.000Z", documentType: "SO", docNo: "SO-2609-001", outcome: "corrected", detail: "Product code", changes: [{ field: "Line 1 Product code", before: "A1", after: "B2" }] },
+    { id: "b", at: "2026-09-09T01:00:00.000Z", documentType: "PI", docNo: null, outcome: "failed", detail: "Supplier not matched", changes: null },
   ],
 };
 
@@ -47,6 +47,7 @@ describe("OCR page", () => {
     expect(screen.getByText("not recorded")).toBeTruthy();
     expect(screen.getByRole("link", { name: "SO-2609-001" }).getAttribute("href")).toBe("/scm/sales-orders/SO-2609-001");
     expect(screen.getByText("Supplier not matched")).toBeTruthy();
+    expect(screen.getByText("A1 → B2", { exact: false })).toBeTruthy();
     expect(screen.getByText("none created")).toBeTruthy();
     expect(pct(9, 10)).toBe("90.0%");
   });

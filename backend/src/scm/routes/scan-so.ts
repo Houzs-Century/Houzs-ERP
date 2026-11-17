@@ -58,7 +58,12 @@ import { depositSenAfterReceiptPass, safeScanDepositSen } from '../lib/scan-head
 import { applySlipTotalToUnpricedLines } from '../lib/scan-slip-total';
 import { scanTimer } from '../lib/scan-timing';
 import { scanCatalogSkus, type CatalogSku, type ScanCatalogRow } from '../lib/scan-catalog-skus';
+import { buildScanLineVariants } from '../lib/scan-line-variants';
+import { resolveSlipAddress } from '../lib/scan-address-lookup';
+import { hasUnexpectedDigitCount, phoneDigitCountWarnings } from '../lib/scan-phone-check';
 import { readSlipWithAliases } from '../lib/scan-field-aliases';
+import { snapshotDraftBaseline, LEARNING_POOL_BASELINE_FILTER } from '../lib/scan-sample-review';
+import { isDroppedBlankLine } from '../lib/scan-slip-fields';
 import { ttlCached } from '../lib/ttl-cache';
 import { keepScanFile, linkScanFiles } from '../lib/scan-files';
 import { variantNotAllowedSentence } from '../lib/allowed-options-check';
@@ -256,6 +261,8 @@ type Catalog = {
   // validateSlip resolves a line's model from skuMatch.code and keeps only a
   // matched special the model actually allows (else it would render "retired").
   specialsByModelSku: Map<string, Set<string>>;
+  // SKU code → its BEDFRAME Model's total_heights pool (null = unrestricted).
+  totalHeightsByModelSku: Map<string, string[] | null>;
   sofaSizes: string[];
   sofaLegHeights: string[];
   // BEDFRAME variant pools from the SAME Products -> Maintenance master the SO
@@ -461,11 +468,14 @@ async function loadCatalogFresh(sb: SupabaseClient, db: D1Database, companyId?: 
     // SOFA Models — allowed_options.specials is the per-model ON/OFF authority
     // for which specials each model offers. Used to build the SKU→allowed-codes
     // map so validateSlip keeps only a special the line's model actually allows.
-    paginateAll((from, to) => sb
-      .from('product_models')
-      .select('model_code, allowed_options')
-      .eq('category', 'SOFA')
-      .range(from, to)),
+    paginateAll((from, to) => {
+      let q = sb
+        .from('product_models')
+        .select('model_code, category, allowed_options')
+        .in('category', ['SOFA', 'BEDFRAME']);
+      if (companyId != null) q = q.eq('company_id', companyId);
+      return q.order('model_code').range(from, to);
+    }),
     // The venue master (public.project_venues, ACTIVE) — env.DB, not `sb`.
     loadVenueNames(db),
   ]);
@@ -551,10 +561,21 @@ async function loadCatalogFresh(sb: SupabaseClient, db: D1Database, companyId?: 
   // (uppercased for case-insensitive lookup). allowed_options is jsonb; PostgREST
   // may return it camelCased — dual-read either casing.
   const specialsByModelCode = new Map<string, Set<string>>();
+  // model_code → the BEDFRAME Model's total_heights pool (null = unrestricted).
+  const totalHeightsByModelCode = new Map<string, string[] | null>();
   for (const row of (modRes.data as Array<Record<string, unknown>> | null) ?? []) {
     const modelCode = (row.modelCode ?? row.model_code) as string | undefined;
     if (!modelCode) continue;
-    const opts = (row.allowedOptions ?? row.allowed_options) as { specials?: unknown } | null;
+    const opts = (row.allowedOptions ?? row.allowed_options) as
+      { specials?: unknown; total_heights?: unknown; totalHeights?: unknown } | null;
+    if (row.category === 'BEDFRAME') {
+      const pool = opts?.totalHeights ?? opts?.total_heights;
+      totalHeightsByModelCode.set(
+        modelCode.toUpperCase(),
+        Array.isArray(pool) ? pool.filter((v): v is string => typeof v === 'string') : null,
+      );
+      continue;
+    }
     const list = Array.isArray(opts?.specials) ? (opts!.specials as unknown[]) : [];
     const set = new Set<string>();
     for (const v of list) if (typeof v === 'string' && v.trim() !== '') set.add(v.toUpperCase());
@@ -569,9 +590,15 @@ async function loadCatalogFresh(sb: SupabaseClient, db: D1Database, companyId?: 
     const allowed = specialsByModelCode.get(s.baseModel.toUpperCase());
     if (allowed) specialsByModelSku.set(s.code.toUpperCase(), allowed);
   }
+  const totalHeightsByModelSku = new Map<string, string[] | null>();
+  for (const s of skus) {
+    if (!s.baseModel) continue;
+    const pool = totalHeightsByModelCode.get(s.baseModel.toUpperCase());
+    if (pool !== undefined) totalHeightsByModelSku.set(s.code.toUpperCase(), pool);
+  }
 
   return {
-    skus, fabrics, specials, specialsByModelSku,
+    skus, fabrics, specials, specialsByModelSku, totalHeightsByModelSku,
     sofaSizes, sofaLegHeights, legHeights, divanHeights, gaps,
     options, venues: venueNames, states, citiesByState, postcodesByStateCity,
   };
@@ -821,6 +848,7 @@ LINE ITEMS
 For EVERY handwritten row in the item table output one lines[] entry:
 - rawText — the row's text VERBATIM, exactly as written, including misspellings and abbreviations. This is the source of truth for the operator; never clean it up.
 - rawSpec — when the row (or its margin / continuation text) carries a SPECIFICATION string for the item — the variant text such as "Col: PC151-01 + front / Side Divan 8\"+0\"", "divan10+4/gap12", "8\" + no leg" — copy the row's specification text verbatim into rawSpec; do not rephrase, reorder or normalise it (keep punctuation, slashes and inch marks exactly). null when the row has no spec text. rawSpec may overlap rawText — that is fine: rawText is the whole row, rawSpec is just the specification portion.
+- SPEC NOTES BESIDE OR BETWEEN ROWS — a BEDFRAME spec note written in the margin, to the right of the table, or squeezed between two rows (e.g. "no leg", "divan 12", "gap 14", "+4") belongs to the nearest BEDFRAME row ABOVE it, never to a pillow, mattress, protector or other accessory row. Put its numbers on that bedframe line (rawSpec, divanHeightInches / legHeightInches / gapInches / noLeg), not on the row printed next to it.
 - divanHeightInches / legHeightInches / gapInches / noLeg — BEDFRAME variant NUMBERS read from the spec text: the divan/drawer height in inches, the leg height in inches, the mattress gap in inches, and noLeg = true when the spec says no legs ("no leg", "noleg"). Read the FULL numeric token (12" is 12, NEVER 1). Use null (and noLeg = false) when absent or when the row is not a bedframe.
 - seatHeightInches — SOFA seat-height in inches. A sofa row's seat size is usually written as a parenthesised inch figure right after the model / sections, e.g. "8030 (2R+1R)(28\")" → 28, or "seat 30\"" / "H30" → 30. Read the FULL numeric token as a plain NUMBER (28" is 28, NEVER 2). The seat size applies to EVERY compartment of that sofa, so repeat the SAME seatHeightInches on each compartment line you emit for the sofa. Use null when the row is not a sofa or no seat size is written (do NOT guess a seat height).
 - qtyGuess — quantity (default 1 when blank or unreadable).
@@ -1822,6 +1850,7 @@ async function distillSalespersonRules(
     .select('extracted, corrected')
     .not('corrected', 'is', null)
     .eq('status', SAMPLE_CORRECTED)
+    .or(LEARNING_POOL_BASELINE_FILTER)
     .ilike('salesperson', ilikeExact(rep))
     .order('created_at', { ascending: false })
     .limit(50);
@@ -1946,6 +1975,7 @@ async function distillGlobalAliases(
     .select('extracted, corrected')
     .not('corrected', 'is', null)
     .eq('status', SAMPLE_CORRECTED)
+    .or(LEARNING_POOL_BASELINE_FILTER)
     .order('created_at', { ascending: false })
     .limit(80);
   if (selErr) {
@@ -2057,6 +2087,7 @@ async function distillGlobalRules(
     .select('extracted, corrected')
     .not('corrected', 'is', null)
     .eq('status', SAMPLE_CORRECTED)
+    .or(LEARNING_POOL_BASELINE_FILTER)
     .order('created_at', { ascending: false })
     .limit(80);
   if (selErr) {
@@ -2170,6 +2201,7 @@ export async function distillAllSalespersonRules(
     .select('salesperson')
     .not('corrected', 'is', null)
     .eq('status', SAMPLE_CORRECTED)
+    .or(LEARNING_POOL_BASELINE_FILTER)
     .not('salesperson', 'is', null)
     .order('created_at', { ascending: false })
     .range(from, to));
@@ -2818,36 +2850,17 @@ async function postProcessSlip(
     .map((p) => normalizeSlipPhone(p))
     .filter((p): p is string => p !== null);
 
-  // Address via Google Geocoding (GOOGLE_MAPS_API_KEY). The LLM mis-parses
-  // Malaysian areas (it put Melawati at Ampang/Selangor 68000 — it's KL/Setapak
-  // ~53100), so when geocoding succeeds we PREFER its state/city/postcode over
-  // the LLM guess. Fail-soft: no key / network error / no result -> keep the LLM
-  // parse untouched. The geocoded STATE is seeded into addressStateMatch so the
-  // validateSlip pass below still snaps it to the catalog states list (and
-  // clears it if the geocoder ever returns a non-catalog state).
+  // Postcode is the driver. A postcode written on the slip that the localities
+  // master knows wins, and its city/state come from that master row (HC-0190:
+  // the map lookup put orders in the wrong town, e.g. Bukit Tunku KL vs Kulim).
+  // Google Geocoding (GOOGLE_MAPS_API_KEY) only fills in when the slip has no
+  // usable postcode. The seeded STATE still goes through validateSlip below.
+  // Fail-soft: no key / network error / no result -> keep the LLM parse.
   try {
-    const geo = await geocodeAddress(parsed.address, googleMapsApiKey);
-    if (geo) {
-      // Postcode is the driver: seed it first, then resolve city/state from the
-      // SAME my_localities row that postcode maps to (the cascade the form uses),
-      // so the seeded city/state are consistent with the postcode and selectable
-      // in the form's dropdowns. Fall back to Google's components only when no
-      // localities row matches the resolved postcode.
-      let city = geo.city;
-      let state = geo.state;
-      if (geo.postcode) {
-        parsed.postcode = geo.postcode;
-        const loc = await localityForPostcode(sb, geo.postcode);
-        if (loc) {
-          if (loc.city) city = loc.city;
-          if (loc.state) state = loc.state;
-        }
-      }
-      if (state) {
-        parsed.addressStateMatch = { value: state, confidence: 0.95, reason: 'Google geocode' };
-      }
-      if (city) parsed.city = city;
-    }
+    await resolveSlipAddress(parsed, {
+      findLocality: (postcode) => localityForPostcode(sb, postcode),
+      geocode: (address) => geocodeAddress(address, googleMapsApiKey),
+    });
   } catch {
     /* fail-soft — keep the LLM address parse */
   }
@@ -2855,14 +2868,10 @@ async function postProcessSlip(
   const warnings = validateSlip(parsed, catalog);
 
   // Phone plausibility (evidence 2026-07: the OCR dropped a doubled digit —
-  // "01137166720" read as "0113716720"): a Malaysian national-significant
-  // number (after the trunk 0 strip above) is 9-10 digits for mobiles and
-  // 8-9 for landlines. Anything under 9 or over 10 very likely lost/gained a
-  // digit — warn the operator so the form gets a second look.
+  // "01137166720" read as "0113716720"). The length depends on the prefix:
+  // 011/015 mobiles have 8 subscriber digits, other mobiles 7 (lib/scan-phone-check).
   for (const p of parsed.phones) {
-    if (!p.startsWith('+60')) continue; // the 9-10 rule is Malaysian; leave foreign numbers alone
-    const national = p.slice(3);
-    if (national.length < 9 || national.length > 10) {
+    if (hasUnexpectedDigitCount(p)) {
       warnings.push({
         field: 'phones',
         value: p,
@@ -3499,61 +3508,6 @@ async function postScanNotice(
   });
 }
 
-/* The sofa Leg Height "Default" option (RM 0.00) from the maintenance
-   sofaLegHeights pool, matched case-insensitively by name (owner 2026-07-13).
-   Used to seed a drafted sofa line's Leg Height when the slip named no specific
-   leg, so it is never an empty required field. null when the pool has none. */
-const DEFAULT_SOFA_LEG_RE = /^\s*default\s*$/i;
-function resolveDefaultSofaLeg(catalog: Catalog): string | null {
-  return catalog.sofaLegHeights.find((v) => DEFAULT_SOFA_LEG_RE.test(v)) ?? null;
-}
-
-/* The pool's "No Leg" option, matched by NAME (same posture as
-   resolveDefaultSofaLeg). The maintenance value is the words "No Leg", NOT a
-   0" measurement — resolving it from the pool keeps a genuine no-leg read
-   instead of inventing an option that was never configured. */
-const NO_LEG_RE = /^\s*no\s*-?\s*leg\s*$/i;
-function resolveNoLeg(pool: string[]): string | null {
-  return pool.find((v) => NO_LEG_RE.test(v)) ?? null;
-}
-
-/* Snap an OCR-derived variant value to the live Maintenance pool.
-   Owner rule (2026-07-16, the "8\" leg" report): the handwritten slip is a
-   HINT, not authority. The OCR reads these axes as bare inch NUMBERS, so a
-   misread (or a number belonging to another axis) trivially produces a value
-   that was never configured — the reported draft carried legHeight 8" when the
-   BEDFRAME Leg Heights pool only holds No Leg / 1" / 2" / 4" / 5" / 6" / 7".
-
-   Returns the pool's CANONICAL value on a hit (trim + case-insensitive, so a
-   pool value carrying data-entry whitespace still matches — same defensive
-   posture as the specials gate in allowed-options-check), or null when the pool
-   has no such option. null means the caller LEAVES THE AXIS UNSET so the
-   operator picks it against the slip photo. Deliberately NO nearest-value
-   coercion: silently rounding 8" to 7" would invent a price and a spec nobody
-   wrote.
-
-   An EMPTY pool means the config never configured that axis at all — not "allow
-   anything". Return null there too, matching the "never invent" rule the SKU /
-   fabric / specials matches already follow. */
-function snapToMaintPool(value: string, pool: string[]): string | null {
-  const v = value.trim();
-  if (v === '' || pool.length === 0) return null;
-  const exact = pool.find((o) => o.trim() === v);
-  if (exact) return exact;
-  const ci = pool.find((o) => o.trim().toLowerCase() === v.toLowerCase());
-  return ci ?? null;
-}
-
-/* Snap an OCR inch NUMBER to its pool value. The pools are not spelled
-   consistently — legHeights / divanHeights / gaps carry the inch mark (`4"`)
-   while sofaSizes carries the bare number (`28`) — so try BOTH spellings and
-   return whichever the pool actually holds. This is a spelling reconciliation,
-   never a value change: only an exact member of the pool is ever returned, and
-   a number the pool doesn't hold still yields null (axis left unset). */
-function snapInchesToMaintPool(inches: number, pool: string[]): string | null {
-  return snapToMaintPool(`${inches}"`, pool) ?? snapToMaintPool(`${inches}`, pool);
-}
-
 function buildDraftSoBodyFromSlip(
   parsed: ExtractedSlip,
   catalog: Catalog,
@@ -3589,13 +3543,12 @@ function buildDraftSoBodyFromSlip(
     // MATCHED line keeps its resolved SKU name + variants (scan-parity). The raw
     // text is intentionally NOT carried onto the line (standing clean-remark
     // rule); the slip photo on the SO detail is the operator's reference.
-    if (!sku && !rawText) continue;
+    if (isDroppedBlankLine(l.rawText, sku !== undefined)) continue;
     const name = sku ? (sku.name ?? '').trim() : '';
     // Owner (said many times): the line REMARK must stay CLEAN -- do NOT stuff
     // the raw slip text / fabric code / specials / OCR notes into it. The
     // operator reviews the draft against the order-slip photo (shown on the SO
     // detail). Only genuine structured variant numbers ride along below.
-    const variants: Record<string, unknown> = {};
     const cat = (sku?.category ?? 'OTHERS').toLowerCase();
     // Bedframe numbers (reparseSpec-overruled) -> the same inch-string variant
     // keys the New SO form writes, so the draft's line editor seeds correctly.
@@ -3614,26 +3567,12 @@ function buildDraftSoBodyFromSlip(
     // The sofa leg picker renders sofaLegHeights while the bedframe one renders
     // legHeights, but BOTH write the same `legHeight` key (SoLineCard) — so the
     // pool is chosen by the line's category, not by the key.
-    if (sku) {
-      const legPool = cat === 'sofa' ? catalog.sofaLegHeights : catalog.legHeights;
-      if (l.divanHeightInches != null) {
-        const snapped = snapInchesToMaintPool(l.divanHeightInches, catalog.divanHeights);
-        if (snapped) variants.divanHeight = snapped;
-      }
-      if (l.noLeg) {
-        // "No Leg" is a configured pool WORD, not a 0" measurement. The old
-        // literal '0"' was itself an un-configured value on every pool.
-        const noLeg = resolveNoLeg(legPool);
-        if (noLeg) variants.legHeight = noLeg;
-      } else if (l.legHeightInches != null) {
-        const snapped = snapInchesToMaintPool(l.legHeightInches, legPool);
-        if (snapped) variants.legHeight = snapped;
-      }
-      if (l.gapInches != null) {
-        const snapped = snapInchesToMaintPool(l.gapInches, catalog.gaps);
-        if (snapped) variants.gap = snapped;
-      }
-    }
+    const variants = buildScanLineVariants(l, {
+      category: cat,
+      skuCode: sku?.code ?? null,
+      pools: catalog,
+      totalHeights: sku ? catalog.totalHeightsByModelSku.get(sku.code.toUpperCase()) ?? null : null,
+    });
     // Owner 2026-07-04: a scan line must equal a DESKTOP manual line — itemGroup =
     // the SKU's REAL category (not 'others'), and bedframe/sofa carry the fabric
     // COLOUR + special-order add-ons the OCR read, keyed exactly as the New SO form
@@ -3645,35 +3584,6 @@ function buildDraftSoBodyFromSlip(
     // validation rejects a line (an OCR fabric not allowed on that model, an
     // incomplete sofa), runScanJob degrades it to a loose 'others' line so an
     // imperfect read NEVER loses the whole scanned order.
-    if (cat === 'bedframe' || cat === 'sofa') {
-      if (l.fabricMatch?.code) variants.fabricCode = l.fabricMatch.code;
-      const specialCodes = (l.specialsMatch ?? []).map((s) => s.code).filter(Boolean);
-      if (specialCodes.length > 0) variants.specials = specialCodes;
-    }
-    // SOFA seat height — the same key the New SO form's sofa panel writes
-    // (draft.variants.seatHeight), snapped to the live sofaSizes pool.
-    // PRICING NOTE: the create core reprices itemGroup='sofa' from the seat
-    // height, so this OCR figure MOVES the sofa price — an unconfigured read
-    // must never reach the line. Snapping also fixes the SPELLING: sofaSizes is
-    // seeded as bare numbers ("28"), but this seeded `28"` with an inch mark —
-    // a value no sofa pool holds, so it both pinned as `28" (current)` in the
-    // picker and missed the seat-height price lookup. If the stricter category
-    // validation later rejects the sofa line, runScanJob degrades it to a loose
-    // 'others' line (seat height dropped there), so an imperfect read never
-    // loses the row.
-    if (cat === 'sofa' && l.seatHeightInches != null) {
-      const snapped = snapInchesToMaintPool(l.seatHeightInches, catalog.sofaSizes);
-      if (snapped) variants.seatHeight = snapped;
-    }
-    // SOFA leg height — owner 2026-07-13: the sofa Leg Height carries a standing
-    // "Default" option (RM 0.00). When the slip didn't spell out a specific leg
-    // (No Leg / 4" / 6" …), seed the "Default" option so the drafted sofa line
-    // comes out pre-filled (never an empty leg field) and never blocks Confirm.
-    // A scanned specific leg (set above via noLeg / legHeightInches) is kept.
-    if (cat === 'sofa' && variants.legHeight == null) {
-      const defLeg = resolveDefaultSofaLeg(catalog);
-      if (defLeg) variants.legHeight = defLeg;
-    }
     items.push({
       itemCode: sku?.code ?? '',
       itemGroup: cat,
@@ -4021,6 +3931,7 @@ async function runScanJob(
       if (shellNote) {
         // Write both the SO-specific and generic link column (same doc_no for SO).
         await linked;
+        if (sampleId && rawParsed) await snapshotDraftBaseline(svc, { sampleId, docNo, extracted: rawParsed });
         await Promise.all([
           touch({ status: 'done', so_doc_no: docNo, linked_doc_no: docNo, error: shellNote }),
           postScanNotice(env, {
@@ -4074,11 +3985,14 @@ async function runScanJob(
         paymentNote ??= 'Draft created; the payment could not be recorded — please add it on the order.';
       }
       await linked;
+      if (sampleId && rawParsed) await snapshotDraftBaseline(svc, { sampleId, docNo, extracted: rawParsed });
       // Private "your scan is a draft now" notice. Duplicate/payment caveats
       // ride in the body + bump it to WARNING so it stands out.
+      const phoneWarnings = phoneDigitCountWarnings(parsed?.phones ?? []);
       const noticeExtras = [
         dupDocNo ? `This looks like a possible duplicate of ${dupDocNo}.` : null,
         paymentNote,
+        ...phoneWarnings,
       ].filter(Boolean);
       await Promise.all([
         touch({
@@ -4089,7 +4003,7 @@ async function runScanJob(
         }),
         postScanNotice(env, {
           houzsUserId: job.houzsUserId,
-          category: dupDocNo || paymentNote ? 'WARNING' : 'GENERAL',
+          category: dupDocNo || paymentNote || phoneWarnings.length > 0 ? 'WARNING' : 'GENERAL',
           title: `Sales order saved — ${docNo}`,
           body: [`Your scan was saved as a draft. Open it from your Orders to review.`, ...noticeExtras].join(' '),
         }),

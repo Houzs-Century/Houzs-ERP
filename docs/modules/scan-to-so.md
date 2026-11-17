@@ -46,6 +46,7 @@ Lives in the `scm` Postgres schema, reached under `/api/scm/scan-so/*`.
 
 ## Rules that must not break
 
+- A correction is what a person changed on the draft, compared with `so_scan_samples.draft_baseline` (the draft after the pipeline's own phone, postcode and catalog fixes). Pipeline transforms and the fair pick never count; a scan without a baseline keeps the old compare, and the distillers skip those rows.
 - The learning pool has two different readers with different needs: the
   **distillers** mine only `status = CONFIRMED` (the diff teaches the
   rules); the **few-shot pool** ranks (never filters) on `corrected IS NOT
@@ -77,8 +78,10 @@ Lives in the `scm` Postgres schema, reached under `/api/scm/scan-so/*`.
 - Salesperson attribution on write is never caller-trusted —
   `resolveScanUploaderStaffId` reads the authed session, never the request
   body.
-- A geocoded postcode/state (when the Maps key is set) is preferred over the
-  model's own address parse; postcode is the driver.
+- Postcode is the driver. A postcode written on the slip that `my_localities`
+  knows wins (with an empty postcode field: the one known 5-digit number in the
+  address text), with city/state from that row; the map lookup (Maps key) only
+  fills in when the slip has no usable postcode (`lib/scan-address-lookup.ts`).
 - A scan DRAFT carries no venue, no fair and no Fair Day: the slip's place and
   date are read (duplicate check, learning) but never written to the order, and
   no default fills them. A person picks all three; Confirm refuses until then

@@ -16,3 +16,4 @@ Gotchas:
 - The model is the `CLAUDE_MODEL` constant; it is not saved per scan, so there is no per-model split.
 - Field misses compare `extracted` to `corrected` key by key. When a line was added or removed, only "Line added/removed" is reported for the lines.
 - Payment, workshop, bill and credit note scans keep no read record and are not on this page.
+- Scans confirmed before the draft baseline existed (`draft_baseline` empty) over-count corrections, mostly Phone, City and Postcode.
