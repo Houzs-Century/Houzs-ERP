@@ -335,5 +335,8 @@ describe("curated warehouse addresses", () => {
     }
     for (const n of ["guangzhou warehouse", "consignment (out)", "cash & carry segment - fair"]) expect(idx.byName.has(n)).toBe(false);
     expect(idx.byName.get("pg warehouse")?.postcode).toBe("14100");
+    expect(idx.byName.get("sbh display")?.postcode).toBe("88100");
+    expect(idx.byName.get("sunway showroom")?.postcode).toBe("13700");
+    expect(idx.byName.has("em display")).toBe(false);
   });
 });
