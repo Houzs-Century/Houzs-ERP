@@ -1,0 +1,982 @@
+{
+  "about": "Researched postcodes for company 1 venue master (public.project_venues). Public business locations. Read by scripts/fill-master-postcodes.mjs: used only when a row name matches exactly, confidence is high or medium, the postcode is in scm.my_localities and its state agrees. City/State are written from my_localities.",
+  "researched": "2026-11-17",
+  "entries": [
+    {
+      "id": 90,
+      "name": "1 MONT KIARA MALL",
+      "postcode": "50480",
+      "city": "Kuala Lumpur",
+      "state": "Kuala Lumpur",
+      "address": "1 Jalan Kiara, Mont Kiara",
+      "source": "https://www.apm-asia.com/portfolio/1-mont-kiara/",
+      "confidence": "high",
+      "note": "Official 1mk.com.my contact address and APM Asia agree"
+    },
+    {
+      "id": 97,
+      "name": "3 DAMANSARA",
+      "postcode": "47400",
+      "city": "Petaling Jaya",
+      "state": "Selangor",
+      "address": "No. 3, Jalan SS20/27, Damansara Utama",
+      "source": "https://capitaland.com/my/malls/threedamansara/en/concierge/mall-info.html",
+      "confidence": "high",
+      "note": "CapitaLand official mall page"
+    },
+    {
+      "id": 86,
+      "name": "AEON AU2 SETIAWANGSA",
+      "postcode": "54200",
+      "city": "Kuala Lumpur",
+      "state": "Kuala Lumpur",
+      "address": "No. 6, Jalan Taman Setiawangsa (Jalan 37/56), AU2, Taman Keramat",
+      "source": "https://aeonretail.com.my/our-locations/",
+      "confidence": "high",
+      "note": ""
+    },
+    {
+      "id": 72,
+      "name": "AEON BIG KEPONG",
+      "postcode": "52100",
+      "city": "Kuala Lumpur",
+      "state": "Kuala Lumpur",
+      "address": "2, Jalan Metro Perdana, Taman Usahawan Kepong",
+      "source": "https://www.penang-traveltips.com/malaysia/kuala-lumpur/aeon-big-kepong.htm",
+      "confidence": "high",
+      "note": "Travel directory and Maybank AEON outlet list agree"
+    },
+    {
+      "id": 46,
+      "name": "AEON BIG PUCHONG",
+      "postcode": "47100",
+      "city": "Puchong",
+      "state": "Selangor",
+      "address": "No. 1, Jalan BP 7/13, Bandar Bukit Puchong",
+      "source": "https://www.maybank2u.com.my/iwov-resources/pdf/personal/services/agent_banking/Selangor.pdf",
+      "confidence": "medium",
+      "note": "No official AEON BiG Puchong page found; picked the AEON BiG agent outlet at Bandar Bukit Puchong (Maybank list). Alternative AEON Bandar Puchong (IOI Mall, Bandar Puchong Jaya) is also 47100, so postcode holds either way"
+    },
+    {
+      "id": 85,
+      "name": "AEON BIG SUBANG",
+      "postcode": "47500",
+      "city": "Subang Jaya",
+      "state": "Selangor",
+      "address": "No. 3, Jalan SS16/1 (off Jalan Kemajuan Subang), SS16",
+      "source": "https://aeonretail.com.my/our-locations/",
+      "confidence": "high",
+      "note": "AEON Wellness entry for AEON BIG Subang Jaya on aeonretail.com.my; Sun Life list also gives 47500"
+    },
+    {
+      "id": 49,
+      "name": "AEON BIG WANGSA MAJU",
+      "postcode": "53300",
+      "city": "Kuala Lumpur",
+      "state": "Kuala Lumpur",
+      "address": "6, Jalan 8/27A, Section 5, Wangsa Maju",
+      "source": "https://www.midea.com/my/midea-brand-stores-my/aeon-big-m-sdn-bhd-wangsamaju-mideabrandstore",
+      "confidence": "high",
+      "note": "Midea, Sun Life and HLB lists agree. Not the same as AEON Alpha Angle (Jalan R1, also 53300)"
+    },
+    {
+      "id": 50,
+      "name": "AEON BUKIT MERTAJAM",
+      "postcode": "14000",
+      "city": "Bukit Mertajam",
+      "state": "Pulau Pinang",
+      "address": "Lot 30908, Jalan Rozhan, Alma, Seberang Perai Tengah",
+      "source": "https://aeonretail.com.my/our-locations/",
+      "confidence": "high",
+      "note": "AEON Mall Bukit Mertajam (replaced AEON Seberang Prai City in 2014)"
+    },
+    {
+      "id": 82,
+      "name": "AEON BUKIT RAJA",
+      "postcode": "41150",
+      "city": "Klang",
+      "state": "Selangor",
+      "address": "Persiaran Bukit Raja 2, Bandar Baru Klang",
+      "source": "https://aeonretail.com.my/our-locations/",
+      "confidence": "high",
+      "note": ""
+    },
+    {
+      "id": 51,
+      "name": "AEON CHERAS SELATAN",
+      "postcode": "43200",
+      "city": "Balakong",
+      "state": "Selangor",
+      "address": "Lebuh Tun Hussein Onn, Balakong",
+      "source": "https://aeonretail.com.my/our-locations/",
+      "confidence": "high",
+      "note": ""
+    },
+    {
+      "id": 6,
+      "name": "AEON KINTA CITY",
+      "postcode": "31400",
+      "city": "Ipoh",
+      "state": "Perak",
+      "address": "No 2, Jalan Teh Lean Swee, Off Jalan Sultan Azlan Shah Utara",
+      "source": "https://aeonretail.com.my/our-locations/",
+      "confidence": "high",
+      "note": ""
+    },
+    {
+      "id": 47,
+      "name": "AEON KOTA BHARU",
+      "postcode": "15050",
+      "city": "Kota Bharu",
+      "state": "Kelantan",
+      "address": "AEON Mall Kota Bharu, Kampung Sireh, Jalan Jambatan Sultan Yahya Petra",
+      "source": "https://www.hlb.com.my/content/dam/hlb/my/images/Promotions/tomei/tomei-outlets.pdf",
+      "confidence": "high",
+      "note": "HLB outlet list and penang-traveltips (Lembah Sireh, 15050) agree"
+    },
+    {
+      "id": 94,
+      "name": "AEON KUCHING",
+      "postcode": "93150",
+      "city": "Kuching",
+      "state": "Sarawak",
+      "address": "No 88, Lot 3458, Block 10 KCLD, Jalan Datuk Patinggi Ahmad Zaidi Adruce",
+      "source": "https://aeonretail.com.my/our-locations/",
+      "confidence": "medium",
+      "note": "Picked AEON Mall Kuching Central (AEON's only Kuching mall). Official page gives 93150 for the mall, but an AEON Wellness tenant entry on the same page uses 93200"
+    },
+    {
+      "id": 52,
+      "name": "AEON METRO PRIMA KEPONG",
+      "postcode": "52100",
+      "city": "Kuala Lumpur",
+      "state": "Kuala Lumpur",
+      "address": "No 1, Jalan Metro Prima Kepong",
+      "source": "https://aeonretail.com.my/our-locations/",
+      "confidence": "high",
+      "note": ""
+    },
+    {
+      "id": 7,
+      "name": "AEON NILAI",
+      "postcode": "71800",
+      "city": "Nilai",
+      "state": "Negeri Sembilan",
+      "address": "No 2, Persiaran Pusat Bandar, Putra Point, Putra Nilai",
+      "source": "https://aeonretail.com.my/our-locations/",
+      "confidence": "high",
+      "note": ""
+    },
+    {
+      "id": 53,
+      "name": "AEON PERMAS JAYA",
+      "postcode": "81750",
+      "city": "Masai",
+      "state": "Johor",
+      "address": "No. 1, Jalan Permas Jaya Utara, Bandar Baru Permas Jaya",
+      "source": "https://www.samsung.com/my/offer/mobile/galaxy-fold-EPP/participating-outlets",
+      "confidence": "high",
+      "note": "Samsung outlet list, Maybank AEON list and ST distributor document all give 81750"
+    },
+    {
+      "id": 54,
+      "name": "AEON RAWANG",
+      "postcode": "48000",
+      "city": "Rawang",
+      "state": "Selangor",
+      "address": "No. 1, Kompleks Beli-belah AEON Rawang Anggun, Persiaran Anggun, Taman Anggun",
+      "source": "https://aeonretail.com.my/our-locations/",
+      "confidence": "high",
+      "note": ""
+    },
+    {
+      "id": 8,
+      "name": "AEON SEREMBAN 2",
+      "postcode": "70300",
+      "city": "Seremban",
+      "state": "Negeri Sembilan",
+      "address": "112 Persiaran S2 B1, Seremban 2",
+      "source": "https://aeonretail.com.my/our-locations/",
+      "confidence": "high",
+      "note": ""
+    },
+    {
+      "id": 87,
+      "name": "AEON SERI MANJUNG",
+      "postcode": "32040",
+      "city": "Seri Manjung",
+      "state": "Perak",
+      "address": "Pusat Perniagaan Manjung Point 3",
+      "source": "https://aeonretail.com.my/our-locations/",
+      "confidence": "high",
+      "note": "Sunway REIT page also gives 32040"
+    },
+    {
+      "id": 55,
+      "name": "AEON STATION 18",
+      "postcode": "31650",
+      "city": "Ipoh",
+      "state": "Perak",
+      "address": "No. 2, Susuran Stesen 18, Station 18",
+      "source": "https://aeonretail.com.my/our-locations/",
+      "confidence": "high",
+      "note": ""
+    },
+    {
+      "id": 83,
+      "name": "AEON TAIPING",
+      "postcode": "34000",
+      "city": "Taiping",
+      "state": "Perak",
+      "address": "Lot 8576 & 8577, Jalan Kamunting",
+      "source": "https://aeonretail.com.my/our-locations/",
+      "confidence": "medium",
+      "note": "Official AEON page says 34000; a tenant listing in the mall uses 34600 (Kamunting). Used official value"
+    },
+    {
+      "id": 9,
+      "name": "AEON TAMAN EQUINE",
+      "postcode": "43300",
+      "city": "Seri Kembangan",
+      "state": "Selangor",
+      "address": "No. 2, Jalan Equine, Taman Equine, Bandar Putra Permai",
+      "source": "https://aeonretail.com.my/our-locations/",
+      "confidence": "high",
+      "note": ""
+    },
+    {
+      "id": 96,
+      "name": "AEON TAMAN MALURI",
+      "postcode": "55100",
+      "city": "Kuala Lumpur",
+      "state": "Kuala Lumpur",
+      "address": "Jalan Jejaka, Taman Maluri, Cheras",
+      "source": "https://aeonretail.com.my/our-locations/",
+      "confidence": "high",
+      "note": ""
+    },
+    {
+      "id": 88,
+      "name": "AEON TEBRAU CITY",
+      "postcode": "81100",
+      "city": "Johor Bahru",
+      "state": "Johor",
+      "address": "No. 1, Persiaran Desa Tebrau, Taman Desa Tebrau",
+      "source": "https://www.penang-traveltips.com/malaysia/johor/johor-bahru/aeon-tebrau-city-shopping-centre.htm",
+      "confidence": "high",
+      "note": "Multiple directories agree on 81100 (some write Jalan Desa Tebrau)"
+    },
+    {
+      "id": 11,
+      "name": "ALAMANDA PUTRAJAYA",
+      "postcode": "62000",
+      "city": "Putrajaya",
+      "state": "Putrajaya",
+      "address": "Jalan Alamanda, Presint 1",
+      "source": "https://www.maybank2u.com.my/iwov-resources/pdf/personal/promotions/2020/List_of_Participating_Address_Putrajaya.pdf",
+      "confidence": "high",
+      "note": ""
+    },
+    {
+      "id": 12,
+      "name": "AMAN CENTRAL",
+      "postcode": "05100",
+      "city": "Alor Setar",
+      "state": "Kedah",
+      "address": "No. 1, Lebuhraya Darul Aman",
+      "source": "https://en.wikipedia.org/wiki/Aman_Central_Mall",
+      "confidence": "high",
+      "note": ""
+    },
+    {
+      "id": 77,
+      "name": "AMANJAYA MALL SUNGAI PETANI",
+      "postcode": "08000",
+      "city": "Sungai Petani",
+      "state": "Kedah",
+      "address": "Kompleks Amanjaya, Lot 3, Jalan Jati 1, Bandar Amanjaya",
+      "source": "https://www.watsons.com.my/store/wtcmy_315_EN/amanjaya-mall",
+      "confidence": "high",
+      "note": "postcode from two tenant listings (Watsons, magicpin); street from tenant listing"
+    },
+    {
+      "id": 10,
+      "name": "AUSTIN INTERNATIONAL CONVENTION CENTRE",
+      "postcode": "81100",
+      "city": "Johor Bahru",
+      "state": "Johor",
+      "address": "71, Jalan Austin Heights 8/2, Taman Mount Austin",
+      "source": "https://globaltradefairs.com/venues/austin-international-convention-centre-aicc/venuedetails",
+      "confidence": "high",
+      "note": "also visitjohor2026.my"
+    },
+    {
+      "id": 56,
+      "name": "AUTO CITY",
+      "postcode": "13600",
+      "city": "Perai",
+      "state": "Pulau Pinang",
+      "address": "Jalan Perusahaan Auto-City, North-South Highway Juru Interchange, 13600 Perai, Pulau Pinang",
+      "source": "https://my.hiredly.com/companies/penang-island",
+      "confidence": "high",
+      "note": "Owner confirmed: Auto City, Juru, Penang. Hiredly, wapcar.my (Toyota dealer) and a tenant listing agree on 13600 Perai; Time Out alone says 14000."
+    },
+    {
+      "id": 75,
+      "name": "AVENUE K",
+      "postcode": "50450",
+      "city": "Kuala Lumpur",
+      "state": "Kuala Lumpur",
+      "address": "156, Jalan Ampang",
+      "source": "https://www.avenuek.com.my/getting-here/",
+      "confidence": "high",
+      "note": "official site; some property portals list 50560"
+    },
+    {
+      "id": 57,
+      "name": "BLOOMSVALE",
+      "postcode": "58200",
+      "city": "Kuala Lumpur",
+      "state": "Kuala Lumpur",
+      "address": "B1-01, Menara Vista Petaling, No. 137, Jalan Puchong (Old Klang Road)",
+      "source": "https://www.bloomsvale.shopping/contact-us/",
+      "confidence": "high",
+      "note": "Bloomsvale Shopping Gallery, official site"
+    },
+    {
+      "id": 13,
+      "name": "BORNEO CONVENTION CENTRE KUCHING",
+      "postcode": "93050",
+      "city": "Kuching",
+      "state": "Sarawak",
+      "address": "The Isthmus, Sejingkat",
+      "source": "https://ufi.org/membership/ufi-members/member/UFIACCOUNT-4396",
+      "confidence": "high",
+      "note": "also meetings-conventions.com"
+    },
+    {
+      "id": 58,
+      "name": "BOULEVARD SHOPPING MALL MIRI",
+      "postcode": "98000",
+      "city": "Miri",
+      "state": "Sarawak",
+      "address": "Lot 2528, Jalan Boulevard Utama, Boulevard Commercial Centre",
+      "source": "https://magicpin.com/malaysia/Miri/Krokop/Other/Outpost-Miri/store/2492997",
+      "confidence": "medium",
+      "note": "postcode from tenant listing and Sarawak guide default; street from Wikivoyage"
+    },
+    {
+      "id": 105,
+      "name": "BUTTERWORTH ARENA",
+      "postcode": "13400",
+      "city": "Butterworth",
+      "state": "Pulau Pinang",
+      "address": "PMT 5144, Lorong Ampang Jajar",
+      "source": "https://www.cvent.com/venues/butterworth/arena-stadium/picca-at-butterworth-arena/venue-5f8ffa75-a466-4c26-8bf0-ea22152ce91d",
+      "confidence": "high",
+      "note": "single directory (Cvent, as PICCA at Butterworth Arena) Same building as PICCA; Cvent and yopki.com listings agree on PMT 5144 Lorong Ampang Jajar 13400."
+    },
+    {
+      "id": 91,
+      "name": "DATARAN PAHLAWAN MELAKA MEGAMALL",
+      "postcode": "75000",
+      "city": "Melaka",
+      "state": "Melaka",
+      "address": "Jalan Merdeka, Bandar Hilir",
+      "source": "https://ngchanmau.com/property/104477/Dataran-Pahlawan-Melaka-Megamall-Melaka",
+      "confidence": "high",
+      "note": "multiple listings agree"
+    },
+    {
+      "id": 98,
+      "name": "DESA PARK CITY",
+      "postcode": "52200",
+      "city": "Kuala Lumpur",
+      "state": "Kuala Lumpur",
+      "address": "The Waterfront @ ParkCity, 5 Persiaran Residen, Desa ParkCity",
+      "source": "https://timeout.com/kuala-lumpur/attractions/desa-parkcity",
+      "confidence": "medium",
+      "note": "assumed The Waterfront @ ParkCity (township's mall/event hub); 52200 is the township postcode (Time Out, property listings); street number from Airbnb listing"
+    },
+    {
+      "id": 74,
+      "name": "EKO CHERAS MALL",
+      "postcode": "56000",
+      "city": "Kuala Lumpur",
+      "state": "Kuala Lumpur",
+      "address": "EkoCheras Mall, Jalan Cheras, Taman Mutiara Barat",
+      "source": "https://magicpin.com/malaysia/Kuala-Lumpur/Taman-Segar/Restaurant/Sukishi-@-Ekocheras/store/2c24a58",
+      "confidence": "medium",
+      "note": "single tenant listing"
+    },
+    {
+      "id": 14,
+      "name": "GURNEY PARAGON",
+      "postcode": "10250",
+      "city": "George Town",
+      "state": "Pulau Pinang",
+      "address": "163D Persiaran Gurney",
+      "source": "https://en.wikipedia.org/wiki/Gurney_Paragon",
+      "confidence": "high",
+      "note": "also LEGO store listing"
+    },
+    {
+      "id": 62,
+      "name": "INTERNATIONAL TECHNOLOGY AND COMMERCIAL CENTRE",
+      "postcode": "89500",
+      "city": "Penampang",
+      "state": "Sabah",
+      "address": "ITCC, Jalan Pintas Penampang",
+      "source": "https://www.propertyguru.com.my/condo/manhattan-suites-itcc-21273",
+      "confidence": "medium",
+      "note": "ITCC Penampang, Sabah; postcode from listings for Manhattan Suites ITCC (PropertyGuru, Skyscanner), no building number"
+    },
+    {
+      "id": 15,
+      "name": "IOI GRAND EXHIBITION & CONVENTION CENTRE",
+      "postcode": "62502",
+      "city": "Putrajaya",
+      "state": "Putrajaya",
+      "address": "Level 3, IOI City Mall, Lebuh IRC, IOI Resort City",
+      "source": "https://www.showsbee.com/contact-7545.html",
+      "confidence": "medium",
+      "note": "postal address uses 62502 Putrajaya, but IOI Resort City physically lies in Sepang district, Selangor"
+    },
+    {
+      "id": 48,
+      "name": "IOI MALL DAMANSARA",
+      "postcode": "47810",
+      "city": "Petaling Jaya",
+      "state": "Selangor",
+      "address": "No. 2A, Persiaran Surian, Tropicana Indah",
+      "source": "https://www.ioiproperties.com.my/petaling-jaya-pj/ioi-mall-damansara",
+      "confidence": "high",
+      "note": "formerly Tropicana Gardens Mall"
+    },
+    {
+      "id": 103,
+      "name": "IOI MALL KULAI",
+      "postcode": "81000",
+      "city": "Kulai",
+      "state": "Johor",
+      "address": "Lebuh Putra Utama, Bandar Putra Kulai",
+      "source": "https://www.ioiproperties.com.my/bandar-putra-kulai/ioi-mall-kulai",
+      "confidence": "high",
+      "note": ""
+    },
+    {
+      "id": 61,
+      "name": "IOI MALL PUTRAJAYA",
+      "postcode": "62502",
+      "city": "Putrajaya",
+      "state": "Putrajaya",
+      "address": "IOI City Mall, Lebuh IRC, IOI Resort City",
+      "source": "https://www.maybank2u.com.my/iwov-resources/pdf/personal/promotions/2020/List_of_Participating_Address_Putrajaya.pdf",
+      "confidence": "medium",
+      "note": "taken as IOI City Mall (no separate 'IOI Mall Putrajaya'); postal 62502 Putrajaya but physically in Sepang, Selangor"
+    },
+    {
+      "id": 99,
+      "name": "IPOH CONVENTION CENTRE",
+      "postcode": "30450",
+      "city": "Ipoh",
+      "state": "Perak",
+      "address": "PT 254557, Jalan Sultan Abdul Jalil, Greentown",
+      "source": "https://globaltradefairs.com/venues/ipoh-convention-centre/venuedetails",
+      "confidence": "high",
+      "note": "two directories agree (globaltradefairs, successfulmeetings)"
+    },
+    {
+      "id": 95,
+      "name": "KB MALL",
+      "postcode": "15050",
+      "city": "Kota Bharu",
+      "state": "Kelantan",
+      "address": "Jalan Hamzah, Seksyen 16, 15050 Kota Bharu",
+      "source": "https://www.watsons.com.my/store/wtcmy_92_EN/kb-mall",
+      "confidence": "medium",
+      "note": "Assumed KB Mall, Kota Bharu (Jalan Hamzah / Jalan Sultan Ibrahim); postcode from tenant store page, corroborated by a neighbouring listing"
+    },
+    {
+      "id": 102,
+      "name": "KL BASE EXHIBITION CENTER",
+      "postcode": "50460",
+      "city": "Kuala Lumpur",
+      "state": "Kuala Lumpur",
+      "address": "Pangkalan TUDM KL Base, Jalan Lapangan Terbang Lama, 50460 Kuala Lumpur",
+      "source": "https://www.cvent.com/venues/en-US/kuala-lumpur/exposition-center/kl-base-exhibition-centre/venue-e9f172cd-282e-4b33-acb0-7baf27c1ffb5",
+      "confidence": "medium",
+      "note": "Single directory source (Cvent)"
+    },
+    {
+      "id": 79,
+      "name": "KL GATEWAY MALL",
+      "postcode": "59200",
+      "city": "Kuala Lumpur",
+      "state": "Kuala Lumpur",
+      "address": "2 Jalan Kerinchi, Pantai Dalam, 59200 Kuala Lumpur",
+      "source": "https://timeout.com/kuala-lumpur/shopping/kl-gateway-mall",
+      "confidence": "high",
+      "note": ""
+    },
+    {
+      "id": 40,
+      "name": "KSL CITY MALL",
+      "postcode": "80250",
+      "city": "Johor Bahru",
+      "state": "Johor",
+      "address": "33 Jalan Seladang, Taman Abad, 80250 Johor Bahru",
+      "source": "https://yourjbhood.com/listing/ksl-city-mall/",
+      "confidence": "high",
+      "note": ""
+    },
+    {
+      "id": 63,
+      "name": "KSL ESPLANADE MALL",
+      "postcode": "41200",
+      "city": "Klang",
+      "state": "Selangor",
+      "address": "No. 1 Persiaran Bestari 2/KS09, Bandar Bestari, 41200 Klang",
+      "source": "https://www.owndays.com/my/en/shops/1030",
+      "confidence": "high",
+      "note": ""
+    },
+    {
+      "id": 64,
+      "name": "KTCC MALL",
+      "postcode": "20000",
+      "city": "Kuala Terengganu",
+      "state": "Terengganu",
+      "address": "Jalan Sultan Zainal Abidin, Muara Selatan, 20000 Kuala Terengganu",
+      "source": "https://magicpin.com/malaysia/Kuala-Terengganu/Chendering/Restaurant/Chagee-Ktcc-Mall/store/2420b41",
+      "confidence": "high",
+      "note": ""
+    },
+    {
+      "id": 16,
+      "name": "KUALA LUMPUR CONVENTION CENTRE",
+      "postcode": "50088",
+      "city": "Kuala Lumpur",
+      "state": "Kuala Lumpur",
+      "address": "Jalan Pinang, Kuala Lumpur City Centre, 50088 Kuala Lumpur",
+      "source": "https://www.myceb.com.my/mepg/backup/supplier-search-kuala-lumpur/klcc",
+      "confidence": "high",
+      "note": ""
+    },
+    {
+      "id": 34,
+      "name": "MAHKOTA PARADE",
+      "postcode": "75000",
+      "city": "Melaka",
+      "state": "Melaka",
+      "address": "No. 1 Jalan Merdeka, Taman Costa Mahkota, 75000 Melaka",
+      "source": "https://magicpin.com/malaysia/Malacca/Bandar-Hilir/Restaurant/Santai-Tropis-@-Mahkota-Parade/store/2423154",
+      "confidence": "high",
+      "note": ""
+    },
+    {
+      "id": 45,
+      "name": "MALAYSIA INTERNATIONAL TRADE AND EXHIBITION CENTRE",
+      "postcode": "50480",
+      "city": "Kuala Lumpur",
+      "state": "Kuala Lumpur",
+      "address": "No. 8 Jalan Dutamas 2, 50480 Kuala Lumpur",
+      "source": "https://www.cidb.gov.my/icw-2023-travel-accommodation/",
+      "confidence": "high",
+      "note": ""
+    },
+    {
+      "id": 20,
+      "name": "MELAKA INTERNATIONAL TRADE CENTRE",
+      "postcode": "75450",
+      "city": "Ayer Keroh",
+      "state": "Melaka",
+      "address": "MITC Complex, Jalan Konvensyen, Hang Tuah Jaya, 75450 Ayer Keroh",
+      "source": "https://site.mitc.org.my/",
+      "confidence": "high",
+      "note": ""
+    },
+    {
+      "id": 84,
+      "name": "MELAWATI MALL",
+      "postcode": "53100",
+      "city": "Kuala Lumpur",
+      "state": "Selangor",
+      "address": "Jalan Bandar Melawati, Pusat Bandar Melawati, 53100 Kuala Lumpur",
+      "source": "https://en.wikipedia.org/wiki/Taman_Melawati",
+      "confidence": "medium",
+      "note": "53100 is the Taman Melawati township postcode (KL postal address) but the site is in Selangor (MPAJ); no mall listing showed the postcode directly. State set to Selangor by location; postal town is Kuala Lumpur"
+    },
+    {
+      "id": 80,
+      "name": "MESA MALL",
+      "postcode": "71800",
+      "city": "Nilai",
+      "state": "Negeri Sembilan",
+      "address": "Persiaran Ilmu, Putra Nilai, 71800 Nilai",
+      "source": "https://www.propertyguru.com.my/property-listing/mesahill-for-sale-by-emily-60478861",
+      "confidence": "medium",
+      "note": "Assumed MesaMall at MesaHill, Nilai; postcode from property listings of the same development, no official mall address seen"
+    },
+    {
+      "id": 1,
+      "name": "MID VALLEY",
+      "postcode": "59200",
+      "city": "Kuala Lumpur",
+      "state": "Kuala Lumpur",
+      "address": "Mid Valley City, Lingkaran Syed Putra, 59200 Kuala Lumpur",
+      "source": "https://igbreit.com/mvm",
+      "confidence": "medium",
+      "note": "Ambiguous: picked Mid Valley Megamall KL over Mid Valley Southkey JB (the JB venue has its own MVEC SOUTHKEY row); address from owner IGB REIT"
+    },
+    {
+      "id": 41,
+      "name": "MVEC SOUTHKEY",
+      "postcode": "80150",
+      "city": "Johor Bahru",
+      "state": "Johor",
+      "address": "3F, The Mall Mid Valley Southkey, 1 Persiaran Southkey 1, Kota Southkey, 80150 Johor Bahru",
+      "source": "https://globaltradefairs.com/venues/mid-valley-exhibition-centre-johor-bahru/venuedetails",
+      "confidence": "medium",
+      "note": "Sources split: mall listings (Wikipedia, directories) use 80150; some event listings for MVEC use 81100. Chose 80150"
+    },
+    {
+      "id": 39,
+      "name": "NU EMPIRE SUBANG",
+      "postcode": "47500",
+      "city": "Subang Jaya",
+      "state": "Selangor",
+      "address": "Jalan SS16/1, SS16, 47500 Subang Jaya",
+      "source": "https://www.timeout.com/kuala-lumpur/shopping/empire-shopping-gallery",
+      "confidence": "high",
+      "note": ""
+    },
+    {
+      "id": 92,
+      "name": "PALM MALL",
+      "postcode": "70200",
+      "city": "Seremban",
+      "state": "Negeri Sembilan",
+      "address": "Jalan Sungai Ujong, Kemayan Square, 70200 Seremban",
+      "source": "https://penang-traveltips.com/malaysia/negeri-sembilan/seremban/palm-mall.htm",
+      "confidence": "medium",
+      "note": "Assumed Palm Mall, Seremban; two tenant/travel listings agree on 70200"
+    },
+    {
+      "id": 109,
+      "name": "PARADIGM MALL PETALING JAYA",
+      "postcode": "47301",
+      "city": "Petaling Jaya",
+      "state": "Selangor",
+      "address": "1 Jalan SS7/26A, Kelana Jaya, 47301 Petaling Jaya",
+      "source": "https://www.timeout.com/kuala-lumpur/shopping/paradigm-mall",
+      "confidence": "high",
+      "note": ""
+    },
+    {
+      "id": 22,
+      "name": "PAVILION BUKIT JALIL",
+      "postcode": "57000",
+      "city": "Kuala Lumpur",
+      "state": "Kuala Lumpur",
+      "address": "No. 2 Persiaran Jalil 8, Bandar Bukit Jalil, 57000 Kuala Lumpur",
+      "source": "https://pavilion-bukitjalil.com/about",
+      "confidence": "high",
+      "note": ""
+    },
+    {
+      "id": 23,
+      "name": "PENANG INTERNATIONAL CONVENTION CULTURAL AND ARTS CENTRE",
+      "postcode": "13400",
+      "city": "Butterworth",
+      "state": "Pulau Pinang",
+      "address": "PMT 5144, Lorong Ampang Jajar, Ampang Jajar, 13400 Butterworth, Pulau Pinang",
+      "source": "https://www.cvent.com/venues/butterworth/arena-stadium/picca-at-butterworth-arena/venue-5f8ffa75-a466-4c26-8bf0-ea22152ce91d",
+      "confidence": "high",
+      "note": "PICCA = Penang International (Exhibition) Convention Cultural & Arts Centre @ Butterworth Arena, Ampang Jajar (not SPICE in Bayan Lepas, which has its own rows). Cvent and yopki listings agree on 13400."
+    },
+    {
+      "id": 25,
+      "name": "PENANG WATERFRONT CONVENTION CENTRE",
+      "postcode": "11700",
+      "city": "Gelugor",
+      "state": "Pulau Pinang",
+      "address": "1B, PWCC, The Light City, Persiaran Pantai Sinaran, 11700 Gelugor",
+      "source": "https://www.premiertickets.co/?p=84702",
+      "confidence": "high",
+      "note": "Ticketing site and penang-traveltips listing agree on 11700; no official PWCC page seen"
+    },
+    {
+      "id": 78,
+      "name": "PERSADA JOHOR INTERNATIONAL CONVENTION CENTRE",
+      "postcode": "80730",
+      "city": "Johor Bahru",
+      "state": "Johor",
+      "address": "Jalan Abdullah Ibrahim, 80730 Johor Bahru",
+      "source": "https://www.jetro.go.jp/en/database/j-messe/center/malaysia.html",
+      "confidence": "high",
+      "note": "Several listings (JETRO, meetings-conventions) give 80730; one aggregator gives generic 80000"
+    },
+    {
+      "id": 24,
+      "name": "PISA SPICE ARENA CONVENTION CENTRE",
+      "postcode": "11900",
+      "city": "Bayan Lepas",
+      "state": "Pulau Pinang",
+      "address": "108, Jalan Tun Dr Awang, Bayan Baru, 11900 Bayan Lepas",
+      "source": "https://en.wikipedia.org/wiki/SPICE_Arena",
+      "confidence": "high",
+      "note": "SPICE Arena (formerly PISA); Wikipedia and Kupi agree"
+    },
+    {
+      "id": 66,
+      "name": "SABAH INTERNATIONAL CONVENTION CENTRE",
+      "postcode": "88400",
+      "city": "Kota Kinabalu",
+      "state": "Sabah",
+      "address": "Jalan Tun Fuad Stephens, Tanjung Lipat, 88400 Kota Kinabalu",
+      "source": "https://en.wikipedia.org/wiki/Sabah_International_Convention_Centre",
+      "confidence": "high",
+      "note": ""
+    },
+    {
+      "id": 26,
+      "name": "SETIA CITY CONVENTION CENTRE",
+      "postcode": "40170",
+      "city": "Shah Alam",
+      "state": "Selangor",
+      "address": "No. 1, Jalan Setia Dagang AG U13/AG, Setia Alam Seksyen U13, 40170 Shah Alam",
+      "source": "https://spsetia.com/venues/setia-city-convention-centre/our-history-team/",
+      "confidence": "high",
+      "note": ""
+    },
+    {
+      "id": 27,
+      "name": "SETIA SPICE CONVENTION CENTRE",
+      "postcode": "11900",
+      "city": "Bayan Lepas",
+      "state": "Pulau Pinang",
+      "address": "108C, Jalan Tun Dr Awang, 11900 Bayan Lepas",
+      "source": "https://www.penang-traveltips.com/spice-convention-centre.htm",
+      "confidence": "high",
+      "note": "Same complex as SPICE Arena; Wikipedia gives same street address"
+    },
+    {
+      "id": 29,
+      "name": "STADIUM BUKIT JALIL",
+      "postcode": "57000",
+      "city": "Kuala Lumpur",
+      "state": "Kuala Lumpur",
+      "address": "Jalan Barat, Bukit Jalil, 57000 Kuala Lumpur",
+      "source": "https://www.premiertickets.co/?p=19617",
+      "confidence": "high",
+      "note": "Google listing and ticketing site agree; Bukit Jalil National Stadium"
+    },
+    {
+      "id": 73,
+      "name": "STRAITS QUAY",
+      "postcode": "10470",
+      "city": "Tanjung Tokong",
+      "state": "Pulau Pinang",
+      "address": "1, Jalan Seri Tanjung Pinang, Seri Tanjung Pinang, 10470 Tanjung Tokong",
+      "source": "https://ports.marinelink.com/ports/port/straits-quay",
+      "confidence": "high",
+      "note": "Marina listing and E&O developer brochure give 10470"
+    },
+    {
+      "id": 30,
+      "name": "SULTAN AHMAD SHAH CONVENTION CENTRE",
+      "postcode": "25200",
+      "city": "Kuantan",
+      "state": "Pahang",
+      "address": "Jalan Putra Square 6, Putra Square, 25200 Kuantan",
+      "source": "https://cvent.com/venues/kuantan/hotel/sultan-ahmad-shah-international-convention-centre-the-zenith-hotel/venue-557f2a49-ca37-4b8e-b839-aeff7c653cfe",
+      "confidence": "medium",
+      "note": "Sultan Ahmad Shah International Convention Centre (with The Zenith Hotel); only Cvent listing seen with postcode"
+    },
+    {
+      "id": 104,
+      "name": "SUNSHINE CENTRAL",
+      "postcode": "11500",
+      "city": "Ayer Itam",
+      "state": "Pulau Pinang",
+      "address": "No. 8, Sunshine Mall @ Sunshine Central, Jalan Thean Teik, Bandar Baru Ayer Itam, 11500 Ayer Itam",
+      "source": "https://sunshinecentral.my/",
+      "confidence": "medium",
+      "note": "Picked Sunshine Central mall (Farlim/Ayer Itam, Penang, opened Oct 2024), the only venue by this name; it is in Ayer Itam, not Bayan Lepas. Address from official site"
+    },
+    {
+      "id": 69,
+      "name": "SUNWAY CARNIVAL",
+      "postcode": "13700",
+      "city": "Seberang Jaya",
+      "state": "Pulau Pinang",
+      "address": "3068, Jalan Todak, Pusat Bandar Seberang Jaya, 13700 Seberang Jaya",
+      "source": "https://www.sunwayreit.com/our-portfolio/sunway-carnival-mall/",
+      "confidence": "high",
+      "note": "Sunway Carnival Mall; mall site and Sunway REIT agree"
+    },
+    {
+      "id": 36,
+      "name": "SUNWAY KLUANG MALL",
+      "postcode": "86000",
+      "city": "Kluang",
+      "state": "Johor",
+      "address": "Jalan Rambutan, Bandar Kluang, 86000 Kluang",
+      "source": "https://www.sunwayreit.com/our-portfolio/sunway-kluang-mall/",
+      "confidence": "high",
+      "note": "Formerly Kluang Mall; operator (Sunway REIT) page"
+    },
+    {
+      "id": 28,
+      "name": "SUNWAY PYRAMID CONVENTION CENTRE",
+      "postcode": "47500",
+      "city": "Subang Jaya",
+      "state": "Selangor",
+      "address": "Level CP3, Sunway Pyramid, 3, Jalan PJS 11/15, Bandar Sunway, 47500 Subang Jaya",
+      "source": "https://penang-traveltips.com/malaysia/selangor/petaling-jaya/sunway-pyramid.htm",
+      "confidence": "high",
+      "note": "Multiple listings give 47500 (some write the town as Petaling Jaya); Time Out's 46150 is an outlier"
+    },
+    {
+      "id": 31,
+      "name": "SURIA SABAH",
+      "postcode": "88000",
+      "city": "Kota Kinabalu",
+      "state": "Sabah",
+      "address": "1, Jalan Tun Fuad Stephens, Pusat Bandar Kota Kinabalu, 88000 Kota Kinabalu",
+      "source": "https://en.wikipedia.org/wiki/Suria_Sabah",
+      "confidence": "high",
+      "note": ""
+    },
+    {
+      "id": 32,
+      "name": "SUTERA MALL",
+      "postcode": "81300",
+      "city": "Skudai",
+      "state": "Johor",
+      "address": "No. 1, Jalan Sutera Tanjung 8/4, Taman Sutera Utama, 81300 Skudai",
+      "source": "https://thetravelintern.com/sutera-mall-jb/",
+      "confidence": "high",
+      "note": "Several tenant listings agree"
+    },
+    {
+      "id": 70,
+      "name": "SUTERA SQUARE",
+      "postcode": "81300",
+      "city": "Skudai",
+      "state": "Johor",
+      "address": "Sutera Square, Jalan Sutera Tanjung 8, Taman Sutera Utama, 81300 Skudai",
+      "source": "https://www.propertyguru.com.my/property-news/2022/4/204646/sutera-square-brand-new-three-storey-shop-offices-sold-out",
+      "confidence": "medium",
+      "note": "Shop-office square/carpark beside Sutera Mall in Taman Sutera Utama (events held at its carpark); no exact street number found, postcode from neighbouring listings"
+    },
+    {
+      "id": 35,
+      "name": "THE COMMUNE KULAI",
+      "postcode": "81000",
+      "city": "Kulai",
+      "state": "Johor",
+      "address": "No. 291, Jalan Kiambang 10, Pusat Komersial Indah, Bandar Indahpura, 81000 Kulai",
+      "source": "https://confirmgood.com/post/the-commune-jb",
+      "confidence": "high",
+      "note": "The Commune Lifestyle Mall; several listings agree"
+    },
+    {
+      "id": 33,
+      "name": "THE STARLING MALL",
+      "postcode": "47400",
+      "city": "Petaling Jaya",
+      "state": "Selangor",
+      "address": "6, Jalan SS 21/37, Damansara Utama, 47400 Petaling Jaya",
+      "source": "https://timeout.com/kuala-lumpur/shopping/the-starling-mall",
+      "confidence": "high",
+      "note": ""
+    },
+    {
+      "id": 100,
+      "name": "TROPICANA GARDENS MALL",
+      "postcode": "47810",
+      "city": "Petaling Jaya",
+      "state": "Selangor",
+      "address": "No. 29, Unit CC, 2A, Persiaran Surian, Tropicana Indah, 47810 Petaling Jaya",
+      "source": "https://tropicanacorp.com.my/TropicanaGardensMall",
+      "confidence": "high",
+      "note": "Developer's own page; one listing says it may have been renamed IOI Mall Damansara (unverified)"
+    },
+    {
+      "id": 89,
+      "name": "VIVACITY MEGAMALL",
+      "postcode": "93350",
+      "city": "Kuching",
+      "state": "Sarawak",
+      "address": "Jalan Wan Alwi, 93350 Kuching",
+      "source": "https://www.kupi.com/en-ae/explore/malaysia/kuching/vivacity-megamall",
+      "confidence": "high",
+      "note": "Several listings incl. tenant pages agree"
+    },
+    {
+      "id": 101,
+      "name": "WORLD TRADE CENTRE KUALA LUMPUR",
+      "postcode": "50480",
+      "city": "Kuala Lumpur",
+      "state": "Kuala Lumpur",
+      "address": "41, Jalan Tun Ismail, Chow Kit, 50480 Kuala Lumpur",
+      "source": "https://www.meetings-conventions.com/Meeting-Event-Venues/Kuala-Lumpur/Convention-Center/World-Trade-Centre-Kuala-Lumpur-p56098065",
+      "confidence": "medium",
+      "note": "Formerly PWTC; only venue directory listings seen, official site not fetched"
+    }
+  ],
+  "unresolved": [
+    {
+      "id": 81,
+      "name": "CENTRE POINT",
+      "reason": "owner: leave out if unsure. Ambiguous: Centre Point Sabah (88000 Kota Kinabalu) vs Centrepoint Bandar Utama (47800 Petaling Jaya)"
+    },
+    {
+      "id": 59,
+      "name": "DATARAN CENTRIO",
+      "reason": "no Malaysian venue named 'Dataran Centrio' found in 4 searches; only Centrio Avenue (residential, Gelugor Penang) and Centrio Mall (Philippines); possibly a typo for Centro (Klang) - needs owner to identify"
+    },
+    {
+      "id": 76,
+      "name": "DEWAN MILLENNIUM KEPALA BATAS",
+      "reason": "owner: leave out if unsure. No source gives the hall's own address; only the Kepala Batas town postcode (13200)"
+    },
+    {
+      "id": 60,
+      "name": "EAST COAST MALL",
+      "reason": "owner: leave out if unsure. Sources disagree: 25200 (travel sites), 25300 and 25000 (tenants); operator page has no postcode"
+    },
+    {
+      "id": 110,
+      "name": "KENYALANG CONVENTION AND EXHIBITION CENTRE",
+      "reason": "owner: leave out if unsure. No venue by this name found; Borneo Convention Centre Kuching (93050) was only a guess"
+    },
+    {
+      "id": 93,
+      "name": "KUANTAN CITY MALL",
+      "reason": "owner: leave out if unsure. One source says 25000, other listings put it on Jalan Putra Square 6 with no postcode"
+    },
+    {
+      "id": 17,
+      "name": "KUCHING METROCITY CONVENTION CENTRE",
+      "reason": "owner: leave out if unsure. No address for the convention centre itself; 93050 only inferred from MetroCity shops"
+    },
+    {
+      "id": 21,
+      "name": "PARADIGM MALL",
+      "reason": "owner: leave out if unsure. Paradigm Mall exists in Johor Bahru (81200) and Petaling Jaya (row 109); which one is a guess"
+    },
+    {
+      "id": 68,
+      "name": "STADIUM INDERA MULIA",
+      "reason": "owner: leave out if unsure. Only one source, and it gives the Kompleks Sukan Ipoh address (31400), which may be Stadium Perak rather than Indera Mulia"
+    },
+    {
+      "id": 106,
+      "name": "ZANOTTI LIVING (KELANA JAYA)",
+      "reason": "No web trace of a 'Zanotti Living' showroom in Kelana Jaya or anywhere in Malaysia; searches return only the Italian brand Zanotta. Needs the address from the company's own records/Google Maps."
+    }
+  ]
+}
