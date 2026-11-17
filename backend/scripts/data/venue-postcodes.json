@@ -313,13 +313,13 @@
     {
       "id": 56,
       "name": "AUTO CITY",
-      "postcode": "14000",
-      "city": "Juru",
+      "postcode": "13600",
+      "city": "Perai",
       "state": "Pulau Pinang",
-      "address": "1688-F8, Jalan Perusahaan, Auto-City, North-South Highway Juru Interchange",
-      "source": "https://www.timeout.com/penang/shops/auto-city",
-      "confidence": "medium",
-      "note": "picked Auto-City Juru, Penang (only known venue of that name); one tenant listing uses 13600 Perai instead"
+      "address": "Jalan Perusahaan Auto-City, North-South Highway Juru Interchange, 13600 Perai, Pulau Pinang",
+      "source": "https://my.hiredly.com/companies/penang-island",
+      "confidence": "high",
+      "note": "Owner confirmed: Auto City, Juru, Penang. Hiredly, wapcar.my (Toyota dealer) and a tenant listing agree on 13600 Perai; Time Out alone says 14000."
     },
     {
       "id": 75,
@@ -377,17 +377,6 @@
       "note": "single directory (Cvent, as PICCA at Butterworth Arena) Same building as PICCA; Cvent and yopki.com listings agree on PMT 5144 Lorong Ampang Jajar 13400."
     },
     {
-      "id": 81,
-      "name": "CENTRE POINT",
-      "postcode": "88000",
-      "city": "Kota Kinabalu",
-      "state": "Sabah",
-      "address": "1, Jalan Centre Point, Pusat Bandar Kota Kinabalu",
-      "source": "https://en.wikipedia.org/wiki/Centre_Point_Sabah",
-      "confidence": "low",
-      "note": "ambiguous: picked Centre Point Sabah because the list spells it 'Centre Point' (two words, as Sabah's mall) and has other East Malaysia venues (ITCC Penampang, BCCK, Miri); alternative Centrepoint Bandar Utama = 3 Lebuh Bandar Utama, 47800 Petaling Jaya, Selangor"
-    },
-    {
       "id": 91,
       "name": "DATARAN PAHLAWAN MELAKA MEGAMALL",
       "postcode": "75000",
@@ -408,28 +397,6 @@
       "source": "https://timeout.com/kuala-lumpur/attractions/desa-parkcity",
       "confidence": "medium",
       "note": "assumed The Waterfront @ ParkCity (township's mall/event hub); 52200 is the township postcode (Time Out, property listings); street number from Airbnb listing"
-    },
-    {
-      "id": 76,
-      "name": "DEWAN MILLENNIUM KEPALA BATAS",
-      "postcode": "13200",
-      "city": "Kepala Batas",
-      "state": "Pulau Pinang",
-      "address": "Dewan Milenium, Kepala Batas (government complex)",
-      "source": "https://en.wikipedia.com/wiki/Kepala_Batas,_Penang",
-      "confidence": "low",
-      "note": "no source gives the hall's own street address; 13200 is the Kepala Batas town postcode"
-    },
-    {
-      "id": 60,
-      "name": "EAST COAST MALL",
-      "postcode": "25200",
-      "city": "Kuantan",
-      "state": "Pahang",
-      "address": "Jalan Putra Square 6, Putra Square",
-      "source": "https://penang-traveltips.com/malaysia/pahang/kuantan/east-coast-mall.htm",
-      "confidence": "medium",
-      "note": "25200 per Penang Travel Tips and Agoda; Samsung store lists 25300, Longines 25000; operator page gives no postcode"
     },
     {
       "id": 74,
@@ -531,17 +498,6 @@
       "note": "Assumed KB Mall, Kota Bharu (Jalan Hamzah / Jalan Sultan Ibrahim); postcode from tenant store page, corroborated by a neighbouring listing"
     },
     {
-      "id": 110,
-      "name": "KENYALANG CONVENTION AND EXHIBITION CENTRE",
-      "postcode": "93050",
-      "city": "Kuching",
-      "state": "Sarawak",
-      "address": "The Isthmus, Jalan Keruing, Sejingkat, 93050 Kuching",
-      "source": "https://ufi.org/membership/ufi-members/member/UFIACCOUNT-4396",
-      "confidence": "low",
-      "note": "No venue by this exact name found online; guessed Borneo Convention Centre Kuching (hosts 'Kenyalang'-branded events). Verify with the business"
-    },
-    {
       "id": 102,
       "name": "KL BASE EXHIBITION CENTER",
       "postcode": "50460",
@@ -606,28 +562,6 @@
       "source": "https://www.myceb.com.my/mepg/backup/supplier-search-kuala-lumpur/klcc",
       "confidence": "high",
       "note": ""
-    },
-    {
-      "id": 93,
-      "name": "KUANTAN CITY MALL",
-      "postcode": "25000",
-      "city": "Kuantan",
-      "state": "Pahang",
-      "address": "No 1A, Lorong Tun Ismail 9, Sri Dagangan 2, Jalan Tun Ismail, 25000 Kuantan",
-      "source": "https://www.cimb.com.my/content/dam/cimb/personal/documents/important-notices/2025/notice-sst-closure-kuantan-city-mall.pdf",
-      "confidence": "medium",
-      "note": "Single source (CIMB notice); other listings give Jalan Putra Square 6 without postcode"
-    },
-    {
-      "id": 17,
-      "name": "KUCHING METROCITY CONVENTION CENTRE",
-      "postcode": "93050",
-      "city": "Kuching",
-      "state": "Sarawak",
-      "address": "MetroCity, Jalan Matang, 93050 Kuching",
-      "source": "https://www.watsons.com.my/store/wtcmy_436_EN/metro-city-matang",
-      "confidence": "medium",
-      "note": "No venue-specific address found; 93050 is the postcode used by MetroCity Matang tenants (Watsons, Senheng) on Jalan Matang"
     },
     {
       "id": 34,
@@ -727,17 +661,6 @@
       "source": "https://penang-traveltips.com/malaysia/negeri-sembilan/seremban/palm-mall.htm",
       "confidence": "medium",
       "note": "Assumed Palm Mall, Seremban; two tenant/travel listings agree on 70200"
-    },
-    {
-      "id": 21,
-      "name": "PARADIGM MALL",
-      "postcode": "81200",
-      "city": "Johor Bahru",
-      "state": "Johor",
-      "address": "Jalan Skudai (Lebuhraya Skudai), Taman Bukit Mewah, 81200 Johor Bahru",
-      "source": "https://yourjbhood.com/listing/paradigm-mall-johor-bahru",
-      "confidence": "medium",
-      "note": "Ambiguous: picked Paradigm Mall Johor Bahru because row 109 is explicitly Paradigm Mall PJ"
     },
     {
       "id": 109,
@@ -848,17 +771,6 @@
       "source": "https://www.premiertickets.co/?p=19617",
       "confidence": "high",
       "note": "Google listing and ticketing site agree; Bukit Jalil National Stadium"
-    },
-    {
-      "id": 68,
-      "name": "STADIUM INDERA MULIA",
-      "postcode": "31400",
-      "city": "Ipoh",
-      "state": "Perak",
-      "address": "Persiaran Bulan, Kompleks Sukan Ipoh, 31400 Ipoh",
-      "source": "https://visitperak.com.my/?p=10511",
-      "confidence": "medium",
-      "note": "Indoor stadium in MBI Sports Complex, Ipoh; only one source (Visit Perak) gives the address"
     },
     {
       "id": 73,
@@ -1017,9 +929,49 @@
   ],
   "unresolved": [
     {
+      "id": 81,
+      "name": "CENTRE POINT",
+      "reason": "owner: leave out if unsure. Ambiguous: Centre Point Sabah (88000 Kota Kinabalu) vs Centrepoint Bandar Utama (47800 Petaling Jaya)"
+    },
+    {
       "id": 59,
       "name": "DATARAN CENTRIO",
       "reason": "no Malaysian venue named 'Dataran Centrio' found in 4 searches; only Centrio Avenue (residential, Gelugor Penang) and Centrio Mall (Philippines); possibly a typo for Centro (Klang) - needs owner to identify"
+    },
+    {
+      "id": 76,
+      "name": "DEWAN MILLENNIUM KEPALA BATAS",
+      "reason": "owner: leave out if unsure. No source gives the hall's own address; only the Kepala Batas town postcode (13200)"
+    },
+    {
+      "id": 60,
+      "name": "EAST COAST MALL",
+      "reason": "owner: leave out if unsure. Sources disagree: 25200 (travel sites), 25300 and 25000 (tenants); operator page has no postcode"
+    },
+    {
+      "id": 110,
+      "name": "KENYALANG CONVENTION AND EXHIBITION CENTRE",
+      "reason": "owner: leave out if unsure. No venue by this name found; Borneo Convention Centre Kuching (93050) was only a guess"
+    },
+    {
+      "id": 93,
+      "name": "KUANTAN CITY MALL",
+      "reason": "owner: leave out if unsure. One source says 25000, other listings put it on Jalan Putra Square 6 with no postcode"
+    },
+    {
+      "id": 17,
+      "name": "KUCHING METROCITY CONVENTION CENTRE",
+      "reason": "owner: leave out if unsure. No address for the convention centre itself; 93050 only inferred from MetroCity shops"
+    },
+    {
+      "id": 21,
+      "name": "PARADIGM MALL",
+      "reason": "owner: leave out if unsure. Paradigm Mall exists in Johor Bahru (81200) and Petaling Jaya (row 109); which one is a guess"
+    },
+    {
+      "id": 68,
+      "name": "STADIUM INDERA MULIA",
+      "reason": "owner: leave out if unsure. Only one source, and it gives the Kompleks Sukan Ipoh address (31400), which may be Stadium Perak rather than Indera Mulia"
     },
     {
       "id": 106,

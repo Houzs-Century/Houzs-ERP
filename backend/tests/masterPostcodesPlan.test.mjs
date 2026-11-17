@@ -10,6 +10,7 @@ import {
   buildPlan,
   CURATED_CONFIDENCE,
   curatedIndex,
+  curatedWarehouseIndex,
   geocodeQuery,
   localityIndex,
   MASTER_TABLES,
@@ -103,13 +104,13 @@ describe("parseGeocodePostcode", () => {
 describe("buildPlan", () => {
   const row = (over) => ({ master: "suppliers", id: "s1", companyId: 1, name: "ABC Sdn Bhd", address: "", city: null, state: null, ...over });
   const run = (rows, geocodes = new Map()) =>
-    buildPlan({ rows, localities: LOCALITIES, geocodes, geocodeSkipped: () => "not geocoded: no key", curated: null });
+    buildPlan({ rows, localities: LOCALITIES, geocodes, geocodeSkipped: () => "not geocoded: no key", curated: null, curatedWarehouses: null });
 
   test("an address-text postcode is planned with its source and confidence", () => {
     const { planned, unresolved } = run([row({ address: "No 3, 47500 Subang Jaya" })]);
     expect(unresolved).toEqual([]);
     expect(planned).toEqual([expect.objectContaining({
-      master: "suppliers", id: "s1", proposed: { postcode: "47500", city: "Subang Jaya", state: "Selangor" },
+      master: "suppliers", id: "s1", proposed: { postcode: "47500", city: "Subang Jaya", state: "Selangor", street: null },
       source: "address text", confidence: "high", note: null,
     })]);
   });
@@ -167,10 +168,11 @@ describe("curated venue postcodes", () => {
   const venue = (over) => ({ master: "venues", id: "28", companyId: 1, name: "SUNWAY PYRAMID CONVENTION CENTRE", address: null, city: null, state: null, ...over });
   const entry = (over) => ({ id: 28, name: "SUNWAY PYRAMID CONVENTION CENTRE", postcode: "47500", city: "Subang Jaya", state: "Selangor", confidence: "high", ...over });
   const run = (rows, entries, geocodes = new Map()) =>
-    buildPlan({ rows, localities: LOCALITIES, geocodes, geocodeSkipped: () => "not geocoded: no key", curated: curatedIndex(entries).byName });
+    buildPlan({ rows, localities: LOCALITIES, geocodes, geocodeSkipped: () => "not geocoded: no key", curated: curatedIndex(entries).byName, curatedWarehouses: null });
 
   test("buildPlan refuses a call that forgets to say whether there is a curated list", () => {
-    expect(() => buildPlan({ rows: [], localities: LOCALITIES, geocodes: new Map(), geocodeSkipped: () => "" })).toThrow(/curated/);
+    expect(() => buildPlan({ rows: [], localities: LOCALITIES, geocodes: new Map(), geocodeSkipped: () => "", curatedWarehouses: null })).toThrow(/curated/);
+    expect(() => buildPlan({ rows: [], localities: LOCALITIES, geocodes: new Map(), geocodeSkipped: () => "", curated: null })).toThrow(/curatedWarehouses/);
   });
 
   test("an exact name match is planned, City and State from my_localities", () => {
@@ -178,7 +180,7 @@ describe("curated venue postcodes", () => {
     expect(unresolved).toEqual([]);
     expect(planned[0]).toMatchObject({
       id: "28", source: "curated list", confidence: "high", note: null,
-      proposed: { postcode: "47500", city: "Subang Jaya", state: "Selangor" },
+      proposed: { postcode: "47500", city: "Subang Jaya", state: "Selangor", street: null },
     });
   });
 
@@ -224,7 +226,7 @@ describe("curated venue postcodes", () => {
   test("the researched city breaks a tie between cities under one postcode", () => {
     const row = venue({ name: "SUTERA MALL", id: "32" });
     const { planned } = run([row], [entry({ id: 32, name: "SUTERA MALL", postcode: "81300", city: "Skudai", state: "Johor" })]);
-    expect(planned[0].proposed).toEqual({ postcode: "81300", city: "Skudai", state: "Johor" });
+    expect(planned[0].proposed).toEqual({ postcode: "81300", city: "Skudai", state: "Johor", street: null });
   });
 
   test("a row whose State already contradicts the curated postcode is refused", () => {
@@ -255,5 +257,83 @@ describe("curated venue postcodes", () => {
       expect(["high", "medium", "low"]).toContain(e.confidence);
       expect(e.source, e.name).toMatch(/^https?:\/\//);
     }
+  });
+});
+
+describe("curated warehouse addresses", () => {
+  const wh = (over) => ({ master: "warehouses", id: "w1", companyId: 1, name: "PENANG WAREHOUSE", code: "PG WAREHOUSE", address: null, city: null, state: "Pulau Pinang", ...over });
+  const ENTRIES = [
+    { names: ["PENANG WAREHOUSE", "PG WAREHOUSE"], street: "868, Jalan Estate Baru, Mukim 12", postcode: "10050", city: "George Town", state: "Pulau Pinang" },
+    { names: ["BALAKONG WAREHOUSE"], street: "1831-B, Jalan KPB 1", postcode: "47500", city: "Subang Jaya", state: "Selangor" },
+  ];
+  const run = (rows, entries = ENTRIES) =>
+    buildPlan({ rows, localities: LOCALITIES, geocodes: new Map(), geocodeSkipped: () => "not geocoded: no key", curated: null, curatedWarehouses: curatedWarehouseIndex(entries).byName });
+
+  test("a name match ignoring case plans postcode, my_localities City/State, and the street for an empty location", () => {
+    const { planned, unresolved } = run([wh({ name: "penang warehouse" })]);
+    expect(unresolved).toEqual([]);
+    expect(planned[0]).toMatchObject({
+      source: "official warehouse address", confidence: "high", note: null,
+      proposed: { postcode: "10050", city: "George Town", state: "Pulau Pinang", street: "868, Jalan Estate Baru, Mukim 12" },
+    });
+  });
+
+  test("the code matches when the name does not", () => {
+    const { planned } = run([wh({ name: "Penang Main Store", code: "PG WAREHOUSE" })]);
+    expect(planned[0].proposed.postcode).toBe("10050");
+  });
+
+  test("otherwise the match is exact: a longer name is not used", () => {
+    const { planned, unresolved } = run([wh({ name: "PENANG WAREHOUSE 2", code: "PG2" })]);
+    expect(planned).toEqual([]);
+    expect(unresolved[0].reason).toMatch(/no curated warehouse entry with this name or code/);
+  });
+
+  test("a location already filled is kept: no street planned", () => {
+    const { planned } = run([wh({ address: "Lot 9, Simpang Ampat" })]);
+    expect(planned[0].proposed.street).toBeNull();
+    expect(planned[0].note).toMatch(/location already filled, kept/);
+  });
+
+  test("a location holding a different valid postcode is refused", () => {
+    const { planned, unresolved } = run([wh({ address: "Lot 9, 47500 Subang Jaya" })]);
+    expect(planned).toEqual([]);
+    expect(unresolved[0]).toMatchObject({ settled: true });
+    expect(unresolved[0].reason).toMatch(/already holds postcode 47500/);
+  });
+
+  test("the code-guessed State is replaced by the official one, and the plan says so", () => {
+    const { planned } = run([wh({ name: "BALAKONG WAREHOUSE", code: "KL WAREHOUSE", state: "Kuala Lumpur" })]);
+    expect(planned[0].proposed.state).toBe("Selangor");
+    expect(planned[0].note).toMatch(/STATE "Kuala Lumpur" becomes "Selangor" \(official address\)/);
+  });
+
+  test("name and code pointing at different addresses are refused", () => {
+    const { planned, unresolved } = run([wh({ name: "BALAKONG WAREHOUSE", code: "PG WAREHOUSE" })]);
+    expect(planned).toEqual([]);
+    expect(unresolved[0].reason).toMatch(/different curated warehouse addresses/);
+  });
+
+  test("a name claimed by two entries is dropped", () => {
+    const idx = curatedWarehouseIndex([{ names: ["X"], postcode: "47500" }, { names: ["x"], postcode: "50000" }]);
+    expect(idx.duplicates).toEqual(["x"]);
+    expect(idx.byName.size).toBe(0);
+  });
+
+  test("warehouse entries never apply to venues", () => {
+    const { planned } = run([wh({ master: "venues" })]);
+    expect(planned).toEqual([]);
+  });
+
+  test("the committed warehouse file is well-formed and leaves out the sites with no fixed address", () => {
+    const data = JSON.parse(readFileSync(new URL("../scripts/data/warehouse-addresses.json", import.meta.url), "utf8"));
+    const idx = curatedWarehouseIndex(data.entries);
+    expect(idx.duplicates).toEqual([]);
+    for (const e of data.entries) {
+      expect(e.postcode).toMatch(/^\d{5}$/);
+      expect(e.street.length).toBeGreaterThan(0);
+    }
+    for (const n of ["guangzhou warehouse", "consignment (out)", "cash & carry segment - fair"]) expect(idx.byName.has(n)).toBe(false);
+    expect(idx.byName.get("pg warehouse")?.postcode).toBe("14100");
   });
 });
