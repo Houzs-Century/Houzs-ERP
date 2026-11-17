@@ -6,7 +6,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { fmtSen } from '@2990s/shared';
 import { AuditHistoryPanel } from './AuditHistoryPanel';
 import type { AuditLabelDictionary, AuditLogEntry } from './audit-labels';
-import { AUDIT_VALUE_MAX, auditValueShown, auditValueText } from './audit-value';
+import { AUDIT_VALUE_MAX, auditValueShown, auditValueText, isStoredPhotoKey } from './audit-value';
 
 const DICT: AuditLabelDictionary = { actions: { UPDATE: 'Updated' }, fields: {}, moneyFields: new Set(['total_sen']) };
 const PNG = 'data:image/png;base64,' + 'iVBORw0KGgo'.repeat(400);
@@ -52,5 +52,17 @@ describe('the History drawer', () => {
     expect(document.body.textContent).not.toContain('base64');
     const cut = screen.getByTitle(long);
     expect(cut.textContent).toBe(long.slice(0, AUDIT_VALUE_MAX) + '…');
+  });
+});
+
+describe('a stored photo key reads as a photo (HC-SO-013319, 2026-11-17)', () => {
+  it('shows "1 photo", not the object path', () => {
+    const key = 'so-items/HC-SO-013319/4f57c48c-2d78-4480-bbaf-c4e20b9eb381/61461e27-0e3d-4d56-aa63-c6754a07429c.jpg';
+    expect(auditValueText('photoAdded', key, { actions: {}, fields: {} })).toBe('1 photo');
+    expect(isStoredPhotoKey(key)).toBe(true);
+  });
+  it('leaves ordinary text alone', () => {
+    expect(isStoredPhotoKey('Send together with HC12931+HC12932')).toBe(false);
+    expect(isStoredPhotoKey('MAJ-DINING CHAIR')).toBe(false);
   });
 });

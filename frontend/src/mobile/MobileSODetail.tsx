@@ -15,6 +15,7 @@ import { MobileLinePhotos } from "./MobileLinePhotos";
 import { useStaff, usePickableStaff } from "../vendor/scm/lib/admin-queries";
 import { SoSharedWith } from "../vendor/scm/components/SoSharedWith";
 import { HIST_FIELD_LABEL, HIST_MONEY_FIELDS } from "./so-history-labels";
+import { isStoredPhotoKey } from "../components/audit/audit-value";
 import { statusLabel } from "../vendor/scm/lib/status-pill";
 import { AMENDMENT_APPROVER_LABEL, soAmendmentApprover, SO_AMENDMENT_LANE_APPROVE_PERM } from "../vendor/scm/lib/amendment-approver";
 import { useAuth as useHouzsAuth } from "../auth/AuthContext";
@@ -1516,6 +1517,7 @@ const histVal = (field: string, v: unknown): string => {
   if (typeof v === "object") {
     return Array.isArray(v) ? `${v.length} item${v.length === 1 ? "" : "s"}` : "updated";
   }
+  if (typeof v === "string" && isStoredPhotoKey(v)) return "1 photo";
   return String(v).replace(/_/g, " ");
 };
 /* Timestamp — desktop-standard numeric DD/MM/YYYY + HH:mm. */
