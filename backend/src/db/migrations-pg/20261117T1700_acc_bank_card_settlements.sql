@@ -24,9 +24,9 @@
 -- HOUSE STYLE. Additive, idempotent, schema-qualified, no backfill. RE-CHECK THE
 -- NUMBER AT MERGE.
 --
--- REVERSAL (undo every such match on Bank Recon first, so each SETTLECARD
--- journal is reversed; a row dropped while its journal stands leaves card
--- clearing credited by an entry nothing explains):
+-- REVERSAL: undo every such match on Bank Recon first, so each SETTLECARD
+-- journal is reversed (a row dropped while its journal stands leaves card
+-- clearing credited by an entry nothing explains); then:
 --   DROP TRIGGER IF EXISTS acc_settlement_match_not_bank_card ON scm.acc_settlement_matches;
 --   DROP FUNCTION IF EXISTS scm.acc_settlement_match_not_bank_card();
 --   DROP TABLE IF EXISTS scm.acc_bank_card_settlements;
