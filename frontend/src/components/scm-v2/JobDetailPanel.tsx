@@ -6,8 +6,9 @@ import { fieldPhotoContext, uploadFieldPhoto } from "../../vendor/scm/lib/slip";
 import { serverFieldPhotoRestore, useFieldPhotos } from "../../lib/fieldPhotos";
 import { FieldPhotos } from "../FieldPhotos";
 import {
-  jobKey, jobRefOf, LEG_LABEL, jobSectionRows, str, hm, type JobRef, type JobResponse,
+  jobKey, jobRefOf, LEG_LABEL, jobSectionRows, str, hm, type JobRef,
 } from "../../vendor/scm/lib/delivery-job";
+import { jobApiPath, useDeliveryJob } from "../../vendor/scm/lib/delivery-job-queries";
 import { PodPhotoAlbum } from "./PodPhotoAlbum";
 import { DpJobDetails } from "./DpJobDetails";
 import { DoProofOfDeliveryCard, type DoPodFields } from "../../pages/scm-v2/DoProofOfDeliveryCard";
@@ -41,8 +42,6 @@ export function rowDocumentPath(o: Parameters<typeof panelTargetOf>[0]): string 
   return ref ? jobDocumentPath(ref, null) : `/scm/sales-orders/${o.so_doc_no}`;
 }
 
-const jobApiPath = (r: JobRef) =>
-  `/delivery-jobs/${r.sourceType}/${encodeURIComponent(r.sourceId)}/${encodeURIComponent(r.leg)}`;
 
 /** The document a job belongs to, for "Open document" and the row double-click. */
 export function jobDocumentPath(r: JobRef, ctx?: Record<string, unknown> | null): string | null {
@@ -104,7 +103,7 @@ export function JobBody({ jobRef, inStopDrawer }: { jobRef: JobRef; inStopDrawer
   const navigate = useNavigate();
   const qc = useQueryClient();
   const base = jobApiPath(jobRef);
-  const q = useQuery({ queryKey: ["delivery-job", jobKey(jobRef)], queryFn: () => authedFetch<JobResponse>(base), staleTime: 15_000 });
+  const q = useDeliveryJob(jobRef);
   /* Same upload-on-pick block as the phone (lib/fieldPhotos.ts). Not stamped:
      the office uploads photos it was sent, so the time burned in would be the
      office's, not the photo's. Limits mirror delivery-job-progress.ts: 10 to

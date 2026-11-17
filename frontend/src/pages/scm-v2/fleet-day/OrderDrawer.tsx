@@ -12,6 +12,7 @@ import { DoProofOfDeliveryCard, type DoPodFields } from '../DoProofOfDeliveryCar
 import { DoPodUpload } from '../../../components/scm-v2/DoPodUpload';
 import { JobBody } from '../../../components/scm-v2/JobDetailPanel';
 import { jobKey, jobRefOf } from '../../../vendor/scm/lib/delivery-job';
+import { stopContactName, useDeliveryJob } from '../../../vendor/scm/lib/delivery-job-queries';
 import type { LorryRunVM, DocRowVM } from './vm';
 import { issueKeysOf } from './AllOrders';
 import { DeliveryIssuesCard } from '../../../components/scm-v2/DeliveryIssuesCard';
@@ -187,6 +188,9 @@ export function OrderDrawer({
   const issuesQ = useRunDeliveryIssues(runKeysOf(issueKeys ? [issueKeys] : []), !!doc);
   const issues = issueKeys ? issuesForRow(issuesQ.data, issueKeys) : [];
   const jobRef = doc && doc.rowType !== 'so' ? jobRefOf(doc.order) : null;
+  // The person to ask for at a supplier / venue: shown once, here, not again in the job panel below.
+  const job = useDeliveryJob(jobRef);
+  const contactName = doc ? stopContactName(job.data?.context, doc.customer) : null;
 
   return (
     <ResizableDetailDrawer open={!!doc} onClose={onClose} ariaLabel="Delivery order detail">
@@ -216,7 +220,8 @@ export function OrderDrawer({
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="rounded-lg border border-border bg-surface p-3">
                 <div className="font-mono text-[10px] font-semibold uppercase tracking-brand text-ink-muted">Customer</div>
-                <div className="mt-1 text-[13px] text-ink">{doc.phone || 'No phone'}</div>
+                {contactName && <div className="mt-1 text-[13px] font-semibold text-ink">{contactName}</div>}
+                <div className={contactName ? 'text-[13px] text-ink' : 'mt-1 text-[13px] text-ink'}>{doc.phone || 'No phone'}</div>
                 {doc.phone && (
                   <a href={`tel:${doc.phone}`} className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-[12px] font-semibold text-primary hover:bg-primary-soft">
                     <Phone size={13} /> Call customer
