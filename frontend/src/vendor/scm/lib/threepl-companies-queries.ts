@@ -24,6 +24,10 @@ export type ThreePLCompanyRow = {
   officePhone: string | null;
   email: string | null;
   address: string | null;
+  /** Picked off my_localities; a TRANSFER to this 3PL snapshots them (mig 20261117T2000). */
+  postcode: string | null;
+  city: string | null;
+  state: string | null;
   isActive: boolean;
   notes: string | null;
   /** Null when the carrier is not linked to a supplier yet. */
@@ -43,6 +47,9 @@ export type NewThreePLCompany = {
   officePhone?: string | null;
   email?: string | null;
   address?: string | null;
+  postcode?: string | null;
+  city?: string | null;
+  state?: string | null;
   notes?: string | null;
   isActive?: boolean;
   /** Link to a supplier of this company; null unlinks. The server refuses one

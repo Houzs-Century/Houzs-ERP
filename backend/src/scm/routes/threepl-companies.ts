@@ -43,7 +43,7 @@ import {
 export const threeplCompanies = new Hono<{ Bindings: Env; Variables: Variables }>();
 threeplCompanies.use('*', supabaseAuth);
 
-const COLS = 'id, code, name, registration_no, contact_name, contact_phone, office_phone, email, address, is_active, notes, supplier_id, created_at, updated_at';
+const COLS = 'id, code, name, registration_no, contact_name, contact_phone, office_phone, email, address, postcode, city, state, is_active, notes, supplier_id, created_at, updated_at';
 
 type Row = {
   id: string;
@@ -55,6 +55,9 @@ type Row = {
   office_phone?: string | null;   officePhone?: string | null;
   email?: string | null;
   address?: string | null;
+  postcode?: string | null;
+  city?: string | null;
+  state?: string | null;
   is_active?: boolean | null;     isActive?: boolean | null;
   notes?: string | null;
   supplier_id?: string | null;    supplierId?: string | null;
@@ -90,6 +93,9 @@ function rowOut(r: Row, counts: FleetCounts, supplier: SupplierRef | null) {
     officePhone:    r.officePhone ?? r.office_phone ?? null,
     email:          r.email ?? null,
     address:        r.address ?? null,
+    postcode:       r.postcode ?? null,
+    city:           r.city ?? null,
+    state:          r.state ?? null,
     isActive:       (r.isActive ?? r.is_active ?? true) !== false,
     notes:          r.notes ?? null,
     supplier,
@@ -250,6 +256,11 @@ const companyFields = {
   email:        z.string().trim().max(160).email('That is not a valid email address.').nullable().optional()
                  .or(z.literal('').transform(() => null)),
   address:      z.string().trim().max(500).nullable().optional(),
+  /* Picked off scm.my_localities in the form (postcode back-fills City and
+     State), so Delivery Planning can snapshot them for a TRANSFER to this 3PL. */
+  postcode:     z.string().trim().max(12).nullable().optional(),
+  city:         z.string().trim().max(120).nullable().optional(),
+  state:        z.string().trim().max(120).nullable().optional(),
   notes:        z.string().trim().max(2000).nullable().optional(),
   isActive:     z.boolean().optional(),
   /* The supplier this carrier bills as; null unlinks. */
@@ -288,6 +299,9 @@ threeplCompanies.post('/', async (c) => {
     office_phone:  asPhone(p.officePhone),
     email:         p.email ?? null,
     address:       p.address ?? null,
+    postcode:      p.postcode || null,
+    city:          p.city || null,
+    state:         p.state || null,
     notes:         p.notes ?? null,
     is_active:     p.isActive ?? true,
     supplier_id:   supplier?.id ?? null,
@@ -358,6 +372,9 @@ threeplCompanies.patch('/:id', async (c) => {
   if (p.officePhone !== undefined)  updates.office_phone = asPhone(p.officePhone);
   if (p.email !== undefined)        updates.email = p.email;
   if (p.address !== undefined)      updates.address = p.address;
+  if (p.postcode !== undefined)     updates.postcode = p.postcode || null;
+  if (p.city !== undefined)         updates.city = p.city || null;
+  if (p.state !== undefined)        updates.state = p.state || null;
   if (p.notes !== undefined)        updates.notes = p.notes;
   if (p.isActive !== undefined)     updates.is_active = p.isActive;
   if (Object.keys(updates).length === 0 && p.supplierId === undefined) return c.json({ error: 'no_changes' }, 400);

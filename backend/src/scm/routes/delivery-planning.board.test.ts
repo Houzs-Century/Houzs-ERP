@@ -344,7 +344,9 @@ describe('GET /delivery-planning — the ASSR / DP / project sub-boards union on
         results: /\bprojects\b/i.test(sql)
           ? [{
               id: 10, code: 'PRJ-1', name: 'Expo Build', brand: 'AKEMI', venue: 'Hall 3', venue_address: 'Hall 3, KLCC',
-              state: 'Selangor', setup_start_at: '2026-09-10', dismantle_start_at: null,
+              state: null, setup_start_at: '2026-09-10', dismantle_start_at: null,
+              // Joined from the venue master the project picked (lib/project-venue-join.ts).
+              venue_postcode: '50088', venue_city: 'Kuala Lumpur', venue_state: 'Selangor',
               // Crew lives in the per-phase JSON (the editor path); the scalar
               // driver/lorry are stale fallbacks that the JSON must override.
               setup_crew: JSON.stringify({
@@ -407,6 +409,12 @@ describe('GET /delivery-planning — the ASSR / DP / project sub-boards union on
     expect(byType('project').map((o) => o.so_doc_no)).toEqual(['PRJ:10#SETUP']);
     // Branding column fills for a project leg from the PMS project's brand (read-only).
     expect(byType('project').map((o) => o.branding)).toEqual(['AKEMI']);
+    // Owner 2026-11-17: a project leg carries the venue master's Postcode / City,
+    // and its State when the project has none.
+    const prj = byType('project')[0] as unknown as { postcode: string | null; customer_state: string | null; address: string | null };
+    expect(prj.postcode).toBe('50088');
+    expect(prj.customer_state).toBe('Selangor');
+    expect(prj.address).toBe('Hall 3, KLCC, Kuala Lumpur, 50088');
     // Owner 2026-10-21 — the Delivered tab shows every job type: a project window
     // whose date has already passed is done, while an OPEN service case is still
     // pending (and a dated DP job that is not yet delivered is pending too).

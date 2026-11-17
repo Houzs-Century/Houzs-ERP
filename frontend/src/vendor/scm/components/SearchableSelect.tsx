@@ -199,6 +199,8 @@ export function SearchableSelect({
         aria-expanded={menuOpen}
         aria-controls={menuOpen ? listId : undefined}
         aria-autocomplete="list"
+        // The browser's own address autofill must not paint over the picked value.
+        autoComplete="off"
         aria-activedescendant={menuOpen && activeOption >= 0 ? optionId(activeOption) : undefined}
         // Closed → the selected label; open → the live search term.
         value={open ? search : selectedLabel}
