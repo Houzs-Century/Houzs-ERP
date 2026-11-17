@@ -5,6 +5,7 @@ import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tansta
 import { api } from "../api/client";
 import { formatPhone } from "../vendor/shared/phone";
 import { uploadAssrAttachment } from "../lib/assrAttachmentUpload";
+import { isPdfAttachment, openAssrAttachment } from "../lib/assrAttachmentOpen";
 import { UploadDropZone, clipboardFiles, useStrayFileDropGuard } from "../lib/uploadDropZone";
 import { loadThumbFirst } from "../lib/imagePipeline";
 import { useAuth } from "../auth/AuthContext";
@@ -3248,8 +3249,18 @@ function AttachThumb({ att, onArchive, onVisibility }: { att: Any; onArchive: ()
   const key = get(att, "r2Key", "r2_key");
   const contentType = String(get(att, "contentType", "content_type") ?? "");
   const isVideo = contentType.startsWith("video");
-  const isPdf = contentType.includes("pdf");
+  const isPdf = isPdfAttachment(contentType);
+  const fileName = String(get(att, "fileName", "file_name") ?? "");
+  const notify = useNotify();
   const [viewing, setViewing] = useState(false);
+
+  const openPdf = async (): Promise<void> => {
+    try {
+      await openAssrAttachment(String(key), contentType);
+    } catch (e: unknown) {
+      await notify({ title: "Couldn't open file", body: e instanceof Error ? e.message : "Please try again.", tone: "error" });
+    }
+  };
   // Customer-portal visibility (mirror desktop ServiceCases AttachmentThumb):
   // visible_to_customer defaults to 1, so a photo shot from the phone is
   // customer-visible unless explicitly hidden. Without this toggle the mobile
@@ -3277,8 +3288,10 @@ function AttachThumb({ att, onArchive, onVisibility }: { att: Any; onArchive: ()
 
   return (
     <div
-      onClick={() => { if (!isPdf) setViewing(true); }}
-      style={{ position: "relative", aspectRatio: "1", borderRadius: 9, overflow: "hidden", background: FIELD_BG, border: `1px solid ${DIM}`, cursor: isPdf ? "default" : "pointer", opacity: visible ? 1 : 0.55 }}
+      onClick={() => { if (isPdf) void openPdf(); else setViewing(true); }}
+      role="button"
+      aria-label={isPdf ? `Open ${fileName || "PDF"}` : undefined}
+      style={{ position: "relative", aspectRatio: "1", borderRadius: 9, overflow: "hidden", background: FIELD_BG, border: `1px solid ${DIM}`, cursor: "pointer", opacity: visible ? 1 : 0.55 }}
     >
       {isVideo || isPdf ? (
         <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 3 }}>
@@ -3286,6 +3299,9 @@ function AttachThumb({ att, onArchive, onVisibility }: { att: Any; onArchive: ()
             <span style={{ width: 24, height: 24, borderRadius: "50%", background: "rgba(17,20,15,.12)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: INK, paddingLeft: 2 }}>▶</span>
           )}
           <span style={{ fontSize: 9, fontWeight: 700, color: MUTED }}>{isVideo ? "VIDEO" : "PDF"}</span>
+          {isPdf && fileName && (
+            <span style={{ maxWidth: "90%", fontSize: 9, color: MUTED, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{fileName}</span>
+          )}
         </div>
       ) : url ? (
         <img src={url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
@@ -3315,7 +3331,7 @@ function AttachThumb({ att, onArchive, onVisibility }: { att: Any; onArchive: ()
         <AttachViewer
           url={viewerUrl}
           isVideo={isVideo}
-          name={String(get(att, "fileName", "file_name") ?? "")}
+          name={fileName}
           onClose={() => setViewing(false)}
         />
       )}
