@@ -96,6 +96,7 @@ import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
+import { fetchSoItemCodes, passesSoffioReminder } from "../../vendor/scm/lib/soffio-reminder";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
 import { convertToLink, transferToLabel } from "../../lib/convertScope";
@@ -1279,11 +1280,22 @@ export function MfgSalesOrdersListV2() {
   const goEdit = (r: SoRow) => navigate(`/scm/sales-orders/${r.doc_no}?edit=1`);
   const printDocument = usePrintDocument();
   const goFullPage = (r: SoRow) => navigate(`/scm/sales-orders/${r.doc_no}`);
-  const doConfirm = (r: SoRow) =>
+  const doConfirm = async (r: SoRow) => {
+    /* The list row carries no lines, so read them before deciding on the SOFFIO
+       reminder; an unreadable order is not confirmed blind. */
+    let codes: string[];
+    try {
+      codes = await fetchSoItemCodes(r.doc_no);
+    } catch (e) {
+      void notify({ title: "Could not load the order lines", body: e instanceof Error ? e.message : "Something went wrong.", tone: "error" });
+      return;
+    }
+    if (!(await passesSoffioReminder(askConfirm, codes))) return;
     updateStatus.mutate(
       { docNo: r.doc_no, status: "confirmed", expectedStatus: r.status },
       { onSuccess: () => setSelected(null) }
     );
+  };
   /* Discard a DRAFT (DELETE /:docNo) — confirm + words in ./use-discard-draft-action.
      The row no longer exists on success, so the drawer closes. */
   const doDiscard = async (r: SoRow) => { if (await discardDraft(r.doc_no)) setSelected(null); };
@@ -2306,7 +2318,7 @@ export function MfgSalesOrdersListV2() {
         onOpenFull={() => selected && goFullPage(selected)}
         onEdit={() => selected && goEdit(selected)}
         onPrint={() => selected && printDocument(salesOrderPrintChain(selected).own)}
-        onConfirm={() => selected && doConfirm(selected)}
+        onConfirm={() => selected && void doConfirm(selected)}
         onDiscard={() => selected && void doDiscard(selected)}
         onDeliver={() => selected && doDeliver(selected)}
         onReopen={() => selected && void doReopen(selected)}

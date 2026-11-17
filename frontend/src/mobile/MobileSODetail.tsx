@@ -7,7 +7,7 @@ import { ADD_LINE_LABEL } from "../vendor/scm/lib/add-line-handoff";
 import type { FlowNav } from "./relationship-map-model";
 import { fmtAmt } from "../lib/scm";
 import { useQueryClient } from "@tanstack/react-query";
-import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
+import { useConfirm } from "../vendor/scm/components/ConfirmDialog"; import { passesSoffioReminder } from "../vendor/scm/lib/soffio-reminder";
 import { useNotify } from "../vendor/scm/components/NotifyDialog"; import { notifySaveProblems } from "../vendor/scm/components/SaveProblemsList";
 import { usePrompt } from "../vendor/scm/components/PromptDialog"; import { CancelRequestPanel } from "../vendor/scm/components/CancelRequestPanel"; import { useCancelRequestAction } from "../pages/scm-v2/use-cancel-request-action"; import { WrongApproverFlagButton } from "../pages/scm-v2/WrongApproverFlagButton";
 import { fetchScanSlipImageBlobUrl } from "../vendor/scm/lib/slip"; import { fairLabel } from "../vendor/scm/lib/fair-options-queries"; import { fairElsewhereLine, type LinkedFair } from "../components/fairPick";
@@ -1303,7 +1303,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
             <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
               <div style={{ display: "flex", gap: 9 }}>
                 <button className="btn-ghost" style={{ flex: 1, opacity: busy || migratedLocked ? 0.55 : 1 }} disabled={busy || migratedLocked} onClick={() => onEdit?.(docNo)}>Edit Draft</button>
-                <button className="btn" style={{ flex: 1.3, opacity: busy || migratedLocked ? 0.55 : 1 }} disabled={busy || migratedLocked} onClick={async () => { const note = soConfirmDateNote(h.processing_date, h.customer_delivery_date); if (note && !(await confirm({ title: `Confirm ${docNo}?`, body: note, confirmLabel: "Create Sales Order" }))) return; void setStatus("CONFIRMED"); }}>{busy ? "Working…" : "Create Sales Order"}</button>
+                <button className="btn" style={{ flex: 1.3, opacity: busy || migratedLocked ? 0.55 : 1 }} disabled={busy || migratedLocked} onClick={async () => { if (!(await passesSoffioReminder(confirm, items.map((l) => l.item_code)))) return; const note = soConfirmDateNote(h.processing_date, h.customer_delivery_date); if (note && !(await confirm({ title: `Confirm ${docNo}?`, body: note, confirmLabel: "Create Sales Order" }))) return; void setStatus("CONFIRMED"); }}>{busy ? "Working…" : "Create Sales Order"}</button>
               </div>
               {onAddLine && <button className="btn-ghost" style={{ opacity: busy || migratedLocked ? 0.55 : 1 }} disabled={busy || migratedLocked} onClick={() => onAddLine(docNo)}>+ {ADD_LINE_LABEL}</button>}
               {/* Discard draft — the escape hatch for a junk draft (esp. a bad
