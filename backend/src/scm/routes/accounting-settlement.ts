@@ -43,6 +43,7 @@ import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { resolveRoles } from '../../acc/rules';
 import { loadLineMonth, loadLiveMonthLock } from '../../acc/bank';
 import { lockedRefusal } from '../../acc/bank-lock';
+import { bankFollowsMerchant, type BankFollows } from './accounting-bank';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
@@ -1135,6 +1136,28 @@ export const settlementBatchDetail = guard(async (c) => {
    Deciding a line
    ════════════════════════════════════════════════════════════════════════ */
 
+/* THE BANK FOLLOWS THE MERCHANT SIDE (owner 2026-11-17: 我只要对一边). Once a
+   line is confirmed, a bank credit this report now fully accounts for matches
+   itself (accounting-bank applyMerchantAgreedMatches): a ready QR credit, or a
+   payout of exactly what the report is still owed now that every line of it is
+   confirmed. Looked for around the report's first trading day. */
+type Sb = Parameters<typeof bankFollowsMerchant>[0];
+async function bankFollows(sb: Sb, companyId: number, batchIds: number[], actor: string | null): Promise<BankFollows> {
+  const ids = [...new Set(batchIds.filter((n) => Number.isInteger(n) && n > 0))];
+  if (ids.length === 0) return { matched: 0, jeNos: [], left: [] };
+  const { data, error } = await sb.from('acc_settlement_batches').select('period_from').eq('company_id', companyId).in('id', ids);
+  if (error) return { error: error.message };
+  const from = ((data ?? []) as Array<{ period_from: string | null }>).map((b) => String(b.period_from ?? '').slice(0, 10)).filter(Boolean).sort()[0] ?? null;
+  return bankFollowsMerchant(sb, companyId, from, actor);
+}
+/** The reports these lines are on. */
+async function batchesOfRows(sb: Sb, companyId: number, rowIds: number[]): Promise<number[]> {
+  if (rowIds.length === 0) return [];
+  const { data, error } = await sb.from('acc_settlement_rows').select('batch_id').eq('company_id', companyId).in('id', rowIds);
+  if (error) return [];
+  return [...new Set(((data ?? []) as Array<{ batch_id: number }>).map((r) => Number(r.batch_id)))];
+}
+
 /* POST /rows/:id/confirm — the moment that posts. `payments` may hold several
    (一笔刷卡对应两张订单); the sum must be the statement line, to the sen. */
 export const settlementConfirmRow = guard(async (c) => {
@@ -1165,7 +1188,9 @@ export const settlementConfirmRow = guard(async (c) => {
       : 500;
     return c.json({ error: r.status, message: r.reason }, status);
   }
-  return c.json(r);
+  const sb = c.get('supabase');
+  const actor = (c.get('houzsUser') as { name?: string } | undefined)?.name ?? null;
+  return c.json({ ...r, bank: await bankFollows(sb, co.companyId, await batchesOfRows(sb, co.companyId, [rowId]), actor) });
 });
 
 /* POST /rows/confirm-together — several lines of one report confirmed against
@@ -1198,7 +1223,9 @@ export const settlementConfirmGroup = guard(async (c) => {
       : 500;
     return c.json({ error: r.status, message: r.reason }, status);
   }
-  return c.json(r);
+  const sb = c.get('supabase');
+  const actor = (c.get('houzsUser') as { name?: string } | undefined)?.name ?? null;
+  return c.json({ ...r, bank: await bankFollows(sb, co.companyId, await batchesOfRows(sb, co.companyId, rowIds), actor) });
 });
 
 /* POST /batches/:id/confirm-matched — the "全部确认" button: post every line
@@ -1324,6 +1351,7 @@ export const settlementConfirmMatched = guard(async (c) => {
     confirmed,
     failed,
     statementCharge: charge.ok ? { status: charge.status, ...(charge.jeNo ? { jeNo: charge.jeNo } : {}) } : null,
+    bank: confirmed > 0 ? await bankFollows(sb, co.companyId, [batchId], userName) : { matched: 0, jeNos: [], left: [] },
   });
 });
 

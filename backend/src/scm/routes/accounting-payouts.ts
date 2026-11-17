@@ -21,6 +21,7 @@ import { readPbbAdvice } from '../../acc/pbb-advice';
 import { statusOfPayout, type ReportForPayout } from '../../acc/payout-advice';
 import { postPayoutCharge, undoPayoutCharge } from '../../acc/payout-charge';
 import { expenseLeafAccounts } from '../../acc/settlement';
+import { bankFollowsMerchant } from './accounting-bank';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
@@ -153,7 +154,11 @@ export const payoutUpload = guard(async (c) => {
   );
   if (dayErr) return c.json({ error: 'save_failed', reason: dayErr.message }, 500);
 
-  return c.json({ ok: true, payoutId, advice, status });
+  /* The advice can make a bank credit certain — it says which days one credit
+     pays — and the bank then follows by itself (owner 2026-11-17: 我只要对一边). */
+  const firstDay = status.days.map((d) => String(d.settledOn).slice(0, 10)).sort()[0] ?? null;
+  const bank = await bankFollowsMerchant(sb, co.companyId, firstDay, (c.get('houzsUser') as { name?: string } | undefined)?.name ?? null);
+  return c.json({ ok: true, payoutId, advice, status, bank });
 });
 
 /** Where a bank charge may be booked — active expense leaves of this company,
@@ -269,7 +274,9 @@ export const payoutCharge = guard(async (c) => {
     const status = r.status === 'not_found' ? 404 : r.status === 'load_failed' || r.status === 'save_failed' ? 500 : 409;
     return c.json({ error: r.status, message: r.reason }, status);
   }
-  return c.json(r);
+  /* A charge booked leaves the report owed exactly what its credit brought: the bank follows (owner 2026-11-17). */
+  const bank = await bankFollowsMerchant(c.get('supabase'), co.companyId, at.settledOn, (c.get('houzsUser') as { name?: string } | undefined)?.name ?? null);
+  return c.json({ ...r, bank });
 });
 
 export const payoutChargeUndo = guard(async (c) => {

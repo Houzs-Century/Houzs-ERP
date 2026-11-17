@@ -36,7 +36,8 @@ import {
   loadRecognitionRules, loadPayableBatches, loadPayoutAdvices, loadAccountLedger,
   loadLiveMonthLock, loadLineMonth, loadClaimedElsewhere, claimedSetFor, jeNosOf, loadLinesForRepeats, loadLineMatches,
   loadQrReports } from '../../acc/bank';
-import { paginateAll } from '../lib/paginate-all';
+import { chunkIn, paginateAll } from '../lib/paginate-all';
+import { merchantAgreedActions } from '../../acc/bank-merchant-auto';
 import { readFailure } from '../lib/read-failure';
 import { loadOpenTallies, openTallySql } from '../../acc/bank-statement-open';
 import { lockedRefusal, lockMonthOf } from '../../acc/bank-lock';
@@ -427,6 +428,11 @@ export const bankUpload = guard(async (c) => {
   if (!obvious.ok) return c.json({ error: 'match_failed', reason: obvious.reason, message: `The file was read, but the obvious matches could not be applied: ${obvious.reason}` }, 500);
   /* A customer transfer matched is its money seen: its receipt turns formal (owner 2026-11-09). */
   await formaliseReceiptsForBankMatch(sb, co.companyId, accountCode, obvious.jeNos, userName(c));
+  /* And the merchant money the merchant side already agrees with (owner 2026-11-17). */
+  const merchant = decisions.length === 0
+    ? { ok: true as const, matched: 0 }
+    : await applyMerchantAgreedMatches(sb, co.companyId, { statementIds: [statementId], bookedFrom: null }, userName(c));
+  if (!merchant.ok) return c.json({ error: 'match_failed', reason: merchant.reason, message: `The file was read, but the merchant matches could not be applied: ${merchant.reason}` }, 500);
 
   const counts = decisions.reduce<Record<string, number>>((acc, d, idx) => {
     const kind = alreadyRecorded[idx] ? 'DUPLICATE' : d.kind;
@@ -444,8 +450,9 @@ export const bankUpload = guard(async (c) => {
        re-upload that quietly settles half its own lines is a surprise, even
        when every one of them is right. */
     alreadyRecorded: counts.DUPLICATE ?? 0,
-    /* Matched by amount and name on the way in (docs/bugs/0814). */
-    autoMatched: obvious.matched,
+    /* Matched by amount and name on the way in (docs/bugs/0814), and the
+       merchant money its report already agrees with (owner 2026-11-17). */
+    autoMatched: obvious.matched + merchant.matched,
     /* Pairs the bank itself reversed, left out on the way in (docs/bugs/0817). */
     contraPairs: obvious.contraPairs,
     periodFrom,
@@ -500,9 +507,10 @@ export function freshDecisions(
 /* ── The bank's DuitNow QR credit, decided on every read (owner 2026-11-09) ──
    An OPEN credit that is a day's QR money (acc/bank-match qrSalesFor) is not a
    card payout: its money is already in the books through the QR sales, so it
-   is shown as QR money with those sales' entries — matched to them with one
-   press of match-group — and offered no report to book a payout against, which
-   would put the money in the bank twice. Nothing is written here. */
+   is shown as QR money with those sales' entries — matched to them by itself once
+   ready (applyMerchantAgreedMatches), or by a press of match-group — and offered
+   no report to book a payout against, which would put the money in the bank
+   twice. Nothing is written here. */
 export function withQrSales<T extends Record<string, unknown>>(
   lines: T[], rules: BankRecognitionRule[], reports: QrReportForMatch[], claimed: ReadonlySet<string>, accountCode: string,
 ): T[] {
@@ -719,8 +727,167 @@ export const bankStatementAutoMatch = guard(async (c) => {
   const r = await applyObviousMatches(sb, co.companyId, statement);
   if (!r.ok) return c.json({ error: 'match_failed', reason: r.reason, message: `The obvious matches could not be applied: ${r.reason}` }, 500);
   await formaliseReceiptsForBankMatch(sb, co.companyId, statement.account_code, r.jeNos, userName(c));
-  return c.json({ ok: true, matched: r.matched, jeNos: r.jeNos, contraPairs: r.contraPairs });
+  const merchant = await applyMerchantAgreedMatches(sb, co.companyId, { statementIds: [statement.id], bookedFrom: null }, userName(c));
+  if (!merchant.ok) return c.json({ error: 'match_failed', reason: merchant.reason, message: `The merchant matches could not be applied: ${merchant.reason}` }, 500);
+  return c.json({ ok: true, matched: r.matched + merchant.matched, jeNos: [...r.jeNos, ...merchant.jeNos], contraPairs: r.contraPairs });
 });
+
+/* ── The bank's merchant money, once the merchant side agrees ─────────────────
+   Owner 2026-11-17: 他应该和 merchant 一样我只要对一边，只是如果银行实际收到的钱同个
+   merchant report 还有没有对上的才应该卡着. Which credits is acc/bank-merchant-auto's
+   rule; this does them through the doors a person's press goes through — a ready
+   QR credit to its sales' entries the way match-group writes them (reason
+   "qr+report"), a certain payout through postBankCredit, the way "Money
+   received — all matched payouts" books it. Runs on upload, on a statement's
+   auto-match, and after a Merchant Recon write that can complete a report — a
+   confirm, a payment advice, a payout charge: whichever side is done second
+   finishes it. A line in a closed month, or one whose month cannot be read, is
+   left for a person, and so is anything a door refuses — each named in `left`.
+   Reads fail closed: nothing is matched and the reason is returned. */
+export async function applyMerchantAgreedMatches(
+  sb: Parameters<typeof loadAccountLedger>[0], companyId: number,
+  scope: { statementIds: number[] | null; bookedFrom: string | null },
+  actor: string | null,
+): Promise<{ ok: true; matched: number; qr: number; payouts: number; jeNos: string[]; left: string[] } | { ok: false; reason: string }> {
+  const done = { qr: 0, payouts: 0, jeNos: [] as string[], left: [] as string[] };
+  const result = () => ({ ok: true as const, matched: done.qr + done.payouts, ...done });
+
+  const stmtRes = await paginateAll<{ id: number; account_code: string }>((lo, hi) => {
+    let q = sb.from('acc_bank_statements').select('id, account_code').eq('company_id', companyId);
+    if (scope.statementIds) q = q.in('id', scope.statementIds);
+    return q.order('id').range(lo, hi);
+  });
+  if (stmtRes.error) return { ok: false, reason: stmtRes.error.message };
+  const accountOf = new Map((stmtRes.data ?? []).map((st) => [Number(st.id), String(st.account_code)]));
+  if (accountOf.size === 0) return result();
+
+  const linesRes = await chunkIn<Record<string, unknown>, number>([...accountOf.keys()], (ids, lo, hi) => {
+    let q = sb.from('acc_bank_statement_lines').select('*').eq('company_id', companyId).in('statement_id', ids)
+      .eq('state', 'OPEN').gt('amount_sen', 0);
+    if (scope.bookedFrom) q = q.gte('booked_on', scope.bookedFrom);
+    return q.order('id').range(lo, hi);
+  });
+  if (linesRes.error) return { ok: false, reason: linesRes.error.message };
+  const open = linesRes.data;
+  if (open.length === 0) return result();
+
+  const [rules, batches, payouts, qrReports] = await Promise.all([
+    loadRecognitionRules(sb), loadPayableBatches(sb, companyId), loadPayoutAdvices(sb, companyId), loadQrReports(sb, companyId),
+  ]);
+  if (!rules.ok) return { ok: false, reason: rules.reason };
+  if (!batches.ok) return { ok: false, reason: batches.reason };
+  if (!payouts.ok) return { ok: false, reason: payouts.reason };
+  if (!qrReports.ok) return { ok: false, reason: qrReports.reason };
+
+  /* Decided again against today's reports (docs/bugs/0815), then the QR answer
+     laid over, per bank — a QR sale counts only on the account it is booked to. */
+  const fresh = freshDecisions(open, rules.rules, batches.batches, payouts.payouts);
+  const decided: Array<Record<string, unknown>> = open.map((l) => ({ ...l, ...(fresh.get(Number(l.id)) ?? {}) }));
+  const accountOfLine = (l: Record<string, unknown>) => accountOf.get(Number(l.statement_id)) ?? '';
+  const answered: Array<Record<string, unknown>> = [];
+  if (qrReports.reports.length === 0) answered.push(...decided);
+  else {
+    for (const accountCode of [...new Set(decided.map(accountOfLine))].filter(Boolean)) {
+      const claims = await loadClaimedElsewhere(sb, companyId, accountCode, null);
+      if (!claims.ok) return { ok: false, reason: claims.reason };
+      answered.push(...withQrSales(decided.filter((l) => accountOfLine(l) === accountCode), rules.rules, qrReports.reports, claims.claimed, accountCode));
+    }
+  }
+
+  const actions = merchantAgreedActions(
+    answered.map((l) => {
+      const qr = l.qr_sales as { ready?: boolean; jeNos?: unknown[] } | null | undefined;
+      return {
+        id: Number(l.id), amountSen: Number(l.amount_sen ?? 0), kind: String(l.kind ?? ''),
+        matchedBatchId: l.matched_batch_id == null ? null : Number(l.matched_batch_id),
+        split: Array.isArray(l.split) ? (l.split as unknown[]) : null,
+        qr: qr ? { ready: qr.ready === true, jeNos: (qr.jeNos ?? []).map(String) } : null,
+      };
+    }),
+    batches.batches.map((b) => ({ id: b.id, outstandingSen: b.outstandingSen })),
+  );
+  if (actions.length === 0) return result();
+
+  const lineOf = new Map(answered.map((l) => [Number(l.id), l]));
+  const ledgers = new Map<string, EntryCandidateSource[]>();
+  for (const a of actions) {
+    const line = lineOf.get(a.lineId);
+    if (!line) continue;
+    const accountCode = accountOfLine(line);
+    const statementId = Number(line.statement_id);
+    const bookedOn = String(line.booked_on).slice(0, 10);
+    const named = `line ${String(line.line_no ?? a.lineId)} (${rm(Number(line.amount_sen))})`;
+
+    /* A closed month is never touched; a month that cannot be read is treated as closed. */
+    const held = await loadLiveMonthLock(sb, companyId, accountCode, lockMonthOf(bookedOn));
+    if (!held.ok || held.lock) { done.left.push(`${named}: ${held.ok ? 'its month is closed' : `its month could not be checked (${held.reason})`}`); continue; }
+
+    if (a.kind === 'payout') {
+      const booked = await postBankCredit(
+        sb, companyId,
+        { id: a.lineId, booked_on: bookedOn, reference: line.reference == null ? null : String(line.reference), statement_id: statementId },
+        [{ batchId: a.batchId, amountSen: a.amountSen }], null, actor,
+      );
+      if (!booked.ok) {
+        const said = booked.body as { message?: unknown; reason?: unknown };
+        done.left.push(`${named}: ${String(said.message ?? said.reason ?? 'not booked')}`);
+        continue;
+      }
+      done.payouts += 1;
+      done.jeNos.push(...booked.posted.map((p) => p.jeNo).filter((n): n is string => !!n));
+      continue;
+    }
+
+    /* QR: the entries by what the ledger says they are, and the two sides equal to the sen. */
+    let movements = ledgers.get(accountCode);
+    if (!movements) {
+      const ledger = await loadAccountLedger(sb, companyId, accountCode, '9999-12-31');
+      if (!ledger.ok) return { ok: false, reason: ledger.reason };
+      movements = ledger.movements;
+      ledgers.set(accountCode, movements);
+    }
+    const entries = a.jeNos.map((n) => movements.find((m) => m.jeNo === n) ?? null);
+    const found = entries.filter((e): e is EntryCandidateSource => e != null);
+    if (found.length !== entries.length) { done.left.push(`${named}: one of its sales has no posted entry on ${accountCode}`); continue; }
+    const entriesSen = found.reduce((sum, e) => sum + (e.debitSen - e.creditSen), 0);
+    if (entriesSen !== Number(line.amount_sen)) { done.left.push(`${named}: its sales' entries come to ${rm(entriesSen)}`); continue; }
+    const claims = await liveClaimsOn(sb, companyId, a.jeNos);
+    if (!claims.ok) return { ok: false, reason: claims.reason };
+    const here = claims.live.find((m) => m.accountCode === accountCode);
+    if (here) { done.left.push(`${named}: ${claimedHere(here.jeNo, accountCode)}`); continue; }
+    if (claims.dead.length > 0) {
+      const { error: dErr } = await sb.from('acc_bank_statement_matches').delete().eq('company_id', companyId).in('id', claims.dead.map((m) => m.id));
+      if (dErr) return { ok: false, reason: dErr.message };
+    }
+    const { error: insErr } = await sb.from('acc_bank_statement_matches').insert(found.map((e) => ({
+      bank_line_id: a.lineId, company_id: companyId, je_no: e.jeNo, amount_sen: e.debitSen - e.creditSen, match_reason: 'qr+report',
+    })));
+    if (insErr) return { ok: false, reason: insErr.message };
+    const { error: upErr } = await sb.from('acc_bank_statement_lines')
+      .update({ state: 'POSTED', posted_je_no: a.jeNos[0]!, updated_at: new Date().toISOString() })
+      .eq('id', a.lineId).eq('company_id', companyId).eq('state', 'OPEN');
+    if (upErr) return { ok: false, reason: upErr.message };
+    await formaliseReceiptsForBankMatch(sb, companyId, accountCode, a.jeNos, actor);
+    done.qr += 1;
+    done.jeNos.push(...a.jeNos);
+  }
+  return result();
+}
+
+/** The bank side of a Merchant Recon write (a confirm, an advice, a charge), as
+    its reply carries it. The bank's lines from a month before `tradingFrom` on
+    are looked at: a payout follows the trading it pays, but a bank's own date is
+    not always its value date, and the matcher still decides each line on its
+    trading day and amount. The write itself has already happened; the bank's
+    answer rides along and never undoes it. */
+export type BankFollows = { matched: number; jeNos: string[]; left: string[] } | { error: string };
+export async function bankFollowsMerchant(sb: Parameters<typeof loadAccountLedger>[0], companyId: number, tradingFrom: string | null, actor: string | null): Promise<BankFollows> {
+  const bookedFrom = tradingFrom && /^\d{4}-\d{2}-\d{2}$/.test(tradingFrom)
+    ? new Date(Date.parse(`${tradingFrom}T00:00:00Z`) - 31 * 86_400_000).toISOString().slice(0, 10)
+    : null;
+  const r = await applyMerchantAgreedMatches(sb, companyId, { statementIds: null, bookedFrom }, actor);
+  return r.ok ? { matched: r.matched, jeNos: r.jeNos, left: r.left } : { error: r.reason };
+}
 
 /* ── POST /bank/statements/:id/repeats — what an earlier file already recorded ──
    The upload's own rule for a statement already in (owner 2026-10-14: B，做 —

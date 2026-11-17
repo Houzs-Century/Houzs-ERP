@@ -347,6 +347,14 @@ describe('matching the obvious ones', () => {
     expect(screen.getByText(/matched by the voucher number on the bank's line/)).toBeTruthy();
     expect(screen.queryByText(/matched by amount and name/)).toBeNull();
   });
+
+  /* Owner 2026-11-17: 他应该和 merchant 一样我只要对一边 — a QR credit its report accounts for matched itself. */
+  test('a QR credit that matched itself says the merchant report agrees', () => {
+    lines = [{ ...OTHER, state: 'POSTED', posted_je_no: '2990-JE-2611-0430', matches: [{ je_no: '2990-JE-2611-0430', amount_sen: 61500, match_reason: 'qr+report' }] }];
+    openStatement();
+    fireEvent.click(screen.getByText('Show'));
+    expect(screen.getByText(/matched by itself: the merchant report agrees/)).toBeTruthy();
+  });
 });
 
 describe('the list of statements read', () => {

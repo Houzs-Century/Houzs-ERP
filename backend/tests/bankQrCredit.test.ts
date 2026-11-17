@@ -7,14 +7,18 @@
 // that money, already in the books. Pinned through the bank routes:
 //   • the month and the statement show the credit as QR money with the two
 //     sales' entries, ready, and offer no report to book a payout against;
-//   • one match-group press matches it to those entries;
 //   • while a QR line has no sale linked, it says so and is not ready.
+// Owner 2026-11-17 (他应该和 merchant 一样我只要对一边): a READY credit then
+// matches itself to those entries, nobody pressing anything — on upload when the
+// sales are already linked, on Merchant Recon's confirm of the last QR line when
+// the bank came first, and on a statement's auto-match.
 
 import { Hono } from 'hono';
 import { describe, expect, test } from 'vitest';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
-import { bankUpload, bankStatementDetail, bankLinesMatchGroup } from '../src/scm/routes/accounting-bank';
+import { bankUpload, bankStatementDetail, bankLinesMatchGroup, bankStatementAutoMatch } from '../src/scm/routes/accounting-bank';
 import { bankMonthDetail } from '../src/scm/routes/accounting-bank-months';
+import { settlementConfirmRow } from '../src/scm/routes/accounting-settlement';
 
 const CO = 2;
 
@@ -45,7 +49,11 @@ function harness(opts: { linkBoth?: boolean } = {}) {
   const sb = fakeSb(
     {
       accounts: [], acc_account_roles: [],
-      acc_acquirers: [], acc_acquirer_config: [], acc_company_acquirers: [],
+      acc_acquirers: [{
+        company_id: CO, code: 'HLB', display_name: 'HLB', transit_account_code: '326-0040', fee_account_code: '900-T009', bank_account_code: '310-0020',
+        statement_format: 'CSV', has_unique_ref: true, fee_method: 'stated', date_tolerance_days: 7, column_map: {}, is_active: true,
+      }],
+      acc_acquirer_config: [], acc_company_acquirers: [],
       acc_bank_statement_config: [HLB_ACCOUNT],
       acc_bank_recognition_rules: [HLB_RULE],
       acc_bank_statements: [], acc_bank_statement_lines: [], acc_bank_statement_matches: [],
@@ -60,7 +68,11 @@ function harness(opts: { linkBoth?: boolean } = {}) {
         { id: 2, settlement_row_id: 848, company_id: CO, payment_source: 'SOPAY', payment_id: 'mia', doc_no: '2990-SO-2611-019', amount_sen: 200000 },
       ],
       acc_settlement_receipts: [], acc_settlement_payout_batches: [], acc_settlement_payouts: [],
-      mfg_sales_order_payments: [], mfg_sales_orders: [], acc_official_receipts: [],
+      mfg_sales_order_payments: [
+        { id: 'p35', company_id: CO, so_doc_no: '2990-SO-2611-077', paid_at: '2026-11-01', amount_sen: 350000, method: 'transfer', merchant_provider: null, account_sheet: 'Bank transfer' },
+        { id: 'mia', company_id: CO, so_doc_no: '2990-SO-2611-019', paid_at: '2026-10-31', amount_sen: 200000, method: 'transfer', merchant_provider: null, account_sheet: 'Bank transfer' },
+      ],
+      mfg_sales_orders: [], acc_official_receipts: [],
       journal_entries: [
         { id: 'je35', company_id: CO, je_no: '2990-JE-2611-0500', source_type: 'SOPAY', source_doc_no: 'p35', posted: true, reversed: false },
         { id: 'jemia', company_id: CO, je_no: '2990-JE-2610-0448', source_type: 'SOPAY', source_doc_no: 'mia', posted: true, reversed: false },
@@ -91,7 +103,9 @@ function harness(opts: { linkBoth?: boolean } = {}) {
   app.post('/bank/statements', bankUpload as never);
   app.get('/bank/statements/:id', bankStatementDetail as never);
   app.post('/bank/lines/match-group', bankLinesMatchGroup as never);
+  app.post('/bank/statements/:id/auto-match', bankStatementAutoMatch as never);
   app.get('/bank/months/:accountCode/:month', bankMonthDetail as never);
+  app.post('/settlement/rows/:id/confirm', settlementConfirmRow as never);
   return { app, sb };
 }
 
@@ -114,38 +128,73 @@ const uploadNovember = async (app: Hono) => {
 type Line = { id: number; amount_sen: number; kind: string; candidates: unknown[]; note: string; qr_sales?: { ready: boolean; jeNos: string[]; waiting: unknown[]; clue: string } };
 const qrLineOf = (lines: Line[]) => lines.find((l) => Number(l.amount_sen) === 550000)!;
 
-describe("the bank's QR credit is matched to the QR sales", () => {
-  test('the month shows it as QR money, ready, with the two entries — and no report to book a payout against', async () => {
-    const { app } = harness();
-    await uploadNovember(app);
-    const month = (await (await app.request('/bank/months/310-0020/2026-11')).json()) as { lines: Line[] };
-    const line = qrLineOf(month.lines);
-    expect(line.kind).toBe('QR');
-    expect(line.candidates).toEqual([]);
-    expect(line.qr_sales).toMatchObject({ ready: true, jeNos: ['2990-JE-2611-0500', '2990-JE-2610-0448'] });
-    expect(line.note).toMatch(/QR/);
-  });
+const QR_ENTRIES = ['2990-JE-2610-0448', '2990-JE-2611-0500'];
+const matchedTo = (sb: ReturnType<typeof harness>['sb'], lineId: number) =>
+  sb.tables.acc_bank_statement_matches.filter((m) => m.bank_line_id === lineId).map((m) => ({ je: m.je_no, why: m.match_reason }))
+    .sort((a, b) => String(a.je).localeCompare(String(b.je)));
 
-  test('the statement says the same, and one match-group press matches it to those entries', async () => {
+describe("the bank's QR credit is matched to the QR sales", () => {
+  test('ready on upload: it matches itself to the two sales\' entries, and books nothing', async () => {
     const { app, sb } = harness();
-    const { statementId } = await uploadNovember(app);
-    const detail = (await (await app.request(`/bank/statements/${statementId}`)).json()) as { lines: Line[] };
-    const line = qrLineOf(detail.lines);
-    expect(line.qr_sales?.ready).toBe(true);
-    const res = await post(app, '/bank/lines/match-group', { lineIds: [line.id], jeNos: line.qr_sales!.jeNos });
+    const res = await post(app, '/bank/statements', { accountCode: '310-0020', fileName: 'acs_23600602788_2026-11.csv', content: NOVEMBER, statementMonth: '2026-11' });
     expect(res.status).toBe(200);
-    expect(sb.tables.acc_bank_statement_lines.find((l) => l.id === line.id)).toMatchObject({ state: 'POSTED' });
-    expect(sb.tables.acc_bank_statement_matches.map((m) => m.je_no).sort()).toEqual(['2990-JE-2610-0448', '2990-JE-2611-0500']);
+    expect(((await res.json()) as { autoMatched: number }).autoMatched).toBe(1);
+    const line = sb.tables.acc_bank_statement_lines.find((l) => l.amount_sen === 550000)!;
+    expect(line).toMatchObject({ state: 'POSTED' });
+    expect(matchedTo(sb, Number(line.id))).toEqual(QR_ENTRIES.map((je) => ({ je, why: 'qr+report' })));
+    /* The money is already in the books through the sales: nothing new is posted. */
     expect(sb.tables.journal_entries).toHaveLength(2);
   });
 
-  test('while a QR line has no sale linked it says so, and is not ready', async () => {
-    const { app } = harness({ linkBoth: false });
+  test('while a QR line has no sale linked it says so, is not ready, and waits', async () => {
+    const { app, sb } = harness({ linkBoth: false });
     await uploadNovember(app);
     const month = (await (await app.request('/bank/months/310-0020/2026-11')).json()) as { lines: Line[] };
     const line = qrLineOf(month.lines);
     expect(line.kind).toBe('QR');
     expect(line.qr_sales).toMatchObject({ ready: false, jeNos: [], waiting: [{ lineNo: 17, grossSen: 350000 }] });
     expect(line.qr_sales!.clue).toMatch(/Merchant Recon/);
+    expect(sb.tables.acc_bank_statement_matches).toEqual([]);
+  });
+
+  test('the bank came first: confirming the last QR line on Merchant Recon matches the credit by itself', async () => {
+    const { app, sb } = harness({ linkBoth: false });
+    await uploadNovember(app);
+    const line = sb.tables.acc_bank_statement_lines.find((l) => l.amount_sen === 550000)!;
+    expect(line.state).toBe('OPEN');
+
+    const res = await post(app, '/settlement/rows/847/confirm', { payments: [{ source: 'SOPAY', id: 'p35', docNo: '2990-SO-2611-077', amountSen: 350000 }] });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { bank: { matched: number } }).bank).toMatchObject({ matched: 1 });
+    expect(sb.tables.acc_bank_statement_lines.find((l) => l.id === line.id)).toMatchObject({ state: 'POSTED' });
+    expect(matchedTo(sb, Number(line.id))).toEqual(QR_ENTRIES.map((je) => ({ je, why: 'qr+report' })));
+  });
+
+  test('a statement in before the rule: its auto-match finishes a credit that is ready now', async () => {
+    const { app, sb } = harness({ linkBoth: false });
+    const { statementId } = await uploadNovember(app);
+    /* The sale was linked since, the way an older confirm left it. */
+    Object.assign(sb.tables.acc_settlement_rows.find((r) => r.id === 847)!, { bucket: 'MATCHED', match_reason: 'manual', confirmed_at: '2026-11-10T08:00:00Z' });
+    sb.tables.acc_settlement_matches.push({ id: 3, settlement_row_id: 847, company_id: CO, payment_source: 'SOPAY', payment_id: 'p35', doc_no: '2990-SO-2611-077', amount_sen: 350000 });
+
+    const res = await post(app, `/bank/statements/${statementId}/auto-match`, {});
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { matched: number }).matched).toBe(1);
+    const line = sb.tables.acc_bank_statement_lines.find((l) => l.amount_sen === 550000)!;
+    expect(line).toMatchObject({ state: 'POSTED' });
+  });
+
+  test('a closed month is left alone: the credit stays for a person', async () => {
+    const { app, sb } = harness({ linkBoth: false });
+    const { statementId } = await uploadNovember(app);
+    Object.assign(sb.tables.acc_settlement_rows.find((r) => r.id === 847)!, { bucket: 'MATCHED', match_reason: 'manual', confirmed_at: '2026-11-10T08:00:00Z' });
+    sb.tables.acc_settlement_matches.push({ id: 3, settlement_row_id: 847, company_id: CO, payment_source: 'SOPAY', payment_id: 'p35', doc_no: '2990-SO-2611-077', amount_sen: 350000 });
+    sb.tables.acc_bank_month_locks = [{ company_id: CO, account_code: '310-0020', period_month: '2026-11-01', locked_by: 'Chew', locked_at: '2026-12-02T01:00:00Z', released_at: null, statement_count: 1, was_complete: true }];
+
+    const { applyMerchantAgreedMatches } = await import('../src/scm/routes/accounting-bank');
+    const r = await applyMerchantAgreedMatches(sb, CO, { statementIds: [statementId], bookedFrom: null }, 'Chew');
+    expect(r).toMatchObject({ ok: true, matched: 0 });
+    expect((r as { left: string[] }).left.join(' ')).toMatch(/month is closed/);
+    expect(sb.tables.acc_bank_statement_lines.find((l) => l.amount_sen === 550000)).toMatchObject({ state: 'OPEN' });
   });
 });

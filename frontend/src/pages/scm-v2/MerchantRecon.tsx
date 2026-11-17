@@ -36,6 +36,7 @@ import {
   type AcquirerSetup, type SettlementRow, type SettlementBatch, type BankAccount, type SettlementCandidate,
   type Watchlist, type Payout,
 } from './settlement-queries';
+import { bankFollowsText } from './bank-follows';
 import { DataTable, type Column } from '../../components/DataTable';
 import { HeaderExportMenu } from '../../components/DataTableExportItems';
 import { writeLineExportFile, type TablePdfView } from '../../components/dataTableLineExport';
@@ -999,6 +1000,7 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
         <div style={{ fontSize: 'var(--fs-13)', color: confirmAll.data.failed.length ? danger : good }}>
           Posted {confirmAll.data.confirmed} of {confirmAll.data.attempted}.
           {confirmAll.data.statementCharge?.jeNo && ` Statement charge booked as ${confirmAll.data.statementCharge.jeNo}.`}
+          {bankFollowsText(confirmAll.data.bank) && ` ${bankFollowsText(confirmAll.data.bank)}`}
           {confirmAll.data.failed.map((f) => <div key={f.rowId}>{f.rowId ? `Line ${f.rowId}: ` : ''}{f.reason}</div>)}
         </div>
       )}
@@ -1464,6 +1466,10 @@ const SettlementLine = ({ row, others = [] }: {
         <div style={{ fontSize: 'var(--fs-13)', color: danger }}>
           {(failed as { message?: string } | null)?.message ?? 'The line was not confirmed.'}
         </div>
+      )}
+      {/* The bank side follows (owner 2026-11-17: 我只要对一边). */}
+      {bankFollowsText((confirm.data ?? confirmGroup.data)?.bank) && (
+        <div style={{ fontSize: 'var(--fs-13)', color: good }}>{bankFollowsText((confirm.data ?? confirmGroup.data)?.bank)}</div>
       )}
     </section>
   );
