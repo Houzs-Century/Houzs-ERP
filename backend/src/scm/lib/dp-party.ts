@@ -98,7 +98,12 @@ export function snapshotFromSupplier(row: Record<string, unknown>): DpPartySnaps
 
 /** From a public.projects row + the PIC's public.users row. The project's PIC is
  *  a users(id) FK (survey), so the contact NAME/PHONE come from the user, not the
- *  project. The venue address is a single free-text line → address1. */
+ *  project. The venue address is a single free-text line → address1.
+ *
+ *  Postcode and City live on the VENUE master (public.project_venues), which the
+ *  project names by its picked venue name — the caller joins it in as
+ *  venue_postcode / venue_city / venue_state (lib/project-venue-join.ts). The
+ *  project's own State wins; the venue's fills it only when the project has none. */
 export function snapshotFromProject(
   proj: Record<string, unknown>,
   picUser: Record<string, unknown> | null,
@@ -109,8 +114,8 @@ export function snapshotFromProject(
     contact_name: picUser ? s(picUser.name) : null,
     contact_phone: picUser ? s(picUser.phone) : null,
     address1: s(proj.venue_address), address2: null, address3: null, address4: null,
-    city: null, postcode: null,
-    state: s(proj.state),
+    city: s(proj.venue_city), postcode: s(proj.venue_postcode),
+    state: s(proj.state) ?? s(proj.venue_state),
   };
 }
 
@@ -151,7 +156,8 @@ export function snapshotFromWarehouse(row: Record<string, unknown>): DpPartySnap
 
 /** From an scm.threepl_companies row (mig 0210) — an OUTSOURCED warehouse a
  *  TRANSFER job delivers to (owner 2026-11-02). The 3PL master has ONE free-text
- *  `address` (like scm.workshops), so it maps to address1 with nothing to split.
+ *  `address` (like scm.workshops), so it maps to address1 with nothing to split;
+ *  postcode / city / state are their own columns since mig 20261117T1900.
  *  party_type stays WAREHOUSE — an outsourced warehouse is still the destination
  *  the move ends at, just one we do not own; keeping it WAREHOUSE means "who was
  *  this transfer for" groups the same whether the destination is ours or a
@@ -164,7 +170,8 @@ export function snapshotFromThreepl(row: Record<string, unknown>): DpPartySnapsh
     contact_name: s(row.contact_name),
     contact_phone: s(row.contact_phone) ?? s(row.office_phone),
     address1: s(row.address), address2: null, address3: null, address4: null,
-    city: null, postcode: null, state: null,
+    // Picked off my_localities on the 3PL form (mig 20261117T1900).
+    city: s(row.city), postcode: s(row.postcode), state: s(row.state),
   };
 }
 

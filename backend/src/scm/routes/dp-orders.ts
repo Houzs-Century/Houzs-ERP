@@ -30,6 +30,7 @@ import {
   snapshotFromSavedLocation, snapshotFromWorkshop, snapshotFromWorkshopName,
   type DpJobType, type DpPartySnapshot,
 } from '../lib/dp-party';
+import { PROJECT_VENUE_COLS, PROJECT_VENUE_JOIN } from '../lib/project-venue-join';
 import { assertTripInAllowedCompanies } from '../lib/ref-in-company';
 import { mintNextDpNo, plateForLorry } from '../lib/dp-no-mint';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
@@ -228,8 +229,10 @@ async function resolveSnapshot(
   }
   if (p.projectId != null) {
     // public schema → raw SQL, like delivery-planning's ASSR union.
+    // Postcode / City come from the venue master the project picked.
     const proj = await c.env.DB.prepare(
-      'SELECT venue, venue_address, organizer, state, pic_id FROM projects WHERE id = ?',
+      `SELECT p.venue, p.venue_address, p.organizer, p.state, p.pic_id, ${PROJECT_VENUE_COLS}
+         FROM projects p ${PROJECT_VENUE_JOIN} WHERE p.id = ?`,
     ).bind(p.projectId).first<Record<string, unknown>>();
     if (proj) {
       let picUser: Record<string, unknown> | null = null;
@@ -265,7 +268,7 @@ async function resolveSnapshot(
     // snapshot and then refuse with "address_required" — a misleading answer when
     // the operator did pick a carrier. Surface the real failure instead.
     const { data, error } = await sb.from('threepl_companies')
-      .select('code, name, contact_name, contact_phone, office_phone, address')
+      .select('code, name, contact_name, contact_phone, office_phone, address, postcode, city, state')
       .eq('id', p.threeplCompanyId).maybeSingle();
     if (error) throw error;
     if (data) return snapshotFromThreepl(data as Record<string, unknown>);
@@ -328,7 +331,7 @@ async function resolveOrigin(c: Ctx, p: z.infer<typeof createSchema>): Promise<D
   }
   if (p.fromThreeplCompanyId) {
     const { data, error } = await sb.from('threepl_companies')
-      .select('code, name, contact_name, contact_phone, office_phone, address')
+      .select('code, name, contact_name, contact_phone, office_phone, address, postcode, city, state')
       .eq('id', p.fromThreeplCompanyId).maybeSingle();
     if (error) throw error;
     if (data) return snapshotFromThreepl(data as Record<string, unknown>);

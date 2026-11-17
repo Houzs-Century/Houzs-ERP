@@ -1526,6 +1526,9 @@ app.delete("/contractors/:id/share-link", requirePermission("projects.manage"), 
 });
 
 // ── Venues ────────────────────────────────────────────────────
+const blankToNull = (v: unknown): string | null =>
+  (typeof v === "string" && v.trim() ? v.trim() : null);
+
 // Same shape as organizers — picker-backed lookup, free-text column on
 // `projects.venue` stays valid so legacy data still renders.
 
@@ -1535,7 +1538,7 @@ app.get("/venues", requirePageAccess("projects"), async (c) => {
   // + the SO venue picker listed every HOUZS exhibition venue — the same leak
   // already fixed for the brand pool below.
   const rows = await c.env.DB.prepare(
-    `SELECT id, name, state, size, notes, active FROM project_venues
+    `SELECT id, name, state, country, city, postcode, size, notes, active FROM project_venues
       WHERE active = 1${activeCompanySql(c)} ORDER BY name`
   ).all();
   type VenueOut = Record<string, unknown> & { name?: unknown; origin: 'PROJECT' | 'SHOWROOM' };
@@ -1619,10 +1622,19 @@ app.post("/venues", requirePermission("projects.write"), async (c) => {
   const body = await c.req.json<{
     name?: string;
     state?: string | null;
+    country?: string | null;
+    city?: string | null;
+    postcode?: string | null;
     size?: string | null;
     notes?: string | null;
   }>();
   const rawName = (body.name || "").trim();
+  /* Country / City / Postcode (migs 0178 / 0182) — the Project Maintenance form
+     always sent them, and this insert dropped them, which is why no venue had a
+     postcode. Delivery Planning reads them for a project's SETUP / DISMANTLE. */
+  const country = blankToNull(body.country);
+  const city = blankToNull(body.city);
+  const postcode = blankToNull(body.postcode);
   if (!rawName) return c.json({ error: "name required" }, 400);
   // Fold showroom-venue aliases (e.g. "PJ Showroom") to canonical "2990s PJ" before
   // the by-name lookup + INSERT, so re-adding an alias reactivates the ONE canonical
@@ -1652,20 +1664,23 @@ app.post("/venues", requirePermission("projects.write"), async (c) => {
     await c.env.DB.prepare(
       `UPDATE project_venues
           SET active = 1,
-              state  = COALESCE(?, state),
-              size   = COALESCE(?, size),
-              notes  = COALESCE(?, notes)
+              state    = COALESCE(?, state),
+              country  = COALESCE(?, country),
+              city     = COALESCE(?, city),
+              postcode = COALESCE(?, postcode),
+              size     = COALESCE(?, size),
+              notes    = COALESCE(?, notes)
         WHERE id = ? AND company_id = ?`
     )
-      .bind(body.state ?? null, body.size ?? null, body.notes ?? null, existing.id, co.companyId)
+      .bind(body.state ?? null, country, city, postcode, body.size ?? null, body.notes ?? null, existing.id, co.companyId)
       .run();
     return c.json({ id: existing.id, name: existing.name, state: existing.state }, 200);
   }
   const r = await c.env.DB.prepare(
-    `INSERT INTO project_venues (name, state, size, notes, created_by, company_id)
-     VALUES (?, ?, ?, ?, ?, ?)`
+    `INSERT INTO project_venues (name, state, country, city, postcode, size, notes, created_by, company_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
-    .bind(name, body.state ?? null, body.size ?? null, body.notes ?? null, user?.id ?? null, co.companyId)
+    .bind(name, body.state ?? null, country, city, postcode, body.size ?? null, body.notes ?? null, user?.id ?? null, co.companyId)
     .run();
   return c.json({ id: r.meta.last_row_id, name, state: body.state ?? null }, 201);
 });
@@ -1682,6 +1697,9 @@ app.patch("/venues/:id", requirePermission("projects.manage"), async (c) => {
   const body = await c.req.json<{
     name?: string;
     state?: string | null;
+    country?: string | null;
+    city?: string | null;
+    postcode?: string | null;
     size?: string | null;
     notes?: string | null;
   }>();
@@ -1696,6 +1714,12 @@ app.patch("/venues/:id", requirePermission("projects.manage"), async (c) => {
   if ("state" in body) {
     sets.push("state = ?");
     binds.push(body.state ?? null);
+  }
+  for (const col of ["country", "city", "postcode"] as const) {
+    if (col in body) {
+      sets.push(`${col} = ?`);
+      binds.push(blankToNull(body[col]));
+    }
   }
   if ("size" in body) {
     sets.push("size = ?");
