@@ -855,6 +855,30 @@ dpOrders.post('/:id/schedule', async (c) => {
   return c.json({ dpOrder: data, dp_no: dpNo, tripStop, lorryBlocked });
 });
 
+/* Move a DP job's existing trip_stop onto a different run (the crew PEEL below).
+   Renumbers the stop at the tail of the new run; the old run keeps its other
+   stops. trip_stops is the cross-company queue, so the move is scoped to the
+   caller's allowed companies like every other write to it. REPORTED, never
+   thrown: a failed move must stop the crew write, never let it fall through onto
+   the shared run (the #720 rule). */
+async function moveStopToTrip(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Hono ctx + the untyped scm client, as across this route
+  c: any, sb: any, stopId: string, newTripId: string,
+): Promise<{ failed: boolean; reason?: string }> {
+  try {
+    const { data: stops } = await sb.from('trip_stops').select('stop_no').eq('trip_id', newTripId);
+    const nextStopNo = ((stops ?? []) as Array<{ stop_no?: number }>)
+      .reduce((m: number, r: { stop_no?: number }) => Math.max(m, Number(r.stop_no ?? 0)), 0) + 1;
+    const { error } = await scopeToAllowedCompanies(
+      sb.from('trip_stops').update({ trip_id: newTripId, stop_no: nextStopNo }).eq('id', stopId), c,
+    );
+    if (error) return { failed: true, reason: error.message };
+    return { failed: false };
+  } catch (e) {
+    return { failed: true, reason: `stop move failed: ${String((e as Error)?.message ?? e).slice(0, 140)}` };
+  }
+}
+
 /* ── POST /:id/crew — inline crew edit on a DP row (owner 2026-10-31) ───────────
    The board's Driver / Lorry / Helper cells write DP jobs the way they write SO
    rows now, with no "Schedule…" drawer. A DP job's crew IS its RUN's crew
@@ -915,6 +939,48 @@ dpOrders.post('/:id/crew', async (c) => {
     tripId = trip.tripId;
     await sb.from('dp_orders').update({ trip_id: tripId, updated_at: new Date().toISOString() }).eq('id', id);
     tripStop = await appendDpStop(c, sb, d, tripId, (d.dp_no as string | null) ?? null);
+  }
+
+  /* PEEL (owner 2026-11-17): a crew edit on a DP that SHARES its run with other
+     jobs must change ONLY this job — not rewrite the whole run's crew, which moved
+     every job on it together (the three same-lorry supplier pickups the owner saw
+     all flip driver at once). When this run carries another stop, split THIS job
+     onto its own run first, then set the seat there; the old run keeps the other
+     jobs untouched. A run holding only this job is edited in place, as before — no
+     needless churn of its lorry/driver.
+
+     A different driver means a different lorry (one lorry runs one driver a day):
+     a LORRY change moves the job onto that lorry's run (joining it when it already
+     exists); a driver/helper change with no lorry peels onto a FRESH lorryless run,
+     so the board shows this job needing its own lorry rather than silently
+     splitting the shared one. */
+  if (tripId && requestedDate) {
+    let otherQ = sb.from('trip_stops').select('id').eq('trip_id', tripId).limit(1);
+    // Only a real stop id can be excluded — never neq('id','') (an invalid uuid
+    // filter). With no own stop recorded, every stop on the run counts as another.
+    if (d.trip_stop_id) otherQ = otherQ.neq('id', d.trip_stop_id as string);
+    const { data: otherStops, error: othErr } = await scopeToAllowedCompanies(otherQ, c);
+    if (othErr) return c.json({ error: 'lookup_failed', reason: othErr.message }, 500);
+    if (((otherStops ?? []) as Array<unknown>).length > 0) {
+      const ownRun = await resolveScheduleTrip(c, sb, p.lorryId ?? null, requestedDate, null);
+      if ('error' in ownRun) return c.json({ error: 'trip_failed', reason: ownRun.error }, 500);
+      // ownRun === tripId only when the caller re-picked the SAME lorry this run is
+      // already on — nothing to split, fall through to the in-place crew write.
+      if (ownRun.tripId !== tripId) {
+        if (d.trip_stop_id) {
+          const moved = await moveStopToTrip(c, sb, String(d.trip_stop_id), ownRun.tripId);
+          if (moved.failed) return c.json({ error: 'peel_failed', reason: moved.reason }, 500);
+        } else {
+          tripStop = await appendDpStop(c, sb, d, ownRun.tripId, (d.dp_no as string | null) ?? null);
+          if (tripStop.failed) return c.json({ error: 'peel_failed', reason: tripStop.reason }, 500);
+        }
+        await scopeToCompanyId(
+          sb.from('dp_orders').update({ trip_id: ownRun.tripId, updated_at: new Date().toISOString() }).eq('id', id),
+          co.companyId,
+        );
+        tripId = ownRun.tripId;
+      }
+    }
   }
 
   // Write the picked seat(s) — the primary action, so a failure is reported, not
