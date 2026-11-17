@@ -236,6 +236,8 @@ export type PlanningStop = {
   assr_no: string | null;
   case_addr3: string | null;
   case_addr4: string | null;
+  case_own_postcode: string | null;
+  case_own_state: string | null;
   case_so_state: string | null;
   d1: string | null;
   d2: string | null;
@@ -253,7 +255,7 @@ type Seat = { name: string; employeeId: number | null };
 export function planningRowOf(s: PlanningStop, who: (id: string | null) => Seat) {
   const [d1, d2, h1, h2] = [who(s.d1), who(s.d2), who(s.h1), who(s.h2)];
   const isCase = s.assr_case_id != null;
-  const caseState = isCase ? assrBoardLocation(s.case_addr3, s.case_addr4, s.case_so_state, null).state : null;
+  const caseState = isCase ? assrBoardLocation(s.case_addr3, s.case_addr4, s.case_so_state, null, { postcode: s.case_own_postcode, state: s.case_own_state }).state : null;
   const amount = s.local_total_sen ?? (isCase ? 0 : s.revenue_sen);
   return {
     source: "PLANNING",
@@ -286,6 +288,7 @@ export async function planningRows(db: Db, companyId: number, month: string, peo
            d.do_number, d.so_doc_no, d.status::text AS do_status, d.local_total_sen,
            COALESCE(NULLIF(d.state, ''), d.customer_state) AS do_state, dp.state AS dp_state, dp.dp_no,
            s.assr_case_id, ac.assr_no, ac.addr3 AS case_addr3, ac.addr4 AS case_addr4, so.customer_state AS case_so_state,
+           ca.postcode AS case_own_postcode, ca.state AS case_own_state,
            COALESCE(cr.driver_1_id, t.driver_id)::text AS d1, cr.driver_2_id::text AS d2,
            COALESCE(cr.helper_1_id, t.helper_1_id)::text AS h1, COALESCE(cr.helper_2_id, t.helper_2_id)::text AS h2
       FROM scm.trip_stops s
@@ -295,6 +298,7 @@ export async function planningRows(db: Db, companyId: number, month: string, peo
       LEFT JOIN scm.dp_orders dp ON dp.trip_stop_id = s.id
       LEFT JOIN scm.lorries l ON l.id = t.lorry_id
       LEFT JOIN public.assr_cases ac ON ac.id = s.assr_case_id
+      LEFT JOIN public.assr_case_address ca ON ca.assr_id = ac.id
       LEFT JOIN LATERAL (
            SELECT o.customer_state FROM scm.mfg_sales_orders o
             WHERE o.doc_no = ac.doc_no OR o.linked_ac_docno = ac.doc_no

@@ -72,6 +72,8 @@ import {
 } from "../vendor/scm/lib/assr/case-fields";
 import "./mobile.css";
 import { FormTouchScope, useFormGuard } from "../hooks/useLeaveGuard";
+import { CaseAddressFields, CASE_ADDRESS_MOBILE } from "../components/assr/CaseAddressFields";
+import { formatCaseAddress } from "../vendor/scm/lib/assr-case-address";
 
 // The core /api/assr route (NOT scm). The list returns
 // { data, page, per_page, total } with assr_cases.* columns; the detail
@@ -1520,7 +1522,7 @@ function CaseDetail({ id, onBack, onRaiseExchangePo }: { id: number; onBack: () 
                       <div style={{ paddingTop: 9 }}>
                         <div className="money" style={{ fontSize: 8.5, letterSpacing: ".1em", textTransform: "uppercase", color: GREY, fontWeight: 600 }}>Customer address</div>
                         <div style={{ fontSize: 12.5, fontWeight: 500, color: INK, lineHeight: 1.5, marginTop: 3 }}>
-                          {[get(c, "addr1"), get(c, "addr2"), get(c, "addr3"), get(c, "addr4")].filter(Boolean).join(", ") || "—"}
+                          {formatCaseAddress(c as Record<string, unknown>) || "—"}
                         </div>
                         {get(c, "location", "customerState", "customer_state") && (
                           <span style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 8, fontSize: 11, fontWeight: 600, color: TEAL_DK, background: "var(--hz-c-primary-soft)", borderRadius: 7, padding: "4px 10px" }}>
@@ -1533,6 +1535,11 @@ function CaseDetail({ id, onBack, onRaiseExchangePo }: { id: number; onBack: () 
                     </>
                   }
                 />
+
+                {/* Address in the SO's layout (lines + State / City / Postcode), the desktop's component. */}
+                <Acc title="Customer address">
+                  <CaseAddressFields c={c as Record<string, unknown>} onSave={(b) => patchCase(b, "Couldn't save the address")} classes={CASE_ADDRESS_MOBILE} />
+                </Acc>
 
                 {/* PIC — right-header = current assignee; Assign reassigns via PATCH */}
                 <Acc

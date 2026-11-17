@@ -114,8 +114,9 @@ export function snapshotFromProject(
   };
 }
 
-/** From a public.assr_cases row (a service case → SERVICE / PICKUP). No postcode
- *  or dedicated state column (survey); `location` doubles as the region/state. */
+/** From a public.assr_cases row (a service case → SERVICE / PICKUP) joined to
+ *  its assr_case_address (postcode / city / state, owner 2026-11-17). A case
+ *  with no State of its own falls back to `location`, as before. */
 export function snapshotFromAssr(row: Record<string, unknown>): DpPartySnapshot {
   return {
     party_type: 'CUSTOMER',
@@ -123,8 +124,8 @@ export function snapshotFromAssr(row: Record<string, unknown>): DpPartySnapshot 
     contact_name: null,
     contact_phone: s(row.phone),
     address1: s(row.addr1), address2: s(row.addr2), address3: s(row.addr3), address4: s(row.addr4),
-    city: null, postcode: null,
-    state: s(row.location),
+    city: s(row.city), postcode: s(row.postcode),
+    state: s(row.state) ?? s(row.location),
   };
 }
 

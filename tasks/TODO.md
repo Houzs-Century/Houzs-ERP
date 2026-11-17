@@ -46,6 +46,8 @@ One line per open item: what — waiting on — since. Delete the line when it i
 - Houzs bound-cost backfill: 8 lines / 8 DOs can be re-costed from their bound PO (`backfill-hard-bound-cost.mjs`, PLAN COMPANY_ID=1; APPLY needs ALLOW_CLOSED_MONTHS=2026-10); the other 272 migrated-PO lines the owner chose NOT to backfill (B3) — owner — 2026-11-11
 - Service case detail: `po_amount` is still visible and editable to anyone who can open a case (the export now hides it from non-cost viewers, #5628) — owner — 2026-11-11
 - Finance: HC-SO-2609-164 (pay 03c0c4b1 + a692fff5, 2.1 s apart) and HC-SO-008674 (112ad71a + 358dea27, 4.1 s apart) look double-recorded; check the bank and who recorded them before deleting either — finance — 2026-11-11
+- Old service cases have no Postcode / City / State of their own yet (new table `assr_case_address`, empty at migration; readers fall back to the linked SO as before). Run `backfill-assr-case-address.mjs` on production through "Run a backend script on production": plan first, read the refusals, then apply — owner — 2026-11-17
+
 ## Waiting on others
 - PR #5448 (service case Operation Dept): staging already ran its `20261110T1300` / `T1400` files; if they merge under new numbers, add the two old names to `backend/scripts/lib/migration-retirements.mjs` — Laphii1206 — 2026-11-11
 - Accountant: start date for the customer receipt (OR) write-back — 2026-09-14

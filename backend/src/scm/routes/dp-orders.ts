@@ -242,7 +242,7 @@ async function resolveSnapshot(
   }
   if (p.assrCaseId != null) {
     const a = await c.env.DB.prepare(
-      'SELECT customer_name, phone, addr1, addr2, addr3, addr4, location FROM assr_cases WHERE id = ?',
+      'SELECT customer_name, phone, addr1, addr2, addr3, addr4, location, ca.postcode, ca.city, ca.state FROM assr_cases LEFT JOIN assr_case_address ca ON ca.assr_id = assr_cases.id WHERE assr_cases.id = ?',
     ).bind(p.assrCaseId).first<Record<string, unknown>>();
     if (a) return snapshotFromAssr(a);
   }

@@ -117,6 +117,7 @@ import { pgrestIn } from '../lib/pgrest-in-list';
 import { stepClock } from '../../lib/step-timing';
 import { loadRegionConfig, stateToRegionsFromConfig, FALLBACK_DEFAULT_REGION, type Region, type RegionConfig } from '../lib/delivery-board-regions';
 import { assembleSoOrders } from '../lib/delivery-board-so-rows';
+import { formatCaseAddress } from '../shared/assr-case-address';
 import { boardSourceOf, loadBoardHead, kickOffRestBoardReads, loadBoardMaps, scheduleBoardShadow } from '../lib/delivery-board-source';
 
 export const deliveryPlanning = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -382,11 +383,12 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       // State and put a Sarawak case in the KL bucket. Region is then classified
       // by that real state with the SAME config mapping SO rows use, so an ASSR
       // row filters under its customer's tab exactly like an SO.
-      const { state: realState, postcode: realPostcode } = assrBoardLocation(a.addr3, a.addr4, a.so_state, a.so_postcode);
+      const { state: realState, postcode: realPostcode } = assrBoardLocation(a.addr3, a.addr4, a.so_state, a.so_postcode,
+        { postcode: a.case_postcode, state: a.case_state });
       const stateRegions = stateToRegionsFromConfig(regionCfg, realState, a.so_country);
       const primaryRegion = stateRegions[0] ?? FALLBACK_DEFAULT_REGION;
       const regionSet = new Set<Region>(stateRegions);
-      const address = [a.addr1, a.addr2, a.addr3, a.addr4].filter(Boolean).join(', ') || null;
+      const address = formatCaseAddress({ ...a, postcode: a.case_postcode, city: a.case_city, state: a.case_state });
       // A closed / archived case's legs are DONE → they belong on Delivered.
       const caseClosed = assrCaseClosed(a);
 
@@ -2135,14 +2137,18 @@ async function scheduleAssrOntoTrip(
        granted companies. Same shape as routes/assr.ts (:2672, :1116). */
     const a = (await c.env.DB.prepare(
       `SELECT customer_name AS customer_name, ${dateCol} AS leg_date,
-              addr1 AS addr1, addr2 AS addr2, addr3 AS addr3, addr4 AS addr4
-         FROM assr_cases WHERE id = ?`,
+              addr1 AS addr1, addr2 AS addr2, addr3 AS addr3, addr4 AS addr4,
+              ca.postcode AS postcode, ca.city AS city, ca.state AS state
+         FROM assr_cases LEFT JOIN assr_case_address ca ON ca.assr_id = assr_cases.id WHERE assr_cases.id = ?`,
     ).bind(caseId).first()) as {
       customer_name: string | null; leg_date: string | null;
       addr1: string | null; addr2: string | null; addr3: string | null; addr4: string | null;
+      postcode: string | null; city: string | null; state: string | null;
     } | null;
     const customerName = a?.customer_name ?? null;
-    const address = [a?.addr1, a?.addr2, a?.addr3, a?.addr4].filter(Boolean).join(', ') || null;
+    // The stop's address snapshot is what Last Mile and the run-sheet print (and
+    // geocode): lines + "<postcode> <city>" + state, the SO's shape.
+    const address = a ? formatCaseAddress(a) : null;
 
     /* Find-or-create the trip — same rule as scheduleOntoTrip. */
     const tripDate = dateOrNull(p.tripDate) ?? dateOrNull(p.scheduleDate) ?? dateOrNull(a?.leg_date) ?? todayMyt();

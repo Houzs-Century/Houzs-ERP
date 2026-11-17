@@ -260,6 +260,10 @@ export interface AssrCase {
   addr2: string | null;
   addr3: string | null;
   addr4: string | null;
+  /** assr_case_address (owner 2026-11-17), merged onto the detail; absent on the list. */
+  postcode?: string | null;
+  city?: string | null;
+  state?: string | null;
   created_at: string;
   updated_at: string;
 }

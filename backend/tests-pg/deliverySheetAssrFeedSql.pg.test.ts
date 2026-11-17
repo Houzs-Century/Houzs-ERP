@@ -43,6 +43,8 @@ async function resetFixture(s: Sql): Promise<void> {
     INSERT INTO scm.mfg_sales_orders (doc_no, linked_ac_docno, customer_country, postcode, city, customer_state) VALUES
       ('HC-SO-9010', 'SO-9010', 'Malaysia', '47300', 'Petaling Jaya', 'Selangor'),
       ('HC-SO-9011', 'HC-SO-9011', 'Singapore', '600314', 'Jurong East', 'West');
+    DROP TABLE IF EXISTS public.assr_case_address CASCADE;
+    CREATE TABLE public.assr_case_address (assr_id bigint PRIMARY KEY, postcode text, city text, state text);
     DROP TABLE IF EXISTS public.assr_cases CASCADE;
     CREATE TABLE public.assr_cases (
       id bigserial PRIMARY KEY, assr_no text NOT NULL, doc_no text, company_id bigint NOT NULL, status text, stage text,
