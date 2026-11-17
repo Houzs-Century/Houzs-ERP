@@ -1385,11 +1385,32 @@ app.patch("/organizers/:id", requirePermission("projects.manage"), async (c) => 
     .bind(name, id)
     .first<{ id: number }>();
   if (clash) return c.json({ error: "An organizer with that name already exists" }, 409);
+  // Capture the old name so the rename cascades into existing events:
+  // projects.organizer is plain free text, not a FK, so renaming the master
+  // alone strands historical events on the old name (and the public share
+  // calendar reads projects.organizer). Mirrors PATCH /brands/:id.
+  const cur = await c.env.DB.prepare(
+    `SELECT name FROM project_organizers WHERE id = ?`
+  )
+    .bind(id)
+    .first<{ name: string }>();
+  const oldName = cur?.name ?? null;
   await c.env.DB.prepare(
     `UPDATE project_organizers SET name = ? WHERE id = ?`
   )
     .bind(name, id)
     .run();
+  if (oldName && oldName.trim() !== name) {
+    // Scope to the active company like /brands/:id; project_organizers itself
+    // is a shared master with no company_id, so activeCompanySql degrades to no
+    // predicate in a single-company context (a global cascade there).
+    const orgCoSql = activeCompanySql(c);
+    await c.env.DB.prepare(
+      `UPDATE projects SET organizer = ?, updated_at = datetime('now') WHERE organizer = ?${orgCoSql}`
+    )
+      .bind(name, oldName)
+      .run();
+  }
   return c.json({ id, name });
 });
 
