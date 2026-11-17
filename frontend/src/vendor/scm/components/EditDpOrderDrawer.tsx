@@ -73,7 +73,8 @@ export const EditDpOrderDrawer = ({ row, onClose }: { row: DpOrderRow; onClose: 
 
   const fieldRow: CSSProperties = { display: 'block', marginBottom: 'var(--space-3)' };
   const inputStyle: CSSProperties = { width: '100%' };
-  const row2: CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' };
+  // minmax(0, 1fr): a wide control (the date field) must not squeeze its neighbour on a phone.
+  const row2: CSSProperties = { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 'var(--space-3)' };
 
   const remarkField = (
     <label style={fieldRow}>
