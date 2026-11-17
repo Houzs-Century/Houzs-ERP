@@ -40,7 +40,7 @@ type ComboTabProps = {
 
 type Dialog =
   | { kind: 'new' } | { kind: 'hand' } | { kind: 'edit'; line: ComboLine }
-  | { kind: 'assign' } | { kind: 'delete' } | { kind: 'adjust' } | { kind: 'export' } | { kind: 'import' } | { kind: 'presets' };
+  | { kind: 'assign' } | { kind: 'delete'; lines: ComboLine[] } | { kind: 'adjust' } | { kind: 'export' } | { kind: 'import' } | { kind: 'presets' };
 
 const card: CSSProperties = { background: 'var(--c-cream)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md)' };
 const soft: CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-soft)' };
@@ -248,7 +248,7 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
           <Button variant="secondary" onClick={() => setDialog({ kind: 'export' })}>Export</Button>
           <Button variant="secondary" onClick={() => setDialog({ kind: 'import' })}>Import</Button>
-          {!supplierId && <Button variant="secondary" onClick={() => setDialog({ kind: 'presets' })}>Presets</Button>}
+          {!supplierId && <Button variant="secondary" onClick={() => setDialog({ kind: 'presets' })}>Combos</Button>}
           <Button variant="primary" onClick={() => setDialog({ kind: 'new' })} disabled={!model}>New combo</Button>
         </div>
       </div>
@@ -320,7 +320,7 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
               <strong style={{ flex: '1 1 140px', fontWeight: 600 }}>{chosen.length} {chosen.length === 1 ? 'combo' : 'combos'} selected</strong>
               {!supplierId && <Button variant="primary" onClick={() => setDialog({ kind: 'assign' })}>Assign to supplier</Button>}
               <Button variant="secondary" onClick={() => setDialog({ kind: 'adjust' })}>Adjust by %</Button>
-              <Button variant="secondary" onClick={() => setDialog({ kind: 'delete' })} style={{ color: 'var(--c-festive-b, #8f2c1a)' }}>Delete</Button>
+              <Button variant="secondary" onClick={() => setDialog({ kind: 'delete', lines: chosen })} style={{ color: 'var(--c-festive-b, #8f2c1a)' }}>Delete</Button>
               <Button variant="ghost" onClick={() => setTicked(new Set())}>Clear</Button>
             </div>
           )}
@@ -422,6 +422,7 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
             tier={tier}
             supplierId={supplierId ?? null}
             onEdit={() => setDialog({ kind: 'edit', line: picked })}
+            onDelete={() => setDialog({ kind: 'delete', lines: [picked] })}
           />
         )}
       </div>
@@ -454,7 +455,13 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
         <AssignDialog model={model} chosen={chosen} today={today} onDone={closeDone} onClose={() => setDialog(null)} />
       )}
       {dialog?.kind === 'delete' && (
-        <DeleteDialog chosen={chosen} supplierId={supplierId ?? null} onDone={closeDone} onClose={() => setDialog(null)} />
+        <DeleteDialog
+          chosen={dialog.lines}
+          modelName={model ? [model, modelNames.get(model) !== model ? modelNames.get(model) : ''].filter(Boolean).join(' ') : 'this model'}
+          supplierId={supplierId ?? null}
+          onDone={closeDone}
+          onClose={() => setDialog(null)}
+        />
       )}
       {dialog?.kind === 'adjust' && (
         <AdjustDialog chosen={chosen} tier={tier} supplierId={supplierId ?? null} today={today} onDone={closeDone} onClose={() => setDialog(null)} />
@@ -470,8 +477,8 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
   );
 };
 
-function ComboPanel({ line, tier, supplierId, onEdit }: {
-  line: ComboLine; tier: SofaPriceTier; supplierId: string | null; onEdit: () => void;
+function ComboPanel({ line, tier, supplierId, onEdit, onDelete }: {
+  line: ComboLine; tier: SofaPriceTier; supplierId: string | null; onEdit: () => void; onDelete: () => void;
 }) {
   const rule = line.byTier[tier];
   const historyQ = useSofaComboHistory(rule ? { baseModel: rule.baseModel, modules: rule.modules, tier: rule.tier, customerId: rule.customerId, supplierId } : null);
@@ -492,6 +499,7 @@ function ComboPanel({ line, tier, supplierId, onEdit }: {
       </div>
       <div style={{ marginTop: 12 }}>
         <Button variant="primary" onClick={onEdit} style={{ width: '100%' }}>Edit compartments</Button>
+        <Button variant="secondary" onClick={onDelete} style={{ width: '100%', marginTop: 8, color: 'var(--c-festive-b, #8f2c1a)' }}>Delete this combo</Button>
       </div>
       </div>
       <div>

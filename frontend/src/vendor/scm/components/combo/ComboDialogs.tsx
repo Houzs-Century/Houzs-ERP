@@ -77,7 +77,7 @@ export function NewComboDialog({ model, lines, sourceBook, ownModules, supplierI
   const [source, setSource] = useState(PRESET);
   const [query, setQuery] = useState('');
   const [ticked, setTicked] = useState<Record<string, boolean>>({});
-  // The presets come from Products > Combo Pricing > Presets; only active ones are offered.
+  // The list comes from Products > Combo Pricing > Combos; only active ones are offered.
   const presetsQ = useComboPresets();
 
   const have = useMemo(() => new Set(lines.map((l) => comboSlotsKey(l.modules))), [lines]);
@@ -95,7 +95,7 @@ export function NewComboDialog({ model, lines, sourceBook, ownModules, supplierI
   const chosen = candidates.filter((c) => !c.blocked && ticked[c.key]);
 
   const options = [
-    { value: PRESET, label: 'Preset' },
+    { value: PRESET, label: 'Combos' },
     { value: BY_HAND, label: 'Build by hand' },
     // A supplier starts from the master combos of the very model it is pricing.
     ...[...sourceBook.keys()].filter((m) => supplierId !== null || m !== model).sort().map((m) => ({ value: m, label: `Copy from model: ${m}` })),
@@ -118,7 +118,7 @@ export function NewComboDialog({ model, lines, sourceBook, ownModules, supplierI
   return (
     <Dialog
       title={`New combo for ${model}`}
-      subtitle="Copy from a preset or another model, or build it by hand. Prices stay empty."
+      subtitle="Copy from the Combos list or another model, or build it by hand. Prices stay empty."
       width={680}
       onClose={onClose}
       footer={(
@@ -134,7 +134,7 @@ export function NewComboDialog({ model, lines, sourceBook, ownModules, supplierI
         className={styles.field}
         ariaLabel="Start from"
         value=""
-        placeholder={options.find((o) => o.value === source)?.label ?? 'Preset'}
+        placeholder={options.find((o) => o.value === source)?.label ?? 'Combos'}
         options={options}
         onChange={(v) => {
           if (!v) return;
@@ -162,10 +162,10 @@ export function NewComboDialog({ model, lines, sourceBook, ownModules, supplierI
             <span style={noteText}>{c.blocked ?? c.note}</span>
           </label>
         ))}
-        {source === PRESET && presetsQ.isPending && <p style={noteText}>Loading the presets...</p>}
-        {source === PRESET && presetsQ.isError && <p style={{ ...noteText, color: 'var(--c-festive-b, #8f2c1a)' }}>Couldn't load the presets. {errText(presetsQ.error)}</p>}
+        {source === PRESET && presetsQ.isPending && <p style={noteText}>Loading the combos...</p>}
+        {source === PRESET && presetsQ.isError && <p style={{ ...noteText, color: 'var(--c-festive-b, #8f2c1a)' }}>Couldn't load the combos. {errText(presetsQ.error)}</p>}
         {shown.length === 0 && !(source === PRESET && (presetsQ.isPending || presetsQ.isError)) && (
-          <p style={noteText}>{source === PRESET ? 'No active preset. Add one under Presets.' : 'This model has no combos to copy.'}</p>
+          <p style={noteText}>{source === PRESET ? 'No active combo. Add one under Combos.' : 'This model has no combos to copy.'}</p>
         )}
       </div>
     </Dialog>
@@ -174,10 +174,12 @@ export function NewComboDialog({ model, lines, sourceBook, ownModules, supplierI
 
 // ─── Compartments ──────────────────────────────────────────────────────
 
-export function ModulePicker({ codes, names, picked, plainLabel, onToggle }: {
+export function ModulePicker({ codes, names, picked, plainLabel, listHeight, onToggle }: {
   codes: readonly string[]; names: Readonly<Record<string, string>>; picked: readonly string[];
-  /** The button for a module with no side: "Add" on a combo, "Either side" on a preset. */
+  /** The button for a module with no side: "Add" on a combo, "Either side" on the Combos list. */
   plainLabel: string;
+  /** Height of the module list, in px. */
+  listHeight: number;
   onToggle: (code: string) => void;
 }) {
   const [query, setQuery] = useState('');
@@ -203,7 +205,7 @@ export function ModulePicker({ codes, names, picked, plainLabel, onToggle }: {
           {MODULE_GROUPS.map((g) => <option key={g} value={g}>{g}</option>)}
         </select>
       </div>
-      <div style={{ maxHeight: 214, overflowY: 'auto', marginTop: 8, border: '1px solid var(--line)', borderRadius: 'var(--radius-sm)' }}>
+      <div style={{ maxHeight: listHeight, overflowY: 'auto', marginTop: 8, border: '1px solid var(--line)', borderRadius: 'var(--radius-sm)' }}>
         {shown.map((f) => (
           <div key={f.code} style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 44, padding: '3px 10px', borderBottom: '1px solid var(--line)' }}>
             <span style={{ flex: 1, minWidth: 0, fontWeight: 600 }}>{f.code}</span>
@@ -301,7 +303,7 @@ export function CompartmentDialog({ model, editing, codes, names, supplierId, to
               Remove
             </button>
           </div>
-          {i === active && <ModulePicker codes={codes} names={names} picked={slot} plainLabel="Add" onToggle={(code) => toggle(i, code)} />}
+          {i === active && <ModulePicker codes={codes} names={names} picked={slot} plainLabel="Add" listHeight={214} onToggle={(code) => toggle(i, code)} />}
         </div>
       ))}
       <button
@@ -389,8 +391,8 @@ export function AssignDialog({ model, chosen, today, onDone, onClose }: {
 
 // ─── Delete ────────────────────────────────────────────────────────────
 
-export function DeleteDialog({ chosen, supplierId, onDone, onClose }: {
-  chosen: readonly ComboLine[]; supplierId: string | null; onDone: (text: string) => void; onClose: () => void;
+export function DeleteDialog({ chosen, modelName, supplierId, onDone, onClose }: {
+  chosen: readonly ComboLine[]; modelName: string; supplierId: string | null; onDone: (text: string) => void; onClose: () => void;
 }) {
   const notify = useNotify();
   const retire = useRetireCombos();
@@ -405,7 +407,7 @@ export function DeleteDialog({ chosen, supplierId, onDone, onClose }: {
   };
   return (
     <Dialog
-      title={`Delete ${n} ${n === 1 ? 'combo' : 'combos'}?`}
+      title={`Delete ${n} ${n === 1 ? 'combo' : 'combos'} from ${modelName}?`}
       subtitle={null}
       width={480}
       onClose={onClose}
@@ -418,7 +420,8 @@ export function DeleteDialog({ chosen, supplierId, onDone, onClose }: {
     >
       <div style={{ fontWeight: 600 }}>{chosen.map((l) => l.name).join(', ')}</div>
       <p style={{ margin: '8px 0 0' }}>
-        {supplierId ? 'Only this supplier loses these combos.' : 'They also go from every supplier that has them.'}
+        Their prices on Price 1 to 4 go with them.
+        {' '}{supplierId ? 'Only this supplier loses these combos.' : 'They also go from every supplier that has them.'}
         {' '}New orders can no longer pick them. Orders already made keep their price, and the history stays.
       </p>
     </Dialog>
