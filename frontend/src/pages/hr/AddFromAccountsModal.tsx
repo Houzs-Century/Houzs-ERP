@@ -55,6 +55,27 @@ export function AddFromAccountsModal({ open, onClose, onDone }: { open: boolean;
       return n;
     });
 
+  // Group the list by the account's department, so HR can scan and tick a whole
+  // department at once. Departments alphabetical; the no-department bucket last.
+  const groups = useMemo(() => {
+    const byDept = new Map<string, ErpAccount[]>();
+    for (const a of filtered) {
+      const dept = a.department_id != null ? deptName.get(a.department_id) ?? "No department" : "No department";
+      const arr = byDept.get(dept);
+      if (arr) arr.push(a);
+      else byDept.set(dept, [a]);
+    }
+    return [...byDept.entries()].sort(([x], [y]) => (x === "No department" ? 1 : y === "No department" ? -1 : x.localeCompare(y)));
+  }, [filtered, deptName]);
+
+  const toggleGroup = (accts: ErpAccount[], allIn: boolean) =>
+    setPicked((p) => {
+      const n = new Set(p);
+      for (const a of accts) if (allIn) n.delete(a.id);
+      else n.add(a.id);
+      return n;
+    });
+
   async function confirm() {
     if (picked.size === 0) return;
     setSaving(true);
@@ -133,23 +154,36 @@ export function AddFromAccountsModal({ open, onClose, onDone }: { open: boolean;
               {filtered.length === 0 ? (
                 <p className="px-3 py-3 text-ink-muted">No account matches “{search}”.</p>
               ) : (
-                <ul>
-                  {filtered.map((a: ErpAccount) => (
-                    <li key={a.id} className="border-b border-border-subtle last:border-0">
-                      <label className="flex cursor-pointer items-center gap-2.5 px-3 py-2 hover:bg-surface-dim">
-                        <input type="checkbox" checked={picked.has(a.id)} onChange={() => toggleOne(a.id)} />
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate font-medium text-ink">{a.name ?? a.email}</span>
-                          <span className="block truncate text-[11px] text-ink-muted">
-                            {a.email}
-                            {a.position ? ` · ${a.position}` : ""}
-                            {a.department_id != null && deptName.get(a.department_id) ? ` · ${deptName.get(a.department_id)}` : ""}
-                          </span>
-                        </span>
-                      </label>
-                    </li>
-                  ))}
-                </ul>
+                groups.map(([dept, accts]) => {
+                  const allIn = accts.every((a) => picked.has(a.id));
+                  return (
+                    <div key={dept}>
+                      <div className="sticky top-0 z-[1] flex items-center justify-between border-b border-border-subtle bg-surface-dim px-3 py-1.5">
+                        <label className="flex cursor-pointer items-center gap-2 text-[11px] font-semibold uppercase tracking-brand text-ink-secondary">
+                          <input type="checkbox" checked={allIn} onChange={() => toggleGroup(accts, allIn)} />
+                          {dept}
+                        </label>
+                        <span className="text-[10.5px] text-ink-muted">{accts.length}</span>
+                      </div>
+                      <ul>
+                        {accts.map((a) => (
+                          <li key={a.id} className="border-b border-border-subtle last:border-0">
+                            <label className="flex cursor-pointer items-center gap-2.5 px-3 py-2 hover:bg-surface-dim">
+                              <input type="checkbox" checked={picked.has(a.id)} onChange={() => toggleOne(a.id)} />
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate font-medium text-ink">{a.name ?? a.email}</span>
+                                <span className="block truncate text-[11px] text-ink-muted">
+                                  {a.email}
+                                  {a.position ? ` · ${a.position}` : ""}
+                                </span>
+                              </span>
+                            </label>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  );
+                })
               )}
             </div>
           </>
