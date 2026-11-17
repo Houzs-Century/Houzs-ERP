@@ -501,9 +501,10 @@ async function renderPurchaseOrderInto(
      supplier sees at a glance this sheet replaces an earlier one (Sim
      2026-11-17, ticket 2990-0064). Same rule as poDisplayNumber's _R suffix. */
   if (Number(header.revision ?? 1) > 1) {
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(11); doc.setTextColor(220, 38, 38);
-    doc.text('Amended', pageW / 2 + 2 + 33, infoTop);
-    doc.setTextColor(0);
+    // Bold and large: Sim asked for it "bigger and obviously" (2026-11-17).
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(18); doc.setTextColor(220, 38, 38);
+    doc.text('AMENDED', pageW / 2 + 2 + 33, infoTop + 1);
+    doc.setTextColor(0); doc.setFont('helvetica', 'normal');
   }
 
   /* Boxed under the PO DETAILS rows; the row geometry mirrors drawInfoColumns
