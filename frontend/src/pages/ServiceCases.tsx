@@ -42,6 +42,7 @@ import {
   Play,
   Target,
   Image as ImageIcon,
+  FileText,
 } from "lucide-react";
 import { HubGrid } from "../components/HubGrid";
 import { PageHeader } from "../components/Layout";
@@ -121,6 +122,7 @@ import { api, buildQuery } from "../api/client";
 import { downloadAllPagesCSV } from "../lib/csv";
 import { formatPhone } from "../vendor/shared/phone";
 import { uploadAssrAttachment } from "../lib/assrAttachmentUpload";
+import { isPdfAttachment, openAssrAttachment } from "../lib/assrAttachmentOpen";
 import {
   UploadDropZone,
   clipboardFiles,
@@ -7995,8 +7997,18 @@ function AttachmentThumb({ att, onClick, onVisibilityChange, onArchive }: {
   onArchive?: () => void;
 }) {
   const [url, setUrl] = useState<string | null>(null);
+  const toast = useToast();
   const isImage = att.content_type?.startsWith("image/");
   const isVideo = att.content_type?.startsWith("video/");
+  const isPdf = isPdfAttachment(att.content_type);
+
+  async function openPdf(): Promise<void> {
+    try {
+      await openAssrAttachment(att.r2_key, att.content_type);
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Could not open the file");
+    }
+  }
 
   useEffect(() => {
     if (!isImage) return;
@@ -8025,10 +8037,10 @@ function AttachmentThumb({ att, onClick, onVisibilityChange, onArchive }: {
     )}>
       <button
         type="button"
-        onClick={onClick}
-        disabled={(!isImage && !isVideo) || !onClick}
+        onClick={isPdf ? () => void openPdf() : onClick}
+        disabled={isPdf ? false : (!isImage && !isVideo) || !onClick}
         className="block w-full text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-        aria-label={isImage ? "View full-size photo" : isVideo ? "Play video" : att.category}
+        aria-label={isImage ? "View full-size photo" : isVideo ? "Play video" : isPdf ? `Open ${att.file_name || "PDF"}` : att.category}
       >
         {isImage && url ? (
           <img
@@ -8043,6 +8055,11 @@ function AttachmentThumb({ att, onClick, onVisibilityChange, onArchive }: {
             </span>
             <span className="text-[9px] font-semibold uppercase tracking-wider">Video</span>
           </div>
+        ) : isPdf ? (
+          <div className="flex h-20 w-full flex-col items-center justify-center gap-1 text-ink-muted transition-colors group-hover:bg-accent/5 group-hover:text-ink">
+            <FileText size={20} />
+            <span className="text-[9px] font-semibold uppercase tracking-wider">PDF</span>
+          </div>
         ) : (
           <div className="flex h-20 items-center justify-center text-[11px] text-ink-muted">
             File
@@ -8050,7 +8067,7 @@ function AttachmentThumb({ att, onClick, onVisibilityChange, onArchive }: {
         )}
       </button>
       <div className="flex items-center justify-between px-1.5 py-1 text-[9px] text-ink-muted">
-        <span className="truncate">{att.category}</span>
+        <span className="truncate" title={att.file_name ?? undefined}>{isImage || isVideo ? att.category : att.file_name || att.category}</span>
         {isCustomer && <span className="text-accent font-semibold">CUSTOMER</span>}
       </div>
       <div className="absolute right-0.5 top-0.5 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
