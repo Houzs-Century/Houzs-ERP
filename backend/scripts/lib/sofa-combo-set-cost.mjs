@@ -31,6 +31,10 @@ import { planComboCostSpread } from '../../src/scm/lib/sofa-combo-cost-spread.ts
 export const SIBLING_TOLERANCE = 0.3;
 
 const bmOf = (itemCode) => splitSofaCode(String(itemCode ?? '')).baseModel.toUpperCase();
+
+/** A date or timestamp column as YYYY-MM-DD. postgres.js hands both back as a
+ *  Date; String(Date) would read "Tue Jul 27" and break every date compare. */
+export const isoDay = (v) => (v instanceof Date ? v.toISOString().slice(0, 10) : String(v ?? '').slice(0, 10));
 const isSofa = (l) => String(l.item_group ?? '').toLowerCase() === 'sofa';
 const qtyOf = (l) => Math.max(1, Number(l.qty) || 1);
 
@@ -69,7 +73,7 @@ export function costCombos(comboRows) {
     .map((r) => ({
       id: r.id, baseModel: r.base_model, modules: r.modules, tier: r.tier, customerId: null,
       pricesByHeight: r.prices_by_height ?? {}, label: r.label ?? null,
-      effectiveFrom: String(r.effective_from).slice(0, 10), createdAt: r.created_at ? new Date(r.created_at).toISOString() : '',
+      effectiveFrom: isoDay(r.effective_from), createdAt: r.created_at ? new Date(r.created_at).toISOString() : '',
       deletedAt: null,
     }));
 }

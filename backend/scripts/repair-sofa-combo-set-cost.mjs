@@ -52,7 +52,7 @@ import postgres from 'postgres';
 import { isOnePieceSetCombo } from '../src/scm/shared/sofa-combo-pricing.ts';
 import { todayMyt } from '../src/scm/lib/my-time.ts';
 import {
-  costCombos, listCostOf, onePieceSetPrices, repairOrder, setPriceOn,
+  costCombos, isoDay, listCostOf, onePieceSetPrices, repairOrder, setPriceOn,
 } from './lib/sofa-combo-set-cost.mjs';
 
 const DSN = process.env.DATABASE_URL;
@@ -93,13 +93,13 @@ async function readState(db) {
   const orders = docs.length ? await db`
     SELECT doc_no, so_date, status, venue, local_total_sen, total_cost_sen, total_margin_sen, service_cost_sen,
            mattress_sofa_cost_sen, mattress_sofa_sen, bedframe_sen, accessories_sen, others_sen
-      FROM scm.mfg_sales_orders WHERE company_id = ${CO} AND doc_no = ANY(${docs}) ORDER BY doc_no` : [];
+      FROM scm.mfg_sales_orders WHERE company_id = ${CO} AND doc_no = ANY(${docs}::text[]) ORDER BY doc_no` : [];
   const lines = docs.length ? await db`
     SELECT id::text, doc_no, item_code, item_group, qty, unit_price_sen, total_sen, unit_cost_sen, line_cost_sen, variants, cancelled
-      FROM scm.mfg_sales_order_items WHERE company_id = ${CO} AND doc_no = ANY(${docs}) ORDER BY doc_no, id` : [];
+      FROM scm.mfg_sales_order_items WHERE company_id = ${CO} AND doc_no = ANY(${docs}::text[]) ORDER BY doc_no, id` : [];
   const codes = [...new Set(lines.map((l) => l.item_code))];
   const products = codes.length ? await db`
-    SELECT code, seat_height_prices FROM scm.mfg_products WHERE company_id = ${CO} AND code = ANY(${codes})` : [];
+    SELECT code, seat_height_prices FROM scm.mfg_products WHERE company_id = ${CO} AND code = ANY(${codes}::text[])` : [];
   const fabrics = await db`SELECT fabric_code, sofa_price_tier, price_tier FROM scm.fabric_trackings WHERE company_id = ${CO}`;
   return { combos, setPrices, orders, lines, products, fabrics };
 }
@@ -127,7 +127,7 @@ async function main() {
   for (const c of retire) {
     const cost = Object.entries(c.prices_by_height ?? {}).filter(([, v]) => typeof v === 'number').map(([h, v]) => `${h}=${rm(v)}`).join(' ');
     const sell = Object.entries(c.selling_prices_by_height ?? {}).filter(([, v]) => typeof v === 'number').map(([h, v]) => `${h}=${rm(v)}`).join(' ');
-    note(`  ${c.supplier_id ? `[${c.supplier}]` : '[master]'} ${c.base_model} [${slots(c.modules)}] ${c.tier ?? 'any tier'}  cost ${cost || '-'}  selling ${sell || '-'}  created ${new Date(c.created_at).toISOString().slice(0, 10)}  id ${c.id}`);
+    note(`  ${c.supplier_id ? `[${c.supplier}]` : '[master]'} ${c.base_model} [${slots(c.modules)}] ${c.tier ?? 'any tier'}  cost ${cost || '-'}  selling ${sell || '-'}  created ${isoDay(c.created_at)}  id ${c.id}`);
   }
 
   const plans = planAll(state);
@@ -142,7 +142,7 @@ async function main() {
     const costBefore = Number(o.total_cost_sen) - Number(o.service_cost_sen || 0);
     const costAfter = Number(r.header.total_cost_sen) - Number(o.service_cost_sen || 0);
     if (!SKIP.has(o.doc_no)) { goods += g; before += costBefore; after += costAfter; }
-    note(`  ${o.doc_no}  ${String(o.so_date).slice(0, 10)}  ${o.status}  ${o.venue ?? ''}${SKIP.has(o.doc_no) ? '  (SKIPPED: SKIP_DOCS)' : ''}`);
+    note(`  ${o.doc_no}  ${isoDay(o.so_date)}  ${o.status}  ${o.venue ?? ''}${SKIP.has(o.doc_no) ? '  (SKIPPED: SKIP_DOCS)' : ''}`);
     note(`      goods ${rm(g)}   cost ${rm(costBefore)} -> ${rm(costAfter)}   margin ${pct(g - costBefore, g)} -> ${pct(g - costAfter, g)}`);
     for (const c of r.changes) note(`      ${c.item_code.padEnd(24)} ${rm(c.from)} -> ${rm(c.to)}  (${c.how})  line ${c.id}`);
   }
@@ -207,9 +207,9 @@ async function main() {
     (leftShapes ? bad : note)(`  live wrong-shaped combo rows: ${leftShapes}`);
     const docs = applied.map((p) => p.order.doc_no);
     if (docs.length) {
-      const heads = await check`SELECT doc_no, total_cost_sen, mattress_sofa_cost_sen FROM scm.mfg_sales_orders WHERE company_id = ${CO} AND doc_no = ANY(${docs})`;
+      const heads = await check`SELECT doc_no, total_cost_sen, mattress_sofa_cost_sen FROM scm.mfg_sales_orders WHERE company_id = ${CO} AND doc_no = ANY(${docs}::text[])`;
       const ls = await check`SELECT id::text, doc_no, item_code, item_group, qty, total_sen, line_cost_sen, line_margin_sen, variants, cancelled
-                               FROM scm.mfg_sales_order_items WHERE company_id = ${CO} AND doc_no = ANY(${docs})`;
+                               FROM scm.mfg_sales_order_items WHERE company_id = ${CO} AND doc_no = ANY(${docs}::text[])`;
       const setPrices = onePieceSetPrices(await check`SELECT id::text, base_model, modules, prices_by_height, selling_prices_by_height FROM scm.sofa_combo_pricing WHERE company_id = ${CO}`);
       let wrong = 0;
       for (const h of heads) {

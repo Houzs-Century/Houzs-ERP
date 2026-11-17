@@ -67,6 +67,21 @@ describe('finding a set price on one piece', () => {
   });
 });
 
+describe('rows as the database driver returns them', () => {
+  it('reads date columns that arrive as Date objects, and big numbers that arrive as strings', () => {
+    const fromDriver = COMBOS.map((r) => ({ ...r, effective_from: new Date(`${r.effective_from}T00:00:00Z`), created_at: new Date(r.created_at) }));
+    const combos = costCombos(fromDriver);
+    expect(combos.map((c: Row) => c.effectiveFrom).sort()).toEqual(['2026-10-27', '2026-11-05']);
+    const v = { seatHeight: '32', fabricCode: 'EZ-002', buildKey: 'build-1' };
+    const lines = [line('BOAAT-1A(P)(RHF)', 220000, 155750, v), line('BOAAT-1A(P)(LHF)', 220000, 155750, v)]
+      .map((l) => ({ ...l, line_cost_sen: String(l.line_cost_sen), unit_price_sen: String(l.unit_price_sen), qty: '1' }));
+    const head = { ...order('2990-SO-2610-046', lines.map((l) => ({ ...l, line_cost_sen: Number(l.line_cost_sen) })), 311500) };
+    const r = repairOrder({ ...head, total_cost_sen: String(head.total_cost_sen) }, lines, { ...ctx, combos, setPrices: onePieceSetPrices(fromDriver) }) as Row;
+    expect(r.status).toBe('repair');
+    expect(r.header.total_cost_sen).toBe(180000);
+  });
+});
+
 describe('re-costing the real orders', () => {
   it('the 2990-SO-2610-057 shape, LOTTI 2A + L: the 2A gets its build sibling\'s share back', () => {
     const v = { seatHeight: '30', fabricCode: 'HG1313-02', buildKey: 'build-1' };
