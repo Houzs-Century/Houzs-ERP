@@ -374,9 +374,10 @@ trips.get('/day', async (c) => {
   const dpByStopId = new Map<string, Record<string, unknown>>();
   {
     const stopIds = rawStops.map((s) => s.id);
-    const { data: dpRows } = await chunkIn<Record<string, unknown>>(stopIds, (batch, lo, hi) => scopeToAllowedCompanies(
+    const { data: dpRows, error: dpErr } = await chunkIn<Record<string, unknown>>(stopIds, (batch, lo, hi) => scopeToAllowedCompanies(
       sb.from('dp_orders').select('id, trip_stop_id, address1, address2, address3, address4, city, postcode, state').in('trip_stop_id', batch).order('id'), c,
     ).range(lo, hi));
+    if (dpErr) return c.json({ error: 'load_failed', reason: dpErr.message }, 500);
     await fillDpRowsPostcode(sb, dpRows);
     for (const d of dpRows) {
       const sid = dual<string | null>(d, 'trip_stop_id');

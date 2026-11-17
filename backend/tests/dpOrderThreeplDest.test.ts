@@ -73,6 +73,18 @@ describe('POST /dp-orders — TRANSFER to an outsourced (3PL) warehouse', () => 
     expect(insert.address1).toBe('No 3, Jalan Perdagangan, Johor Bahru');
   });
 
+  // Owner 2026-11-17: every DP job carries Postcode + City + State — the 3PL's
+  // own columns (mig 20261117T2000) reach the job.
+  test('carries the 3PL postcode, city and state onto the job', async () => {
+    const { a, calls } = app({
+      code: '3PL-003', name: 'MSJ TRANSPORT SDN BHD', contact_name: null, contact_phone: null, office_phone: null,
+      address: 'No 3, Jalan Perdagangan', postcode: '81200', city: 'Johor Bahru', state: 'Johor',
+    });
+    expect((await send(a, { jobType: 'TRANSFER', threeplCompanyId: THREEPL })).status).toBe(201);
+    const insert = calls.find((x) => x.op === 'insert')?.payload as Record<string, unknown>;
+    expect([insert.postcode, insert.city, insert.state]).toEqual(['81200', 'Johor Bahru', 'Johor']);
+  });
+
   test('a 3PL destination with no address on file is refused — nothing is inserted', async () => {
     const { a, calls } = app({
       code: '3PL-009', name: 'NO ADDRESS CARRIER',

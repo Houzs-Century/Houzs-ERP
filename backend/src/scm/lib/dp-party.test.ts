@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   partyTypeFor, emptySnapshot,
-  snapshotFromWarehouse, snapshotFromThreepl, snapshotFromSavedLocation,
+  snapshotFromWarehouse, snapshotFromThreepl, snapshotFromSavedLocation, snapshotFromProject,
   snapshotFromWorkshop, snapshotFromWorkshopName,
   type DpJobType,
 } from './dp-party';
@@ -91,6 +91,32 @@ describe('snapshotFromThreepl — an outsourced warehouse destination', () => {
 
   it('falls back to the code for a carrier with no name', () => {
     expect(snapshotFromThreepl({ ...row, name: '   ' }).party_name).toBe('3PL-003');
+  });
+
+  // Owner 2026-11-17: every DP job carries Postcode + City + State — a TRANSFER
+  // to a 3PL takes them from the carrier's own columns (mig 20261117T2000).
+  it('carries the postcode, city and state picked on the 3PL form', () => {
+    const snap = snapshotFromThreepl({ ...row, postcode: '81200', city: 'Johor Bahru', state: 'Johor' });
+    expect([snap.postcode, snap.city, snap.state]).toEqual(['81200', 'Johor Bahru', 'Johor']);
+  });
+});
+
+describe('snapshotFromProject — SETUP / DISMANTLE at the venue the project picked', () => {
+  const proj = { venue: 'Sunway Pyramid', venue_address: 'Sunway Pyramid Convention Centre', organizer: 'Org', state: 'Selangor' };
+
+  it('takes postcode and city from the joined venue master row', () => {
+    const snap = snapshotFromProject({ ...proj, venue_postcode: '47500', venue_city: 'Subang Jaya', venue_state: 'Selangor' }, null);
+    expect([snap.postcode, snap.city, snap.state]).toEqual(['47500', 'Subang Jaya', 'Selangor']);
+  });
+
+  it("keeps the project's own state; the venue's fills only a blank one", () => {
+    expect(snapshotFromProject({ ...proj, venue_state: 'Johor' }, null).state).toBe('Selangor');
+    expect(snapshotFromProject({ ...proj, state: '', venue_state: 'Johor' }, null).state).toBe('Johor');
+  });
+
+  it('a project whose venue is not in the master still snapshots, with no postcode', () => {
+    const snap = snapshotFromProject(proj, null);
+    expect([snap.postcode, snap.city]).toEqual([null, null]);
   });
 });
 
