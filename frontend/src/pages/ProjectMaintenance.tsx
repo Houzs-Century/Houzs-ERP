@@ -15,6 +15,9 @@ import { clearBrandLogoCache } from "../lib/branding";
 import { shareLinkMenuItems } from "./project-maintenance/shareLinks";
 import { VenueManagerRow } from "./project-maintenance/VenueManagerRow";
 import { OrganizerManagerRow } from "./project-maintenance/OrganizerManagerRow";
+import { ContractorManagerRow } from "./project-maintenance/ContractorManagerRow";
+import { BrandManagerRow } from "./project-maintenance/BrandManagerRow";
+import { EventTypeManagerRow } from "./project-maintenance/EventTypeManagerRow";
 import {
   useLocalities,
   distinctCountries,
@@ -369,6 +372,15 @@ function ContractorManager() {
     }
   }
 
+  async function patch(id: number, body: Record<string, unknown>) {
+    try {
+      await api.patch(`/api/projects/contractors/${id}`, body);
+      toast.success("Contractor updated");
+      q.reload();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Something went wrong. Please try again.");
+    }
+  }
 
   const rows = q.data?.data ?? [];
   return (
@@ -404,24 +416,17 @@ function ContractorManager() {
           <li className="px-3 py-3 text-[11.5px] text-ink-muted">No contractors yet.</li>
         )}
         {(expanded ? rows : rows.slice(0, PICKER_PREVIEW_ROWS)).map((o) => (
-          <li
+          <ContractorManagerRow
             key={o.id}
-            className="flex items-center justify-between gap-3 px-3 py-2"
-          >
-            <span className="flex-1 text-[13px] font-medium text-ink">{o.name}</span>
-            <RowActionsMenu
-              items={[
-                ...shareLinkMenuItems({ kind: "contractor", row: o, reload: () => q.reload() }, toast, dialog),
-                {
-                  type: "action",
-                  icon: Trash2,
-                  label: "Remove",
-                  danger: true,
-                  onClick: () => remove(o),
-                },
-              ]}
-            />
-          </li>
+            o={o}
+            shareItems={shareLinkMenuItems(
+              { kind: "contractor", row: o, reload: () => q.reload() },
+              toast,
+              dialog
+            )}
+            onPatch={(id, body) => void patch(id, body)}
+            onRemove={() => void remove(o)}
+          />
         ))}
       </ul>
       <ExpandToggle
@@ -1756,92 +1761,37 @@ function BrandManager() {
           const isDragging = reorder.isDragging(b.id);
           const isDropTarget = reorder.isDropTarget(b.id);
           return (
-          <li
+          <BrandManagerRow
             key={b.id}
-            {...handlers}
-            className={cn(
-              "flex flex-wrap items-center gap-2 px-3 py-2 transition-colors",
-              // Owner 2026-07-23: 50% fade made the 3-dots look disabled and
-              // nobody could tell a hidden brand could be re-shown. Softer.
-              !b.active && "opacity-75",
-              isDragging && "opacity-40",
-              isDropTarget && "bg-accent-soft/40"
-            )}
-          >
-            {/* Drag + arrow controls — replaces the old sort_order
-                number input for visual consistency with the
-                checklist editor. */}
-            <div className="flex items-center gap-0.5 text-ink-muted">
-              <span
-                className="cursor-grab rounded p-1 hover:bg-bg/70 active:cursor-grabbing"
-                title="Drag to reorder"
-                aria-label="Drag handle"
-              >
-                <GripVertical size={14} />
-              </span>
-              <button
-                type="button"
-                onClick={() => reorder.moveBy(idx, -1)}
-                disabled={idx === 0}
-                title="Move up"
-                aria-label="Move up"
-                className="rounded p-1 hover:bg-bg/70 hover:text-ink disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
-              >
-                <ChevronUp size={14} />
-              </button>
-              <button
-                type="button"
-                onClick={() => reorder.moveBy(idx, 1)}
-                disabled={idx === reorder.view.length - 1}
-                title="Move down"
-                aria-label="Move down"
-                className="rounded p-1 hover:bg-bg/70 hover:text-ink disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
-              >
-                <ChevronDown size={14} />
-              </button>
-            </div>
-            <input
-              defaultValue={b.name}
-              key={`name-${b.id}-${b.name}`}
-              onBlur={(e) => {
-                const v = e.target.value.trim();
-                if (v && v !== b.name) patch(b, { name: v });
-              }}
-              className="flex-1 min-w-[140px] h-8 rounded-md border border-transparent bg-transparent px-2 text-[13px] font-medium text-ink hover:border-border focus:border-primary focus:bg-surface focus:ring-1 focus:ring-primary/20 focus:outline-none"
-            />
-            {/* Brand logo (owner 2026-07) — prints on SCM Sales Order PDFs
-                in place of the company letterhead when the SO resolves to
-                this brand. */}
-            <BrandLogoCell brand={b} onChanged={() => q.reload()} />
-            <span
-              className={cn(
-                "rounded px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider",
-                b.active ? "bg-synced/15 text-synced" : "bg-bg text-ink-muted"
-              )}
-            >
-              {b.active ? "Active" : "Hidden"}
-            </span>
-            <RowActionsMenu
-              indicator={!b.active}
-              items={[
-                {
-                  type: "toggle",
-                  icon: b.active ? Eye : EyeOff,
-                  label: b.active ? "Hide from picker" : "Show in picker",
-                  active: !!b.active,
-                  onClick: () => patch(b, { active: !b.active }),
-                },
-                ...shareLinkMenuItems({ kind: "brand", row: b }, toast, dialog),
-                {
-                  type: "action",
-                  icon: Trash2,
-                  label: "Delete permanently",
-                  danger: true,
-                  onClick: () => removePermanently(b),
-                },
-              ]}
-            />
-          </li>
+            b={b}
+            active={!!b.active}
+            logo={<BrandLogoCell brand={b} onChanged={() => q.reload()} />}
+            handlers={handlers}
+            isDragging={isDragging}
+            isDropTarget={isDropTarget}
+            isFirst={idx === 0}
+            isLast={idx === reorder.view.length - 1}
+            onMoveUp={() => reorder.moveBy(idx, -1)}
+            onMoveDown={() => reorder.moveBy(idx, 1)}
+            onPatch={(_id, body) => void patch(b, body as { name?: string })}
+            menuItems={[
+              {
+                type: "toggle",
+                icon: b.active ? Eye : EyeOff,
+                label: b.active ? "Hide from picker" : "Show in picker",
+                active: !!b.active,
+                onClick: () => patch(b, { active: !b.active }),
+              },
+              ...shareLinkMenuItems({ kind: "brand", row: b }, toast, dialog),
+              {
+                type: "action",
+                icon: Trash2,
+                label: "Delete permanently",
+                danger: true,
+                onClick: () => removePermanently(b),
+              },
+            ]}
+          />
           );
         })}
       </ul>
@@ -1967,87 +1917,35 @@ function EventTypeManager() {
           const isDragging = reorder.isDragging(t.id);
           const isDropTarget = reorder.isDropTarget(t.id);
           return (
-            <li
+            <EventTypeManagerRow
               key={t.id}
-              {...handlers}
-              className={cn(
-                "flex flex-wrap items-center gap-2 px-3 py-2 transition-colors",
-                !active && "opacity-50",
-                isDragging && "opacity-40",
-                isDropTarget && "bg-accent-soft/40"
-              )}
-            >
-              {/* Drag + arrow controls — replaces the old sort_order
-                  number input. */}
-              <div className="flex items-center gap-0.5 text-ink-muted">
-                <span
-                  className="cursor-grab rounded p-1 hover:bg-bg/70 active:cursor-grabbing"
-                  title="Drag to reorder"
-                  aria-label="Drag handle"
-                >
-                  <GripVertical size={14} />
-                </span>
-                <button
-                  type="button"
-                  onClick={() => reorder.moveBy(idx, -1)}
-                  disabled={idx === 0}
-                  title="Move up"
-                  aria-label="Move up"
-                  className="rounded p-1 hover:bg-bg/70 hover:text-ink disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
-                >
-                  <ChevronUp size={14} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => reorder.moveBy(idx, 1)}
-                  disabled={idx === reorder.view.length - 1}
-                  title="Move down"
-                  aria-label="Move down"
-                  className="rounded p-1 hover:bg-bg/70 hover:text-ink disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
-                >
-                  <ChevronDown size={14} />
-                </button>
-              </div>
-              <input
-                defaultValue={t.name}
-                key={`name-${t.id}-${t.name}`}
-                onBlur={(e) => {
-                  const v = e.target.value.trim();
-                  if (v && v !== t.name) patch(t, { name: v });
-                }}
-                className="flex-1 min-w-[160px] h-8 rounded-md border border-transparent bg-transparent px-2 text-[13px] font-medium text-ink hover:border-border focus:border-primary focus:bg-surface focus:ring-1 focus:ring-primary/20 focus:outline-none"
-              />
-              {/* Slug hidden (Houzs 2026-06-24) — owner: the tiny gray machine
-                  code next to each name is unnecessary clutter + misaligned.
-                  Slug stays the stable machine value; just no longer shown. */}
-              <span
-                className={cn(
-                  "rounded px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider",
-                  active ? "bg-synced/15 text-synced" : "bg-bg text-ink-muted"
-                )}
-              >
-                {active ? "Active" : "Hidden"}
-              </span>
-              <RowActionsMenu
-                indicator={!active}
-                items={[
-                  {
-                    type: "toggle",
-                    icon: active ? Eye : EyeOff,
-                    label: active ? "Active" : "Hidden",
-                    active,
-                    onClick: () => patch(t, { active: !active }),
-                  },
-                  {
-                    type: "action",
-                    icon: Trash2,
-                    label: "Hide from picker",
-                    danger: true,
-                    onClick: () => remove(t),
-                  },
-                ]}
-              />
-            </li>
+              t={t}
+              active={active}
+              handlers={handlers}
+              isDragging={isDragging}
+              isDropTarget={isDropTarget}
+              isFirst={idx === 0}
+              isLast={idx === reorder.view.length - 1}
+              onMoveUp={() => reorder.moveBy(idx, -1)}
+              onMoveDown={() => reorder.moveBy(idx, 1)}
+              onPatch={(_id, body) => void patch(t, body)}
+              menuItems={[
+                {
+                  type: "toggle",
+                  icon: active ? Eye : EyeOff,
+                  label: active ? "Active" : "Hidden",
+                  active,
+                  onClick: () => patch(t, { active: !active }),
+                },
+                {
+                  type: "action",
+                  icon: Trash2,
+                  label: "Hide from picker",
+                  danger: true,
+                  onClick: () => remove(t),
+                },
+              ]}
+            />
           );
         })}
       </ul>
