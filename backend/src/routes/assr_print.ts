@@ -1050,6 +1050,10 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     body.sup .rc-l2 { font-size: 8.5pt; margin-top: 0; }
     body.sup .sup-note { margin-top: 3mm; padding: 2mm 3mm; background: #f3f3f1; font-size: 8.8pt; color: #4a4a4a; }
     body.sup .page-two { break-before: page; page-break-before: always; }
+    /* Page 1 that runs past one sheet would leave the rest of that sheet blank
+       before the forced break (HC-0234), so the photos follow straight on. */
+    body.sup.page-one-overflows .page-two { break-before: auto; page-break-before: auto; margin-top: 3.5mm; }
+    body.sup .page-two > .bar:first-child { break-after: avoid; page-break-after: avoid; }
     body.sup .pgrid { padding: 2.4mm; gap: 2.4mm; break-inside: auto; }
     body.sup .pgrid .ph { break-inside: avoid; }
     body.sup .signoff .panel { padding: 3.5mm 4.5mm 4mm; display: flex; flex-direction: column; min-height: 72mm; }
@@ -1415,7 +1419,25 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     </td></tr></tfoot>
 
   </table>
-</body>
+${isSupplier ? `  <script>
+    (function () {
+      var sheet = document.querySelector("table.sheet");
+      var pageTwo = document.querySelector(".page-two");
+      if (!sheet || !pageTwo) return;
+      var pixelsPerMillimetre = 96 / 25.4;
+      var printableHeightMillimetres = 297 - 14 - 12 - 3;
+      window.addEventListener("beforeprint", function () {
+        var screenWidth = sheet.style.width;
+        sheet.style.width = "182mm";
+        var headerHeight = sheet.tHead.getBoundingClientRect().height;
+        var pageOneHeight = pageTwo.getBoundingClientRect().top - sheet.tBodies[0].getBoundingClientRect().top;
+        sheet.style.width = screenWidth;
+        var pageOneMillimetres = (headerHeight + pageOneHeight) / pixelsPerMillimetre;
+        document.body.classList.toggle("page-one-overflows", pageOneMillimetres > printableHeightMillimetres);
+      });
+    })();
+  </script>
+` : ""}</body>
 </html>`;
 
   return new Response(html, {
