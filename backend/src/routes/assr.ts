@@ -46,6 +46,7 @@ import {
   companyCodeMap,
   type CompanyScopeCtx,
 } from "../scm/lib/companyScope";
+import { officeCreateFromDeliveryIssue } from "../scm/lib/delivery-issue";
 import { hasPermission } from "../services/permissions";
 import { subtreeUserIds } from "../services/orgScope";
 /* Row-level case visibility + the creditor strip. Lives in services/ so the
@@ -1681,6 +1682,8 @@ app.post(
     service_category?: string | string[] | null;
     assigned_to?: number | null;
   }>();
+  const fromIssue = await officeCreateFromDeliveryIssue(c, (body as Record<string, unknown>).delivery_issue_id, Number((c as any).get?.("userId")) || null);
+  if (fromIssue) return c.json(fromIssue.body, fromIssue.status);
 
   // Owner ruling (2026-07): Issue Category is REQUIRED and must be enforced
   // server-side, not only by the FE button gate — the server previously

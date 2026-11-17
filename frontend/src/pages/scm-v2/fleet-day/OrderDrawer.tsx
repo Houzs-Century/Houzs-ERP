@@ -12,7 +12,8 @@ import { DoProofOfDeliveryCard, type DoPodFields } from '../DoProofOfDeliveryCar
 import type { LorryRunVM, DocRowVM } from './vm';
 import { issueKeysOf } from './AllOrders';
 import { DeliveryIssuesCard } from '../../../components/scm-v2/DeliveryIssuesCard';
-import { issuesForRow, runKeysOf, useRunDeliveryIssues } from '../../../vendor/scm/lib/delivery-issue-queries';
+import { issuesForRow, runKeysOf, SERVICE_CASE_CREATE_PERMS, useRunDeliveryIssues } from '../../../vendor/scm/lib/delivery-issue-queries';
+import { useAuth } from '../../../auth/AuthContext';
 
 /** Dispatch / customer-service remarks thread for one order (phase 3). */
 function RemarksSection({ soDocNo }: { soDocNo: string }) {
@@ -176,6 +177,7 @@ export function OrderDrawer({
   salespersonName: string;
   onClose: () => void;
 }) {
+  const { canAny } = useAuth();
   const pod = useDoPod(doc?.latestLiveDoId ?? null);
   const pill = doc ? STATUS_PILL[doc.status] : null;
   const issueKeys = doc ? issueKeysOf(doc) : null;
@@ -239,7 +241,7 @@ export function OrderDrawer({
             </div>
 
             {/* What the crew reported at POD ("Delivered with issue") + its Service Case. */}
-            <DeliveryIssuesCard issues={issues} showDo />
+            <DeliveryIssuesCard issues={issues} showDo canCreateCase={canAny(SERVICE_CASE_CREATE_PERMS)} />
 
             {/* change lorry (phase 3b) — SO deliveries only; a non-SO job is
                 scheduled + crewed in its own module (DP / PMS / ASSR), not moved

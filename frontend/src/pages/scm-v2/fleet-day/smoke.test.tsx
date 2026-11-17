@@ -18,6 +18,13 @@ import { CrewModal } from './CrewModal';
 import { EMPTY_FILTERS } from './vm';
 import type { DayStats } from '../../../vendor/scm/lib/fleet-day-cards';
 
+// OrderDrawer reads useAuth for the "Create service case" gate; this smoke test
+// mounts bare (no AuthProvider), so stub the hook. Other exports stay real.
+vi.mock('../../../auth/AuthContext', async (orig) => ({
+  ...(await orig<typeof import('../../../auth/AuthContext')>()),
+  useAuth: () => ({ can: () => false, canAny: () => false, canAll: () => false, pageAccess: () => 'none' }),
+}));
+
 function wrap(ui: ReactElement) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
