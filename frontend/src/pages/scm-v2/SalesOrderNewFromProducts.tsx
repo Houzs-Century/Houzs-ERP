@@ -66,6 +66,8 @@ import { useBranding } from "../../hooks/useBranding";
 import { PhoneInput } from "../../vendor/scm/components/PhoneInput";
 import { FormTouchScope } from "../../components/FormTouchScope";
 import { useFormTouched, useLeaveGuard } from "../../hooks/useLeaveGuard";
+import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
+import { passesSoffioReminder } from "../../vendor/scm/lib/soffio-reminder";
 
 // ── Types & constants ───────────────────────────────────────────────────────
 
@@ -255,6 +257,7 @@ export function SalesOrderNewFromProducts() {
   // Submit
   const [postError, setPostError] = useState<string | null>(null);
   const notify = useNotify();
+  const askConfirm = useConfirm();
   const customerValid = customer.name.trim() && customer.phone.trim();
   const canSubmit = customerValid && cartLines.length > 0 && !create.isPending;
 
@@ -315,6 +318,7 @@ export function SalesOrderNewFromProducts() {
       await notify({ title: saveProblemsTitle(problems.length), body: <SaveProblemsList problems={problems} />, tone: "error" });
       return;
     }
+    if (!landsDraft && !(await passesSoffioReminder(askConfirm, items.map((l) => l.itemCode)))) return;
 
     /* This flow carries no Processing Date and no variant editors by design
        ("enrich on the SO detail after save"), so nothing here can be
