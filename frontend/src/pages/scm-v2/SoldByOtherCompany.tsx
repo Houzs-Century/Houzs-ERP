@@ -86,6 +86,9 @@ const SoldByConfirm = ({ row, company, onCancel }: { row: SettlementRow; company
   );
 };
 
+/** The order typed when the line was booked ("Sold by 2990: 2990-SO-2611-017" → the order), or null. */
+export const soldByNoteOf = (notes: string | null): string | null => /^Sold by [^:]+: (.+)$/.exec(notes ?? '')?.[1] ?? null;
+
 /** What a line booked as another company's sale shows where a sale would be. */
 export const SoldByTag = ({ companyId }: { companyId: number }) => {
   const companies = useOtherCompanies();

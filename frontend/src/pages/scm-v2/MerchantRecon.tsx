@@ -37,7 +37,7 @@ import {
   type Watchlist, type Payout,
 } from './settlement-queries';
 import { bankFollowsText } from './bank-follows';
-import { SoldByButtons, SoldByTag } from './SoldByOtherCompany';
+import { SoldByButtons, SoldByTag, soldByNoteOf } from './SoldByOtherCompany';
 import { DataTable, type Column } from '../../components/DataTable';
 import { HeaderExportMenu } from '../../components/DataTableExportItems';
 import { writeLineExportFile, type TablePdfView } from '../../components/dataTableLineExport';
@@ -1051,6 +1051,12 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
                 <td className={grid.num}>{fmt(r.fee_sen)}</td>
                 <td className={grid.num}>{fmt(r.net_sen)}</td>
                 <td className={grid.seam}>
+                  {r.sold_by_company_id != null && (
+                    <div>
+                      <b><SoldByTag companyId={r.sold_by_company_id} /></b>
+                      {soldByNoteOf(r.notes) && <span className={grid.sub}> · {soldByNoteOf(r.notes)}</span>}
+                    </div>
+                  )}
                   {r.matched_with && (
                     <div className={grid.sub}>
                       with line {r.matched_with.lines.filter((g) => g.rowId !== r.id).map((g) => g.lineNo).join(', ')} · together {fmt(r.matched_with.grossSen)}
