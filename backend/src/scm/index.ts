@@ -80,6 +80,7 @@ import { deliveryOrderExports } from "./routes/delivery-order-exports";
 import { deliveryOrderScanToken } from "./routes/delivery-order-scan-token";
 import { deliveryOrderItemPhotos } from "./routes/delivery-order-item-photos";
 import { deliveryOrderPodAttempts } from "./routes/delivery-order-pod-attempts";
+import { deliveryOrderPodPhotos } from "./routes/delivery-order-pod-photos";
 import { salesInvoices } from "./routes/sales-invoices";
 import { salesInvoiceExports } from "./routes/sales-invoice-exports";
 import { deliveryReturns } from "./routes/delivery-returns";
@@ -570,6 +571,7 @@ scm.route("/delivery-orders-mfg", deliveryOrderExports);
 scm.route("/delivery-orders-mfg", doDeliveryIssues);
 // Earlier delivery attempts (POD kept by "Undo delivered"). routes/delivery-order-pod-attempts.ts.
 scm.route("/delivery-orders-mfg", deliveryOrderPodAttempts);
+scm.route("/delivery-orders-mfg", deliveryOrderPodPhotos);
 scm.route("/delivery-orders-mfg", deliveryOrdersMfg);
 // Ported 2026-06-20 — SI backend (skipped in the earlier sync; the vendored SI
 // pages 404'd on /sales-invoices). NEEDS scm.sales_invoice_payments +

@@ -175,6 +175,14 @@ describe('Complete claims the whole stop, once', () => {
     expect(tables.pending_slip_uploads!.filter((r) => r.status === 'promoted').map((r) => r.id).sort()).toEqual(['drv-a', 'hlp-b']);
   });
 
+  test('photos a linked Delivery Planning job filed on the DO first are kept: the POD merges, never replaces', async () => {
+    const tables = world();
+    tables.delivery_orders![0]!.pod_photo_keys = ['slips/2026/11/dp-job.jpg'];
+    expect((await complete(app(tables, 'driver'), ['slips/2026/11/drv-a.jpg'])).status).toBe(200);
+    expect(tables.delivery_orders![0]!.pod_photo_keys).toEqual(['slips/2026/11/dp-job.jpg', 'slips/2026/11/drv-a.jpg']);
+    expect(tables.delivery_orders![0]!.pod_r2_key).toBe('slips/2026/11/dp-job.jpg');
+  });
+
   test("another stop's photo by someone else is refused and nothing is delivered", async () => {
     const tables = world();
     const res = await complete(app(tables, 'driver'), ['slips/2026/11/oth-c.jpg']);
