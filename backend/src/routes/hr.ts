@@ -30,9 +30,9 @@ import { requireActiveCompanyId } from "../scm/lib/companyScope";
 import { todayMyt } from "../scm/lib/my-time";
 import { hasPermission } from "../services/permissions";
 import { audit } from "../services/audit";
-import { employeeInputProblem, nextEmpNo, parseEmployeeInput } from "../scm/shared/hr-employee";
+import { employeeInputProblem, nextEmpNo, parseEmployeeInput, type EmployeeInput } from "../scm/shared/hr-employee";
 import { DEFAULT_PAY_RULES, normalizePayRules, payRulesProblem, resolvePayRulesAsOf } from "../scm/shared/hr-pay-rules";
-import { employeeColumns, employeeDiff, rowToEmployee, salaryAsOf, type EmployeeOut, type EmployeeRow } from "./lib/hr-rules";
+import { employeeColumns, employeeDiff, planBulkImport, planBulkLink, rowToEmployee, salaryAsOf, type BulkAccount, type EmployeeOut, type EmployeeRow, type ImportRowIn } from "./lib/hr-rules";
 
 type Ctx = Context<{ Bindings: Env }>;
 type Db = ReturnType<typeof getDb>;
@@ -105,6 +105,26 @@ async function linkProblem(db: Db, companyId: number, userId: number | null, dep
   return null;
 }
 
+/** Insert one employee and its starting-salary row, the way POST /employees
+ *  does, so the bulk paths and the single add write identical shapes. Returns
+ *  the new id. The caller handles a unique-violation (a clash on Emp No or on
+ *  the ERP account link). */
+async function insertEmployeeWithSalary(db: Db, companyId: number, input: EmployeeInput, by: number, today: string): Promise<number> {
+  const [row] = await db
+    .insert(hr_employees)
+    .values({ ...employeeColumns(input), company_id: companyId, basic_salary_sen: input.basicSalarySen, created_by: by, updated_by: by })
+    .returning({ id: hr_employees.id });
+  await db.insert(hr_employee_salary_history).values({
+    company_id: companyId,
+    employee_id: row.id,
+    basic_salary_sen: input.basicSalarySen,
+    effective_from: input.joinDate || today,
+    note: "Starting salary",
+    created_by: by,
+  });
+  return row.id;
+}
+
 /* ── employees ─────────────────────────────────────────────────────────── */
 
 hr.get("/employees", async (c) => {
@@ -152,26 +172,136 @@ hr.post("/employees", async (c) => {
   const by = c.get("user").id;
   let id: number;
   try {
-    const [row] = await db
-      .insert(hr_employees)
-      .values({ ...employeeColumns(input), company_id: co.companyId, basic_salary_sen: input.basicSalarySen, created_by: by, updated_by: by })
-      .returning({ id: hr_employees.id });
-    id = row.id;
+    id = await insertEmployeeWithSalary(db, co.companyId, input, by, today);
   } catch (e) {
     if (isUniqueViolation(e)) return c.json({ error: "duplicate", message: `Employee No ${input.empNo} or that ERP account is already in use.` }, 409);
     throw e;
   }
-  await db.insert(hr_employee_salary_history).values({
-    company_id: co.companyId,
-    employee_id: id,
-    basic_salary_sen: input.basicSalarySen,
-    effective_from: input.joinDate,
-    note: "Starting salary",
-    created_by: by,
-  });
   await audit(c, { action: "hr.employee.create", entityType: "hr_employee", entityId: id, summary: `Added ${input.empNo} ${input.name}` });
   const [employee] = await loadEmployees(db, co.companyId, [id]);
   return c.json({ employee }, 201);
+});
+
+/* Bulk add from the ERP accounts that already exist (option 1). The accounts
+   carry the name / phone / department / position; HR fills salary and statutory
+   per person afterwards. Best-effort per account: a clash is reported as
+   skipped, not a failure, so the rest still go in. */
+hr.post("/employees/bulk-link", async (c) => {
+  if (!canManage(c)) return c.json(FORBIDDEN, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const body = (await c.req.json().catch(() => ({}))) as { userIds?: unknown; isOutsource?: unknown };
+  const userIds = Array.isArray(body.userIds) ? [...new Set(body.userIds.map(Number).filter((n) => Number.isInteger(n) && n > 0))] : [];
+  if (userIds.length === 0) return c.json({ error: "validation_failed", message: "Pick at least one ERP account." }, 400);
+  if (userIds.length > 500) return c.json({ error: "too_many", message: "Add at most 500 accounts at a time." }, 400);
+  const isOutsource = body.isOutsource === true;
+  const db = getDb(c.env);
+  const today = todayMyt();
+  const [accts, linked] = await Promise.all([
+    db
+      .select({ id: users.id, name: users.name, email: users.email, phone: users.phone, department_id: users.department_id, position: positions.name })
+      .from(users)
+      .leftJoin(positions, eq(positions.id, users.position_id))
+      .where(and(inArray(users.id, userIds), eq(users.status, "active"))),
+    db.select({ user_id: hr_employees.user_id, emp_no: hr_employees.emp_no }).from(hr_employees).where(eq(hr_employees.company_id, co.companyId)),
+  ]);
+  const byId = new Map(accts.map((a) => [a.id, a]));
+  const linkedUserIds = new Set(linked.filter((l) => l.user_id != null).map((l) => l.user_id as number));
+  const existingEmpNos = linked.map((l) => l.emp_no);
+  // Keep the order the accounts were chosen, and flag any that went inactive or
+  // vanished between the picker loading and this call.
+  const skipped: Array<{ userId: number; name: string; reason: string }> = [];
+  const ordered: BulkAccount[] = [];
+  for (const uid of userIds) {
+    const a = byId.get(uid);
+    if (!a) {
+      skipped.push({ userId: uid, name: `Account #${uid}`, reason: "the ERP account is not active or no longer exists" });
+      continue;
+    }
+    ordered.push({ userId: a.id, name: a.name, email: a.email, phone: a.phone, departmentId: a.department_id, position: a.position });
+  }
+  const plan = planBulkLink(ordered, linkedUserIds, existingEmpNos, isOutsource, today);
+  skipped.push(...plan.skipped);
+  const by = c.get("user").id;
+  const created: Array<{ id: number; empNo: string; name: string }> = [];
+  for (const { input } of plan.create) {
+    try {
+      const id = await insertEmployeeWithSalary(db, co.companyId, input, by, today);
+      created.push({ id, empNo: input.empNo, name: input.name });
+    } catch (e) {
+      if (isUniqueViolation(e)) {
+        skipped.push({ userId: input.userId ?? 0, name: input.name, reason: "already has an employee record" });
+        continue;
+      }
+      throw e;
+    }
+  }
+  if (created.length) {
+    await audit(c, {
+      action: "hr.employee.bulk_link",
+      entityType: "hr_employee",
+      entityId: co.companyId,
+      summary: `Added ${created.length} ${created.length === 1 ? "employee" : "employees"} from ERP accounts`,
+      meta: { created: created.map((r) => r.empNo), skipped: skipped.length },
+    });
+  }
+  return c.json({ created, skipped }, 201);
+});
+
+/* Bulk add from a spreadsheet (option 2). The browser maps the file to rows and
+   previews them; the server is the authority and re-checks every row, so the
+   result lists exactly what went in and what was refused and why. */
+hr.post("/employees/bulk-import", async (c) => {
+  if (!canManage(c)) return c.json(FORBIDDEN, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const body = (await c.req.json().catch(() => ({}))) as { rows?: unknown };
+  const rawRows = Array.isArray(body.rows) ? body.rows : [];
+  if (rawRows.length === 0) return c.json({ error: "validation_failed", message: "There were no rows to import." }, 400);
+  if (rawRows.length > 1000) return c.json({ error: "too_many", message: "Import at most 1000 rows at a time." }, 400);
+  const today = todayMyt();
+  const db = getDb(c.env);
+  const parsed: ImportRowIn[] = rawRows.map((r) => {
+    const rec = (r ?? {}) as Record<string, unknown>;
+    const input = parseEmployeeInput(rec, today);
+    if (!input.joinDate) input.joinDate = today;
+    const email = typeof rec.accountEmail === "string" ? rec.accountEmail.trim() : "";
+    return { input, accountEmail: email || null };
+  });
+  const [linked, activeUsers] = await Promise.all([
+    db.select({ user_id: hr_employees.user_id, emp_no: hr_employees.emp_no }).from(hr_employees).where(eq(hr_employees.company_id, co.companyId)),
+    db.select({ id: users.id, email: users.email }).from(users).where(eq(users.status, "active")),
+  ]);
+  const linkedUserIds = new Set(linked.filter((l) => l.user_id != null).map((l) => l.user_id as number));
+  const existingEmpNos = linked.map((l) => l.emp_no);
+  const userIdByEmail = new Map(activeUsers.filter((u) => u.email).map((u) => [u.email.toLowerCase(), u.id]));
+  const plan = planBulkImport(parsed, { existingEmpNos, linkedUserIds, userIdByEmail });
+  const by = c.get("user").id;
+  const created: Array<{ index: number; id: number; empNo: string; name: string }> = [];
+  const errors = [...plan.errors];
+  for (const { index, input } of plan.create) {
+    try {
+      const id = await insertEmployeeWithSalary(db, co.companyId, input, by, today);
+      created.push({ index, id, empNo: input.empNo, name: input.name });
+    } catch (e) {
+      if (isUniqueViolation(e)) {
+        errors.push({ index, message: `Employee No ${input.empNo} or that ERP account is already in use.` });
+        continue;
+      }
+      throw e;
+    }
+  }
+  errors.sort((a, b) => a.index - b.index);
+  if (created.length) {
+    await audit(c, {
+      action: "hr.employee.bulk_import",
+      entityType: "hr_employee",
+      entityId: co.companyId,
+      summary: `Imported ${created.length} ${created.length === 1 ? "employee" : "employees"}`,
+      meta: { created: created.map((r) => r.empNo), errors: errors.length },
+    });
+  }
+  return c.json({ created, errors }, 201);
 });
 
 hr.patch("/employees/:id", async (c) => {

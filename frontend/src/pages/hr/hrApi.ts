@@ -43,6 +43,25 @@ export const useEmployees = (): QueryState<{ employees: Employee[]; canManage: b
 export const useEmployeeOptions = (enabled: boolean): QueryState<EmployeeOptions> =>
   useQuery(`${HR}/employees/options`, () => api.get<EmployeeOptions>(`${HR}/employees/options`), [], { enabled });
 
+// Bulk add: from the existing ERP accounts, or from a spreadsheet. Both report
+// exactly what went in and what was left out and why.
+export type BulkLinkResult = {
+  created: { id: number; empNo: string; name: string }[];
+  skipped: { userId: number; name: string; reason: string }[];
+};
+export const bulkLinkEmployees = (userIds: number[], isOutsource: boolean): Promise<BulkLinkResult> =>
+  api.post<BulkLinkResult>(`${HR}/employees/bulk-link`, { userIds, isOutsource });
+
+/** One mapped import row on the wire: employee fields plus the optional ERP
+ *  account email to link by. Money is sen, same as every other write. */
+export type ImportEmployeeRow = Partial<EmployeeInput> & { accountEmail?: string | null };
+export type BulkImportResult = {
+  created: { index: number; id: number; empNo: string; name: string }[];
+  errors: { index: number; message: string }[];
+};
+export const bulkImportEmployees = (rows: ImportEmployeeRow[]): Promise<BulkImportResult> =>
+  api.post<BulkImportResult>(`${HR}/employees/bulk-import`, { rows });
+
 export const useSalaryHistory = (employeeId: number | null): QueryState<{ history: SalaryRow[] }> =>
   useQuery(`${HR}/employees/salary-history`, () => api.get<{ history: SalaryRow[] }>(`${HR}/employees/${employeeId}/salary-history`), [employeeId], {
     enabled: employeeId != null,
