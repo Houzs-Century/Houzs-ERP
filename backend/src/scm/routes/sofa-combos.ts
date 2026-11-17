@@ -33,7 +33,7 @@ import { canWriteScmConfig } from '../lib/houzs-perms';
 import { todayMyt } from '../lib/my-time';
 import { autoDeriveEnabled } from '../lib/auto-derive-cost';
 import { deriveMasterComboCostFromSuppliers, comboCostChanged, pickDearestSupplierCombo } from '../lib/derive-combo-cost';
-import { activeCompanyId, scopeToCompany } from '../lib/companyScope';
+import { activeCompanyId, scopeToCompany, NOT_THIS_COMPANY } from '../lib/companyScope';
 import { clearHeights, hasAnyPrice, mergeComboPrices, newestComboRow, type HeightPrices } from '../lib/sofa-combo-apply';
 
 export const sofaCombos = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -1011,6 +1011,8 @@ export const sofaComboRetireHandler = async (c: AppContext) => {
   const hit = live.rows.filter((r) =>
     wanted.has(JSON.stringify([r.base_model, comboSlotsKey(r.modules ?? [])]))
     && (supplierId === null || r.supplier_id === supplierId));
+  // Nothing of this company matched: say so, rather than "0 deleted" read as done.
+  if (hit.length === 0) return c.json(NOT_THIS_COMPANY, 404);
 
   const failed = await softDeleteRows(c, hit.map((r) => r.id));
   if (failed) return c.json({ error: 'delete_failed', reason: failed }, 500);

@@ -10,9 +10,13 @@
 //   GET    /          the company's presets, active and switched off, in order
 //   POST   /          add a preset (goes to the end of the list)
 //   PATCH  /:id       rename it, change its slots, switch it on or off
+//   DELETE /:id       delete it (owner 2026-11-17)
 //   POST   /reorder   set the order: { ids } lists every preset of the company
 //
-// Nothing is deleted: a preset is switched off (active = false).
+// A hard delete: nothing stores a preset's id. New combo copies the slots and
+// name onto sofa_combo_pricing rows, so a combo made from it keeps working.
+// (The preset_id of sofa-quick-presets.ts is a different, older list.)
+// The screen calls a preset a "combo" (owner 2026-11-17); the code keeps "preset".
 // Writes need the permission that edits combo pricing (canWriteScmConfig, as in
 // sofa-combos.ts). Mounted behind scmAreaGuard('scm.procurement.products').
 // ----------------------------------------------------------------------------
@@ -101,7 +105,7 @@ sofaComboPresets.post('/', async (c) => {
   const list = await companyPresets(c, co.companyId);
   if (!list.ok) return c.json({ error: 'fetch_failed', reason: list.reason }, 500);
   if (nameTaken(list.presets, parsed.data.name, null)) {
-    return c.json({ error: 'name_taken', reason: `A preset named ${parsed.data.name} already exists.` }, 409);
+    return c.json({ error: 'name_taken', reason: `A combo named ${parsed.data.name} already exists.` }, 409);
   }
   const sortOrder = list.presets.reduce((max, p) => Math.max(max, p.sortOrder + 1), 0);
   const { data, error } = await pg(c.get('supabase')).from('sofa_combo_presets')
@@ -127,7 +131,7 @@ sofaComboPresets.patch('/:id', async (c) => {
   const patch: Row = { updated_at: new Date().toISOString() };
   if (parsed.data.name !== undefined) {
     if (nameTaken(list.presets, parsed.data.name, id)) {
-      return c.json({ error: 'name_taken', reason: `A preset named ${parsed.data.name} already exists.` }, 409);
+      return c.json({ error: 'name_taken', reason: `A combo named ${parsed.data.name} already exists.` }, 409);
     }
     patch.name = parsed.data.name;
   }
@@ -145,6 +149,19 @@ sofaComboPresets.patch('/:id', async (c) => {
   return c.json({ preset: presetOut(data as Row) });
 });
 
+// ── DELETE /:id — delete it; another company's id is a 404. ─────────────────
+sofaComboPresets.delete('/:id', async (c) => {
+  if (!canWriteScmConfig(c)) return forbidden(c);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const { data, error } = await scopeToCompanyId(
+    pg(c.get('supabase')).from('sofa_combo_presets').delete().eq('id', c.req.param('id')), co.companyId,
+  ).select(COLS).maybeSingle();
+  if (error) return c.json({ error: 'delete_failed', reason: String(error.message) }, 500);
+  if (!data) return c.json(NOT_THIS_COMPANY, 404);
+  return c.json({ deleted: presetOut(data as Row).id });
+});
+
 // ── POST /reorder — set the order of every preset of the company. ────────────
 sofaComboPresets.post('/reorder', async (c) => {
   if (!canWriteScmConfig(c)) return forbidden(c);
@@ -159,7 +176,7 @@ sofaComboPresets.post('/reorder', async (c) => {
   const ids = parsed.data.ids;
   const own = new Set(list.presets.map((p) => p.id));
   if (new Set(ids).size !== ids.length || ids.length !== own.size || ids.some((id) => !own.has(id))) {
-    return c.json({ error: 'order_mismatch', reason: 'The list changed since you opened it. Close and open Presets again.' }, 409);
+    return c.json({ error: 'order_mismatch', reason: 'The list changed since you opened it. Close and open Combos again.' }, 409);
   }
   const now = new Date().toISOString();
   const sb = pg(c.get('supabase'));

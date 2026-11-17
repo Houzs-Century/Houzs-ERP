@@ -228,6 +228,13 @@ describe('sofa combo batch writes stay inside the company', () => {
     expect(t.sofa_combo_pricing.find((r) => r.id === 'b')?.deleted_at).toBeNull();
   });
 
+  it("retire of a combo only another company has is a 404 and touches nothing", async () => {
+    const t = { sofa_combo_pricing: [row('b', CO_B)] };
+    const res = await jsonPost(harness(t, CO_A).app, '/sofa-combos/retire', { items: [item], supplierId: null });
+    expect(res.status).toBe(404);
+    expect(t.sofa_combo_pricing.find((r) => r.id === 'b')?.deleted_at).toBeNull();
+  });
+
   it("recompose never moves the other company's combo", async () => {
     const t = { sofa_combo_pricing: [row('b', CO_B)] };
     const res = await jsonPost(harness(t, CO_A).app, '/sofa-combos/recompose', { baseModel: 'M1', from: item.modules, to: [['A']], supplierId: null });

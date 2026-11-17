@@ -1,4 +1,4 @@
-// New combo presets (Products > Combo Pricing > Presets), read and written on
+// New combo presets (Products > Combo Pricing > Combos; the screen says "combo"), read and written on
 // /sofa-combo-presets. Each write shows its failure (writeFailedAs); a caller
 // that awaits mutateAsync only decides whether its dialog stays open.
 
@@ -30,13 +30,17 @@ const usePresetWrite = <T,>(title: string, write: (body: T) => Promise<unknown>)
 };
 
 export const useCreateComboPreset = () =>
-  usePresetWrite("Couldn't add this preset", (body: { name: string; slots: string[][] }) =>
+  usePresetWrite("Couldn't add this combo", (body: { name: string; slots: string[][] }) =>
     authedFetch('/sofa-combo-presets', { method: 'POST', body: JSON.stringify(body) }));
 
 export const useUpdateComboPreset = () =>
-  usePresetWrite("Couldn't save this preset", ({ id, ...patch }: { id: string; name?: string; slots?: string[][]; active?: boolean }) =>
+  usePresetWrite("Couldn't save this combo", ({ id, ...patch }: { id: string; name?: string; slots?: string[][]; active?: boolean }) =>
     authedFetch(`/sofa-combo-presets/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) }));
 
 export const useReorderComboPresets = () =>
   usePresetWrite("Couldn't change the order", (ids: string[]) =>
     authedFetch('/sofa-combo-presets/reorder', { method: 'POST', body: JSON.stringify({ ids }) }));
+
+export const useDeleteComboPreset = () =>
+  usePresetWrite("Couldn't delete this combo", (id: string) =>
+    authedFetch(`/sofa-combo-presets/${encodeURIComponent(id)}`, { method: 'DELETE' }));
