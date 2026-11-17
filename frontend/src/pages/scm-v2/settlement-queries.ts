@@ -113,6 +113,9 @@ export type SettlementRow = {
       的，不算卡机的): its sale is keyed Online and already in the bank, so it is
       linked, never posted. Null or absent: a card line. */
   channel?: 'QR' | null;
+  /** Set when the line was confirmed as ANOTHER company's sale swiped on this
+      terminal (owner 2026-11-17: 2990's on Houzs's AEON): that company's id. */
+  sold_by_company_id?: number | null;
 };
 
 /** One credit of a payout, as the BANK shows it. */
@@ -504,6 +507,35 @@ export const useUnconfirmSettlementRow = () => {
   return useMutation({
     mutationFn: (rowId: number) => authedFetch<{ ok: boolean; reversalJeNo?: string }>(
       `/accounting/settlement/rows/${rowId}/unconfirm`, { method: 'POST', body: '{}' },
+    ),
+    onSuccess: () => invalidateAfterPosting(qc, []),
+  });
+};
+
+/* ANOTHER COMPANY'S SALE (owner 2026-11-17: 2990's swipes on Houzs's AEON
+   terminal, 「houzs 那边的报表要确定这些和refund给2990 contra 掉」): the companies
+   this one keeps an account for, and the press that books a line as theirs. */
+export type OtherCompany = { companyId: number; code: string; name: string; accountCode: string; accountName: string | null; usable: boolean };
+
+export const useOtherCompanies = () => useQuery({
+  queryKey: ['settlement-other-companies'],
+  queryFn: () => authedFetch<{ companies: OtherCompany[] }>('/accounting/settlement/other-companies'),
+  staleTime: 5 * 60_000,
+  retry: retryUnlessClientError,
+  retryDelay: 800,
+});
+
+export type SoldByResult = {
+  ok: true; status: 'confirmed'; jeNo: string; owedSen: number; chargeShareSen: number; accountCode: string; soldBy: string;
+  bank?: BankFollows;
+};
+
+/** The screen shows a refusal beside the line it was pressed on (`refusalText`), so no toast here. */
+export const useSoldBy = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ rowId, companyId, note }: { rowId: number; companyId: number; note: string | null }) => authedFetch<SoldByResult>(
+      `/accounting/settlement/rows/${rowId}/sold-by`, { method: 'POST', body: JSON.stringify({ companyId, note }) },
     ),
     onSuccess: () => invalidateAfterPosting(qc, []),
   });

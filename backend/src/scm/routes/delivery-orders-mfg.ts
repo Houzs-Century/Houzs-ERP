@@ -32,6 +32,8 @@ import { resolveCrewSeats } from '../lib/crew-seats';
 import { fetchDoCrewAssignment, doPodPhotoHandler } from './delivery-pod-context';
 import { startTripIfPlanned } from './delivery-job-progress';
 import { claimPodPhotos, doStopContext } from '../lib/pod-photo-claim';
+import { mergePodPhotoKeys } from '../lib/do-pod-photos';
+import { podPhotoKeysOf } from '../lib/do-pod-attempts';
 import { alreadyDeliveredRefusal, houzsUserIdOf } from '../lib/crew-stop-complete';
 import { revertDeliveryOrderHandler } from './delivery-order-revert';
 import type { Env, Variables } from '../env';
@@ -4995,7 +4997,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
     scopeCompanyId = co.companyId;
   }
   const { data: cur } = await scopeToCompanyId(
-    sb.from('delivery_orders').select('status, so_doc_no, updated_at, customer_delivered_date').eq('id', id), scopeCompanyId,
+    sb.from('delivery_orders').select('status, so_doc_no, updated_at, customer_delivered_date, pod_r2_key, pod_photo_keys').eq('id', id), scopeCompanyId,
   ).maybeSingle();
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);
   const prevStatus = (cur as { status: string }).status;
@@ -5111,6 +5113,8 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
     if (!claim.ok) return c.json({ error: 'photo_not_accepted', reason: claim.reason }, 400);
     podKeys = claim.keys;
   }
+  // Merged, not replaced: a linked Delivery Planning job may have filed photos here first (lib/do-pod-photos.ts).
+  if (podKeys.length) podKeys = mergePodPhotoKeys(podPhotoKeysOf(cur as { pod_r2_key: string | null; pod_photo_keys: unknown }), podKeys);
   if (podKeys.length) ts.pod_r2_key = podKeys[0]!;
   const tsJson: Record<string, string[]> = podKeys.length ? { pod_photo_keys: podKeys } : {};
 
