@@ -57,6 +57,7 @@ import { hrAttendance } from "./routes/hr-attendance";
 import { hrLabor } from "./routes/hr-labor";
 import { hrPayroll } from "./routes/hr-payroll";
 import { hrTripPay } from "./routes/hr-trip-pay";
+import { runNightlyTripSync } from "./routes/lib/hr-trip-sync";
 import { attendance } from "./routes/attendance";
 import { runAutoClockOut } from "./routes/lib/hr-labor-store";
 import { posDevice } from "./routes/pos-device";
@@ -1444,6 +1445,14 @@ export default {
             (failed.length ? ` — failed: ${failed.map((r) => `${r.companyId}: ${r.reason}`).join("; ")}` : ""),
           );
         }).catch((e) => console.error("[cron self-check]", e)),
+      );
+      // Trip Pay fills itself (owner 2026-11-17): yesterday's lorry runs and project
+      // Setup / Dismantle become rows; older open days are re-read only where their
+      // source changed. HR's edits and approved months are never touched (lib/hr-trip-sync.ts).
+      ctx.waitUntil(
+        track("hr-trip-sync", () => runNightlyTripSync(env, event.scheduledTime))
+          .then((r) => console.log(`[cron hr-trip-sync] ${r.companies} compan${r.companies === 1 ? "y" : "ies"}: ${r.results.join(" | ")}`))
+          .catch((e) => console.error("[cron hr-trip-sync]", e)),
       );
       // Scheduled supplier prices whose effective date is today (BUG-32): onto
       // the flat binding POs read, then the derived product cost SOs read.
