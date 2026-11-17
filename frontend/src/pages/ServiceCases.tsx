@@ -163,6 +163,8 @@ import {
 } from "../lib/assrProductCategories";
 import { todayMyt } from "../vendor/scm/lib/dates";
 import { FormTouchScope, useFormGuard } from "../hooks/useLeaveGuard";
+import { CaseAddressFields, CASE_ADDRESS_DESKTOP } from "../components/assr/CaseAddressFields";
+import { formatCaseAddress } from "../vendor/scm/lib/assr-case-address";
 
 type StageFilter = "ALL" | AssrStage;
 
@@ -4544,8 +4546,8 @@ function DetailContent({
             <>
               {/* Edit view — the full InlineEdit set. Correcting the SO No
                   re-matches customer info from the local SO mirror
-                  server-side; the address textarea maps line-by-line onto
-                  addr1-4. */}
+                  server-side, the address included (lines + postcode /
+                  city / state, CaseAddressFields). */}
               <InlineEdit
                 label="Customer"
                 value={c.customer_name}
@@ -4589,24 +4591,8 @@ function DetailContent({
                 onSave={(v) => patch({ phone: v })}
                 placeholder="012-345 6789"
               />
-              <InlineEdit
-                label="Customer address"
-                textarea
-                value={[c.addr1, c.addr2, c.addr3, c.addr4].filter(Boolean).join("\n")}
-                onSave={(v) => {
-                  const lines = (v || "")
-                    .split(/\r?\n/)
-                    .map((t) => t.trim())
-                    .filter(Boolean);
-                  return patch({
-                    addr1: lines[0] ?? null,
-                    addr2: lines[1] ?? null,
-                    addr3: lines[2] ?? null,
-                    addr4: lines.slice(3).join(", ") || null,
-                  });
-                }}
-                placeholder={"Street / unit\nCity - postcode\nState"}
-              />
+              {/* SO layout: lines + State / City / Postcode, the SO form's cascade. */}
+              <CaseAddressFields c={c as unknown as Record<string, unknown>} onSave={patch} classes={CASE_ADDRESS_DESKTOP} />
               <InlineEdit
                 label="Location"
                 value={c.location}
@@ -4667,7 +4653,7 @@ function DetailContent({
               <div className="border-t border-border-subtle pt-2.5">
                 <div className="font-mono text-[9px] font-semibold uppercase tracking-wider text-ink-muted">Customer address</div>
                 <div className="mt-1 text-[13px] font-medium leading-relaxed text-ink">
-                  {[c.addr1, c.addr2, c.addr3, c.addr4].filter(Boolean).join(", ") || "—"}
+                  {formatCaseAddress(c) || "—"}
                 </div>
                 {c.location && (
                   <span className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-primary-soft px-2.5 py-1 text-[11.5px] font-semibold text-primary-ink">

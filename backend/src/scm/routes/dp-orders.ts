@@ -315,9 +315,14 @@ async function resolveSnapshot(
   }
   if (p.assrCaseId != null) {
     const a = await c.env.DB.prepare(
-      'SELECT customer_name, phone, addr1, addr2, addr3, addr4, location, doc_no FROM assr_cases WHERE id = ?',
+      'SELECT customer_name, phone, addr1, addr2, addr3, addr4, location, doc_no, ca.postcode, ca.city, ca.state FROM assr_cases LEFT JOIN assr_case_address ca ON ca.assr_id = assr_cases.id WHERE assr_cases.id = ?',
     ).bind(p.assrCaseId).first<Record<string, unknown>>();
-    if (a) return withCaseSoPlace(c, snapshotFromAssr(a), (a.doc_no as string | null) ?? null);
+    if (a) {
+      // The case's own Postcode / City / State (assr_case_address) outrank its SO's.
+      const snap = await withCaseSoPlace(c, snapshotFromAssr(a), (a.doc_no as string | null) ?? null);
+      const own = (v: unknown) => (v == null || String(v).trim() === '' ? null : String(v).trim());
+      return { ...snap, postcode: own(a.postcode) ?? snap.postcode, city: own(a.city) ?? snap.city, state: own(a.state) ?? snap.state };
+    }
   }
   /* TRANSFER destination from the saved-locations address book (owner 2026-11-02
      方案2). Checked first so a picked saved location wins; its structured address

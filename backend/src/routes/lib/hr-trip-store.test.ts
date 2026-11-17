@@ -29,6 +29,8 @@ const base: PlanningStop = {
   assr_no: null,
   case_addr3: null,
   case_addr4: null,
+  case_own_postcode: null,
+  case_own_state: null,
   case_so_state: null,
   case_so_postcode: null,
   d1: "drv",
@@ -60,6 +62,10 @@ describe("planningRowOf", () => {
 
   test("a service case with no state in its address takes its order's state", () => {
     expect(planningRowOf({ ...base, assr_case_id: 54, case_addr4: "", case_so_state: "Melaka" }, who).state).toBe("Melaka");
+  });
+
+  test("a service case's own State outranks its address lines and its order", () => {
+    expect(planningRowOf({ ...base, assr_case_id: 56, case_addr4: "Johor", case_so_state: "Melaka", case_own_state: "Penang" }, who).state).toBe("Pulau Pinang");
   });
 
   test("manual jobs keep their job type; a Setup carries its project and event type", () => {

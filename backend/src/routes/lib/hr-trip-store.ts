@@ -271,6 +271,8 @@ export type PlanningStop = {
   assr_no: string | null;
   case_addr3: string | null;
   case_addr4: string | null;
+  case_own_postcode: string | null;
+  case_own_state: string | null;
   case_so_state: string | null;
   case_so_postcode: string | null;
   d1: string | null;
@@ -316,7 +318,7 @@ export type SourceRow = {
 export function planningRowOf(s: PlanningStop, who: (id: string | null) => Seat): SourceRow {
   const [d1, d2, h1, h2] = [who(s.d1), who(s.d2), who(s.h1), who(s.h2)];
   const isCase = s.assr_case_id != null;
-  const caseLoc = isCase ? assrBoardLocation(s.case_addr3, s.case_addr4, s.case_so_state, s.case_so_postcode) : null;
+  const caseLoc = isCase ? assrBoardLocation(s.case_addr3, s.case_addr4, s.case_so_state, s.case_so_postcode, { postcode: s.case_own_postcode, state: s.case_own_state }) : null;
   const amount = s.local_total_sen ?? (isCase ? 0 : s.revenue_sen);
   const jobType = (isCase ? CASE_LEG_KIND[ASSR_LEG_BY_STOP[s.stop_type] ?? ""] : undefined) ?? STOP_KIND[s.stop_type] ?? "NONE";
   return {
@@ -455,6 +457,7 @@ export async function planningRows(db: Db, companyId: number, month: string, peo
            et.slug AS event_slug, et.name AS event_name,
            s.assr_case_id, ac.assr_no, ac.addr3 AS case_addr3, ac.addr4 AS case_addr4,
            so.customer_state AS case_so_state, so.postcode AS case_so_postcode,
+           ca.postcode AS case_own_postcode, ca.state AS case_own_state,
            COALESCE(cr.driver_1_id, t.driver_id)::text AS d1, cr.driver_2_id::text AS d2,
            COALESCE(cr.helper_1_id, t.helper_1_id)::text AS h1, COALESCE(cr.helper_2_id, t.helper_2_id)::text AS h2
       FROM scm.trip_stops s
@@ -466,6 +469,7 @@ export async function planningRows(db: Db, companyId: number, month: string, peo
       LEFT JOIN public.project_event_types et ON et.id = pj.event_type_id
       LEFT JOIN scm.lorries l ON l.id = t.lorry_id
       LEFT JOIN public.assr_cases ac ON ac.id = s.assr_case_id
+      LEFT JOIN public.assr_case_address ca ON ca.assr_id = ac.id
       LEFT JOIN LATERAL (
            SELECT o.customer_state, o.postcode FROM scm.mfg_sales_orders o
             WHERE o.doc_no = ac.doc_no OR o.linked_ac_docno = ac.doc_no

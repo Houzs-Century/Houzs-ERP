@@ -32,6 +32,7 @@ import { setChecklistStatus, getUserPhasesOnProject } from '../../services/proje
 import { sendCompletionSurvey } from '../../services/assrCompletionSurvey';
 import { todayMyt } from '../lib/my-time';
 import { paginateAll } from '../lib/paginate-all';
+import { formatCaseAddress, type CaseAddressParts } from '../shared/assr-case-address';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 export const JOB_SOURCE_TYPES = ['dp', 'project', 'assr'] as const;
@@ -126,8 +127,9 @@ export async function loadJob(c: Ctx, sourceType: SourceType, sourceId: string, 
   const row = await c.env.DB.prepare(
     `SELECT id, assr_no, customer_name, phone, addr1, addr2, addr3, addr4, location, item_code,
             complaint_issue, issue_category, doc_no, stage, sub_status, company_id,
-            customer_pickup_at, inspection_visit_at, do_date
-       FROM assr_cases WHERE id = ?${allowedCompaniesSql(c)}`,
+            customer_pickup_at, inspection_visit_at, do_date, ca.postcode, ca.city, ca.state
+       FROM assr_cases LEFT JOIN assr_case_address ca ON ca.assr_id = assr_cases.id
+      WHERE assr_cases.id = ?${allowedCompaniesSql(c)}`,
   ).bind(Number(sourceId)).first<Record<string, unknown>>();
   if (!row) return { ok: false, status: 404, error: 'not_found', reason: 'This service case could not be found.' };
   // The case's leg rides the trip its stop was put on by Time Arrangement.
@@ -167,7 +169,7 @@ async function contextFor(c: Ctx, sourceType: SourceType, leg: string, row: Reco
     return {
       kind: leg, title: row.customer_name, ref: row.assr_no,
       contact_name: row.customer_name, contact_phone: row.phone,
-      address: [row.addr1, row.addr2, row.addr3, row.addr4].filter(Boolean).join(', '), state: row.location,
+      address: formatCaseAddress(row as unknown as CaseAddressParts) ?? '', state: row.state ?? row.location,
       product: row.item_code, issue: row.complaint_issue, issue_category: row.issue_category, so_doc_no: row.doc_no,
       stage: row.stage, sub_status: row.sub_status,
       date: leg === 'customer_pickup' ? row.customer_pickup_at : leg === 'inspection' ? row.inspection_visit_at : row.do_date,

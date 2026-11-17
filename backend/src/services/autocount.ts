@@ -36,6 +36,9 @@ function headers(env: Env, rid: string) {
   };
 }
 
+/** How long a single-SO lookup may take before the caller goes on without it. */
+export const GET_SINGLE_TIMEOUT_MS = 5_000;
+
 export class AutoCountClient {
   constructor(private env: Env, private rid: string = crypto.randomUUID()) {}
 
@@ -65,8 +68,11 @@ export class AutoCountClient {
   }
 
   async getSingle(docNo: string): Promise<ACSalesOrder | null> {
+    // Bounded, one attempt: creating a service case awaits this, and an
+    // unanswered office host held the create open past a minute (CI 2026-11-17).
     const res = await fetch(this.url(`/SalesOrder/getSingle/${encodeURIComponent(docNo)}`), {
       headers: headers(this.env, this.rid),
+      signal: AbortSignal.timeout(GET_SINGLE_TIMEOUT_MS),
     });
     if (!res.ok) throw new Error(`getSingle HTTP ${res.status}`);
     const arr = (await res.json()) as ACSalesOrder[];

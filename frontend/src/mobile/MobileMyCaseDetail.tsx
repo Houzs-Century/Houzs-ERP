@@ -39,6 +39,7 @@
 // ----------------------------------------------------------------------------
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { formatCaseAddress } from "../vendor/scm/lib/assr-case-address";
 import { api } from "../api/client";
 import { formatDate, formatDateTime } from "../lib/utils";
 import { formatPhone } from "../vendor/shared/phone";
@@ -177,7 +178,7 @@ export function MobileMyCaseDetail({ id, onBack }: { id: number; onBack: () => v
   });
 
   const busy = postComment.isPending || nudge.isPending;
-  const address = [c.addr1, c.addr2, c.addr3, c.addr4].filter(Boolean).map(String).join(", ");
+  const address = formatCaseAddress(c) ?? "";
   const orderDelivery = orderDeliveryOf(c);
 
   return (

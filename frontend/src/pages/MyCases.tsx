@@ -17,6 +17,7 @@ import { api } from "../api/client";
 import { formatPhone } from "../vendor/shared/phone";
 import { ASSR_STAGE_LABEL } from "../vendor/scm/lib/assr-stage-labels";
 import { useQuery } from "../hooks/useQuery";
+import { formatCaseAddress } from "../vendor/scm/lib/assr-case-address";
 import { useToast } from "../hooks/useToast";
 import { PageHeader } from "../components/Layout";
 import { Panel, PanelSection } from "../components/Panel";
@@ -418,10 +419,8 @@ export function MyCaseDetail() {
               {c.customer_name || "—"}
             </div>
             <div className="text-[11.5px] text-ink-muted">{formatPhone(c.phone) || "—"}</div>
-            {(c.addr1 || c.addr2 || c.addr3 || c.addr4) && (
-              <div className="mt-1 text-[11.5px] text-ink-secondary">
-                {[c.addr1, c.addr2, c.addr3, c.addr4].filter(Boolean).join(", ")}
-              </div>
+            {formatCaseAddress(c) && (
+              <div className="mt-1 text-[11.5px] text-ink-secondary">{formatCaseAddress(c)}</div>
             )}
           </PanelSection>
 

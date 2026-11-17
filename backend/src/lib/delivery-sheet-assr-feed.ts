@@ -35,6 +35,7 @@
 import { LOCATION_MAP } from "../services/autocount-master-maps";
 import { bookSpellingOrOwn } from "../services/autocount-writeback";
 import { tidy } from "../services/autocount-address-fit";
+import { caseAddressFourLines } from "../scm/shared/assr-case-address";
 import { sheetRegion, sheetStateSpelling, type DeliverySheetRecord } from "./delivery-sheet-feed";
 
 export type AssrLegKind = "INSPECT" | "PICKUP" | "DELIVERY";
@@ -65,7 +66,11 @@ export type AssrFeedRow = {
   customer_pickup_at: string | null;
   delivery_by: string | null;
   do_date: string | null;
-  /** The linked Sales Order's country and town — `assr_cases` has none of its own. */
+  /** The case's own Postcode / City / State (assr_case_address, owner 2026-11-17). */
+  case_postcode: string | null;
+  case_city: string | null;
+  case_state: string | null;
+  /** The linked Sales Order's country and town. */
   customer_country: string | null;
   so_postcode: string | null;
   so_city: string | null;
@@ -126,12 +131,14 @@ SELECT assr_no,
        sales_agent,
        delivery_order,
        addr1, addr2, addr3, addr4,
+       ca.postcode AS case_postcode, ca.city AS case_city, ca.state AS case_state,
        inspection_by, inspection_visit_at,
        pickup_by, customer_pickup_at,
        delivery_by, do_date,
        so.customer_country, so.so_postcode, so.so_city, so.so_state,
        updated_at::text AS last_modified_text
   FROM assr_cases
+  LEFT JOIN assr_case_address ca ON ca.assr_id = assr_cases.id
   LEFT JOIN LATERAL (
        SELECT o.customer_country, o.postcode AS so_postcode, o.city AS so_city, o.customer_state AS so_state
          FROM scm.mfg_sales_orders o
@@ -171,9 +178,22 @@ const blankToNull = (v: string | null | undefined): string | null => {
   return s ? s : null;
 };
 
-/** Address lines 3 / 4 for a leg: the case's own, else the linked order's
- *  "<postcode> <city>" / state, unless the case's address names a postcode the
- *  order does not have (then the order's town would describe another place). */
+/** The four address cells of a leg. A case with its own Postcode / City / State
+ *  prints like a Sales Order: its lines, then "<postcode> <city>", then the state
+ *  (caseAddressFourLines, never naming a part twice). Otherwise lines 1 / 2 as
+ *  typed and caseTownLines for 3 / 4. */
+export function caseSheetLines(row: AssrFeedRow): [string | null, string | null, string | null, string | null] {
+  if (tidy(row.case_postcode) || tidy(row.case_city) || tidy(row.case_state)) {
+    return caseAddressFourLines({ ...row, postcode: row.case_postcode, city: row.case_city, state: row.case_state });
+  }
+  const [addr3, addr4] = caseTownLines(row);
+  return [blankToNull(row.addr1), blankToNull(row.addr2), addr3, addr4];
+}
+
+/** Address lines 3 / 4 for a leg with no Postcode / City / State of its own: the
+ *  case's lines, else the linked order's "<postcode> <city>" / state, unless the
+ *  case's address names a postcode the order does not have (then the order's
+ *  town would describe another place). */
 export function caseTownLines(row: AssrFeedRow): [string | null, string | null] {
   const own3 = tidy(row.addr3);
   const own4 = tidy(row.addr4);
@@ -190,7 +210,7 @@ export function caseTownLines(row: AssrFeedRow): [string | null, string | null] 
  *  Sales Order for that customer would. */
 function legBase(row: AssrFeedRow): Omit<AssrLegRecord, "Kind" | "DocNo" | "TransferTo" | "Remark2" | "SalesExemptionExpiryDate"> {
   const salesLocation = bookSpellingOrOwn(row.location, LOCATION_MAP);
-  const [addr3, rawAddr4] = caseTownLines(row);
+  const [addr1, addr2, addr3, rawAddr4] = caseSheetLines(row);
   return {
     ErpDocNo: row.assr_no,
     // Farra parity: col D the complaint date, col AA the case PO. Ref (col E) and
@@ -209,8 +229,8 @@ function legBase(row: AssrFeedRow): Omit<AssrLegRecord, "Kind" | "DocNo" | "Tran
     Remark3: null,
     SOUDF_Note: null,
     SOUDF_ToPONo: blankToNull(row.po_no),
-    InvAddr1: blankToNull(row.addr1),
-    InvAddr2: blankToNull(row.addr2),
+    InvAddr1: addr1,
+    InvAddr2: addr2,
     InvAddr3: addr3,
     InvAddr4: sheetStateSpelling(rawAddr4),
     Attention: null,

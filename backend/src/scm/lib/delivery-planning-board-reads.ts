@@ -176,6 +176,7 @@ export function kickOffSubBoardReads(
         closed_at: string | null; archived_at: string | null;
         delivery_message_status: string | null; pickup_message_status: string | null; inspection_message_status: string | null;
         addr1: string | null; addr2: string | null; addr3: string | null; addr4: string | null;
+        case_postcode: string | null; case_city: string | null; case_state: string | null;
         so_state: string | null; so_postcode: string | null; so_country: string | null;
         so_ref_src: string | null; so_custso_src: string | null;
         ref_no: string | null; delivery_order: string | null;

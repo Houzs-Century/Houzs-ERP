@@ -5,6 +5,8 @@ import { getAssrDetail } from "../services/assr";
 import { earlierSupplierReturns, ensureFirstSupplierReturn, listSupplierReturns } from "../services/assrSupplierReturns";
 import { assrCaseRowInScope, assrCallerIsScoped, stripCreditorFields } from "../services/assrVisibility";
 import { getVerificationNotes } from "../services/assrVerificationNotes";
+import { getCaseAddress } from "../services/assrCaseAddress";
+import { formatCaseAddress } from "../scm/shared/assr-case-address";
 import { allowedCompanyIds } from "../scm/lib/companyScope";
 import {
   getBrandingForCompany,
@@ -227,6 +229,8 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
   if (callerScoped && isOffice) stripCreditorFields(detail.case as any);
 
   const { case: cs, items, attachments, activity, logistics } = detail;
+  // Postcode / City / State live in assr_case_address (getAssrDetail reads assr_cases only).
+  const caseAddr = await getCaseAddress(c.env, id);
 
   // Related Cases (owner 2026-09-28): this customer's service-case history up to
   // and including the current case, oldest -> newest, shown on the supplier doc.
@@ -1204,7 +1208,7 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       <div class="lc">Inspection Date</div><div class="vc mono">${fmtDate((cs as any).sched_inspection_date)}</div>
       <div class="lc">Pickup Date</div><div class="vc mono">${fmtDate((cs as any).sched_pickup_date)}</div>
       <div class="lc">Delivery Date</div><div class="vc mono">${fmtDate((cs as any).sched_delivery_date)}</div>
-      <div class="lc">Address</div><div class="vc span3">${esc([cs.addr1, cs.addr2, cs.addr3, cs.addr4].filter(Boolean).join(", ") || "—")}</div>
+      <div class="lc">Address</div><div class="vc span3">${esc(formatCaseAddress({ ...cs, ...caseAddr }) || "—")}</div>
       <div class="lc">Problem</div><div class="vc span3" style="font-size: 11.8pt;">${esc(cs.complaint_issue || "—")}</div>
     </div>
 
@@ -1320,7 +1324,7 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     <div class="bar">Deliver / Collect</div>
     <div class="mgrid cols-4">
       <div class="lc">Customer</div><div class="vc">${esc(cs.customer_name || "—")}</div>
-      <div class="lc">Delivery Area</div><div class="vc">${esc(cs.location || (cs as any).addr4 || "—")}</div>
+      <div class="lc">Delivery Area</div><div class="vc">${esc(cs.location || caseAddr.state || (cs as any).addr4 || "—")}</div>
       <div class="lc">Coordinator</div><div class="vc">Service Admin (Purchasing)</div>
       <div class="lc">Warehouse</div><div class="vc">${esc(warehouseLabel || "—")}</div>
       <div class="lc">Inspection Date</div><div class="vc mono">${fmtDate((cs as any).sched_inspection_date)}</div>
