@@ -2,6 +2,7 @@
  * without a database: the wire shape of an employee, the salary in force on a
  * date, and the field diff the audit log records. */
 import type { EmployeeInput, EmployeeStatus, PayMode, PaymentMethod, TaxCategory, TaxResidency } from "../../scm/shared/hr-employee";
+import { emptyEmployeeInput, employeeInputProblem, nextEmpNo } from "../../scm/shared/hr-employee";
 
 export type EmployeeRow = {
   id: number;
@@ -149,4 +150,135 @@ export function employeeDiff(before: EmployeeInput, after: EmployeeInput): Recor
     out[k] = secret.has(k) ? { from: "(hidden)", to: "(hidden)" } : { from: before[k], to: after[k] };
   }
   return out;
+}
+
+/* ── bulk add ────────────────────────────────────────────────────────────────
+ * Two ways to fill Employee Master without keying each row: pick the ERP
+ * accounts that already exist, or import a spreadsheet. Both reduce to "make
+ * many employee rows at once", so the Emp No assignment and the duplicate rules
+ * live here, pure and tested; the route only does the database I/O. */
+
+/** One ERP account offered for a bulk add. */
+export type BulkAccount = {
+  userId: number;
+  name: string | null;
+  email: string;
+  phone: string | null;
+  departmentId: number | null;
+  position: string | null;
+};
+
+export type BulkLinkPlan = {
+  create: Array<{ userId: number; input: EmployeeInput }>;
+  skipped: Array<{ userId: number; name: string; reason: string }>;
+};
+
+/** Plan the rows to create from chosen ERP accounts. The Emp No runs on from
+ *  the highest in the book, one per row, so a batch never collides; name,
+ *  phone, department and position are copied from the account. Pay basis stays
+ *  the monthly default — a bulk add cannot know a day rate, so HR sets that per
+ *  person afterwards, and `isOutsource` only chooses the OSC number series. An
+ *  account already linked, or with no name to show, is skipped with a reason
+ *  rather than guessed. */
+export function planBulkLink(
+  accounts: readonly BulkAccount[],
+  linkedUserIds: ReadonlySet<number>,
+  existingEmpNos: readonly string[],
+  isOutsource: boolean,
+  todayYmd: string,
+): BulkLinkPlan {
+  const create: BulkLinkPlan["create"] = [];
+  const skipped: BulkLinkPlan["skipped"] = [];
+  const running: string[] = [...existingEmpNos];
+  for (const a of accounts) {
+    const name = (a.name ?? "").trim() || a.email.trim();
+    if (linkedUserIds.has(a.userId)) {
+      skipped.push({ userId: a.userId, name, reason: "already has an employee record" });
+      continue;
+    }
+    if (!name) {
+      skipped.push({ userId: a.userId, name: a.email, reason: "the ERP account has no name" });
+      continue;
+    }
+    const empNo = nextEmpNo(running, isOutsource);
+    running.push(empNo);
+    create.push({
+      userId: a.userId,
+      input: {
+        ...emptyEmployeeInput(todayYmd),
+        empNo,
+        name,
+        userId: a.userId,
+        phone: (a.phone ?? "").trim(),
+        departmentId: a.departmentId,
+        position: (a.position ?? "").trim(),
+        isOutsource,
+      },
+    });
+  }
+  return { create, skipped };
+}
+
+/** One already-parsed import row: the employee fields, plus the ERP account
+ *  email to link by when the sheet named one and gave no user id. */
+export type ImportRowIn = { input: EmployeeInput; accountEmail: string | null };
+
+export type BulkImportPlan = {
+  create: Array<{ index: number; input: EmployeeInput }>;
+  errors: Array<{ index: number; message: string }>;
+};
+
+/** Plan the rows to create from a spreadsheet. One message per bad row, never a
+ *  silent drop: a blank Emp No is auto-assigned in sequence, a given one that
+ *  already exists is refused, an account email is resolved to its user (refused
+ *  when it names no active account), and an account that is already an employee
+ *  — in the book or earlier in this same file — is refused. A number is only
+ *  consumed by a row that is accepted, so refused rows leave no gaps. `index` is
+ *  the row's position in the input, echoed back so the UI can point at it. */
+export function planBulkImport(
+  rows: readonly ImportRowIn[],
+  opts: {
+    existingEmpNos: readonly string[];
+    linkedUserIds: ReadonlySet<number>;
+    userIdByEmail: ReadonlyMap<string, number>;
+  },
+): BulkImportPlan {
+  const create: BulkImportPlan["create"] = [];
+  const errors: BulkImportPlan["errors"] = [];
+  const running: string[] = [...opts.existingEmpNos];
+  const usedEmpNo = new Set(running.map((e) => e.trim().toUpperCase()));
+  const batchLinked = new Set<number>();
+  rows.forEach((row, index) => {
+    const input: EmployeeInput = { ...row.input };
+    if (input.userId == null && row.accountEmail) {
+      const uid = opts.userIdByEmail.get(row.accountEmail.trim().toLowerCase());
+      if (uid == null) {
+        errors.push({ index, message: `No active ERP account has the email ${row.accountEmail}.` });
+        return;
+      }
+      input.userId = uid;
+    }
+    let empNo = input.empNo.trim();
+    if (!empNo) {
+      empNo = nextEmpNo(running, input.isOutsource);
+    } else if (usedEmpNo.has(empNo.toUpperCase())) {
+      errors.push({ index, message: `Employee No ${empNo} is already in use.` });
+      return;
+    }
+    input.empNo = empNo;
+    const problem = employeeInputProblem(input);
+    if (problem) {
+      errors.push({ index, message: problem });
+      return;
+    }
+    if (input.userId != null && (opts.linkedUserIds.has(input.userId) || batchLinked.has(input.userId))) {
+      errors.push({ index, message: "That ERP account already has an employee record." });
+      return;
+    }
+    running.push(empNo);
+    usedEmpNo.add(empNo.toUpperCase());
+    if (input.userId != null) batchLinked.add(input.userId);
+    create.push({ index, input });
+  });
+  return { create, errors };
 }
