@@ -94,7 +94,7 @@ describe('snapshotFromThreepl — an outsourced warehouse destination', () => {
   });
 
   // Owner 2026-11-17: every DP job carries Postcode + City + State — a TRANSFER
-  // to a 3PL takes them from the carrier's own columns (mig 20261117T1900).
+  // to a 3PL takes them from the carrier's own columns (mig 20261117T2000).
   it('carries the postcode, city and state picked on the 3PL form', () => {
     const snap = snapshotFromThreepl({ ...row, postcode: '81200', city: 'Johor Bahru', state: 'Johor' });
     expect([snap.postcode, snap.city, snap.state]).toEqual(['81200', 'Johor Bahru', 'Johor']);

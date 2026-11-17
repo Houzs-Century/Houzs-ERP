@@ -24,7 +24,7 @@ export type ThreePLCompanyRow = {
   officePhone: string | null;
   email: string | null;
   address: string | null;
-  /** Picked off my_localities; a TRANSFER to this 3PL snapshots them (mig 20261117T1900). */
+  /** Picked off my_localities; a TRANSFER to this 3PL snapshots them (mig 20261117T2000). */
   postcode: string | null;
   city: string | null;
   state: string | null;

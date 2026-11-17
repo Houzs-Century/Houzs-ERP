@@ -74,7 +74,7 @@ describe('POST /dp-orders — TRANSFER to an outsourced (3PL) warehouse', () => 
   });
 
   // Owner 2026-11-17: every DP job carries Postcode + City + State — the 3PL's
-  // own columns (mig 20261117T1900) reach the job.
+  // own columns (mig 20261117T2000) reach the job.
   test('carries the 3PL postcode, city and state onto the job', async () => {
     const { a, calls } = app({
       code: '3PL-003', name: 'MSJ TRANSPORT SDN BHD', contact_name: null, contact_phone: null, office_phone: null,

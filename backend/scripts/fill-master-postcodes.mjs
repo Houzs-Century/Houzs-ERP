@@ -7,7 +7,7 @@
    whatever its source, so Last Mile shows them. The masters are where those
    come from, and on 2026-11-17 venues had 94 of 94 without a postcode,
    suppliers 58 of 77, 3PL companies 9 of 9 (the 3PL columns are new in mig
-   20261117T1900). The forms now take a postcode in the Sales Order's control;
+   20261117T2000). The forms now take a postcode in the Sales Order's control;
    this proposes one for the rows already there.
 
    HOW A POSTCODE IS FOUND, in order (scripts/lib/master-postcodes.mjs):

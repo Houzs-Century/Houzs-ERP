@@ -157,7 +157,7 @@ export function snapshotFromWarehouse(row: Record<string, unknown>): DpPartySnap
 /** From an scm.threepl_companies row (mig 0210) — an OUTSOURCED warehouse a
  *  TRANSFER job delivers to (owner 2026-11-02). The 3PL master has ONE free-text
  *  `address` (like scm.workshops), so it maps to address1 with nothing to split;
- *  postcode / city / state are their own columns since mig 20261117T1900.
+ *  postcode / city / state are their own columns since mig 20261117T2000.
  *  party_type stays WAREHOUSE — an outsourced warehouse is still the destination
  *  the move ends at, just one we do not own; keeping it WAREHOUSE means "who was
  *  this transfer for" groups the same whether the destination is ours or a
@@ -170,7 +170,7 @@ export function snapshotFromThreepl(row: Record<string, unknown>): DpPartySnapsh
     contact_name: s(row.contact_name),
     contact_phone: s(row.contact_phone) ?? s(row.office_phone),
     address1: s(row.address), address2: null, address3: null, address4: null,
-    // Picked off my_localities on the 3PL form (mig 20261117T1900).
+    // Picked off my_localities on the 3PL form (mig 20261117T2000).
     city: s(row.city), postcode: s(row.postcode), state: s(row.state),
   };
 }
