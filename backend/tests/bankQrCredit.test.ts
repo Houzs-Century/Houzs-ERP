@@ -184,6 +184,29 @@ describe("the bank's QR credit is matched to the QR sales", () => {
     expect(line).toMatchObject({ state: 'POSTED' });
   });
 
+  /* 2026-11-17: production refused "qr+report" (its check did not know the word)
+     and the whole run stopped at the first QR credit, matching nothing after it. */
+  test('a refused write leaves that credit for a person and says why — the run does not stop', async () => {
+    const { app, sb } = harness({ linkBoth: false });
+    const { statementId } = await uploadNovember(app);
+    Object.assign(sb.tables.acc_settlement_rows.find((r) => r.id === 847)!, { bucket: 'MATCHED', match_reason: 'manual', confirmed_at: '2026-11-10T08:00:00Z' });
+    sb.tables.acc_settlement_matches.push({ id: 3, settlement_row_id: 847, company_id: CO, payment_source: 'SOPAY', payment_id: 'p35', doc_no: '2990-SO-2611-077', amount_sen: 350000 });
+    const refused = { data: null, error: { message: 'new row for relation "acc_bank_statement_matches" violates check constraint "acc_bank_match_reason"' } };
+    const refusing = {
+      ...sb,
+      from: (table: string) => {
+        const q = sb.from(table);
+        return table === 'acc_bank_statement_matches' ? Object.assign(q, { insert: () => Promise.resolve(refused) }) : q;
+      },
+    } as typeof sb;
+
+    const { applyMerchantAgreedMatches } = await import('../src/scm/routes/accounting-bank');
+    const r = await applyMerchantAgreedMatches(refusing, CO, { statementIds: [statementId], bookedFrom: null }, 'Chew');
+    expect(r).toMatchObject({ ok: true, matched: 0 });
+    expect((r as { left: string[] }).left.join(' ')).toMatch(/not matched — .*acc_bank_match_reason/);
+    expect(sb.tables.acc_bank_statement_lines.find((l) => l.amount_sen === 550000)).toMatchObject({ state: 'OPEN' });
+  });
+
   test('a closed month is left alone: the credit stays for a person', async () => {
     const { app, sb } = harness({ linkBoth: false });
     const { statementId } = await uploadNovember(app);

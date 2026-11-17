@@ -860,18 +860,23 @@ export async function applyMerchantAgreedMatches(
     if (!claims.ok) return { ok: false, reason: claims.reason };
     const here = claims.live.find((m) => m.accountCode === accountCode);
     if (here) { done.left.push(`${named}: ${claimedHere(here.jeNo, accountCode)}`); continue; }
+    /* A write refused for ONE credit leaves that credit for a person and says
+       why; the run goes on to the rest (2026-11-17: the database refused
+       "qr+report" until its check knew the word, and the first QR credit
+       stopped every match after it). A match row left on a line still OPEN is
+       nobody's claim and is cleared the next time (liveClaimsOn's dead rows). */
     if (claims.dead.length > 0) {
       const { error: dErr } = await sb.from('acc_bank_statement_matches').delete().eq('company_id', companyId).in('id', claims.dead.map((m) => m.id));
-      if (dErr) return { ok: false, reason: dErr.message };
+      if (dErr) { done.left.push(`${named}: not matched — ${dErr.message}`); continue; }
     }
     const { error: insErr } = await sb.from('acc_bank_statement_matches').insert(found.map((e) => ({
       bank_line_id: a.lineId, company_id: companyId, je_no: e.jeNo, amount_sen: e.debitSen - e.creditSen, match_reason: 'qr+report',
     })));
-    if (insErr) return { ok: false, reason: insErr.message };
+    if (insErr) { done.left.push(`${named}: not matched — ${insErr.message}`); continue; }
     const { error: upErr } = await sb.from('acc_bank_statement_lines')
       .update({ state: 'POSTED', posted_je_no: a.jeNos[0]!, updated_at: new Date().toISOString() })
       .eq('id', a.lineId).eq('company_id', companyId).eq('state', 'OPEN');
-    if (upErr) return { ok: false, reason: upErr.message };
+    if (upErr) { done.left.push(`${named}: not matched — ${upErr.message}`); continue; }
     await formaliseReceiptsForBankMatch(sb, companyId, accountCode, a.jeNos, actor);
     done.qr += 1;
     done.jeNos.push(...a.jeNos);
