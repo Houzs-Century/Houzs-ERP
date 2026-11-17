@@ -34,6 +34,7 @@ import {
   type PaymentRowMutability,
 } from '../scm/shared/so-field-policy';
 import { postSoPayment } from './payments';
+import { bankCardRowOf } from './bank-card-settled';
 
 /** The permission Finance holds to correct a payment after the day it was
     keyed. Named here so the two routes and any later surface spell it once. */
@@ -96,6 +97,13 @@ export async function paymentReconciliation(
       return { ok: true, by: { kind: 'merchant', on: dayOf(confirmed.confirmed_at ?? links.at(0)?.created_at) } };
     }
   }
+
+  /* 1b. A BANK MOVEMENT THAT TOOK THE CARD PAYMENT IN ITSELF (acc/bank-card-settle,
+         owner 2026-11-17): its journal cleared this payment's gross out of card
+         clearing, so the amount may no longer move under it. */
+  const banked = await bankCardRowOf(sb, companyId, source, paymentId);
+  if (!banked.ok) return { ok: false, reason: banked.reason };
+  if (banked.row) return { ok: true, by: { kind: 'bank', jeNo: banked.row.je_no ?? `taken in ${dayOf(banked.row.received_on)}` } };
 
   /* 2. THE ENTRY the other two speak through. `reversed` is filtered in
         JavaScript, not in the query: it defaults to FALSE in Postgres but is

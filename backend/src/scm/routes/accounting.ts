@@ -55,6 +55,7 @@ import {
   bankLineReceipt, bankLineMatch, bankLineIgnore, bankLineUndo, bankLinesMatchGroup, bankStatementPeriod, bankStatementAutoMatch,
   bankStatementRepeats,
 } from './accounting-bank';
+import { bankCardPayments, bankLineMatchWithCards } from './accounting-bank-cards';
 import { bankMonths, bankMonthDetail, bankMonthClosing } from './accounting-bank-months';
 import { bankLocks, bankMonthLock, bankMonthUnlock } from './accounting-bank-locks';
 import { paymentCorrections } from './accounting-payment-corrections';
@@ -327,6 +328,10 @@ accounting.post('/bank/lines/:id/ignore', bankLineIgnore);
 accounting.post('/bank/lines/:id/undo', bankLineUndo);
 /* Several movements are one entry, or one movement is several (docs/bugs/0803). */
 accounting.post('/bank/lines/match-group', bankLinesMatchGroup);
+/* One credit takes entries AND card payments no report carries; the difference
+   goes to the charges account (owner 2026-11-17, acc/bank-card-settle). */
+accounting.get('/bank/card-payments', bankCardPayments);
+accounting.post('/bank/lines/:id/match-with-cards', bankLineMatchWithCards);
 
 /* ════════════════════════════════════════════════════════════════════════
    Helpers

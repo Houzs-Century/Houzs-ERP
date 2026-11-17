@@ -19,7 +19,7 @@ Auto-posting source types (reversal = `<TYPE>_REVERSAL`)
 - `PV` payment voucher: posts at approve, reverses at cancel.
 - `SOPAY` / `SIPAY` customer payment: Dr cash, default bank or the acquirer's clearing account / Cr AR. `SOCONV` money moved off a cancelled order: Dr AR (old customer) / Cr AR (new customer).
 - `CASHUP` daily-close cash over/short (946-0000; corrected by JV). `STOCKADJ` month-end stock pair: Dr 330-0000 / Cr 620-0000 on the last day, mirror dated the 1st.
-- `SETTLE` merchant fee at confirm; `SETTLEMOVE` untagged card money to the merchant's own clearing account; `SETTLEADJ` statement charge with no transaction; `SETTLEBANK` payout credit; `SETTLECHARGE` bank charge kept from a payout.
+- `SETTLE` merchant fee at confirm; `SETTLEMOVE` untagged card money to the merchant's own clearing account; `SETTLEADJ` statement charge with no transaction; `SETTLEBANK` payout credit; `SETTLECHARGE` bank charge kept from a payout; `SETTLECARD` card payments a bank credit took in itself.
 - `ODB` debtor bill, `ODR` debtor receipt, `RCT` general receipt, `CN` / `DN` / `SCN` / `OCN` notes, `DI` deposit invoice.
 
 Documents
@@ -127,6 +127,7 @@ Bank reconciliation
 - A closed month refuses booking, matching, ignoring, undoing and uploads with a movement dated inside it; a failed lock read refuses. It is not a GL period close.
 - Card decisions on OPEN lines are recomputed on every read (`freshDecisions`); POSTED and IGNORED lines keep what they were booked as.
 - Merchant money matches itself once the merchant side agrees (owner 2026-11-17): a READY QR credit to its sales' entries (reason `qr+report`), a certain payout (one report, exactly what it is still owed; a report is offered only once every line is confirmed) booked as Money received, and a payout for several reports only when the acquirer's payment advice names them (reports that merely add up to it wait for a person). It runs on upload, on a statement's auto-match, and after a Merchant Recon confirm, advice upload or payout charge (`applyMerchantAgreedMatches`, `acc/bank-merchant-auto.ts`); the reply's `bank` says what it did. A different amount, a split, an unsure payout, a line still to link or a closed month stays for a person; Undo as for any match.
+- A credit may take in card payments no merchant report carries (owner 2026-11-17: 2990's swipes on Houzs's AEON terminal, paid back by Houzs less AEON's charges): the month view's Card payments tab lists Merchant Recon's waiting card payments; tick them with ONE open credit (never a payout or QR movement) and its entries on the bank; the difference (entries + card payments − credit) goes to the company's merchant charges account (900-T009), refused when negative or over 10% of the card payments. One `SETTLECARD` journal (Dr bank, Dr charges, Cr each payment's own clearing account), the payments recorded in `acc_bank_card_settlements` (no merchant report may then claim them, by trigger; they leave the waiting lists, Payments not matched yet and count as in the bank for R&P, and are locked against edits); Undo reverses it (`acc/bank-card-settle.ts`).
 
 Reports
 - Every reader counts only posted entries on neither side of a reversal pair (`acc/reversal-pairs.ts`): statements, R&P, GL, Daily Bank, bank ledger, `scm.v_account_balances`.

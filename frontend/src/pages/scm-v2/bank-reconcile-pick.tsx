@@ -12,15 +12,19 @@
 
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { Link2 } from 'lucide-react';
-import { useMatchBankGroup, type BankLine, type LedgerEntry } from './bank-queries';
+import { cardPaymentKey, useMatchBankGroup, useMatchWithCards, type BankCardPayment, type BankCardPayments, type BankLine, type LedgerEntry } from './bank-queries';
+import { cardPickState } from './bank-card-pick';
 import { ICON, fmt, btn, softText, danger, good, refusalText } from './settlement-ui';
 import { dropReturnPicks, peekReturnPicks, rememberReturnPicks } from '../../lib/returnScroll';
 
 export type ReconcilePick = {
   pickedLines: number[];
   pickedEntries: string[];
+  /** Card payments no report carries, ticked for the movement to take in (cardPaymentKey). */
+  pickedCards: string[];
   toggleLine: (id: number) => void;
   toggleEntry: (jeNo: string) => void;
+  toggleCard: (key: string) => void;
   clear: () => void;
   /** Note the ticks as a document opens from this page, for the way back. */
   keepForReturn: () => void;
@@ -44,11 +48,19 @@ export const byDateThenLine = <T extends { booked_on: string; line_no: number }>
 
 /** `ready`: the lists have arrived (a screen that mounts this while it loads says
     when), so a tick they do not hold may be let go. */
-export const ReconcilePickProvider = ({ lines, entries, ready = true, children }: { lines: BankLine[]; entries: LedgerEntry[]; ready?: boolean; children: React.ReactNode }) => {
+export type CardSetup = Pick<BankCardPayments, 'feeAccount' | 'feeProblem' | 'maxChargePct'>;
+
+export const ReconcilePickProvider = ({ lines, entries, cards = [], cardSetup = null, ready = true, children }: {
+  lines: BankLine[]; entries: LedgerEntry[];
+  /** The card payments no report carries (the month view lists them in its own tab); none elsewhere. */
+  cards?: BankCardPayment[]; cardSetup?: CardSetup | null;
+  ready?: boolean; children: React.ReactNode;
+}) => {
   /* What was ticked when an order was opened from here comes back with the page
      (owner 2026-11-10: 点开后也可以返回这里), once. */
   const [ticked, setTicked] = useState<number[]>(() => peekReturnPicks()?.lines ?? []);
   const [tickedEntries, setTickedEntries] = useState<string[]>(() => peekReturnPicks()?.entries ?? []);
+  const [tickedCards, setTickedCards] = useState<string[]>([]);
   useEffect(() => { dropReturnPicks(); }, []);
   /* Only what is still on the screen is ticked (owner 2026-11-10: 这个情况不应该出现啊).
      A movement ticked, then matched another way, left the list but kept its tick —
@@ -58,46 +70,62 @@ export const ReconcilePickProvider = ({ lines, entries, ready = true, children }
      back unticked. */
   const listedLines = useMemo(() => new Set(lines.map((l) => l.id)), [lines]);
   const listedEntries = useMemo(() => new Set(entries.map((e) => e.jeNo)), [entries]);
+  const listedCards = useMemo(() => new Set(cards.map(cardPaymentKey)), [cards]);
   const pickedLines = useMemo(() => ticked.filter((id) => listedLines.has(id)), [ticked, listedLines]);
   const pickedEntries = useMemo(() => tickedEntries.filter((je) => listedEntries.has(je)), [tickedEntries, listedEntries]);
+  const pickedCards = useMemo(() => tickedCards.filter((k) => listedCards.has(k)), [tickedCards, listedCards]);
   useEffect(() => {
     if (!ready) return;
     setTicked((was) => (was.every((id) => listedLines.has(id)) ? was : was.filter((id) => listedLines.has(id))));
     setTickedEntries((was) => (was.every((je) => listedEntries.has(je)) ? was : was.filter((je) => listedEntries.has(je))));
-  }, [ready, listedLines, listedEntries]);
+    setTickedCards((was) => (was.every((k) => listedCards.has(k)) ? was : was.filter((k) => listedCards.has(k))));
+  }, [ready, listedLines, listedEntries, listedCards]);
   const value = useMemo<ReconcilePick>(() => ({
     pickedLines,
     pickedEntries,
+    pickedCards,
     toggleLine: (id) => setTicked((was) => (was.includes(id) ? was.filter((x) => x !== id) : [...was, id])),
     toggleEntry: (je) => setTickedEntries((was) => (was.includes(je) ? was.filter((x) => x !== je) : [...was, je])),
-    clear: () => { setTicked([]); setTickedEntries([]); },
+    toggleCard: (k) => setTickedCards((was) => (was.includes(k) ? was.filter((x) => x !== k) : [...was, k])),
+    clear: () => { setTicked([]); setTickedEntries([]); setTickedCards([]); },
     keepForReturn: () => rememberReturnPicks({ lines: pickedLines, entries: pickedEntries }),
-  }), [pickedLines, pickedEntries]);
+  }), [pickedLines, pickedEntries, pickedCards]);
   return (
     <Ctx.Provider value={value}>
       {children}
-      <MatchBar lines={lines} entries={entries} />
+      <MatchBar lines={lines} entries={entries} cards={cards} cardSetup={cardSetup} />
     </Ctx.Provider>
   );
 };
 
 /* ── The bar at the foot of the window ────────────────────────────────────── */
 
-const MatchBar = ({ lines, entries }: { lines: BankLine[]; entries: LedgerEntry[] }) => {
+const MatchBar = ({ lines, entries, cards, cardSetup }: { lines: BankLine[]; entries: LedgerEntry[]; cards: BankCardPayment[]; cardSetup: CardSetup | null }) => {
   const pick = useReconcilePick();
   const group = useMatchBankGroup();
+  const withCards = useMatchWithCards();
   /* A refusal answers the ticks it was sent with; once they change it is old news
      (the owner's next pair still carried the first one's red line, 2026-11-10). */
-  const ticks = `${pick.pickedLines.join(',')}|${pick.pickedEntries.join(',')}`;
+  const ticks = `${pick.pickedLines.join(',')}|${pick.pickedEntries.join(',')}|${pick.pickedCards.join(',')}`;
   const [sentWith, setSentWith] = useState<string | null>(null);
-  if (pick.pickedLines.length === 0 && pick.pickedEntries.length === 0) return null;
+  if (pick.pickedLines.length === 0 && pick.pickedEntries.length === 0 && pick.pickedCards.length === 0) return null;
 
   const chosenLines = lines.filter((l) => pick.pickedLines.includes(l.id));
   const chosenEntries = entries.filter((e) => pick.pickedEntries.includes(e.jeNo));
+  const chosenCards = cards.filter((p) => pick.pickedCards.includes(cardPaymentKey(p)));
   const linesSen = chosenLines.reduce((s, l) => s + l.amount_sen, 0);
   const entriesSen = chosenEntries.reduce((s, e) => s + (e.debitSen - e.creditSen), 0);
+  const cardsSen = chosenCards.reduce((s, p) => s + p.amountSen, 0);
+  /* Card payments ticked: the movement takes them in itself and the difference
+     goes to the charges account (owner 2026-11-17; bank-card-pick). */
+  const cardMode = chosenCards.length > 0;
+  const card = cardMode
+    ? cardPickState({ lines: chosenLines, entriesSen, cards: chosenCards, maxChargePct: cardSetup?.maxChargePct ?? 0, feeAccount: cardSetup?.feeAccount ?? null, feeProblem: cardSetup?.feeProblem ?? null })
+    : null;
   const oneSide = chosenLines.length <= 1 || chosenEntries.length <= 1;
-  const agrees = chosenLines.length > 0 && chosenEntries.length > 0 && linesSen === entriesSen && oneSide;
+  const agrees = card ? card.ok : chosenLines.length > 0 && chosenEntries.length > 0 && linesSen === entriesSen && oneSide;
+  const busy = group.isPending || withCards.isPending;
+  const failed = cardMode ? (withCards.isError ? withCards.error : null) : (group.isError ? group.error : null);
   const n = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : (word === 'entry' ? 'ies' : 's')}`.replace('entryies', 'entries');
 
   return (
@@ -118,24 +146,33 @@ const MatchBar = ({ lines, entries }: { lines: BankLine[]; entries: LedgerEntry[
         <b>{n(chosenLines.length, 'movement')}</b> · {fmt(linesSen)}
         {' — '}
         <b>{n(chosenEntries.length, 'entry')}</b> · {fmt(entriesSen)}
+        {cardMode && <>{' + '}<b>{n(chosenCards.length, 'card payment')}</b> · {fmt(cardsSen)}</>}
       </span>
       <span style={{ color: agrees ? good : danger }}>
-        {chosenLines.length === 0 && 'Tick the movement(s) above.'}
-        {chosenLines.length > 0 && chosenEntries.length === 0 && 'Tick the entry (or entries) below.'}
-        {chosenLines.length > 0 && chosenEntries.length > 0 && linesSen !== entriesSen && `${fmt(linesSen - entriesSen)} out — the totals must agree.`}
-        {!oneSide && ' Several movements to several entries is two matches; do one side at a time.'}
-        {agrees && 'The totals agree.'}
+        {card && card.message}
+        {!card && chosenLines.length === 0 && 'Tick the movement(s) above.'}
+        {!card && chosenLines.length > 0 && chosenEntries.length === 0 && 'Tick the entry (or entries) below.'}
+        {!card && chosenLines.length > 0 && chosenEntries.length > 0 && linesSen !== entriesSen && `${fmt(linesSen - entriesSen)} out — the totals must agree.`}
+        {!card && !oneSide && ' Several movements to several entries is two matches; do one side at a time.'}
+        {!card && agrees && 'The totals agree.'}
       </span>
       <span style={{ flex: 1 }} />
-      <button type="button" style={btn(true, !agrees || group.isPending)} disabled={!agrees || group.isPending}
+      <button type="button" style={btn(true, !agrees || busy)} disabled={!agrees || busy}
         onClick={() => {
           setSentWith(ticks);
-          group.mutate({ lineIds: pick.pickedLines, jeNos: pick.pickedEntries }, { onSuccess: () => pick.clear() });
+          if (cardMode) {
+            withCards.mutate(
+              { lineId: pick.pickedLines[0]!, jeNos: pick.pickedEntries, cardPayments: chosenCards.map((p) => ({ source: p.source, id: p.id })) },
+              { onSuccess: () => pick.clear() },
+            );
+          } else {
+            group.mutate({ lineIds: pick.pickedLines, jeNos: pick.pickedEntries }, { onSuccess: () => pick.clear() });
+          }
         }}>
-        <Link2 {...ICON} /> {group.isPending ? 'Matching…' : 'These are that entry'}
+        <Link2 {...ICON} /> {busy ? 'Matching…' : cardMode ? 'Match, difference to charges' : 'These are that entry'}
       </button>
       <button type="button" style={{ ...btn(), padding: '2px 8px' }} onClick={pick.clear}>Clear</button>
-      {group.isError && sentWith === ticks && <span style={{ ...softText, color: danger, width: '100%' }}>{refusalText(group.error, 'That was not accepted.')}</span>}
+      {failed != null && sentWith === ticks && <span style={{ ...softText, color: danger, width: '100%' }}>{refusalText(failed, 'That was not accepted.')}</span>}
     </div>
   );
 };

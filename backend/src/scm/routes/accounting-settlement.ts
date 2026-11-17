@@ -32,7 +32,8 @@ import { hasHouzsPerm } from '../lib/houzs-perms';
 import { requireActiveCompanyId, allowedCompanyIds } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
 import { cardTotalsOf, parseStatement, type StatementColumnMap } from '../../acc/settlement-parse';
-import { matchStatement, recordedNotArrived, listOnce, UNTAGGED_LIST, type MatchBucket, type PaymentCandidate } from '../../acc/settlement-match';
+import { matchStatement, listOnce, UNTAGGED_LIST, type MatchBucket, type PaymentCandidate } from '../../acc/settlement-match';
+import { loadWaitingCardPayments } from '../../acc/waiting-card-payments';
 import {
   loadAcquirer, loadPaymentCandidates, loadSettledKeys, loadSettledKeysFor, linesAlreadyOnFile, confirmSettlementRow, confirmSettlementGroup, postStatementCharge,
   releaseSettlementRow, notThisOf, turnedDownKeysOf, MAX_TURNED_DOWN,
@@ -1579,35 +1580,17 @@ export const settlementWatchlist = guard(async (c) => {
   const acquirers = ((acqRaw ?? []) as Array<{ code: string; display_name: string; date_tolerance_days: number; so_names?: string[] | null }>)
     .filter((a) => !only || a.code === only);
 
-  /* Every merchant's pool and the stranded lines are read together — they were
-     read one merchant after another. The pools are then walked in the same
-     order as before, which listOnce depends on. */
-  const [pools, strandedRes] = await Promise.all([
-    Promise.all(acquirers.map((a) => loadPaymentCandidates(sb, co.companyId, a, from, to))),
+  /* The waiting card payments and the stranded lines are read together; the
+     list's one rule is acc/waiting-card-payments, which Bank Recon reads too. */
+  const [waiting, strandedRes] = await Promise.all([
+    loadWaitingCardPayments(sb, co.companyId, acquirers, from, to),
     paginateAll<Record<string, any>>((f, t) => sb
       .from('acc_settlement_rows').select('id, batch_id, acquirer_code, txn_date, ref, gross_sen, fee_sen, net_sen, notes')
       .eq('company_id', co.companyId).eq('bucket', 'UNMATCHED')
       .gte('txn_date', from).lte('txn_date', to).order('txn_date').order('id').range(f, t)),
   ]);
-  const pooled: PaymentCandidate[] = [];
-  for (const got of pools) {
-    if (!got.ok) return c.json({ error: 'load_failed', reason: got.reason }, 500);
-    pooled.push(...got.payments);
-  }
-  /* Claimed or not, asked of the pooled payments only (see loadSettledKeysFor). */
-  const settled = await loadSettledKeysFor(sb, co.companyId, pooled);
-  if (!settled.ok) return c.json({ error: 'load_failed', reason: settled.reason }, 500);
-
-  /* An untagged payment is in EVERY acquirer's pool — that is how a statement
-     finds it — but it is ONE payment on this list, under no acquirer
-     (docs/bugs/0688: the owner saw the same instalment under GHL, HLB, MBB and
-     PBB, and the header counting it four times). */
-  const recorded: Array<PaymentCandidate & { ageDays: number; acquirerCode: string | null }> = [];
-  const listedUntagged = new Set<string>();
-  acquirers.forEach((a, i) => {
-    const got = pools[i] as { ok: true; payments: PaymentCandidate[] };
-    recorded.push(...listOnce(recordedNotArrived(got.payments, settled.keys, to), a.code, listedUntagged));
-  });
+  if (!waiting.ok) return c.json({ error: 'load_failed', reason: waiting.reason }, 500);
+  const recorded = waiting.payments;
 
   const { data: strandedRaw, error: sErr } = strandedRes;
   if (sErr) return c.json({ error: 'load_failed', reason: sErr.message }, 500);

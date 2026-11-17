@@ -90,7 +90,7 @@ const nodesById = (r: RpReport | undefined): Map<string, LaidNode> => {
 
 const SOURCE_WORD: Partial<Record<string, string>> = {
   PV: 'Payment voucher', SOPAY: 'Customer payment', SIPAY: 'Customer payment', RCT: 'Receipt', ODR: 'Other debtor receipt',
-  SETTLE: 'Settlement', SETTLEBANK: 'Settlement', MANUAL: 'Journal', CASHUP: 'Cash-up', AUTOCOUNT: 'AutoCount',
+  SETTLE: 'Settlement', SETTLEBANK: 'Settlement', SETTLECARD: 'Settlement', MANUAL: 'Journal', CASHUP: 'Cash-up', AUTOCOUNT: 'AutoCount',
 };
 
 type DrillEntry = RpEntry & { idx: number };

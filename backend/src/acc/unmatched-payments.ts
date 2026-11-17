@@ -57,6 +57,7 @@ import { PAYMENT_METHOD_CODES, type PaymentMethodCode } from '../scm/shared/paym
 import { jeNosOf } from './bank';
 import { keyedAs, merchantNamesOf } from './merchant-names';
 import { loadPreviousKeys, previousKey } from './previous-payments';
+import { loadBankCardKeys } from './bank-card-settled';
 
 export type PaymentSource = 'SOPAY' | 'SIPAY';
 
@@ -434,6 +435,12 @@ export async function loadUnmatchedPayments(
   const [pay, previous] = await Promise.all([readPayments(sb, companyId, window.from, window.to), loadPreviousKeys(sb, companyId)]);
   if (!pay.ok) return pay;
   if (!previous.ok) return previous;
+  /* A card payment a bank movement took in itself is matched (acc/bank-card-settle). */
+  const banked = await loadBankCardKeys(sb, companyId, [
+    ...pay.so.map((r) => ({ source: 'SOPAY', id: String(r.id) })),
+    ...pay.si.map((r) => ({ source: 'SIPAY', id: String(r.id) })),
+  ]);
+  if (!banked.ok) return banked;
   const parties = await readParties(sb, companyId, pay.so, pay.si);
   if (!parties.ok) return parties;
 
@@ -443,6 +450,7 @@ export async function loadUnmatchedPayments(
     if (!/^\d{4}-\d{2}-\d{2}$/.test(paidOn)) return;
     /* The previous system's, by the owner's mark: listed on its own (header). */
     if (previous.keys.has(previousKey(source, String(r.id)))) return;
+    if (banked.keys.has(`${source}:${String(r.id)}`)) return;
     facts.push({
       source, id: String(r.id), docNo, customerName: customer, salespersonName: salesperson,
       collectedByName: parties.staffName.get(String(r.collected_by ?? '')) ?? null, paidOn,
