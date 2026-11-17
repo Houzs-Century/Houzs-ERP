@@ -6,12 +6,9 @@
    ("..., 47000 SUNGAI BULOH."), before the server fills the same value. */
 import type { LocalityRow } from './localities-queries';
 
-/** DP job types whose destination needs a postcode (owner 2026-11-17). Mirrors
- *  POSTCODE_REQUIRED_JOB_TYPES in backend/src/scm/routes/dp-orders.ts. A lorry
- *  service, and setup / dismantle (scheduled from the Project module), do not. */
-export const DP_POSTCODE_REQUIRED_JOB_TYPES: ReadonlySet<string> = new Set([
-  'DELIVERY', 'PICKUP', 'SERVICE', 'INSPECTION', 'SUPPLIER_PICKUP', 'TRANSFER',
-]);
+/** Which DP job types need a postcode: the shared rule, re-exported under the
+ *  name the DP forms use. */
+export { POSTCODE_REQUIRED_JOB_TYPES as DP_POSTCODE_REQUIRED_JOB_TYPES } from '../../shared/dp-postcode-rule';
 
 export const postcodeCandidates = (...texts: ReadonlyArray<string | null | undefined>): string[] => {
   const out = new Set<string>();

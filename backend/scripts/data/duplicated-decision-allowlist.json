@@ -1854,6 +1854,11 @@
       "check": "D2",
       "key": "ACCESSORY,BEDFRAME,MATTRESS,OTHERS,SOFA ~ ACCESSORY,BEDFRAME,MATTRESS,SOFA",
       "why": "Deliberate: Mrp.tsx lists every lead-time row a person can set, Others included (2990-0063); ProcurementOverview MRP_CATEGORY offers Apply only where the overview bucket equals one lead-time row, and the overview's OTHERS / DINING buckets do not line up with the 'others' row (carpet etc. sit under ACCESSORY there)."
+    },
+    {
+      "check": "D1",
+      "key": "DELIVERY,INSPECTION,PICKUP,SERVICE,SUPPLIER_PICKUP,TRANSFER|backend/src/scm/shared/dp-postcode-rule.ts frontend/src/vendor/shared/dp-postcode-rule.ts",
+      "why": "A VENDORED TWIN, not a second decision: which DP job types need a destination postcode lives in backend/src/scm/shared/dp-postcode-rule.ts, copied byte-identical into frontend/src/vendor/shared so the DP forms can mark the field required. check-shared-mirrors.mjs compares the pair and fails on DIVERGED."
     }
   ]
 }

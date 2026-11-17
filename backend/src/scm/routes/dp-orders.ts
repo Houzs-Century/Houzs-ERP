@@ -11,6 +11,7 @@
 // SQL, exactly as delivery-planning.ts does for the ASSR union.
 // ---------------------------------------------------------------------------
 
+import { POSTCODE_REQUIRED_JOB_TYPES } from '../shared/dp-postcode-rule';
 import { yymmFor } from '../../services/documentRefs';
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
@@ -235,14 +236,9 @@ async function detectedPostcodeCols(
 const DEST_COLS = { postcode: 'postcode', state: 'state', city: 'city' };
 
 /* Owner 2026-11-17: the postcode is compulsory, checked AFTER detection so a
-   master that writes it only in the address passes without typing. The
-   destination only; a TRANSFER's origin stays optional. A lorry going to the
-   workshop needs none, and SETUP / DISMANTLE are scheduled from the Project
-   module, so theirs stays optional (their venue address is still searched for
-   one). The rule lives in this one list. */
-export const POSTCODE_REQUIRED_JOB_TYPES: ReadonlySet<string> = new Set([
-  'DELIVERY', 'PICKUP', 'SERVICE', 'INSPECTION', 'SUPPLIER_PICKUP', 'TRANSFER',
-]);
+   master that writes it only in the address passes without typing. Which job
+   types: ../shared/dp-postcode-rule.ts. */
+export { POSTCODE_REQUIRED_JOB_TYPES };
 const POSTCODE_REQUIRED = {
   error: 'postcode_required',
   message: 'A delivery job needs a postcode. Type the postcode, or write it in the address.',
