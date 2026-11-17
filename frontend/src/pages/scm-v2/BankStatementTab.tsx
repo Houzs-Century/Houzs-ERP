@@ -874,6 +874,7 @@ export const DoneLine = ({ line }: { line: BankLine }) => {
               {/* Said, because nobody pressed it (docs/bugs/0814). */}
               {line.matches.some((m) => m.match_reason === 'amount+name') ? ' · matched by amount and name' : ''}
               {line.matches.some((m) => m.match_reason === 'amount+document') ? " · matched by the voucher number on the bank's line" : ''}
+              {line.matches.some((m) => m.match_reason === 'qr+report') ? ' · matched by itself: the merchant report agrees' : ''}
             </span>}
       </td>
       <td>

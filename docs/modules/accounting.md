@@ -126,6 +126,7 @@ Bank reconciliation
 - A month locks only when a statement is filed, nothing is undecided, it is covered end to end, a closing balance exists and it tallies (`not_tallied`); there is no reason override.
 - A closed month refuses booking, matching, ignoring, undoing and uploads with a movement dated inside it; a failed lock read refuses. It is not a GL period close.
 - Card decisions on OPEN lines are recomputed on every read (`freshDecisions`); POSTED and IGNORED lines keep what they were booked as.
+- Merchant money matches itself once the merchant side agrees (owner 2026-11-17): a READY QR credit to its sales' entries (reason `qr+report`), a certain payout (one report, exactly what it is still owed; a report is offered only once every line is confirmed) booked as Money received. It runs on upload, on a statement's auto-match, and after a Merchant Recon confirm, advice upload or payout charge (`applyMerchantAgreedMatches`, `acc/bank-merchant-auto.ts`); the reply's `bank` says what it did. A different amount, a split, an unsure payout, a line still to link or a closed month stays for a person; Undo as for any match.
 
 Reports
 - Every reader counts only posted entries on neither side of a reversal pair (`acc/reversal-pairs.ts`): statements, R&P, GL, Daily Bank, bank ledger, `scm.v_account_balances`.

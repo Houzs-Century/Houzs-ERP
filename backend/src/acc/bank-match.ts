@@ -521,7 +521,8 @@ export function matchBankMovements(input: {
    make the credit to the sen. Offered ready only when every line of it is linked
    to its sale on Merchant Recon, every sale has its live entry on THIS bank
    account, and no other bank line holds one; otherwise it says what is missing.
-   Never applied by itself — the person presses. */
+   A ready one is applied by itself (owner 2026-11-17: 我只要对一边 —
+   accounting-bank applyMerchantAgreedMatches); one that is not waits for a person. */
 
 export type QrReportForMatch = {
   batchId: number; fileName: string | null; acquirerCode: string; periodFrom: string; periodTo: string;

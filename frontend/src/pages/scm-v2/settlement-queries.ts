@@ -2,6 +2,7 @@
 // (accounting phase 2B; brief §3.5 layer 3). Every rule lives on the server;
 // these are transport only, so the page cannot drift from what actually posts.
 
+import type { BankFollows } from './bank-follows';
 import { useCallback } from 'react';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
@@ -443,6 +444,11 @@ const invalidateAfterPosting = (qc: ReturnType<typeof useQueryClient>, postedTo:
   void qc.invalidateQueries({ queryKey: ['daily-bank'] });
   /* Finance's To do counts these lines; it moves with them. */
   void qc.invalidateQueries({ queryKey: ['finance-todo'] });
+  /* A confirm can match the bank's credit for the report by itself. */
+  void qc.invalidateQueries({ queryKey: ['bank-statement'] });
+  void qc.invalidateQueries({ queryKey: ['bank-statements'] });
+  void qc.invalidateQueries({ queryKey: ['bank-month'] });
+  void qc.invalidateQueries({ queryKey: ['bank-months'] });
 };
 
 export const useConfirmSettlementRow = () => {
@@ -452,7 +458,7 @@ export const useConfirmSettlementRow = () => {
       rowId: number;
       matchReason: 'ref' | 'amount+date' | 'manual';
       payments: Array<{ source: string; id: string; docNo: string | null; amountSen: number }>;
-    }) => authedFetch<{ ok: boolean; status: string; jeNo?: string }>(
+    }) => authedFetch<{ ok: boolean; status: string; jeNo?: string; bank?: BankFollows }>(
       `/accounting/settlement/rows/${rowId}/confirm`, { method: 'POST', body: JSON.stringify(body) },
     ),
     onSuccess: () => invalidateAfterPosting(qc, []),
@@ -468,7 +474,7 @@ export const useConfirmSettlementGroup = () => {
     mutationFn: (body: {
       rowIds: number[];
       payments: Array<{ source: string; id: string; docNo: string | null; amountSen: number }>;
-    }) => authedFetch<{ ok: boolean; status: string; jeNo?: string }>(
+    }) => authedFetch<{ ok: boolean; status: string; jeNo?: string; bank?: BankFollows }>(
       '/accounting/settlement/rows/confirm-together', { method: 'POST', body: JSON.stringify(body) },
     ),
     onSuccess: () => invalidateAfterPosting(qc, []),
@@ -508,6 +514,7 @@ export type ConfirmMatchedResult = {
   confirmed: number;
   failed: Array<{ rowId: number; reason: string }>;
   statementCharge: { status: string; jeNo?: string } | null;
+  bank?: BankFollows;
 };
 
 /** One report's "post every line the reference matched" — the bare call, so a
