@@ -23,6 +23,14 @@ describe('Supplier Service Order layout', () => {
     expect(supplierBlock.indexOf('Acknowledgement &amp; Sign-off')).toBeGreaterThan(pageTwo);
   });
 
+  test('a page 1 longer than one sheet lets the photos follow on, with no blank sheet (HC-0234)', () => {
+    expect(printRaw).toMatch(/body\.sup\.page-one-overflows \.page-two \{ break-before: auto; page-break-before: auto; margin-top: 3\.5mm; \}/);
+    expect(printRaw).toMatch(/window\.addEventListener\("beforeprint"/);
+    expect(printRaw).toMatch(/classList\.toggle\("page-one-overflows", pageOneMillimetres > printableHeightMillimetres\)/);
+    expect(printRaw).toMatch(/var printableHeightMillimetres = 297 - 14 - 12 - 3;/);
+    expect(printRaw).toMatch(/@page \{ size: A4; margin: 14mm 14mm 12mm 14mm; \}/);
+  });
+
   test('page 1 keeps the facts: dates, supplier, deliver/collect, items, related cases', () => {
     const pageOne = supplierBlock.slice(0, supplierBlock.indexOf('<div class="page-two">'));
     for (const label of [

@@ -1370,6 +1370,29 @@ app.post("/organizers", requirePermission("projects.write"), async (c) => {
   return c.json({ id: r.meta.last_row_id, name }, 201);
 });
 
+app.patch("/organizers/:id", requirePermission("projects.manage"), async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  const body = await c.req.json<{ name?: string }>();
+  const name = (body.name || "").trim();
+  if (!name) return c.json({ error: "name required" }, 400);
+  // Guard against colliding with another active organizer's name (the POST
+  // route is idempotent on name, so two rows sharing a name must not exist).
+  const clash = await c.env.DB.prepare(
+    `SELECT id FROM project_organizers
+      WHERE LOWER(name) = LOWER(?) AND id <> ? AND active = 1`
+  )
+    .bind(name, id)
+    .first<{ id: number }>();
+  if (clash) return c.json({ error: "An organizer with that name already exists" }, 409);
+  await c.env.DB.prepare(
+    `UPDATE project_organizers SET name = ? WHERE id = ?`
+  )
+    .bind(name, id)
+    .run();
+  return c.json({ id, name });
+});
+
 app.delete("/organizers/:id", requirePermission("projects.manage"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);

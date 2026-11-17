@@ -8,6 +8,10 @@ import { authedFetch } from './authed-fetch';
 import { uploadSlipFull } from './slip';
 import { deliveryIssueKindLabel, type DeliveryIssueKind } from './delivery-issue-kinds';
 import type { JobRef } from './delivery-job';
+// The core app client (/api), NOT the scm authedFetch (/api/scm): the office
+// create reuses the Service Cases endpoint POST /api/assr, which lives on the
+// core router.
+import { api } from '../../../api/client';
 
 export type DeliveryIssue = {
   id: string;
@@ -49,6 +53,20 @@ export function deliveryIssueSummary(i: Pick<DeliveryIssue, 'kinds'>): string {
 /** The Service Cases page, opened on the case. */
 export function serviceCaseHref(i: Pick<DeliveryIssue, 'assr_case_id'>): string | null {
   return i.assr_case_id != null ? `/assr/${i.assr_case_id}` : null;
+}
+
+/** The permissions whose holder may open a service case from a delivery report
+ *  — the FE mirror of the office gate on POST /api/assr. The server also admits
+ *  any company grantee / director; this narrower set is the safe direction for
+ *  a button (worst case it hides from someone who could, who still has the
+ *  Service Cases page). */
+export const SERVICE_CASE_CREATE_PERMS = ['service_cases.create', 'service_cases.write', 'service_cases.manage'] as const;
+
+/** The office opens the Service Case for an unlinked delivery report. The
+ *  backend builds the case from the report row and files the POD photos onto
+ *  it (backend/src/scm/lib/delivery-issue.ts createCaseForDeliveryIssue). */
+export function createServiceCaseForIssue(issueId: string): Promise<{ id: number; assr_no: string }> {
+  return api.post<{ id: number; assr_no: string }>('/api/assr', { delivery_issue_id: issueId });
 }
 
 async function send(path: string, d: DeliveryIssueDraft): Promise<DeliveryIssue> {

@@ -190,16 +190,20 @@ export const forBrand = (r: EventCommission, brand: string): EventCommission => 
   const monthAdjustments = monthAdjOf(r).filter((a) => brandOfOrder(a) === brand);
   const marked = markedOf(r).filter((o) => brandOfOrder(o) === brand);
   const deferredIn = deferredInOf(r).filter((o) => brandOfOrder(o) === brand);
-  const payableSen = sum(fairs, (f) => f.payableSen);
-  const adjustmentsSen = sum(adjustments, (a) => a.commissionSen);
-  const monthAdjustmentsSen = sum(monthAdjustments, (a) => a.adjustmentSen);
-  const deferredInSen = sum(deferredIn, (o) => o.commissionSen);
   /* Finance's own lines: only a report that has some carries the list and its figure. */
-  const manualLines = manualOf(r).filter((o) => brandOfOrder(o) === brand);
-  const manualSen = sum(manualLines, (o) => o.commissionSen);
-  const manual = r.manualLines ? { manualLines } : {};
+  const manual = r.manualLines ? { manualLines: manualOf(r).filter((o) => brandOfOrder(o) === brand) } : {};
+  return withTotals({ ...r, fairs, adjustments, earlierOrders, changedOrders, monthAdjustments, marked, deferredIn, ...manual });
+};
+
+/** A narrowed report's totals: the server's sums over exactly the lines it still holds. */
+const withTotals = (r: EventCommission): EventCommission => {
+  const payableSen = sum(r.fairs, (f) => f.payableSen);
+  const adjustmentsSen = sum(r.adjustments, (a) => a.commissionSen);
+  const monthAdjustmentsSen = sum(monthAdjOf(r), (a) => a.adjustmentSen);
+  const deferredInSen = sum(deferredInOf(r), (o) => o.commissionSen);
+  const manualSen = sum(manualOf(r), (o) => o.commissionSen);
   return {
-    ...r, fairs, adjustments, earlierOrders, changedOrders, monthAdjustments, marked, deferredIn, ...manual,
+    ...r,
     totals: {
       payableSen, adjustmentsSen, monthAdjustmentsSen, deferredInSen, ...(r.manualLines ? { manualSen } : {}),
       totalSen: payableSen + adjustmentsSen + monthAdjustmentsSen + deferredInSen + manualSen,
@@ -300,6 +304,63 @@ export const belowDepositOf = (r: EventCommission): BelowDepositRow[] =>
   r.fairs.flatMap((f) => f.sos
     .filter((s) => s.reachedOn == null && !s.mark)
     .map((s) => ({ ...s, fair: f, neededSen: Math.max(0, Math.ceil(s.totalSen * 0.3) - s.paidSen) })));
+
+/** An order of the first table with its fair: a row of the By SO date list, and of a fair's orders exported as one list. */
+export type SoListRow = CommissionSoRow & { fair: CommissionFairRow };
+export const soListOf = (r: EventCommission): SoListRow[] => r.fairs.flatMap((f) => f.sos.map((s) => ({ ...s, fair: f })));
+
+/* ── One salesperson (owner 2026-11-16: 「要按销售员分开」, 「可以total，可以单独」) ─────
+   Every line of the report carries its order's salesperson, so the report splits
+   by salesperson with nothing left over: one salesperson's report is the report
+   over their lines alone, its cards the report's cards over those lines, and the
+   salespeople's cards add up to the report's. A line with none sits apart, under
+   "(no salesperson)". */
+
+export const NO_SALESPERSON = '(no salesperson)';
+export const salespersonOf = (o: { salesperson: string | null }): string => o.salesperson?.trim() || NO_SALESPERSON;
+
+/** Everyone with a line on the report, A to Z; "(no salesperson)" last. */
+export const salespeopleOf = (r: EventCommission): string[] => {
+  const names = new Set([
+    ...r.fairs.flatMap((f) => f.sos), ...r.adjustments, ...earlierOf(r), ...changedOf(r),
+    ...monthAdjOf(r), ...markedOf(r), ...deferredInOf(r), ...manualOf(r),
+  ].map(salespersonOf));
+  return [...names].sort((a, b) => (a === NO_SALESPERSON ? 1 : b === NO_SALESPERSON ? -1 : a.localeCompare(b, 'en', { sensitivity: 'base' })));
+};
+
+/** The report for one salesperson: their lines in every table, a fair worked on their
+    orders alone the way the server works one (its goods, those × the rate, what they
+    earned), and totals of exactly those. The event page's typed figures are the whole
+    fair's, not theirs: left out. */
+export const forSalesperson = (r: EventCommission, name: string): EventCommission => {
+  const theirs = <T extends { salesperson: string | null }>(rows: readonly T[]): T[] => rows.filter((o) => salespersonOf(o) === name);
+  const fairs = r.fairs.flatMap((f) => {
+    const sos = theirs(f.sos);
+    if (sos.length === 0) return [];
+    const goodsSen = sum(sos, (s) => s.goodsSen);
+    return [{
+      ...f, sos, totalSalesRm: null, estimateRm: null,
+      goodsSen, estimateSen: f.ratePct == null ? 0 : Math.round((goodsSen * f.ratePct) / 100), payableSen: sum(sos, (s) => s.commissionSen),
+    }];
+  });
+  return withTotals({
+    ...r, fairs, adjustments: theirs(r.adjustments),
+    earlierOrders: theirs(earlierOf(r)), changedOrders: theirs(changedOf(r)), monthAdjustments: theirs(monthAdjOf(r)),
+    marked: theirs(markedOf(r)), deferredIn: theirs(deferredInOf(r)), ...(r.manualLines ? { manualLines: theirs(r.manualLines) } : {}),
+  });
+};
+
+/** A salesperson's line in the export's By salesperson table: their orders in the tables
+    that add to the total, each card over their lines, and their total — the cards' sum. */
+export type SalespersonCards = { name: string; orders: number; cards: Partial<Record<CardKey, number>>; totalSen: number };
+export const bySalespersonOf = (r: EventCommission): SalespersonCards[] => salespeopleOf(r).map((name) => {
+  const p = forSalesperson(r, name);
+  const cards = cardsOf(p);
+  const orders = new Set([
+    ...p.fairs.flatMap((f) => f.sos), ...earlierShownOf(p), ...monthAdjOf(p), ...deferredInOf(p), ...manualOf(p), ...changesEarlierOf(p),
+  ].map((o) => o.docNo)).size;
+  return { name, orders, cards: Object.fromEntries(cards.map((c) => [c.key, c.sen])), totalSen: sum(cards, (c) => c.sen) };
+});
 
 /* ── The Excel / PDF sheet and the CSV ─────────────────────────────────────────
    Owner 2026-11-13: 「export 出来的顺便排一排做好看一点」. The summary (the cards, the

@@ -28,13 +28,14 @@
 // a cross-company row. A default-visible Company column tags each row.
 // ----------------------------------------------------------------------------
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { JobDetailPanel, panelTargetOf, rowDocumentPath, type JobPanelTarget } from '../../components/scm-v2/JobDetailPanel';
 import { useNavigate } from 'react-router-dom';
 import { useStickyFilters } from '../../hooks/useStickyFilters';
 import { MapPinned, Truck, Plus, MessageSquare, CalendarClock, ChevronDown, RefreshCw } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/Layout';
+import { AnchoredMenu } from '../../components/AnchoredMenu';
 import { DeliveryFieldsDrawer } from '../../vendor/scm/components/DeliveryFieldsDrawer';
 import { NewDpOrderDrawer } from '../../vendor/scm/components/NewDpOrderDrawer';
 import { SetJobDateDrawer } from '../../vendor/scm/components/SetJobDateDrawer';
@@ -353,6 +354,7 @@ export const DeliveryPlanning = () => {
   const [sendKind, setSendKind] = useState<SendMessageKind>('delivery');
   const [sendMenuOpen, setSendMenuOpen] = useState(false);
   const [oneTimeOpen, setOneTimeOpen] = useState(false);
+  const sendMenuAnchorRef = useRef<HTMLDivElement | null>(null);
   const [bulkMenuOpen, setBulkMenuOpen] = useState(false);
   if (bulkMenuOpen && sel.size === 0) setBulkMenuOpen(false);
   /* Ticked Service Case legs - they send their own Service Arrangement (HC-0171). */
@@ -451,7 +453,7 @@ export const DeliveryPlanning = () => {
             {/* Send Message — standing header button (owner picked design B,
                 2026-07-22): always visible, WhatsApp green, counts the selected
                 SO rows; disabled until something is ticked. */}
-            <div style={{ position: 'relative' }}>
+            <div ref={sendMenuAnchorRef}>
               <Button
                 variant="primary"
                 style={{ background: '#1D9E75', borderColor: '#1D9E75' }}
@@ -463,108 +465,108 @@ export const DeliveryPlanning = () => {
                 Send Message ({sendCount})
                 <ChevronDown size={14} strokeWidth={1.75} />
               </Button>
+              {/* Portalled: the pinned page header (z-20) traps an in-place menu, so the
+                  table's sticky header and frozen columns painted over it (HC-0235). */}
               {sendMenuOpen && (
-                <>
-                  <div onClick={() => { setSendMenuOpen(false); setOneTimeOpen(false); }} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
-                  <div
-                    role="menu"
-                    style={{
-                      position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 41, minWidth: 220,
-                      /* Expanding "One Time Send Now" makes this 11 items tall — cap it to
-                         the viewport and scroll, so the bottom entries (Postage / Delivery
-                         Completed) can't fall off-screen (owner 2026-10-23). */
-                      maxHeight: '70vh', overflowY: 'auto',
-                      background: 'var(--hz-c-surface)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md, 10px)',
-                      boxShadow: '0 8px 28px rgba(34, 31, 32, 0.14)', padding: 4,
-                    }}
-                  >
-                    {(() => {
-                      /* Service Arrangement, Driver Info and the two date sends
-                         reach a Service Case job; the rest read a Sales Order, so
-                         with only ASSR rows ticked they are greyed instead of doing
-                         nothing. */
-                      const soOnlyIdle = (k: SendMessageKind) =>
-                        k !== 'assr_arrangement' && k !== 'driver_info' && !ASSR_DATE_KINDS.has(k) && selectedSoDocNos().length === 0;
-                      // SO + ASSR ticked: an SO-only send leaves the ASSR rows out, so say so.
-                      const assrLeftOut = (k: SendMessageKind) =>
-                        k !== 'assr_arrangement' && k !== 'driver_info' && selectedAssrRows.length > 0 && selectedSoDocNos().length > 0;
-                      const renderKind = (
-                        [k, label, hint]: readonly [SendMessageKind, string, string],
-                        sub: boolean,
-                      ) => (
+                <AnchoredMenu
+                  anchorRef={sendMenuAnchorRef}
+                  onClose={() => { setSendMenuOpen(false); setOneTimeOpen(false); }}
+                  menuStyle={{
+                    minWidth: 220,
+                    /* Expanding "One Time Send Now" makes this 11 items tall — cap it to
+                       the viewport and scroll, so the bottom entries (Postage / Delivery
+                       Completed) can't fall off-screen (owner 2026-10-23). */
+                    maxHeight: '70vh', overflowY: 'auto',
+                    background: 'var(--hz-c-surface)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md, 10px)',
+                    boxShadow: '0 8px 28px rgba(34, 31, 32, 0.14)', padding: 4,
+                  }}
+                >
+                  {(() => {
+                    /* Service Arrangement, Driver Info and the two date sends
+                       reach a Service Case job; the rest read a Sales Order, so
+                       with only ASSR rows ticked they are greyed instead of doing
+                       nothing. */
+                    const soOnlyIdle = (k: SendMessageKind) =>
+                      k !== 'assr_arrangement' && k !== 'driver_info' && !ASSR_DATE_KINDS.has(k) && selectedSoDocNos().length === 0;
+                    // SO + ASSR ticked: an SO-only send leaves the ASSR rows out, so say so.
+                    const assrLeftOut = (k: SendMessageKind) =>
+                      k !== 'assr_arrangement' && k !== 'driver_info' && selectedAssrRows.length > 0 && selectedSoDocNos().length > 0;
+                    const renderKind = (
+                      [k, label, hint]: readonly [SendMessageKind, string, string],
+                      sub: boolean,
+                    ) => (
+                      <button
+                        key={k}
+                        type="button"
+                        role="menuitem"
+                        disabled={soOnlyIdle(k)}
+                        title={soOnlyIdle(k) ? 'Sales Orders only - tick an SO row' : undefined}
+                        onClick={() => { setSendMenuOpen(false); setOneTimeOpen(false); if (k === 'postpone') void sendPostponeDirect(); else openSendModal(k); }}
+                        style={{ display: 'block', width: '100%', padding: sub ? '8px 10px 8px 24px' : '8px 10px', background: 'transparent', border: 'none', borderRadius: 8, cursor: soOnlyIdle(k) ? 'default' : 'pointer', textAlign: 'left', opacity: soOnlyIdle(k) ? 0.5 : 1 }}
+                        onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg, #f4f2ec)'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                      >
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--fs-13, 13px)', fontWeight: 600, color: 'var(--ink, #221f20)' }}>
+                          <MessageSquare size={14} strokeWidth={1.75} /> {label}
+                        </span>
+                        <span style={{ display: 'block', marginLeft: 22, fontSize: 'var(--fs-12, 11px)', color: 'var(--c-muted, var(--hz-c-ink-muted))' }}>{assrLeftOut(k) ? `${hint}. SO rows only: ${selectedAssrRows.length} ASSR not included` : hint}</span>
+                      </button>
+                    );
+                    return (
+                      <>
+                        {selectedAssrRows.length > 0 && renderKind(['assr_arrangement', 'Service Arrangement', `${selectedAssrRows.length} ASSR job${selectedAssrRows.length === 1 ? '' : 's'}: date message (Confirm / Amend)`], false)}
+                        {([
+                          ['delivery', 'Send Now', 'Delivery-date message (Confirm / Amend)'],
+                          ['amend', 'Amend Now', 'Amend / reschedule message (Confirm / Amend)'],
+                        ] as const).map((it) => renderKind(it, false))}
+                        {/* Sync to Connect (owner 2026-11-02): fill the customer's
+                            Connect contact panel from the order — no message sent. */}
                         <button
-                          key={k}
                           type="button"
                           role="menuitem"
-                          disabled={soOnlyIdle(k)}
-                          title={soOnlyIdle(k) ? 'Sales Orders only - tick an SO row' : undefined}
-                          onClick={() => { setSendMenuOpen(false); setOneTimeOpen(false); if (k === 'postpone') void sendPostponeDirect(); else openSendModal(k); }}
-                          style={{ display: 'block', width: '100%', padding: sub ? '8px 10px 8px 24px' : '8px 10px', background: 'transparent', border: 'none', borderRadius: 8, cursor: soOnlyIdle(k) ? 'default' : 'pointer', textAlign: 'left', opacity: soOnlyIdle(k) ? 0.5 : 1 }}
+                          disabled={selectedSoDocNos().length === 0 || syncContacts.isPending}
+                          onClick={() => { setSendMenuOpen(false); setOneTimeOpen(false); syncToConnectDirect(); }}
+                          style={{ display: 'block', width: '100%', padding: '8px 10px', background: 'transparent', border: 'none', borderRadius: 8, cursor: selectedSoDocNos().length === 0 ? 'default' : 'pointer', textAlign: 'left', opacity: selectedSoDocNos().length === 0 ? 0.5 : 1 }}
                           onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg, #f4f2ec)'; }}
                           onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
                         >
                           <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--fs-13, 13px)', fontWeight: 600, color: 'var(--ink, #221f20)' }}>
-                            <MessageSquare size={14} strokeWidth={1.75} /> {label}
+                            <RefreshCw size={14} strokeWidth={1.75} /> Sync to Connect
                           </span>
-                          <span style={{ display: 'block', marginLeft: 22, fontSize: 'var(--fs-12, 11px)', color: 'var(--c-muted, var(--hz-c-ink-muted))' }}>{assrLeftOut(k) ? `${hint}. SO rows only: ${selectedAssrRows.length} ASSR not included` : hint}</span>
+                          <span style={{ display: 'block', marginLeft: 22, fontSize: 'var(--fs-12, 11px)', color: 'var(--c-muted, var(--hz-c-ink-muted))' }}>Fill the customer's Connect details from the order — no message sent</span>
                         </button>
-                      );
-                      return (
-                        <>
-                          {selectedAssrRows.length > 0 && renderKind(['assr_arrangement', 'Service Arrangement', `${selectedAssrRows.length} ASSR job${selectedAssrRows.length === 1 ? '' : 's'}: date message (Confirm / Amend)`], false)}
-                          {([
-                            ['delivery', 'Send Now', 'Delivery-date message (Confirm / Amend)'],
-                            ['amend', 'Amend Now', 'Amend / reschedule message (Confirm / Amend)'],
-                          ] as const).map((it) => renderKind(it, false))}
-                          {/* Sync to Connect (owner 2026-11-02): fill the customer's
-                              Connect contact panel from the order — no message sent. */}
-                          <button
-                            type="button"
-                            role="menuitem"
-                            disabled={selectedSoDocNos().length === 0 || syncContacts.isPending}
-                            onClick={() => { setSendMenuOpen(false); setOneTimeOpen(false); syncToConnectDirect(); }}
-                            style={{ display: 'block', width: '100%', padding: '8px 10px', background: 'transparent', border: 'none', borderRadius: 8, cursor: selectedSoDocNos().length === 0 ? 'default' : 'pointer', textAlign: 'left', opacity: selectedSoDocNos().length === 0 ? 0.5 : 1 }}
-                            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg, #f4f2ec)'; }}
-                            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                          >
-                            <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--fs-13, 13px)', fontWeight: 600, color: 'var(--ink, #221f20)' }}>
-                              <RefreshCw size={14} strokeWidth={1.75} /> Sync to Connect
-                            </span>
-                            <span style={{ display: 'block', marginLeft: 22, fontSize: 'var(--fs-12, 11px)', color: 'var(--c-muted, var(--hz-c-ink-muted))' }}>Fill the customer's Connect details from the order — no message sent</span>
-                          </button>
-                          {/* One Time Send Now (owner 2026-10-21): the ad-hoc sends
-                              fold under one entry, opened on demand. */}
-                          <button
-                            type="button"
-                            role="menuitem"
-                            aria-expanded={oneTimeOpen}
-                            onClick={() => setOneTimeOpen((v) => !v)}
-                            style={{ display: 'block', width: '100%', padding: '8px 10px', background: 'transparent', border: 'none', borderRadius: 8, cursor: 'pointer', textAlign: 'left' }}
-                            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg, #f4f2ec)'; }}
-                            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                          >
-                            <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--fs-13, 13px)', fontWeight: 600, color: 'var(--ink, #221f20)' }}>
-                              <MessageSquare size={14} strokeWidth={1.75} /> One Time Send Now
-                              <ChevronDown size={13} strokeWidth={1.75} style={{ marginLeft: 'auto', transform: oneTimeOpen ? 'rotate(180deg)' : 'none' }} />
-                            </span>
-                            <span style={{ display: 'block', marginLeft: 22, fontSize: 'var(--fs-12, 11px)', color: 'var(--c-muted, var(--hz-c-ink-muted))' }}>Pick one: postpone, driver info, balance, reminders, postage, thanks</span>
-                          </button>
-                          {oneTimeOpen && ([
-                            ['postpone', 'Postpone', 'Move the date - reads the order reason and new date'],
-                            ['overdue_order', 'Overdue Order', 'Production delay - one-way heads-up, no new date'],
-                            ['driver_info', 'Driver Info', 'Day-before: date, time, driver, lorry plate'],
-                            ['balance_reminder', 'Balance Reminder', 'Outstanding balance + bank details (owing orders only)'],
-                            ['reminder_1', 'Reminder 1', 'No reply yet - first nudge'],
-                            ['reminder_2', 'Reminder 2', 'No reply yet - second nudge'],
-                            ['reminder_3', 'Reminder 3', 'No reply yet - final nudge'],
-                            ['postage', 'Postage Confirm', 'Confirm the postage address'],
-                            ['delivery_completed', 'Delivery Completed', 'Thank-you after delivery'],
-                          ] as const).map((it) => renderKind(it, true))}
-                        </>
-                      );
-                    })()}
-                  </div>
-                </>
+                        {/* One Time Send Now (owner 2026-10-21): the ad-hoc sends
+                            fold under one entry, opened on demand. */}
+                        <button
+                          type="button"
+                          role="menuitem"
+                          aria-expanded={oneTimeOpen}
+                          onClick={() => setOneTimeOpen((v) => !v)}
+                          style={{ display: 'block', width: '100%', padding: '8px 10px', background: 'transparent', border: 'none', borderRadius: 8, cursor: 'pointer', textAlign: 'left' }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg, #f4f2ec)'; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                        >
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--fs-13, 13px)', fontWeight: 600, color: 'var(--ink, #221f20)' }}>
+                            <MessageSquare size={14} strokeWidth={1.75} /> One Time Send Now
+                            <ChevronDown size={13} strokeWidth={1.75} style={{ marginLeft: 'auto', transform: oneTimeOpen ? 'rotate(180deg)' : 'none' }} />
+                          </span>
+                          <span style={{ display: 'block', marginLeft: 22, fontSize: 'var(--fs-12, 11px)', color: 'var(--c-muted, var(--hz-c-ink-muted))' }}>Pick one: postpone, driver info, balance, reminders, postage, thanks</span>
+                        </button>
+                        {oneTimeOpen && ([
+                          ['postpone', 'Postpone', 'Move the date - reads the order reason and new date'],
+                          ['overdue_order', 'Overdue Order', 'Production delay - one-way heads-up, no new date'],
+                          ['driver_info', 'Driver Info', 'Day-before: date, time, driver, lorry plate'],
+                          ['balance_reminder', 'Balance Reminder', 'Outstanding balance + bank details (owing orders only)'],
+                          ['reminder_1', 'Reminder 1', 'No reply yet - first nudge'],
+                          ['reminder_2', 'Reminder 2', 'No reply yet - second nudge'],
+                          ['reminder_3', 'Reminder 3', 'No reply yet - final nudge'],
+                          ['postage', 'Postage Confirm', 'Confirm the postage address'],
+                          ['delivery_completed', 'Delivery Completed', 'Thank-you after delivery'],
+                        ] as const).map((it) => renderKind(it, true))}
+                      </>
+                    );
+                  })()}
+                </AnchoredMenu>
               )}
             </div>
             {/* New DP Order — manual setup / dismantle / supplier-pickup jobs (and
