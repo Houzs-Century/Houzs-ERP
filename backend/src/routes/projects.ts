@@ -1526,8 +1526,8 @@ app.delete("/contractors/:id/share-link", requirePermission("projects.manage"), 
 });
 
 // ── Venues ────────────────────────────────────────────────────
-const blankToNull = (v: unknown): string | null =>
-  (typeof v === "string" && v.trim() ? v.trim() : null);
+type VenueBody = { name?: string; state?: string | null; country?: string | null; city?: string | null; postcode?: string | null; size?: string | null; notes?: string | null };
+const blankToNull = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
 
 // Same shape as organizers — picker-backed lookup, free-text column on
 // `projects.venue` stays valid so legacy data still renders.
@@ -1619,22 +1619,10 @@ app.get("/venues", requirePageAccess("projects"), async (c) => {
 
 app.post("/venues", requirePermission("projects.write"), async (c) => {
   const user = c.get("user");
-  const body = await c.req.json<{
-    name?: string;
-    state?: string | null;
-    country?: string | null;
-    city?: string | null;
-    postcode?: string | null;
-    size?: string | null;
-    notes?: string | null;
-  }>();
+  const body = await c.req.json<VenueBody>();
   const rawName = (body.name || "").trim();
-  /* Country / City / Postcode (migs 0178 / 0182) — the Project Maintenance form
-     always sent them, and this insert dropped them, which is why no venue had a
-     postcode. Delivery Planning reads them for a project's SETUP / DISMANTLE. */
-  const country = blankToNull(body.country);
-  const city = blankToNull(body.city);
-  const postcode = blankToNull(body.postcode);
+  // Country / City / Postcode (migs 0178 / 0182): sent by the form, dropped here until 2026-11-17; DP reads them.
+  const [country, city, postcode] = [body.country, body.city, body.postcode].map(blankToNull);
   if (!rawName) return c.json({ error: "name required" }, 400);
   // Fold showroom-venue aliases (e.g. "PJ Showroom") to canonical "2990s PJ" before
   // the by-name lookup + INSERT, so re-adding an alias reactivates the ONE canonical
@@ -1694,15 +1682,7 @@ app.patch("/venues/:id", requirePermission("projects.manage"), async (c) => {
   // Mirrors the sibling PATCH /brands/:id guard. Degrades to no predicate on a
   // genuinely unresolved / single-company context, matching activeCompanySql.
   const venueCoSql = activeCompanySql(c);
-  const body = await c.req.json<{
-    name?: string;
-    state?: string | null;
-    country?: string | null;
-    city?: string | null;
-    postcode?: string | null;
-    size?: string | null;
-    notes?: string | null;
-  }>();
+  const body = await c.req.json<VenueBody>();
   const sets: string[] = [];
   const binds: any[] = [];
   if ("name" in body) {
