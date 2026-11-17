@@ -9,6 +9,10 @@ export type AuditFieldChange = {
   field: string;
   from?: unknown;
   to?: unknown;
+  /* The record's name when the value is a record id (a supplier, warehouse,
+     PO ...), added by the server at read time (backend lib/audit-id-labels). */
+  from_label?: string;
+  to_label?: string;
 };
 
 /* Structural shape of one append-only audit row. Matches mfg_so_audit_log's
@@ -70,4 +74,8 @@ export const auditActionLabel = (
 export const auditFieldLabel = (
   field: string,
   dict: AuditLabelDictionary,
-): string => dict.fields[field] ?? dict.fallbackFieldLabel?.(field) ?? humaniseKey(field);
+): string =>
+  dict.fields[field] ??
+  dict.fallbackFieldLabel?.(field) ??
+  // "supplierId" reads "Supplier": the value beside it is now the supplier's name.
+  humaniseKey(field).replace(/ Ids?$/i, '');

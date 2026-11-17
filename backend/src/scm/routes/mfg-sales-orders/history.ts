@@ -3,6 +3,7 @@ import type { Env, Variables } from '../../env';
 import { scopeToCompany } from '../../lib/companyScope';
 import { canViewScmFinance } from '../../lib/houzs-perms';
 import { stripAuditFinance } from '../../lib/finance-keys';
+import { labelAuditIds, type AuditLabelReader } from '../../lib/audit-id-labels';
 
 /* GET /:docNo/audit-log, /related-audit-log, /status-changes, /revisions, /price-overrides — moved out of mfg-sales-orders.ts, which calls this where the block
    stood, so registration order is unchanged. The body is moved verbatim and left
@@ -30,7 +31,8 @@ mfgSalesOrders.get('/:docNo/audit-log', async (c) => {
      (lib/finance-keys) — the consignment audit-log reads this SAME table. */
   const entries = (data ?? []) as Array<Record<string, unknown>>;
   if (!canViewScmFinance(c)) stripAuditFinance(entries);
-  return c.json({ entries });
+  const labelsFailed = await labelAuditIds(sb as unknown as AuditLabelReader, entries);
+  return c.json(labelsFailed.length ? { entries, labels_unavailable: labelsFailed } : { entries });
 });
 
 // ── GET /mfg-sales-orders/:docNo/related-audit-log ──────────────────
@@ -109,7 +111,8 @@ mfgSalesOrders.get('/:docNo/related-audit-log', async (c) => {
   if (error) return fail(error.message);
   const entries = (data ?? []) as unknown as Array<Record<string, unknown>>;
   if (!canViewScmFinance(c)) stripAuditFinance(entries);
-  return c.json({ entries });
+  const labelsFailed = await labelAuditIds(sb as unknown as AuditLabelReader, entries);
+  return c.json(labelsFailed.length ? { entries, labels_unavailable: labelsFailed } : { entries });
 });
 
 // GET — list status change history for the SO detail timeline.
