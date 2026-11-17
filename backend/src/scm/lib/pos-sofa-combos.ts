@@ -9,7 +9,7 @@
  *
  * Every SELLING reader goes through loadSellingSofaCombos: the '2990' company
  * reads the POS table, every other company keeps sofa_combo_pricing's master
- * rows exactly as before. The SO cost spread keeps loadMasterSofaCombos for
+ * rows exactly as before. The SO cost spread reads loadMasterSofaComboCosts for
  * every company. */
 
 import {
@@ -118,6 +118,37 @@ export async function loadMasterSofaCombos(sb: Sb, c: CompanyScopeCtx): Promise<
     label: r.label, effectiveFrom: r.effective_from, createdAt: r.created_at, deletedAt: r.deleted_at,
     defaultFreeGifts: r.default_free_gifts ?? [],
   }));
+}
+
+/** sofa_combo_pricing master rows of the active company priced at their COST
+ *  (`prices_by_height`) only. loadMasterSofaCombos charges the selling grid
+ *  over the cost one, which is right for a selling reader and wrong for a cost
+ *  spread: 2990-SO-2610-017 booked a PLLAO set at its selling figure instead
+ *  of its cost. A failed read is returned, never read as
+ *  "no combos", which would write unspread costs to the header as fact. */
+export async function loadMasterSofaComboCosts(
+  sb: Sb,
+  c: CompanyScopeCtx,
+): Promise<{ rows: SofaComboRow[]; error: string | null }> {
+  const { data, error } = await scopeToCompany(
+    sb
+      .from('sofa_combo_pricing')
+      .select('id, base_model, modules, tier, customer_id, prices_by_height, label, effective_from, created_at, deleted_at'),
+    c,
+  )
+    .is('deleted_at', null)
+    .is('customer_id', null)
+    .is('supplier_id', null);
+  if (error) return { rows: [], error: error.message ?? String(error) };
+  return {
+    rows: ((data ?? []) as MasterComboRow[]).map((r) => ({
+      id: r.id, baseModel: r.base_model, modules: r.modules,
+      tier: r.tier, customerId: r.customer_id,
+      pricesByHeight: r.prices_by_height,
+      label: r.label, effectiveFrom: r.effective_from, createdAt: r.created_at, deletedAt: r.deleted_at,
+    })),
+    error: null,
+  };
 }
 
 /** The combos a SELLING path prices with (SO create / line edit / add line /

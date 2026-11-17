@@ -12,7 +12,7 @@ import { normalizePhone } from '../shared/phone';
 import { checkPaymentSlipDate } from '../shared/payment-slip-date';
 import { checkPaymentSlip } from '../shared/payment-slip-required';
 import {
-  pickComboMatch, spreadComboTotal, splitSofaCode, sofaHeightKey,
+  splitSofaCode,
   buildVariantSummary, matchComboBuild, type SofaPriceTier,
   oneShotSofaCode, oneShotSimpleCode, remarkSlug,
   fabricTierAddon,
@@ -135,7 +135,8 @@ import {
   MIRRORED_SO_READONLY, MIRRORED_SO_CREATE_BLOCKED,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
 } from '../lib/companyScope';
-import { loadComboModulesById, loadMasterSofaCombos, loadSellingSofaCombos } from '../lib/pos-sofa-combos';
+import { loadComboModulesById, loadMasterSofaComboCosts, loadSellingSofaCombos } from '../lib/pos-sofa-combos';
+import { planComboCostSpread } from '../lib/sofa-combo-cost-spread';
 import { supabaseAuth } from '../middleware/auth';
 import { escapeForOr } from '../lib/postgrest-search';
 import { effectiveStatusFilter, isRangeNotSatisfiable } from '../lib/so-list-filters';
@@ -7032,16 +7033,15 @@ export async function recomputeTotals(sb: any, docNo: string, c: any) {
   type Row = { id: string; item_code: string; item_group: string; variants: Record<string, unknown> | null; qty: number; total_sen: number; line_cost_sen: number };
   const rows = (items ?? []) as Row[];
 
-  /* ── Master sofa-combo COST spread (Commander 2026-05-29) ──────────────────
-     A sofa is a set of per-module lines. When those lines (same base model)
-     match a MASTER combo (sofa_combo_pricing where supplier_id IS NULL — the
-     Product-Maintenance combo), the set's COST = the combo price, spread across
-     the matched lines (mirror of the PO side, but master-scoped). We spread off
-     the stored per-line line_cost_sen (the per-module base cost). Idempotent:
-     spreadComboTotal re-normalises an already-spread group to the same total. */
+  /* ── Master sofa-combo COST spread: lib/sofa-combo-cost-spread.ts ────────── */
   const sofaRows = rows.filter((r) => (r.item_group ?? '').toLowerCase() === 'sofa');
   if (sofaRows.length > 0) {
-    const combos = await loadMasterSofaCombos(sb, c); // Houzs master rows: COST spread, every company
+    const { rows: combos, error: combosErr } = await loadMasterSofaComboCosts(sb, c);
+    if (combosErr) {
+      /* eslint-disable-next-line no-console */
+      console.error('[so-recompute] combo read failed — header left unchanged:', docNo, combosErr);
+      return;
+    }
     if (combos.length > 0) {
       const fabricCodes = [...new Set(sofaRows.map((r) => String((r.variants ?? {} as Record<string, unknown>).fabricCode ?? '')).filter(Boolean))];
       const tierByFabric = new Map<string, SofaPriceTier>();
@@ -7064,75 +7064,30 @@ export async function recomputeTotals(sb: any, docNo: string, c: any) {
           tierByFabric.set(f.fabric_code, (f.sofa_price_tier ?? f.price_tier ?? 'PRICE_2'));
         }
       }
-      const groups = new Map<string, Row[]>();
-      for (const r of sofaRows) {
-        const { baseModel, sizeCode } = splitSofaCode(r.item_code);
-        /* Audit 2026-06-11 I-1 — the old `sizeCode.includes('-')` gate was a
-           legacy dash-vocabulary sniff that skipped EVERY canonical parens
-           module (`1A(LHF)`) AND whole-unit codes (1S/2S/3S), making this
-           whole spread dead code since the 2026-06-04 vocabulary unification.
-           Module-set matching is pickComboMatch's job (it already rejects
-           non-matching sets); we only skip codes with no module token at all. */
-        if (!sizeCode) continue; // bare model code → nothing to match
-        const key = baseModel.toUpperCase();
-        const arr = groups.get(key) ?? [];
-        arr.push(r); groups.set(key, arr);
-      }
-      for (const [bm, members] of groups) {
-        const tierOf = (m: Row) => tierByFabric.get(String((m.variants ?? {} as Record<string, unknown>).fabricCode ?? '')) ?? 'PRICE_2';
-        const tiers = new Set(members.map(tierOf));
-        if (tiers.size !== 1) continue;
-        const tier = [...tiers][0]!;
-        const heights = new Set(members.map((m) => sofaHeightKey(m.variants)));
-        if (heights.size !== 1) continue;
-        const height = [...heights][0]!;
-        if (!height) continue;
-        /* Audit 2026-06-11 I2 — combos must match the SAME base model only
-           (owner rule: no cross-model fallback). Module codes are a shared
-           vocabulary, so falling back to ALL combos let a Model with no combos
-           silently take another Model's combo price as its set cost. */
-        const pool = combos.filter((cmb) => (cmb.baseModel ?? '').toUpperCase() === bm);
-        if (pool.length === 0) continue; // no combo named for this Model → no combo
-        const match = pickComboMatch(
-          { baseModel: '', modules: members.map((m) => splitSofaCode(m.item_code).sizeCode), customerId: null, tier, height },
-          pool,
-        );
-        if (!match) continue;
-        const matched = match.matchedIndices.map((i) => members[i]).filter((m): m is Row => !!m);
-        if (matched.length === 0) continue;
-        /* Audit 2026-06-11 I1 — the combo price is ONE set; line_cost_sen is
-           a LINE total (unit × qty). Owner rule: combo cost MUST multiply by
-           qty. Uniform qty q across the matched lines → q sets → comboTotal×q.
-           Mixed qtys → no clean set count → SKIP the combo and keep the
-           per-module costs (never under-book). */
-        const qtySet = new Set(matched.map((m) => Math.max(1, m.qty || 1)));
-        if (qtySet.size !== 1) continue;
-        const uniformQty = [...qtySet][0]!;
-        const comboTotal = match.comboPriceSen * uniformQty;
-        if (comboTotal <= 0) continue;
-        const spread = spreadComboTotal(matched.map((m) => m.line_cost_sen || 0), comboTotal);
-        for (let i = 0; i < matched.length; i++) {
-          const m = matched[i]!; const newLineCost = spread[i] ?? 0; const q = Math.max(1, m.qty || 1);
-          m.line_cost_sen = newLineCost; // mutate in place so the rollup below sees it
-          const { error: spreadErr } = await sb.from('mfg_sales_order_items').update({
-            line_cost_sen:   newLineCost,
-            unit_cost_sen:   Math.round(newLineCost / q),
-            line_margin_sen: (m.total_sen || 0) - newLineCost,
-          }).eq('id', m.id);
-          /* The in-memory mutation above already fed this cost to the roll-up,
-             so a failed line write would have the header assert a cost its own
-             lines do not carry. There is no transaction here to undo the sibling
-             lines that did land; leaving the header alone keeps the ONE row every
-             list, report and margin reads honest, and the spread is idempotent so
-             the next successful edit re-rolls the whole group. */
-          if (spreadErr) {
-            if (sb?.__atomicCommand === true) {
-              throw new Error(`SO combo cost spread failed: ${spreadErr.message}`);
-            }
-            /* eslint-disable-next-line no-console */
-            console.error('[so-recompute] combo cost spread failed — header left unchanged:', docNo, m.id, spreadErr.message);
-            return;
+      const spread = planComboCostSpread(sofaRows, combos, (code) => tierByFabric.get(code) ?? 'PRICE_2', null);
+      for (const m of sofaRows) {
+        const newLineCost = spread.get(m.id);
+        if (newLineCost === undefined) continue;
+        const q = Math.max(1, m.qty || 1);
+        m.line_cost_sen = newLineCost; // mutate in place so the rollup below sees it
+        const { error: spreadErr } = await sb.from('mfg_sales_order_items').update({
+          line_cost_sen:   newLineCost,
+          unit_cost_sen:   Math.round(newLineCost / q),
+          line_margin_sen: (m.total_sen || 0) - newLineCost,
+        }).eq('id', m.id);
+        /* The in-memory mutation above already fed this cost to the roll-up,
+           so a failed line write would have the header assert a cost its own
+           lines do not carry. There is no transaction here to undo the sibling
+           lines that did land; leaving the header alone keeps the ONE row every
+           list, report and margin reads honest, and the spread is idempotent so
+           the next successful edit re-rolls the whole group. */
+        if (spreadErr) {
+          if (sb?.__atomicCommand === true) {
+            throw new Error(`SO combo cost spread failed: ${spreadErr.message}`);
           }
+          /* eslint-disable-next-line no-console */
+          console.error('[so-recompute] combo cost spread failed — header left unchanged:', docNo, m.id, spreadErr.message);
+          return;
         }
       }
     }
