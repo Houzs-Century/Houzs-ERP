@@ -713,11 +713,10 @@ export function computeTripMonth(input: TripMonthInput): { pay: Map<number, Trip
       const sen = role === "D" ? tier.driverSen : tier.helperSen;
       if (sen <= 0) continue;
       const first = qualifying.length ? qualifying[0] : null;
-      const row = first ? input.rows[first.i] : null;
       add(a, `NIGHT_${tier.after}_${role}`, `Overnight (clock-out after ${tier.after})${role === "H" ? ", helper" : ""}`, "OVERNIGHT", {
         date,
-        docNo: row?.docNo ?? "",
-        job: row ? jobName(row, rowPay[first.i].tripOfDay) : "",
+        docNo: first ? input.rows[first.i].docNo : "",
+        job: first ? jobName(input.rows[first.i], rowPay[first.i].tripOfDay) : "",
         state: first ? resolved[first.i].state : "",
         amountSen: sen,
       });
