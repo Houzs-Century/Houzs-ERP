@@ -7,7 +7,7 @@ import { describe, expect, test } from 'vitest';
 import { merchantAgreedActions, type AgreedLine } from '../src/acc/bank-merchant-auto';
 
 const line = (over: Partial<AgreedLine> & { id: number }): AgreedLine => ({
-  amountSen: 61500, kind: 'OTHER', matchedBatchId: null, split: null, qr: null, ...over,
+  amountSen: 61500, kind: 'OTHER', matchedBatchId: null, split: null, byAdvice: false, qr: null, ...over,
 });
 
 describe('which bank credits the merchant side already accounts for', () => {
@@ -24,12 +24,12 @@ describe('which bank credits the merchant side already accounts for', () => {
       line({ id: 1, kind: 'PAYOUT', matchedBatchId: 7 }),
       /* The bank kept a charge: less than the report is owed — a person names it. */
       line({ id: 2, kind: 'PAYOUT', matchedBatchId: 8, amountSen: 99400 }),
-    ], batches)).toEqual([{ kind: 'payout', lineId: 1, batchId: 7, amountSen: 61500 }]);
+    ], batches)).toEqual([{ kind: 'payout', lineId: 1, allocations: [{ batchId: 7, amountSen: 61500 }] }]);
   });
 
-  test('a split, an unsure payout, a report not offered (lines still to confirm) and a transfer all wait', () => {
+  test('a split found by amounts adding up, an unsure payout, a report not offered (lines still to confirm) and a transfer all wait', () => {
     expect(merchantAgreedActions([
-      line({ id: 1, kind: 'PAYOUT', matchedBatchId: 7, split: [{ batchId: 7, amountSen: 30000 }, { batchId: 9, amountSen: 31500 }] }),
+      line({ id: 1, kind: 'PAYOUT_SPLIT', split: [{ batchId: 7, amountSen: 61500 }, { batchId: 9, amountSen: 0 }] }),
       line({ id: 2, kind: 'PAYOUT_UNSURE', matchedBatchId: 7 }),
       line({ id: 3, kind: 'PAYOUT', matchedBatchId: 42 }),
       line({ id: 4, kind: 'OTHER' }),
@@ -44,8 +44,30 @@ describe('which bank credits the merchant side already accounts for', () => {
       line({ id: 3, kind: 'QR', qr: { ready: true, jeNos: ['JE-1', 'JE-2'] } }),
       line({ id: 4, kind: 'QR', qr: { ready: true, jeNos: ['JE-2'] } }),
     ], [{ id: 7, outstandingSen: 61500 }])).toEqual([
-      { kind: 'payout', lineId: 1, batchId: 7, amountSen: 61500 },
+      { kind: 'payout', lineId: 1, allocations: [{ batchId: 7, amountSen: 61500 }] },
       { kind: 'qr', lineId: 3, jeNos: ['JE-1', 'JE-2'] },
     ]);
+  });
+
+  /* Owner 2026-11-17, choosing A for 2990's PBB RM 20,710.87 of 10/11 — three
+     reports (7, 8, 9 Nov) that add up to it, and no advice uploaded for the day. */
+  describe('one payout for several reports', () => {
+    const reports = [{ id: 7, outstandingSen: 240285 }, { id: 8, outstandingSen: 502363 }, { id: 9, outstandingSen: 1328439 }];
+    const split = [{ batchId: 7, amountSen: 240285 }, { batchId: 8, amountSen: 502363 }, { batchId: 9, amountSen: 1328439 }];
+
+    test('is booked across the reports when the payment advice says so', () => {
+      expect(merchantAgreedActions([line({ id: 1, kind: 'PAYOUT_SPLIT', amountSen: 2071087, split, byAdvice: true })], reports))
+        .toEqual([{ kind: 'payout', lineId: 1, allocations: split }]);
+    });
+
+    test('waits for a person when the reports only add up to it', () => {
+      expect(merchantAgreedActions([line({ id: 1, kind: 'PAYOUT_SPLIT', amountSen: 2071087, split, byAdvice: false })], reports)).toEqual([]);
+    });
+
+    test('waits when a report is owed something else now, or the shares miss the credit', () => {
+      expect(merchantAgreedActions([line({ id: 1, kind: 'PAYOUT_SPLIT', amountSen: 2071087, split, byAdvice: true })],
+        [reports[0]!, reports[1]!, { id: 9, outstandingSen: 1000000 }])).toEqual([]);
+      expect(merchantAgreedActions([line({ id: 1, kind: 'PAYOUT_SPLIT', amountSen: 2071000, split, byAdvice: true })], reports)).toEqual([]);
+    });
   });
 });
