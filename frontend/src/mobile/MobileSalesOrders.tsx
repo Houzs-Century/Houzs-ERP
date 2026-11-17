@@ -3,6 +3,8 @@ import { brandingToneForCategory, type BrandTone } from "../lib/brandingTone";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
+import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
+import { fetchSoItemCodes, passesSoffioReminder } from "../vendor/scm/lib/soffio-reminder";
 import { useAuth } from "../auth/AuthContext";
 import { quickActionAccess } from "../auth/salesAccess";
 import { normalizeJobs, type ScanJobsResp } from "./MobileScan";
@@ -186,6 +188,7 @@ function statusToParam(s: StatusFilter): string | null {
 export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan: () => void; onOpen: (docNo: string) => void; onNew: () => void; onNewCase?: () => void }) {
   const qc = useQueryClient();
   const notify = useNotify();
+  const confirm = useConfirm();
   const { user, can, pageAccess } = useAuth();
   const [q, setQ] = useState("");
   /* Debounced search term — the actual value sent to the server (and keyed into
@@ -455,6 +458,16 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
   const bulkConfirm = async () => {
     if (confirming || selected.size === 0) return;
     const docs = Array.from(selected);
+    /* The cards carry no lines: read each order's codes for the SOFFIO reminder
+       before anything is confirmed. An unreadable order stops the batch. */
+    let codes: string[];
+    try {
+      codes = (await Promise.all(docs.map((d) => fetchSoItemCodes(d)))).flat();
+    } catch (e) {
+      void notify({ title: "Could not load the order lines", body: e instanceof Error ? e.message : "Something went wrong.", tone: "error" });
+      return;
+    }
+    if (!(await passesSoffioReminder(confirm, codes))) return;
     setConfirming(true);
     setConfirmProgress(0);
     let ok = 0;

@@ -52,7 +52,8 @@ import { api } from '../../api/client';
 import type { Department, TeamMember } from '../../types';
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog'; import { copySeedLines, soCopyHeaderSeed } from '../../lib/soCopyLines';
-import { usePrompt } from '../../vendor/scm/components/ConfirmDialog';
+import { useConfirm, usePrompt } from '../../vendor/scm/components/ConfirmDialog';
+import { passesSoffioReminder } from '../../vendor/scm/lib/soffio-reminder';
 import { askNewSoBackdateReason, draftRequestBody, isBackdateRequestRow, sendNewSoBackdateRequests } from '../../vendor/scm/lib/new-so-backdate';
 import {
   useCreateMfgSalesOrder, useDebtorSearch, useAddSalesOrderPayment,
@@ -160,7 +161,7 @@ export const SalesOrderNew = () => {
   const navigate = useNavigate();
   const { touched: formTouched, markTouched } = useFormTouched();
   const { allowLeave } = useLeaveGuard(formTouched, null);
-  const notify = useNotify(); const prompt = usePrompt();
+  const notify = useNotify(); const prompt = usePrompt(); const askConfirm = useConfirm();
   /* Copy-to-new-SO: ?copyFrom=<docNo> seeds this form from an existing SO
      (customer + line items only — dates, payments, customer SO ref, doc no
      and status are intentionally left blank so the operator starts fresh). */
@@ -1545,6 +1546,7 @@ export const SalesOrderNew = () => {
     }
     const backdateReason = await askNewSoBackdateReason(prompt, backdateRows().length);
     if (backdateReason === null) return;
+    if (!asDraft && !(await passesSoffioReminder(askConfirm, validLines.map((l) => l.itemCode)))) return;
 
     /* Edit-gate — operator committed to saving, so fold their corrections back
        into the few-shot pool (fire-and-forget, fromScan only). */

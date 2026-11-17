@@ -68,6 +68,7 @@ import { StatePicker } from "../vendor/scm/components/StatePicker"; import { Tra
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { createLineBody, deferLineDateToHeader, lineDatePinned, withoutLineDate } from "../vendor/scm/lib/so-line-date-defer";
 import { useConfirm, usePrompt } from "../vendor/scm/components/ConfirmDialog";
+import { passesSoffioReminder } from "../vendor/scm/lib/soffio-reminder";
 import { useCreateAmendment, type CreateAmendmentLine } from "../vendor/scm/lib/so-amendment-queries";
 import { useCreateMfgSalesOrder, useOverrideSoLock } from "../vendor/scm/lib/sales-order-queries";
 import { MobileSavedPhotoThumb, StagedPhotoThumb } from "./MobileSavedPhotoThumb";
@@ -1951,6 +1952,8 @@ export function MobileNewSO({
     }
     const backdateReason = await askNewSoBackdateReason(prompt, pays.filter((p) => toSen(p.amount) > 0 && isBackdateRow(p)).length);
     if (backdateReason === null) return;
+    // Only the create below can land a CONFIRMED order; the edit PATCH keeps its status.
+    if (!(isEdit && docNo) && !asDraft && !(await passesSoffioReminder(confirm, namedLines.map((l) => l.itemCode)))) return;
     backdateReasonRef.current = backdateReason;
     setError(null);
     setSubmitting(true);
