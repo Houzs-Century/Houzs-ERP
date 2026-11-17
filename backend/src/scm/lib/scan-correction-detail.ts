@@ -43,13 +43,42 @@ export function displayValue(key: string, v: unknown): string {
 const asLines = (v: unknown): Array<Record<string, unknown>> =>
   Array.isArray(v) ? (v as Array<Record<string, unknown>>) : [];
 const same = (a: string, b: string): boolean => a === b;
+const NONE = "(none)";
+
+function describeLine(line: Record<string, unknown>): string {
+  const product = displayValue("skuMatch", line.skuMatch);
+  const name = product === BLANK ? text(line.rawText) || BLANK : product;
+  return `${name}, qty ${displayValue("qtyGuess", line.qtyGuess)}`;
+}
+
+function partnerLine(
+  line: Record<string, unknown>,
+  ownLines: Array<Record<string, unknown>>,
+  otherLines: Array<Record<string, unknown>>,
+): Record<string, unknown> | null {
+  return uniqueByRawText(ownLines, line.rawText) === null ? null : uniqueByRawText(otherLines, line.rawText);
+}
+
+function lineCountChanges(
+  baseLines: Array<Record<string, unknown>>,
+  finLines: Array<Record<string, unknown>>,
+): FieldChange[] {
+  const removed = baseLines
+    .filter((line) => partnerLine(line, baseLines, finLines) === null)
+    .map((line) => ({ field: "Line removed", before: describeLine(line), after: NONE }));
+  const added = finLines
+    .filter((line) => partnerLine(line, finLines, baseLines) === null)
+    .map((line) => ({ field: "Line added", before: NONE, after: describeLine(line) }));
+  return [...removed, ...added];
+}
 
 /**
  * Per changed field, the draft's value and the confirmed value. Only fields
  * `changedFields(extracted, corrected)` names are listed, so the detail never
  * shows a change the field-miss counts do not. Lines pair by their raw slip text
  * (the same rule keepPersonChanges uses), never by position; a line that does not
- * pair is left out and a changed line count is shown as one row. Returns null
+ * pair is left out. When the line count changed, every line that does not pair
+ * is listed as removed (draft only) or added (confirmed only). Returns null
  * without a baseline (scans from before it was kept).
  */
 export function correctionChanges(extracted: unknown, corrected: unknown, baseline: unknown): FieldChange[] | null {
@@ -69,9 +98,7 @@ export function correctionChanges(extracted: unknown, corrected: unknown, baseli
   }
   const baseLines = asLines(base.lines);
   const finLines = asLines(fin.lines).filter((l) => !(text(l.rawText) === "" && asObj(l.skuMatch)?.code == null));
-  if (names.has(LINES_CHANGED)) {
-    out.push({ field: LINES_CHANGED, before: `${baseLines.length} lines`, after: `${finLines.length} lines` });
-  }
+  if (names.has(LINES_CHANGED)) out.push(...lineCountChanges(baseLines, finLines));
   finLines.forEach((line, i) => {
     const b = uniqueByRawText(baseLines, line.rawText);
     if (!b || uniqueByRawText(finLines, line.rawText) === null) return;
