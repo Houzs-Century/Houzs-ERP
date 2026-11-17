@@ -64,7 +64,8 @@ describe("buildOcrReport", () => {
       row({ id: "d", status: "queued" }),
       row({ id: "e", document_type: "PI", doc_no: "PI-9" }),
     ];
-    const r = buildOcrReport("2026-10", rows);
+    const r = buildOcrReport("2026-10", "claude-sonnet-5-5", rows);
+    expect(r.model).toBe("claude-sonnet-5-5");
     expect(r.docTypes.map((d) => d.documentType)).toEqual(["SO", "PI"]);
     const so = r.docTypes[0];
     expect(so).toMatchObject({ scans: 4, clean: 1, corrected: 1, failed: 1, pending: 1, accuracy: { clean: 1, reviewed: 2 } });

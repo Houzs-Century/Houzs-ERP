@@ -8,7 +8,7 @@ import { sql } from "drizzle-orm";
 import type { Env } from "../types";
 import { getDb } from "../db/client";
 import { mytMonthRangeUtc } from "./agent-console";
-import { CLAUDE_MODEL } from "../scm/lib/scan-ocr";
+import { scanSoModel } from "../scm/lib/scan-ocr";
 import { changedFields, LINES_CHANGED } from "../scm/lib/scan-slip-fields";
 import { SCAN_DOCUMENT_TYPES, SCAN_DOCUMENT_TYPE_LABEL, isScanDocumentType } from "../scm/lib/scan-document-type";
 
@@ -100,7 +100,7 @@ function percentile(sorted: number[], p: number): number {
 }
 
 /** Pure: rows (newest first) to the report. */
-export function buildOcrReport(month: string, rows: ScanRow[]): OcrReport {
+export function buildOcrReport(month: string, model: string, rows: ScanRow[]): OcrReport {
   const byType = new Map<string, DocTypeStats>();
   const secs = new Map<string, number[]>();
   const misses = new Map<string, number>();
@@ -147,7 +147,7 @@ export function buildOcrReport(month: string, rows: ScanRow[]): OcrReport {
   const rank = (t: string) => (order.includes(t) ? order.indexOf(t) : order.length);
   return {
     month,
-    model: CLAUDE_MODEL,
+    model,
     docTypes: [...byType.values()].sort((a, b) => rank(a.documentType) - rank(b.documentType)),
     fieldMisses: {
       reviewed,
@@ -177,5 +177,5 @@ export async function loadOcrReport(env: Env, companyId: number, month: string):
        AND j.document_type NOT LIKE 'AI_%' -- AI reads (scm/lib/ai-read-jobs.ts) share the table; they are not scans
        AND j.created_at >= ${startIso}::timestamptz AND j.created_at < ${endIso}::timestamptz
      ORDER BY j.created_at DESC`);
-  return buildOcrReport(month, [...rows]);
+  return buildOcrReport(month, scanSoModel(env), [...rows]);
 }
