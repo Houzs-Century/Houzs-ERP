@@ -68,11 +68,20 @@ export const EditDpOrderDrawer = ({ row, onClose }: { row: DpOrderRow; onClose: 
   const isPending = row.status === 'PENDING_SCHEDULE';
   // Compulsory only for the job types routed by region (the server's rule too).
   const postcodeMissing = DP_POSTCODE_REQUIRED_JOB_TYPES.has(row.job_type) && !form.postcode.trim();
-  const postcodeClasses = { label: styles.eyebrow, select: styles.searchInput };
+  // The Postcode caption stacks like the drawer's own captions, so the input lines up with City beside it.
+  const postcodeClasses = { field: styles.stackField, label: `${styles.eyebrow} ${styles.stackLabel}`, select: styles.searchInput };
 
   const fieldRow: CSSProperties = { display: 'block', marginBottom: 'var(--space-3)' };
   const inputStyle: CSSProperties = { width: '100%' };
-  const row2: CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' };
+  // minmax(0, 1fr): a wide control (the date field) must not squeeze its neighbour on a phone.
+  const row2: CSSProperties = { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 'var(--space-3)' };
+
+  const remarkField = (
+    <label style={fieldRow}>
+      <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>Remark</div>
+      <input className={styles.searchInput} style={inputStyle} value={form.remark} onChange={(e) => set('remark', e.target.value)} />
+    </label>
+  );
 
   const hasAddress = [form.address1, form.address2, form.address3, form.address4].some((v) => v.trim() !== '');
 
@@ -157,10 +166,6 @@ export const EditDpOrderDrawer = ({ row, onClose }: { row: DpOrderRow; onClose: 
                 <input className={styles.searchInput} style={inputStyle} value={form.fromAddress2} onChange={(e) => set('fromAddress2', e.target.value)} />
               </label>
               <div style={row2}>
-                <label style={fieldRow}>
-                  <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>From city</div>
-                  <input className={styles.searchInput} style={inputStyle} value={form.fromCity} onChange={(e) => set('fromCity', e.target.value)} />
-                </label>
                 <div style={fieldRow}>
                   <PostcodeCascadeField
                     value={form.fromPostcode} state={form.fromState} city={form.fromCity}
@@ -169,6 +174,10 @@ export const EditDpOrderDrawer = ({ row, onClose }: { row: DpOrderRow; onClose: 
                     classes={postcodeClasses}
                   />
                 </div>
+                <label style={fieldRow}>
+                  <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>From city</div>
+                  <input className={styles.searchInput} style={inputStyle} value={form.fromCity} onChange={(e) => set('fromCity', e.target.value)} />
+                </label>
               </div>
               <label style={{ ...fieldRow, marginBottom: 0 }}>
                 <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>From state</div>
@@ -206,10 +215,6 @@ export const EditDpOrderDrawer = ({ row, onClose }: { row: DpOrderRow; onClose: 
             <input className={styles.searchInput} style={inputStyle} value={form.address2} onChange={(e) => set('address2', e.target.value)} />
           </label>
           <div style={row2}>
-            <label style={fieldRow}>
-              <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>City</div>
-              <input className={styles.searchInput} style={inputStyle} value={form.city} onChange={(e) => set('city', e.target.value)} />
-            </label>
             <div style={fieldRow}>
               <PostcodeCascadeField
                 value={form.postcode} state={form.state} city={form.city}
@@ -223,23 +228,26 @@ export const EditDpOrderDrawer = ({ row, onClose }: { row: DpOrderRow; onClose: 
                 </div>
               )}
             </div>
+            <label style={fieldRow}>
+              <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>City</div>
+              <input className={styles.searchInput} style={inputStyle} value={form.city} onChange={(e) => set('city', e.target.value)} />
+            </label>
           </div>
           <div style={row2}>
             <label style={fieldRow}>
               <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>State</div>
               <input className={styles.searchInput} style={inputStyle} value={form.state} onChange={(e) => set('state', e.target.value)} />
             </label>
-            {isPending && (
+            {/* A scheduled job's date is set by planning, not here: Remark takes the
+                cell instead of leaving State's row half empty. */}
+            {isPending ? (
               <label style={fieldRow}>
                 <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>Requested date</div>
                 <DateField fullWidth className={styles.searchInput} style={inputStyle} value={form.requestedDate} onChange={(iso) => set('requestedDate', iso)} />
               </label>
-            )}
+            ) : remarkField}
           </div>
-          <label style={fieldRow}>
-            <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>Remark</div>
-            <input className={styles.searchInput} style={inputStyle} value={form.remark} onChange={(e) => set('remark', e.target.value)} />
-          </label>
+          {isPending && remarkField}
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-3)', padding: 'var(--space-4)' }}>

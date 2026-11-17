@@ -9,7 +9,9 @@ import type { DpOrderRow } from "../../vendor/scm/lib/delivery-planning-queries"
    no postcode and the drawer gave no way to fix it). Reads the dp_orders row
    (GET /dp-orders/:id, which shows a postcode written only in the address), and
    edits it with the same form the DP Orders registry uses. */
-export function DpJobDetails({ dpId }: { dpId: string }) {
+/** `showFacts` false: the host (the Last Mile stop drawer) already shows the
+ *  postcode and state, so only the Edit action is added. */
+export function DpJobDetails({ dpId, showFacts }: { dpId: string; showFacts: boolean }) {
   const q = useQuery({
     queryKey: ["dp-order", dpId],
     queryFn: () => authedFetch<{ dpOrder: DpOrderRow }>(`/dp-orders/${encodeURIComponent(dpId)}`),
@@ -27,9 +29,9 @@ export function DpJobDetails({ dpId }: { dpId: string }) {
   );
   return (
     <>
-      {line("Postcode", row.postcode)}
-      {line("State", row.state)}
-      {line("City", row.city)}
+      {showFacts && line("Postcode", row.postcode)}
+      {showFacts && line("State", row.state)}
+      {showFacts && line("City", row.city)}
       {row.status !== "CANCELLED" && (
         <button type="button" onClick={() => setEditing(true)}
           className="mt-3 w-full rounded-md border border-border py-2 text-[13px] font-semibold text-accent">

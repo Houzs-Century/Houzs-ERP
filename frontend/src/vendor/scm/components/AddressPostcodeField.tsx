@@ -1,5 +1,4 @@
 import type { ReactNode } from 'react';
-import { ChevronDown } from 'lucide-react';
 import { SearchableSelect } from './SearchableSelect';
 import { SgPostcodeField } from './SgPostcodeField';
 import { sortByNumeric } from '../lib/sort-options';
@@ -60,18 +59,16 @@ export const AddressPostcodeField = ({
   return (
     <label className={c.field}>
       <span className={c.label}>{label ?? 'Postcode'}</span>
-      <span className={c.selectWrap}>
-        <SearchableSelect
-          className={c.select}
-          value={value}
-          onChange={onCascadePick}
-          disabled={disabled}
-          title={title}
-          placeholder={placeholder}
-          options={sortByNumeric(postcodeChoices).map((p) => ({ value: p, label: p }))}
-        />
-        <ChevronDown size={14} strokeWidth={1.75} className={c.chevron} />
-      </span>
+      <SearchableSelect
+        chevron
+        className={c.select}
+        value={value}
+        onChange={onCascadePick}
+        disabled={disabled}
+        title={title}
+        placeholder={placeholder}
+        options={sortByNumeric(postcodeChoices).map((p) => ({ value: p, label: p }))}
+      />
     </label>
   );
 };

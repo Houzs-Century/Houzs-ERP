@@ -636,3 +636,9 @@
   gap: 4px;
   margin-bottom: var(--space-3);
 }
+
+/* A shared address field (PostcodeCascadeField) inside the DP drawers: its label
+   must stack exactly like the drawers' own `<div eyebrow>` captions, or the
+   input sits a few px lower than its row neighbour. */
+.stackField { display: block; }
+.stackLabel { display: block; margin-bottom: var(--space-1); }

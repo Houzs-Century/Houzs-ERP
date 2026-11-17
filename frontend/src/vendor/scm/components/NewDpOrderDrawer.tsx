@@ -55,6 +55,8 @@ import { useLocalities, resolvePostcode } from '../lib/localities-queries';
 import { knownPostcodeInText, DP_POSTCODE_REQUIRED_JOB_TYPES } from '../lib/postcode-in-address';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
+/* The Postcode caption stacks like the drawer's own captions, so the input lines up with City beside it. */
+const DP_POSTCODE_CLASSES = { field: styles.stackField, label: `${styles.eyebrow} ${styles.stackLabel}`, select: styles.searchInput };
 
 /* Job types + labels come from the SHARED canonical list (DP_JOB_TYPES /
    DP_JOB_TYPE_LABEL in delivery-planning-queries) — the same set the board renders
@@ -643,7 +645,8 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
 
   const fieldRow: CSSProperties = { display: 'block', marginBottom: 'var(--space-3)' };
   const inputStyle: CSSProperties = { width: '100%' };
-  const row2: CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' };
+  // minmax(0, 1fr): a wide control (the date field) must not squeeze its neighbour on a phone.
+  const row2: CSSProperties = { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 'var(--space-3)' };
 
   /* Which control the source field renders as. A failed list fetch (403 for a
      position without that master's page, or a network hiccup) falls back to
@@ -946,18 +949,18 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
                 <input className={styles.searchInput} style={inputStyle} value={form.fromAddress2} onChange={(e) => set('fromAddress2', e.target.value)} />
               </label>
               <div style={row2}>
-                <label style={fieldRow}>
-                  <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>From city</div>
-                  <input className={styles.searchInput} style={inputStyle} value={form.fromCity} onChange={(e) => set('fromCity', e.target.value)} />
-                </label>
                 <div style={fieldRow}>
                   <PostcodeCascadeField
                     value={form.fromPostcode} state={form.fromState} city={form.fromCity}
                     onPick={(t) => setForm((s) => ({ ...s, fromPostcode: t.postcode, fromState: t.state, fromCity: t.city }))}
                     label="From postcode"
-                    classes={{ label: styles.eyebrow, select: styles.searchInput }}
+                    classes={DP_POSTCODE_CLASSES}
                   />
                 </div>
+                <label style={fieldRow}>
+                  <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>From city</div>
+                  <input className={styles.searchInput} style={inputStyle} value={form.fromCity} onChange={(e) => set('fromCity', e.target.value)} />
+                </label>
               </div>
               <label style={{ ...fieldRow, marginBottom: 0 }}>
                 <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>From state</div>
@@ -1080,16 +1083,12 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
             <input className={styles.searchInput} style={inputStyle} value={form.address2} onChange={(e) => set('address2', e.target.value)} />
           </label>
           <div style={row2}>
-            <label style={fieldRow}>
-              <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>City</div>
-              <input className={styles.searchInput} style={inputStyle} value={form.city} onChange={(e) => set('city', e.target.value)} />
-            </label>
             <div style={fieldRow}>
               <PostcodeCascadeField
                 value={form.postcode} state={form.state} city={form.city}
                 onPick={(t) => setForm((s) => ({ ...s, postcode: t.postcode, state: t.state, city: t.city }))}
                 label={<>Postcode{postcodeRequired && <span style={{ textTransform: 'none', color: 'var(--c-burnt)' }}> — required</span>}</>}
-                classes={{ label: styles.eyebrow, select: styles.searchInput }}
+                classes={DP_POSTCODE_CLASSES}
               />
               {postcodeMissing && (
                 <div role="alert" style={{ marginTop: 'var(--space-1)', fontSize: 'var(--fs-12)', color: 'var(--c-burnt)' }}>
@@ -1099,6 +1098,10 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
                 </div>
               )}
             </div>
+            <label style={fieldRow}>
+              <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>City</div>
+              <input className={styles.searchInput} style={inputStyle} value={form.city} onChange={(e) => set('city', e.target.value)} />
+            </label>
           </div>
           <div style={row2}>
             <label style={fieldRow}>

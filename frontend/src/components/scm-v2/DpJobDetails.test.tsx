@@ -14,9 +14,9 @@ vi.mock("../../vendor/scm/components/EditDpOrderDrawer", () => ({
 
 const { DpJobDetails } = await import("./DpJobDetails");
 
-const renderIt = () => render(
+const renderIt = (showFacts = true) => render(
   <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-    <DpJobDetails dpId="dp-9" />
+    <DpJobDetails dpId="dp-9" showFacts={showFacts} />
   </QueryClientProvider>,
 );
 
@@ -38,6 +38,14 @@ describe("DpJobDetails", () => {
     renderIt();
     expect(await screen.findByText("47000")).toBeTruthy();
     expect(screen.queryByText("Edit job details")).toBeNull();
+  });
+
+  test("inside the Last Mile stop drawer only Edit is added: the drawer shows the postcode and state", async () => {
+    fetchMock.mockResolvedValueOnce({ dpOrder: ROW });
+    renderIt(false);
+    expect(await screen.findByText("Edit job details")).toBeTruthy();
+    expect(screen.queryByText("47000")).toBeNull();
+    expect(screen.queryByText("Selangor")).toBeNull();
   });
 
   test("a failed read is shown", async () => {

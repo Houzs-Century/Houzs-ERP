@@ -18,7 +18,8 @@ import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { FilterPills } from '../../components/FilterPills';
 import { JobDetailPanel, type JobPanelTarget } from '../../components/scm-v2/JobDetailPanel';
-import { CalendarClock, Pencil, Plus, XCircle } from 'lucide-react';
+import { Plus } from 'lucide-react';
+import { DpRowActions } from './DpRowActions';
 import { Button } from '../../components/Button';
 import { DataTable, type Column } from '../../components/DataTable';
 import { PageHeader } from '../../components/Layout';
@@ -273,24 +274,13 @@ export const DpOrders = () => {
     {
       key: 'actions', label: '', width: '260px', disableSort: true,
       render: (r) => (
-        <div style={{ display: 'inline-flex', gap: 4 }}>
-          {/* A scheduled job's address can still be corrected; only its date is fixed. */}
-          {r.status !== 'CANCELLED' && (
-            <Button variant="ghost" onClick={() => setEditing(r)}>
-              <Pencil {...ICON} /><span>Edit…</span>
-            </Button>
-          )}
-          {r.status === 'PENDING_SCHEDULE' && (
-            <Button variant="ghost" onClick={() => setScheduling(r)}>
-              <CalendarClock {...ICON} /><span>Schedule…</span>
-            </Button>
-          )}
-          {r.status !== 'CANCELLED' && (
-            <Button variant="ghost" onClick={() => void cancel(r)} disabled={cancelDp.isPending}>
-              <XCircle {...ICON} /><span>Cancel</span>
-            </Button>
-          )}
-        </div>
+        <DpRowActions
+          status={r.status}
+          cancelling={cancelDp.isPending}
+          onEdit={() => setEditing(r)}
+          onSchedule={() => setScheduling(r)}
+          onCancel={() => void cancel(r)}
+        />
       ),
     },
   ];
