@@ -226,6 +226,61 @@ export const invalidateAfterBankPosting = (qc: ReturnType<typeof useQueryClient>
   void qc.invalidateQueries({ queryKey: ['finance-todo'] });
   void qc.invalidateQueries({ queryKey: ['control-check'] });
   void qc.invalidateQueries({ queryKey: ['daily-bank'] });
+  /* Card payments a movement takes in, or gives back on Undo, leave or rejoin
+     these lists (acc/bank-card-settle). */
+  void qc.invalidateQueries({ queryKey: ['bank-card-payments'] });
+  void qc.invalidateQueries({ queryKey: ['settlement-watchlist'] });
+  void qc.invalidateQueries({ queryKey: ['unmatched-payments'] });
+};
+
+/** A card payment no merchant report has carried — one a bank movement may take
+    in itself, its difference going to the charges account (owner 2026-11-17). */
+export type BankCardPayment = {
+  source: 'SOPAY' | 'SIPAY';
+  id: string;
+  docNo: string;
+  paidOn: string;
+  amountSen: number;
+  approvalCode: string | null;
+  customerName: string | null;
+  /** The merchant it is listed under; null when it was keyed without one (未标). */
+  acquirerCode: string | null;
+  merchantProvider: string | null;
+  ageDays: number;
+};
+
+export type BankCardPayments = {
+  from: string;
+  to: string;
+  /** Where a difference goes — the account the company's merchants book their charges to. */
+  feeAccount: { code: string; name: string | null } | null;
+  /** Why there is no such account, when there is none. */
+  feeProblem: string | null;
+  /** The most a difference may be, as a percentage of the card payments ticked. */
+  maxChargePct: number;
+  payments: BankCardPayment[];
+};
+
+export const cardPaymentKey = (p: { source: string; id: string }): string => `${p.source}:${p.id}`;
+
+export const useBankCardPayments = (enabled: boolean) => useQuery({
+  queryKey: ['bank-card-payments'],
+  queryFn: () => authedFetch<BankCardPayments>('/accounting/bank/card-payments'),
+  enabled,
+  retry: retryUnlessClientError,
+});
+
+/** One credit = entries on its bank + card payments no report carries; the server
+    books the difference to the charges account and refuses one past the cap. */
+export const useMatchWithCards = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ lineId, jeNos, cardPayments }: { lineId: number; jeNos: string[]; cardPayments: Array<{ source: 'SOPAY' | 'SIPAY'; id: string }> }) =>
+      authedFetch<{ ok: boolean; status: string; jeNo: string; chargeSen: number; chargePct: number; bankSen: number; feeAccountCode: string }>(
+        `/accounting/bank/lines/${lineId}/match-with-cards`, { method: 'POST', body: JSON.stringify({ jeNos, cardPayments }) },
+      ),
+    onSuccess: () => invalidateAfterBankPosting(qc),
+  });
 };
 
 export const useUploadBankStatement = () => {

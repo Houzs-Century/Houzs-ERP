@@ -43,6 +43,7 @@ import { loadOpenTallies, openTallySql } from '../../acc/bank-statement-open';
 import { lockedRefusal, lockMonthOf } from '../../acc/bank-lock';
 import { undoBatchReceipt } from '../../acc/settlement';
 import { postBankCredit } from '../../acc/bank-receive';
+import { undoCardSettlement } from '../../acc/bank-card-settle';
 import { formaliseReceiptsForBankMatch } from '../../acc/receipts';
 import { withJournalRefs } from '../../acc/journal-refs';
 import { fmtSen } from '../shared/format';
@@ -93,7 +94,7 @@ async function refuseIfLocked(
 }
 
 /** The same question asked of a LINE, which knows its own account and date. */
-async function refuseIfLineLocked(
+export async function refuseIfLineLocked(
   c: Ctx, companyId: number, lineId: number, what: string,
 ): Promise<Response | null> {
   const sb = c.get('supabase');
@@ -127,7 +128,7 @@ async function sha256Hex(text: string): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-const userName = (c: Ctx) => (c.get('houzsUser') as { name?: string } | undefined)?.name ?? null;
+export const userName = (c: Ctx) => (c.get('houzsUser') as { name?: string } | undefined)?.name ?? null;
 
 /* ── GET /bank/setup — which accounts can take a statement ────────────────── */
 
@@ -1315,6 +1316,12 @@ export const bankLineUndo = guard(async (c) => {
         + ' The rest were reversed; this movement is left as posted so nothing is hidden.',
     }, 409);
   }
+  /* Card payments this movement took in itself (acc/bank-card-settle): their
+     journal is reversed and they go back to waiting for a report. */
+  const cards = await undoCardSettlement(sb, co.companyId, lineId);
+  if (!cards.ok) {
+    return c.json({ error: 'undo_incomplete', message: `The card payments this movement took in could not be put back — ${cards.reason}. The movement is left as posted so nothing is hidden.` }, 409);
+  }
 
   /* LET GO OF THE ENTRY (docs/bugs/0802). The link is what makes the books
      count the entry as claimed; a line put back to OPEN with its link still
@@ -1420,7 +1427,7 @@ type Claim = { id: number; jeNo: string; bankLineId: number; accountCode: string
 /** Every match row on these entries, split into the live claims (a POSTED
     line's) and the rows an older undo left behind; each live claim names the
     bank account its line sits on. */
-async function liveClaimsOn(sb: any, companyId: number, jeNos: string[]): Promise<{ ok: true; live: Claim[]; dead: Claim[] } | { ok: false; reason: string }> {
+export async function liveClaimsOn(sb: any, companyId: number, jeNos: string[]): Promise<{ ok: true; live: Claim[]; dead: Claim[] } | { ok: false; reason: string }> {
   const { data: rowsRaw, error } = await sb.from('acc_bank_statement_matches')
     .select('id, je_no, bank_line_id').eq('company_id', companyId).in('je_no', jeNos);
   if (error) return { ok: false, reason: error.message };
@@ -1449,7 +1456,7 @@ async function liveClaimsOn(sb: any, companyId: number, jeNos: string[]): Promis
 }
 
 /** The bank account a statement belongs to. */
-async function accountOfStatement(sb: any, companyId: number, statementId: number): Promise<{ ok: true; accountCode: string } | { ok: false; reason: string }> {
+export async function accountOfStatement(sb: any, companyId: number, statementId: number): Promise<{ ok: true; accountCode: string } | { ok: false; reason: string }> {
   const { data, error } = await sb.from('acc_bank_statements').select('account_code').eq('company_id', companyId).eq('id', statementId).maybeSingle();
   if (error) return { ok: false, reason: error.message };
   return { ok: true, accountCode: String((data as { account_code?: string } | null)?.account_code ?? '') };
@@ -1464,7 +1471,7 @@ async function entryOnAccount(sb: any, companyId: number, accountCode: string, j
   return { ok: true, found: (Array.isArray(data) ? data : []).length > 0 };
 }
 
-const claimedHere = (jeNo: string, accountCode: string): string =>
+export const claimedHere = (jeNo: string, accountCode: string): string =>
   `${jeNo} is already reconciled against another movement on ${accountCode}'s statements. One entry cannot account for two movements of the same bank.`;
 const noLegHere = (jeNo: string, accountCode: string): string =>
   `${jeNo} has no line on ${accountCode}, so no movement of this bank can be it — it is reconciled on the bank it does touch.`;

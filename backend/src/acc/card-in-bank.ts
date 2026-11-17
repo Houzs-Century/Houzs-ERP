@@ -29,6 +29,7 @@
 
 import { paginateAll } from '../scm/lib/paginate-all';
 import type { resolveRoles } from './rules';
+import { loadBankCardFacts } from './bank-card-settled';
 
 export type CardPayoutFacts = {
   matches: Array<{ payment_source: string; payment_id: string; settlement_row_id: number }>;
@@ -37,6 +38,9 @@ export type CardPayoutFacts = {
   receipts: Array<{ batch_id: number; received_on: string; amount_sen: number; charge_sen: number | null; je_no: string | null }>;
   /** What the bank kept off a payout, booked on its advice day; a caller that reads no advice days passes none. */
   dayCharges?: Array<{ batch_id: number; charge_sen: number | null; charge_je_no: string | null }>;
+  /** Card payments a bank movement took in itself, no report carrying them (acc/bank-card-settle):
+      all of it in the bank on the movement's day. */
+  bankCards?: Array<{ payment_source: string; payment_id: string; received_on: string }>;
 };
 
 export const paymentKey = (source: string, paymentId: string): string => `${source.replace(/_REVERSAL$/, '')}:${paymentId}`;
@@ -74,6 +78,9 @@ export function inBankShares(facts: CardPayoutFacts, asOf: string): Map<string, 
     if (batch === undefined) continue;
     out.set(paymentKey(m.payment_source, String(m.payment_id)), shareOfBatch(batch));
   }
+  for (const b of facts.bankCards ?? []) {
+    if (String(b.received_on).slice(0, 10) <= asOf) out.set(paymentKey(b.payment_source, String(b.payment_id)), 1);
+  }
   return out;
 }
 
@@ -86,6 +93,8 @@ export function merchantMatched(facts: CardPayoutFacts): Set<string> {
   for (const m of facts.matches) {
     if (confirmed.has(Number(m.settlement_row_id))) out.add(paymentKey(m.payment_source, String(m.payment_id)));
   }
+  /* Taken in by the bank itself: nothing is left for a report to match. */
+  for (const b of facts.bankCards ?? []) out.add(paymentKey(b.payment_source, String(b.payment_id)));
   return out;
 }
 
@@ -105,11 +114,14 @@ export async function loadCardPayoutFacts(sb: Sb, companyId: number): Promise<{ 
   for (const [name, r] of [['matches', matches], ['lines', rows], ['statements', batches], ['credits', receipts], ['advice days', dayCharges]] as const) {
     if (r.error) return { ok: false, reason: `card settlement ${name}: ${String((r.error as { message?: string }).message ?? r.error)}` };
   }
+  const banked = await loadBankCardFacts(sb, companyId);
+  if (!banked.ok) return banked;
   return {
     ok: true,
     facts: {
       matches: matches.data ?? [], rows: rows.data ?? [], batches: batches.data ?? [], receipts: receipts.data ?? [],
       dayCharges: (dayCharges.data ?? []).map((d) => ({ batch_id: Number(d.batch_id), charge_sen: d.charge_sen == null ? null : Number(d.charge_sen), charge_je_no: d.charge_je_no ?? null })),
+      bankCards: banked.rows,
     },
   };
 }
