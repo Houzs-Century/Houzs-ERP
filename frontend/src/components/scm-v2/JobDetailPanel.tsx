@@ -10,6 +10,7 @@ import {
 } from "../../vendor/scm/lib/delivery-job";
 import { PodPhotoAlbum } from "./PodPhotoAlbum";
 import { DoProofOfDeliveryCard, type DoPodFields } from "../../pages/scm-v2/DoProofOfDeliveryCard";
+import { DoPodUpload } from "./DoPodUpload";
 
 /* The right-hand panel a single click opens on Delivery Planning, DP Orders,
    Date / Time Arrangement and Last Mile (owner, 2026-10-08): what the job is,
@@ -96,7 +97,7 @@ function Row({ k, v }: { k: string; v: string | null }) {
   );
 }
 
-function JobBody({ jobRef }: { jobRef: JobRef }) {
+export function JobBody({ jobRef }: { jobRef: JobRef }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const base = jobApiPath(jobRef);
@@ -207,10 +208,11 @@ function SoBody({ soDocNo, doId }: { soDocNo: string; doId: string | null }) {
             className="flex-1 rounded-md border border-border py-2 text-[13px] font-semibold text-accent">Open delivery order →</button>
         )}
       </div>
-      {!doId && <div className="text-[12.5px] text-ink-muted">No delivery order yet — the POD is recorded on the DO once it is cut.</div>}
+      {!doId && <div className="text-[12.5px] text-ink-muted">No delivery order yet. Cut the delivery order first; its POD is uploaded here once it has shipped.</div>}
       {doId && q.isPending && <div className="text-[12.5px] text-ink-muted">Loading…</div>}
       {doId && q.error && <div className="text-[12.5px] text-red-600 dark:text-red-300">{(q.error as Error).message}</div>}
       {q.data && <DoProofOfDeliveryCard h={q.data.deliveryOrder} />}
+      {q.data && <DoPodUpload key={q.data.deliveryOrder.id} h={q.data.deliveryOrder} />}
     </>
   );
 }
