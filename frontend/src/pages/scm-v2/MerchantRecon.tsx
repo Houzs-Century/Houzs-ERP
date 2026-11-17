@@ -37,6 +37,7 @@ import {
   type Watchlist, type Payout,
 } from './settlement-queries';
 import { bankFollowsText } from './bank-follows';
+import { SoldByButtons, SoldByTag } from './SoldByOtherCompany';
 import { DataTable, type Column } from '../../components/DataTable';
 import { HeaderExportMenu } from '../../components/DataTableExportItems';
 import { writeLineExportFile, type TablePdfView } from '../../components/dataTableLineExport';
@@ -785,9 +786,11 @@ const BatchRows = ({ batch, onOpen, openOnly }: {
             <td className={grid.num}>{fmt(r.net_sen)}</td>
 
             <td className={grid.seam}>
-              {orders.length === 0
-                ? <span className={grid.sub}>{r.candidates.length > 0 ? `${r.candidates.length} possible` : '—'}</span>
-                : stack((o) => <DocLink source={o.source} docNo={o.docNo} bold />)}
+              {r.sold_by_company_id != null
+                ? <SoldByTag companyId={r.sold_by_company_id} />
+                : orders.length === 0
+                  ? <span className={grid.sub}>{r.candidates.length > 0 ? `${r.candidates.length} possible` : '—'}</span>
+                  : stack((o) => <DocLink source={o.source} docNo={o.docNo} bold />)}
             </td>
             <td>{stack((o) => o.customer)}</td>
             <td>{stack((o) => o.sales)}</td>
@@ -1338,6 +1341,7 @@ const SettlementLine = ({ row, others = [] }: {
         <div style={{ fontSize: 'var(--fs-13)', color: good }}>
           Posted as <span className={styles.codeChip}>{row.posted_je_no}</span>
           {row.linked.length > 0 && <> — <LinkedDocs links={row.linked} /></>}
+          {row.sold_by_company_id != null && <> — <SoldByTag companyId={row.sold_by_company_id} /></>}
         </div>
       )}
 
@@ -1442,6 +1446,7 @@ const SettlementLine = ({ row, others = [] }: {
             <button type="button" style={btn()} onClick={() => ignore.mutate({ rowId: row.id, restore: row.bucket === 'IGNORED' })}>
               {row.bucket === 'IGNORED' ? 'Put back' : 'Set aside'}
             </button>
+            <SoldByButtons row={row} />
           </div>
         </div>
       )}
@@ -1458,6 +1463,7 @@ const SettlementLine = ({ row, others = [] }: {
           <button type="button" style={btn()} onClick={() => ignore.mutate({ rowId: row.id, restore: row.bucket === 'IGNORED' })}>
             {row.bucket === 'IGNORED' ? 'Put back' : 'Set aside'}
           </button>
+          <SoldByButtons row={row} />
         </div>
       )}
 
