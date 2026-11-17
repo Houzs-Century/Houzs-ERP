@@ -130,26 +130,84 @@ export function postcodeFromGeocode(idx, geo, address) {
   return { ok: true, postcode: geo.postcode, city: loc.city, state: loc.state, confidence };
 }
 
+/* CURATED VENUE POSTCODES (scripts/data/venue-postcodes.json). Venues hold no
+   street address, only a well-known name, so their postcodes were researched by
+   hand from the venue's own site or directories. An entry is used only when:
+   the row's name matches the entry's name exactly (after trimming; the id is a
+   hint only), the entry is high or medium confidence, its postcode exists in
+   my_localities, and my_localities' state for that postcode agrees with the
+   researched state. City and State still come from my_localities. */
+export const CURATED_CONFIDENCE = new Set(['high', 'medium']);
+
+/** The JSON entries -> Map(name -> entry). A name listed twice is dropped (and
+ *  reported in `duplicates`), so it can never pick one of two answers. */
+export function curatedIndex(entries) {
+  const byName = new Map();
+  const duplicates = new Set();
+  for (const e of entries ?? []) {
+    const name = t(e?.name);
+    if (!name) continue;
+    if (byName.has(name)) duplicates.add(name);
+    byName.set(name, {
+      id: e.id == null ? null : String(e.id),
+      name,
+      postcode: t(e.postcode),
+      city: t(e.city),
+      state: t(e.state),
+      confidence: t(e.confidence).toLowerCase(),
+    });
+  }
+  for (const d of duplicates) byName.delete(d);
+  return { byName, duplicates: [...duplicates] };
+}
+
+/** Decide one venue row from the curated list. `settled` marks a verdict no
+ *  geocode may override (the evidence contradicts itself). */
+export function postcodeFromCurated(idx, byName, row) {
+  const entry = byName.get(t(row.name));
+  if (!entry) return { ok: false, why: 'no curated entry with this exact name' };
+  if (!CURATED_CONFIDENCE.has(entry.confidence)) return { ok: false, why: `curated entry is ${entry.confidence || 'unrated'} confidence, not used` };
+  if (!/^\d{5}$/.test(entry.postcode)) return { ok: false, why: `curated postcode "${entry.postcode}" is not 5 digits` };
+  if (!idx.has(entry.postcode)) return { ok: false, why: `curated postcode ${entry.postcode} is not in my_localities` };
+  const loc = localityFor(idx, entry.postcode, entry.city);
+  if (!loc.ok) return { ok: false, settled: true, why: `curated: ${loc.why}` };
+  if (stateKey(loc.state) !== stateKey(entry.state)) {
+    return { ok: false, settled: true, why: `curated postcode ${entry.postcode} is ${loc.state} in my_localities, but the research says ${entry.state}` };
+  }
+  const notes = [];
+  if (entry.city && entry.city.toLowerCase() !== loc.city.toLowerCase()) notes.push(`researched city "${entry.city}", my_localities says "${loc.city}"`);
+  if (entry.id && entry.id !== t(row.id)) notes.push(`curated id ${entry.id} differs from row id ${t(row.id)} (name matched)`);
+  return { ok: true, postcode: entry.postcode, city: loc.city, state: loc.state, confidence: entry.confidence, curatedNote: notes.join('; ') || null };
+}
+
 /**
  * The plan. `rows` are master rows with an EMPTY postcode:
  *   { master: 'suppliers'|..., id, companyId, name, address, city, state }
  * `geocodes` maps `${master}:${id}` -> parsed geocode (or null for "no match");
  * a row with no entry was not geocoded, and `geocodeSkipped` says why.
+ * `curated` is curatedIndex(...).byName for venues, or null for none.
  *
  * Returns { planned, unresolved } — planned rows carry the proposal and its
  * evidence; unresolved rows carry the reason. Nothing ambiguous is planned.
  */
-export function buildPlan({ rows, localities, geocodes, geocodeSkipped }) {
+export function buildPlan({ rows, localities, geocodes, geocodeSkipped, curated }) {
+  if (curated === undefined) throw new Error('buildPlan: pass curated (a Map, or null for none)');
   const idx = localityIndex(localities);
   const planned = [];
   const unresolved = [];
   for (const r of rows) {
     const base = { master: r.master, id: r.id, companyId: r.companyId, name: t(r.name), address: t(r.address), current: { city: t(r.city) || null, state: t(r.state) || null } };
-    const fromText = postcodeFromAddress(idx, r.address);
     let pick = null;
     const reasons = [];
-    if (fromText.ok) pick = { ...fromText, source: 'address text' };
-    else {
+    if (curated && r.master === 'venues') {
+      const c = postcodeFromCurated(idx, curated, r);
+      if (c.ok) pick = { ...c, source: 'curated list' };
+      else if (c.settled) { unresolved.push({ ...base, settled: true, reason: c.why }); continue; }
+      else reasons.push(c.why);
+    }
+    const fromText = pick ? null : postcodeFromAddress(idx, r.address);
+    if (fromText?.ok) pick = { ...fromText, source: 'address text' };
+    else if (fromText) {
       reasons.push(fromText.why);
       if (!fromText.ambiguous) {
         const key = `${r.master}:${r.id}`;
@@ -164,7 +222,7 @@ export function buildPlan({ rows, localities, geocodes, geocodeSkipped }) {
     }
     // `settled`: no geocode can change this verdict (the text itself was ambiguous,
     // or a postcode was found and contradicts the row).
-    if (!pick) { unresolved.push({ ...base, settled: fromText.ambiguous === true, reason: reasons.join('; ') }); continue; }
+    if (!pick) { unresolved.push({ ...base, settled: fromText?.ambiguous === true, reason: reasons.join('; ') }); continue; }
     if (base.current.state && stateKey(base.current.state) !== stateKey(pick.state)) {
       unresolved.push({ ...base, settled: true, reason: `postcode ${pick.postcode} (${pick.source}) is in ${pick.state}, but the row says ${base.current.state}` });
       continue;
@@ -175,7 +233,7 @@ export function buildPlan({ rows, localities, geocodes, geocodeSkipped }) {
       proposed: { postcode: pick.postcode, city: pick.city, state: pick.state },
       source: pick.source,
       confidence: pick.confidence,
-      note: cityChange ? `city "${base.current.city}" becomes my_localities' "${pick.city}"` : null,
+      note: [cityChange ? `city "${base.current.city}" becomes my_localities' "${pick.city}"` : null, pick.curatedNote ?? null].filter(Boolean).join('; ') || null,
     });
   }
   return { planned, unresolved };

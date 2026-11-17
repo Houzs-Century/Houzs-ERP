@@ -11,6 +11,11 @@
    this proposes one for the rows already there.
 
    HOW A POSTCODE IS FOUND, in order (scripts/lib/master-postcodes.mjs):
+     0. venues only: the hand-researched list scripts/data/venue-postcodes.json,
+        when the row's name matches an entry's name exactly (the id is a hint),
+        the entry is high or medium confidence, its postcode is in my_localities
+        and my_localities' state agrees with the researched one (a disagreement
+        is UNRESOLVED, not overridden by geocoding). Low confidence is not used;
      1. a 5-digit postcode already written in the row's address text, valid in
         scm.my_localities;
      2. otherwise Google Geocoding — a venue by "name, state, Malaysia", the
@@ -37,8 +42,9 @@
    RE-RUN: safe. Only rows whose postcode is still empty are read or written, so
    a second run proposes only what the first left unresolved, and never touches
    a postcode someone has since entered by hand. */
+import { readFileSync } from 'node:fs';
 import postgres from 'postgres';
-import { MASTER_TABLES, buildPlan, geocodeQuery, parseGeocodePostcode } from './lib/master-postcodes.mjs';
+import { MASTER_TABLES, buildPlan, curatedIndex, geocodeQuery, parseGeocodePostcode } from './lib/master-postcodes.mjs';
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error('need DATABASE_URL'); process.exit(2); }
@@ -60,6 +66,9 @@ if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
 
 /* A long run of digits in an address is a phone number more often than not. */
 const mask = (s) => String(s ?? '').replace(/\+?\d[\d\s-]{7,}\d/g, '[number]').slice(0, 140);
+
+const CURATED_FILE = new URL('./data/venue-postcodes.json', import.meta.url);
+const curated = curatedIndex(JSON.parse(readFileSync(CURATED_FILE, 'utf8')).entries);
 
 const sql = postgres(DSN, { ssl: 'require', prepare: false, max: 1 });
 
@@ -123,6 +132,8 @@ async function main() {
   note(`my_localities rows with a postcode: ${localities.length}`);
   if (localities.length === 0) { bad('my_localities is empty — nothing can be validated, refusing to plan.'); await sql.end({ timeout: 5 }); process.exit(1); }
 
+  note(`curated venue entries: ${curated.byName.size}${curated.duplicates.length ? ` (dropped, name listed twice: ${curated.duplicates.join(', ')})` : ''}`);
+
   const has = await columnsOf(sql);
   const rows = [];
   for (const m of MASTER_TABLES) {
@@ -136,12 +147,12 @@ async function main() {
 
   /* Geocode only the rows the address text could not settle, and only when the
      text itself was not ambiguous (buildPlan would refuse those anyway). */
-  const { planned: firstPass, unresolved: needGeo } = buildPlan({ rows, localities, geocodes: new Map(), geocodeSkipped: () => 'not geocoded yet' });
+  const { planned: firstPass, unresolved: needGeo } = buildPlan({ rows, localities, geocodes: new Map(), geocodeSkipped: () => 'not geocoded yet', curated: curated.byName });
   const geocodes = new Map();
   let calls = 0;
   const skipped = new Map();
   for (const u of needGeo) {
-    if (u.settled) continue; // the address text was ambiguous, or contradicts the row — Google cannot fix that
+    if (u.settled) continue; // the address text or curated entry was ambiguous, or contradicts the row — Google cannot fix that
     const master = MASTER_TABLES.find((m) => m.key === u.master);
     const row = rows.find((r) => r.master === u.master && r.id === u.id);
     const query = geocodeQuery(master, row);
@@ -154,11 +165,12 @@ async function main() {
     if (g.failed) skipped.set(key, `geocode ${g.failed}`);
     else geocodes.set(key, g.hit);
   }
-  note(`geocode calls made: ${calls} (address-text proposals: ${firstPass.length})`);
+  note(`geocode calls made: ${calls} (curated + address-text proposals: ${firstPass.length})`);
 
   const { planned, unresolved } = buildPlan({
     rows, localities, geocodes,
     geocodeSkipped: (r) => skipped.get(`${r.master}:${r.id}`) ?? 'not geocoded',
+    curated: curated.byName,
   });
 
   say(`\n=== PLANNED (${planned.length}) — table | id | name | current address | proposed postcode / city / state | source | confidence ===`);
@@ -167,6 +179,11 @@ async function main() {
   }
   say(`\n=== UNRESOLVED (${unresolved.length}) — never written ===`);
   for (const u of unresolved) say(`  ${u.master} | ${u.id} | ${u.name} | ${mask(u.address) || '-'} | ${u.reason}`);
+  const venueNames = new Set(rows.filter((r) => r.master === 'venues').map((r) => String(r.name ?? '').trim()));
+  const unmatched = [...curated.byName.keys()].filter((n) => !venueNames.has(n));
+  say(`
+=== CURATED ENTRIES WITH NO EMPTY-POSTCODE VENUE OF THAT EXACT NAME (${unmatched.length}) ===`);
+  for (const n of unmatched) say(`  ${n}`);
   const byMaster = (list) => MASTER_TABLES.map((m) => `${m.key} ${list.filter((x) => x.master === m.key).length}`).join(', ');
   note(`\nplanned: ${planned.length} (${byMaster(planned)})   unresolved: ${unresolved.length} (${byMaster(unresolved)})`);
 
