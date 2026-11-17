@@ -10,9 +10,11 @@ import { getDb } from "../db/client";
 import { mytMonthRangeUtc } from "./agent-console";
 import { scanSoModel } from "../scm/lib/scan-ocr";
 import { changedFields, LINES_CHANGED } from "../scm/lib/scan-slip-fields";
+import { correctionChanges, type FieldChange } from "../scm/lib/scan-correction-detail";
 import { SCAN_DOCUMENT_TYPES, SCAN_DOCUMENT_TYPE_LABEL, isScanDocumentType } from "../scm/lib/scan-document-type";
 
 export { changedFields, LINES_CHANGED };
+export type { FieldChange };
 
 export type ScanOutcome = "pending" | "failed" | "discarded" | "clean" | "corrected" | "awaiting" | "imported";
 
@@ -29,6 +31,8 @@ export interface ScanRow {
   sample_error: string | null;
   extracted: unknown;
   corrected: unknown;
+  /** The draft as the scan built it; null on scans from before it was kept. */
+  draft_baseline: unknown;
   /** SO only: the draft this scan made no longer exists (deleted). */
   so_missing: boolean;
 }
@@ -82,6 +86,8 @@ export interface ProblemScan {
   docNo: string | null;
   outcome: "failed" | "corrected";
   detail: string | null;
+  /** Before/after per changed field; null when the scan has no draft snapshot. */
+  changes: FieldChange[] | null;
 }
 export interface OcrReport {
   month: string;
@@ -119,6 +125,7 @@ export function buildOcrReport(month: string, model: string, rows: ScanRow[]): O
       secs.set(t, []);
     }
     const { outcome, detail } = classifyScan(r);
+    const changes = outcome === "corrected" ? correctionChanges(r.extracted, r.corrected, r.draft_baseline) : null;
     s.scans++;
     s[outcome]++;
     if (outcome !== "pending") {
@@ -130,7 +137,7 @@ export function buildOcrReport(month: string, model: string, rows: ScanRow[]): O
       for (const f of detail.split(", ")) misses.set(f, (misses.get(f) ?? 0) + 1);
     }
     if ((outcome === "failed" || outcome === "corrected") && problems.length < PROBLEM_LIMIT) {
-      problems.push({ id: r.id, at: iso(r.created_at), documentType: t, docNo: r.doc_no, outcome, detail });
+      problems.push({ id: r.id, at: iso(r.created_at), documentType: t, docNo: r.doc_no, outcome, detail, changes });
     }
   }
 
@@ -168,6 +175,7 @@ export async function loadOcrReport(env: Env, companyId: number, month: string):
            CASE WHEN s.status = 'FAILED' THEN s.extracted->>'error' END AS sample_error,
            CASE WHEN s.status = 'CONFIRMED' THEN s.extracted END AS extracted,
            CASE WHEN s.status = 'CONFIRMED' THEN s.corrected END AS corrected,
+           CASE WHEN s.status = 'CONFIRMED' THEN s.draft_baseline END AS draft_baseline,
            (j.document_type = 'SO' AND j.status = 'done' AND j.so_doc_no IS NOT NULL
              AND NOT EXISTS (SELECT 1 FROM scm.mfg_sales_orders so
                               WHERE so.doc_no = j.so_doc_no AND so.company_id = j.company_id)) AS so_missing

@@ -13,6 +13,7 @@ const row = (over: Partial<ScanRow>): ScanRow => ({
   sample_error: null,
   extracted: null,
   corrected: null,
+  draft_baseline: null,
   so_missing: false,
   ...over,
 });
@@ -52,6 +53,20 @@ describe("changedFields", () => {
     expect(changedFields(slip("A"), { ...slip("A"), lines: [...slip("A").lines, { qtyGuess: 2 }] })).toEqual([LINES_CHANGED]);
     expect(changedFields(slip("A", 1), slip("A", 2))).toEqual(["Qty"]);
     expect(changedFields(null, slip("A"))).toEqual([]);
+  });
+});
+
+describe("buildOcrReport before/after", () => {
+  it("shows the draft value and the confirmed value when a baseline exists, names only without one", () => {
+    const ex = slip("A1", 1, { phones: ["012-345 6789"] });
+    const corrected = slip("B2", 1, { phones: ["0198765432"] });
+    const base = slip("A1", 1, { phones: ["123456789"] });
+    const withBase = row({ id: "a", sample_status: "CONFIRMED", extracted: ex, corrected, draft_baseline: base });
+    const noBase = row({ id: "b", sample_status: "CONFIRMED", extracted: ex, corrected });
+    const [a, b] = buildOcrReport("2026-10", "m", [withBase, noBase]).problems;
+    expect(a.changes).toEqual([{ field: "Phone", before: "0123456789", after: "0198765432" }]);
+    expect(a.detail).toBe("Phone, Product code");
+    expect(b.changes).toBeNull();
   });
 });
 

@@ -532,7 +532,7 @@ function withoutDroppedBlankLines(extracted: Record<string, unknown>): Record<st
 /* The one line of `lines` carrying this non-empty rawText, or null when there
    is none or it is not unique. rawText is the only provenance a draft line
    keeps of its slip line; anything else would be a guess. */
-function uniqueByRawText(
+export function uniqueByRawText(
   lines: Array<Record<string, unknown>>,
   rawText: unknown,
 ): Record<string, unknown> | null {

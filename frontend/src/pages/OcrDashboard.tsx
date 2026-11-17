@@ -29,6 +29,7 @@ type DocTypeStats = {
   avgSec: number | null;
   p90Sec: number | null;
 };
+type FieldChange = { field: string; before: string; after: string };
 type ProblemScan = {
   id: string;
   at: string;
@@ -36,6 +37,8 @@ type ProblemScan = {
   docNo: string | null;
   outcome: "failed" | "corrected";
   detail: string | null;
+  /** Before/after per changed field; null for scans with no draft snapshot. */
+  changes: FieldChange[] | null;
 };
 export type OcrReport = {
   month: string;
@@ -84,6 +87,8 @@ const DOC_COLUMNS: Column<DocTypeStats>[] = [
   { key: "p90", label: "Slowest 10%", align: "right", getValue: (r) => r.p90Sec ?? -1, render: (r) => secs(r.p90Sec) },
 ];
 
+const changeText = (c: FieldChange) => `${c.field}: ${c.before} → ${c.after}`;
+
 const problemColumns = (docLabel: (t: string) => string): Column<ProblemScan>[] => [
   {
     key: "at", label: "When", getValue: (r) => r.at,
@@ -105,7 +110,17 @@ const problemColumns = (docLabel: (t: string) => string): Column<ProblemScan>[] 
     key: "outcome", label: "Outcome", getValue: (r) => r.outcome,
     render: (r) => <span className={cn("font-semibold", r.outcome === "failed" ? "text-err" : "text-warning-text")}>{r.outcome === "failed" ? "Failed" : "Corrected"}</span>,
   },
-  { key: "detail", label: "Detail", getValue: (r) => r.detail ?? "", render: (r) => <span className="text-[11.5px] text-ink">{r.detail ?? "—"}</span> },
+  {
+    key: "detail", label: "Detail", getValue: (r) => r.changes?.map(changeText).join("; ") ?? r.detail ?? "",
+    render: (r) =>
+      r.changes?.length ? (
+        <div className="space-y-0.5 text-[11.5px] text-ink">
+          {r.changes.map((c) => <div key={c.field} className="whitespace-normal break-words"><span className="font-semibold">{c.field}:</span> {c.before} → {c.after}</div>)}
+        </div>
+      ) : (
+        <span className="whitespace-normal break-words text-[11.5px] text-ink">{r.detail ?? "—"}</span>
+      ),
+  },
 ];
 
 const card = "rounded-lg border border-border bg-surface px-5 py-5 shadow-stone";
