@@ -5,7 +5,7 @@ import { useQuery, type QueryState } from "../../hooks/useQuery";
 import type { EmployeeInput } from "../../vendor/shared/hr-employee";
 import type { PayRuleVersion, PayRulesConfig } from "../../vendor/shared/hr-pay-rules";
 import type { AttendanceStatus } from "../../vendor/shared/hr-attendance";
-import type { TripCommission, TripKind, TripPay, TripPayLine, TripRates } from "../../vendor/shared/hr-trip-pay";
+import type { TripCommission, TripEventType, TripJobType, TripKind, TripPay, TripPayLine, TripRates, TripRowPay } from "../../vendor/shared/hr-trip-pay";
 
 export const HR = "/api/hr";
 
@@ -219,7 +219,8 @@ export type Payslip = {
     advanceDates: string[];
     pcbNote: string;
     allowances?: { kind: AllowanceKind; label: string; amountSen: number; note: string | null }[];
-    trip?: { commission: TripCommission; lines: TripPayLine[] } | null;
+    /** As stored on the payslip; one approved before 2026-11-17 has no category / items. */
+    trip?: { commission: TripCommission; lines: Omit<TripPayLine, "category" | "items">[] } | null;
   };
   approvedAt: string | null;
   paidAt: string | null;
@@ -292,9 +293,18 @@ export type TripRowOut = {
   transferTo: string;
   refNo: string;
   kind: TripKind;
+  jobType: TripJobType;
+  eventType: TripEventType | null;
   localTotalSen: number;
   state: string;
+  postcode: string;
   lorryPlate: string;
+  /** HR changed it by hand: no read from Delivery Planning overwrites it. */
+  hrEdited: boolean;
+  /** Its Delivery Planning stop was cancelled or deleted: HR decides. */
+  sourceMissing: boolean;
+  /** What the row earned, the crew together. */
+  pay: TripRowPay;
   driver1: TripPerson;
   driver2: TripPerson;
   helper1: TripPerson;
@@ -316,7 +326,7 @@ export type TripPayResponse = {
   rows: TripRowOut[];
   people: TripPersonPay[];
   unmatched: { name: string; rows: number }[];
-  totals: { commissionSen: number; allowanceSen: number };
+  totals: { commissionSen: number; allowanceSen: number; jobAllowanceSen: number; outstationSen: number; overnightSen: number };
   sources: string[];
   canManage: boolean;
 };

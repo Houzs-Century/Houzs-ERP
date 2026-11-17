@@ -7,9 +7,12 @@
 //
 //   GET    /trip-pay?month=YYYY-MM          rows, everyone's pay, unmatched names
 //   POST   /trip-pay/import {month, text}   paste the Trip Report (replaces SHEET + PLANNING rows)
-//   POST   /trip-pay/pull {month}           read Delivery Planning's lorry runs (replaces them too)
+//   POST   /trip-pay/pull {month}           read Delivery Planning + project Setup / Dismantle now
+//                                           (removes pasted rows; keeps HR's edits, flags gone stops)
 //   POST   /trip-pay/rows                   add a row (MANUAL)
-//   PATCH  /trip-pay/rows/:id   DELETE /trip-pay/rows/:id
+//   PATCH  /trip-pay/rows/:id   DELETE /trip-pay/rows/:id   (an edit marks the row HR-edited;
+//                                           removing a Planning row keeps it, paid nothing)
+// The same read runs every night at 00:05 MYT (lib/hr-trip-sync.ts).
 //   PUT    /trip-pay/missed {employeeId, month, missedDays|null, note}
 //   GET    /trip-rates   POST /trip-rates   DELETE /trip-rates/:id
 //   GET    /allowances?period   POST /allowances   PATCH|DELETE /allowances/:id
@@ -29,18 +32,25 @@ import { hasPermission } from "../services/permissions";
 import { audit } from "../services/audit";
 import {
   DEFAULT_TRIP_RATES,
-  TRIP_KINDS,
+  TRIP_EVENT_TYPES,
+  TRIP_JOB_TYPES,
+  isFairJob,
+  kindOfJobType,
   normalizeTripRates,
   parseTripReport,
   resolveTripRatesAsOf,
   tripMonthBounds,
   tripMonthOf,
   tripRatesProblem,
+  type TripEventType,
+  type TripJobType,
   type TripKind,
+  type TripRowPay,
 } from "../scm/shared/hr-trip-pay";
 import { lockedPeriods } from "./lib/hr-payroll-store";
 import { ALLOWANCE_KINDS, ALLOWANCE_LABEL, type AllowanceKind } from "./lib/hr-payslip";
-import { loadTripMonth, nameIndex, planningRows, tripMonthLocked } from "./lib/hr-trip-store";
+import { jobTypeOfRow, loadTripMonth, nameIndex, rowHrEdited, tripMonthLocked } from "./lib/hr-trip-store";
+import { syncTripMonth } from "./lib/hr-trip-sync";
 
 type Ctx = Context<{ Bindings: Env }>;
 
@@ -81,9 +91,14 @@ const rowOut = (r: RowRecord) => ({
   transferTo: r.transfer_to,
   refNo: r.ref_no,
   kind: r.kind,
+  jobType: jobTypeOfRow(r),
+  eventType: r.event_type,
   localTotalSen: Number(r.local_total_sen),
   state: r.state,
+  postcode: r.postcode,
   lorryPlate: r.lorry_plate,
+  hrEdited: rowHrEdited(r),
+  sourceMissing: r.source_missing_at != null,
   driver1: { name: r.driver_1_name, employeeId: r.driver_1_employee_id },
   driver2: { name: r.driver_2_name, employeeId: r.driver_2_employee_id },
   helper1: { name: r.helper_1_name, employeeId: r.helper_1_employee_id },
@@ -114,10 +129,12 @@ hrTripPay.get("/trip-pay", async (c) => {
     last: t.last,
     locked,
     rates: t.rates,
-    rows: t.rows.map((r) => {
+    rows: t.rows.map((r, i) => {
       const o = rowOut(r);
+      const pay: TripRowPay = t.rowPay[i];
       return {
         ...o,
+        pay,
         matched: {
           driver1: o.driver1.name || o.driver1.employeeId != null ? resolved(o.driver1) : undefined,
           driver2: o.driver2.name || o.driver2.employeeId != null ? resolved(o.driver2) : undefined,
@@ -131,6 +148,9 @@ hrTripPay.get("/trip-pay", async (c) => {
     totals: {
       commissionSen: people.reduce((s, p) => s + p.commission.amountSen, 0),
       allowanceSen: people.reduce((s, p) => s + p.allowanceSen, 0),
+      jobAllowanceSen: people.reduce((s, p) => s + p.jobAllowanceSen, 0),
+      outstationSen: people.reduce((s, p) => s + p.outstationSen, 0),
+      overnightSen: people.reduce((s, p) => s + p.overnightSen, 0),
     },
     sources: [...new Set(t.rows.map((r) => r.source))],
     canManage: canManage(c),
@@ -176,6 +196,8 @@ hrTripPay.post("/trip-pay/import", async (c) => {
       transfer_to: r.transferTo,
       ref_no: r.refNo,
       kind: r.kind,
+      job_type: r.jobType,
+      event_type: r.eventType,
       local_total_sen: Math.max(0, r.localTotalSen),
       state: r.state,
       lorry_plate: r.lorryPlate,
@@ -196,26 +218,16 @@ hrTripPay.post("/trip-pay/pull", async (c) => {
   if (!PERIOD.test(month)) return c.json({ error: "validation_failed", message: "Pick a month." }, 400);
   const db = getDb(c.env);
   if (await tripMonthLocked(db, co.companyId, month)) return c.json(LOCKED(month), 409);
-  const people = await db
-    .select({
-      id: hr_employees.id,
-      empNo: hr_employees.emp_no,
-      name: hr_employees.name,
-      tripNames: hr_employees.trip_names,
-      userId: hr_employees.user_id,
-      joinDate: hr_employees.join_date,
-      resignedOn: hr_employees.resigned_on,
-    })
-    .from(hr_employees)
-    .where(eq(hr_employees.company_id, co.companyId));
-  const rows = await planningRows(db, co.companyId, month, people);
-  if (!rows.length) {
-    const { first, last } = tripMonthBounds(month);
-    return c.json({ error: "nothing_planned", message: `Delivery Planning has no lorry run of our own from ${first} to ${last}. Nothing was changed.` }, 409);
-  }
-  await replaceGenerated(c, co.companyId, month, rows);
-  await audit(c, { action: "hr.trip.pull", entityType: "hr_trip_month", entityId: month, summary: `Read ${rows.length} stops from Delivery Planning for ${month}` });
-  return c.json({ ok: true, count: rows.length });
+  /* Reading Planning replaces a pasted Trip Report; rows HR added or edited stay. */
+  await db.delete(hr_trip_rows).where(and(eq(hr_trip_rows.company_id, co.companyId), eq(hr_trip_rows.trip_month, month), eq(hr_trip_rows.source, "SHEET")));
+  const r = await syncTripMonth(db, co.companyId, month, { mode: "all", yesterday: todayMyt(-1), since: null, by: c.get("user").id });
+  await audit(c, {
+    action: "hr.trip.pull",
+    entityType: "hr_trip_month",
+    entityId: month,
+    summary: `Read Delivery Planning for ${month}: ${r.added} added, ${r.updated} updated, ${r.flagged} flagged`,
+  });
+  return c.json({ ok: true, added: r.added, updated: r.updated, flagged: r.flagged });
 });
 
 type RowInput = {
@@ -223,9 +235,11 @@ type RowInput = {
   docNo: string;
   transferTo: string;
   refNo: string;
-  kind: TripKind;
+  jobType: TripJobType;
+  eventType: TripEventType | null;
   localTotalSen: number;
   state: string;
+  postcode: string;
   lorryPlate: string;
   names: { driver_1_name: string; driver_2_name: string; helper_1_name: string; helper_2_name: string };
 };
@@ -233,13 +247,26 @@ type RowInput = {
 function parseRow(b: Record<string, unknown>): RowInput | string {
   const tripDate = str(b.tripDate);
   if (!YMD.test(tripDate)) return "Pick the date.";
-  const kind = TRIP_KINDS.includes(b.kind as TripKind) ? (b.kind as TripKind) : null;
-  if (!kind) return "Pick what the job was.";
+  const jobType = TRIP_JOB_TYPES.includes(b.jobType as TripJobType) ? (b.jobType as TripJobType) : null;
+  if (!jobType) return "Pick what the job was.";
+  const eventType = isFairJob(jobType) && TRIP_EVENT_TYPES.includes(b.eventType as TripEventType) ? (b.eventType as TripEventType) : null;
   const sen = Number(b.localTotalSen ?? 0);
   if (!Number.isInteger(sen) || sen < 0) return "Local Total must be RM 0.00 or more.";
   const names = { driver_1_name: str(b.driver1, 80), driver_2_name: str(b.driver2, 80), helper_1_name: str(b.helper1, 80), helper_2_name: str(b.helper2, 80) };
   if (!names.driver_1_name && !names.driver_2_name) return "Name the driver.";
-  return { tripDate, docNo: str(b.docNo), transferTo: str(b.transferTo), refNo: str(b.refNo), kind, localTotalSen: sen, state: str(b.state, 60), lorryPlate: str(b.lorryPlate, 30), names };
+  return {
+    tripDate,
+    docNo: str(b.docNo),
+    transferTo: str(b.transferTo),
+    refNo: str(b.refNo),
+    jobType,
+    eventType,
+    localTotalSen: sen,
+    state: str(b.state, 60),
+    postcode: str(b.postcode, 10),
+    lorryPlate: str(b.lorryPlate, 30),
+    names,
+  };
 }
 
 hrTripPay.post("/trip-pay/rows", async (c) => {
@@ -261,15 +288,18 @@ hrTripPay.post("/trip-pay/rows", async (c) => {
       doc_no: r.docNo,
       transfer_to: r.transferTo,
       ref_no: r.refNo,
-      kind: r.kind,
+      kind: kindOfJobType(r.jobType),
+      job_type: r.jobType,
+      event_type: r.eventType,
       local_total_sen: r.localTotalSen,
       state: r.state,
+      postcode: r.postcode,
       lorry_plate: r.lorryPlate,
       ...r.names,
       created_by: c.get("user").id,
     })
     .returning({ id: hr_trip_rows.id });
-  await audit(c, { action: "hr.trip.row_add", entityType: "hr_trip_row", entityId: row.id, summary: `Added trip row ${r.tripDate} ${r.kind}`, meta: r });
+  await audit(c, { action: "hr.trip.row_add", entityType: "hr_trip_row", entityId: row.id, summary: `Added trip row ${r.tripDate} ${r.jobType}`, meta: r });
   return c.json({ id: row.id, month }, 201);
 });
 
@@ -288,6 +318,8 @@ hrTripPay.patch("/trip-pay/rows/:id", async (c) => {
   if (await tripMonthLocked(db, co.companyId, cur.trip_month)) return c.json(LOCKED(cur.trip_month), 409);
   /* A renamed person is matched by name again; an unchanged one keeps the employee Planning found. */
   const keep = (name: string, was: string, id: number | null) => (name === was ? id : null);
+  /* An unchanged job type keeps the old kind an earlier rates version reads (a fair night stays one). */
+  const kind: TripKind = r.jobType === jobTypeOfRow(cur) ? (cur.kind as TripKind) : kindOfJobType(r.jobType);
   await db
     .update(hr_trip_rows)
     .set({
@@ -295,11 +327,15 @@ hrTripPay.patch("/trip-pay/rows/:id", async (c) => {
       doc_no: r.docNo,
       transfer_to: r.transferTo,
       ref_no: r.refNo,
-      kind: r.kind,
+      kind,
+      job_type: r.jobType,
+      event_type: r.eventType,
       local_total_sen: r.localTotalSen,
       state: r.state,
+      postcode: r.postcode,
       lorry_plate: r.lorryPlate,
       ...r.names,
+      hr_edited: true,
       driver_1_employee_id: keep(r.names.driver_1_name, cur.driver_1_name, cur.driver_1_employee_id),
       driver_2_employee_id: keep(r.names.driver_2_name, cur.driver_2_name, cur.driver_2_employee_id),
       helper_1_employee_id: keep(r.names.helper_1_name, cur.helper_1_name, cur.helper_1_employee_id),
@@ -321,7 +357,13 @@ hrTripPay.delete("/trip-pay/rows/:id", async (c) => {
   const cur = (await db.select().from(hr_trip_rows).where(and(eq(hr_trip_rows.company_id, co.companyId), eq(hr_trip_rows.id, id))).limit(1)).at(0);
   if (!cur) return c.json({ error: "not_found_in_company" }, 404);
   if (await tripMonthLocked(db, co.companyId, cur.trip_month)) return c.json(LOCKED(cur.trip_month), 409);
-  await db.delete(hr_trip_rows).where(eq(hr_trip_rows.id, id));
+  /* A row read from Planning is kept, removed and paid nothing, so no later read adds it back. */
+  if (cur.source === "PLANNING") {
+    const now = new Date().toISOString();
+    await db.update(hr_trip_rows).set({ removed_at: now, hr_edited: true, updated_at: now }).where(and(eq(hr_trip_rows.company_id, co.companyId), eq(hr_trip_rows.id, id)));
+  } else {
+    await db.delete(hr_trip_rows).where(and(eq(hr_trip_rows.company_id, co.companyId), eq(hr_trip_rows.id, id)));
+  }
   await audit(c, { action: "hr.trip.row_remove", entityType: "hr_trip_row", entityId: id, summary: `Removed trip row ${cur.trip_date}`, meta: rowOut(cur) });
   return c.json({ ok: true });
 });
@@ -380,7 +422,8 @@ hrTripPay.post("/trip-rates", async (c) => {
   const body = await readBody(c);
   const effectiveFrom = str(body.effectiveFrom);
   if (!YMD.test(effectiveFrom)) return c.json({ error: "validation_failed", message: "Pick the date the rates take effect." }, 400);
-  const rates = normalizeTripRates(body.rates);
+  if ((body.rates as { schema?: unknown } | null)?.schema !== 2) return c.json({ error: "validation_failed", message: "Reload the page: the rates form is out of date." }, 400);
+  const rates = { ...normalizeTripRates(body.rates), legacy: null };
   const problem = tripRatesProblem(rates);
   if (problem) return c.json({ error: "validation_failed", message: problem }, 400);
   const db = getDb(c.env);

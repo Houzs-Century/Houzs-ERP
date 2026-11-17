@@ -61,7 +61,7 @@ describe('POST /dp-orders — TRANSFER to an outsourced (3PL) warehouse', () => 
       contact_name: 'Encik Rahman', contact_phone: '0127778888', office_phone: '075551234',
       address: 'No 3, Jalan Perdagangan, Johor Bahru',
     });
-    const res = await send(a, { jobType: 'TRANSFER', threeplCompanyId: THREEPL });
+    const res = await send(a, { jobType: 'TRANSFER', threeplCompanyId: THREEPL, overrides: { postcode: '81100' } });
     expect(res.status).toBe(201);
 
     const insert = calls.find((x) => x.op === 'insert')?.payload as Record<string, unknown>;

@@ -171,3 +171,4 @@ Frontend
 - Mobile: `frontend/src/mobile/MobileDeliveryPlanning.tsx`, `MobileDeliveryFieldsCard.tsx`, `MobilePOD.tsx`, `MobileTrackingBanner.tsx`, `MobileModuleList.tsx`, `MobileApp.tsx`.
 
 Endpoints: see `docs/generated/route-capability-matrix.csv`.
+- DP order postcode: required (after detection) for DELIVERY / PICKUP / SERVICE / INSPECTION / SUPPLIER_PICKUP / TRANSFER (`shared/dp-postcode-rule.ts`), not LORRY_SERVICE / SETUP / DISMANTLE; an empty one is taken from the single `my_localities`-known 5-digit number in the address (`lib/postcode-from-address.ts`). Address fields are editable at any status but CANCELLED (date only while PENDING_SCHEDULE); an edit on a trip rewrites its stop snapshot.

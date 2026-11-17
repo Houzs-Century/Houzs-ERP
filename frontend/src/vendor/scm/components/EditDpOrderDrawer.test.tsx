@@ -14,6 +14,27 @@ vi.mock('../lib/delivery-planning-queries', () => ({
 }));
 vi.mock('./NotifyDialog', () => ({ useNotify: () => () => {} }));
 vi.mock('../lib/mutation-error', () => ({ writeFailedAs: () => () => {} }));
+// The Sales Order postcode picker reads my_localities; a fixed slice here.
+vi.mock('../lib/localities-queries', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/localities-queries')>()),
+  useLocalities: () => ({
+    isLoading: false,
+    data: [
+      { postcode: '47000', city: 'Sungai Buloh', state: 'Selangor', stateCode: 'SGR', country: 'Malaysia' },
+      { postcode: '81100', city: 'Johor Bahru', state: 'Johor', stateCode: 'JHR', country: 'Malaysia' },
+      { postcode: '43300', city: 'Seri Kembangan', state: 'Selangor', stateCode: 'SGR', country: 'Malaysia' },
+    ],
+  }),
+}));
+// The portalled combobox needs layout jsdom lacks; a native select stands in.
+vi.mock('./SearchableSelect', () => ({
+  SearchableSelect: ({ value, onChange, options }: { value: string; onChange: (v: string) => void; options: { value: string; label: string }[] }) => (
+    <select data-testid="postcode-picker" value={value} onChange={(e) => onChange(e.target.value)}>
+      <option value="" />
+      {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+    </select>
+  ),
+}));
 
 const { EditDpOrderDrawer } = await import('./EditDpOrderDrawer');
 
@@ -40,6 +61,7 @@ const row = {
   from_postcode: '43300',
   from_state: 'Selangor',
   requested_date: '2026-11-05',
+  status: 'PENDING_SCHEDULE',
   remark: '',
 } as unknown as Parameters<typeof EditDpOrderDrawer>[0]['row'];
 
@@ -104,5 +126,40 @@ describe('EditDpOrderDrawer', () => {
     expect(saveBtn().disabled).toBe(false);
     fireEvent.change(screen.getByDisplayValue('No 3, Jalan Perdagangan'), { target: { value: '   ' } });
     expect(saveBtn().disabled).toBe(true);
+  });
+
+  test('a scheduled job edits its address but not its date', () => {
+    mutate.mockClear();
+    const scheduled = { ...row, status: 'SCHEDULED', dp_no: 'DP-261118-VRH02' } as unknown as Parameters<typeof EditDpOrderDrawer>[0]['row'];
+    render(<EditDpOrderDrawer row={scheduled} onClose={() => {}} />);
+    expect(screen.queryByText('Requested date')).toBeNull();
+    fireEvent.change(screen.getByDisplayValue('No 3, Jalan Perdagangan'), { target: { value: 'No 5, Jalan Perdagangan' } });
+    fireEvent.click(saveBtn());
+    const sent = mutate.mock.calls[0][0] as Record<string, unknown>;
+    expect(sent.address1).toBe('No 5, Jalan Perdagangan');
+    expect('requestedDate' in sent).toBe(false);
+  });
+
+  test('picking a postcode fills State and City', () => {
+    mutate.mockClear();
+    const blank = { ...row, job_type: 'SUPPLIER_PICKUP', city: '', postcode: '', state: '' } as unknown as Parameters<typeof EditDpOrderDrawer>[0]['row'];
+    render(<EditDpOrderDrawer row={blank} onClose={() => {}} />);
+    fireEvent.change(screen.getAllByTestId('postcode-picker')[0], { target: { value: '47000' } });
+    fireEvent.click(saveBtn());
+    expect(mutate.mock.calls[0][0]).toMatchObject({ postcode: '47000', state: 'Selangor', city: 'Sungai Buloh' });
+  });
+
+  test('a supplier pickup without a postcode cannot be saved and says why', () => {
+    const blank = { ...row, job_type: 'SUPPLIER_PICKUP', postcode: '' } as unknown as Parameters<typeof EditDpOrderDrawer>[0]['row'];
+    render(<EditDpOrderDrawer row={blank} onClose={() => {}} />);
+    expect(saveBtn().disabled).toBe(true);
+    expect(screen.getByRole('alert').textContent).toMatch(/Pick the postcode/);
+  });
+
+  test('a lorry service may go without a postcode', () => {
+    const blank = { ...row, job_type: 'LORRY_SERVICE', postcode: '' } as unknown as Parameters<typeof EditDpOrderDrawer>[0]['row'];
+    render(<EditDpOrderDrawer row={blank} onClose={() => {}} />);
+    expect(saveBtn().disabled).toBe(false);
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 });

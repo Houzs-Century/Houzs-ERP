@@ -269,6 +269,8 @@ export function OrderDrawer({
                 </>
               )}
               <Field label="Address" value={doc.address} />
+              <Field label="Postcode" value={doc.order.postcode} />
+              <Field label="State" value={doc.order.customer_state} />
               <Field label="Region" value={doc.region} />
               <Field label="Time slot" value={doc.order.time_range || '—'} />
               {doc.rowType === 'so' && <Field label="Salesperson" value={salespersonName} />}

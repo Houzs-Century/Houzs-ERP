@@ -25,6 +25,7 @@ import { cn } from '../../lib/utils';
 import { formatPhone } from '@2990s/shared/phone';
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
 import { StatePicker } from '../../vendor/scm/components/StatePicker';
+import { PostcodeCascadeField } from '../../vendor/scm/components/PostcodeCascadeField';
 import {
   useSuppliersPaged,
   useCreateSupplier,
@@ -721,7 +722,14 @@ const SupplierFields = ({
         />
       </label>
       <Field label="Area" value={(form.area as string) ?? ''} onChange={(v) => onChange('area', v)} />
-      <Field label="Postcode" value={(form.postcode as string) ?? ''} onChange={(v) => onChange('postcode', v)} />
+      {/* The Sales Order postcode picker: picking one fills State and City, so a
+          DP supplier pickup copies a real postcode (owner 2026-11-17). */}
+      <PostcodeCascadeField
+        value={String(form.postcode || '')} state={String(form.state || '')} city={String(form.city || '')}
+        label="Postcode"
+        onPick={(t) => { onChange('postcode', t.postcode); onChange('state', t.state); onChange('city', t.city); }}
+        classes={{ field: styles.field, label: styles.fieldLabel, select: styles.fieldSelect, selectWrap: styles.selectWrap, chevron: styles.selectChevron, input: styles.fieldInput }}
+      />
       <Field label="City" value={(form.city as string) ?? ''} onChange={(v) => onChange('city', v)} />
       {/* Structured pickup address (mig 0131) — the SAME shape as the SO header,
           so a Supplier-Pickup DP order auto-fills it in the SO-Maintenance format.

@@ -61,6 +61,7 @@ import { resolveDeliveryScope, scopeMatchesAssignment, type CrewAssignment } fro
 import { reconcileStopsToBoard, reconcileFieldsFor, type ReconcileStop } from '../lib/tripReconcile';
 import { validatePing, shouldAcceptPing, latestPerDriver, PING_ACCEPTED_STATUSES, pingCallerAllowed } from '../lib/tripLocation';
 import { dateOrNull } from '../lib/date-coerce';
+import { fillDpRowsPostcode, fillPostcodeFields, localitiesForPostcodes, postcodesToLookUp } from '../lib/postcode-from-address';
 import { DO_ARRIVED_STATES } from '../shared/do-shipped-states';
 
 export const trips = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -317,7 +318,7 @@ trips.get('/day', async (c) => {
     }
   }
   const soDocNos = [...new Set([...soDocByDoId.values()])];
-  const soByDoc = new Map<string, { phone: string | null; buildingType: string | null; address: string }>();
+  const soByDoc = new Map<string, { phone: string | null; buildingType: string | null; address: string; postcode: string | null; state: string | null }>();
   if (soDocNos.length > 0) {
     const { data: soRows } = await scopeToAllowedCompanies(
       sb.from('mfg_sales_orders')
@@ -331,6 +332,8 @@ trips.get('/day', async (c) => {
       soByDoc.set(docNo, {
         phone: dual<string | null>(r, 'phone'),
         buildingType,
+        postcode: dual<string | null>(r, 'postcode'),
+        state: dual<string | null>(r, 'customer_state'),
         address: composeAddress({
           address1: dual<string | null>(r, 'address1'),
           address2: dual<string | null>(r, 'address2'),
@@ -363,6 +366,29 @@ trips.get('/day', async (c) => {
     });
   }
 
+  /* Postcode + state per stop. A DP job's come off its dp_orders row (company
+     predicate: the stop's trip is scoped, but a parent filter is not company
+     scope), with the postcode found in its address when the columns are empty;
+     any other stop with neither falls back to the postcode in its address text.
+     Read-only. */
+  const dpByStopId = new Map<string, Record<string, unknown>>();
+  {
+    const stopIds = rawStops.map((s) => s.id);
+    const { data: dpRows, error: dpErr } = await chunkIn<Record<string, unknown>>(stopIds, (batch, lo, hi) => scopeToAllowedCompanies(
+      sb.from('dp_orders').select('id, trip_stop_id, address1, address2, address3, address4, city, postcode, state').in('trip_stop_id', batch).order('id'), c,
+    ).range(lo, hi));
+    if (dpErr) return c.json({ error: 'load_failed', reason: dpErr.message }, 500);
+    await fillDpRowsPostcode(sb, dpRows);
+    for (const d of dpRows) {
+      const sid = dual<string | null>(d, 'trip_stop_id');
+      if (sid) dpByStopId.set(String(sid), d);
+    }
+  }
+  const snapshotFields = (address: string | null) => ({ lines: [address], city: null, postcode: null, state: null });
+  const snapshotKnown = await localitiesForPostcodes(sb, rawStops
+    .filter((s) => !dpByStopId.has(s.id) && !(s.do_id && soDocByDoId.has(s.do_id)))
+    .flatMap((s) => postcodesToLookUp(snapshotFields(s.address))));
+
   // Per-stop enrichment + the address to geocode (prefer the SO's fuller address,
   // matching what propose-schedule cached, for cache-key parity; else the snapshot).
   const enrichByStopId = new Map<string, StopEnrichment>();
@@ -374,12 +400,20 @@ trips.get('/day', async (c) => {
     const so = soDoc ? soByDoc.get(soDoc) ?? null : null;
     const houseType = so?.buildingType ?? null;
     const win = houseType ? windowByType.get(houseType.trim().toLowerCase()) ?? null : null;
+    const dp = dpByStopId.get(s.id) ?? null;
+    const place = dp
+      ? { postcode: (dp.postcode as string | null) ?? null, state: (dp.state as string | null) ?? null }
+      : so
+        ? { postcode: so.postcode, state: so.state }
+        : fillPostcodeFields(snapshotFields(s.address), snapshotKnown);
     enrichByStopId.set(s.id, {
       phone: so?.phone ?? null,
       houseType,
       earliestTime: win?.earliest ?? null,
       latestTime: win?.latest ?? null,
       accessNote: win?.note ?? null,
+      postcode: place.postcode,
+      state: place.state,
     });
     const addr = (so?.address && so.address.trim() !== '') ? so.address : (s.address ?? '');
     if (addr.trim() !== '') geoAddrByStopId.set(s.id, addr);

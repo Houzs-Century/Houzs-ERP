@@ -104,7 +104,8 @@ export function slipOut(r: SlipRow) {
       advanceDates: string[];
       pcbNote: string;
       allowances?: AllowanceLine[];
-      trip?: { commission: TripCommission; lines: TripPayLine[] } | null;
+      /** As stored on the payslip; one approved before 2026-11-17 has no category / items. */
+      trip?: { commission: TripCommission; lines: Omit<TripPayLine, "category" | "items">[] } | null;
     },
     approvedAt: r.approved_at ?? null,
     paidAt: r.paid_at ?? null,

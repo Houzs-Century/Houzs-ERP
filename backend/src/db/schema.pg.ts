@@ -1263,12 +1263,29 @@ export const hr_trip_rows = pgTable(
     driver_2_employee_id: bigint("driver_2_employee_id", { mode: "number" }),
     helper_1_employee_id: bigint("helper_1_employee_id", { mode: "number" }),
     helper_2_employee_id: bigint("helper_2_employee_id", { mode: "number" }),
+    // mig-pg 20261117T2100 (Trip Pay redesign): NULL job_type = read from kind.
+    job_type: text("job_type"),
+    event_type: text("event_type"),
+    postcode: text("postcode").notNull().default(""),
+    trip_ref: text("trip_ref").notNull().default(""),
+    venue_key: text("venue_key").notNull().default(""),
+    hr_edited: boolean("hr_edited").notNull().default(false),
+    source_missing_at: timestamp("source_missing_at", { withTimezone: true, mode: "string" }),
+    removed_at: timestamp("removed_at", { withTimezone: true, mode: "string" }),
     created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
     created_by: integer("created_by"),
     updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
   },
-  (t) => [index("idx_hr_trip_rows_month").on(t.company_id, t.trip_month, t.trip_date)],
+  (t) => [index("idx_hr_trip_rows_month").on(t.company_id, t.trip_month, t.trip_date), index("idx_hr_trip_rows_source_ref").on(t.company_id, t.source, t.source_ref)],
 );
+
+export const hr_trip_sync_state = pgTable("hr_trip_sync_state", {
+  company_id: bigint("company_id", { mode: "number" }).primaryKey(),
+  watermark: timestamp("watermark", { withTimezone: true, mode: "string" }),
+  last_run_at: timestamp("last_run_at", { withTimezone: true, mode: "string" }),
+  last_summary: text("last_summary"),
+  updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+});
 
 export const hr_trip_rate_versions = pgTable(
   "hr_trip_rate_versions",
