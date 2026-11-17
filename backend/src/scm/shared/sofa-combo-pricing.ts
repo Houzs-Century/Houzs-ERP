@@ -160,6 +160,27 @@ export function normalizeComboModules(
 }
 
 /**
+ * True when a combo is ONE slot that lists several codes, e.g.
+ * `[["2A(LHF)","2A(RHF)","L(LHF)","L(RHF)"]]`. Codes in a slot are
+ * alternatives for a single piece, so such a combo can only ever cover one
+ * piece of an order. Every one found in production (2026-11-17) carried the
+ * price of a whole set, which costing then charged to that single piece while
+ * the order's other pieces still added their own cost. A set needs one slot
+ * per piece; a single code in a single slot (`[["1S(P)"]]`) is a whole unit
+ * and stays valid.
+ */
+export function isOnePieceSetCombo(
+  raw: readonly (string | readonly string[])[] | readonly string[],
+): boolean {
+  const slots = normalizeComboModules(raw);
+  return slots.length === 1 && new Set(slots[0]).size > 1;
+}
+
+/** What a combo write says when it is refused for {@link isOnePieceSetCombo}. */
+export const ONE_PIECE_SET_COMBO_MESSAGE =
+  'Each piece of the set needs its own slot. One slot listing several codes would charge the whole set price to a single piece.';
+
+/**
  * Storage canonical form (mirrors HOOKKA's `canonicalSizes` in
  * src/api/routes/sofa-combos.ts). Applied on SAVE (API) so two equivalent
  * combos persist byte-identical `modules` JSON and therefore hash to the same
@@ -565,6 +586,34 @@ export function pickComboMatch(
   const comboPriceSen = winner.row.pricesByHeight[args.height];
   if (typeof comboPriceSen !== 'number') return null;
   return { row: winner.row, comboPriceSen, matchedIndices: winner.subset, matchedAccessoryIds: winner.accessoryIds };
+}
+
+/**
+ * The COST side's pick: a set's cost is the combo covering the most of its
+ * pieces, so combos are tried from the most slots down and the first size that
+ * matches wins; within a size, pickComboMatch's own scope and date order.
+ * A newer combo for part of the set must not hide the set's own price: that is
+ * how a 2A + L order took a corner set's price on its 2A alone and then added
+ * the L on top (2990-SO-2610-057). A one-slot, several-code combo
+ * ({@link isOnePieceSetCombo}) never prices cost.
+ */
+export function pickCostComboMatch(
+  args: PickComboArgs,
+  rows: readonly SofaComboRow[],
+): ComboMatch | null {
+  const bySize = new Map<number, SofaComboRow[]>();
+  for (const r of rows) {
+    if (isOnePieceSetCombo(r.modules)) continue;
+    const size = normalizeComboModules(r.modules).length;
+    const list = bySize.get(size) ?? [];
+    list.push(r);
+    bySize.set(size, list);
+  }
+  for (const size of [...bySize.keys()].sort((a, b) => b - a)) {
+    const match = pickComboMatch(args, bySize.get(size) ?? []);
+    if (match) return match;
+  }
+  return null;
 }
 
 /**

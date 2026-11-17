@@ -103,7 +103,8 @@ export async function loadCompanyLinks(sb: Sb, companyId: number): Promise<{ ok:
   const rows = (data ?? []) as Array<{ other_company_id: number; account_code: string }>;
   if (rows.length === 0) return { ok: true, links: [] };
   const [cos, accs] = await Promise.all([
-    sb.from('companies').select('id, code, name').in('id', rows.map((r) => Number(r.other_company_id))),
+    /* public.companies: the scm client alone answers "Could not find the table 'scm.companies'". */
+    sb.schema('public').from('companies').select('id, code, name').in('id', rows.map((r) => Number(r.other_company_id))),
     sb.from('accounts').select('account_code, account_name, is_active')
       .eq('company_id', companyId).in('account_code', rows.map((r) => String(r.account_code))),
   ]);

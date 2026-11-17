@@ -213,3 +213,30 @@ describe('Merchant Recon: a line is another company\'s sale', () => {
     expect(standing(db, 'SETTLEFOR', 'SETTLEFOR-11')).not.toBeNull();
   });
 });
+
+/* Production, 2026-11-17: Merchant Recon showed no 「2990 的单」 — GET
+   /settlement/other-companies answered 500 "Could not find the table
+   'scm.companies' in the schema cache". The SCM client is pinned to `scm` and
+   the companies master lives in `public` (docs/bugs/0522); the fake has one
+   namespace, so here the scm side is made to answer as production does. */
+describe('the companies master is read from public', () => {
+  test('the button is offered when the scm client has no companies table', async () => {
+    const { app, sb } = harness();
+    const fake = sb as unknown as { from: (t: string) => unknown; schema: (s: string) => unknown };
+    const realFrom = fake.from;
+    const publicSide = { ...fake, from: realFrom };
+    const missing = () => {
+      const q: Record<string, unknown> = {};
+      for (const m of ['select', 'in', 'eq', 'order']) q[m] = () => q;
+      q.then = (ok: (v: unknown) => unknown) => ok({ data: null, error: { code: 'PGRST205', message: "Could not find the table 'scm.companies' in the schema cache" } });
+      return q;
+    };
+    fake.from = (t: string) => (t === 'companies' ? missing() : realFrom(t));
+    fake.schema = (s: string) => (s === 'public' ? publicSide : fake);
+
+    const res = await app.request('/settlement/other-companies');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ companies: [{ companyId: T2990, code: '2990', accountCode: '350-0070', usable: true }] });
+    expect((await soldBy(app, 11)).status).toBe(200);
+  });
+});

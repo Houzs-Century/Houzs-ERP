@@ -9,6 +9,9 @@ import { useNotify } from '../../../vendor/scm/components/NotifyDialog';
 import { useDeliveryRemarks, useAddRemark } from '../../../vendor/scm/lib/delivery-remarks-queries';
 import { useMoveStop } from '../../../vendor/scm/lib/trips-queries';
 import { DoProofOfDeliveryCard, type DoPodFields } from '../DoProofOfDeliveryCard';
+import { DoPodUpload } from '../../../components/scm-v2/DoPodUpload';
+import { JobBody } from '../../../components/scm-v2/JobDetailPanel';
+import { jobKey, jobRefOf } from '../../../vendor/scm/lib/delivery-job';
 import type { LorryRunVM, DocRowVM } from './vm';
 import { issueKeysOf } from './AllOrders';
 import { DeliveryIssuesCard } from '../../../components/scm-v2/DeliveryIssuesCard';
@@ -183,6 +186,7 @@ export function OrderDrawer({
   const issueKeys = doc ? issueKeysOf(doc) : null;
   const issuesQ = useRunDeliveryIssues(runKeysOf(issueKeys ? [issueKeys] : []), !!doc);
   const issues = issueKeys ? issuesForRow(issuesQ.data, issueKeys) : [];
+  const jobRef = doc && doc.rowType !== 'so' ? jobRefOf(doc.order) : null;
 
   return (
     <ResizableDetailDrawer open={!!doc} onClose={onClose} ariaLabel="Delivery order detail">
@@ -279,12 +283,13 @@ export function OrderDrawer({
                 so it is shown for SO deliveries only (a non-SO job has none). */}
             {doc.rowType === 'so' && <RemarksSection soDocNo={doc.soDocNo} />}
 
-            {/* POD + timeline — off the SO's delivery order; a non-SO job has no DO,
-                its progress lives in its own module. */}
+            {/* POD + timeline — an SO delivery's off its delivery order; a non-SO job's
+                off its own progress, with the same office upload as the job panel. */}
+            {jobRef && <JobBody key={jobKey(jobRef)} jobRef={jobRef} />}
             {doc.rowType === 'so' && (
               doc.latestLiveDoId ? (
                 pod.data?.deliveryOrder
-                  ? <DoProofOfDeliveryCard h={pod.data.deliveryOrder} />
+                  ? <><DoProofOfDeliveryCard h={pod.data.deliveryOrder} /><DoPodUpload key={pod.data.deliveryOrder.id} h={pod.data.deliveryOrder} /></>
                   : <div className="rounded-lg border border-border bg-surface p-4 text-[12.5px] text-ink-muted">{pod.isLoading ? 'Loading proof of delivery…' : 'Proof of delivery unavailable.'}</div>
               ) : (
                 <div className="rounded-lg border border-border bg-surface p-4 text-[12.5px] text-ink-muted">No delivery order cut yet — proof of delivery appears once the DO exists.</div>
