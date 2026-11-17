@@ -73,6 +73,9 @@ function fakeDb(state: { project?: Row; assr?: Row; checklist?: Row[] }, ran: st
           return null;
         },
         async all() {
+          // Already-filed keys, so the idempotency of a re-run is observable.
+          if (/FROM project_phase_photos/.test(sql)) return { results: ran.filter((r) => r.startsWith('INSERT INTO project_phase_photos')).map((r) => ({ r2_key: JSON.parse(r.split(' :: ')[1]!)[2] })) };
+          if (/FROM assr_attachments/.test(sql)) return { results: (assrSvc.saveAttachment.mock.calls as unknown as unknown[][]).filter((cl) => cl[1] === args[0]).map((cl) => ({ r2_key: cl[2] })) };
           if (/FROM project_checklist/.test(sql)) return { results: (state.checklist ?? []).filter((r) => r.status !== 'done') };
           if (/FROM users/.test(sql)) return { results: args.filter((id) => id === 7).map((id) => ({ id, name: 'Faslie' })) };
           return { results: [] };
@@ -94,6 +97,15 @@ function app(opts: { caps?: string[]; tripDriver?: string; project?: Row; assr?:
     dp_orders: [
       { id: 'dp-1', company_id: 1, job_type: 'SUPPLIER_PICKUP', trip_id: 'trip-1', status: 'SCHEDULED', party_name: 'Supplier A' },
       { id: 'dp-2', company_id: 1, job_type: 'LORRY_SERVICE', trip_id: 'trip-1', status: 'SCHEDULED', work_order_id: 'wo-1' },
+      // Jobs made from another document: the POD goes back to it as well.
+      { id: 'dp-3', company_id: 1, job_type: 'DELIVERY', trip_id: 'trip-1', status: 'SCHEDULED', dp_no: 'DP-3', do_id: 'do-1' },
+      { id: 'dp-4', company_id: 1, job_type: 'SERVICE', trip_id: 'trip-1', status: 'SCHEDULED', dp_no: 'DP-4', assr_case_id: 31 },
+      { id: 'dp-5', company_id: 1, job_type: 'SETUP', trip_id: 'trip-1', status: 'SCHEDULED', dp_no: 'DP-5', project_id: 9 },
+      { id: 'dp-6', company_id: 1, job_type: 'DELIVERY', trip_id: 'trip-1', status: 'SCHEDULED', dp_no: 'DP-6', do_id: 'do-other-co' },
+    ],
+    delivery_orders: [
+      { id: 'do-1', company_id: 1, status: 'DISPATCHED', pod_r2_key: null, pod_photo_keys: [] },
+      { id: 'do-other-co', company_id: 2, status: 'DELIVERED', pod_r2_key: null, pod_photo_keys: [] },
     ],
     lorry_work_orders: [{ id: 'wo-1', photo_refs: ['old.jpg'] }],
     job_progress: [],
@@ -319,5 +331,68 @@ describe('review fixes (2026-10-08)', () => {
     await a.request('/assr/31/customer_pickup');
     expect(ran.filter((q) => q.startsWith('FIRST') && /FROM projects/.test(q))[0]).toContain('p.company_id IN (1)');
     expect(ran.filter((q) => q.startsWith('FIRST') && /FROM assr_cases/.test(q))[0]).toContain('company_id IN (1)');
+  });
+});
+
+describe('a Delivery Planning job files its POD on the document it was made from (2026-11-17)', () => {
+  test('linked to a Delivery Order: the photos join that DO POD; a re-run adds nothing twice', async () => {
+    const { a, tables } = app();
+    expect((await post(a, '/dp/dp-3/DELIVERY/complete', PHOTO)).status).toBe(200);
+    const d = tables.delivery_orders!.find((r) => r.id === 'do-1')!;
+    expect(d.pod_photo_keys).toEqual(['slips/2026/10/a.jpg']);
+    // Not delivered yet: the "has a POD" flag the board reads is left to the DO own delivery.
+    expect(d.pod_r2_key).toBeNull();
+    expect((await post(a, '/dp/dp-3/DELIVERY/add-photos', { photoKeys: ['slips/2026/10/a.jpg', 'slips/2026/10/b.jpg'] })).status).toBe(200);
+    expect((await post(a, '/dp/dp-3/DELIVERY/add-photos', { photoKeys: ['slips/2026/10/b.jpg'] })).status).toBe(200);
+    expect(d.pod_photo_keys).toEqual(['slips/2026/10/a.jpg', 'slips/2026/10/b.jpg']);
+  });
+
+  test('a delivered DO also gets its first photo as pod_r2_key', async () => {
+    const { a, tables } = app();
+    const d = tables.delivery_orders!.find((r) => r.id === 'do-1')!;
+    d.status = 'DELIVERED'; d.pod_r2_key = 'slips/old.jpg';
+    expect((await post(a, '/dp/dp-3/DELIVERY/complete', PHOTO)).status).toBe(200);
+    expect(d.pod_photo_keys).toEqual(['slips/old.jpg', 'slips/2026/10/a.jpg']);
+    expect(d.pod_r2_key).toBe('slips/old.jpg');
+  });
+
+  test("a DO in another company is not written, and the job still completes", async () => {
+    const { a, tables } = app();
+    expect((await post(a, '/dp/dp-6/DELIVERY/complete', PHOTO)).status).toBe(200);
+    expect(tables.delivery_orders!.find((r) => r.id === 'do-other-co')!.pod_photo_keys).toEqual([]);
+    expect(tables.dp_orders.find((r) => r.id === 'dp-6')!.status).toBe('COMPLETED');
+  });
+
+  test('linked to a Service Case: completion attachments + a timeline entry, once per photo', async () => {
+    const { a, ran } = app({ assr: { id: 31, stage: 'pending_delivery_service', sub_status: null } });
+    expect((await post(a, '/dp/dp-4/SERVICE/complete', PHOTO)).status).toBe(200);
+    expect(assrSvc.saveAttachment).toHaveBeenCalledWith(expect.anything(), 31, 'slips/2026/10/a.jpg', null, 'image/jpeg', 'completion', 7);
+    expect(assrSvc.logActivity).toHaveBeenCalledWith(expect.anything(), 31, 'attachment_added', null, 'Service job DP-4 POD',
+      'Service job DP-4 completed by the crew (1 POD photo)', 7, expect.anything());
+    // The case lookup carries the caller's companies; the job does not move the case.
+    expect(ran.find((q) => q.startsWith('FIRST SELECT id FROM assr_cases'))).toContain('company_id IN (1)');
+    expect(assrSvc.transitionStage).not.toHaveBeenCalled();
+    await post(a, '/dp/dp-4/SERVICE/add-photos', { photoKeys: ['slips/2026/10/a.jpg', 'slips/2026/10/b.jpg'] });
+    expect(assrSvc.saveAttachment).toHaveBeenCalledTimes(2);
+    expect(assrSvc.logActivity).toHaveBeenCalledTimes(2);
+    await post(a, '/dp/dp-4/SERVICE/add-photos', { photoKeys: ['slips/2026/10/b.jpg'] });
+    expect(assrSvc.saveAttachment).toHaveBeenCalledTimes(2);
+    expect(assrSvc.logActivity).toHaveBeenCalledTimes(2);
+  });
+
+  test('a Service Case outside the caller companies gets nothing', async () => {
+    const { a } = app();
+    expect((await post(a, '/dp/dp-4/SERVICE/complete', PHOTO)).status).toBe(200);
+    expect(assrSvc.saveAttachment).not.toHaveBeenCalled();
+  });
+
+  test('linked to a project: the setup job photos file as setup phase photos, once', async () => {
+    const { a, ran } = app({ project: { id: 9 } });
+    expect((await post(a, '/dp/dp-5/SETUP/complete', PHOTO)).status).toBe(200);
+    await post(a, '/dp/dp-5/SETUP/add-photos', PHOTO);
+    const inserts = ran.filter((s) => s.startsWith('INSERT INTO project_phase_photos'));
+    expect(inserts).toHaveLength(1);
+    expect(inserts[0]).toContain('[9,"setup","slips/2026/10/a.jpg"');
+    expect(projectsSvc.setChecklistStatus).not.toHaveBeenCalled();
   });
 });

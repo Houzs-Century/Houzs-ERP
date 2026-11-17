@@ -23,9 +23,10 @@ import {
   settlementSetup, settlementSetupSave, settlementUpload, settlementBatches,
   settlementBatchDetail, settlementConfirmRow, settlementConfirmMatched,
   settlementIgnoreRow, settlementWatchlist, settlementExport, settlementInTransit,
-  settlementBatchReceived, settlementReceiptUndo,
+  settlementBatchReceived, settlementReceiptUndo, settlementRowUnconfirm,
   settlementMaintenance, settlementMaintenanceMerchant, settlementMaintenanceBank,
 } from '../src/scm/routes/accounting-settlement';
+import { settlementOtherCompanies, settlementRowSoldBy } from '../src/scm/routes/accounting-settlement-sold-by';
 import {
   bankSetup, bankUpload, bankStatements, bankStatementDetail,
   bankLineReceipt, bankLineMatch, bankLineIgnore, bankLineUndo,
@@ -47,6 +48,9 @@ const CHART: Row[] = [
   ['335-0000', 'Cash on Hand', 'ASSET'],
   ['300-0000', 'Trade Debtor', 'ASSET'],
   ['930-0000', 'Merchant/Gateway Charges', 'EXPENSE'],
+  /* What Houzs keeps for 2990's money: a 2990 sale swiped on Houzs's AEON
+     terminal is booked here (「2990 的单」, owner 2026-11-17). */
+  ['350-0070', 'LOAN TO RELATED PARTY - 2990 HOME SDN BHD', 'ASSET'],
 ].map(([account_code, account_name, account_type]) => ({
   account_code, account_name, account_type, parent_code: null, is_active: true, company_id: CO,
   /* acc_money (migration 0299) is what Daily Bank counts and what the merchant
@@ -199,6 +203,9 @@ const seed = () => ({
      there and Setup's "Move earlier transfers here" has one to move. */
   acc_account_roles: [{ company_id: CO, role: 'BANK_DEFAULT', account_code: '331-0000' }] as Row[],
   acc_bank_month_locks: [] as Row[],
+  companies: [{ id: 1, code: 'HOUZS', name: 'Houzs Century' }, { id: 2, code: '2990', name: "2990's Home" }] as Row[],
+  /* demo-statements/AEON-2990-swipe.csv is one of 2990's sales on this terminal. */
+  acc_company_links: [{ company_id: CO, other_company_id: 2, account_code: '350-0070' }] as Row[],
   acc_acquirer_config: ACQUIRER_CONFIG.map((r) => ({ ...r })),
   acc_company_acquirers: COMPANY_LINKS.map((r) => ({ ...r })),
   acc_acquirers: acquirerView(),
@@ -375,6 +382,9 @@ app.post(`${R}/batches/:id/received`, settlementBatchReceived as never);
 app.post(`${R}/receipts/:id/undo`, settlementReceiptUndo as never);
 app.post(`${R}/rows/:id/confirm`, settlementConfirmRow as never);
 app.post(`${R}/rows/:id/ignore`, settlementIgnoreRow as never);
+app.post(`${R}/rows/:id/unconfirm`, settlementRowUnconfirm as never);
+app.get(`${R}/other-companies`, settlementOtherCompanies as never);
+app.post(`${R}/rows/:id/sold-by`, settlementRowSoldBy as never);
 app.get(`${R}/watchlist`, settlementWatchlist as never);
 app.get(`${R}/in-transit`, settlementInTransit as never);
 /* The acquirer's own payment advice — 几份 excel 对一份 pdf. */

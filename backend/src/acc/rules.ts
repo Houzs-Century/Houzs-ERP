@@ -19,6 +19,7 @@
 //  Statement-level charge    | Dr fee                / Cr transit      | SETTLEADJ   | SETTLEADJ_REVERSAL
 //  Acquirer payout received  | Dr bank               / Cr transit      | SETTLEBANK  | SETTLEBANK_REVERSAL
 //  Card taken in by the bank | Dr bank, Dr charges   / Cr transit      | SETTLECARD  | SETTLECARD_REVERSAL
+//  Another company's swipe   | Dr transit / Cr its account, less fees | SETTLEFOR   | SETTLEFOR_REVERSAL
 //  Books' opening balances   | each account to the old book's B/F     | OPENING     | OPENING_REVERSAL
 //    (Houzs 31/08/2026 from AutoCount; the Opening Balance page. Its bills,
 //    credits and debtor bills are ordinary API / SCN / ODB documents flagged
@@ -146,6 +147,7 @@ export const REVERSAL_SOURCE: Record<string, string> = {
   SETTLEMOVE: 'SETTLEMOVE_REVERSAL',
   SETTLECHARGE: 'SETTLECHARGE_REVERSAL',
   SETTLECARD: 'SETTLECARD_REVERSAL',
+  SETTLEFOR: 'SETTLEFOR_REVERSAL',
   ODB: 'ODB_REVERSAL',
   ODR: 'ODR_REVERSAL',
   CN: 'CN_REVERSAL',

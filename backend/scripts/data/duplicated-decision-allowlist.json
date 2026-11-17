@@ -1859,6 +1859,11 @@
       "check": "D2",
       "key": "ACCESSORY,BEDFRAME,MATTRESS,OTHERS,SOFA ~ ACCESSORY,BEDFRAME,MATTRESS,SOFA",
       "why": "Deliberate: Mrp.tsx lists every lead-time row a person can set, Others included (2990-0063); ProcurementOverview MRP_CATEGORY offers Apply only where the overview bucket equals one lead-time row, and the overview's OTHERS / DINING buckets do not line up with the 'others' row (carpet etc. sit under ACCESSORY there)."
+    },
+    {
+      "check": "D1",
+      "key": "DELIVERY,DISMANTLE,PICKUP,SERVICE,SETUP|backend/src/scm/routes/delivery-job-progress.ts backend/src/scm/routes/trips.ts",
+      "why": "TWO DIFFERENT QUESTIONS keyed by the stop types: trips.ts stopType is the z.enum of stop types POST /trips/:id/stops accepts (the schema of a stop); delivery-job-progress.ts DP_PROJECT_PHASE maps a DP job type to the project phase its POD photos are filed under (setup / dismantle / service). A stop type missing from the photo map files no project photo; it never changes what a stop may be."
     }
   ]
 }
