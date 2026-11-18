@@ -139,7 +139,7 @@ function extraOf(extras: string | undefined): { extra_sen: number | null; extra_
   const tags: string[] = [];
   for (const part of (extras ?? "").matchAll(EXTRA_PART_RE)) {
     sen += amountToSen(part[1]!) ?? 0;
-    const tag = part[2] ?? part[3];
+    const tag = part[2] || part[3];
     if (tag) tags.push(tag.toUpperCase());
   }
   return { extra_sen: sen > 0 ? sen : null, extra_tag: tags.length > 0 ? tags.join("+") : null };
