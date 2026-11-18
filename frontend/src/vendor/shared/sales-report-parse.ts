@@ -109,7 +109,8 @@ export function extractRefTokens(text: string | null | undefined): string[] {
    for class candidates and turned the dash/colon class into an invalid CSS
    rule that failed the production build. */
 const AMOUNT = String.raw`([\d][\d,]*(?:\.\d{1,2})?)`;
-const EXTRA = String.raw`(?:\s*\+\s*(?:RM|rm|Rm)?\s*([\d][\d,]*(?:\.\d{1,2})?)(?:\s*\(\s*([A-Za-z]{1,3})\s*\)?)?)?`;
+const EXTRA = String.raw`((?:\s*\+\s*(?:RM|rm|Rm)?\s*[\d][\d,]*(?:\.\d{1,2})?(?:\s*\(\s*[A-Za-z]{1,3}\s*\)?|[A-Za-z](?![A-Za-z]))?)*)`;
+const EXTRA_PART_RE = /\+\s*(?:RM|rm|Rm)?\s*([\d][\d,]*(?:\.\d{1,2})?)(?:\s*\(\s*([A-Za-z]{1,3})|([A-Za-z])(?![A-Za-z]))?/g;
 const SEP = String.raw`(?:-|:|–|=)`;
 const BILL_RE = new RegExp(
   String.raw`^\s*(?:\d{1,3}\s*[.)]\s*)?([A-Za-z]{1,5}\s*-?\s*\d{3,6})\b\s*${SEP}?\s*(?:RM|rm|Rm)?\s*${AMOUNT}${EXTRA}\s*${SEP}?\s*(.*?)\s*$`,
@@ -133,9 +134,15 @@ function amountToSen(s: string): number | null {
   return Math.round(n * 100);
 }
 
-function extraOf(amount: string | undefined, tag: string | undefined): { extra_sen: number | null; extra_tag: string | null } {
-  const sen = amount ? amountToSen(amount) : null;
-  return { extra_sen: sen != null && sen > 0 ? sen : null, extra_tag: tag ? tag.toUpperCase() : null };
+function extraOf(extras: string | undefined): { extra_sen: number | null; extra_tag: string | null } {
+  let sen = 0;
+  const tags: string[] = [];
+  for (const part of (extras ?? "").matchAll(EXTRA_PART_RE)) {
+    sen += amountToSen(part[1]!) ?? 0;
+    const tag = part[2] ?? part[3];
+    if (tag) tags.push(tag.toUpperCase());
+  }
+  return { extra_sen: sen > 0 ? sen : null, extra_tag: tags.length > 0 ? tags.join("+") : null };
 }
 
 const validDayMonth = (day: number, month: number): boolean => day >= 1 && day <= 31 && month >= 1 && month <= 12;
@@ -173,13 +180,13 @@ export function parseSalesReport(text: string | null | undefined): ParsedSalesRe
     if (bill) {
       const amount = amountToSen(bill[2]!);
       if (amount != null && amount > 0) {
-        const name = bill[5]!.replace(/^(?:-|:|–)\s*/, "").trim();
+        const name = bill[4]!.replace(/^(?:-|:|–)\s*/, "").trim();
         bills.push({
           line,
           ref_raw: bill[1]!.replace(/\s+/g, " ").trim(),
           ref_token: normalizeRefToken(bill[1]!),
           amount_sen: amount,
-          ...extraOf(bill[3], bill[4]),
+          ...extraOf(bill[3]),
           salesperson_name: name || null,
         });
         continue;
@@ -192,7 +199,7 @@ export function parseSalesReport(text: string | null | undefined): ParsedSalesRe
       const month = Number(dayLine[2]);
       const amount = amountToSen(dayLine[3]!);
       if (validDayMonth(day, month) && amount != null) {
-        days.push({ line, day, month, amount_sen: amount, ...extraOf(dayLine[4], dayLine[5]) });
+        days.push({ line, day, month, amount_sen: amount, ...extraOf(dayLine[4]) });
         continue;
       }
     }
