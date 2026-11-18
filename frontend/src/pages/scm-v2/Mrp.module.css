@@ -133,8 +133,6 @@
   font-family: var(--font-money, ui-monospace, monospace);
   font-variant-numeric: tabular-nums;
 }
-.colCaret { width: 30px; text-align: center; }
-.colSelect { width: 34px; text-align: center; }
 
 .skuRow {
   cursor: pointer;
@@ -162,7 +160,6 @@
 
 /* Per-warehouse MRP (Commander 2026-05-31) — each Model row is scoped to one
    warehouse; the tag makes the binding visible at a glance. */
-.whCell { white-space: nowrap; }
 .whTag {
   display: inline-block;
   padding: 1px 8px;
@@ -178,11 +175,9 @@
 
 /* Variant sub-rows (3-level General view: Model → Variant → orders). */
 .variantRow {
-  cursor: pointer;
   border-bottom: 1px solid var(--hz-c-border);
   background: var(--hz-c-surface-2);
 }
-.variantRow:hover { background: rgba(0, 0, 0, 0.03); }
 .variantRow > td {
   padding: var(--space-1) var(--space-3);
   color: var(--hz-c-ink);
@@ -192,7 +187,6 @@
   background: rgba(22, 105, 95, 0.08);
   box-shadow: inset 3px 0 0 rgba(8, 53, 46, 0.85);
 }
-.variantRowShort:hover { background: rgba(22, 105, 95, 0.13); }
 .variantDescCell {
   display: flex;
   align-items: center;
@@ -200,14 +194,6 @@
   gap: var(--space-2);
 }
 .variantBranch { color: var(--hz-c-ink-muted); font-weight: 700; }
-
-/* Single-variant model — spec label shown above the SO orders (2-level). */
-.singleSpec {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3) var(--space-1);
-}
 
 /* "N variants" count pill on a Model row. */
 .countTag {
@@ -249,12 +235,6 @@
    The row highlights below take the same deepening. No solid fill (rejected 2026-05-29). */
 .shortNum { color: #08352e; font-weight: 800; }
 
-.supplierCell span {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  white-space: nowrap;
-}
 .noSupplier { color: var(--hz-c-err); font-weight: 600; }
 /* Read-only supplier on a covered (already-PO'd) SO line — a raised PO's
    supplier can't change, so it's shown as plain text, not a dropdown. */
@@ -295,51 +275,10 @@
 /* The same row as a phone card (DataTable's stacked cards below `sm`). */
 .rowShort[data-mobile-card] { box-shadow: inset 3px 0 0 #08352e, inset 0 0 0 9999px rgba(22, 105, 95, 0.08); }
 
-/* ── Child detail (drilldown) ──────────────────────────────────────── */
-/* The expanded body sits inside DataTable's full-width expanded cell; give it
-   the same soft ground the old inline drilldown row had. The child tables carry
-   their own side margins, so this only needs the tint + a little breathing room. */
-.drilldown { padding: var(--space-2) 0 var(--space-3); background: var(--hz-c-surface-2); }
-.detailRow > td { padding: 0 0 var(--space-3) 0; background: var(--hz-c-surface-2); }
-.childTable {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: var(--fs-12);
-  margin: 0 var(--space-3) 0 var(--space-3);
-}
-.childTable thead th {
-  /* Nested detail header — stays light (no fill, muted ink) but takes the
-     sample's brand tracking so parent and child headers read as one system. */
-  text-align: center;
-  font-size: var(--fs-10, 10px);
-  font-weight: 700;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--hz-c-ink-muted);
-  padding: var(--space-2) var(--space-3);
-}
-.childTable tbody td {
-  text-align: center;
-  padding: 5px var(--space-3);
-  border-top: 1px solid var(--hz-c-border);
-  color: var(--hz-c-ink);
-}
+/* ── Lines under a row ─────────────────────────────────────────────── */
+/* The SO lines open as rows of the main table, in its own columns, so every
+   date sits under its own header in every group (HC-0143). */
 .childShort { background: rgba(22, 105, 95, 0.09); }
-/* SO-line child tables (HC-0143, Sim 2026-10-22): each expanded row draws its
-   own table, and auto layout sized every one from its own content, so the
-   Processing Date column landed at a different x per group and the eye could
-   not run down it to pick the orders past their cooling-off. Fixed layout with
-   set widths puts every column at the same place in every group; Customer is
-   the one elastic column (it wraps). */
-.childTableFixed { table-layout: fixed; }
-.cSoNo { width: 140px; }
-.cWh { width: 130px; }
-.cModule { width: 220px; }
-.cState { width: 130px; }
-.cDate { width: 150px; }
-.cQty { width: 60px; }
-.cCoverage { width: 230px; }
-.cSupplier { width: 230px; }
 
 /* ── Coverage pills ────────────────────────────────────────────────── */
 .tag {

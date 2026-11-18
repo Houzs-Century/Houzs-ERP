@@ -92,6 +92,7 @@ import { reorderKeys } from "../lib/reorder";
 import { useDragAutoScroll } from "./useDragAutoScroll";
 import type { Column, DataTableProps, SortDir, SortState } from "./dataTableTypes";
 import { DataRowCells } from "./DataTableRowCells";
+import { DataTableExpandedRows } from "./DataTableExpandedRows";
 import {
   DEFAULT_COL_WIDTH,
   DebouncedSearchInput,
@@ -108,7 +109,7 @@ import {
 } from "./dataTableHelpers";
 import { todayMyt } from "../vendor/scm/lib/dates";
 
-export type { Column, ColumnLayoutPreset, DataTableProps } from "./dataTableTypes";
+export type { Column, ColumnLayoutPreset, DataTableChildRow, DataTableProps } from "./dataTableTypes";
 
 type Props<T, L = never> = DataTableProps<T, L>;
 
@@ -836,6 +837,7 @@ function DataTableInner<T, L>({
     const set = new Set(hiddenSource);
     for (const c of allColumns) {
       if (c.defaultHidden && !shownSource.has(c.key)) set.add(c.key);
+      if (c.canHide === false) set.delete(c.key);
     }
     return set;
   }, [allColumns, userHidden, userShown, baselineLayout]);
@@ -1254,6 +1256,7 @@ function DataTableInner<T, L>({
              classifier rather than one flat scroll. */
           group: c.group || inferColumnGroup(c.key, c.label || c.key) || "",
           visible: !effectiveHidden.has(c.key),
+          canHide: c.canHide !== false,
           width: resolveWidth(c),
           pinned: pinnedSet.has(c.key)
             ? ("left" as const)
@@ -2899,22 +2902,14 @@ function DataTableInner<T, L>({
                           firstColGutter={!expandable && !selection}
                         />
                       </tr>
-                      {/* Inline expanded sub-row (opt-in `expandable`). Spans
-                          the full width; renders the caller's drill-down.
-                          Carries the parent row's getRowClassName class so a
-                          state the page paints on the row (e.g. the muted
-                          cancelled-row treatment) covers the drill-down too —
-                          a full-strength expansion under a faded row would
-                          read as live lines on a dead document. */}
                       {isExpanded && expandable && (
-                        <tr className={cn("bg-surface-dim/20", customClass)}>
-                          <td
-                            colSpan={totalColSpan}
-                            className="border-b border-border-subtle px-5 py-3 text-[13px] text-ink"
-                          >
-                            {expandable.render(row)}
-                          </td>
-                        </tr>
+                        <DataTableExpandedRows
+                          row={row} expandable={expandable} rowClassName={customClass}
+                          columns={displayColumns} totalColSpan={totalColSpan} hasSelectionCell={!!selection}
+                          widths={widths} stickyLeft={stickyLeft} stickyRight={stickyRight}
+                          stickyCount={stickyCount} stickyRightCount={stickyRightCount}
+                          cellPad={cellPad} fillerAt={fillerAt} fillerCount={fillerCount}
+                        />
                       )}
                     </Fragment>
                   );
@@ -3350,7 +3345,7 @@ function DataTableInner<T, L>({
           if (!col) return null;
           const sortable = canSortColumn(col);
           const isPinned = pinnedSet.has(col.key);
-          const canHide = !col.alwaysVisible;
+          const canHide = !col.alwaysVisible && col.canHide !== false;
           const itemCls = HEADER_MENU_ITEM_CLASS;
           const pos = headerMenuPos ?? { top: headerMenu.y, left: headerMenu.x };
           return createPortal(

@@ -20,9 +20,9 @@
 // Backed by GET /mrp (apps/api/src/routes/mrp.ts).
 // ----------------------------------------------------------------------------
 
-import { useRef, useState, type ReactNode } from 'react';
+import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { ChevronRight, ChevronDown, RefreshCw, Truck, ShoppingCart, CalendarRange, Clock, Download } from 'lucide-react';
+import { RefreshCw, ShoppingCart, CalendarRange, Clock, Download } from 'lucide-react';
 import { DataTable, type Column } from '../../components/DataTable';
 import {
   useMrp, useRegenerateMrp, useCategoryLeadTimes, useUpdateCategoryLeadTime, GLOBAL_LEAD_KEY,
@@ -38,6 +38,9 @@ import {
   type ModelGroup, type MrpFilters, rowKey, computeTabModels, lineInWindow, groupEarliestDate,
 } from './mrp-model-pipeline';
 import { exportMrpWorkbook } from './mrp-export-workbook';
+import {
+  buildMrpChildRows, distinctLineValues, rollupLabel, shortageLineIdsOf, supplierRollup, type MrpLineControls,
+} from './mrp-tree-rows';
 import { isSofaAccessory } from './mrp-sofa-accessory';
 import { checkSofaSetsBeforePo } from './mrp-sofa-set-gate';
 import { fmtDate, fmtDateTime, fmtQty } from '../../vendor/shared/format';
@@ -55,33 +58,6 @@ const ICON = { size: 14, strokeWidth: 1.75 } as const;
 const TOOLBAR_BTN =
   'inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-surface px-3 text-[11px] font-semibold uppercase tracking-wider text-ink-secondary transition-colors hover:border-primary/40 hover:bg-primary-soft hover:text-primary disabled:cursor-default disabled:opacity-50';
 
-
-/* The Delivery cell for an SO line. A missing delivery date is NOT the same
-   fact as a missing debtor name or warehouse, and since 2026-08-18 these rows
-   sit in the default view alongside dated ones — so it gets a word instead of
-   the same em-dash every other empty cell renders. Undated rows sort LAST in
-   the allocation (byDateAsc, mrp.ts) and cannot take supply from a dated line;
-   the tag is what makes that visible on the row.
-
-   Since the page-level undated summary banner was removed (owner, 2026-08-20 —
-   「黄色的也delete掉」) this tag is the ONLY place an undated line announces
-   itself, so it is load-bearing rather than decorative. Do not fold it back into
-   fmtDate's em-dash.
-
-   Not orderable yet is the POINT: the operator should see the demand exists and
-   see, in the same glance, that it has no promised date behind it. */
-function DeliveryCell({ iso }: { iso: string | null }) {
-  if (iso) return <td>{fmtDate(iso)}</td>;
-  return (
-    <td>
-      <span
-        className="inline-flex items-center rounded border border-warning-text/30 bg-warning-bg px-1.5 py-0.5 text-[10.5px] font-semibold uppercase tracking-wide text-warning-text"
-        title="No delivery date on this line or its Sales Order — planned last, not ready to order">
-        No date
-      </span>
-    </td>
-  );
-}
 
 /* A tab id — the lower-cased product category it shows. NOT a closed union:
    the tab list is derived from the catalogue the server reports, so a category
@@ -716,13 +692,19 @@ export const Mrp = () => {
      its proven freeze + funnel filters at once and retires the odd-table-out.
 
      The TOP-LEVEL row (one per Model / SO / colour variant) is a DataTable row
-     described by `columns` below; the Model -> Variant -> SO drilldown renders
-     inside `expandable.render` (ModelDrilldown), unchanged. Selection stays at
-     the SO-LINE level (soItemId) exactly as before — the leading `select` column
-     is a custom cell + header so it keeps the parent indeterminate state and the
-     select-all; the fine per-line checkboxes live in the drilldown. Nothing in
-     the Proceed-PO / idempotency path changed. */
+     described by `columns` below; what opens under it is drawn by
+     buildMrpChildRows as rows in these same columns, so it follows the user's
+     column order and hiding. Selection stays at the SO-LINE level (soItemId) —
+     the leading `select` column keeps the parent indeterminate state and the
+     select-all; the per-line checkboxes sit in the same column on the lines. */
   const isSofa = view === 'sofa';
+  const lineControls: MrpLineControls = {
+    selected,
+    onToggleLine: toggleSelectLine,
+    onSetLinesSelected: setLinesSelected,
+    lineSupplier,
+    onLineSupplierChange: setLineSupplierId,
+  };
   const columns: Column<ModelGroup>[] = [
     {
       key: 'select', label: '', width: '38px', align: 'center',
@@ -819,14 +801,14 @@ export const Mrp = () => {
       getValue: (g) => g.shortage,
       render: (g) => (g.shortage > 0 ? <span className={styles.shortNum}>{g.shortage}</span> : '—'),
     },
-    /* Planning dates (owner 2026-09-17) — default-hidden, opt-in from the Columns
-       drawer. A Model row can span several SO lines, so each shows the EARLIEST of
-       the group's lines on that basis (the leading edge the plan sorts by, the per-
-       line dates stay in the drilldown). Grouped under Logistics so the three sit
-       together beside Warehouse; "—" when no line carries that date. */
+    /* Planning dates (owner 2026-09-17). A Model row can span several SO lines, so
+       each shows the EARLIEST of the group's lines on that basis (the leading edge
+       the plan sorts by); the expanded lines show their own dates in the same
+       column. Processing and Delivery are shown by default because the lines carry
+       their dates (and the "No date" tag) there; SO Date stays opt-in. */
     {
       key: 'processingDate', label: 'Processing Date', group: 'Logistics',
-      width: '150px', align: 'center', defaultHidden: true, exportFormat: 'date',
+      width: '150px', align: 'center', exportFormat: 'date',
       getValue: (g) => groupEarliestDate(g, 'processing') ?? '',
       render: (g) => fmtDate(groupEarliestDate(g, 'processing')),
     },
@@ -838,9 +820,25 @@ export const Mrp = () => {
     },
     {
       key: 'deliveryDate', label: 'Delivery Date', group: 'Logistics',
-      width: '140px', align: 'center', defaultHidden: true, exportFormat: 'date',
+      width: '140px', align: 'center', exportFormat: 'date',
       getValue: (g) => groupEarliestDate(g, 'delivery') ?? '',
       render: (g) => fmtDate(groupEarliestDate(g, 'delivery')),
+    },
+    {
+      key: 'customer', label: 'Customer', group: 'Basic', width: '170px', align: 'center',
+      className: 'whitespace-normal break-words',
+      getValue: (g) => distinctLineValues(g, (l) => l.debtorName).join(', '),
+      render: (g) => rollupLabel(distinctLineValues(g, (l) => l.debtorName)),
+    },
+    {
+      key: 'state', label: 'State', group: 'Basic', width: '130px', align: 'center',
+      getValue: (g) => distinctLineValues(g, (l) => l.customerState).join(', '),
+      render: (g) => rollupLabel(distinctLineValues(g, (l) => l.customerState)),
+    },
+    {
+      key: 'supplier', label: 'Supplier', group: 'Purchasing', width: '190px', align: 'center',
+      canHide: false, disableSort: true, disableFilter: true,
+      render: (g) => supplierRollup(g, lineControls),
     },
   ];
 
@@ -1046,7 +1044,7 @@ export const Mrp = () => {
 
       {/* Report table — the shared DataTable. Top-level rows are Models / SOs /
           colour variants (the `columns` above); the Model -> Variant -> SO
-          drilldown renders inside expandable.render (ModelDrilldown). Frozen
+          lines open under them as rows in the same columns. Frozen
           header, per-column funnel filters, sort, column show/hide, CSV export
           and Reset layout all come from DataTable — the parity the owner asked
           for, and the freeze that never worked on the hand-built table. */}
@@ -1084,23 +1082,15 @@ export const Mrp = () => {
           rowKey: (g) => g.groupKey,
           expandedIds: modelExpandedIds,
           onExpandedChange: setExpandedModels,
-          render: (g) => (
-            <ModelDrilldown
-              group={g}
-              expandedVariants={expandedVariants}
-              onToggleVariant={toggleVariant}
-              forceOpen={forceOpen}
-              selected={selected}
-              onToggleLine={toggleSelectLine}
-              onSetLinesSelected={setLinesSelected}
-              lineSupplier={lineSupplier}
-              onLineSupplierChange={setLineSupplierId}
-              flatModules={isSofa}
-              variantAtL1={view === 'bedframe'}
-              accessoryRiders={isSofa ? (accessoryBySoDoc.get(g.itemCode) ?? []) : []}
-              poMode={poMode}
-            />
-          ),
+          childRows: (g) => buildMrpChildRows(g, {
+            ...lineControls,
+            shape: isSofa ? 'sofa' : view === 'bedframe' ? 'bedframe' : 'model',
+            expandedVariants,
+            onToggleVariant: toggleVariant,
+            isEveryVariantOpen: forceOpen,
+            accessoryRiders: isSofa ? (accessoryBySoDoc.get(g.itemCode) ?? []) : [],
+            poMode,
+          }),
         }}
         emptyLabel={
           search.trim() ? `No rows match "${search.trim()}" on this tab.`
@@ -1201,443 +1191,3 @@ export const Mrp = () => {
     </div>
   );
 };
-
-/* Per-shortage-line supplier dropdown (Commander 2026-05-31). Each shortage SO
-   line picks its own supplier, defaulting to the SKU's main supplier; different
-   lines of the same SKU MAY differ. Unbound SKU → "— none —" (can't be ordered
-   until a supplier is assigned). */
-const LineSupplierCell = ({ suppliers, chosenSupplierId, onSupplierChange }: {
-  suppliers: MrpSku['suppliers']; chosenSupplierId: string | null;
-  onSupplierChange: (supplierId: string) => void;
-}) => {
-  if (suppliers.length === 0) return <span className={styles.noSupplier}>— none —</span>;
-  const defaultSupplierId = suppliers.find((s) => s.isMain)?.supplierId ?? suppliers[0]!.supplierId;
-  return (
-    <select
-      className={styles.supplierSelect}
-      value={chosenSupplierId ?? defaultSupplierId}
-      onChange={(e) => onSupplierChange(e.target.value)}
-      onClick={(e) => e.stopPropagation()}
-      title="Supplier for this SO line — defaults to the SKU's main supplier (NB FURNITURE for Hydraulic / NB fabric, and for the other bedframes of that SO)"
-    >
-      {sortByText(suppliers).map((s) => (
-        <option key={s.supplierId} value={s.supplierId}>
-          {s.name}{s.isMain ? ' ★' : ''} · {s.code}
-        </option>
-      ))}
-    </select>
-  );
-};
-
-/* All shortage line ids beneath a variant (sku). */
-const shortageLineIdsOf = (s: MrpSku): string[] =>
-  s.lines.filter((l) => l.source === 'shortage' && l.shortageQty > 0 && l.soItemId).map((l) => l.soItemId);
-
-/* One sofa-cover rider: an ACCESSORY shortage line on a sofa SO, carried with
-   its owning SKU so the row can show the supplier + code alongside the SO line. */
-type AccessoryRider = { sku: MrpSku; line: MrpLine };
-
-/* The drilldown body under a Model / SO / colour-variant row — rendered inside
-   DataTable's full-width expanded cell (the top-level row itself is a DataTable
-   row now, drawn by `columns`). Sofa = one SofaSoTable; single-variant model =
-   its SO orders directly; multi-variant model = variant sub-rows, each
-   expandable to its SO orders. Selection + supplier stay on each SO ORDER LINE;
-   the Variant checkboxes are parent toggles, exactly as before. */
-const ModelDrilldown = ({
-  group, expandedVariants, onToggleVariant, forceOpen,
-  selected, onToggleLine, onSetLinesSelected, lineSupplier, onLineSupplierChange,
-  flatModules, variantAtL1, accessoryRiders, poMode,
-}: {
-  group: ModelGroup;
-  expandedVariants: Set<string>;
-  onToggleVariant: (key: string) => void;
-  /* A search hit force-opens every variant so the match is visible without a
-     second drill (the Model row itself is opened via modelExpandedIds). */
-  forceOpen?: boolean;
-  selected: Set<string>;
-  onToggleLine: (soItemId: string) => void;
-  onSetLinesSelected: (ids: string[], on: boolean) => void;
-  lineSupplier: Partial<Record<string, string>>;
-  onLineSupplierChange: (soItemId: string, supplierId: string) => void;
-  flatModules?: boolean;
-  /* BF-FLAT — bedframe groups are single-variant (one colour each); its colour
-     already shows on the Model row, so skip the redundant spec label here. */
-  variantAtL1?: boolean;
-  /* Sofa only — the cover / pillow shortage lines on this SO, shown under the
-     sofa modules so the operator sees them ride onto the order (empty otherwise). */
-  accessoryRiders?: AccessoryRider[];
-  poMode?: 'combined' | 'per-so';
-}) => {
-  // Sofa (M-S1): one table per SO, module + its order-line detail on one row.
-  if (flatModules) {
-    return (
-      <div className={styles.drilldown}>
-        <SofaSoTable group={group} selected={selected} onToggleLine={onToggleLine}
-          lineSupplier={lineSupplier} onLineSupplierChange={onLineSupplierChange}
-          accessoryRiders={accessoryRiders ?? []} poMode={poMode ?? 'combined'} />
-      </div>
-    );
-  }
-  const single = group.variants.length === 1;
-  const onlyVariant = group.variants[0]!;
-  // Single-variant model (mattress / accessory / one bedframe colour) → its SO
-  // orders directly (2-level). The variant spec shows as a label above them.
-  if (single) {
-    return (
-      <div className={styles.drilldown}>
-        {!variantAtL1 && onlyVariant.variantLabel && (
-          <div className={styles.singleSpec}>
-            <span className={styles.variantBranch}>↳</span>
-            <span className={styles.variantTag}>{onlyVariant.variantLabel}</span>
-          </div>
-        )}
-        <OrderLines sku={onlyVariant} selected={selected} onToggleLine={onToggleLine}
-          lineSupplier={lineSupplier} onLineSupplierChange={onLineSupplierChange} />
-      </div>
-    );
-  }
-  // Multi-variant model → variant sub-rows, each expandable to its SO orders.
-  // Its own labelled sub-table (the Model row's numbers live one level up now).
-  return (
-    <div className={styles.drilldown}>
-      <table className={styles.childTable}>
-        <thead>
-          <tr>
-            <th className={styles.colSelect} />
-            <th className={styles.colCaret} />
-            <th>Variant</th>
-            <th className={styles.num}>Qty Needed</th>
-            <th className={styles.num}>Stock</th>
-            <th className={styles.num}>PO Outstanding</th>
-            <th className={styles.num}>Shortage</th>
-          </tr>
-        </thead>
-        <tbody>
-          {group.variants.map((v) => {
-            const k = rowKey(v);
-            const vShort = v.shortage > 0;
-            const vOpen = forceOpen || expandedVariants.has(k);
-            // Variant parent checkbox — over this variant's shortage lines.
-            const vLineIds = shortageLineIdsOf(v);
-            const vSel = vLineIds.filter((id) => selected.has(id));
-            const vAllSel = vLineIds.length > 0 && vSel.length === vLineIds.length;
-            const vSomeSel = vSel.length > 0 && !vAllSel;
-            return (
-              <FragmentRow key={k}>
-                <tr className={`${styles.variantRow} ${vShort ? styles.variantRowShort : ''}`} onClick={() => onToggleVariant(k)}>
-                  <td className={styles.colSelect} onClick={(e) => e.stopPropagation()}>
-                    {vLineIds.length > 0 && (
-                      <input
-                        type="checkbox"
-                        checked={vAllSel}
-                        ref={(el) => { if (el) el.indeterminate = vSomeSel; }}
-                        onChange={(e) => onSetLinesSelected(vLineIds, e.target.checked)}
-                        aria-label={`Select all shortage lines under ${v.variantLabel ?? v.itemCode}`}
-                      />
-                    )}
-                  </td>
-                  <td className={styles.colCaret}>
-                    {vOpen ? <ChevronDown {...ICON} /> : <ChevronRight {...ICON} />}
-                  </td>
-                  <td className={styles.variantDescCell}>
-                    <span className={styles.variantBranch}>↳</span>
-                    <span className={styles.variantTag}>{v.variantLabel ?? '(no variant)'}</span>
-                  </td>
-                  <td className={styles.num}>{v.qtyNeeded}</td>
-                  <td className={styles.num}>{v.stock}</td>
-                  <td className={styles.num}>{v.poOutstanding || '—'}</td>
-                  <td className={`${styles.num} ${vShort ? styles.shortNum : ''}`}>{vShort ? v.shortage : '—'}</td>
-                </tr>
-                {vOpen && (
-                  <tr className={styles.detailRow}>
-                    <td /><td />
-                    <td colSpan={5}>
-                      <OrderLines sku={v} selected={selected} onToggleLine={onToggleLine}
-                        lineSupplier={lineSupplier} onLineSupplierChange={onLineSupplierChange} />
-                    </td>
-                  </tr>
-                )}
-              </FragmentRow>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-};
-
-/* Tiny helper so multi-element returns inside .map keep a single key. */
-const FragmentRow = ({ children }: { children: ReactNode }) => <>{children}</>;
-
-/* Column widths for the SO-line child tables (see .childTableFixed). The
-   unclassed <col> is Customer, the elastic one. */
-const SoLineCols = ({ module }: { module?: boolean }) => (
-  <colgroup>
-    <col className={styles.colSelect} />
-    <col className={styles.cSoNo} />
-    <col className={styles.cWh} />
-    {module && <col className={styles.cModule} />}
-    <col />
-    <col className={styles.cState} />
-    <col className={styles.cDate} />
-    <col className={styles.cDate} />
-    <col className={styles.cQty} />
-    <col className={styles.cCoverage} />
-    <col className={styles.cSupplier} />
-  </colgroup>
-);
-
-/* The SO-order child table — shared by every leaf level. Each shortage line has
-   its own select checkbox + supplier dropdown; covered lines show the covering
-   PO's supplier read-only (Commander 2026-05-31). */
-const OrderLines = ({ sku, selected, onToggleLine, lineSupplier, onLineSupplierChange }: {
-  sku: MrpSku;
-  selected: Set<string>;
-  onToggleLine: (soItemId: string) => void;
-  lineSupplier: Partial<Record<string, string>>;
-  onLineSupplierChange: (soItemId: string, supplierId: string) => void;
-}) => (
-  <table className={`${styles.childTable} ${styles.childTableFixed}`}>
-    <SoLineCols />
-    <thead>
-      <tr>
-        <th className={styles.colSelect} />
-        <th>SO No</th>
-        <th>Warehouse</th>
-        <th>Customer</th>
-        <th>State</th>
-        <th>Processing Date</th>
-        <th>Delivery Date</th>
-        <th className={styles.num}>Qty</th>
-        <th>Coverage</th>
-        <th>Supplier</th>
-      </tr>
-    </thead>
-    <tbody>
-      {sku.lines.map((ln, i) => (
-        <ChildLine
-          key={`${ln.soDocNo}-${i}`}
-          ln={ln}
-          suppliers={sku.suppliers}
-          whCode={sku.warehouseCode}
-          whName={sku.warehouseName}
-          selected={selected.has(ln.soItemId)}
-          onToggleLine={() => onToggleLine(ln.soItemId)}
-          chosenSupplierId={lineSupplier[ln.soItemId] ?? ln.ruleSupplierId ?? null}
-          onSupplierChange={(sid) => onLineSupplierChange(ln.soItemId, sid)}
-        />
-      ))}
-    </tbody>
-  </table>
-);
-
-const ChildLine = ({ ln, suppliers, whCode, whName, selected, onToggleLine, chosenSupplierId, onSupplierChange }: {
-  ln: MrpLine;
-  suppliers: MrpSku['suppliers'];
-  whCode: string | null;
-  whName: string | null;
-  selected: boolean;
-  onToggleLine: () => void;
-  chosenSupplierId: string | null;
-  onSupplierChange: (supplierId: string) => void;
-}) => {
-  const short = ln.source === 'shortage' && ln.shortageQty > 0 && Boolean(ln.soItemId);
-  return (
-    <tr className={short ? styles.childShort : undefined}>
-      <td className={styles.colSelect}>
-        {short && (
-          <input
-            type="checkbox"
-            checked={selected}
-            onChange={onToggleLine}
-            aria-label={`Select ${ln.soDocNo} to order`}
-          />
-        )}
-      </td>
-      <td className={styles.codeCell}>{ln.soDocNo}</td>
-      <td className={styles.whCell}>
-        {whCode
-          ? <span className={styles.whTag} title={whName ?? undefined}>{whCode}</span>
-          : <span className={styles.whNone}>—</span>}
-      </td>
-      <td>{ln.debtorName ?? '—'}</td>
-      <td>{ln.customerState ?? '—'}</td>
-      <td>{fmtDate(ln.processingDate)}</td>
-      <DeliveryCell iso={ln.deliveryDate} />
-      <td className={styles.num}>{ln.qty}</td>
-      <td>
-        {ln.source === 'stock' && <span className={`${styles.tag} ${styles.tagStock}`}>stock</span>}
-        {/* `source === 'po'` now GUARANTEES a number — allocSourceOf returns
-            'stock' when there is none — so the old `: 'ordered'` fallback is
-            gone. It was never a state the system computed: it was the word the
-            chip printed when it had been told "po" and could not find a PO, and
-            it is what put "ordered" over sofa sets already in the warehouse. */}
-        {ln.source === 'po' && ln.poNumber && (
-          <span className={`${styles.tag} ${styles.tagPo}`}>
-            {ln.poNumber}{ln.poEta ? ` · ETA ${fmtDate(ln.poEta)}` : ''}
-          </span>
-        )}
-        {short && (
-          <span className={`${styles.tag} ${styles.tagShort}`}>
-            SHORT{ln.shortageQty > 1 ? ` ×${ln.shortageQty}` : ''}
-          </span>
-        )}
-      </td>
-      <td className={styles.supplierCell}>
-        {short
-          /* Shortage line → editable per-line supplier dropdown. */
-          ? <LineSupplierCell suppliers={suppliers} chosenSupplierId={chosenSupplierId} onSupplierChange={onSupplierChange} />
-          /* Covered / already-PO'd line → the PO's supplier, READ-ONLY (a raised
-             PO's supplier can't change). Stock lines show a dash. */
-          : ln.source === 'po'
-            ? <span className={styles.poSupplierRO} title="This PO covers the line in the current allocation. Supplier is read-only because the PO is already raised.">
-                <Truck {...ICON} /> {ln.poSupplierName ?? '—'}
-              </span>
-            : <span className={styles.whNone}>—</span>}
-      </td>
-    </tr>
-  );
-};
-
-/* Sofa-only flat view (M-S1, Wei Siang 2026-06-16): ONE table per SO, one row
-   per module, with the order-line detail (coverage / supplier / delivery) on the
-   SAME row — instead of the module → order-line two-level drill. Each sofa module
-   has exactly one SO line; selection + supplier reuse the per-line handlers, so
-   ordering (Proceed PO) is unchanged. */
-const SofaSoTable = ({ group, selected, onToggleLine, lineSupplier, onLineSupplierChange, accessoryRiders, poMode }: {
-  group: ModelGroup;
-  selected: Set<string>;
-  onToggleLine: (soItemId: string) => void;
-  lineSupplier: Partial<Record<string, string>>;
-  onLineSupplierChange: (soItemId: string, supplierId: string) => void;
-  /* The cover / pillow shortage lines on THIS SO (owner 2026-09-11). Shown as
-     read-along rows under the sofa modules: they ride onto the order whenever
-     the sofa set is proceeded (gatherSofa), so they follow the sofa's selection
-     rather than carrying their own checkbox. */
-  accessoryRiders: AccessoryRider[];
-  poMode: 'combined' | 'per-so';
-}) => (
-  <table className={`${styles.childTable} ${styles.childTableFixed}`}>
-    <SoLineCols module />
-    <thead>
-      <tr>
-        <th className={styles.colSelect} />
-        <th>SO No</th>
-        <th>Warehouse</th>
-        <th>Module</th>
-        <th>Customer</th>
-        <th>State</th>
-        <th>Processing Date</th>
-        <th>Delivery Date</th>
-        <th className={styles.num}>Qty</th>
-        <th>Coverage</th>
-        <th>Supplier</th>
-      </tr>
-    </thead>
-    <tbody>
-      {group.variants.flatMap((v) => v.lines.map((ln, i) => {
-        const short = ln.source === 'shortage' && ln.shortageQty > 0 && Boolean(ln.soItemId);
-        return (
-          <tr key={`${v.itemCode}-${ln.soDocNo}-${i}`} className={short ? styles.childShort : undefined}>
-            <td className={styles.colSelect}>
-              {short && (
-                <input
-                  type="checkbox"
-                  checked={selected.has(ln.soItemId)}
-                  onChange={() => onToggleLine(ln.soItemId)}
-                  aria-label={`Select ${v.variantLabel ?? v.itemCode} to order`}
-                />
-              )}
-            </td>
-            <td className={styles.codeCell}>{ln.soDocNo}</td>
-            <td className={styles.whCell}>
-              {v.warehouseCode
-                ? <span className={styles.whTag} title={v.warehouseName ?? undefined}>{v.warehouseCode}</span>
-                : <span className={styles.whNone}>—</span>}
-            </td>
-            <td><span className={styles.variantTag}>{v.variantLabel ?? v.itemCode}</span></td>
-            <td>{ln.debtorName ?? '—'}</td>
-            <td>{ln.customerState ?? '—'}</td>
-            <td>{fmtDate(ln.processingDate)}</td>
-            <DeliveryCell iso={ln.deliveryDate} />
-            <td className={styles.num}>{ln.qty}</td>
-            <td>
-              {ln.source === 'stock' && (
-                <span className={`${styles.tag} ${styles.tagStock}`} title={ln.batchNo ? `Whole set from batch ${ln.batchNo}` : undefined}>stock</span>
-              )}
-              {/* Same rule as the desktop table above: no number, no chip. */}
-              {ln.source === 'po' && ln.poNumber && (
-                <span className={`${styles.tag} ${styles.tagPo}`}>
-                  {ln.poNumber}{ln.poEta ? ` · ETA ${fmtDate(ln.poEta)}` : ''}
-                </span>
-              )}
-              {short && (
-                <span className={`${styles.tag} ${styles.tagShort}`}>
-                  SHORT{ln.shortageQty > 1 ? ` ×${ln.shortageQty}` : ''}
-                </span>
-              )}
-            </td>
-            <td className={styles.supplierCell}>
-              {short
-                ? <LineSupplierCell suppliers={v.suppliers} chosenSupplierId={lineSupplier[ln.soItemId] ?? ln.ruleSupplierId ?? null} onSupplierChange={(sid) => onLineSupplierChange(ln.soItemId, sid)} />
-                : ln.source === 'po'
-                  ? <span className={styles.poSupplierRO} title="This PO covers the line in the current allocation. Supplier is read-only because the PO is already raised."><Truck {...ICON} /> {ln.poSupplierName ?? '—'}</span>
-                  : <span className={styles.whNone}>—</span>}
-            </td>
-          </tr>
-        );
-      }))}
-      {/* Cover / pillow riders (owner 2026-09-11). These ACCESSORY shortage lines
-          belong to this SO and are pulled onto the order when the sofa set is
-          proceeded. Read-along: no checkbox, because they follow the sofa's
-          selection. The caption states where they land in the current mode. */}
-      {accessoryRiders.length > 0 && (
-        <tr className={styles.detailRow}>
-          <td />
-          <td colSpan={10} className="py-1 text-[11px] font-semibold uppercase tracking-wide text-ink-muted">
-            {poMode === 'combined'
-              ? 'Accessories on this order (皮套 / pillow) — ride on the sofa PO when a supplier matches, else their own PO'
-              : 'Accessories on this order (皮套 / pillow) — ordered on their own PO (Per-SO); switch to Combined to ride on the sofa PO'}
-          </td>
-        </tr>
-      )}
-      {accessoryRiders.map(({ sku, line }, i) => {
-        // main-first (suppliers is main-first), guarded on length below — mirrors
-        // skuDefaultSupplierId; an unbound accessory shows "— none —".
-        const main = sku.suppliers.find((s) => s.isMain) ?? sku.suppliers[0];
-        return (
-          <tr key={`acc-${sku.itemCode}-${line.soItemId}-${i}`} className={styles.childShort}>
-            <td className={styles.colSelect} title="Rides with the sofa — selected together">
-              <span className={styles.variantBranch}>↳</span>
-            </td>
-            <td className={styles.codeCell}>{line.soDocNo}</td>
-            <td className={styles.whCell}>
-              {sku.warehouseCode
-                ? <span className={styles.whTag} title={sku.warehouseName ?? undefined}>{sku.warehouseCode}</span>
-                : <span className={styles.whNone}>—</span>}
-            </td>
-            <td>
-              <span className={styles.variantTag}>Accessory</span> {sku.itemCode}
-              {sku.description ? ` · ${sku.description}` : ''}
-            </td>
-            <td>{line.debtorName ?? '—'}</td>
-            <td>{line.customerState ?? '—'}</td>
-            <td>{fmtDate(line.processingDate)}</td>
-            <DeliveryCell iso={line.deliveryDate} />
-            <td className={styles.num}>{line.qty}</td>
-            <td>
-              <span className={`${styles.tag} ${styles.tagShort}`}>
-                SHORT{line.shortageQty > 1 ? ` ×${line.shortageQty}` : ''}
-              </span>
-            </td>
-            <td className={styles.supplierCell}>
-              <span className={styles.poSupplierRO} title="The cover's main supplier. In Combined it joins the sofa PO only when this matches the sofa's supplier.">
-                <Truck {...ICON} /> {sku.suppliers.length ? main.name : '— none —'}
-              </span>
-            </td>
-          </tr>
-        );
-      })}
-    </tbody>
-  </table>
-);
