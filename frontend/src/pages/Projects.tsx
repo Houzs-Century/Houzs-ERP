@@ -7478,7 +7478,7 @@ function FinanceLedgerSection({
           </p>
           {forecast?.estimated && (
             <p className="mt-1 text-[10.5px] text-ink-secondary">
-              Includes estimates: a line tagged Forecast is a typed figure, Last event is {forecast.last_event?.code ?? "the last event"}&apos;s actual. Real figures replace them as they come in.
+              Includes forecast: a line tagged Forecast is a typed figure, or else {forecast.last_event?.code ?? "the last same event"}&apos;s actual. Real figures replace them as they come in.
             </p>
           )}
           {forecast?.last_event_error && (

@@ -44,7 +44,9 @@ export interface LastEventExpoMap { last_event: { id: number; code: string | nul
 
 /** The tag a line carries; an actual carries none. */
 export function sourceTag(source: LineSource): string | null {
-  return source === "forecast" ? "Forecast" : source === "last_event" ? "Last event" : null;
+  /* A last event's result IS the forecast until one is typed (owner 2026-11-19),
+     so both read "Forecast"; the hover says where it came from. */
+  return source === "forecast" || source === "last_event" ? "Forecast" : null;
 }
 
 /** The note under a total that holds an estimate. */

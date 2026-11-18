@@ -1,5 +1,5 @@
 // The phone's view of the three-layer Financial Snapshot (owner 2026-11-18):
-// every line with its figure and its tag — "Forecast" or "Last event", none for
+// every line with its figure and its tag — "Forecast" (typed, or the last same event's result), none for
 // an actual — and the totals, which say when they include an estimate. A line
 // is tapped to set or clear its Forecast (canWrite only). Same figures, tags
 // and save as the desktop table (pages/projects/forecastLayers.ts).
