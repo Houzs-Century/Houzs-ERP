@@ -57,6 +57,7 @@ export const bulkLinkEmployees = (userIds: number[], isOutsource: boolean): Prom
 export type ImportEmployeeRow = Partial<EmployeeInput> & { accountEmail?: string | null };
 export type BulkImportResult = {
   created: { index: number; id: number; empNo: string; name: string }[];
+  updated: { index: number; id: number; empNo: string; name: string }[];
   errors: { index: number; message: string }[];
 };
 export const bulkImportEmployees = (rows: ImportEmployeeRow[]): Promise<BulkImportResult> =>

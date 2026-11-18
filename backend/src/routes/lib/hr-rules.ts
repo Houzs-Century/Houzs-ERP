@@ -219,35 +219,97 @@ export function planBulkLink(
   return { create, skipped };
 }
 
-/** One already-parsed import row: the employee fields, plus the ERP account
- *  email to link by when the sheet named one and gave no user id. */
-export type ImportRowIn = { input: EmployeeInput; accountEmail: string | null };
+/** One already-parsed import row: the employee fields, which of them the sheet
+ *  actually gave (so a re-import patches only the cells that were filled, never
+ *  blanking what it left empty), and the ERP account email to match or link by
+ *  when the sheet named one and gave no user id. */
+export type ImportRowIn = {
+  input: EmployeeInput;
+  provided: ReadonlySet<keyof EmployeeInput>;
+  accountEmail: string | null;
+};
+
+/** An employee already in the book, for a re-import to match a row against. */
+export type ExistingEmp = { id: number; empNo: string; userId: number | null };
 
 export type BulkImportPlan = {
   create: Array<{ index: number; input: EmployeeInput }>;
+  update: Array<{ index: number; employeeId: number; empNo: string; name: string; patch: Partial<EmployeeInput> }>;
   errors: Array<{ index: number; message: string }>;
 };
 
-/** Plan the rows to create from a spreadsheet. One message per bad row, never a
- *  silent drop: a blank Emp No is auto-assigned in sequence, a given one that
- *  already exists is refused, an account email is resolved to its user (refused
- *  when it names no active account), and an account that is already an employee
- *  — in the book or earlier in this same file — is refused. A number is only
- *  consumed by a row that is accepted, so refused rows leave no gaps. `index` is
- *  the row's position in the input, echoed back so the UI can point at it. */
+/* The fields a spreadsheet re-import may change on someone already in the book.
+ * Deliberately left out: emp_no and the ERP-account link (an import enriches a
+ * record, it does not renumber or relink it), status, and anything to do with
+ * pay — the salary and day rate stay with HR and the salary history, so a sheet
+ * with a blank or default salary can never knock down what someone earns. */
+const UPDATABLE_TEXT: ReadonlyArray<keyof EmployeeInput> = [
+  "name", "phone", "position", "joinDate", "nationality", "icNumber", "passportNumber", "bankName", "bankAccount", "tripNames",
+];
+const UPDATABLE_BOOL: ReadonlyArray<keyof EmployeeInput> = ["epfEnabled", "socsoEnabled", "eisEnabled", "pcbEnabled"];
+
+/** The patch for a matched employee: only the updatable fields the sheet gave,
+ *  text left out when blank so an empty cell changes nothing. */
+function buildUpdatePatch(input: EmployeeInput, provided: ReadonlySet<keyof EmployeeInput>): Partial<EmployeeInput> {
+  const patch: Record<string, unknown> = {};
+  for (const k of UPDATABLE_TEXT) if (provided.has(k) && String(input[k] ?? "").trim() !== "") patch[k] = input[k];
+  for (const k of UPDATABLE_BOOL) if (provided.has(k)) patch[k] = input[k];
+  if (provided.has("departmentId") && input.departmentId != null) patch.departmentId = input.departmentId;
+  return patch as Partial<EmployeeInput>;
+}
+
+/** Translate an update patch to the hr_employees columns to SET. Only the keys
+ *  the patch carries are written; blank text becomes NULL, as on an insert. */
+export function employeeUpdateColumns(patch: Partial<EmployeeInput>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  const blank = (v: string): string | null => (v ? v : null);
+  if (patch.name !== undefined) out.name = patch.name;
+  if (patch.phone !== undefined) out.phone = blank(patch.phone);
+  if (patch.departmentId !== undefined) out.department_id = patch.departmentId;
+  if (patch.position !== undefined) out.position = blank(patch.position);
+  if (patch.joinDate !== undefined) out.join_date = blank(patch.joinDate);
+  if (patch.nationality !== undefined) out.nationality = blank(patch.nationality);
+  if (patch.icNumber !== undefined) out.ic_number = blank(patch.icNumber);
+  if (patch.passportNumber !== undefined) out.passport_number = blank(patch.passportNumber);
+  if (patch.bankName !== undefined) out.bank_name = blank(patch.bankName);
+  if (patch.bankAccount !== undefined) out.bank_account = blank(patch.bankAccount);
+  if (patch.epfEnabled !== undefined) out.epf_enabled = patch.epfEnabled;
+  if (patch.socsoEnabled !== undefined) out.socso_enabled = patch.socsoEnabled;
+  if (patch.eisEnabled !== undefined) out.eis_enabled = patch.eisEnabled;
+  if (patch.pcbEnabled !== undefined) out.pcb_enabled = patch.pcbEnabled;
+  if (patch.tripNames !== undefined) out.trip_names = blank(patch.tripNames);
+  return out;
+}
+
+/** Plan a spreadsheet import, update-or-create. One message per bad row, never
+ *  a silent drop. A row is matched to someone already in the book by its ERP
+ *  account (the resolved user id) first, else by an exactly-matching Emp No; a
+ *  match is UPDATED in place (keeping its Emp No and link, enriching only the
+ *  cells the sheet filled), everyone else is CREATED. On create a blank Emp No
+ *  is auto-assigned in sequence and a within-file duplicate is refused; an
+ *  account email that names no active account is refused, and one account
+ *  cannot seed two new rows. A number is only consumed by an accepted create,
+ *  so refused rows leave no gaps. `index` is the row's position in the input. */
 export function planBulkImport(
   rows: readonly ImportRowIn[],
   opts: {
-    existingEmpNos: readonly string[];
-    linkedUserIds: ReadonlySet<number>;
+    existing: readonly ExistingEmp[];
     userIdByEmail: ReadonlyMap<string, number>;
   },
 ): BulkImportPlan {
   const create: BulkImportPlan["create"] = [];
+  const update: BulkImportPlan["update"] = [];
   const errors: BulkImportPlan["errors"] = [];
-  const running: string[] = [...opts.existingEmpNos];
+  const byUser = new Map<number, ExistingEmp>();
+  const byEmpNo = new Map<string, ExistingEmp>();
+  for (const e of opts.existing) {
+    if (e.userId != null) byUser.set(e.userId, e);
+    byEmpNo.set(e.empNo.trim().toUpperCase(), e);
+  }
+  const running: string[] = opts.existing.map((e) => e.empNo);
   const usedEmpNo = new Set(running.map((e) => e.trim().toUpperCase()));
-  const batchLinked = new Set<number>();
+  const createdUserIds = new Set<number>();
+  const touched = new Set<number>();
   rows.forEach((row, index) => {
     const input: EmployeeInput = { ...row.input };
     if (input.userId == null && row.accountEmail) {
@@ -258,10 +320,27 @@ export function planBulkImport(
       }
       input.userId = uid;
     }
-    let empNo = input.empNo.trim();
+    const empNoGiven = input.empNo.trim().toUpperCase();
+    const matchUser = input.userId != null ? byUser.get(input.userId) : undefined;
+    const matchEmpNo = empNoGiven ? byEmpNo.get(empNoGiven) : undefined;
+    if (matchUser && matchEmpNo && matchUser.id !== matchEmpNo.id) {
+      errors.push({ index, message: `Employee No ${empNoGiven} belongs to a different person than that ERP account.` });
+      return;
+    }
+    const target = matchUser ?? matchEmpNo;
+    if (target) {
+      if (touched.has(target.id)) {
+        errors.push({ index, message: `Two rows change the same employee (${target.empNo}).` });
+        return;
+      }
+      touched.add(target.id);
+      update.push({ index, employeeId: target.id, empNo: target.empNo, name: input.name || target.empNo, patch: buildUpdatePatch(input, row.provided) });
+      return;
+    }
+    let empNo = empNoGiven;
     if (!empNo) {
       empNo = nextEmpNo(running, input.isOutsource);
-    } else if (usedEmpNo.has(empNo.toUpperCase())) {
+    } else if (usedEmpNo.has(empNo)) {
       errors.push({ index, message: `Employee No ${empNo} is already in use.` });
       return;
     }
@@ -271,14 +350,14 @@ export function planBulkImport(
       errors.push({ index, message: problem });
       return;
     }
-    if (input.userId != null && (opts.linkedUserIds.has(input.userId) || batchLinked.has(input.userId))) {
-      errors.push({ index, message: "That ERP account already has an employee record." });
+    if (input.userId != null && createdUserIds.has(input.userId)) {
+      errors.push({ index, message: "That ERP account is used by more than one new row." });
       return;
     }
     running.push(empNo);
-    usedEmpNo.add(empNo.toUpperCase());
-    if (input.userId != null) batchLinked.add(input.userId);
+    usedEmpNo.add(empNo);
+    if (input.userId != null) createdUserIds.add(input.userId);
     create.push({ index, input });
   });
-  return { create, errors };
+  return { create, update, errors };
 }

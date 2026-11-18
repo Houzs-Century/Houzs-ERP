@@ -1,8 +1,8 @@
 // routes/hr.ts pure pieces: salary in force on a date, the columns written
 // (salary never written directly), and the audit diff hiding personal numbers.
 import { describe, expect, test } from "vitest";
-import { emptyEmployeeInput } from "../../scm/shared/hr-employee";
-import { employeeColumns, employeeDiff, planBulkImport, planBulkLink, salaryAsOf, type BulkAccount, type ImportRowIn } from "./hr-rules";
+import { emptyEmployeeInput, type EmployeeInput } from "../../scm/shared/hr-employee";
+import { employeeColumns, employeeDiff, employeeUpdateColumns, planBulkImport, planBulkLink, salaryAsOf, type BulkAccount, type ImportRowIn } from "./hr-rules";
 
 describe("salaryAsOf", () => {
   const history = [
@@ -75,24 +75,27 @@ describe("planBulkLink", () => {
 });
 
 describe("planBulkImport", () => {
-  const row = (over: Partial<ReturnType<typeof emptyEmployeeInput>>, accountEmail: string | null = null): ImportRowIn => ({
+  const row = (
+    over: Partial<EmployeeInput>,
+    opts: { accountEmail?: string | null; provided?: Array<keyof EmployeeInput> } = {},
+  ): ImportRowIn => ({
     input: { ...emptyEmployeeInput("2026-11-17"), ...over },
-    accountEmail,
+    provided: new Set(opts.provided ?? []),
+    accountEmail: opts.accountEmail ?? null,
   });
-  test("auto-numbers blanks gaplessly, refuses dup numbers, bad links and bad rows", () => {
+
+  test("auto-numbers blanks gaplessly, refuses a within-file dup number and bad rows", () => {
     const plan = planBulkImport(
       [
-        row({ name: "A", empNo: "" }),                       // 0 -> EMP-011
-        row({ name: "B", empNo: "EMP-010" }),                // 1 -> dup number
-        row({ name: "", empNo: "" }),                        // 2 -> no name (consumes no number)
-        row({ name: "C", empNo: "" }, "ali@x.com"),          // 3 -> EMP-012, linked to user 1
-        row({ name: "D", empNo: "" }, "linked@x.com"),       // 4 -> account already an employee
-        row({ name: "E", empNo: "" }, "ghost@x.com"),        // 5 -> no such account
+        row({ name: "A", empNo: "" }),                                  // 0 -> EMP-011 (existing EMP-010)
+        row({ name: "B", empNo: "EMP-011" }),                           // 1 -> collides with row 0's new number
+        row({ name: "", empNo: "" }),                                   // 2 -> no name (consumes no number)
+        row({ name: "C", empNo: "" }, { accountEmail: "ali@x.com" }),   // 3 -> EMP-012, linked to user 1
+        row({ name: "E", empNo: "" }, { accountEmail: "ghost@x.com" }), // 4 -> no such account
       ],
       {
-        existingEmpNos: ["EMP-010"],
-        linkedUserIds: new Set([99]),
-        userIdByEmail: new Map([["ali@x.com", 1], ["linked@x.com", 99]]),
+        existing: [{ id: 50, empNo: "EMP-010", userId: 99 }],
+        userIdByEmail: new Map([["ali@x.com", 1]]),
       },
     );
     expect(plan.create.map((r) => ({ index: r.index, empNo: r.input.empNo }))).toEqual([
@@ -100,11 +103,73 @@ describe("planBulkImport", () => {
       { index: 3, empNo: "EMP-012" },
     ]);
     expect(plan.create[1].input.userId).toBe(1);
+    expect(plan.update).toEqual([]);
     expect(plan.errors).toEqual([
-      { index: 1, message: "Employee No EMP-010 is already in use." },
+      { index: 1, message: "Employee No EMP-011 is already in use." },
       { index: 2, message: "Name is required." },
-      { index: 4, message: "That ERP account already has an employee record." },
-      { index: 5, message: "No active ERP account has the email ghost@x.com." },
+      { index: 4, message: "No active ERP account has the email ghost@x.com." },
     ]);
+  });
+
+  test("matches an existing person by ERP account or by Emp No and patches only the filled cells", () => {
+    const plan = planBulkImport(
+      [
+        row(
+          { name: "Khalid", empNo: "HC0009", icNumber: "660120-08-5365", bankName: "Maybank", bankAccount: "164", epfEnabled: true },
+          { accountEmail: "khalid@x.com", provided: ["name", "icNumber", "bankName", "bankAccount", "epfEnabled"] },
+        ), // by account -> EMP-001, HC0009 ignored
+        row(
+          { name: "Sagor", empNo: "EMP-002", passportNumber: "B00381966", nationality: "Bangladeshi" },
+          { provided: ["name", "passportNumber", "nationality"] },
+        ), // by Emp No -> EMP-002
+      ],
+      {
+        existing: [
+          { id: 1, empNo: "EMP-001", userId: 7 },
+          { id: 2, empNo: "EMP-002", userId: null },
+        ],
+        userIdByEmail: new Map([["khalid@x.com", 7]]),
+      },
+    );
+    expect(plan.create).toEqual([]);
+    expect(plan.errors).toEqual([]);
+    expect(plan.update).toEqual([
+      { index: 0, employeeId: 1, empNo: "EMP-001", name: "Khalid", patch: { name: "Khalid", icNumber: "660120-08-5365", bankName: "Maybank", bankAccount: "164", epfEnabled: true } },
+      { index: 1, employeeId: 2, empNo: "EMP-002", name: "Sagor", patch: { name: "Sagor", passportNumber: "B00381966", nationality: "Bangladeshi" } },
+    ]);
+  });
+
+  test("a blank cell stays out of the patch, so an import never clears a field or the salary", () => {
+    const plan = planBulkImport(
+      [row({ name: "", empNo: "", icNumber: "900101-07-5501" }, { accountEmail: "a@x.com", provided: ["icNumber"] })],
+      { existing: [{ id: 9, empNo: "EMP-009", userId: 3 }], userIdByEmail: new Map([["a@x.com", 3]]) },
+    );
+    expect(plan.update).toEqual([{ index: 0, employeeId: 9, empNo: "EMP-009", name: "EMP-009", patch: { icNumber: "900101-07-5501" } }]);
+    expect(plan.create).toEqual([]);
+  });
+
+  test("two rows that resolve to the same person — the second is refused, not applied twice", () => {
+    const plan = planBulkImport(
+      [
+        row({ name: "x", empNo: "EMP-001" }, { provided: ["name"] }),
+        row({ name: "y", empNo: "" }, { accountEmail: "u@x.com", provided: ["name"] }),
+      ],
+      { existing: [{ id: 1, empNo: "EMP-001", userId: 7 }], userIdByEmail: new Map([["u@x.com", 7]]) },
+    );
+    expect(plan.update.map((u) => u.index)).toEqual([0]);
+    expect(plan.errors).toEqual([{ index: 1, message: "Two rows change the same employee (EMP-001)." }]);
+  });
+});
+
+describe("employeeUpdateColumns", () => {
+  test("maps only the patched keys to columns; blank text becomes NULL", () => {
+    expect(employeeUpdateColumns({ icNumber: "900101", bankName: "Maybank", epfEnabled: true, departmentId: 5 })).toEqual({
+      ic_number: "900101",
+      bank_name: "Maybank",
+      epf_enabled: true,
+      department_id: 5,
+    });
+    expect(employeeUpdateColumns({ phone: "" })).toEqual({ phone: null });
+    expect(employeeUpdateColumns({})).toEqual({});
   });
 });

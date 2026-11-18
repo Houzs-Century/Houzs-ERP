@@ -30,6 +30,22 @@ describe("mapImportGrid", () => {
     });
   });
 
+  test("sends only the filled cells and maps the passport column", () => {
+    const grid = [
+      ["Name", "Emp No", "ERP Account Email", "Phone", "Position", "IC Number", "Passport Number", "EPF", "SOCSO"],
+      ["Rahman", "HCFW0001", "", "", "Warehouse Crew", "", "A1234567", "No", ""],
+    ];
+    const { rows } = mapImportGrid(grid, DEPTS, TODAY);
+    const r = rows[0];
+    expect(r.problem).toBeNull();
+    expect(r.row).toMatchObject({ name: "Rahman", empNo: "HCFW0001", accountEmail: null, position: "Warehouse Crew", passportNumber: "A1234567", epfEnabled: false });
+    // A blank cell is left off the wire, so a re-import patches only what was filled.
+    expect("phone" in r.row).toBe(false);
+    expect("icNumber" in r.row).toBe(false);
+    expect("socsoEnabled" in r.row).toBe(false);
+    expect("bankName" in r.row).toBe(false);
+  });
+
   test("normalises DD/MM/YYYY join dates", () => {
     const { rows } = mapImportGrid(
       [["Name", "Join Date"], ["Siti", "05/02/2026"]],
