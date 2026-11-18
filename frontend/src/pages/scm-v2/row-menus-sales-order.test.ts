@@ -38,7 +38,7 @@ const noop = () => {};
 
 const soMenu = (over: Partial<Parameters<typeof salesOrderRowMenu<Row>>[0]> = {}) =>
   salesOrderRowMenu<Row>({
-    open: noop, edit: noop, copyAsNew: noop, print: noop, confirm: noop, transferToDo: noop,
+    open: noop, edit: noop, copyAsNew: noop, print: noop, confirm: noop, transferToDo: noop, convertToDoDraft: noop,
     setStatus: noop, close: noop, setHold: noop, cancel: noop, discard: noop, reopen: noop, canDeliver: true,
     ...over,
   });
@@ -250,5 +250,28 @@ describe("Reopen", () => {
     expect(labels(soMenu()(R({ status: "CONFIRMED", reopenable: true })))).not.toContain("Reopen");
     expect(soOffersReopen({ status: "CONFIRMED", reopenable: true })).toBe(false);
     expect(soOffersReopen({ status: "Cancelled", reopenable: true })).toBe(true);
+  });
+});
+
+/* Owner 2026-11-18: open the DO as a DRAFT before the goods arrive. Same gate as
+   Transfer: a live order with something left to deliver, for a DO operator. */
+describe("Convert to DO Draft", () => {
+  test("is offered beside Transfer and calls its own handler", () => {
+    const convertToDoDraft = vi.fn();
+    const transferToDo = vi.fn();
+    const menu = soMenu({ convertToDoDraft, transferToDo })(R({ status: "CONFIRMED" }));
+    const item = menu.find((i) => i.label === "Convert to DO Draft");
+    item!.onClick();
+    expect(convertToDoDraft).toHaveBeenCalledTimes(1);
+    expect(transferToDo).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    ["a draft order", R({ status: "DRAFT" }), true],
+    ["a fully delivered order", R({ status: "DELIVERED", has_undelivered: false }), true],
+    ["a held order", R({ status: "CONFIRMED", on_hold: true }), true],
+    ["a caller who may not operate DOs", R({ status: "CONFIRMED" }), false],
+  ])("is NOT offered on %s", (_name, row, canDeliver) => {
+    expect(labels(soMenu({ canDeliver })(row))).not.toContain("Convert to DO Draft");
   });
 });

@@ -44,7 +44,8 @@ import {
   type PoChainRow, type GrnChainRow, type PiChainRow, type PrChainRow,
 } from "../../lib/printChain";
 import { transferToLabel } from "../../lib/convertScope";
-import { soOffersTransferToDo } from "../../lib/so-transfer-to-do";
+import { soOffersTransferToDo, CONVERT_TO_DO_DRAFT_LABEL } from "../../lib/so-transfer-to-do";
+export { CONVERT_TO_DO_DRAFT_LABEL };
 import { DO_STOCK_OUT_STATES, doHasArrived } from "../../vendor/shared/do-shipped-states";
 import { rowIsHeld, type HoldFields } from "../../vendor/scm/components/HoldChip";
 
@@ -217,6 +218,8 @@ export function salesOrderRowMenu<R extends StatusRow & SoChainRow & MigratedRow
   print: (t: PrintTarget) => void;
   confirm: (r: R) => void;
   transferToDo: (r: R) => void;
+  /** Open a DRAFT DO for every remaining line, before the goods arrive (owner 2026-11-18). */
+  convertToDoDraft: (r: R) => void;
   setStatus: (r: R, status: string) => void;
   /** Stop chasing the remainder. Its own handler, not a setStatus, because the
    *  confirmation wording is the point — see MfgSalesOrdersListV2. */
@@ -267,6 +270,8 @@ export function salesOrderRowMenu<R extends StatusRow & SoChainRow & MigratedRow
       [
         h.canDeliver && soOffersTransferToDo(r) && !isDraft &&
           { label: transferToLabel("do"), onClick: () => h.transferToDo(r) },
+        h.canDeliver && soOffersTransferToDo(r) && !isDraft &&
+          { label: CONVERT_TO_DO_DRAFT_LABEL, onClick: () => h.convertToDoDraft(r) },
       ],
       [
         isDraft && { label: "Confirm", onClick: () => h.confirm(r) },

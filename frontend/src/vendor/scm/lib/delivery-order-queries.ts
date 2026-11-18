@@ -21,7 +21,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { companyHeaderFor } from '../../../lib/activeCompany';
-import { idempotentInit } from '../../../lib/idempotency';
+import { idempotentInit, newIdempotencyKey } from '../../../lib/idempotency';
 import { serviceNotify } from './dialog-service';
 import { reportInBandFailure, type InBandFailure } from './mutation-error';
 import { invalidateSoLists } from './sales-order-queries';
@@ -286,6 +286,35 @@ export const useCreateMfgDeliveryOrder = () => {
         `/delivery-orders-mfg`,
         idempotentInit(idempotencyKey, { method: 'POST', body: JSON.stringify(body) }),
       ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['mfg-delivery-orders'] });
+      releaseSoSideQueries(qc);
+    },
+  });
+};
+
+/* Convert to DO Draft (owner 2026-11-18): the goods are not in yet, so the DO
+   is opened as a DRAFT for every line the order still has to deliver (the SO's
+   live remaining, the same numbers the Transfer picker shows), the lorry
+   delivers on it, and the office presses Confirm once the GR is in. A draft
+   moves no stock and is not asked about stock or readiness; Confirm asks. */
+export function soDraftPicks(lines: Array<Pick<DeliverableSoLine, 'soItemId' | 'remaining'>>): Array<{ soItemId: string; qty: number }> {
+  return lines.filter((l) => Number(l.remaining) > 0).map((l) => ({ soItemId: l.soItemId, qty: Number(l.remaining) }));
+}
+
+export const useConvertSoToDoDraft = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (docNo: string) => {
+      const { lines } = await authedFetch<{ lines: DeliverableSoLine[] }>(
+        `/delivery-orders-mfg/deliverable-so-lines?docNos=${encodeURIComponent(docNo)}`,
+      );
+      const picks = soDraftPicks(lines ?? []);
+      if (picks.length === 0) throw new Error(`Nothing is left to deliver on ${docNo}.`);
+      // One press, one key: a replay authedFetch runs (drop-ship question) re-sends it.
+      return authedFetch<{ id: string; doNumber: string }>('/delivery-orders-mfg/from-sos',
+        idempotentInit(newIdempotencyKey(), { method: 'POST', body: JSON.stringify({ asDraft: true, picks }) }));
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['mfg-delivery-orders'] });
       releaseSoSideQueries(qc);

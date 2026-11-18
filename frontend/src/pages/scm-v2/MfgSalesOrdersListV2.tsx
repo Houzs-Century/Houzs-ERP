@@ -27,7 +27,8 @@ import { SoListFilterBar } from "./SoListFilterBar";
 import { clampSoPage, soPageOnlyFunnelKeys, soServerFunnels, withSoFunnelSeeds, type SoServerFunnels } from "./so-list-server-funnels";
 import { useProjectBrands } from "../../vendor/scm/lib/product-models-queries";
 import { useSoListFilters } from "../../vendor/scm/lib/so-list-filter-state";
-import { salesOrderRowMenu, soOffersReopen, SO_REOPEN_FINAL_HINT } from "./row-menus";
+import { salesOrderRowMenu, soOffersReopen, SO_REOPEN_FINAL_HINT, CONVERT_TO_DO_DRAFT_LABEL } from "./row-menus";
+import { useConvertSoToDoDraft } from "../../vendor/scm/lib/delivery-order-queries";
 import { brandingToneForCategory, type BrandTone } from "../../lib/brandingTone";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { CancelledMoneyActions } from "./CancelledMoneyActions";
@@ -452,6 +453,7 @@ function DetailDrawer({
   onConfirm,
   onDiscard,
   onDeliver,
+  onConvertDraft,
   onReopen,
   canDeliver,
   salespersonName,
@@ -465,6 +467,7 @@ function DetailDrawer({
   /** DRAFT only: hard-delete it (use-discard-draft-action.ts). */
   onDiscard: () => void;
   onDeliver: () => void;
+  onConvertDraft: () => void;
   onReopen: () => void;
   /** Sales may raise the SO but not operate the DO (owner 2026-07-17). False
    *  makes the Deliver CTA ABSENT — the destination route is guarded on
@@ -743,13 +746,10 @@ function DetailDrawer({
                   /* Renamed from "Deliver" 2026-08-17 — the SO already reports a
                      "Delivered" STATUS, and statuses report while buttons act. */
                   return (
-                    <Button
-                      variant="primary"
-                      icon={<Truck size={14} />}
-                      onClick={onDeliver}
-                    >
-                      {transferToLabel('do')}
-                    </Button>
+                    <>
+                      <Button variant="secondary" onClick={onConvertDraft}>{CONVERT_TO_DO_DRAFT_LABEL}</Button>
+                      <Button variant="primary" icon={<Truck size={14} />} onClick={onDeliver}>{transferToLabel('do')}</Button>
+                    </>
                   );
                 }
                 // Reopen a cancelled SO back to CONFIRMED — only where the
@@ -1300,6 +1300,15 @@ export function MfgSalesOrdersListV2() {
      The row no longer exists on success, so the drawer closes. */
   const doDiscard = async (r: SoRow) => { if (await discardDraft(r.doc_no)) setSelected(null); };
   const doDeliver = (r: SoRow) => navigate(convertToLink('soToDo', r.doc_no));
+  /* Owner 2026-11-18: goods not in yet -> a DRAFT DO for every remaining line; stock moves at its Confirm. */
+  const convertDraft = useConvertSoToDoDraft();
+  const doConvertDraft = async (r: SoRow) => {
+    if (!(await askConfirm({ title: `Open a draft delivery order for ${r.doc_no}?`, body: "Every line still to deliver goes on one DRAFT delivery order. No stock moves and nothing is asked about stock until you press Confirm on it.", confirmLabel: "Create DO Draft" }))) return;
+    convertDraft.mutate(r.doc_no, {
+      onSuccess: (res) => navigate(`/scm/delivery-orders/${res.id}`),
+      onError: (e) => void notify({ title: "Draft delivery order not created", body: e instanceof Error ? e.message : "Something went wrong.", tone: "error" }),
+    });
+  };
   // Reopen a cancelled SO → CONFIRMED so it can proceed again (2990
   // MfgSalesOrdersList "Reopen SO" parity; reuses the status PATCH endpoint).
   const doReopen = async (r: SoRow) => {
@@ -1352,7 +1361,7 @@ export function MfgSalesOrdersListV2() {
   const soContextMenu = salesOrderRowMenu<SoRow>({
     open: goFullPage, edit: goEdit, print: printDocument,
     copyAsNew: (r) => navigate(`/scm/sales-orders/new?copyFrom=${encodeURIComponent(r.doc_no)}`),
-    confirm: doConfirm, transferToDo: doDeliver, reopen: doReopen,
+    confirm: doConfirm, transferToDo: doDeliver, convertToDoDraft: (r) => void doConvertDraft(r), reopen: doReopen,
     setStatus: setSoStatus, close: doCloseSo, setHold: setSoHold, cancel: doCancelSo, discard: (r) => void doDiscard(r), canDeliver,
   });
 
@@ -2321,6 +2330,7 @@ export function MfgSalesOrdersListV2() {
         onConfirm={() => selected && void doConfirm(selected)}
         onDiscard={() => selected && void doDiscard(selected)}
         onDeliver={() => selected && doDeliver(selected)}
+        onConvertDraft={() => selected && void doConvertDraft(selected)}
         onReopen={() => selected && void doReopen(selected)}
         canDeliver={canDeliver}
         salespersonName={
