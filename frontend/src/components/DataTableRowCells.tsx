@@ -8,6 +8,41 @@ import type { Column } from "./dataTableTypes";
 const showDash = (node: ReactNode): ReactNode =>
   node == null || node === "" || node === false ? <span className="text-ink-muted">—</span> : node;
 
+export interface CellPlacement {
+  widths: Record<string, number>;
+  stickyLeft: Array<number | undefined>;
+  stickyRight: Array<number | undefined>;
+  stickyCount: number;
+}
+
+export function dataCellStyle<T>(
+  column: Column<T>,
+  index: number,
+  placement: CellPlacement,
+  stickyBg: string,
+): CSSProperties {
+  const cellStyle: CSSProperties = {};
+  const userWidth = placement.widths[column.key];
+  if (typeof userWidth === "number") {
+    cellStyle.width = userWidth;
+    cellStyle.minWidth = userWidth;
+    cellStyle.maxWidth = userWidth;
+  } else if (column.width) {
+    cellStyle.width = column.width;
+    // Same cap as the header cell: a px width means "clip here", never
+    // "stretch to the longest value".
+    const px = parsePxWidth(column.width);
+    if (px != null) cellStyle.maxWidth = px;
+  }
+  const stickyRightOffset = placement.stickyRight[index];
+  if (index < placement.stickyCount) {
+    Object.assign(cellStyle, { position: "sticky", left: placement.stickyLeft[index], zIndex: 20, background: stickyBg });
+  } else if (stickyRightOffset !== undefined) {
+    Object.assign(cellStyle, { position: "sticky", right: stickyRightOffset, zIndex: 20, background: stickyBg });
+  }
+  return cellStyle;
+}
+
 /* SCROLL PERF (owner 2026-10-21 "滚动变顺" step 2): the DATA cells of one row.
    The <tr>, its selection checkbox, expand chevron, click/drag handlers and
    selected/hover classes stay in the parent (DataTable) — those are cheap and
@@ -55,30 +90,7 @@ function DataRowCellsInner<T>({
         const isStickyRight = stickyRight[i] !== undefined;
         const isFirstStickyRight =
           isStickyRight && i === columns.length - stickyRightCount;
-        const userW = widths[c.key];
-        const cellStyle: CSSProperties = {};
-        if (typeof userW === "number") {
-          cellStyle.width = userW;
-          cellStyle.minWidth = userW;
-          cellStyle.maxWidth = userW;
-        } else if (c.width) {
-          cellStyle.width = c.width;
-          // Same cap as the header cell: a px width means "clip here", never
-          // "stretch to the longest value".
-          const px = parsePxWidth(c.width);
-          if (px != null) cellStyle.maxWidth = px;
-        }
-        if (isSticky) {
-          cellStyle.position = "sticky";
-          cellStyle.left = stickyLeft[i];
-          cellStyle.zIndex = 20;
-          cellStyle.background = stickyBg;
-        } else if (isStickyRight) {
-          cellStyle.position = "sticky";
-          cellStyle.right = stickyRight[i];
-          cellStyle.zIndex = 20;
-          cellStyle.background = stickyBg;
-        }
+        const cellStyle = dataCellStyle(c, i, { widths, stickyLeft, stickyRight, stickyCount }, stickyBg);
         // Full raw value as a native tooltip so a clipped cell stays readable on
         // hover. Strings only: numeric getValues are raw centi/ISO shapes.
         const rawVal = c.getValue?.(row);

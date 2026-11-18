@@ -29,7 +29,7 @@ export type ModelGroup = {
      same way — from whichever child happened to be first — and a Model or a
      Sales Order does not have suppliers: each VARIANT does, and on the Sofa tab
      each variant is a different module SKU with its own bindings. Supplier lives
-     on MrpSku and is read there (LineSupplierCell, SofaSoTable, OrderLines). */
+     on MrpSku and is read there (mrp-tree-rows.tsx). */
 };
 
 export const WH_NONE = 'NOWH';
@@ -211,7 +211,7 @@ export function groupByVariant(skus: MrpSku[]): ModelGroup[] {
     groupKey: rowKey(s),               // warehouse|itemCode|variantKey — unique per variant
     warehouseId: s.warehouseId, warehouseCode: s.warehouseCode, warehouseName: s.warehouseName,
     itemCode: s.itemCode, description: s.description, category: s.category,
-    variants: [s],                     // single → ModelDrilldown jumps straight to orders
+    variants: [s],                     // single → its SO lines open directly under the row
     qtyNeeded: s.qtyNeeded, stock: s.stock, poOutstanding: s.poOutstanding, shortage: s.shortage,
   }));
   // Same ordering as the other groupers: shortage (orange) first, then warehouse,

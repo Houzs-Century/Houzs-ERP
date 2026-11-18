@@ -24,7 +24,7 @@
     "backend/src/scm/routes/scan-so.ts": 4895,
     "backend/src/services/assr.ts": 2297,
     "backend/src/services/projects.ts": 3137,
-    "frontend/src/components/DataTable.tsx": 3544,
+    "frontend/src/components/DataTable.tsx": 3539,
     "frontend/src/mobile/MobileDeliveryPlanning.tsx": 2449,
     "frontend/src/mobile/MobileModuleList.tsx": 2103,
     "frontend/src/mobile/MobileNewSO.tsx": 3591,
