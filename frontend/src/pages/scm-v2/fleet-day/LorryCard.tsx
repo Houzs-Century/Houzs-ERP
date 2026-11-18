@@ -97,11 +97,12 @@ function StopRow({ d, no, selected, hasRemark, leg, location, siteMin, plannedDe
     >
       <span className="pt-0.5"><StopNo no={no} look={circleLookOf(pill.state, location)} /></span>
       <span className="min-w-0">
-        <span className="flex min-w-0 items-center gap-1.5">
+        {/* the name keeps at least ~8rem; on a narrow card it drops under the tags instead of shrinking to a letter */}
+        <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
           <StopTag label={tag.label} bg={fam.bg} fg={fam.fg} />
           {d.draftDo && <StopTag label="DRAFT DO" bg="#fde8e8" fg="#b42318" />}
-          <span className={cn('min-w-0 truncate text-[13px] font-semibold', done ? 'text-ink-muted' : 'text-ink')} title={title}>{title}</span>
           {hasRemark && <span className="shrink-0 rounded-full bg-accent-soft px-1.5 py-0.5 text-[9px] font-bold text-accent-ink" title="Has dispatch / CS remarks">REMARK</span>}
+          <span className={cn('min-w-[8rem] flex-1 basis-0 truncate text-[13px] font-semibold', done ? 'text-ink-muted' : 'text-ink')} title={title}>{title}</span>
         </span>
         {refLine && <span className="block truncate text-[11.5px] text-ink-muted" title={refLine}>{refLine}</span>}
         {address && <span className={cn('block truncate text-[12px]', done ? 'text-ink-muted' : 'text-ink-secondary')} title={address}>{address}</span>}
@@ -175,7 +176,7 @@ export function LorryCard({
   const r = run.rollup;
   const units = run.docs.reduce((n, d) => n + d.units, 0);
   const crewLine = [run.driver2Name ? `Driver 2: ${run.driver2Name}` : null, run.helpers.length ? `Helpers: ${run.helpers.join(', ')}` : null].filter(Boolean).join(' · ');
-  const progress = [`${r.delivered}/${r.drops} done`, r.late > 0 ? `${r.late} late` : null, r.drops > 0 ? `${units} units` : null, fmtSen(r.totalSen)].filter(Boolean) as string[];
+  const progress = [`${r.delivered}/${r.drops} done`, r.late > 0 ? `${r.late} late` : null, r.drops > 0 ? `${units} unit${units === 1 ? '' : 's'}` : null, fmtSen(r.totalSen)].filter(Boolean) as string[];
   const departText = actualAt ? `Left ${clockMY(actualAt)}` : plannedAt ? `Plan ${clockMY(plannedAt)}` : null;
 
   const plate = (
