@@ -1,5 +1,5 @@
 {
-  "about": "Researched postcodes for company 1 venue master (public.project_venues). Public business locations. Read by scripts/fill-master-postcodes.mjs: used only when a row name matches exactly, confidence is high or medium, the postcode is in scm.my_localities and its state agrees. City/State are written from my_localities.",
+  "about": "Researched postcodes for company 1 venue master (public.project_venues). Public business locations. Read by scripts/fill-master-postcodes.mjs: used only when a row name matches (case and surrounding spaces ignored), confidence is high or medium, the postcode is in scm.my_localities and its state agrees. City/State are written from my_localities.",
   "researched": "2026-11-17",
   "entries": [
     {
@@ -891,7 +891,7 @@
       "address": "6, Jalan SS 21/37, Damansara Utama, 47400 Petaling Jaya",
       "source": "https://timeout.com/kuala-lumpur/shopping/the-starling-mall",
       "confidence": "high",
-      "note": ""
+      "note": "Re-checked 2026-11-18: https://offices.co/malaysia/petaling-jaya/47641/ gives the same No. 6 Jalan SS 21/37, Damansara Utama, 47400"
     },
     {
       "id": 100,
