@@ -4,7 +4,7 @@
    same report five times. */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { describe, expect, test, vi } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 
 const get = vi.fn<(path: string) => Promise<unknown>>();
 const post = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
@@ -29,6 +29,11 @@ const mount = () =>
   );
 
 describe("MobileProjectChat", () => {
+  beforeEach(() => {
+    get.mockReset();
+    post.mockReset();
+  });
+
   test("lists the chat messages the activity endpoint returns under data, without the system rows", async () => {
     get.mockResolvedValueOnce({
       data: [
@@ -56,5 +61,32 @@ describe("MobileProjectChat", () => {
     await waitFor(() => expect(screen.getByText("Chat (1)")).toBeTruthy());
     expect(post).toHaveBeenCalledWith("/api/projects/364/notes", { note: "13/11 - RM35,315" });
     expect(screen.getByText("13/11 - RM35,315")).toBeTruthy();
+  });
+
+  test("keeps the Sending… copy on screen until the reload has the message, so the chat never looks empty after a send", async () => {
+    get.mockResolvedValueOnce({ data: [] });
+    mount();
+    await waitFor(() => expect(screen.getByText("No messages yet.")).toBeTruthy());
+
+    let finishReload: (value: unknown) => void = () => {};
+    post.mockResolvedValueOnce({ ok: true });
+    get.mockReturnValueOnce(new Promise((resolve) => { finishReload = resolve; }));
+    fireEvent.change(screen.getByPlaceholderText(/paste the evening report/), { target: { value: "15/11 - RM29,376" } });
+    fireEvent.click(screen.getByLabelText("Send"));
+
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+    expect(screen.getByText("Sending…")).toBeTruthy();
+    expect(screen.queryByText("No messages yet.")).toBeNull();
+
+    finishReload({ data: [noteRow(4, "15/11 - RM29,376")] });
+    await waitFor(() => expect(screen.queryByText("Sending…")).toBeNull());
+    expect(screen.getByText("Chat (1)")).toBeTruthy();
+  });
+
+  test("a chat that fails to load says so, instead of looking empty", async () => {
+    get.mockRejectedValueOnce(new Error("Network error"));
+    mount();
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("Couldn't load the chat (Network error)"));
+    expect(screen.queryByText("No messages yet.")).toBeNull();
   });
 });
