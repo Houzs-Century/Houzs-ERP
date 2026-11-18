@@ -178,8 +178,13 @@ export function AllowancesTab() {
               ))}
             </select>
           </Field>
-          <Field label="Amount (RM)">
+          <Field label={draft.kind === "ATTENDANCE" ? "Amount (RM per day)" : "Amount (RM)"}>
             <input className={inputCls} value={draft.amount} onChange={(e) => setDraft({ ...draft, amount: e.target.value })} inputMode="decimal" />
+            {draft.kind === "ATTENDANCE" && (
+              <span className="mt-1 block text-[11px] text-ink-muted">
+                Paid per day attended; the whole month is dropped if late on more than 3 days or any unpaid leave.
+              </span>
+            )}
           </Field>
           <Field label="From month">
             <input type="month" className={inputCls} value={draft.fromPeriod} onChange={(e) => e.target.value && setDraft({ ...draft, fromPeriod: e.target.value })} />

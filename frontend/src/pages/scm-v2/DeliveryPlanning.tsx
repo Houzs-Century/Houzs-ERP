@@ -84,6 +84,17 @@ import { canOperateDeliveryOrders } from '../../auth/salesAccess';
 /* The sends that name a date with Confirm / Amend; a Service Case job has its own. */
 const ASSR_DATE_KINDS: ReadonlySet<SendMessageKind> = new Set<SendMessageKind>(['delivery', 'amend']);
 
+/* Sends a Service Case leg takes AS THEMSELVES (no conversion to Service
+   Arrangement): Postpone reads the leg's own Amend Reason + new date, and the
+   three Reminders are a plain nudge. Must match the backend's ASSR_LEG_SEND_KINDS
+   (plus driver_info, handled on its own line). */
+const ASSR_DIRECT_KINDS: ReadonlySet<SendMessageKind> = new Set<SendMessageKind>(['postpone', 'reminder_1', 'reminder_2', 'reminder_3']);
+
+/* Every kind a Service Case leg row can receive from the board — used to grey the
+   SO-only sends when only ASSR rows are ticked. */
+const assrCapableKind = (k: SendMessageKind): boolean =>
+  k === 'assr_arrangement' || k === 'driver_info' || ASSR_DATE_KINDS.has(k) || ASSR_DIRECT_KINDS.has(k);
+
 export const DeliveryPlanning = () => {
   const navigate = useNavigate();
   // Single click opens the job panel; double click goes to the document.
@@ -367,8 +378,9 @@ export const DeliveryPlanning = () => {
     if (kind === 'assr_arrangement' || (ASSR_DATE_KINDS.has(kind) && docs.size === 0)) {
       setSendKind('assr_arrangement'); setSendingRows(selectedAssrRows); return;
     }
-    // Driver Info also goes to a Service Case job: its trip's driver, its date.
-    const assr = kind === 'driver_info' ? selectedAssrRows : [];
+    // Driver Info and the Reminders also go to a Service Case job (Postpone has
+    // its own no-modal path). ASSR_DIRECT_KINDS covers the reminders here.
+    const assr = (kind === 'driver_info' || ASSR_DIRECT_KINDS.has(kind)) ? selectedAssrRows : [];
     if (docs.size === 0 && assr.length === 0) return;
     setSendKind(kind);
     setSendingRows([...allOrders.filter((o) => o.row_type === 'so' && docs.has(o.so_doc_no)), ...assr]);
@@ -389,18 +401,21 @@ export const DeliveryPlanning = () => {
   });
   const sendPostponeDirect = async () => {
     const docs = new Set(selectedSoDocNos());
-    if (docs.size === 0 || postponing) return;
+    if ((docs.size === 0 && selectedAssrRows.length === 0) || postponing) return;
     const byPhone = new Map<string, string[]>();
     for (const o of allOrders) {
       if (o.row_type !== 'so' || !docs.has(o.so_doc_no)) continue;
       const key = phoneKey(o.phone) || o.so_doc_no;
       byPhone.set(key, [...(byPhone.get(key) ?? []), o.so_doc_no]);
     }
+    // A Service Case leg postpones on its own — one message per leg, keyed by its
+    // row key (its so_doc_no IS the key); the backend reads the case, not an SO.
+    for (const o of selectedAssrRows) byPhone.set(o.so_doc_no, [o.so_doc_no]);
     setPostponing(true);
     const res = await sendInChunks(sendMsg.mutateAsync, 'postpone', [...byPhone].map(([phone, docNos]) => ({ phone, docNos })));
     setPostponing(false);
     const sentDocs = new Set(res.sent.flatMap((s) => s.docNos));
-    untickSent(allOrders.filter((o) => o.row_type === 'so' && sentDocs.has(o.so_doc_no)));
+    untickSent(allOrders.filter((o) => (o.row_type === 'so' || o.row_type === 'assr') && sentDocs.has(o.so_doc_no)));
     const notMoved = statusNotMovedNote(res.statusNotMoved);
     const failed = failedNote(res.failed);
     const parts: string[] = [];
@@ -482,15 +497,15 @@ export const DeliveryPlanning = () => {
                   }}
                 >
                   {(() => {
-                    /* Service Arrangement, Driver Info and the two date sends
-                       reach a Service Case job; the rest read a Sales Order, so
-                       with only ASSR rows ticked they are greyed instead of doing
-                       nothing. */
+                    /* Service Arrangement, Driver Info, the two date sends, Postpone
+                       and the Reminders reach a Service Case job (assrCapableKind);
+                       the rest read a Sales Order, so with only ASSR rows ticked
+                       they are greyed instead of doing nothing. */
                     const soOnlyIdle = (k: SendMessageKind) =>
-                      k !== 'assr_arrangement' && k !== 'driver_info' && !ASSR_DATE_KINDS.has(k) && selectedSoDocNos().length === 0;
+                      !assrCapableKind(k) && selectedSoDocNos().length === 0;
                     // SO + ASSR ticked: an SO-only send leaves the ASSR rows out, so say so.
                     const assrLeftOut = (k: SendMessageKind) =>
-                      k !== 'assr_arrangement' && k !== 'driver_info' && selectedAssrRows.length > 0 && selectedSoDocNos().length > 0;
+                      !assrCapableKind(k) && selectedAssrRows.length > 0 && selectedSoDocNos().length > 0;
                     const renderKind = (
                       [k, label, hint]: readonly [SendMessageKind, string, string],
                       sub: boolean,

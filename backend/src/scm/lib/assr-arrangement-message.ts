@@ -26,12 +26,22 @@ import { logActivity } from '../../services/assr';
 import { normDate } from '../../services/agents/schedule-reconcile';
 import { fmtDate } from '../shared/format';
 import { normalizePhone } from '../shared/phone';
-import { ASSR_CONFIRMED_COL, ASSR_STATUS_PICK_SOURCE } from './assr-board-scope';
+import { ASSR_CONFIRMED_COL, ASSR_LEG_AMEND_REASON_COL, ASSR_STATUS_PICK_SOURCE } from './assr-board-scope';
 import { chunkIn, inList } from './paginate-all';
-import { KIND_AFTER_STATUS, KIND_AUTOMATION, kindAttributes, templateDate, type DriverInfoInput } from './delivery-message-kinds';
+import { KIND_AFTER_STATUS, KIND_AUTOMATION, OPENER_KINDS, kindAttributes, templateDate, type DriverInfoInput, type MessageKind } from './delivery-message-kinds';
 import { buildDeliveryFollowUp, chatCallbackUrl, postConnectContact } from '../../services/connect';
 
 export type AssrLeg = keyof typeof ASSR_CONFIRMED_COL;
+
+/** Connect automation NAME -> the Delivery Message Status a successful ASSR send
+ *  lands the leg on, mirroring the SO side's KIND_AFTER_STATUS so an ASSR
+ *  postpone / reminder / driver send reads the same "Done X" the SO row would.
+ *  Service Arrangement has no SO status (not in KIND_AFTER_STATUS), so a send of
+ *  it falls through to the generic 'Done Send' at the read site. */
+const ASSR_SEND_STATUS_BY_AUTOMATION: Record<string, string> = Object.fromEntries(
+  (Object.keys(KIND_AFTER_STATUS) as Array<keyof typeof KIND_AFTER_STATUS>)
+    .map((k) => [KIND_AUTOMATION[k], KIND_AFTER_STATUS[k]]),
+);
 
 /** Service's own (requested) date column per leg — the confirmed one is
  *  ASSR_CONFIRMED_COL. Same pairing assrBoardLegs reads. */
@@ -43,9 +53,9 @@ const REQUESTED_COL: Record<AssrLeg, 'customer_pickup_at' | 'inspection_visit_at
 
 /** What the customer reads after "We have arranged the ...". */
 export const ASSR_LEG_CUSTOMER_LABEL: Record<AssrLeg, string> = {
-  customer_pickup: 'furniture pickup',
+  customer_pickup: 'service item pickup',
   inspection: 'inspection visit',
-  delivery: 'return delivery',
+  delivery: 'service item delivery',
 };
 
 /** What staff read on the timeline — the board's own names (ASSR_JOB_KIND_LABEL). */
@@ -75,7 +85,8 @@ type CaseRow = {
 
 const CASE_COLS = `id, assr_no, doc_no, company_id, customer_name, phone, closed_at, archived_at,
   customer_pickup_at, inspection_visit_at, do_date,
-  sched_pickup_date, sched_inspection_date, sched_delivery_date`;
+  sched_pickup_date, sched_inspection_date, sched_delivery_date,
+  pickup_amend_reason, inspection_amend_reason, delivery_amend_reason`;
 
 /** The leg's date as the customer should read it: Logistics' confirmed date,
  *  else Service's requested one. ISO yyyy-mm-dd, or null. */
@@ -88,20 +99,52 @@ export function assrLegDate(row: Partial<Record<string, unknown>>, leg: AssrLeg)
 /** dd/mm/yyyy for the timeline sentence. */
 const dmy = (iso: string | null): string => (iso ? fmtDate(iso) : 'no date');
 
+/** The case-timeline line each ASSR send writes (logActivity), phrased for the
+ *  kind so staff read what the customer was actually sent. */
+function assrSendSentence(
+  kind: MessageKind,
+  phone: string,
+  leg: AssrLeg,
+  date: string,
+  opts: { driverInfo?: DriverInfoInput; reason?: string },
+): string {
+  const label = ASSR_LEG_STAFF_LABEL[leg];
+  if (kind === 'driver_info' && opts.driverInfo) {
+    const d = opts.driverInfo;
+    return `WhatsApp sent to ${phone}: ${label} driver information for ${dmy(date)} (${d.deliveryTime}, driver ${d.driverName}${d.carPlate ? `, lorry ${d.carPlate}` : ''}).`;
+  }
+  if (kind === 'postpone') {
+    return `WhatsApp sent to ${phone}: ${label} postpone notice — new date ${dmy(date)}${opts.reason ? ` (${opts.reason})` : ''}, customer asked to Confirm or Amend.`;
+  }
+  if (kind === 'reminder_1' || kind === 'reminder_2' || kind === 'reminder_3') {
+    return `WhatsApp sent to ${phone}: ${label} reminder ${kind.slice(-1)} for ${dmy(date)}.`;
+  }
+  return `WhatsApp sent to ${phone}: ${label} on ${dmy(date)}, customer asked to Confirm or Amend the date.`;
+}
+
 export interface AssrSendResult {
   sent: Array<{ phone: string; docNos: string[]; httpCode: number }>;
   failed: Array<{ phone: string; docNos: string[]; error: string }>;
   skipped: Array<{ docNo: string; reason: string }>;
 }
 
-/** Send the Service Arrangement message for each ASSR leg row key — or, with
- *  `driverInfo`, the Driver Info message (the SO template, button-less: name,
- *  the leg's date, time window, driver, lorry). Cases are read through the
- *  caller's granted companies (assrCompanySql) — the same scope the board
- *  showed the row under. One message per leg: both templates name one date. */
+/** Send one of the ASSR-capable message kinds for each Service Case leg row key,
+ *  the Service Case twin of the SO sender (delivery-messages.ts). `kind` picks
+ *  the Connect automation and what it carries beyond the shared leg bundle
+ *  (full_name / assr_no / service_job / the leg's date):
+ *    assr_arrangement — the date message, Confirm / Amend (opener).
+ *    driver_info      — the button-less driver card (name / IC / time / lorry).
+ *    postpone         — we are moving the date: the leg's own Amend Reason +
+ *                       confirmed ("Delivery Date") vs requested date, Confirm /
+ *                       Amend (opener). Skips a leg missing either, like the SO.
+ *    reminder_1/2/3   — a plain nudge; no reply yet (not an opener).
+ *  Cases are read through the caller's granted companies (assrCompanySql) — the
+ *  same scope the board showed the row under. One message per leg: the templates
+ *  name one date. Nothing here moves a leg's date; Logistics still sets it. */
 export async function sendAssrArrangement(
   c: Context<{ Bindings: Env; Variables: Variables }>,
   rowKeys: string[],
+  kind: MessageKind,
   driverInfo?: DriverInfoInput,
 ): Promise<AssrSendResult> {
   const sent: AssrSendResult['sent'] = [];
@@ -137,9 +180,30 @@ export async function sendAssrArrangement(
     const date = assrLegDate(row, leg);
     if (!date) { skipped.push({ docNo: key, reason: 'no_job_date' }); continue; }
 
+    // The shared leg bundle every ASSR send carries: what we arranged, which leg,
+    // the Sales Order (ref_2) and the case number (assr_no).
     const extra: Record<string, string> = { service_job: ASSR_LEG_CUSTOMER_LABEL[leg], assr_leg: leg, ref_2: String(row.doc_no ?? ''), assr_no: assrNo };
-    if (driverInfo) Object.assign(extra, kindAttributes('driver_info', {}, date, 0, { driverInfo }).attributes);
+    // Driver Info and Postpone read the SAME per-kind attributes the SO sender
+    // builds (kindAttributes), off the leg's own fields — the driver the operator
+    // picked, or the leg's Amend Reason + confirmed ("Delivery Date") vs requested
+    // date. A leg missing what the kind needs is skipped with that reason, never
+    // sent with a blank — exactly the SO rule. The other kinds carry no extra.
+    if (kind === 'driver_info' || kind === 'postpone') {
+      const pseudoRow = kind === 'postpone'
+        ? {
+            amend_reason: row[ASSR_LEG_AMEND_REASON_COL[leg]],
+            amended_delivery_date: row[ASSR_CONFIRMED_COL[leg]],
+            customer_delivery_date: row[REQUESTED_COL[leg]],
+          }
+        : {};
+      const perKind = kindAttributes(kind, pseudoRow, date, 0, kind === 'driver_info' ? { driverInfo } : undefined);
+      if (perKind.skip) { skipped.push({ docNo: key, reason: perKind.skip }); continue; }
+      Object.assign(extra, perKind.attributes);
+    }
     if (sentByEmail) extra.sent_by_email = sentByEmail;
+    // The date the bundle names (delivery_date_1): the confirmed/new date for
+    // postpone (new_delivery_date rides in extra too), the scheduled leg date
+    // otherwise.
     const contact = buildDeliveryFollowUp(
       phone,
       String(row.customer_name ?? ''),
@@ -151,11 +215,12 @@ export async function sendAssrArrangement(
       null,
       {
         callbackUrl,
-        automation: driverInfo ? KIND_AUTOMATION.driver_info : KIND_AUTOMATION.assr_arrangement,
+        automation: KIND_AUTOMATION[kind],
         extra,
-        // Driver Info opens no Confirm / Amend, so a customer who already
-        // confirmed keeps their Delivery Lock (OPENER_KINDS).
-        resetConversation: !driverInfo,
+        // Only the openers (Service Arrangement, Postpone — OPENER_KINDS) start a
+        // fresh Confirm / Amend; a Driver Info or Reminder sent to a customer who
+        // already confirmed must not blank their Delivery Lock.
+        resetConversation: OPENER_KINDS.has(kind),
       },
     );
     const result = await postConnectContact(c.env, contact);
@@ -180,9 +245,7 @@ export async function sendAssrArrangement(
     if (result.ok) {
       try {
         await logActivity(c.env, row.id, 'whatsapp_sent', null, date,
-          driverInfo
-            ? `WhatsApp sent to ${phone}: ${ASSR_LEG_STAFF_LABEL[leg]} driver information for ${dmy(date)} (${driverInfo.deliveryTime}, driver ${driverInfo.driverName}${driverInfo.carPlate ? `, lorry ${driverInfo.carPlate}` : ''}).`
-            : `WhatsApp sent to ${phone}: ${ASSR_LEG_STAFF_LABEL[leg]} on ${dmy(date)}, customer asked to Confirm or Amend the date.`,
+          assrSendSentence(kind, phone, leg, date, { driverInfo, reason: extra.amend_date_reason_2 }),
           userId, { category: 'service', source_channel: 'whatsapp' });
       } catch (e) {
         console.warn(`[assr-arrangement] activity insert failed: ${String((e as Error).message).slice(0, 120)}`);
@@ -306,7 +369,12 @@ export function assrChatStateFromLog(rows: LogRow[]): Map<string, AssrChatState>
     }
     if (r.source === 'delivery-planning') {
       if (!r.success) continue;
-      const status = p.automation === KIND_AUTOMATION.driver_info ? KIND_AFTER_STATUS.driver_info : 'Done Send';
+      // Each automation lands the leg on the SAME "Done X" the SO row would
+      // (ASSR_SEND_STATUS_BY_AUTOMATION, from KIND_AFTER_STATUS): Driver Info ->
+      // Done Driver Information, Postpone -> Done Postpone Reason, Reminder N ->
+      // Done Remind (N). Service Arrangement has no SO status, so it reads the
+      // generic 'Done Send'.
+      const status = (p.automation && ASSR_SEND_STATUS_BY_AUTOMATION[p.automation]) || 'Done Send';
       out.set(r.doc_no, { delivery_message_status: status, amend_date_from_customer: null, amend_reason_from_customer: null });
       continue;
     }

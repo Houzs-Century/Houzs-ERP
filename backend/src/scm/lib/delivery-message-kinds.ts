@@ -74,6 +74,14 @@ export const KIND_AFTER_STATUS: Record<Exclude<MessageKind, 'assr_arrangement' |
  *  customer who already confirmed must not unlock the Delivery Lock guard. */
 export const OPENER_KINDS: ReadonlySet<MessageKind> = new Set<MessageKind>(['delivery', 'amend', 'postpone', 'assr_arrangement']);
 
+/** Kinds a Service Case (ASSR) leg row can be sent — besides assr_arrangement,
+ *  which is ASSR-only and handled on its own. A mixed selection's ASSR row keys
+ *  are split out to the ASSR sender (assr-arrangement-message.ts) for these;
+ *  every other kind reads a Sales Order and leaves ASSR rows out. Keep in step
+ *  with the board's own ASSR gating (frontend DeliveryPlanning). */
+export const ASSR_LEG_SEND_KINDS: ReadonlySet<MessageKind> =
+  new Set<MessageKind>(['driver_info', 'postpone', 'reminder_1', 'reminder_2', 'reminder_3']);
+
 export interface DriverInfoInput {
   driverName: string;
   driverContact: string;
