@@ -126,6 +126,7 @@ import { resolveDoLineWarehouses, doShipFromWarehouseId } from '../lib/do-line-w
 import { resolveHardBoundCostBatches, costBatchNoteText, type CostBatchMode, type CostBatchNote } from '../lib/hard-bound-cost-batch';
 import { doWarehouseLabels } from '../lib/do-warehouse-labels';
 import { isMigratedNoStock } from '../lib/migrated-no-stock';
+import { doConfirmPreflight } from '../lib/do-confirm-preflight';
 import { currentDocNoByKey, type CurrentEvent } from '../lib/current-doc';
 import { doLifecycleFrom, type DoLifecycle, type DoLifecycleSi, type DoLifecycleDr } from '../lib/do-lifecycle';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
@@ -2791,7 +2792,8 @@ deliveryOrdersMfg.get('/:id', async (c) => {
 // Accepts the full SO-cloned header (debtor / salesperson / address /
 // payment-as-drafts / line items) so the Create-DO screen (prefilled from an
 // SO) can save in one shot. Line items + payments are optional.
-deliveryOrdersMfg.post('/', async (c) => {
+// Exported for tests (supabaseAuth cannot run in vitest); registered below.
+export const createDeliveryOrderHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
   const lap = stepClock(); // Server-Timing s-do-* laps
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -2853,7 +2855,7 @@ deliveryOrdersMfg.post('/', async (c) => {
     if (!sid) continue;
     additions.set(sid, (additions.get(sid) ?? 0) + Number(it.qty ?? 0));
   }
-  const notReadyProm = body.confirmNotReady ? null : eager(findNotReadySoLines(sb, items.map((it) => String(it.soItemId ?? '')), activeCompanyId(c) ?? null));
+  const notReadyProm = (body.confirmNotReady || body.asDraft === true) ? null : eager(findNotReadySoLines(sb, items.map((it) => String(it.soItemId ?? '')), activeCompanyId(c) ?? null));
   const lineWarehousesProm = eager(resolveDoLineWarehouses(sb, stockLines.map((l) => ({ id: l.lineRef, so_item_id: l.soItemId })), headerWarehouseId, activeCompanyId(c)));
   const shortagesProm = items.length > 0 ? eager(checkDoStockAvailability(sb, stockLines, headerWarehouseId, activeCompanyId(c))) : null;
   const remainingProm = additions.size > 0 ? eager(soRemainingByItemId(sb, [...additions.keys()])) : null;
@@ -2981,7 +2983,8 @@ deliveryOrdersMfg.post('/', async (c) => {
       return c.json(sofaSetPoSplitResponse(plan.setConflicts), 409);
     }
     commitments = plan.bindings;
-    if (shortages.length > 0 && !body.confirmShortStock) {
+    // A DRAFT moves no stock: both questions wait for Confirm (lib/do-confirm-preflight.ts).
+    if (shortages.length > 0 && !body.confirmShortStock && body.asDraft !== true) {
       markIdempotencyNoWrite(c);
       return c.json(shortStockResponse(shortages, bindingList(commitments)), 409);
     }
@@ -3290,7 +3293,8 @@ deliveryOrdersMfg.post('/', async (c) => {
     so_amend_mirrored: soAmendMirrored,
     so_mirror_error: soAmendMirrorError, ...(ac?.problems.length ? { acNotSent: ac.problems } : {}),
   }, 201);
-});
+};
+deliveryOrdersMfg.post('/', createDeliveryOrderHandler);
 
 /* buildItemRow moved to lib/do-item-row.ts (size ceiling + a test seam).
    Its `it.itemGroup` is expected pre-resolved by resolveItemGroups. */
@@ -3502,7 +3506,7 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
     fromStock: null,
   })), doCompanyId));
   const partialProm = eager(findIncompleteSofaSets(sb, sortedPicks.map((line) => line.soItemId), doCompanyId));
-  const notReadyProm = body.confirmNotReady ? null : eager(findNotReadySoLines(sb, sortedPicks.map((line) => line.soItemId), doCompanyId ?? null));
+  const notReadyProm = (body.confirmNotReady || body.asDraft === true) ? null : eager(findNotReadySoLines(sb, sortedPicks.map((line) => line.soItemId), doCompanyId ?? null));
   const lineWarehousesProm = eager(resolveDoLineWarehouses(sb, stockLines.map((l) => ({ id: l.lineRef, so_item_id: l.soItemId })), headerWarehouseId, doCompanyId));
   const shortagesProm = eager(checkDoStockAvailability(sb, stockLines, headerWarehouseId, doCompanyId));
   const loadedProm = eager(loadSoHeaderForConversion(sb, firstSoDocNo, sourceCompanyId));
@@ -3588,7 +3592,7 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
     return c.json(sofaSetPoSplitResponse(commitmentPlan.setConflicts), 409);
   }
   const commitments = commitmentPlan.bindings;
-  if (shortages.length > 0 && !body.confirmShortStock) {
+  if (shortages.length > 0 && !body.confirmShortStock && body.asDraft !== true) { // a DRAFT is asked at Confirm
     markIdempotencyNoWrite(c);
     return c.json(shortStockResponse(shortages, bindingList(commitments)), 409);
   }
@@ -4915,7 +4919,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   let body: {
     status?: string; signatureData?: string; podKey?: string; podKeys?: unknown;
     podLat?: number; podLng?: number; podAccuracyM?: number; podLocatedAt?: string;
-    confirmShortStock?: boolean;
+    confirmShortStock?: boolean; confirmNotReady?: boolean;
   }; try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (!body.status) return c.json({ error: 'status_required' }, 400);
   /* NORMALISE FIRST, exactly as the Sales Order handler does
@@ -5195,26 +5199,12 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
     }
   }
 
-  /* A draft's stock was measured when it was saved; by Confirm, where the stock
-     actually leaves, it may have gone to another order. Ask the same "ship
-     anyway?" question again (409 short_stock, replayed with confirmShortStock).
-     A drop-ship DO ships before receipt by choice and a migrated one moves no
-     stock, so neither is asked. Sister fix: Conts-ERP #787. */
-  if (SHIPPED_STATES.includes(toStatus) && DO_PRESHIP_STATUSES.has((prevStatus ?? '').toUpperCase()) && body.confirmShortStock !== true) {
-    const { data: head, error: headErr } = await scopeToCompanyId(sb.from('delivery_orders')
-      .select('warehouse_id, is_dropship, migrated_no_stock').eq('id', id), scopeCompanyId).maybeSingle();
-    if (headErr) return c.json({ error: 'stock_check_unavailable', reason: headErr.message }, 503);
-    const h = head as { warehouse_id: string | null; is_dropship: boolean | null; migrated_no_stock: boolean | null } | null;
-    if (h && h.is_dropship !== true && !isMigratedNoStock(h)) {
-      const { data: lines, error: linesErr } = await sb.from('delivery_order_items')
-        .select('id, so_item_id, item_code, item_group, description, variants, qty').eq('delivery_order_id', id);
-      if (linesErr) return c.json({ error: 'stock_check_unavailable', reason: linesErr.message }, 503);
-      const shortages = await checkDoStockAvailability(sb, ((lines ?? []) as Array<{ id: string; so_item_id: string | null; item_code: string | null; item_group: string | null; description: string | null; variants: VariantAttrs | null; qty: number | null }>).map((l) => ({
-        lineRef: l.id, soItemId: l.so_item_id, itemCode: l.item_code ?? '', itemGroup: l.item_group, productName: l.description,
-        variantKey: computeVariantKey(l.item_group, l.variants), qty: Number(l.qty ?? 0),
-      })), h.warehouse_id, scopeCompanyId);
-      if (shortages.length > 0) return c.json(shortStockResponse(shortages, []), 409);
-    }
+  /* Confirm is where a draft's stock leaves, so the Not Ready and short-stock
+     questions are asked HERE against the stock as it is now (a draft saved
+     before the GR ships with no dialog once the goods are in). */
+  if (SHIPPED_STATES.includes(toStatus) && DO_PRESHIP_STATUSES.has((prevStatus ?? '').toUpperCase())) {
+    const refused = await doConfirmPreflight(sb, id, scopeCompanyId, { confirmShortStock: body.confirmShortStock === true, confirmNotReady: body.confirmNotReady === true }, checkDoStockAvailability);
+    if (refused) return c.json(refused.body, refused.status);
   }
 
   /* Bug #3/#11 — ATOMIC cancel guard. Two concurrent cancels can both read a

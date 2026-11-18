@@ -8,7 +8,7 @@ import type { FlowNav } from "./relationship-map-model";
 import { fmtAmt } from "../lib/scm";
 import { useQueryClient } from "@tanstack/react-query";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog"; import { passesSoffioReminder } from "../vendor/scm/lib/soffio-reminder";
-import { useNotify } from "../vendor/scm/components/NotifyDialog"; import { notifySaveProblems } from "../vendor/scm/components/SaveProblemsList";
+import { useNotify } from "../vendor/scm/components/NotifyDialog"; import { notifySaveProblems } from "../vendor/scm/components/SaveProblemsList"; import { MobileSoDoDraftButton } from "./MobileSoDoDraftButton";
 import { usePrompt } from "../vendor/scm/components/PromptDialog"; import { CancelRequestPanel } from "../vendor/scm/components/CancelRequestPanel"; import { useCancelRequestAction } from "../pages/scm-v2/use-cancel-request-action"; import { WrongApproverFlagButton } from "../pages/scm-v2/WrongApproverFlagButton";
 import { fetchScanSlipImageBlobUrl } from "../vendor/scm/lib/slip"; import { fairLabel } from "../vendor/scm/lib/fair-options-queries"; import { fairElsewhereLine, type LinkedFair } from "../components/fairPick";
 import { MobileLinePhotos } from "./MobileLinePhotos";
@@ -1340,7 +1340,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
           {ph === "cancelled" && (
             <div style={{ textAlign: "center", fontSize: 11.5, color: "var(--mut2)", padding: 4 }}>This order was cancelled.</div>
           )}
-          {ph !== "draft" && canWriteSo && onConvert && <button className="btn-ghost" style={{ width: "100%", marginTop: 9 }} disabled={busy} onClick={() => onConvert({ copyFrom: docNo, picks: [] })}>Copy as new</button>}{/* HC-0149: the desktop list's Copy as new, same seed (lib/soCopyLines) */}
+          {ph === "submitted" && <MobileSoDoDraftButton so={{ doc_no: docNo, status: h.status, on_hold: (h as { on_hold?: boolean | null }).on_hold ?? null, has_undelivered: items.some((l) => l.remaining_qty == null) ? null : items.some((l) => (l.remaining_qty ?? 0) > 0) }} onCreated={(id) => { const nav = { kind: "module" as const, moduleKey: "delivery-orders-mfg", id }; if (flowNav?.can(nav)) flowNav.open(nav); }} />}{ph !== "draft" && canWriteSo && onConvert && <button className="btn-ghost" style={{ width: "100%", marginTop: 9 }} disabled={busy} onClick={() => onConvert({ copyFrom: docNo, picks: [] })}>Copy as new</button>}{/* HC-0149: the desktop list's Copy as new, same seed (lib/soCopyLines) */}
         </footer>
       )}
 

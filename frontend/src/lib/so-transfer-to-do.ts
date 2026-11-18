@@ -16,3 +16,6 @@ export function soOffersTransferToDo(row: {
 }): boolean {
   return soCanRaiseDo(row.status, row.on_hold ?? null) && row.has_undelivered !== false;
 }
+
+/** The SO menu entry that opens a DRAFT DO for every remaining line (owner 2026-11-18). */
+export const CONVERT_TO_DO_DRAFT_LABEL = "Convert to DO Draft";
