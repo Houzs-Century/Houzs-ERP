@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 import { api } from "../api/client";
 import "./mobile.css";
+import { PostcodeCascadeField } from "../vendor/scm/components/PostcodeCascadeField";
 
 /* ---------------------------------------------------------------------------
  * MobileModuleForm — ONE generic, config-driven mobile CREATE / EDIT form that
@@ -34,7 +35,10 @@ export type FormFieldType =
   | "email"
   | "select"
   | "money"
-  | "textarea";
+  | "textarea"
+  /* The Sales Order postcode picker (my_localities): picking one also fills the
+     form's "state" and "city" fields when the schema has them. */
+  | "postcode";
 
 /** A runtime-loaded option source — used when a select's options are real
  *  records (roles / departments / positions) that can't be a static list. */
@@ -340,6 +344,24 @@ export function MobileModuleForm({
             {schema.fields.map((f) => {
               const err = touched && !!f.required && !String(values[f.key] ?? "").trim();
               const options = f.optionsSource ? remoteOptions[f.key] ?? [] : f.options ?? [];
+              if (f.type === "postcode") {
+                const has = (k: string) => schema.fields.some((x) => x.key === k);
+                return (
+                  <PostcodeCascadeField
+                    key={f.key}
+                    value={values[f.key] ?? ""}
+                    state={values.state || ""}
+                    city={values.city || ""}
+                    label={f.required ? `${f.label} *` : f.label}
+                    onPick={(t) => {
+                      set(f.key, t.postcode);
+                      if (has("state")) set("state", t.state);
+                      if (has("city")) set("city", t.city);
+                    }}
+                    classes={{ field: "fld", label: "fld-l", select: "fld-i", input: "fld-i" }}
+                  />
+                );
+              }
               return (
                 <label key={f.key} className="fld">
                   <span className="fld-l" style={err ? { color: "var(--hz-c-err)" } : undefined}>

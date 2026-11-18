@@ -1,8 +1,9 @@
 // Trip pay against Nico's September 2026 sheet ("Houzs_Driver Comm + Worker
-// Allowance", 23 Aug - 22 Sep): Amir's own tab, row for row.
+// Allowance", 23 Aug - 22 Sep): Amir's own tab, row for row. These run under a
+// rates version saved before the 2026-11-17 redesign (OLD = a stored object
+// with no schema 2), which must keep paying exactly what it paid.
 import { describe, expect, test } from "vitest";
 import {
-  DEFAULT_TRIP_RATES,
   areaOfState,
   computeTripPay,
   kindFromSheet,
@@ -16,6 +17,9 @@ import {
   tripMonthOf,
   type TripRow,
 } from "./hr-trip-pay";
+
+const OLD = normalizeTripRates({});
+const NO_PUNCHES = new Map();
 
 const AMIR_TAB = [
   "Doc. No.\tTransfer To\tRef. No\tLocal Total\tDelivery Date\tAddress 4\tlorry plate\tdriver name\tHelper 1\tHelper 2",
@@ -117,7 +121,7 @@ describe("computeTripPay", () => {
   test("Amir, September: the sheet's RM1,520.10 plus the JB/PG day Nico confirmed was missed = RM1,600.10", () => {
     const { rows } = parseTripReport(AMIR_TAB);
     const { ids, employeeOf } = byName(rows);
-    const pay = computeTripPay({ rows, rates: DEFAULT_TRIP_RATES, employeeOf, missedDaysOf: () => 0 });
+    const pay = computeTripPay({ rows, rates: OLD, employeeOf, missedDaysOf: () => 0, punches: NO_PUNCHES });
     const amir = pay.get(ids.get("AMIR")!)!;
     expect(amir.commission).toMatchObject({ baseSen: 16502600, cutBps: 0, amountSen: 66010 });
     expect(amir.lines.map((l) => [l.key, l.count, l.amountSen])).toEqual([
@@ -135,7 +139,7 @@ describe("computeTripPay", () => {
   test("helpers earn the transport allowance only, once per day per area", () => {
     const { rows } = parseTripReport(AMIR_TAB);
     const { ids, employeeOf } = byName(rows);
-    const pay = computeTripPay({ rows, rates: DEFAULT_TRIP_RATES, employeeOf, missedDaysOf: () => 0 });
+    const pay = computeTripPay({ rows, rates: OLD, employeeOf, missedDaysOf: () => 0, punches: NO_PUNCHES });
     const wan = pay.get(ids.get("WAN")!)!;
     expect(wan).toMatchObject({ drove: false, helped: true, commission: { amountSen: 0 } });
     expect(wan.lines.map((l) => [l.key, l.dates])).toEqual([
@@ -152,17 +156,23 @@ describe("computeTripPay", () => {
       transferTo: "DO",
       refNo: "HC",
       kind: "DO",
+      jobType: "DELIVERY_ORDER",
+      eventType: null,
       localTotalSen: sen,
       state: "Selangor",
+      postcode: "",
       lorryPlate: "",
+      tripRef: "",
+      venueKey: "",
       drivers: [{ name: "D", employeeId: 1 }],
       helpers: helpers.map((h, i) => ({ name: h, employeeId: 10 + i })),
     });
     const pay = computeTripPay({
       rows: [row("2026-09-02", 34370400, ["A", "B"]), row("2026-09-03", 100000, ["A"])],
-      rates: DEFAULT_TRIP_RATES,
+      rates: OLD,
       employeeOf: (p) => p.employeeId,
       missedDaysOf: () => 2,
+      punches: NO_PUNCHES,
     }).get(1)!;
     expect(pay.commission.cutBps).toBe(10);
     expect(pay.commission.lines).toEqual([
@@ -175,14 +185,14 @@ describe("computeTripPay", () => {
   test("a service case with a charge counts toward the commission base, as the sheet does", () => {
     const { rows } = parseTripReport("SO-013031 - SERVICE\tASSR/2608-054\tHC11062-SERVICE\t1,900.00\t2026/09/19\tSelangor\tVPC\tD\tA\tB");
     expect(rows[0].kind).toBe("SERVICE_DELIVERY");
-    const pay = computeTripPay({ rows, rates: DEFAULT_TRIP_RATES, employeeOf: (p) => (p.name === "D" ? 1 : 2), missedDaysOf: () => 0 }).get(1)!;
+    const pay = computeTripPay({ rows, rates: OLD, employeeOf: (p) => (p.name === "D" ? 1 : 2), missedDaysOf: () => 0, punches: NO_PUNCHES }).get(1)!;
     expect(pay.commission.amountSen).toBe(760);
     expect(pay.lines.map((l) => l.key)).toEqual(["SERVICE_DELIVERY"]);
   });
 
   test("a name nobody resolves earns nothing", () => {
     const { rows } = parseTripReport(AMIR_TAB);
-    const pay = computeTripPay({ rows, rates: DEFAULT_TRIP_RATES, employeeOf: () => null, missedDaysOf: () => 0 });
+    const pay = computeTripPay({ rows, rates: OLD, employeeOf: () => null, missedDaysOf: () => 0, punches: NO_PUNCHES });
     expect(pay.size).toBe(0);
   });
 });
@@ -203,21 +213,22 @@ describe("overnight", () => {
   });
 
   test("paid RM50 a time, to whoever worked it, even with no trip row", () => {
+    const night = (d: string) => ({ workDate: d, inAt: `${d}T04:00:00.000Z`, outAt: `${d}T20:00:00.000Z` });
     const pay = computeTripPay({
       rows: [],
-      rates: DEFAULT_TRIP_RATES,
+      rates: OLD,
       employeeOf: () => null,
       missedDaysOf: () => 0,
-      overnight: new Map([[9, ["2026-10-04", "2026-10-11"]]]),
+      punches: new Map([[9, [night("2026-10-04"), night("2026-10-11")]]]),
     }).get(9)!;
-    expect(pay.lines).toEqual([{ key: "OVERNIGHT", label: "Overnight", count: 2, unitSen: 5000, amountSen: 10000, dates: ["2026-10-04", "2026-10-11"] }]);
+    expect(pay.lines).toEqual([{ key: "OVERNIGHT", label: "Overnight", category: "OVERNIGHT", count: 2, unitSen: 5000, amountSen: 10000, dates: ["2026-10-04", "2026-10-11"], items: [] }]);
     expect(pay.totalSen).toBe(10000);
   });
 });
 
 describe("rules", () => {
   test("leave cut is cumulative: 0.05, 0.10, 0.20, then 0.10 a day", () => {
-    expect([0, 1, 2, 3, 4].map((n) => leaveCutFor(n, DEFAULT_TRIP_RATES))).toEqual([0, 5, 10, 20, 30]);
+    expect([0, 1, 2, 3, 4].map((n) => leaveCutFor(n, OLD))).toEqual([0, 5, 10, 20, 30]);
   });
 
   test("trip month runs 23rd to 22nd, across the new year", () => {
@@ -257,8 +268,8 @@ describe("rules", () => {
 
   test("stored rates fall back field by field", () => {
     const r = normalizeTripRates({ fairSen: "12000", driverOutstationSen: { JP: 9000 }, leaveCutBps: [5, "x", 10] });
-    expect(r.fairSen).toBe(12000);
-    expect(r.driverOutstationSen).toEqual({ MIS: 3000, JP: 9000, TP: 12000, KEL: 15000 });
+    expect(r.legacy!.fairSen).toBe(12000);
+    expect(r.legacy!.driverOutstationSen).toEqual({ MIS: 3000, JP: 9000, TP: 12000, KEL: 15000 });
     expect(r.leaveCutBps).toEqual([5, 10]);
     expect(r.commission3Bps).toBe(40);
   });

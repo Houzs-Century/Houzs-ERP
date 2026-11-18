@@ -862,6 +862,9 @@ const ASSR: AssrFeedRow = {
   customer_pickup_at: "2026-09-21",
   delivery_by: "own",
   do_date: "2026-09-25",
+  case_postcode: null,
+  case_city: null,
+  case_state: null,
   customer_country: null,
   so_postcode: null,
   so_city: null,
@@ -924,6 +927,14 @@ describe("toAssrLegRecords — one own-team leg per set date, in the sheet's rec
     expect(toAssrLegRecords(own)[0]).toMatchObject({ InvAddr3: "50450 Kuala Lumpur" });
     const elsewhere = { ...ASSR, addr1: "8 Jalan Ampang, 50450", addr3: null, addr4: null, so_postcode: "47300", so_city: "Petaling Jaya", so_state: "Selangor" };
     expect(toAssrLegRecords(elsewhere)[0]).toMatchObject({ InvAddr3: null, InvAddr4: null });
+  });
+
+  test("a case with its own postcode / city / state prints like an SO and never names a part twice", () => {
+    const row = { ...ASSR, addr1: "1-G-9 Halaman Teratai", addr2: "Lebuh Nipah 2", addr3: null, addr4: null,
+      case_postcode: "11900", case_city: "Bayan Lepas", case_state: "Pulau Pinang", so_postcode: "47300", so_city: "Petaling Jaya", so_state: "Selangor" };
+    expect(toAssrLegRecords(row)[0]).toMatchObject({ InvAddr1: "1-G-9 Halaman Teratai", InvAddr2: "Lebuh Nipah 2", InvAddr3: "11900 Bayan Lepas", InvAddr4: "Penang" });
+    const old = { ...row, addr2: "Lebuh Nipah 2", addr3: "11900 Bayan Lepas" };
+    expect(toAssrLegRecords(old)[0]).toMatchObject({ InvAddr3: "11900 Bayan Lepas", InvAddr4: "Penang" });
   });
 
   test("a leg whose linked order is in Singapore routes to SG even when address line 3 lacks the word", () => {

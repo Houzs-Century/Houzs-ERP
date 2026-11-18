@@ -139,6 +139,9 @@ vi.mock('./settlement-queries', () => { const m = {
   confirmMatchedBatch: (id: number) => confirmMatchedBatch(id),
   useInvalidateAfterPosting: () => refreshAfterPosting,
   useIgnoreSettlementRow: () => ({ mutate: vi.fn(), isPending: false }),
+  /* No other company keeps an account here: 「2990 的单」 is offered nowhere (SoldByOtherCompany.test). */
+  useOtherCompanies: () => ({ data: { companies: [] } }),
+  useSoldBy: () => ({ mutate: vi.fn(), isPending: false, data: undefined }),
   /* "Find the sale" (docs/bugs/0792): what the server would answer for the
      lonely line — the sale keyed twelve days late, at the exact gross. */
   useFindPayments: (rowId: number | null, q: string) => ({

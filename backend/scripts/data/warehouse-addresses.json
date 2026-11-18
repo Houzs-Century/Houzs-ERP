@@ -1,0 +1,42 @@
+{
+  "about": "The company's own warehouse and showroom addresses, from the official site https://houzscentury.com/ (fetched 2026-11-17; owner confirmed they are public). Read by scripts/fill-master-postcodes.mjs: a scm.warehouses row matches when its name OR its code equals one of `names` ignoring case (`names` lists both warehouse names and warehouse codes); a row whose name and code point at different entries is refused. The street is written into an empty `location` only; City/State are written from scm.my_localities for the postcode. Not listed on purpose: GUANGZHOU WAREHOUSE, Consignment (Out), CASH & CARRY SEGMENT - FAIR (no fixed address), and code EM DISPLAY (not known which site it is; the SARAWAK DISPLAY name still matches).",
+  "source": "https://houzscentury.com/",
+  "fetched": "2026-11-17",
+  "entries": [
+    {
+      "names": ["Headquarter", "HQ"],
+      "street": "E-28-02 and E-28-03, Menara SUEZCAP 2, KL Gateway, No.2, Jalan Kerinchi, Gerbang Kerinchi Lestari",
+      "postcode": "59200", "city": "Kuala Lumpur", "state": "Kuala Lumpur"
+    },
+    {
+      "names": ["BALAKONG WAREHOUSE", "BALAKONG DISPLAY", "BALAKONG RETURNED TO SUPPLIER FOR SERVICE", "KL WAREHOUSE", "KL DISPLAY", "KL SERVICE"],
+      "street": "1831-B, Jalan KPB 1, Taman Bukit Belimbing",
+      "postcode": "43300", "city": "Seri Kembangan", "state": "Selangor"
+    },
+    {
+      "names": ["PENANG WAREHOUSE", "PENANG DISPLAY", "PENANG RETURNED TO SUPPLIER FOR SERVICE", "PG WAREHOUSE", "PG DISPLAY", "PG SERVICE"],
+      "street": "868, Jalan Estate Baru, Mukim 12",
+      "postcode": "14100", "city": "Simpang Ampat", "state": "Pulau Pinang"
+    },
+    {
+      "names": ["SBH WAREHOUSE", "SABAH DISPLAY", "SBH DISPLAY"],
+      "street": "Lot 6, Off Km 14, KK-Putatan Highway, Jalan Tombovo Merumtum, Kampung Tombovo",
+      "postcode": "88100", "city": "Putatan", "state": "Sabah"
+    },
+    {
+      "names": ["SARAWAK WAREHOUSE", "SARAWAK DISPLAY", "SRW WAREHOUSE"],
+      "street": "Lot 726, Jalan Bako, Demak Laut Industrial Park",
+      "postcode": "93050", "city": "Kuching", "state": "Sarawak"
+    },
+    {
+      "names": ["AKEMI SLEEP STUDIO KELANA JAYA", "CASH & CARRY SEGMENT - KELANA JAYA", "KELANA.J SHOWROOM", "C&C K.J"],
+      "street": "Floor 3, 109, Jalan SS 25/2, Taman Mayang",
+      "postcode": "47301", "city": "Petaling Jaya", "state": "Selangor"
+    },
+    {
+      "names": ["SUNWAY SHOWROOM"],
+      "street": "2F-36, Sunway Carnival Mall, 3068, Jalan Todak, Pusat",
+      "postcode": "13700", "city": "Seberang Jaya", "state": "Pulau Pinang"
+    }
+  ]
+}

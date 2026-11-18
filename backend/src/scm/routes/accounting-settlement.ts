@@ -32,7 +32,8 @@ import { hasHouzsPerm } from '../lib/houzs-perms';
 import { requireActiveCompanyId, allowedCompanyIds } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
 import { cardTotalsOf, parseStatement, type StatementColumnMap } from '../../acc/settlement-parse';
-import { matchStatement, recordedNotArrived, listOnce, UNTAGGED_LIST, type MatchBucket, type PaymentCandidate } from '../../acc/settlement-match';
+import { matchStatement, listOnce, UNTAGGED_LIST, type MatchBucket, type PaymentCandidate } from '../../acc/settlement-match';
+import { loadWaitingCardPayments } from '../../acc/waiting-card-payments';
 import {
   loadAcquirer, loadPaymentCandidates, loadSettledKeys, loadSettledKeysFor, linesAlreadyOnFile, confirmSettlementRow, confirmSettlementGroup, postStatementCharge,
   releaseSettlementRow, notThisOf, turnedDownKeysOf, MAX_TURNED_DOWN,
@@ -43,17 +44,20 @@ import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { resolveRoles } from '../../acc/rules';
 import { loadLineMonth, loadLiveMonthLock } from '../../acc/bank';
 import { lockedRefusal } from '../../acc/bank-lock';
+import { bankFollowsMerchant, type BankFollows } from './accounting-bank';
+import { unmarkSoldBy } from '../../acc/settlement-sold-by';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
 /** The permission check the brief asks for at this end (the page checks at the
     other). One wrapper, so no handler in this file can be added without it. */
-const guard = (handler: (c: Ctx) => Promise<Response>) => async (c: Ctx): Promise<Response> => {
+export const settlementGuard = (handler: (c: Ctx) => Promise<Response>) => async (c: Ctx): Promise<Response> => {
   if (!hasHouzsPerm(c, 'scm.payment_voucher.post')) {
     return c.json({ error: "You don't have permission to reconcile acquirer settlements." }, 403);
   }
   return handler(c);
 };
+const guard = settlementGuard;
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -913,7 +917,7 @@ export const settlementBatchDetail = guard(async (c) => {
     /* Every credit recorded against this statement, and what is still out. */
     loadBatchReceipts(sb, co.companyId, batchId),
     sb.from('acc_settlement_rows')
-      .select('id, line_no, txn_date, ref, gross_sen, fee_sen, net_sen, bucket, match_reason, confirmed_at, posted_je_no, notes, matched_with_row_id, not_this, channel')
+      .select('id, line_no, txn_date, ref, gross_sen, fee_sen, net_sen, bucket, match_reason, confirmed_at, posted_je_no, notes, matched_with_row_id, not_this, channel, sold_by_company_id')
       .eq('batch_id', batchId).eq('company_id', co.companyId).order('line_no'),
   ]);
   const { data: batch, error: bErr } = batchRes;
@@ -1135,6 +1139,28 @@ export const settlementBatchDetail = guard(async (c) => {
    Deciding a line
    ════════════════════════════════════════════════════════════════════════ */
 
+/* THE BANK FOLLOWS THE MERCHANT SIDE (owner 2026-11-17: 我只要对一边). Once a
+   line is confirmed, a bank credit this report now fully accounts for matches
+   itself (accounting-bank applyMerchantAgreedMatches): a ready QR credit, or a
+   payout of exactly what the report is still owed now that every line of it is
+   confirmed. Looked for around the report's first trading day. */
+type Sb = Parameters<typeof bankFollowsMerchant>[0];
+export async function bankFollows(sb: Sb, companyId: number, batchIds: number[], actor: string | null): Promise<BankFollows> {
+  const ids = [...new Set(batchIds.filter((n) => Number.isInteger(n) && n > 0))];
+  if (ids.length === 0) return { matched: 0, jeNos: [], left: [] };
+  const { data, error } = await sb.from('acc_settlement_batches').select('period_from').eq('company_id', companyId).in('id', ids);
+  if (error) return { error: error.message };
+  const from = ((data ?? []) as Array<{ period_from: string | null }>).map((b) => String(b.period_from ?? '').slice(0, 10)).filter(Boolean).sort()[0] ?? null;
+  return bankFollowsMerchant(sb, companyId, from, actor);
+}
+/** The reports these lines are on. */
+async function batchesOfRows(sb: Sb, companyId: number, rowIds: number[]): Promise<number[]> {
+  if (rowIds.length === 0) return [];
+  const { data, error } = await sb.from('acc_settlement_rows').select('batch_id').eq('company_id', companyId).in('id', rowIds);
+  if (error) return [];
+  return [...new Set(((data ?? []) as Array<{ batch_id: number }>).map((r) => Number(r.batch_id)))];
+}
+
 /* POST /rows/:id/confirm — the moment that posts. `payments` may hold several
    (一笔刷卡对应两张订单); the sum must be the statement line, to the sen. */
 export const settlementConfirmRow = guard(async (c) => {
@@ -1165,7 +1191,9 @@ export const settlementConfirmRow = guard(async (c) => {
       : 500;
     return c.json({ error: r.status, message: r.reason }, status);
   }
-  return c.json(r);
+  const sb = c.get('supabase');
+  const actor = (c.get('houzsUser') as { name?: string } | undefined)?.name ?? null;
+  return c.json({ ...r, bank: await bankFollows(sb, co.companyId, await batchesOfRows(sb, co.companyId, [rowId]), actor) });
 });
 
 /* POST /rows/confirm-together — several lines of one report confirmed against
@@ -1198,7 +1226,9 @@ export const settlementConfirmGroup = guard(async (c) => {
       : 500;
     return c.json({ error: r.status, message: r.reason }, status);
   }
-  return c.json(r);
+  const sb = c.get('supabase');
+  const actor = (c.get('houzsUser') as { name?: string } | undefined)?.name ?? null;
+  return c.json({ ...r, bank: await bankFollows(sb, co.companyId, await batchesOfRows(sb, co.companyId, rowIds), actor) });
 });
 
 /* POST /batches/:id/confirm-matched — the "全部确认" button: post every line
@@ -1324,6 +1354,7 @@ export const settlementConfirmMatched = guard(async (c) => {
     confirmed,
     failed,
     statementCharge: charge.ok ? { status: charge.status, ...(charge.jeNo ? { jeNo: charge.jeNo } : {}) } : null,
+    bank: confirmed > 0 ? await bankFollows(sb, co.companyId, [batchId], userName) : { matched: 0, jeNos: [], left: [] },
   });
 });
 
@@ -1442,6 +1473,13 @@ export const settlementRowUnconfirm = guard(async (c) => {
   if (!co.ok) return c.json(co.refusal, 409);
   const rowId = Number(c.req.param('id'));
   if (!Number.isInteger(rowId)) return c.json({ error: 'bad_id' }, 400);
+  /* A line booked as another company's sale goes back through its own journal. */
+  const sold = await unmarkSoldBy(c.get('supabase'), co.companyId, rowId);
+  if (sold.ok) return c.json({ ok: true, ...(sold.jeNo ? { reversalJeNo: sold.jeNo } : {}) });
+  if (sold.status !== 'not_sold_by') {
+    const code = sold.status === 'not_found' ? 404 : sold.status === 'has_receipts' ? 409 : 500;
+    return c.json({ error: sold.status, message: sold.reason }, code);
+  }
   const r = await unconfirmSettlementRow(c.get('supabase'), co.companyId, rowId);
   if (!r.ok) {
     const code = r.status === 'not_found' ? 404
@@ -1551,35 +1589,17 @@ export const settlementWatchlist = guard(async (c) => {
   const acquirers = ((acqRaw ?? []) as Array<{ code: string; display_name: string; date_tolerance_days: number; so_names?: string[] | null }>)
     .filter((a) => !only || a.code === only);
 
-  /* Every merchant's pool and the stranded lines are read together — they were
-     read one merchant after another. The pools are then walked in the same
-     order as before, which listOnce depends on. */
-  const [pools, strandedRes] = await Promise.all([
-    Promise.all(acquirers.map((a) => loadPaymentCandidates(sb, co.companyId, a, from, to))),
+  /* The waiting card payments and the stranded lines are read together; the
+     list's one rule is acc/waiting-card-payments, which Bank Recon reads too. */
+  const [waiting, strandedRes] = await Promise.all([
+    loadWaitingCardPayments(sb, co.companyId, acquirers, from, to),
     paginateAll<Record<string, any>>((f, t) => sb
       .from('acc_settlement_rows').select('id, batch_id, acquirer_code, txn_date, ref, gross_sen, fee_sen, net_sen, notes')
       .eq('company_id', co.companyId).eq('bucket', 'UNMATCHED')
       .gte('txn_date', from).lte('txn_date', to).order('txn_date').order('id').range(f, t)),
   ]);
-  const pooled: PaymentCandidate[] = [];
-  for (const got of pools) {
-    if (!got.ok) return c.json({ error: 'load_failed', reason: got.reason }, 500);
-    pooled.push(...got.payments);
-  }
-  /* Claimed or not, asked of the pooled payments only (see loadSettledKeysFor). */
-  const settled = await loadSettledKeysFor(sb, co.companyId, pooled);
-  if (!settled.ok) return c.json({ error: 'load_failed', reason: settled.reason }, 500);
-
-  /* An untagged payment is in EVERY acquirer's pool — that is how a statement
-     finds it — but it is ONE payment on this list, under no acquirer
-     (docs/bugs/0688: the owner saw the same instalment under GHL, HLB, MBB and
-     PBB, and the header counting it four times). */
-  const recorded: Array<PaymentCandidate & { ageDays: number; acquirerCode: string | null }> = [];
-  const listedUntagged = new Set<string>();
-  acquirers.forEach((a, i) => {
-    const got = pools[i] as { ok: true; payments: PaymentCandidate[] };
-    recorded.push(...listOnce(recordedNotArrived(got.payments, settled.keys, to), a.code, listedUntagged));
-  });
+  if (!waiting.ok) return c.json({ error: 'load_failed', reason: waiting.reason }, 500);
+  const recorded = waiting.payments;
 
   const { data: strandedRaw, error: sErr } = strandedRes;
   if (sErr) return c.json({ error: 'load_failed', reason: sErr.message }, 500);

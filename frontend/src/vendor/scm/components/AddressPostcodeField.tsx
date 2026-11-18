@@ -1,4 +1,4 @@
-import { ChevronDown } from 'lucide-react';
+import type { ReactNode } from 'react';
 import { SearchableSelect } from './SearchableSelect';
 import { SgPostcodeField } from './SgPostcodeField';
 import { sortByNumeric } from '../lib/sort-options';
@@ -25,6 +25,7 @@ export const AddressPostcodeField = ({
   placeholder,
   disabled,
   title,
+  label,
   classes,
 }: {
   country: string;
@@ -36,6 +37,8 @@ export const AddressPostcodeField = ({
   placeholder: string;
   disabled?: boolean;
   title?: string;
+  /** The field's caption; "Postcode" when not given. */
+  label?: ReactNode;
   classes?: { field?: string; label?: string; select?: string; selectWrap?: string; chevron?: string; input?: string };
 }) => {
   const c = classes ?? {};
@@ -55,19 +58,17 @@ export const AddressPostcodeField = ({
   }
   return (
     <label className={c.field}>
-      <span className={c.label}>Postcode</span>
-      <span className={c.selectWrap}>
-        <SearchableSelect
-          className={c.select}
-          value={value}
-          onChange={onCascadePick}
-          disabled={disabled}
-          title={title}
-          placeholder={placeholder}
-          options={sortByNumeric(postcodeChoices).map((p) => ({ value: p, label: p }))}
-        />
-        <ChevronDown size={14} strokeWidth={1.75} className={c.chevron} />
-      </span>
+      <span className={c.label}>{label ?? 'Postcode'}</span>
+      <SearchableSelect
+        chevron
+        className={c.select}
+        value={value}
+        onChange={onCascadePick}
+        disabled={disabled}
+        title={title}
+        placeholder={placeholder}
+        options={sortByNumeric(postcodeChoices).map((p) => ({ value: p, label: p }))}
+      />
     </label>
   );
 };

@@ -103,8 +103,16 @@ describe("snapshotFromAssr — location doubles as state", () => {
     expect(snap.party_type).toBe("CUSTOMER");
     expect(snap.party_name).toBe("Nurul");
     expect(snap.address1).toBe("8 Jalan SS15");
-    expect(snap.state).toBe("Selangor");           // location is the region key
-    expect(snap.postcode).toBeNull();              // assr has no postcode
+    expect(snap.state).toBe("Selangor");           // no State of its own -> location
+    expect(snap.postcode).toBeNull();              // no assr_case_address row
+  });
+
+  test("the case's own postcode / city / state (assr_case_address) are copied", () => {
+    const snap = snapshotFromAssr({
+      customer_name: "Lim", phone: "012-3", addr1: "1-G-9 Halaman Teratai", addr2: "Lebuh Nipah 2",
+      addr3: null, addr4: null, location: "PG", postcode: "11900", city: "Bayan Lepas", state: "Pulau Pinang",
+    });
+    expect(snap).toMatchObject({ postcode: "11900", city: "Bayan Lepas", state: "Pulau Pinang" });
   });
 });
 

@@ -27,7 +27,7 @@ type NoteActivity = {
   created_at: string;
 };
 
-type ActivityResponse = { activity: NoteActivity[] };
+type ActivityResponse = { data: NoteActivity[] };
 
 /** DOM id of the collapsible Chat section — the floating "Chat" FAB in
  *  ProjectDetailView uses it to scroll the page to the panel and pop it open
@@ -53,7 +53,7 @@ export function MobileProjectChat({
   const qc = useQueryClient();
   const queryKey = ["mobile-project-chat", projectId] as const;
 
-  const { data, isLoading } = useQuery({
+  const { data: activityResponse, isLoading, error: loadError } = useQuery({
     queryKey,
     queryFn: () => api.get<ActivityResponse>(`/api/projects/${projectId}/activity`),
     refetchInterval: 30_000,
@@ -89,9 +89,9 @@ export function MobileProjectChat({
       setDraft("");
       setFailed(null);
     },
-    onSuccess: (_data, { localId }) => {
+    onSuccess: async (_data, { localId }) => {
+      await qc.invalidateQueries({ queryKey });
       setPending((prev) => prev.filter((p) => p.id !== localId));
-      void qc.invalidateQueries({ queryKey });
       onPosted();
     },
     onError: (e, { localId, note }) => {
@@ -103,7 +103,7 @@ export function MobileProjectChat({
     },
   });
 
-  const notes = (data?.activity ?? []).filter((a) => a.action === "note");
+  const notes = (activityResponse?.data ?? []).filter((a) => a.action === "note");
   const listRef = useRef<HTMLDivElement | null>(null);
   // Auto-scroll to the newest message every time the count changes — fires for
   // both the optimistic "sending" row and the real one that replaces it, so
@@ -149,6 +149,10 @@ export function MobileProjectChat({
         >
           {isLoading ? (
             <div style={{ padding: 12, fontSize: 12, color: "var(--hz-c-ink-soft)" }}>Loading…</div>
+          ) : loadError && notes.length === 0 && pending.length === 0 ? (
+            <div role="alert" style={{ padding: 12, fontSize: 12, color: "var(--hz-c-err)" }}>
+              Couldn't load the chat ({loadError.message}). A message you sent may already be saved, so reload before sending it again.
+            </div>
           ) : notes.length === 0 && pending.length === 0 ? (
             <div style={{ padding: 12, fontSize: 12, color: "var(--hz-c-ink-soft)" }}>No messages yet.</div>
           ) : (

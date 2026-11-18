@@ -33,6 +33,8 @@ import { useMfgProducts, type MfgProductRow } from '../../vendor/scm/lib/mfg-pro
 import { useCreateMfgSalesOrder } from '../../vendor/scm/lib/sales-order-queries';
 import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
+import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
+import { passesSoffioReminder } from '../../vendor/scm/lib/soffio-reminder';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { NumberInput } from '../../vendor/scm/components/NumberInput';
@@ -186,6 +188,7 @@ const specToBody = (s: SoSpec) => ({
 export const SoFromProducts = () => {
   const navigate = useNavigate();
   const notify = useNotify();
+  const askConfirm = useConfirm();
   const prodQ = useMfgProducts({});
   const createSo = useCreateMfgSalesOrder();
 
@@ -219,6 +222,7 @@ export const SoFromProducts = () => {
 
   const runBatch = async (specs: SoSpec[]) => {
     if (specs.length === 0) return;
+    if (!(await passesSoffioReminder(askConfirm, specs.flatMap((s) => s.lines.map((l) => l.itemCode))))) return;
     setRunning(true); setResult(null); setProgress({ done: 0, total: specs.length });
     const created: string[] = [];
     const errors: { name: string; msg: string }[] = [];

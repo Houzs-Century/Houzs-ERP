@@ -98,6 +98,9 @@ vi.mock('./bank-queries', () => ({
   useBookBankReceipt: () => ({ mutate: bookMutate, mutateAsync: bookMutateAsync, isPending: false, isError: false, error: null }),
   useMatchBankLine: () => ({ mutate: matchMutate, isPending: false, isError: false, error: null }),
   useMatchBankGroup: () => ({ mutate: groupMutate, isPending: false, isError: false, error: null }),
+  useMatchWithCards: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
+  useBankCardPayments: () => ({ data: undefined, isLoading: false }),
+  cardPaymentKey: (p: { source: string; id: string }) => `${p.source}:${p.id}`,
   useSetStatementPeriod: () => ({ mutate: periodMutate, isPending: false, isError: false, error: null }),
   useAutoMatchStatement: () => ({ mutate: autoMatchMutate, isPending: false, isError: false, error: null, data: autoMatchResult }),
   useIgnoreBankLine: () => ({ mutate: ignoreMutate, isPending: false, isError: false, error: null }),
@@ -346,6 +349,14 @@ describe('matching the obvious ones', () => {
     fireEvent.click(screen.getByText('Show'));
     expect(screen.getByText(/matched by the voucher number on the bank's line/)).toBeTruthy();
     expect(screen.queryByText(/matched by amount and name/)).toBeNull();
+  });
+
+  /* Owner 2026-11-17: 他应该和 merchant 一样我只要对一边 — a QR credit its report accounts for matched itself. */
+  test('a QR credit that matched itself says the merchant report agrees', () => {
+    lines = [{ ...OTHER, state: 'POSTED', posted_je_no: '2990-JE-2611-0430', matches: [{ je_no: '2990-JE-2611-0430', amount_sen: 61500, match_reason: 'qr+report' }] }];
+    openStatement();
+    fireEvent.click(screen.getByText('Show'));
+    expect(screen.getByText(/matched by itself: the merchant report agrees/)).toBeTruthy();
   });
 });
 

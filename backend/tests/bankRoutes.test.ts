@@ -460,17 +460,17 @@ describe('booking a credit against the merchant statement it pays', () => {
     return detail.lines.find((l: any) => l.kind === 'PAYOUT');
   };
 
-  test('posts through layer 3, on the BANK date, for the BANK amount', async () => {
+  /* Owner 2026-11-17 (他应该和 merchant 一样我只要对一边): a payout its report —
+     every line confirmed — is owed exactly is booked by the upload itself. */
+  test('a certain payout is booked on upload, through layer 3, on the BANK date, for the BANK amount', async () => {
     const { app, sb } = ready();
     const up = await (await upload(app)).json() as any;
+    expect(up.autoMatched).toBe(1);
     const line = await firstPayout(app, up.statementId);
-    expect(line).toBeTruthy();
-
-    const res = await post(app, `/bank/lines/${line.id}/receipt`, { batchId: 1 });
-    expect(res.status).toBe(200);
+    expect(line).toMatchObject({ state: 'POSTED' });
 
     /* One receipt, carrying the date and the reference off the statement —
-       nobody retyped either. */
+       nobody retyped either, and nobody pressed anything. */
     const receipts = sb.tables.acc_settlement_receipts as Row[];
     expect(receipts).toHaveLength(1);
     expect(receipts[0]!.received_on).toBe('2026-08-03');
@@ -478,21 +478,20 @@ describe('booking a credit against the merchant statement it pays', () => {
     expect(receipts[0]!.bank_ref).toBe('00113107');
   });
 
-  test('a second attempt on the same movement is refused, not doubled', async () => {
-    const { app } = ready();
+  test('pressing Money received on a payout already booked is refused, not doubled', async () => {
+    const { app, sb } = ready();
     const up = await (await upload(app)).json() as any;
     const line = await firstPayout(app, up.statementId);
-    expect((await post(app, `/bank/lines/${line.id}/receipt`, { batchId: 1 })).status).toBe(200);
     const again = await post(app, `/bank/lines/${line.id}/receipt`, { batchId: 1 });
     expect(again.status).toBe(409);
     expect((await again.json() as any).error).toBe('not_open');
+    expect(sb.tables.acc_settlement_receipts).toHaveLength(1);
   });
 
   test('undo REVERSES the entry and puts the movement back', async () => {
     const { app, sb } = ready();
     const up = await (await upload(app)).json() as any;
     const line = await firstPayout(app, up.statementId);
-    await post(app, `/bank/lines/${line.id}/receipt`, { batchId: 1 });
 
     const res = await post(app, `/bank/lines/${line.id}/undo`);
     expect(res.status).toBe(200);
@@ -889,27 +888,21 @@ describe('the matcher decision survives the round trip', () => {
   };
 
   test('each credit carries the statement whose day and amount agreed, not the first of the acquirer', async () => {
-    const { app } = harness(TWO_BATCHES);
+    const { app, sb } = harness(TWO_BATCHES);
     const up = await (await upload(app)).json() as any;
-    const detail = await (await app.request(`/bank/statements/${up.statementId}`)).json() as any;
-
-    const byRef = (ref: string) => detail.lines.find((l: any) => l.reference === ref);
-    /* Two candidates for both, and they must NOT get the same answer. */
-    expect(byRef('00113107').candidates.length).toBe(2);
-    expect(byRef('00113107').matched_batch_id).toBe(1);
-    expect(byRef('D90200808').matched_batch_id).toBe(2);
+    expect(up.kinds.PAYOUT).toBe(2);
+    /* Both were certain, so both were booked on the way in — each to its own report. */
+    const lineOf = (ref: string) => (sb.tables.acc_bank_statement_lines as Row[]).find((l) => l.reference === ref)!;
+    expect(lineOf('00113107')).toMatchObject({ matched_batch_id: 1, state: 'POSTED' });
+    expect(lineOf('D90200808')).toMatchObject({ matched_batch_id: 2, state: 'POSTED' });
   });
 
   test('booking each against its own statement pays both off', async () => {
-    const { app } = harness(TWO_BATCHES);
-    const up = await (await upload(app)).json() as any;
-    const detail = await (await app.request(`/bank/statements/${up.statementId}`)).json() as any;
-
-    for (const l of detail.lines.filter((x: any) => x.kind === 'PAYOUT')) {
-      const res = await post(app, `/bank/lines/${l.id}/receipt`, { batchId: l.matched_batch_id });
-      expect(res.status, `line ${l.line_no}`).toBe(200);
-      expect((await res.json() as any).results[0].outstandingSen).toBe(0);
-    }
+    const { app, sb } = harness(TWO_BATCHES);
+    await upload(app);
+    const receipts = (sb.tables.acc_settlement_receipts as Row[]).map((r) => [r.batch_id, r.amount_sen, r.bank_ref]);
+    expect(receipts).toEqual(expect.arrayContaining([[1, 728448, '00113107'], [2, 87106, 'D90200808']]));
+    expect(receipts).toHaveLength(2);
   });
 });
 
@@ -1198,23 +1191,18 @@ describe('a report the bank charged', () => {
   });
 
   test('is owed its net less the charge, and the advice for that figure is trusted', async () => {
-    const { app } = charged();
+    const { app, sb } = charged();
     const up = await (await upload(app, { fileName: 'aug-charged.csv', content: CHARGED })).json() as any;
     expect(up.kinds.PAYOUT).toBe(1);
-    const detail = await (await app.request(`/bank/statements/${up.statementId}`)).json() as any;
-    const line = detail.lines[0];
-    expect(line.kind).toBe('PAYOUT');
-    expect(line.matched_batch_id).toBe(1);
-    expect(line.candidates[0]).toMatchObject({ id: 1, outstandingSen: 696048 });
+    const line = (sb.tables.acc_bank_statement_lines as Row[])[0]!;
+    expect(line).toMatchObject({ kind: 'PAYOUT', matched_batch_id: 1 });
     expect(String(line.note)).toMatch(/payment advice/);
   });
 
-  test('books the credit, and the report is then fully received — credit plus charge', async () => {
+  test('books the credit on upload, and the report is then fully received — credit plus charge', async () => {
     const { app, sb } = charged();
     const up = await (await upload(app, { fileName: 'aug-charged.csv', content: CHARGED })).json() as any;
-    const detail = await (await app.request(`/bank/statements/${up.statementId}`)).json() as any;
-    const res = await post(app, `/bank/lines/${detail.lines[0].id}/receipt`, { batchId: 1 });
-    expect(res.status).toBe(200);
+    expect(up.autoMatched).toBe(1);
     expect((sb.tables.acc_settlement_receipts as Row[])[0]).toMatchObject({ batch_id: 1, amount_sen: 696048 });
     /* Nothing is owed any more: it is off the payable list. */
     const after = await (await app.request(`/bank/statements/${up.statementId}`)).json() as any;
@@ -1268,9 +1256,8 @@ describe('what a card movement looks like is re-decided on every read', () => {
     const up = await (await upload(app)).json() as any;
     const detail = await (await app.request(`/bank/statements/${up.statementId}`)).json() as any;
     const payout = detail.lines.find((l: any) => l.kind === 'PAYOUT');
-    expect((await post(app, `/bank/lines/${payout.id}/receipt`, { batchId: 1 })).status).toBe(200);
-    /* The report is paid now; a fresh decision would find no report waiting.
-       A POSTED line is not re-decided. */
+    /* Booked on the way in. The report is paid now; a fresh decision would find
+       no report waiting. A POSTED line is not re-decided. */
     const after = await (await app.request(`/bank/statements/${up.statementId}`)).json() as any;
     expect(after.lines.find((l: any) => l.id === payout.id)).toMatchObject({ state: 'POSTED', kind: 'PAYOUT', matched_batch_id: 1 });
     expect(sb.tables.acc_settlement_receipts).toHaveLength(1);
@@ -1406,11 +1393,33 @@ describe('splitting one credit across several statements', () => {
     return { app, sb, line: detail.lines[0] };
   };
 
-  test('the upload works out which statements add up, and says so', async () => {
+  test('the upload works out which statements add up, and says so — and leaves it for a person', async () => {
     const { line } = await openSplit();
     expect(line.kind).toBe('PAYOUT_SPLIT');
     expect(line.split).toEqual([{ batchId: 1, amountSen: 728448 }, { batchId: 2, amountSen: 87106 }]);
     expect(line.note).toMatch(/2 of MBB's reports add up to RM 8,155\.54 exactly/);
+    /* Owner 2026-11-17 (A): amounts adding up are a guess; nobody's advice says so. */
+    expect(line.state).toBe('OPEN');
+  });
+
+  /* Owner 2026-11-17, A — auto with advice: when the acquirer's payment advice
+     names the days this credit pays, it is booked across the reports by itself. */
+  test('a credit the payment advice spells out over several reports is booked on upload', async () => {
+    const { app, sb } = harness({
+      ...SPLIT_WORLD,
+      acc_settlement_payouts: [{ id: 9, company_id: CO, acquirer_code: 'MBB', file_name: 'adv-0815.pdf', advice_date: '2026-08-15', net_sen: 815554 }],
+      acc_settlement_payout_batches: [
+        { id: 1, company_id: CO, payout_id: 9, batch_id: 1, settled_on: '2026-07-31', net_sen: 728448 },
+        { id: 2, company_id: CO, payout_id: 9, batch_id: 2, settled_on: '2026-08-08', net_sen: 87106 },
+      ],
+    });
+    const up = await (await upload(app, { content: ONE_CREDIT })).json() as any;
+    expect(up.autoMatched).toBe(1);
+    const line = (sb.tables.acc_bank_statement_lines as Row[])[0]!;
+    expect(line).toMatchObject({ kind: 'PAYOUT_SPLIT', state: 'POSTED' });
+    expect(String(line.note)).toMatch(/payment advice of 2026-08-15 says/);
+    const receipts = (sb.tables.acc_settlement_receipts as Row[]).map((r) => [r.batch_id, r.amount_sen, r.bank_line_id]);
+    expect(receipts).toEqual([[1, 728448, line.id], [2, 87106, line.id]]);
   });
 
   test('booking it writes one receipt per statement, each with its own entry', async () => {
@@ -1604,12 +1613,7 @@ describe('which bank a payout is booked to', () => {
     const { app, sb } = elsewhere();
     /* …but the credit arrives on the 330-0000 statement. */
     const up = await (await upload(app)).json() as any;
-    const detail = await (await app.request(`/bank/statements/${up.statementId}`)).json() as any;
-    const payout = detail.lines.find((l: any) => l.kind === 'PAYOUT');
-    const res = await post(app, `/bank/lines/${payout.id}/receipt`, {
-      allocations: [{ batchId: payout.matched_batch_id, amountSen: payout.amount_sen }],
-    });
-    expect(res.status).toBe(200);
+    expect(up.autoMatched).toBe(1);
 
     const lines = (sb.tables.journal_entry_lines as Row[]).filter((l) => Number(l.debit_sen ?? 0) > 0);
     expect(lines.map((l) => l.account_code)).toContain('330-0000');
@@ -1857,8 +1861,9 @@ describe('a month somebody has closed', () => {
      refuse it; the guard reads the movements' own dates. */
   test('a lock on another month does not refuse the work', async () => {
     const { app, lines } = await openedThen([LOCK('2026-03')]);
+    /* Booked on the way in; taking it back is work on August. */
     const payout = lines.find((l) => l.kind === 'PAYOUT');
-    const res = await post(app, `/bank/lines/${payout.id}/receipt`, { batchId: 1 });
+    const res = await post(app, `/bank/lines/${payout.id}/undo`);
     expect(res.status).toBe(200);
   });
 
@@ -1869,7 +1874,7 @@ describe('a month somebody has closed', () => {
       LOCK('2026-08', { released_at: '2026-10-05T01:00:00Z', released_by: 'Chew', release_note: 'bank re-issued' }),
     ]);
     const payout = lines.find((l) => l.kind === 'PAYOUT');
-    const res = await post(app, `/bank/lines/${payout.id}/receipt`, { batchId: 1 });
+    const res = await post(app, `/bank/lines/${payout.id}/undo`);
     expect(res.status).toBe(200);
   });
 });
@@ -1889,11 +1894,9 @@ describe('layer 3 undo cannot reach into a closed bank month', () => {
       acc_settlement_batches: [structuredClone(PRISTINE.batch)],
       acc_settlement_rows: [structuredClone(PRISTINE.row)],
     });
+    /* A certain payout: the upload books it (owner 2026-11-17). */
     const up = await (await upload(rig.app)).json() as any;
-    const detail = await (await rig.app.request(`/bank/statements/${up.statementId}`)).json() as any;
-    const payout = (detail.lines as any[]).find((l) => l.kind === 'PAYOUT');
-    const res = await post(rig.app, `/bank/lines/${payout.id}/receipt`, { batchId: 1 });
-    expect(res.status).toBe(200);
+    expect(up.autoMatched).toBe(1);
     const receipts = rig.sb.tables.acc_settlement_receipts as Row[];
     expect(receipts).toHaveLength(1);
     return { ...rig, receiptId: receipts[0]!.id as number };

@@ -81,8 +81,11 @@ describe("buildPayslip", () => {
       drove: true,
       helped: false,
       commission: { lines: [{ crew: 3 as const, baseSen: 16502600, rateBps: 40, amountSen: 66010 }], baseSen: 16502600, missedDays: 0, cutBps: 0, amountSen: 66010 },
-      lines: [{ key: "FAIR", label: "Fair", count: 4, unitSen: 10000, amountSen: 40000, dates: [] }],
+      lines: [{ key: "FAIR", label: "Fair", category: "JOB" as const, count: 4, unitSen: 10000, amountSen: 40000, dates: [], items: [] }],
       allowanceSen: 40000,
+      jobAllowanceSen: 40000,
+      outstationSen: 0,
+      overnightSen: 0,
       totalSen: 106010,
     };
     const s = buildPayslip({
@@ -120,8 +123,11 @@ describe("buildPayslip", () => {
         drove: true,
         helped: false,
         commission: { lines: [], baseSen: 0, missedDays: 0, cutBps: 0, amountSen: 66010 },
-        lines: [{ key: "FAIR", label: "Fair", count: 4, unitSen: 10000, amountSen: 40000, dates: [] }],
+        lines: [{ key: "FAIR", label: "Fair", category: "JOB", count: 4, unitSen: 10000, amountSen: 40000, dates: [], items: [] }],
         allowanceSen: 40000,
+        jobAllowanceSen: 40000,
+        outstationSen: 0,
+        overnightSen: 0,
         totalSen: 106010,
       },
     });

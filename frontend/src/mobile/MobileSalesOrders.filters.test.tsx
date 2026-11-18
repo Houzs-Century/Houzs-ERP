@@ -23,6 +23,7 @@ vi.mock("../auth/AuthContext", () => ({
 
 import { MobileSalesOrders } from "./MobileSalesOrders";
 import { NotifyProvider } from "../vendor/scm/components/NotifyDialog";
+import { ConfirmProvider } from "../vendor/scm/components/ConfirmDialog";
 
 afterEach(cleanup);
 
@@ -51,7 +52,9 @@ function renderList(initial: string) {
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
       <MemoryRouter initialEntries={[initial]}>
         <NotifyProvider>
-          <MobileSalesOrders onScan={() => {}} onOpen={() => {}} onNew={() => {}} />
+          <ConfirmProvider>
+            <MobileSalesOrders onScan={() => {}} onOpen={() => {}} onNew={() => {}} />
+          </ConfirmProvider>
         </NotifyProvider>
         <Probe />
       </MemoryRouter>

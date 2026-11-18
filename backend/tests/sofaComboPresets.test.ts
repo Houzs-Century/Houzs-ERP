@@ -1,6 +1,6 @@
 /* New combo presets (mig 20261112T1400; owner 2026-11-12: the hard-coded list
    becomes maintainable), on the real handlers over fake PostgREST:
-     • list in order, add at the end, rename, change slots, switch off, reorder;
+     • list in order, add at the end, rename, change slots, switch off, reorder, delete;
      • writes need the combo-pricing permission (scm.config.write);
      • company scope: company A neither sees nor edits company B's presets. */
 import { describe, expect, test, vi } from 'vitest';
@@ -35,7 +35,9 @@ function harness(opts: { company: number; canWrite: boolean }) {
   app.route('/sofa-combo-presets', sofaComboPresets as unknown as Hono);
   const req = (path: string, method: string, body?: unknown) =>
     app.request(path, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) }, {});
-  return { req, rows: (sb as unknown as { tables: Record<string, Row[]> }).tables.sofa_combo_presets };
+  const tables = (sb as unknown as { tables: Record<string, Row[]> }).tables;
+  // A delete replaces the table's array, so `current` re-reads it.
+  return { req, rows: tables.sofa_combo_presets, current: () => tables.sofa_combo_presets };
 }
 
 const list = async (req: ReturnType<typeof harness>['req']) =>
@@ -62,7 +64,7 @@ describe('combo presets', () => {
     expect((await req('/sofa-combo-presets', 'POST', { name: 'Empty', slots: [[]] })).status).toBe(400);
   });
 
-  test('a preset is renamed, its slots changed, and switched off, never deleted', async () => {
+  test('a preset is renamed, its slots changed, and switched off', async () => {
     const { req, rows } = harness({ company: A, canWrite: true });
     const res = await req('/sofa-combo-presets/a-2', 'PATCH', { name: '1 + 2', slots: [['1S'], ['2S'], ['STOOL']] });
     expect(res.status).toBe(200);
@@ -81,11 +83,22 @@ describe('combo presets', () => {
     expect((await req('/sofa-combo-presets/reorder', 'POST', { ids: ['a-1'] })).status).toBe(409);
   });
 
+  test('a preset is deleted for good; the rest keep their order', async () => {
+    const { req, current } = harness({ company: A, canWrite: true });
+    const res = await req('/sofa-combo-presets/a-1', 'DELETE');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ deleted: 'a-1' });
+    expect(current().map((r) => r.id)).toEqual(['a-2', 'b-1']);
+    expect((await list(req)).map((p) => p.id)).toEqual(['a-2']);
+    expect((await req('/sofa-combo-presets/a-1', 'DELETE')).status).toBe(404);
+  });
+
   test('writes need the combo-pricing permission', async () => {
     const { req, rows } = harness({ company: A, canWrite: false });
     expect((await req('/sofa-combo-presets', 'POST', { name: 'X', slots: [['2A']] })).status).toBe(403);
     expect((await req('/sofa-combo-presets/a-1', 'PATCH', { active: false })).status).toBe(403);
     expect((await req('/sofa-combo-presets/reorder', 'POST', { ids: ['a-2', 'a-1'] })).status).toBe(403);
+    expect((await req('/sofa-combo-presets/a-1', 'DELETE')).status).toBe(403);
     expect(rows.find((r) => r.id === 'a-1')).toMatchObject({ active: true, sort_order: 0 });
   });
 });
@@ -100,6 +113,7 @@ describe('company scope', () => {
     const { req, rows } = harness({ company: A, canWrite: true });
     expect((await req('/sofa-combo-presets/b-1', 'PATCH', { name: 'Taken over', active: false })).status).toBe(404);
     expect((await req('/sofa-combo-presets/reorder', 'POST', { ids: ['b-1', 'a-1', 'a-2'] })).status).toBe(409);
+    expect((await req('/sofa-combo-presets/b-1', 'DELETE')).status).toBe(404);
     expect(rows.find((r) => r.id === 'b-1')).toMatchObject({ name: 'B only', active: true, sort_order: 0 });
   });
 

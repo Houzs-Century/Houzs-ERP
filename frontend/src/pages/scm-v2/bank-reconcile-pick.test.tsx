@@ -10,12 +10,15 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import type { BankLine, LedgerEntry } from './bank-queries';
+import type { BankCardPayment, BankLine, LedgerEntry } from './bank-queries';
 
 const groupMutate = vi.fn();
+const cardsMutate = vi.fn();
 let groupState: { isError: boolean; error: unknown } = { isError: false, error: null };
 vi.mock('./bank-queries', () => ({
   useMatchBankGroup: () => ({ mutate: groupMutate, isPending: false, ...groupState }),
+  useMatchWithCards: () => ({ mutate: cardsMutate, isPending: false, isError: false, error: null }),
+  cardPaymentKey: (p: { source: string; id: string }) => `${p.source}:${p.id}`,
 }));
 
 import { ReconcilePickProvider, useReconcilePick } from './bank-reconcile-pick';
@@ -24,6 +27,7 @@ import { rememberReturnPicks } from '../../lib/returnScroll';
 
 afterEach(() => {
   groupMutate.mockReset();
+  cardsMutate.mockReset();
   groupState = { isError: false, error: null };
   sessionStorage.clear();
 });
@@ -146,5 +150,67 @@ describe('the ticks, across a trip to an order and back', () => {
     rerender(<Trip />);
     expect(isTicked('U MOBILE')).toBe(true);
     expect(isTicked('2990-JE-2610-0354')).toBe(true);
+  });
+});
+
+/* Owner 2026-11-17, 2990 Hong Leong 13/11: Houzs's RM 26,308.81 is eight transfers
+   already on the bank and three of 2990's swipes on Houzs's AEON terminal, paid back
+   less AEON's charges — 「差额就直接去terminal charges」. */
+describe('card payments ticked with the movement', () => {
+  const HOUZS = line(1633, 2630881, 'HOUZS CENTURY SDN. BHD. REFUND TO 2990 HC-HPV-2611-052');
+  const TRANSFERS = entry('2990-JE-2610-0093', 0);
+  const transfers = { ...TRANSFERS, debitSen: 1537100, creditSen: 0 };
+  const card = (id: string, docNo: string, amountSen: number): BankCardPayment => ({
+    source: 'SOPAY', id, docNo, paidOn: '2026-11-05', amountSen, approvalCode: null, customerName: null, acquirerCode: null, merchantProvider: null, ageDays: 12,
+  });
+  const SWIPES = [card('p028', '2990-SO-2611-028', 399000), card('p017', '2990-SO-2611-017', 399000), card('p081', '2990-SO-2611-081', 350000)];
+  const SETUP = { feeAccount: { code: '900-T009', name: 'TERMINAL INTEREST CHARGES' }, feeProblem: null, maxChargePct: 10 };
+
+  const Cards = () => {
+    const pick = useReconcilePick();
+    return (
+      <div>
+        {SWIPES.map((c) => (
+          <input key={c.id} type="checkbox" aria-label={`Pick ${c.docNo}`} checked={pick.pickedCards.includes(`SOPAY:${c.id}`)} onChange={() => pick.toggleCard(`SOPAY:${c.id}`)} />
+        ))}
+      </div>
+    );
+  };
+  const MonthWithCards = ({ lines }: { lines: BankLine[] }) => (
+    <ReconcilePickProvider lines={lines} entries={[transfers]} cards={SWIPES} cardSetup={SETUP}>
+      <Ticks lines={lines} entries={[transfers]} />
+      <Cards />
+    </ReconcilePickProvider>
+  );
+
+  test('names the difference and where it goes, and sends the movement, entries and card payments', () => {
+    render(<MonthWithCards lines={[HOUZS]} />);
+    tick('HOUZS CENTURY SDN. BHD. REFUND TO 2990 HC-HPV-2611-052');
+    tick('2990-JE-2610-0093');
+    for (const c of SWIPES) tick(c.docNo);
+    expect(bar()!.textContent).toContain('3 card payments · RM 11,480.00');
+    expect(bar()!.textContent).toContain('RM 542.19 (4.72% of the card payments) goes to 900-T009 TERMINAL INTEREST CHARGES.');
+    fireEvent.click(screen.getByRole('button', { name: /Match, difference to charges/ }));
+    expect(cardsMutate.mock.calls[0]?.[0]).toEqual({
+      lineId: 1633, jeNos: ['2990-JE-2610-0093'],
+      cardPayments: [{ source: 'SOPAY', id: 'p028' }, { source: 'SOPAY', id: 'p017' }, { source: 'SOPAY', id: 'p081' }],
+    });
+    expect(groupMutate).not.toHaveBeenCalled();
+  });
+
+  test('a difference past the cap, or the bank paying more, cannot be pressed', () => {
+    render(<MonthWithCards lines={[HOUZS]} />);
+    tick('HOUZS CENTURY SDN. BHD. REFUND TO 2990 HC-HPV-2611-052');
+    tick('2990-SO-2611-028');
+    /* RM 26,308.81 for one RM 3,990 swipe: the bank paid more than ticked. */
+    expect(bar()!.textContent).toContain('more than ticked');
+    expect((screen.getByRole('button', { name: /Match, difference to charges/ }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  test("a merchant's payout is not offered card payments", () => {
+    render(<MonthWithCards lines={[{ ...HOUZS, kind: 'PAYOUT' }]} />);
+    tick('HOUZS CENTURY SDN. BHD. REFUND TO 2990 HC-HPV-2611-052');
+    tick('2990-SO-2611-028');
+    expect(bar()!.textContent).toContain('booked against its report');
   });
 });

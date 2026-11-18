@@ -36,6 +36,8 @@ import {
   type AcquirerSetup, type SettlementRow, type SettlementBatch, type BankAccount, type SettlementCandidate,
   type Watchlist, type Payout,
 } from './settlement-queries';
+import { bankFollowsText } from './bank-follows';
+import { SoldByButtons, SoldByTag, soldByNoteOf } from './SoldByOtherCompany';
 import { DataTable, type Column } from '../../components/DataTable';
 import { HeaderExportMenu } from '../../components/DataTableExportItems';
 import { writeLineExportFile, type TablePdfView } from '../../components/dataTableLineExport';
@@ -784,9 +786,11 @@ const BatchRows = ({ batch, onOpen, openOnly }: {
             <td className={grid.num}>{fmt(r.net_sen)}</td>
 
             <td className={grid.seam}>
-              {orders.length === 0
-                ? <span className={grid.sub}>{r.candidates.length > 0 ? `${r.candidates.length} possible` : '—'}</span>
-                : stack((o) => <DocLink source={o.source} docNo={o.docNo} bold />)}
+              {r.sold_by_company_id != null
+                ? <SoldByTag companyId={r.sold_by_company_id} />
+                : orders.length === 0
+                  ? <span className={grid.sub}>{r.candidates.length > 0 ? `${r.candidates.length} possible` : '—'}</span>
+                  : stack((o) => <DocLink source={o.source} docNo={o.docNo} bold />)}
             </td>
             <td>{stack((o) => o.customer)}</td>
             <td>{stack((o) => o.sales)}</td>
@@ -999,6 +1003,7 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
         <div style={{ fontSize: 'var(--fs-13)', color: confirmAll.data.failed.length ? danger : good }}>
           Posted {confirmAll.data.confirmed} of {confirmAll.data.attempted}.
           {confirmAll.data.statementCharge?.jeNo && ` Statement charge booked as ${confirmAll.data.statementCharge.jeNo}.`}
+          {bankFollowsText(confirmAll.data.bank) && ` ${bankFollowsText(confirmAll.data.bank)}`}
           {confirmAll.data.failed.map((f) => <div key={f.rowId}>{f.rowId ? `Line ${f.rowId}: ` : ''}{f.reason}</div>)}
         </div>
       )}
@@ -1046,6 +1051,12 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
                 <td className={grid.num}>{fmt(r.fee_sen)}</td>
                 <td className={grid.num}>{fmt(r.net_sen)}</td>
                 <td className={grid.seam}>
+                  {r.sold_by_company_id != null && (
+                    <div>
+                      <b><SoldByTag companyId={r.sold_by_company_id} /></b>
+                      {soldByNoteOf(r.notes) && <span className={grid.sub}> · {soldByNoteOf(r.notes)}</span>}
+                    </div>
+                  )}
                   {r.matched_with && (
                     <div className={grid.sub}>
                       with line {r.matched_with.lines.filter((g) => g.rowId !== r.id).map((g) => g.lineNo).join(', ')} · together {fmt(r.matched_with.grossSen)}
@@ -1336,6 +1347,7 @@ const SettlementLine = ({ row, others = [] }: {
         <div style={{ fontSize: 'var(--fs-13)', color: good }}>
           Posted as <span className={styles.codeChip}>{row.posted_je_no}</span>
           {row.linked.length > 0 && <> — <LinkedDocs links={row.linked} /></>}
+          {row.sold_by_company_id != null && <> — <SoldByTag companyId={row.sold_by_company_id} /></>}
         </div>
       )}
 
@@ -1440,6 +1452,7 @@ const SettlementLine = ({ row, others = [] }: {
             <button type="button" style={btn()} onClick={() => ignore.mutate({ rowId: row.id, restore: row.bucket === 'IGNORED' })}>
               {row.bucket === 'IGNORED' ? 'Put back' : 'Set aside'}
             </button>
+            <SoldByButtons row={row} />
           </div>
         </div>
       )}
@@ -1456,6 +1469,7 @@ const SettlementLine = ({ row, others = [] }: {
           <button type="button" style={btn()} onClick={() => ignore.mutate({ rowId: row.id, restore: row.bucket === 'IGNORED' })}>
             {row.bucket === 'IGNORED' ? 'Put back' : 'Set aside'}
           </button>
+          <SoldByButtons row={row} />
         </div>
       )}
 
@@ -1464,6 +1478,10 @@ const SettlementLine = ({ row, others = [] }: {
         <div style={{ fontSize: 'var(--fs-13)', color: danger }}>
           {(failed as { message?: string } | null)?.message ?? 'The line was not confirmed.'}
         </div>
+      )}
+      {/* The bank side follows (owner 2026-11-17: 我只要对一边). */}
+      {bankFollowsText((confirm.data ?? confirmGroup.data)?.bank) && (
+        <div style={{ fontSize: 'var(--fs-13)', color: good }}>{bankFollowsText((confirm.data ?? confirmGroup.data)?.bank)}</div>
       )}
     </section>
   );

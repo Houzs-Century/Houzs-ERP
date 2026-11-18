@@ -893,8 +893,9 @@ export const FORM_SUPPLIERS: FormSchema = {
     { key: "email", label: "Email", type: "email", placeholder: "supplier@example.com" },
     { key: "email2", label: "Email 2", type: "email" }, { key: "email3", label: "Email 3", type: "email" }, // owner 2026-11-09: PO Cc
     { key: "address", label: "Address", type: "textarea" },
+    { key: "postcode", label: "Postcode", type: "postcode" }, // picking fills State + City (owner 2026-11-17)
     { key: "state", label: "State", type: "text" },
-    { key: "postcode", label: "Postcode", type: "text" },
+    { key: "city", label: "City", type: "text" },
     { key: "area", label: "Area", type: "text" },
     { key: "country", label: "Country", type: "text", placeholder: "Malaysia" },
     { key: "paymentTerms", label: "Payment Terms", type: "text", placeholder: "e.g. Net 30" },

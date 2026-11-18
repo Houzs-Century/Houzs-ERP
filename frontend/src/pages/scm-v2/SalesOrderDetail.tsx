@@ -96,6 +96,7 @@ import { completePaymentRetryDraft, consumePaymentRetryNavigationState, readPaym
 import { DocumentRelationshipMapModal, DocumentChoiceDialog } from '../../components/scm-v2/DocumentRelationshipMapModal';
 import { useSoRelationshipMap } from './so-relationship-map';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
+import { passesSoffioReminder } from '../../vendor/scm/lib/soffio-reminder';
 import { SoLockBanner } from './SoLockBanner';
 import { SaveFailedBanner } from './SaveFailedBanner';
 import { soAfterDoMode, soPriceAfterDoOn, afterDoEditableLine, afterDoHeaderFields, afterDoEditFields, afterDoAddFields, afterDoCopyProblem, type AfterDoSave } from '../../vendor/scm/lib/so-after-do-client';
@@ -2066,6 +2067,7 @@ export const SalesOrderDetail = () => {
             </Button>
             <Button variant="primary"
               onClick={async () => {
+                if (!(await passesSoffioReminder(askConfirm, items.filter((it) => !it.cancelled).map((it) => it.item_code)))) return;
                 const dateNote = soConfirmDateNote(header.processing_date, header.customer_delivery_date);
                 if (!(await askConfirm({
                   title: `Confirm ${header.doc_no}?`,

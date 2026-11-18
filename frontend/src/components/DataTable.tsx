@@ -2355,8 +2355,13 @@ function DataTableInner<T, L>({
         />
       )}
       {showTable && (
+        /* `isolate`: the thead/tfoot (z-30) and frozen body cells (z-20) stack
+           INSIDE this box. Without it they joined the page's stacking context
+           and painted over the pinned PageHeader (z-20) whenever an unfrozen
+           table scrolled under it: the card hid, its header row floated on the
+           page title (owner 2026-11-17, Trip Pay). */
         <div
-          className="rounded-lg border border-border bg-surface shadow-stone sm:block sm:overflow-hidden"
+          className="isolate rounded-lg border border-border bg-surface shadow-stone sm:block sm:overflow-hidden"
           style={freezeBoxStyle}
         >
           <div

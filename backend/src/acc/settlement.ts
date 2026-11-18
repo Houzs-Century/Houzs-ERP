@@ -41,6 +41,8 @@ import { checkReceiptCharge, postReceiptCharge, undoReceiptCharge, type ReceiptC
 import { chunkIn, paginateAll } from '../scm/lib/paginate-all';
 import { keyedAs, merchantNamesOf } from './merchant-names';
 import { loadPreviousKeys, notPrevious } from './previous-payments';
+import { loadSettledKeys } from './settled-keys';
+import { loadBankCardKeys } from './bank-card-settled';
 
 export type AcquirerRow = {
   company_id: number;
@@ -479,7 +481,7 @@ export type FoundPayment = PaymentCandidate & {
 
 /* What a merchant report can be explained by: card, instalment, and the
    migration-era rows AutoCount carried with no method of their own. */
-const CARD_METHODS = new Set(['merchant', 'installment', 'imported']);
+export const CARD_METHODS = new Set(['merchant', 'installment', 'imported']);
 
 /* A DuitNow QR line (owner 2026-11-09: 这个hlbb merchant 的0000PP 是qr direct
    去bank 的，不算卡机的) is explained by Online money only — the sale the till
@@ -702,53 +704,8 @@ export async function linesAlreadyOnFile(
   return { ok: true, kept, alreadyOn };
 }
 
-export async function loadSettledKeys(
-  sb: any,
-  companyId: number,
-): Promise<{ ok: true; keys: Set<string> } | { ok: false; reason: string }> {
-  /* PAGED: one link per settled payment, so this grows with every line ever
-     confirmed. Past PostgREST's 1000-row ceiling a single read would drop the
-     rest without an error, and the dropped payments — already cleared — would
-     come back as candidates for a second statement. */
-  const { data, error } = await paginateAll<{ payment_source: string; payment_id: string }>((f, t) => sb
-    .from('acc_settlement_matches').select('payment_source, payment_id')
-    .eq('company_id', companyId).order('id').range(f, t));
-  if (error) return { ok: false, reason: error.message };
-  const keys = new Set<string>();
-  for (const r of data ?? []) {
-    keys.add(`${r.payment_source}:${r.payment_id}`);
-  }
-  return { ok: true, keys };
-}
-
-/** loadSettledKeys asked only about the payments a caller holds. Its readers
-    (matchStatement, recordedNotArrived) only ask about payments in their own
-    list, so other payments' claims never change a result — and reading them
-    paged the whole link table on every open. Per source, for the unique index. */
-export async function loadSettledKeysFor(
-  sb: any,
-  companyId: number,
-  payments: ReadonlyArray<{ source: string; id: string }>,
-): Promise<{ ok: true; keys: Set<string> } | { ok: false; reason: string }> {
-  const idsBySource = new Map<string, Set<string>>();
-  for (const p of payments) {
-    const ids = idsBySource.get(p.source) ?? new Set<string>();
-    ids.add(String(p.id));
-    idsBySource.set(p.source, ids);
-  }
-  const reads = await Promise.all([...idsBySource].map(([source, ids]) => chunkIn<{ payment_source: string; payment_id: string }>(
-    [...ids], (batch, f, t) => sb
-      .from('acc_settlement_matches').select('payment_source, payment_id')
-      .eq('company_id', companyId).eq('payment_source', source).in('payment_id', batch)
-      .order('id').range(f, t),
-  )));
-  const keys = new Set<string>();
-  for (const r of reads) {
-    if (r.error) return { ok: false, reason: r.error.message };
-    for (const m of r.data) keys.add(`${m.payment_source}:${m.payment_id}`);
-  }
-  return { ok: true, keys };
-}
+/* Which payments a report line or a bank movement already took (acc/settled-keys). */
+export { loadSettledKeys, loadSettledKeysFor } from './settled-keys';
 
 /**
  * Book the charge a STATEMENT makes that none of its transactions explain.
@@ -955,6 +912,15 @@ async function readChosenPayments(
         method, provider: r.merchant_provider == null ? null : String(r.merchant_provider), sheet: r.account_sheet == null ? null : String(r.account_sheet),
       });
     }
+  }
+  /* Taken in by a bank movement on Bank Recon (acc/bank-card-settled): its money is
+     in the bank already, so no report line may clear it a second time. Refused
+     before any tag is stamped. */
+  const banked = await loadBankCardKeys(sb, companyId, chosen);
+  if (!banked.ok) return { ok: false, status: 'load_failed', reason: banked.reason };
+  const taken = chosen.find((p) => banked.keys.has(`${p.source}:${p.id}`));
+  if (taken) {
+    return { ok: false, status: 'payment_already_settled', reason: `${taken.docNo ?? taken.id} was taken in by a bank movement on Bank Recon — its money is in the bank, so no merchant report can carry it. Undo that match first if it was wrong.` };
   }
   return { ok: true, chosen };
 }

@@ -6,7 +6,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { fmtSen } from '@2990s/shared';
 import { AuditHistoryPanel } from './AuditHistoryPanel';
 import type { AuditLabelDictionary, AuditLogEntry } from './audit-labels';
-import { AUDIT_VALUE_MAX, auditValueShown, auditValueText } from './audit-value';
+import { AUDIT_VALUE_MAX, auditValueShown, auditValueText, isStoredPhotoKey } from './audit-value';
 
 const DICT: AuditLabelDictionary = { actions: { UPDATE: 'Updated' }, fields: {}, moneyFields: new Set(['total_sen']) };
 const PNG = 'data:image/png;base64,' + 'iVBORw0KGgo'.repeat(400);
@@ -52,5 +52,38 @@ describe('the History drawer', () => {
     expect(document.body.textContent).not.toContain('base64');
     const cut = screen.getByTitle(long);
     expect(cut.textContent).toBe(long.slice(0, AUDIT_VALUE_MAX) + '…');
+  });
+});
+
+describe('a stored photo key reads as a photo (HC-SO-013319, 2026-11-17)', () => {
+  it('shows "1 photo", not the object path', () => {
+    const key = 'so-items/HC-SO-013319/4f57c48c-2d78-4480-bbaf-c4e20b9eb381/61461e27-0e3d-4d56-aa63-c6754a07429c.jpg';
+    expect(auditValueText('photoAdded', key, { actions: {}, fields: {} })).toBe('1 photo');
+    expect(isStoredPhotoKey(key)).toBe(true);
+  });
+  it('leaves ordinary text alone', () => {
+    expect(isStoredPhotoKey('Send together with HC12931+HC12932')).toBe(false);
+    expect(isStoredPhotoKey('MAJ-DINING CHAIR')).toBe(false);
+  });
+});
+
+describe('a record id reads as the record (HC-GRN-2611-149, owner 2026-11-17)', () => {
+  it('shows the supplier name and "Supplier", not "Supplier Id d930541c-..."', () => {
+    const SUP = 'd930541c-297b-4a8c-93e0-53a1d1cce34d';
+    const entry: AuditLogEntry = {
+      id: '1', action: 'UPDATE', actor_name_snapshot: 'Nancy', created_at: '2026-11-17T09:45:00Z',
+      source: null, note: null,
+      field_changes: [
+        { field: 'supplierId', to: SUP, to_label: '400-N001 · NICE FUTURE MARKETING SDN. BHD.' },
+        { field: 'warehouseId', to: 'ffffffff-0000-4000-8000-000000000000' },
+      ],
+    };
+    render(<AuditHistoryPanel recordLabel="HC-GRN-2611-149" entityName="GRN" entries={[entry]} labels={DICT} onClose={() => {}} error={null} />);
+    fireEvent.click(screen.getByText(/Changes \(2\)/));
+    expect(screen.getByText('400-N001 · NICE FUTURE MARKETING SDN. BHD.')).toBeTruthy();
+    expect(screen.getByText('Supplier')).toBeTruthy();
+    expect(document.body.textContent).not.toContain(SUP);
+    // No name came back for this one: the value is still shown rather than hidden.
+    expect(document.body.textContent).toContain('ffffffff-0000-4000-8000-000000000000');
   });
 });

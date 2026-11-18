@@ -1,7 +1,10 @@
 import { useState } from "react";
 import { Pencil, Trash2 } from "lucide-react";
 import { RowActionsMenu } from "../../components/RowActionsMenu";
-import { StatePicker } from "../../vendor/scm/components/StatePicker";
+import {
+  AddressTripleFields,
+  type AddressTripleClasses,
+} from "../../vendor/scm/components/AddressTripleFields";
 
 /**
  * One row of the Venues picker in Project Maintenance.
@@ -18,8 +21,23 @@ export interface VenueRowLike {
   id: number;
   name: string;
   state: string | null;
+  city?: string | null;
+  postcode?: string | null;
   size?: string | null;
 }
+
+/* The venue list's compact field look for the shared State / City / Postcode
+   trio — the labels are screen-reader only, as the row has no header line. */
+const CONTROL =
+  "h-8 w-full min-w-0 rounded-md border border-border bg-surface px-2 text-[12px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/15";
+export const VENUE_TRIPLE_CLASSES: AddressTripleClasses = {
+  field: "flex min-w-0 flex-col",
+  label: "sr-only",
+  select: CONTROL,
+  input: CONTROL,
+  selectWrap: "relative block",
+  chevron: "pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-ink-muted",
+};
 
 export function VenueManagerRow({
   v,
@@ -49,7 +67,10 @@ export function VenueManagerRow({
   }
 
   return (
-    <li className="flex items-center justify-between gap-3 px-3 py-2">
+    <li className="px-3 py-2">
+      {/* Name and the row menu on the first line, the fields under it: side by
+          side the name was squeezed to one word per line (owner 2026-11-18). */}
+      <div className="flex items-center justify-between gap-3">
       <div className="min-w-0 flex-1">
         {editing ? (
           <div className="flex items-center gap-1.5">
@@ -79,33 +100,9 @@ export function VenueManagerRow({
             </button>
           </div>
         ) : (
-          <div className="text-[13px] font-medium text-ink">{v.name}</div>
+          <div className="truncate text-[13px] font-medium text-ink" title={v.name}>{v.name}</div>
         )}
       </div>
-      {/* Inline state re-pick — same maintenance-only source (my_localities) as
-          the Add form's StatePicker. A value not in the seeded set shows blank,
-          forcing a legit pick or an addition via Localities Maintenance first. */}
-      <div className="w-56">
-        <StatePicker
-          value={v.state || ""}
-          onChange={(next) => {
-            if (next !== (v.state || "")) onPatch(v.id, { state: next || null });
-          }}
-        />
-      </div>
-      {/* Inline size edit (mig 0222). Free text, committed on blur so the
-          operator can type "12,000 sqft" without a PATCH per character. key
-          includes the saved value so a reload after save re-seeds defaultValue. */}
-      <input
-        key={`size-${v.id}-${v.size ?? ""}`}
-        defaultValue={v.size ?? ""}
-        onBlur={(e) => {
-          const next = e.target.value.trim();
-          if (next !== (v.size ?? "")) onPatch(v.id, { size: next || null });
-        }}
-        placeholder="size"
-        className="h-8 w-28 min-w-0 rounded-md border border-border bg-surface px-2 text-[12px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
-      />
       <RowActionsMenu
         items={[
           { type: "action", icon: Pencil, label: "Edit", onClick: startEdit },
@@ -118,6 +115,40 @@ export function VenueManagerRow({
           },
         ]}
       />
+      </div>
+      <div className="mt-1.5 grid grid-cols-1 gap-1.5 sm:grid-cols-[repeat(3,minmax(0,1fr))_8rem]">
+      {/* Inline State / City / Postcode — the Sales Order's controls (owner
+          2026-11-17). Each pick saves the WHOLE triple in one PATCH, so a
+          postcode that fills City and State back lands as one change; Country
+          follows the State. Values must live in my_localities. */}
+        <AddressTripleFields
+          country=""
+          value={{ state: v.state ?? "", city: v.city ?? "", postcode: v.postcode ?? "" }}
+          onChange={(next, derivedCountry) =>
+            onPatch(v.id, {
+              state: next.state || null,
+              city: next.city || null,
+              postcode: next.postcode || null,
+              ...(derivedCountry ? { country: derivedCountry } : {}),
+            })
+          }
+          classes={VENUE_TRIPLE_CLASSES}
+        />
+      {/* Inline size edit (mig 0222). Free text, committed on blur so the
+          operator can type "12,000 sqft" without a PATCH per character. key
+          includes the saved value so a reload after save re-seeds defaultValue. */}
+      <input
+        key={`size-${v.id}-${v.size ?? ""}`}
+        defaultValue={v.size ?? ""}
+        onBlur={(e) => {
+          const next = e.target.value.trim();
+          if (next !== (v.size ?? "")) onPatch(v.id, { size: next || null });
+        }}
+        placeholder="Size"
+        aria-label="Venue size"
+        className="h-8 w-full min-w-0 rounded-md border border-border bg-surface px-2 text-[12px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
+      />
+      </div>
     </li>
   );
 }

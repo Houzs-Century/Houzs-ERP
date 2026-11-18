@@ -102,18 +102,20 @@ describe('a Maybank gross-and-fee pair with no reference', () => {
     expect(await res.json()).toMatchObject({ lines: 4, joinedPairs: 1 });
     const lines = (sb.tables.acc_bank_statement_lines as Row[]).sort((a, b) => Number(a.line_no) - Number(b.line_no));
     const card = lines.find((l) => Number(l.amount_sen) === 402978)!;
-    expect(card).toMatchObject({ charge_sen: 1822, kind: 'PAYOUT', matched_batch_id: 96, merchant_no: '2649949', state: 'OPEN' });
+    /* Its report is owed exactly the net, so the upload books it (owner 2026-11-17). */
+    expect(card).toMatchObject({ charge_sen: 1822, kind: 'PAYOUT', matched_batch_id: 96, merchant_no: '2649949', state: 'POSTED' });
     expect(lines.some((l) => Number(l.amount_sen) === -1822)).toBe(false);
     /* A transfer in and a transfer out that share only their words stay two. */
     expect(lines.filter((l) => l.description === 'FUND TRANSFER').map((l) => l.amount_sen)).toEqual([300000, -20000]);
   });
 
-  test('Money received books it once, for the net, on the bank date', async () => {
+  test('Money received books it once, for the net, on the bank date — on upload, and a press after is refused', async () => {
     const { app, sb } = harness();
     const up = await (await post(app, '/bank/statements', { accountCode: BANK, fileName: 'MBBcurrent_564418759397_2026-09-30.csv', content: SEPTEMBER })).json() as any;
+    expect(up.autoMatched).toBe(1);
     const card = (sb.tables.acc_bank_statement_lines as Row[]).find((l) => Number(l.amount_sen) === 402978)!;
     const res = await post(app, `/bank/lines/${card.id}/receipt`, { batchId: 96 });
-    expect(res.status, await res.clone().text()).toBe(200);
+    expect(res.status).toBe(409);
     const receipts = sb.tables.acc_settlement_receipts as Row[];
     expect(receipts).toHaveLength(1);
     expect(receipts[0]).toMatchObject({ batch_id: 96, amount_sen: 402978, received_on: '2026-09-07', bank_line_id: card.id });

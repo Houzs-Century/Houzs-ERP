@@ -49,12 +49,14 @@ import {
   settlementBatchReceived, settlementReceiptUndo,
   settlementMaintenance, settlementMaintenanceMerchant, settlementMaintenanceBank, settlementRematch,
 } from './accounting-settlement';
+import { settlementOtherCompanies, settlementRowSoldBy } from './accounting-settlement-sold-by';
 import {
   bankSetup, bankUpload, bankStatements, bankStatementDetail,
   bankRulesList, bankRuleCreate, bankRuleUpdate,
   bankLineReceipt, bankLineMatch, bankLineIgnore, bankLineUndo, bankLinesMatchGroup, bankStatementPeriod, bankStatementAutoMatch,
   bankStatementRepeats,
 } from './accounting-bank';
+import { bankCardPayments, bankLineMatchWithCards } from './accounting-bank-cards';
 import { bankMonths, bankMonthDetail, bankMonthClosing } from './accounting-bank-months';
 import { bankLocks, bankMonthLock, bankMonthUnlock } from './accounting-bank-locks';
 import { paymentCorrections } from './accounting-payment-corrections';
@@ -152,6 +154,9 @@ accounting.post('/settlement/rows/:id/confirm', settlementConfirmRow);
 accounting.post('/settlement/rows/confirm-together', settlementConfirmGroup);
 accounting.post('/settlement/rows/:id/unconfirm', settlementRowUnconfirm);
 accounting.post('/settlement/rows/:id/ignore', settlementIgnoreRow);
+/* Another company's sale swiped on this terminal (owner 2026-11-17: 2990's on Houzs's AEON). */
+accounting.get('/settlement/other-companies', settlementOtherCompanies);
+accounting.post('/settlement/rows/:id/sold-by', settlementRowSoldBy);
 /* "Not this" — release an unconfirmed line's match (owner 2026-11-03, batch 3 d2). */
 accounting.post('/settlement/rows/:id/release', settlementReleaseRow);
 /* "Find the sale" — the card payments the window could not offer (docs/bugs/0792). */
@@ -327,6 +332,10 @@ accounting.post('/bank/lines/:id/ignore', bankLineIgnore);
 accounting.post('/bank/lines/:id/undo', bankLineUndo);
 /* Several movements are one entry, or one movement is several (docs/bugs/0803). */
 accounting.post('/bank/lines/match-group', bankLinesMatchGroup);
+/* One credit takes entries AND card payments no report carries; the difference
+   goes to the charges account (owner 2026-11-17, acc/bank-card-settle). */
+accounting.get('/bank/card-payments', bankCardPayments);
+accounting.post('/bank/lines/:id/match-with-cards', bankLineMatchWithCards);
 
 /* ════════════════════════════════════════════════════════════════════════
    Helpers

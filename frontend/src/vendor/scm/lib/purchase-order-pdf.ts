@@ -497,6 +497,16 @@ async function renderPurchaseOrderInto(
     margin,
   );
 
+  /* A revised PO (_R1, _R2…) says so beside the PO DETAILS title, so the
+     supplier sees at a glance this sheet replaces an earlier one (Sim
+     2026-11-17, ticket 2990-0064). Same rule as poDisplayNumber's _R suffix. */
+  if (Number(header.revision ?? 1) > 1) {
+    // Bold and large: Sim asked for it "bigger and obviously" (2026-11-17).
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(18); doc.setTextColor(220, 38, 38);
+    doc.text('AMENDED', pageW / 2 + 2 + 33, infoTop + 1);
+    doc.setTextColor(0); doc.setFont('helvetica', 'normal');
+  }
+
   /* Boxed under the PO DETAILS rows; the row geometry mirrors drawInfoColumns
      (first baseline +4.6, 4 per row, blank rows skipped). Judged on OUR
      delivery date, not the supplier ETA: an order that was urgent stays urgent

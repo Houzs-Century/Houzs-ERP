@@ -3,12 +3,14 @@
  * The ERP account column is Century's own: punch in / out happens on the phone
  * with that account (Nico, option B), so an unlinked row cannot punch. */
 import { useMemo, useState } from "react";
-import { Plus } from "lucide-react";
+import { FileUp, Plus, UserPlus } from "lucide-react";
 import { DataTable, type Column } from "../../components/DataTable";
 import { formatDate } from "../../lib/utils";
 import { PAYMENT_METHODS } from "../../vendor/shared/hr-employee";
-import { Pill, primaryBtn } from "../pos-admin/posAdminUi";
+import { Pill, ghostBtn, primaryBtn } from "../pos-admin/posAdminUi";
+import { AddFromAccountsModal } from "./AddFromAccountsModal";
 import { EmployeeDrawer } from "./EmployeeDrawer";
+import { ImportEmployeesModal } from "./ImportEmployeesModal";
 import { fmtRm, useEmployees, type Employee } from "./hrApi";
 
 const statusPill = (e: Employee) =>
@@ -79,6 +81,7 @@ const COLUMNS: Column<Employee>[] = [
 export function EmployeeMasterTab() {
   const employees = useEmployees();
   const [editing, setEditing] = useState<Employee | "new" | null>(null);
+  const [bulk, setBulk] = useState<null | "accounts" | "import">(null);
   const [showAll, setShowAll] = useState(false);
   const all = useMemo(() => employees.data?.employees ?? [], [employees.data]);
   const rows = useMemo(() => all.filter((e) => showAll || e.status === "ACTIVE"), [all, showAll]);
@@ -97,7 +100,13 @@ export function EmployeeMasterTab() {
           </span>
         )}
         {canManage && (
-          <span className="ml-auto">
+          <span className="ml-auto flex flex-wrap items-center gap-2">
+            <button type="button" className={ghostBtn} onClick={() => setBulk("accounts")}>
+              <UserPlus size={11} /> From ERP accounts
+            </button>
+            <button type="button" className={ghostBtn} onClick={() => setBulk("import")}>
+              <FileUp size={11} /> Import
+            </button>
             <button type="button" className={primaryBtn} onClick={() => setEditing("new")}>
               <Plus size={11} /> Add employee
             </button>
@@ -126,6 +135,8 @@ export function EmployeeMasterTab() {
           }}
         />
       )}
+      <AddFromAccountsModal open={bulk === "accounts"} onClose={() => setBulk(null)} onDone={() => employees.reload()} />
+      <ImportEmployeesModal open={bulk === "import"} onClose={() => setBulk(null)} onDone={() => employees.reload()} />
     </div>
   );
 }

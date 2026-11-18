@@ -627,3 +627,18 @@
   text-decoration: none;
 }
 .docLink:hover { text-decoration: underline; }
+
+/* One field of the shared State / City / Postcode trio in the Warehouse drawer:
+   label above, full-width control, the drawer's usual gap below. */
+.tripleField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: var(--space-3);
+}
+
+/* A shared address field (PostcodeCascadeField) inside the DP drawers: its label
+   must stack exactly like the drawers' own `<div eyebrow>` captions, or the
+   input sits a few px lower than its row neighbour. */
+.stackField { display: block; }
+.stackLabel { display: block; margin-bottom: var(--space-1); }

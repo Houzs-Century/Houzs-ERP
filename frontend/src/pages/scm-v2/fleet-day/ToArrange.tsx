@@ -10,6 +10,7 @@ import type { DriverRow } from '../../../vendor/scm/lib/drivers-queries';
 import type { HelperRow } from '../../../vendor/scm/lib/helpers-queries';
 import { slotLabelOf } from '../../../vendor/scm/lib/fleet-day-cards';
 import { latestLiveDoId } from './vm';
+import { addressOnce } from '../../../vendor/scm/lib/address-once';
 
 type Lorry = { id: string; plate: string };
 type Bulk = { lorryId: string; driverId: string; helper1Id: string; helper2Id: string; slotFrom: string; slotTo: string };
@@ -136,7 +137,7 @@ export function ToArrangeTab({
                     <td className={cn(td, 'font-mono')}>{o.so_doc_no}</td>
                     <td className={td}>{o.debtor_name || '—'}</td>
                     <td className={td}>{o.phone || '—'}</td>
-                    <td className={cn(td, 'max-w-[220px] truncate')}>{o.address || '—'}</td>
+                    <td className={cn(td, 'max-w-[220px] truncate')}>{addressOnce(o.address) || '—'}</td>
                     <td className={td}>{o.region}</td>
                     <td className={td}>{slotLabelOf(o.time_range) || '—'}</td>
                     <td className={td}>{salespersonOf(o)}</td>

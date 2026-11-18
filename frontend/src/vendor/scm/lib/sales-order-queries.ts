@@ -307,6 +307,9 @@ export type SoAuditFieldChange = {
   field: string;
   from?: unknown;
   to?: unknown;
+  /* The record's name when the value is a record id (backend lib/audit-id-labels). */
+  from_label?: string;
+  to_label?: string;
 };
 export type SoAuditEntry = {
   id: string;

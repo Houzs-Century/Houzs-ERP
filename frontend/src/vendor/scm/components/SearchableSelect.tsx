@@ -19,8 +19,9 @@
 // `aria-activedescendant`, so a screen reader follows it.
 
 import { Fragment, useEffect, useId, useMemo, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { ChevronDown } from "lucide-react";
 import { useAnchoredPanel, anchoredPanelStyle } from "../../../lib/anchoredPanel";
 
 /** `group` (optional) heads a run of options with a small title — the list is
@@ -90,6 +91,24 @@ export function exactPick(term: string, filtered: ReadonlyArray<SearchableSelect
   return exact.length === 1 ? exact[0] : null;
 }
 
+const CHEVRON_STYLE: CSSProperties = {
+  position: "absolute",
+  right: 10,
+  top: "50%",
+  transform: "translateY(-50%)",
+  pointerEvents: "none",
+  color: "var(--hz-c-ink-muted, #767b6e)",
+};
+
+/** The input's inline style: room for the chevron (and a full-width field, so the
+ *  chevron sits on the input's edge, not the cell's), and the invalid border. */
+export function selectInputStyle(chevron: boolean, invalid: boolean): CSSProperties | undefined {
+  const style: CSSProperties = {};
+  if (chevron) Object.assign(style, { display: "block", width: "100%", boxSizing: "border-box", paddingRight: 30 });
+  if (invalid) style.borderColor = "var(--c-festive-b, #B8331F)";
+  return Object.keys(style).length > 0 ? style : undefined;
+}
+
 export function SearchableSelect({
   value,
   onChange,
@@ -101,6 +120,7 @@ export function SearchableSelect({
   ariaLabel,
   title,
   renderOption,
+  chevron = false,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -117,6 +137,11 @@ export function SearchableSelect({
    *  the plain label. Gets the option and the live query; the CLOSED input still
    *  shows the plain `label`, so set a sensible label even with this on. */
   renderOption?: (option: SearchableSelectOption, query: string) => ReactNode;
+  /** Paint a down-chevron inside the field's right edge, like the State picker.
+   *  Self-positioned here, so it never depends on the host form passing a
+   *  wrapper + chevron class: hosts that did not (DP drawers, warehouse) showed
+   *  the chevron on its own line under the input. */
+  chevron?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -199,6 +224,8 @@ export function SearchableSelect({
         aria-expanded={menuOpen}
         aria-controls={menuOpen ? listId : undefined}
         aria-autocomplete="list"
+        // The browser's own address autofill must not paint over the picked value.
+        autoComplete="off"
         aria-activedescendant={menuOpen && activeOption >= 0 ? optionId(activeOption) : undefined}
         // Closed → the selected label; open → the live search term.
         value={open ? search : selectedLabel}
@@ -268,8 +295,9 @@ export function SearchableSelect({
           setOpen(true);
         }}
         title={title ?? (selectedLabel || undefined)}
-        style={invalid && !disabled ? { borderColor: "var(--c-festive-b, #B8331F)" } : undefined}
+        style={selectInputStyle(chevron, invalid && !disabled)}
       />
+      {chevron && <ChevronDown size={14} strokeWidth={1.75} aria-hidden="true" style={CHEVRON_STYLE} />}
       {menuOpen && menuPos &&
         createPortal(
           <ul

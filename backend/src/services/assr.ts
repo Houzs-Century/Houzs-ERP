@@ -20,6 +20,9 @@ import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
 import { assrVisibilityPredicateSql } from "./assrVisibility";
 import { attachOrderPosAndFill, attachExchangePosEnv, caseCompanySql, pickedSupplierName, showErpSupplierNames } from "./assrCreditorFill";
 import { attachOrderDeliveryDates } from "./assrOrderDos";
+import { caseAddressFromSo, fetchScmSoContext, soAddressForDoc } from "./assrSoContext";
+import { saveCaseAddress } from "./assrCaseAddress";
+import { CASE_ADDRESS_KEYS } from "../scm/shared/assr-case-address";
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -278,70 +281,7 @@ async function resolveCaseCompanyId(
   }
 }
 
-// ── SCM SO context (multi-company create path) ────────────────
-//
-// The platform-native SO row for a doc number, shaped like the AutoCount
-// getSingle context so createAssrCase's binds stay source-agnostic, plus the
-// SO's owning company_id (drives the case's company stamp). It covers 2990
-// orders (live-mirrored into scm."mfg_sales_orders") and Houzs SCM-native
-// orders that never reached AutoCount. Returns null when the doc is not
-// there — or when the scm schema itself is absent (D1 test mirror,
-// pre-migration) — so the caller falls through to the AutoCount path.
-async function fetchScmSoContext(
-  env: Env,
-  docNo: string
-): Promise<{ context: Record<string, unknown>; company_id: number | null } | null> {
-  try {
-    // 2990 SOs leave the free-text `agent` blank and carry the rep as
-    // salesperson_id -> scm.staff, so COALESCE to that name — else a 2990
-    // case's Sales Agent lands empty. (No `--` comments inside the SQL: the
-    // d1-compat shim folds it to one line and would comment out the tail.)
-    const row = await env.DB.prepare(
-      `SELECT o.debtor_name, o.phone, o.sales_location,
-              COALESCE(NULLIF(o.agent, ''), sp.name) AS agent,
-              o.ref, o.address1, o.address2, o.address3, o.address4, o.company_id
-         FROM scm."mfg_sales_orders" o
-         LEFT JOIN scm.staff sp ON sp.id = o.salesperson_id
-        WHERE LOWER(o.doc_no) = LOWER(?)
-          AND o.status <> 'DRAFT' AND o.status <> 'CANCELLED'
-        LIMIT 1`
-    )
-      .bind(docNo)
-      .first<{
-        debtor_name: string | null;
-        phone: string | null;
-        sales_location: string | null;
-        agent: string | null;
-        ref: string | null;
-        address1: string | null;
-        address2: string | null;
-        address3: string | null;
-        address4: string | null;
-        company_id: number | string | null;
-      }>();
-    if (!row) return null;
-    return {
-      context: {
-        DebtorName: row.debtor_name ?? null,
-        Phone1: row.phone ?? null,
-        SalesLocation: row.sales_location ?? null,
-        SalesAgent: row.agent ?? null,
-        // AutoCount-specific UDF (the internal service PO) — no SCM equivalent.
-        SOUDF_ToPONo: null,
-        InvAddr1: row.address1 ?? null,
-        InvAddr2: row.address2 ?? null,
-        InvAddr3: row.address3 ?? null,
-        InvAddr4: row.address4 ?? null,
-        Ref: row.ref ?? null,
-      },
-      company_id: row.company_id != null ? Number(row.company_id) : null,
-    };
-  } catch {
-    // scm schema absent (D1 test mirror / pre-migration) or a transient DB
-    // error — treat as "not an SCM doc" and let the AutoCount path decide.
-    return null;
-  }
-}
+// SCM SO context + the SO address in the case's shape: services/assrSoContext.ts.
 
 // The owning company of the order a doc number names — by the ERP number OR
 // the AutoCount number. Go-live imported every Houzs order as HC-SO-xxxxxx with
@@ -421,6 +361,11 @@ export async function createAssrCase(
       console.warn(`[assr] getSingle failed for ${input.doc_no}`, e);
     }
   }
+
+  // The address in the SO's shape (lines + postcode / city / state); the
+  // AutoCount context has lines only, so its postcode / state come from them.
+  const soAddr = scmSo ? scmSo.address : caseAddressFromSo({ address1: context?.InvAddr1, address2: context?.InvAddr2,
+    address3: context?.InvAddr3, address4: context?.InvAddr4, postcode: null, city: null, customer_state: null });
 
   // `let`, not `const` — the create loop below takes a FRESH number when the
   // unique guard (mig 0218 / D1 135) reports a concurrent create won the race.
@@ -546,10 +491,10 @@ export async function createAssrCase(
       input.issue_category ?? null,
       prioritySlug,
       context?.SOUDF_ToPONo ?? null,
-      context?.InvAddr1 ?? null,
-      context?.InvAddr2 ?? null,
-      context?.InvAddr3 ?? null,
-      context?.InvAddr4 ?? null,
+      soAddr?.addr1 ?? null,
+      soAddr?.addr2 ?? null,
+      soAddr?.addr3 ?? null,
+      soAddr?.addr4 ?? null,
       input.created_by ?? null,
       // ref_no <- the SO's own customer reference (the pre-printed
       // customer docket, e.g. "HC14032"), distinct from the internal
@@ -604,7 +549,7 @@ export async function createAssrCase(
   // id, so they land here.
   if (categories?.slugs.length) await writeCaseCategories(env, assrId, categories.slugs);
 
-  // Activity log
+  if (soAddr) await saveCaseAddress(env, assrId, { postcode: soAddr.postcode, city: soAddr.city, state: soAddr.state }, input.created_by ?? 0, false);
   await logActivity(env, assrId, "created", null, initialStage, null, input.created_by);
 
   // Log the default assignment so the timeline reflects who got it.
@@ -1183,6 +1128,12 @@ export async function patchAssrCase(
         if (!("sales_agent" in body) && so.sales_agent) body.sales_agent = so.sales_agent;
         if (!("ref_no" in body) && so.ref) body.ref_no = so.ref;
       }
+      // The address follows the SO too (owner 2026-11-17), as ONE block — lines +
+      // postcode / city / state — unless the caller sent any part of it. The
+      // PATCH route saves postcode / city / state (takeCaseAddress) after this.
+      const sentAddr = ["addr1", "addr2", "addr3", "addr4", ...CASE_ADDRESS_KEYS].some((k) => k in body);
+      const soAddr = sentAddr ? null : await soAddressForDoc(env, body.doc_no);
+      if (soAddr) Object.assign(body, soAddr);
     }
   } else if ("doc_no" in body) {
     // Blank / non-string doc_no would orphan the case from its SO —

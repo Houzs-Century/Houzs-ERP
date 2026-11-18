@@ -1,12 +1,13 @@
 // ----------------------------------------------------------------------------
-// EditDpOrderDrawer — edit an unscheduled DP Order's party / address / date /
+// EditDpOrderDrawer — edit a DP Order's party / address / postcode / date /
 // remark (PATCH /dp-orders/:id).
 //
 // Owner 2026-11-02 ("DP order maintenance"): the registry had no "edit" — a
-// mistyped address meant cancelling the job and raising a new one. The PATCH
-// endpoint has always existed and refuses anything past PENDING_SCHEDULE; this is
-// its first UI. A scheduled job's details are on a manifest a driver may already
-// hold, so the page offers Edit on PENDING_SCHEDULE rows only.
+// mistyped address meant cancelling the job and raising a new one. Owner
+// 2026-11-17: a scheduled job's contact, address, postcode / state and remark
+// can be corrected too (the server updates the trip stop's manifest line with
+// it); only its DATE stays fixed once scheduled, so the date field is shown for
+// a pending job only. Opened from the DP Orders registry and the job drawer.
 //
 // Deliberately a SMALLER body than NewDpOrderDrawer: no job type, no source
 // picker, no auto-fill — the party is already resolved, this just corrects the
@@ -26,6 +27,8 @@ import {
 import { useNotify } from './NotifyDialog';
 import { writeFailedAs } from '../lib/mutation-error';
 import { DateField } from './DateField';
+import { PostcodeCascadeField } from './PostcodeCascadeField';
+import { DP_POSTCODE_REQUIRED_JOB_TYPES } from '../lib/postcode-in-address';
 import styles from '../../../pages/scm-v2/Suppliers.module.css';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -62,10 +65,23 @@ export const EditDpOrderDrawer = ({ row, onClose }: { row: DpOrderRow; onClose: 
     setForm((s) => ({ ...s, [k]: v }));
 
   const isTransfer = row.job_type === 'TRANSFER';
+  const isPending = row.status === 'PENDING_SCHEDULE';
+  // Compulsory only for the job types routed by region (the server's rule too).
+  const postcodeMissing = DP_POSTCODE_REQUIRED_JOB_TYPES.has(row.job_type) && !form.postcode.trim();
+  // The Postcode caption stacks like the drawer's own captions, so the input lines up with City beside it.
+  const postcodeClasses = { field: styles.stackField, label: `${styles.eyebrow} ${styles.stackLabel}`, select: styles.searchInput };
 
   const fieldRow: CSSProperties = { display: 'block', marginBottom: 'var(--space-3)' };
   const inputStyle: CSSProperties = { width: '100%' };
-  const row2: CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' };
+  // minmax(0, 1fr): a wide control (the date field) must not squeeze its neighbour on a phone.
+  const row2: CSSProperties = { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 'var(--space-3)' };
+
+  const remarkField = (
+    <label style={fieldRow}>
+      <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>Remark</div>
+      <input className={styles.searchInput} style={inputStyle} value={form.remark} onChange={(e) => set('remark', e.target.value)} />
+    </label>
+  );
 
   const hasAddress = [form.address1, form.address2, form.address3, form.address4].some((v) => v.trim() !== '');
 
@@ -97,11 +113,19 @@ export const EditDpOrderDrawer = ({ row, onClose }: { row: DpOrderRow; onClose: 
           fromPostcode: toNull(form.fromPostcode),
           fromState: toNull(form.fromState),
         } : {}),
-        requestedDate: form.requestedDate ? form.requestedDate : null,
+        // The date only while pending: the server refuses a scheduled job's date.
+        ...(isPending ? { requestedDate: form.requestedDate ? form.requestedDate : null } : {}),
         remark: toNull(form.remark),
       },
       {
-        onSuccess: () => { void notify({ title: 'DP Order updated' }); onClose(); },
+        onSuccess: (res) => {
+          /* The job is saved; a failed manifest-line update is still told, so the
+             driver's stop is not silently left on the old address. */
+          void notify(res.tripStop?.failed
+            ? { title: "DP Order updated, the driver's stop was not", body: res.tripStop.reason ?? 'The trip stop could not be updated.', tone: 'error' }
+            : { title: 'DP Order updated' });
+          onClose();
+        },
         onError: writeFailedAs('Update failed'),
       },
     );
@@ -117,7 +141,9 @@ export const EditDpOrderDrawer = ({ row, onClose }: { row: DpOrderRow; onClose: 
 
         <div className={styles.drawerBody}>
           <div style={{ margin: '0 0 var(--space-3)', fontSize: 'var(--fs-12)', color: 'var(--c-muted, var(--hz-c-ink-muted))' }}>
-            {dpJobTypeLabel(row.job_type)} · Pending Schedule. A job can be edited until it is scheduled.
+            {dpJobTypeLabel(row.job_type)} · {isPending
+              ? 'Pending Schedule.'
+              : 'Scheduled. The date stays; the contact, address, postcode and remark can still be corrected, and the driver\'s stop follows.'}
           </div>
 
           {/* Origin ("from") — TRANSFER only (owner 2026-11-02 方案1). Shown above the
@@ -140,13 +166,17 @@ export const EditDpOrderDrawer = ({ row, onClose }: { row: DpOrderRow; onClose: 
                 <input className={styles.searchInput} style={inputStyle} value={form.fromAddress2} onChange={(e) => set('fromAddress2', e.target.value)} />
               </label>
               <div style={row2}>
+                <div style={fieldRow}>
+                  <PostcodeCascadeField
+                    value={form.fromPostcode} state={form.fromState} city={form.fromCity}
+                    onPick={(t) => setForm((s) => ({ ...s, fromPostcode: t.postcode, fromState: t.state, fromCity: t.city }))}
+                    label="From postcode"
+                    classes={postcodeClasses}
+                  />
+                </div>
                 <label style={fieldRow}>
                   <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>From city</div>
                   <input className={styles.searchInput} style={inputStyle} value={form.fromCity} onChange={(e) => set('fromCity', e.target.value)} />
-                </label>
-                <label style={fieldRow}>
-                  <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>From postcode</div>
-                  <input className={styles.searchInput} style={inputStyle} value={form.fromPostcode} onChange={(e) => set('fromPostcode', e.target.value)} />
                 </label>
               </div>
               <label style={{ ...fieldRow, marginBottom: 0 }}>
@@ -185,13 +215,22 @@ export const EditDpOrderDrawer = ({ row, onClose }: { row: DpOrderRow; onClose: 
             <input className={styles.searchInput} style={inputStyle} value={form.address2} onChange={(e) => set('address2', e.target.value)} />
           </label>
           <div style={row2}>
+            <div style={fieldRow}>
+              <PostcodeCascadeField
+                value={form.postcode} state={form.state} city={form.city}
+                onPick={(t) => setForm((s) => ({ ...s, postcode: t.postcode, state: t.state, city: t.city }))}
+                label={<>Postcode{DP_POSTCODE_REQUIRED_JOB_TYPES.has(row.job_type) && <span style={{ textTransform: 'none', color: 'var(--c-burnt)' }}> — required</span>}</>}
+                classes={postcodeClasses}
+              />
+              {postcodeMissing && (
+                <div role="alert" style={{ marginTop: 'var(--space-1)', fontSize: 'var(--fs-12)', color: 'var(--c-burnt)' }}>
+                  Pick the postcode. A job without one cannot be put in a delivery region.
+                </div>
+              )}
+            </div>
             <label style={fieldRow}>
               <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>City</div>
               <input className={styles.searchInput} style={inputStyle} value={form.city} onChange={(e) => set('city', e.target.value)} />
-            </label>
-            <label style={fieldRow}>
-              <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>Postcode</div>
-              <input className={styles.searchInput} style={inputStyle} value={form.postcode} onChange={(e) => set('postcode', e.target.value)} />
             </label>
           </div>
           <div style={row2}>
@@ -199,20 +238,21 @@ export const EditDpOrderDrawer = ({ row, onClose }: { row: DpOrderRow; onClose: 
               <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>State</div>
               <input className={styles.searchInput} style={inputStyle} value={form.state} onChange={(e) => set('state', e.target.value)} />
             </label>
-            <label style={fieldRow}>
-              <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>Requested date</div>
-              <DateField fullWidth className={styles.searchInput} style={inputStyle} value={form.requestedDate} onChange={(iso) => set('requestedDate', iso)} />
-            </label>
+            {/* A scheduled job's date is set by planning, not here: Remark takes the
+                cell instead of leaving State's row half empty. */}
+            {isPending ? (
+              <label style={fieldRow}>
+                <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>Requested date</div>
+                <DateField fullWidth className={styles.searchInput} style={inputStyle} value={form.requestedDate} onChange={(iso) => set('requestedDate', iso)} />
+              </label>
+            ) : remarkField}
           </div>
-          <label style={fieldRow}>
-            <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>Remark</div>
-            <input className={styles.searchInput} style={inputStyle} value={form.remark} onChange={(e) => set('remark', e.target.value)} />
-          </label>
+          {isPending && remarkField}
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-3)', padding: 'var(--space-4)' }}>
           <Button variant="ghost" size="md" onClick={onClose}>Cancel</Button>
-          <Button variant="primary" size="md" onClick={submit} disabled={update.isPending || !hasAddress}>
+          <Button variant="primary" size="md" onClick={submit} disabled={update.isPending || !hasAddress || postcodeMissing}>
             {update.isPending ? 'Saving…' : 'Save changes'}
           </Button>
         </div>

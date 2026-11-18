@@ -14,11 +14,12 @@
 // Maintenance. Backed by scm.threepl_companies (migs 0210 + 0237).
 // ----------------------------------------------------------------------------
 
-import { useMemo, useState, type ReactNode, type CSSProperties } from 'react';
+import { useMemo, useState, type ReactNode, type CSSProperties, type Dispatch, type SetStateAction } from 'react';
 import { Button } from '@2990s/design-system';
 import { Building2, Plus, Trash2, Pencil, Check, X, ChevronRight, ChevronDown } from 'lucide-react';
 import { PageHeader } from '../../components/Layout';
-import { FormCard, FormGrid, FormField, FormInput, FormSearchSelect } from '../../vendor/scm/components/FormCard';
+import { FormCard, FormGrid, FormField, FormInput, FormSearchSelect, FORM_FIELD_CLASSES } from '../../vendor/scm/components/FormCard';
+import { AddressTripleFields } from '../../vendor/scm/components/AddressTripleFields';
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
 import { formatPhone } from '@2990s/shared/phone';
 import styles from './Suppliers.module.css';
@@ -45,7 +46,7 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const BLANK = {
   name: '', registrationNo: '', contactName: '', contactPhone: '',
-  officePhone: '', email: '', address: '',
+  officePhone: '', email: '', address: '', postcode: '', city: '', state: '',
 };
 type Particulars = typeof BLANK;
 
@@ -57,7 +58,27 @@ const particularsOf = (row: ThreePLCompanyRow): Particulars => ({
   officePhone: row.officePhone ?? '',
   email: row.email ?? '',
   address: row.address ?? '',
+  postcode: row.postcode ?? '',
+  city: row.city ?? '',
+  state: row.state ?? '',
 });
+
+/* The address fields every save sends — Postcode / City / State ride with the
+   free-text address so a TRANSFER to this carrier carries all three. */
+const addressOf = (f: Particulars) => {
+  const trimmed = (v: string) => v.trim() || null;
+  return { address: trimmed(f.address), postcode: trimmed(f.postcode), city: trimmed(f.city), state: trimmed(f.state) };
+};
+
+/* Postcode / City / State in the Sales Order's controls (owner 2026-11-17). */
+const AddressTriple = ({ form, setForm }: { form: Particulars; setForm: Dispatch<SetStateAction<Particulars>> }) => (
+  <AddressTripleFields
+    country=""
+    value={{ state: form.state, city: form.city, postcode: form.postcode }}
+    onChange={(next) => setForm((p) => ({ ...p, ...next }))}
+    classes={FORM_FIELD_CLASSES}
+  />
+);
 
 export const ThreePLCompanies = ({ embedded = false }: { embedded?: boolean } = {}) => {
   const companies = useThreePLCompanies();
@@ -85,7 +106,7 @@ export const ThreePLCompanies = ({ embedded = false }: { embedded?: boolean } = 
         contactPhone: trimmed(form.contactPhone),
         officePhone: trimmed(form.officePhone),
         email: trimmed(form.email),
-        address: trimmed(form.address),
+        ...addressOf(form),
         supplierId: supplier?.id ?? null,
       },
       {
@@ -165,6 +186,7 @@ export const ThreePLCompanies = ({ embedded = false }: { embedded?: boolean } = 
           <FormField label="Registered address" span={4}>
             <FormInput value={form.address} onChange={(e) => set('address')(e.target.value)} placeholder="Registered address" />
           </FormField>
+          <AddressTriple form={form} setForm={setForm} />
         </FormGrid>
       </FormCard>
 
@@ -228,7 +250,7 @@ const CompanyRow = ({ row, open, onToggleOpen }: { row: ThreePLCompanyRow; open:
         id: row.id, name: form.name.trim(),
         registrationNo: trimmed(form.registrationNo), contactName: trimmed(form.contactName),
         contactPhone: trimmed(form.contactPhone), officePhone: trimmed(form.officePhone),
-        email: trimmed(form.email), address: trimmed(form.address),
+        email: trimmed(form.email), ...addressOf(form),
         /* Only when it changed, so a phone edit is never refused over a link it did not touch. */
         ...(supplierId !== (row.supplier?.id ?? null) ? { supplierId } : {}),
       },
@@ -283,6 +305,7 @@ const CompanyRow = ({ row, open, onToggleOpen }: { row: ThreePLCompanyRow; open:
             <FormField label="Registered address" span={4}>
               <FormInput value={form.address} onChange={(e) => set('address')(e.target.value)} />
             </FormField>
+            <AddressTriple form={form} setForm={setForm} />
           </FormGrid>
           <div style={{ display: 'flex', gap: 6, marginTop: 12 }}>
             <Button variant="primary" size="sm" onClick={save} disabled={update.isPending}><Check {...ICON} /><span>Save</span></Button>
@@ -323,6 +346,7 @@ const CompanyRow = ({ row, open, onToggleOpen }: { row: ThreePLCompanyRow; open:
         <SupplierFact supplier={row.supplier} />
         <Fact label="Contact" value={row.contactName} sub={row.contactPhone ? formatPhone(row.contactPhone) : null} />
         <Fact label="Office" value={row.officePhone ? formatPhone(row.officePhone) : null} sub={row.email} />
+        <Fact label="Postcode" value={[row.postcode, row.city].filter(Boolean).join(' ') || null} sub={row.state} />
 
         <label className="inline-flex flex-none cursor-pointer items-center gap-1.5">
           <input type="checkbox" className="h-4 w-4 accent-[#16695f]" checked={row.isActive} disabled={update.isPending}

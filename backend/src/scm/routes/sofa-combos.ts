@@ -27,13 +27,13 @@ import { Hono, type Context } from 'hono';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
-import { canonicalizeComboModulesForStorage, comboSlotsKey, sofaComboCostSen, parseDefaultFreeGifts, comboChargedPrices, type ComboSlots } from '../shared';
+import { canonicalizeComboModulesForStorage, comboSlotsKey, sofaComboCostSen, parseDefaultFreeGifts, comboChargedPrices, isOnePieceSetCombo, ONE_PIECE_SET_COMBO_MESSAGE, type ComboSlots } from '../shared';
 import { loadModelSofaModuleCosts } from '../lib/mfg-pricing-recompute';
 import { canWriteScmConfig } from '../lib/houzs-perms';
 import { todayMyt } from '../lib/my-time';
 import { autoDeriveEnabled } from '../lib/auto-derive-cost';
 import { deriveMasterComboCostFromSuppliers, comboCostChanged, pickDearestSupplierCombo } from '../lib/derive-combo-cost';
-import { activeCompanyId, scopeToCompany } from '../lib/companyScope';
+import { activeCompanyId, scopeToCompany, NOT_THIS_COMPANY } from '../lib/companyScope';
 import { clearHeights, hasAnyPrice, mergeComboPrices, newestComboRow, type HeightPrices } from '../lib/sofa-combo-apply';
 
 export const sofaCombos = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -130,6 +130,13 @@ export function validateComboModules(v: unknown): ComboSlots | null {
     }
   }
   return canonicalizeComboModulesForStorage(v);
+}
+
+/** The refusal for a combo shaped as one piece carrying a set's price
+ *  (isOnePieceSetCombo), or null when the shape is fine. Every write that
+ *  prices a combo asks this; retiring one does not. */
+export function onePieceSetRefusal(modules: ComboSlots): { error: string; message: string } | null {
+  return isOnePieceSetCombo(modules) ? { error: 'combo_one_piece_set', message: ONE_PIECE_SET_COMBO_MESSAGE } : null;
 }
 
 export function validatePricesByHeight(v: unknown): Record<string, number | null> | null {
@@ -468,7 +475,8 @@ async function recomputeMasterComboCostFromSuppliers(
 // accepted for back-compat (each code → a singleton slot).
 // Always INSERTs (append-only). To "edit" an existing combo, POST a new
 // row with the same scope tuple + a fresher effectiveFrom.
-sofaCombos.post('/', async (c) => {
+// Exported so a test can drive it without the supabaseAuth bridge.
+export const sofaComboCreateHandler = async (c: AppContext) => {
   const gate = await requireWriteRole(c);
   if (!gate.ok) return gate.res;
 
@@ -499,6 +507,8 @@ sofaCombos.post('/', async (c) => {
   if (!modules) {
     return c.json({ error: 'modules_required' }, 400);
   }
+  const shape = onePieceSetRefusal(modules);
+  if (shape) return c.json(shape, 400);
 
   const tier =
     body.tier === null || body.tier === '' || body.tier === undefined
@@ -617,7 +627,8 @@ sofaCombos.post('/', async (c) => {
     await recomputeMasterComboCostFromSuppliers(supabase, savedRow, activeCompanyId(c), user.id);
   }
   return c.json({ ...rowToWire(savedRow), mirrored }, 201);
-});
+};
+sofaCombos.post('/', sofaComboCreateHandler);
 
 // ── PUT /:id ───────────────────────────────────────────────────────────
 // Convenience alias: edit by id = read the row's tuple + insert a NEW row
@@ -644,6 +655,10 @@ export const sofaComboPutHandler = async (c: any) => {
     .maybeSingle();
   if (findErr) return c.json({ error: 'load_failed', reason: findErr.message }, 500);
   if (!orig) return c.json({ error: 'not_found' }, 404);
+  // An edit re-saves the combo's own modules, so a wrong shape is refused
+  // here too: change its modules (recompose) or retire it instead.
+  const shape = onePieceSetRefusal(orig.modules ?? []);
+  if (shape) return c.json(shape, 400);
 
   let body: {
     pricesByHeight?: unknown;
@@ -833,6 +848,8 @@ const rederiveMasters = async (c: AppContext, rows: readonly Row[]): Promise<voi
   if (rows.length === 0 || !(await autoDeriveEnabled(c.get('supabase'), companyId))) return;
   const done = new Set<string>();
   for (const r of rows) {
+    // A wrong-shaped supplier combo must not mint a master row of its shape.
+    if (isOnePieceSetCombo(r.modules)) continue;
     const key = JSON.stringify([r.base_model, comboSlotsKey(r.modules ?? []), r.tier, r.customer_id]);
     if (done.has(key)) continue;
     done.add(key);
@@ -858,6 +875,7 @@ function parseApplyItem(raw: unknown): ApplyItem | string {
   if (!baseModel) return 'base_model_required';
   const modules = validateComboModules(r.modules);
   if (!modules) return 'modules_required';
+  if (onePieceSetRefusal(modules)) return 'combo_one_piece_set';
   if (typeof r.tier !== 'string' || !TIERS.has(r.tier)) return 'tier_invalid';
   const prices = validatePricesByHeight(r.prices);
   if (!prices) return 'prices_invalid';
@@ -896,7 +914,9 @@ export const sofaComboApplyHandler = async (c: AppContext) => {
   const items: ApplyItem[] = [];
   for (const [index, raw] of body.items.entries()) {
     const parsed = parseApplyItem(raw);
-    if (typeof parsed === 'string') return c.json({ error: parsed, index }, 400);
+    if (typeof parsed === 'string') {
+      return c.json({ error: parsed, index, ...(parsed === 'combo_one_piece_set' ? { message: ONE_PIECE_SET_COMBO_MESSAGE } : {}) }, 400);
+    }
     items.push(parsed);
   }
 
@@ -1011,6 +1031,8 @@ export const sofaComboRetireHandler = async (c: AppContext) => {
   const hit = live.rows.filter((r) =>
     wanted.has(JSON.stringify([r.base_model, comboSlotsKey(r.modules ?? [])]))
     && (supplierId === null || r.supplier_id === supplierId));
+  // Nothing of this company matched: say so, rather than "0 deleted" read as done.
+  if (hit.length === 0) return c.json(NOT_THIS_COMPANY, 404);
 
   const failed = await softDeleteRows(c, hit.map((r) => r.id));
   if (failed) return c.json({ error: 'delete_failed', reason: failed }, 500);
@@ -1038,6 +1060,10 @@ export const sofaComboRecomposeHandler = async (c: AppContext) => {
   const from = validateComboModules(body.from);
   const to = validateComboModules(body.to);
   if (!from || !to) return c.json({ error: 'modules_required' }, 400);
+  // Moving a wrong-shaped combo to a proper set is how it gets fixed, so only
+  // the NEW modules are held to the shape.
+  const shape = onePieceSetRefusal(to);
+  if (shape) return c.json(shape, 400);
   const supplierId = typeof body.supplierId === 'string' && body.supplierId ? body.supplierId : null;
 
   const live = await loadLiveComboRows(c, [baseModel]);

@@ -10,7 +10,8 @@
 import { useState } from 'react';
 import { AlertTriangle, Landmark, Link2 } from 'lucide-react';
 import { useAuth } from '../../auth/AuthContext';
-import { useBookBankReceipt, useMatchBankLine, type BankLine, type LedgerEntry } from './bank-queries';
+import { useBookBankReceipt, useMatchBankLine, type BankCardPayment, type BankLine, type LedgerEntry } from './bank-queries';
+import { BankCardPaymentsTab } from './BankCardPaymentsTab';
 import { BookAllMatched, DepWd, DoneLine, OpenLine, certainAllocation, decisionKey } from './BankStatementTab';
 import { useReconcilePick } from './bank-reconcile-pick';
 import { EntryDocument, entryDocText } from './bank-entry-doc';
@@ -23,8 +24,8 @@ import tokens from './finance/finance-ui.module.css';
 import look from './BankStatements.module.css';
 import grid from './MerchantRecon.module.css';
 
-export type LineTab = 'to-match' | 'to-choose' | 'no-entry' | 'not-on-bank' | 'matched' | 'set-aside';
-type LineOnlyTab = Exclude<LineTab, 'not-on-bank'>;
+export type LineTab = 'to-match' | 'to-choose' | 'no-entry' | 'not-on-bank' | 'cards' | 'matched' | 'set-aside';
+type LineOnlyTab = Exclude<LineTab, 'not-on-bank' | 'cards'>;
 
 /** Which tab a bank line sits in — what the matcher decided, in the redesign's words.
     `chooseAnyway` holds the lines a person pressed "Not this" on: they leave To match for To choose. */
@@ -42,28 +43,30 @@ export function bankLineTab(l: BankLine, chooseAnyway: ReadonlySet<number>): Lin
 
 export const LINE_TAB_LABEL: Record<LineTab, string> = {
   'to-match': 'To match', 'to-choose': 'To choose', 'no-entry': 'No entry found',
-  'not-on-bank': 'Not on the bank yet', matched: 'Matched', 'set-aside': 'Set aside',
+  'not-on-bank': 'Not on the bank yet', cards: 'Card payments', matched: 'Matched', 'set-aside': 'Set aside',
 };
 const HINT: Record<LineTab, string> = {
   'to-match': 'Same amount, one entry, names agree. Check each one, then match it.',
   'to-choose': 'More than one entry could fit, or one movement covers several entries.',
   'no-entry': 'Nothing in the books fits yet. Record what it is, or set it aside with a note.',
   'not-on-bank': 'In the ledger, not shown by the bank yet: a payment not paid out, a receipt not credited, or an entry after the statement ends. Each stays here month after month until the bank shows it and its line is matched.',
+  /* Owner 2026-11-17: a swipe on another company's machine comes back as a transfer, less its charges. */
+  cards: 'Card payments no merchant report has carried. Tick them with the movement that paid them in; the difference goes to the terminal charges account.',
   matched: 'Lines you match here can be undone until the month is locked.',
   'set-aside': 'Kept on the statement with a note. Nothing posted.',
 };
 /* What an empty tab says — what it looked for, never a verdict on the month (the empty-state rule). */
 const EMPTY: Record<LineTab, string> = {
   'to-match': 'No line waiting to be matched.', 'to-choose': 'Nothing to choose.', 'no-entry': 'No line without an entry.',
-  'not-on-bank': 'No ledger entry waiting for the bank.', matched: 'Nothing matched yet.', 'set-aside': 'Nothing set aside.',
+  'not-on-bank': 'No ledger entry waiting for the bank.', cards: 'Every card payment is on a merchant report.', matched: 'Nothing matched yet.', 'set-aside': 'Nothing set aside.',
 };
-const ORDER: LineTab[] = ['to-match', 'to-choose', 'no-entry', 'not-on-bank', 'matched', 'set-aside'];
+const ORDER: LineTab[] = ['to-match', 'to-choose', 'no-entry', 'not-on-bank', 'cards', 'matched', 'set-aside'];
 const OPEN_TABS: LineTab[] = ['to-match', 'to-choose', 'no-entry'];
 
 export type TabCounts = Record<LineTab, number>;
 
-export function tabCounts(lines: BankLine[], entries: LedgerEntry[], chooseAnyway: ReadonlySet<number>): TabCounts {
-  const out: TabCounts = { 'to-match': 0, 'to-choose': 0, 'no-entry': 0, 'not-on-bank': entries.length, matched: 0, 'set-aside': 0 };
+export function tabCounts(lines: BankLine[], entries: LedgerEntry[], chooseAnyway: ReadonlySet<number>, cards: number): TabCounts {
+  const out: TabCounts = { 'to-match': 0, 'to-choose': 0, 'no-entry': 0, 'not-on-bank': entries.length, cards, matched: 0, 'set-aside': 0 };
   for (const l of lines) out[bankLineTab(l, chooseAnyway)] += 1;
   return out;
 }
@@ -182,6 +185,8 @@ function NotOnBankYet({ entries, open, chooseAnyway, periodTo }: { entries: Ledg
 type TabBodyProps = {
   tab: LineTab; lines: BankLine[]; entries: LedgerEntry[]; locked: boolean; periodTo: string;
   chooseAnyway: ReadonlySet<number>; onNotThis: (lineId: number) => void;
+  /** The card payments no report carries (the Card payments tab). */
+  cards: BankCardPayment[];
 };
 
 export function LineTabBody({ accountCode, ...body }: TabBodyProps & {
@@ -207,15 +212,17 @@ export function LineTabBody({ accountCode, ...body }: TabBodyProps & {
   );
 }
 
-function TabBody({ tab, lines, entries, locked, periodTo, chooseAnyway, onNotThis, onRecord }: TabBodyProps & {
+function TabBody({ tab, lines, entries, locked, periodTo, chooseAnyway, onNotThis, cards, onRecord }: TabBodyProps & {
   /** Record journal on a No entry found line; null where it is not offered. */
   onRecord: ((line: BankLine) => void) | null;
 }) {
   const pick = useReconcilePick();
-  const inTab = tab === 'not-on-bank' ? [] : lines.filter((l) => bankLineTab(l, chooseAnyway) === tab);
+  const inTab = tab === 'not-on-bank' || tab === 'cards' ? [] : lines.filter((l) => bankLineTab(l, chooseAnyway) === tab);
   const open = lines.filter((l) => l.state === 'OPEN');
-  if ((tab === 'not-on-bank' ? entries.length : inTab.length) === 0) return <div className={look.emptyTab}>{EMPTY[tab]}</div>;
+  const count = tab === 'not-on-bank' ? entries.length : tab === 'cards' ? cards.length : inTab.length;
+  if (count === 0) return <div className={look.emptyTab}>{EMPTY[tab]}</div>;
   if (tab === 'not-on-bank') return <NotOnBankYet entries={entries} open={open} chooseAnyway={chooseAnyway} periodTo={periodTo} />;
+  if (tab === 'cards') return <BankCardPaymentsTab cards={cards} />;
   if (tab === 'to-match') {
     return (
       <div className={look.section}>

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  leadCategoryOptions,
   loadLeadTimeBase,
   loadSupplierCategoryOverrides,
   resolveLeadDays,
@@ -90,10 +91,33 @@ describe("base cascade — (warehouse, category) -> (NULL, category) -> 0", () =
     expect(resolveLeadDays(base, NO_OVERRIDES, NO_BUFFERS, { warehouseId: WH_PG, category: "SOFA" }).total).toBe(14);
   });
 
-  test("a group outside the five reads the 'others' row (2990-0063)", async () => {
-    const withOthers = await baseFrom([{ warehouse_id: null, category: "others", lead_days: 10 }]);
-    expect(resolveLeadDays(withOthers, NO_OVERRIDES, NO_BUFFERS, { warehouseId: WH_PG, category: "DINING" }).total).toBe(10);
-    expect(resolveLeadDays(withOthers, NO_OVERRIDES, NO_BUFFERS, { warehouseId: WH_PG, category: "sofa" }).total).toBe(0);
+  test("a category with no number of its own reads Others; one with a row (even 0) keeps it (2990-0063)", async () => {
+    const b = await baseFrom([
+      { warehouse_id: null, category: "others", lead_days: 10 },
+      { warehouse_id: null, category: "sofa", lead_days: 0 },
+      { warehouse_id: null, category: "dining", lead_days: 4 },
+    ]);
+    expect(resolveLeadDays(b, NO_OVERRIDES, NO_BUFFERS, { warehouseId: WH_PG, category: "CARPET" }).total).toBe(10);
+    expect(resolveLeadDays(b, NO_OVERRIDES, NO_BUFFERS, { warehouseId: WH_PG, category: "DINING" }).total).toBe(4);
+    expect(resolveLeadDays(b, NO_OVERRIDES, NO_BUFFERS, { warehouseId: WH_PG, category: "sofa" }).total).toBe(0);
+  });
+
+  test("a Sofa Accessory with its own number uses it, else the sofa's", async () => {
+    const b = await baseFrom([{ warehouse_id: null, category: "sofa", lead_days: 7 }]);
+    expect(resolveLeadDays(b, NO_OVERRIDES, NO_BUFFERS, { warehouseId: null, category: "FABRIC_ACCESSORY" }).total).toBe(7);
+    const own = await baseFrom([{ warehouse_id: null, category: "sofa", lead_days: 7 }, { warehouse_id: null, category: "fabric_accessory", lead_days: 2 }]);
+    expect(resolveLeadDays(own, NO_OVERRIDES, NO_BUFFERS, { warehouseId: null, category: "FABRIC_ACCESSORY" }).total).toBe(2);
+  });
+
+  test("a supplier's own category number beats its Others, and Others beats the base Others", async () => {
+    const b = await baseFrom([{ warehouse_id: null, category: "others", lead_days: 10 }]);
+    const ov = await overridesFrom([
+      { supplier_id: SUP_A, category: "dining", lead_days: 3 },
+      { supplier_id: SUP_A, category: "others", lead_days: 21 },
+    ]);
+    expect(resolveLeadDays(b, ov, NO_BUFFERS, { warehouseId: null, category: "DINING", supplierId: SUP_A }).total).toBe(3);
+    expect(resolveLeadDays(b, ov, NO_BUFFERS, { warehouseId: null, category: "CARPET", supplierId: SUP_A }).total).toBe(21);
+    expect(resolveLeadDays(b, ov, NO_BUFFERS, { warehouseId: null, category: "CARPET", supplierId: SUP_B }).total).toBe(10);
   });
 
   test("a supplier's 'others' override covers its dining / carpet lines", async () => {
@@ -281,5 +305,18 @@ describe("subtractCalendarDays", () => {
 
   test("an ISO timestamp is accepted and truncated to its date", () => {
     expect(subtractCalendarDays("2026-12-07T15:30:00Z", 1)).toBe("2026-12-06");
+  });
+});
+
+describe("leadCategoryOptions — one row per stored key (2990-0063)", () => {
+  test("the registry's own OTHERS group does not add a second Others row", () => {
+    const opts = leadCategoryOptions([
+      { code: "OTHERS", name: "OTHERS", is_active: true },
+      { code: "OUTDOOR", name: "Outdoor", is_active: true },
+    ]);
+    expect(opts.filter((o) => o.key === "others")).toEqual([{ key: "others", label: "Others" }]);
+    expect(opts.at(-1)?.key).toBe("others");
+    expect(new Set(opts.map((o) => o.key)).size).toBe(opts.length);
+    expect(opts.map((o) => o.key)).toContain("outdoor");
   });
 });

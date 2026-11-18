@@ -281,6 +281,10 @@ export type BankDecision = {
   candidates: PayableBatch[];
   /** One sentence saying why, in the operator's terms. Never a stack trace. */
   clue: string | null;
+  /** The acquirer's own payment advice said what this credit pays — the payer's
+      answer, not an inference (owner 2026-11-17: a split it spells out matches
+      itself; one found by amounts adding up waits for a person). */
+  byAdvice: boolean;
 };
 
 const rm = (sen: number) =>
@@ -391,7 +395,7 @@ export function matchBankMovements(input: {
     const base = {
       movement, batchId: null, split: [] as Array<{ batchId: number; amountSen: number }>,
       candidates: [] as PayableBatch[],
-      acquirerCode: null, tradingDate: null, merchantNo: null, clue: null,
+      acquirerCode: null, tradingDate: null, merchantNo: null, clue: null, byAdvice: false,
     };
 
     /* Money going OUT is never an acquirer paying us. Said here rather than
@@ -434,13 +438,14 @@ export function matchBankMovements(input: {
       if (parts.length === 1) {
         const b = parts[0]!.batch;
         return {
-          ...named, kind: 'PAYOUT', batchId: b.id, candidates: [b],
+          ...named, kind: 'PAYOUT', batchId: b.id, candidates: [b], byAdvice: true,
           clue: `${saying} says this ${rm(movement.amountSen)} credit pays ${b.fileName ?? `report ${b.id}`}.`,
         };
       }
       return {
         ...named,
         kind: 'PAYOUT_SPLIT',
+        byAdvice: true,
         candidates: parts.map((p) => p.batch),
         split: parts.map((p) => ({ batchId: p.batch.id, amountSen: p.amountSen })),
         clue: `${saying} says this ${rm(movement.amountSen)} credit pays ${parts.length} reports — `
@@ -521,7 +526,8 @@ export function matchBankMovements(input: {
    make the credit to the sen. Offered ready only when every line of it is linked
    to its sale on Merchant Recon, every sale has its live entry on THIS bank
    account, and no other bank line holds one; otherwise it says what is missing.
-   Never applied by itself — the person presses. */
+   A ready one is applied by itself (owner 2026-11-17: 我只要对一边 —
+   accounting-bank applyMerchantAgreedMatches); one that is not waits for a person. */
 
 export type QrReportForMatch = {
   batchId: number; fileName: string | null; acquirerCode: string; periodFrom: string; periodTo: string;

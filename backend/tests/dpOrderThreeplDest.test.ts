@@ -61,7 +61,7 @@ describe('POST /dp-orders — TRANSFER to an outsourced (3PL) warehouse', () => 
       contact_name: 'Encik Rahman', contact_phone: '0127778888', office_phone: '075551234',
       address: 'No 3, Jalan Perdagangan, Johor Bahru',
     });
-    const res = await send(a, { jobType: 'TRANSFER', threeplCompanyId: THREEPL });
+    const res = await send(a, { jobType: 'TRANSFER', threeplCompanyId: THREEPL, overrides: { postcode: '81100' } });
     expect(res.status).toBe(201);
 
     const insert = calls.find((x) => x.op === 'insert')?.payload as Record<string, unknown>;
@@ -71,6 +71,18 @@ describe('POST /dp-orders — TRANSFER to an outsourced (3PL) warehouse', () => 
     expect(insert.party_type).toBe('WAREHOUSE');
     expect(insert.party_name).toBe('MSJ TRANSPORT SDN BHD');
     expect(insert.address1).toBe('No 3, Jalan Perdagangan, Johor Bahru');
+  });
+
+  // Owner 2026-11-17: every DP job carries Postcode + City + State — the 3PL's
+  // own columns (mig 20261117T2000) reach the job.
+  test('carries the 3PL postcode, city and state onto the job', async () => {
+    const { a, calls } = app({
+      code: '3PL-003', name: 'MSJ TRANSPORT SDN BHD', contact_name: null, contact_phone: null, office_phone: null,
+      address: 'No 3, Jalan Perdagangan', postcode: '81200', city: 'Johor Bahru', state: 'Johor',
+    });
+    expect((await send(a, { jobType: 'TRANSFER', threeplCompanyId: THREEPL })).status).toBe(201);
+    const insert = calls.find((x) => x.op === 'insert')?.payload as Record<string, unknown>;
+    expect([insert.postcode, insert.city, insert.state]).toEqual(['81200', 'Johor Bahru', 'Johor']);
   });
 
   test('a 3PL destination with no address on file is refused — nothing is inserted', async () => {

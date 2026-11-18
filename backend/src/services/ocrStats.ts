@@ -35,6 +35,8 @@ export interface ScanRow {
   draft_baseline: unknown;
   /** SO only: the draft this scan made no longer exists (deleted). */
   so_missing: boolean;
+  /** SO only: R2 key of the slip photo the scan read (`scan-slips/<sampleId>`). */
+  slip_image_key: string | null;
 }
 
 /** scan-so.ts writes this prefix on a `done` job whose slip it could not read (a blank shell draft). */
@@ -88,6 +90,8 @@ export interface ProblemScan {
   detail: string | null;
   /** Before/after per changed field; null when the scan has no draft snapshot. */
   changes: FieldChange[] | null;
+  /** The slip photo the scan read, served by GET /scan-so/slip-image; null when none was kept. */
+  slipImageKey: string | null;
 }
 export interface OcrReport {
   month: string;
@@ -137,7 +141,7 @@ export function buildOcrReport(month: string, model: string, rows: ScanRow[]): O
       for (const f of detail.split(", ")) misses.set(f, (misses.get(f) ?? 0) + 1);
     }
     if ((outcome === "failed" || outcome === "corrected") && problems.length < PROBLEM_LIMIT) {
-      problems.push({ id: r.id, at: iso(r.created_at), documentType: t, docNo: r.doc_no, outcome, detail, changes });
+      problems.push({ id: r.id, at: iso(r.created_at), documentType: t, docNo: r.doc_no, outcome, detail, changes, slipImageKey: r.slip_image_key });
     }
   }
 
@@ -176,6 +180,7 @@ export async function loadOcrReport(env: Env, companyId: number, month: string):
            CASE WHEN s.status = 'CONFIRMED' THEN s.extracted END AS extracted,
            CASE WHEN s.status = 'CONFIRMED' THEN s.corrected END AS corrected,
            CASE WHEN s.status = 'CONFIRMED' THEN s.draft_baseline END AS draft_baseline,
+           CASE WHEN j.document_type = 'SO' THEN s.image_key END AS slip_image_key,
            (j.document_type = 'SO' AND j.status = 'done' AND j.so_doc_no IS NOT NULL
              AND NOT EXISTS (SELECT 1 FROM scm.mfg_sales_orders so
                               WHERE so.doc_no = j.so_doc_no AND so.company_id = j.company_id)) AS so_missing

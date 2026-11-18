@@ -14,6 +14,7 @@ Gotchas:
 - Time = job `created_at` to `updated_at`. A retried job includes the 3 minute stall.
 - "Clear failed" hard-deletes error jobs, so cleared failures are not counted.
 - The model is the `CLAUDE_MODEL` constant; it is not saved per scan, so there is no per-model split.
-- Field misses compare `extracted` to `corrected` key by key. When a line was added or removed, only "Line added/removed" is reported for the lines.
+- Field misses compare `extracted` to `corrected` key by key. When a line was added or removed, only "Line added/removed" is counted for the lines. A problem scan's card lists each removed and added line; a line pairs only by its unique slip text, so an edited line with no slip text shows as one removed and one added.
+- Tapping a problem scan's SO number opens a drawer (`?slip=<scanId>`) with the slip photo the scan read (sample `image_key`) beside its changes; it does not leave for the sales order. GR/PI numbers have no preview.
 - Payment, workshop, bill and credit note scans keep no read record and are not on this page.
 - Scans confirmed before the draft baseline existed (`draft_baseline` empty) over-count corrections, mostly Phone, City and Postcode.

@@ -1,9 +1,10 @@
-/* Employees & Attendance > Trip Pay (HC-0125 phase 5): Nico's "Driver Comm +
- * Worker Allowance" sheet as a screen. A trip month (23rd to 22nd) is filled
- * by pasting her Trip Report, or by reading Delivery Planning's lorry runs once
- * the team plans there; every row can be corrected (the job kind, a name).
- * Each person's commission and allowances are worked out from the rows and
- * the rates, and land on the payslip of the month of the same name. */
+/* Employees & Attendance > Trip Pay: the driver's commission and the crews'
+ * allowances. A trip month (23rd to 22nd) fills itself every night from
+ * Delivery Planning and the Projects module's Setup / Dismantle ("Read Delivery
+ * Planning" does it now), or from a pasted Trip Report; every row can be
+ * corrected, and a corrected row is never overwritten by a later read. Each
+ * person's commission and allowances are worked out from the rows and the
+ * rates, and land on the payslip of the month of the same name. */
 import { useMemo, useState } from "react";
 import { ClipboardPaste, Pencil, Plus, RefreshCw, Settings2, Trash2 } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
@@ -15,13 +16,22 @@ import { useToast } from "../../hooks/useToast";
 import { formatDate } from "../../lib/utils";
 import { fmtSen, todayMY } from "../../vendor/shared/format";
 import { DateField } from "../../vendor/scm/components/DateField";
-import { TRIP_KINDS, TRIP_KIND_LABEL, tripMonthOf, type TripKind } from "../../vendor/shared/hr-trip-pay";
+import { TRIP_EVENT_LABEL, TRIP_EVENT_TYPES, TRIP_JOB_LABEL, TRIP_JOB_TYPES, isFairJob, tripMonthOf, type TripEventType, type TripJobType } from "../../vendor/shared/hr-trip-pay";
 import { Field, Pill, errText, ghostBtn, inputCls, primaryBtn } from "../pos-admin/posAdminUi";
 import { HR, rmFromSen, senFromRm, useTripPay, type TripPersonPay, type TripRowOut } from "./hrApi";
 import { TripRatesDrawer } from "./TripRatesDrawer";
 
 const pct = (bps: number) => `${(bps / 100).toFixed(2)}%`;
 const SOURCE: Record<TripRowOut["source"], string> = { SHEET: "Pasted", PLANNING: "Planning", MANUAL: "Added" };
+const money = (sen: number) => (sen ? fmtSen(sen) : null);
+
+/** "Exhibition · 1st trip" for a Setup / Dismantle row; empty for any other job. */
+export function eventTripText(r: Pick<TripRowOut, "jobType" | "eventType" | "pay">): string {
+  if (!isFairJob(r.jobType)) return "";
+  const ev = TRIP_EVENT_LABEL[r.eventType ?? "EXHIBITION"] + (r.eventType ? "" : "?");
+  if (r.pay.tripOfDay == null) return ev;
+  return `${ev} · ${r.pay.tripOfDay === 2 ? "2nd" : "1st"} trip${r.pay.sameJob ? " (same job)" : ""}`;
+}
 
 function Kpi({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
@@ -77,16 +87,23 @@ export function TripPayTab() {
       setBusy(false);
     }
   };
-  const replaceWarning = (d?.sources ?? []).some((s) => s !== "MANUAL") ? " The rows pasted or read before are replaced; rows added by hand stay." : "";
+  const replaceWarning = (d?.sources ?? []).includes("SHEET") ? " The pasted rows are replaced; rows added or corrected by hand stay." : "";
   const importPaste = async () => {
     if (!paste?.trim()) return;
     if (await run(() => api.post(`${HR}/trip-pay/import`, { month, text: paste }), "Trip Report pasted")) setPaste(null);
   };
   const pull = async () => {
-    if (!(await dialog.confirm({ title: `Read Delivery Planning for ${month}?`, message: `Every stop of our own lorry runs from ${d?.first ?? ""} to ${d?.last ?? ""} becomes a row.${replaceWarning}`, confirmLabel: "Read" }))) return;
-    await run(() => api.post(`${HR}/trip-pay/pull`, { month }), "Lorry runs read");
+    if (
+      !(await dialog.confirm({
+        title: `Read Delivery Planning for ${month}?`,
+        message: `Every stop of our own lorry runs and every project Setup / Dismantle from ${d?.first ?? ""} to ${d?.last ?? ""} becomes a row; changed stops are updated, rows corrected by hand are kept, and a stop that is gone is flagged. This also runs every night by itself.${replaceWarning}`,
+        confirmLabel: "Read",
+      }))
+    )
+      return;
+    await run(() => api.post(`${HR}/trip-pay/pull`, { month }), "Delivery Planning read");
   };
-  const setKind = (r: TripRowOut, kind: TripKind) =>
+  const setJobType = (r: TripRowOut, jobType: TripJobType) =>
     void run(
       () =>
         api.patch(`${HR}/trip-pay/rows/${r.id}`, {
@@ -94,9 +111,11 @@ export function TripPayTab() {
           docNo: r.docNo,
           transferTo: r.transferTo,
           refNo: r.refNo,
-          kind,
+          jobType,
+          eventType: r.eventType,
           localTotalSen: r.localTotalSen,
           state: r.state,
+          postcode: r.postcode,
           lorryPlate: r.lorryPlate,
           driver1: r.driver1.name,
           driver2: r.driver2.name,
@@ -136,35 +155,49 @@ export function TripPayTab() {
         ) : null,
     },
     { key: "commission", label: "Commission", align: "right", getValue: (p) => p.commission.amountSen, render: (p) => (p.drove ? fmtSen(p.commission.amountSen) : null), total: (r) => fmtSen(r.reduce((s, p) => s + p.commission.amountSen, 0)) },
-    { key: "allowance", label: "Allowances", align: "right", getValue: (p) => p.allowanceSen, render: (p) => fmtSen(p.allowanceSen), total: (r) => fmtSen(r.reduce((s, p) => s + p.allowanceSen, 0)) },
+    { key: "allowance", label: "Job Allowances", align: "right", getValue: (p) => p.jobAllowanceSen, render: (p) => money(p.jobAllowanceSen), total: (r) => fmtSen(r.reduce((s, p) => s + p.jobAllowanceSen, 0)) },
+    { key: "outstation", label: "Outstation", align: "right", getValue: (p) => p.outstationSen, render: (p) => money(p.outstationSen), total: (r) => fmtSen(r.reduce((s, p) => s + p.outstationSen, 0)) },
+    { key: "overnight", label: "Overnight", align: "right", getValue: (p) => p.overnightSen, render: (p) => money(p.overnightSen), total: (r) => fmtSen(r.reduce((s, p) => s + p.overnightSen, 0)) },
     { key: "total", label: "Total", align: "right", getValue: (p) => p.totalSen, render: (p) => <span className="font-semibold">{fmtSen(p.totalSen)}</span>, total: (r) => fmtSen(r.reduce((s, p) => s + p.totalSen, 0)) },
   ];
 
   const rowCols: Column<TripRowOut>[] = [
     { key: "date", label: "Date", getValue: (r) => r.tripDate, render: (r) => <span className="font-mono">{formatDate(r.tripDate)}</span> },
-    { key: "docNo", label: "Doc No.", getValue: (r) => r.docNo, render: (r) => r.docNo },
-    { key: "transferTo", label: "Transfer To", getValue: (r) => r.transferTo, render: (r) => r.transferTo },
+    {
+      key: "docNo",
+      label: "Doc No.",
+      getValue: (r) => r.docNo,
+      render: (r) => (
+        <span className="inline-flex items-center gap-1">
+          {r.docNo}
+          {r.sourceMissing && <Pill tone="bad">Gone from Planning</Pill>}
+          {r.hrEdited && <Pill tone="muted">Edited</Pill>}
+        </span>
+      ),
+    },
+    { key: "transferTo", label: "Transfer To", defaultHidden: true, getValue: (r) => r.transferTo, render: (r) => r.transferTo },
     { key: "refNo", label: "Ref No.", defaultHidden: true, getValue: (r) => r.refNo, render: (r) => r.refNo },
     {
-      key: "kind",
+      key: "jobType",
       label: "Job Type",
-      getValue: (r) => TRIP_KIND_LABEL[r.kind],
+      getValue: (r) => TRIP_JOB_LABEL[r.jobType],
       render: (r) =>
         canEdit ? (
-          <select className="h-6 rounded border border-border bg-surface px-1 text-[11px]" value={r.kind} disabled={busy} onClick={(e) => e.stopPropagation()} onChange={(e) => setKind(r, e.target.value as TripKind)}>
-            {TRIP_KINDS.map((k) => (
+          <select className="h-6 rounded border border-border bg-surface px-1 text-[11px]" value={r.jobType} disabled={busy} aria-label="Job type" onClick={(e) => e.stopPropagation()} onChange={(e) => setJobType(r, e.target.value as TripJobType)}>
+            {TRIP_JOB_TYPES.map((k) => (
               <option key={k} value={k}>
-                {TRIP_KIND_LABEL[k]}
+                {TRIP_JOB_LABEL[k]}
               </option>
             ))}
           </select>
         ) : (
-          TRIP_KIND_LABEL[r.kind]
+          TRIP_JOB_LABEL[r.jobType]
         ),
     },
-    { key: "localTotal", label: "Local Total", align: "right", getValue: (r) => r.localTotalSen, render: (r) => (r.localTotalSen ? fmtSen(r.localTotalSen) : null), total: (rows) => fmtSen(rows.reduce((s, r) => s + r.localTotalSen, 0)) },
+    { key: "eventTrip", label: "Event / Trip That Day", getValue: (r) => eventTripText(r), render: (r) => eventTripText(r) },
     { key: "state", label: "State", getValue: (r) => r.state, render: (r) => r.state },
-    { key: "lorry", label: "Lorry", getValue: (r) => r.lorryPlate, render: (r) => r.lorryPlate },
+    { key: "postcode", label: "Postcode", getValue: (r) => r.postcode, render: (r) => <span className="font-mono">{r.postcode}</span> },
+    { key: "lorry", label: "Lorry", defaultHidden: true, getValue: (r) => r.lorryPlate, render: (r) => r.lorryPlate },
     {
       key: "driver",
       label: "Driver",
@@ -176,8 +209,21 @@ export function TripPayTab() {
         </span>
       ),
     },
-    { key: "helper1", label: "Helper 1", getValue: (r) => r.helper1.name, render: (r) => <NameCell p={r.helper1} matched={r.matched.helper1} /> },
-    { key: "helper2", label: "Helper 2", getValue: (r) => r.helper2.name, render: (r) => <NameCell p={r.helper2} matched={r.matched.helper2} /> },
+    {
+      key: "helper",
+      label: "Helper",
+      getValue: (r) => [r.helper1.name, r.helper2.name].filter(Boolean).join(", "),
+      render: (r) => (
+        <span className="inline-flex gap-1">
+          <NameCell p={r.helper1} matched={r.matched.helper1} />
+          {r.helper2.name && <NameCell p={r.helper2} matched={r.matched.helper2} />}
+        </span>
+      ),
+    },
+    { key: "localTotal", label: "Local Total", align: "right", getValue: (r) => r.localTotalSen, render: (r) => money(r.localTotalSen), total: (rows) => fmtSen(rows.reduce((s, r) => s + r.localTotalSen, 0)) },
+    { key: "allowance", label: "Allowance", align: "right", getValue: (r) => r.pay.allowanceSen, render: (r) => money(r.pay.allowanceSen), total: (rows) => fmtSen(rows.reduce((s, r) => s + r.pay.allowanceSen, 0)) },
+    { key: "outstation", label: "Outstation", align: "right", getValue: (r) => r.pay.outstationSen, render: (r) => money(r.pay.outstationSen), total: (rows) => fmtSen(rows.reduce((s, r) => s + r.pay.outstationSen, 0)) },
+    { key: "overnight", label: "Overnight", align: "right", getValue: (r) => r.pay.overnightSen, render: (r) => money(r.pay.overnightSen), total: (rows) => fmtSen(rows.reduce((s, r) => s + r.pay.overnightSen, 0)) },
     { key: "source", label: "Source", defaultHidden: true, getValue: (r) => SOURCE[r.source], render: (r) => SOURCE[r.source] },
     {
       key: "actions",
@@ -254,9 +300,14 @@ export function TripPayTab() {
           <span className="font-semibold">{d.unmatched.map((u) => `${u.name} (${u.rows})`).join(", ")}</span>. Type each under Trip sheet names on the person in Employee Master.
         </div>
       )}
-      {d && d.rows.some((r) => !r.state.trim() && r.kind !== "NONE") && (
+      {d && d.rows.some((r) => r.sourceMissing) && (
         <div className="rounded-md border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-[11.5px] text-amber-900 dark:text-amber-300">
-          {d.rows.filter((r) => !r.state.trim() && r.kind !== "NONE").length} row(s) have no state, so no outstation or transport allowance is worked out for them. An order scheduled before its DO was issued has no state: edit the row and fill it in.
+          {d.rows.filter((r) => r.sourceMissing).length} row(s) are no longer in Delivery Planning (the stop was cancelled or removed). They still count: remove each one that did not happen.
+        </div>
+      )}
+      {d && d.rows.some((r) => !r.state.trim() && r.jobType !== "NONE") && (
+        <div className="rounded-md border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-[11.5px] text-amber-900 dark:text-amber-300">
+          {d.rows.filter((r) => !r.state.trim() && r.jobType !== "NONE").length} row(s) have no state, so no outstation or transport allowance is worked out for them. An order scheduled before its DO was issued has no state: edit the row and fill it in.
         </div>
       )}
       {people.some((p) => p.missed?.noAttendance && p.missed.override == null) && (
@@ -266,11 +317,16 @@ export function TripPayTab() {
       )}
 
       {d && d.rows.length > 0 && (
-        <div className="grid grid-cols-4 gap-2 max-md:grid-cols-2">
-          <Kpi label="Commission" value={fmtSen(d.totals.commissionSen)} sub={`${pct(d.rates.commission3Bps)} / ${pct(d.rates.commission2Bps)} by crew`} />
-          <Kpi label="Allowances" value={fmtSen(d.totals.allowanceSen)} />
-          <Kpi label="Total" value={fmtSen(d.totals.commissionSen + d.totals.allowanceSen)} />
-          <Kpi label="Rows" value={String(d.rows.length)} sub={d.sources.map((s) => (SOURCE as Record<string, string>)[s] ?? s).join(", ")} />
+        <div className="grid grid-cols-5 gap-2 max-md:grid-cols-2">
+          <Kpi label="Commission" value={fmtSen(d.totals.commissionSen)} sub={`${pct(d.rates.commission2Bps)} / ${pct(d.rates.commission3Bps)} by crew of 2 / 3`} />
+          <Kpi label="Job allowances" value={fmtSen(d.totals.jobAllowanceSen)} />
+          <Kpi label="Outstation" value={fmtSen(d.totals.outstationSen)} />
+          <Kpi label="Overnight" value={fmtSen(d.totals.overnightSen)} />
+          <Kpi
+            label="Total"
+            value={fmtSen(d.totals.commissionSen + d.totals.allowanceSen)}
+            sub={`${d.rows.length} rows: ${d.sources.map((s) => (SOURCE as Record<string, string>)[s] ?? s).join(", ")}${d.rates.legacy ? " · old rules" : ""}`}
+          />
         </div>
       )}
 
@@ -312,9 +368,11 @@ function RowDrawer({ row, month, first, last, onClose, onSaved }: { row: TripRow
     docNo: row?.docNo ?? "",
     transferTo: row?.transferTo ?? "",
     refNo: row?.refNo ?? "",
-    kind: (row?.kind ?? "DO") as TripKind,
+    jobType: (row?.jobType ?? "DELIVERY_ORDER") as TripJobType,
+    eventType: (row?.eventType ?? "") as TripEventType | "",
     localTotal: row ? rmFromSen(row.localTotalSen) : "",
     state: row?.state ?? "",
+    postcode: row?.postcode ?? "",
     lorryPlate: row?.lorryPlate ?? "",
     driver1: row?.driver1.name ?? "",
     driver2: row?.driver2.name ?? "",
@@ -331,7 +389,7 @@ function RowDrawer({ row, month, first, last, onClose, onSaved }: { row: TripRow
     }
     setBusy(true);
     try {
-      const body = { ...f, localTotalSen };
+      const body = { ...f, eventType: isFairJob(f.jobType) && f.eventType ? f.eventType : null, localTotalSen };
       if (row) await api.patch(`${HR}/trip-pay/rows/${row.id}`, body);
       else await api.post(`${HR}/trip-pay/rows`, body);
       toast.success(row ? "Row updated" : "Row added");
@@ -365,14 +423,26 @@ function RowDrawer({ row, month, first, last, onClose, onSaved }: { row: TripRow
           <DateField fullWidth value={f.tripDate} onChange={(iso) => set("tripDate", iso)} aria-label="Date" />
         </Field>
         <Field label="Job type">
-          <select className={inputCls} value={f.kind} onChange={(e) => set("kind", e.target.value)}>
-            {TRIP_KINDS.map((k) => (
+          <select className={inputCls} value={f.jobType} onChange={(e) => set("jobType", e.target.value)}>
+            {TRIP_JOB_TYPES.map((k) => (
               <option key={k} value={k}>
-                {TRIP_KIND_LABEL[k]}
+                {TRIP_JOB_LABEL[k]}
               </option>
             ))}
           </select>
         </Field>
+        {isFairJob(f.jobType) && (
+          <Field label="Event type" hint="Unknown pays the Exhibition rate.">
+            <select className={inputCls} value={f.eventType} onChange={(e) => set("eventType", e.target.value)}>
+              <option value="">Unknown</option>
+              {TRIP_EVENT_TYPES.map((k) => (
+                <option key={k} value={k}>
+                  {TRIP_EVENT_LABEL[k]}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
         <Field label="Doc No.">
           <input className={inputCls} value={f.docNo} onChange={(e) => set("docNo", e.target.value)} />
         </Field>
@@ -382,11 +452,14 @@ function RowDrawer({ row, month, first, last, onClose, onSaved }: { row: TripRow
         <Field label="Ref No.">
           <input className={inputCls} value={f.refNo} onChange={(e) => set("refNo", e.target.value)} />
         </Field>
-        <Field label="Local Total (RM)" hint="Counts toward the driver's commission.">
+        <Field label="Local Total (RM)" hint="A Delivery order's counts toward the driver's commission.">
           <input className={inputCls} value={f.localTotal} onChange={(e) => set("localTotal", e.target.value)} inputMode="decimal" />
         </Field>
         <Field label="State" hint="Decides the outstation allowance.">
           <input className={inputCls} value={f.state} onChange={(e) => set("state", e.target.value)} placeholder="Johor" />
+        </Field>
+        <Field label="Postcode">
+          <input className={inputCls} value={f.postcode} onChange={(e) => set("postcode", e.target.value)} inputMode="numeric" />
         </Field>
         <Field label="Lorry">
           <input className={inputCls} value={f.lorryPlate} onChange={(e) => set("lorryPlate", e.target.value)} />
@@ -464,7 +537,16 @@ function PersonDrawer({ p, month, canEdit, onClose, onSaved }: { p: TripPersonPa
           <h3 className="mb-1 text-[10.5px] font-bold uppercase tracking-brand text-ink-muted">Allowances</h3>
           {p.lines.length === 0 && <div className="text-[11.5px] text-ink-muted">None this month.</div>}
           {p.lines.map((l) => (
-            <div key={l.key}>{line(`${l.label} x ${l.count} @ ${fmtSen(l.unitSen)}`, fmtSen(l.amountSen), l.dates.map(formatDate).join(", "))}</div>
+            <div key={l.key} className="border-b border-border/60 pb-1">
+              {line(`${l.label} x ${l.count} @ ${fmtSen(l.unitSen)}`, fmtSen(l.amountSen), l.items.length ? undefined : l.dates.map(formatDate).join(", "))}
+              {l.items.map((it, i) => (
+                <div key={i} className="grid grid-cols-[72px_1fr_auto] gap-2 pl-2 text-[10.5px] text-ink-muted">
+                  <span className="font-mono">{formatDate(it.date)}</span>
+                  <span>{[it.docNo, it.job, it.state].filter(Boolean).join(" · ")}</span>
+                  <span className="font-mono">{fmtSen(it.amountSen)}</span>
+                </div>
+              ))}
+            </div>
           ))}
           {line("Total", fmtSen(p.totalSen))}
         </section>

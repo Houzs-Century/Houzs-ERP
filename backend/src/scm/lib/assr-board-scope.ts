@@ -238,6 +238,7 @@ export function assrBoardUnionSql(c: CompanyScopeCtx, recentClosedSince: string)
               assr_cases.pickup_message_status AS pickup_message_status,
               assr_cases.inspection_message_status AS inspection_message_status,
               assr_cases.addr1 AS addr1, assr_cases.addr2 AS addr2, assr_cases.addr3 AS addr3, assr_cases.addr4 AS addr4,
+              ca.postcode AS case_postcode, ca.city AS case_city, ca.state AS case_state,
               -- Ref No. + the DO No. column are back-filled from the ORIGINAL order (owner
               -- 2026-11-11). Ref is the case's OWN ref_no (the HC##### customer docket it was
               -- raised with), the same value the case detail shows; the order's ref is only a
@@ -249,6 +250,7 @@ export function assrBoardUnionSql(c: CompanyScopeCtx, recentClosedSince: string)
               so.customer_state AS so_state, so.postcode AS so_postcode, so.customer_country AS so_country,
               so.ref AS so_ref_src, so.customer_so_no AS so_custso_src
          FROM assr_cases
+         LEFT JOIN assr_case_address ca ON ca.assr_id = assr_cases.id
          LEFT JOIN LATERAL (
               SELECT o.customer_state, o.postcode, o.customer_country, o.ref, o.customer_so_no
                 FROM scm.mfg_sales_orders o
@@ -265,7 +267,8 @@ export function assrBoardUnionSql(c: CompanyScopeCtx, recentClosedSince: string)
 }
 
 /** The State + Postcode a Service-Case board row shows, and the value its region
- *  bucket is classified by: the case's OWN address first — `addr4` is the state,
+ *  bucket is classified by: the case's OWN Postcode / State (assr_case_address,
+ *  owner 2026-11-17) first, then its address lines — `addr4` is the state,
  *  `addr3` leads with the postcode — then the linked Sales Order. NEVER
  *  `location` (the branch the case was raised at), which showed "SRW" in the
  *  State column and dropped a Sarawak case into the KL bucket. Same "case
@@ -277,11 +280,15 @@ export function assrBoardLocation(
   addr4: string | null,
   soState: string | null,
   soPostcode: string | null,
+  caseOwn: { postcode: string | null; state: string | null } | null,
 ): { state: string | null; postcode: string | null } {
+  const ownStateRaw = (caseOwn?.state ?? '').trim() || null;
+  const ownState = ownStateRaw ? (canonicalizeMyState(ownStateRaw) ?? ownStateRaw) : null;
   const addrState = canonicalizeMyState(addr4);
-  const state = addrState && isCanonicalMyState(addrState) ? addrState : (soState ?? null);
+  const state = ownState ?? (addrState && isCanonicalMyState(addrState) ? addrState : (soState ?? null));
+  const ownPostcode = (caseOwn?.postcode ?? '').trim() || null;
   const addrPostcode = (addr3 ?? '').match(/\b\d{5,6}\b/)?.[0] ?? null;
-  return { state, postcode: addrPostcode ?? soPostcode ?? null };
+  return { state, postcode: ownPostcode ?? addrPostcode ?? soPostcode ?? null };
 }
 
 /** The guard every ASSR board write runs before it touches anything, PER JOB

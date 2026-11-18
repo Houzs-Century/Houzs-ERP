@@ -41,7 +41,7 @@ const stop = (over: Partial<RawStopRow> & { id: string; trip_id: string }): RawS
   ...over,
 });
 
-const noEnrich: StopEnrichment = { phone: null, houseType: null, earliestTime: null, latestTime: null, accessNote: null };
+const noEnrich: StopEnrichment = { phone: null, houseType: null, earliestTime: null, latestTime: null, accessNote: null, postcode: null, state: null };
 
 describe("assembleDayView", () => {
   test("groups stops to their trip and orders by stop_no (null sorts last)", () => {
@@ -93,6 +93,7 @@ describe("assembleDayView", () => {
       enrichByStopId: new Map([["s1", {
         phone: "012-3456789", houseType: "Condo",
         earliestTime: "10:00", latestTime: "17:00", accessNote: "Lift booking required",
+        postcode: "47000", state: "Selangor",
       }]]),
     }));
     const s = out.trips[0].stops[0];

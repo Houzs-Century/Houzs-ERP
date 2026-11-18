@@ -33,6 +33,7 @@ import { ASSR_SHEET_STATUS } from "../scm/shared/assr-stage-labels";
 import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
 import { summariseReadiness } from "../scm/lib/so-readiness";
 import { soStreetTail, soTownLines } from "../services/autocount-address-fit";
+import { caseAddressFourLines } from "../scm/shared/assr-case-address";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -497,12 +498,12 @@ app.get("/status-export", async (c) => {
   const rows = await c.env.DB.prepare(
     `SELECT assr_no, doc_no, ref_no, complained_date, stage, sub_status, inspection_by, pickup_by, delivery_by, completion_date, closed_at,
             customer_name, phone, location, sales_agent, po_no, complaint_issue,
-            addr1, addr2, addr3, addr4,
+            addr1, addr2, addr3, addr4, ca.postcode, ca.city, ca.state,
             (SELECT group_concat(i.item_code, ', ')
                FROM assr_items i
               WHERE i.assr_id = assr_cases.id
                 AND i.item_code IS NOT NULL AND i.item_code != '') as items_codes
-       FROM assr_cases
+       FROM assr_cases LEFT JOIN assr_case_address ca ON ca.assr_id = assr_cases.id
       WHERE archived_at IS NULL${coSql}`
   ).all<{
     assr_no: string;
@@ -526,10 +527,14 @@ app.get("/status-export", async (c) => {
     addr2: string | null;
     addr3: string | null;
     addr4: string | null;
+    postcode: string | null;
+    city: string | null;
+    state: string | null;
     items_codes: string | null;
   }>();
 
-  const cases = (rows.results ?? []).map((r) => ({
+  // Address 1-4 in the SO's shape: lines, "<postcode> <city>", state (owner 2026-11-17).
+  const cases = (rows.results ?? []).map((r) => ({ r, a: caseAddressFourLines(r) })).map(({ r, a }) => ({
     assr_no: r.assr_no,
     so_no: r.doc_no,
     ref_no: r.ref_no,
@@ -550,10 +555,10 @@ app.get("/status-export", async (c) => {
     sales_agent: r.sales_agent,
     po_no: r.po_no,
     complaint_issue: r.complaint_issue,
-    addr1: r.addr1,
-    addr2: r.addr2,
-    addr3: r.addr3,
-    addr4: r.addr4,
+    addr1: a[0],
+    addr2: a[1],
+    addr3: a[2],
+    addr4: a[3],
     item_codes: r.items_codes,
     // The sheet's _appendNewAssrRow reads c.item_code (singular) — alias
     // so the existing script fills its Item column without an edit.

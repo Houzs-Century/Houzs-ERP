@@ -28,7 +28,7 @@ const refetch = vi.fn();
 vi.mock('../../vendor/scm/lib/mrp-queries', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../vendor/scm/lib/mrp-queries')>()),
   useMrp: () => ({ data: mrpData, isLoading: false, isError: false, error: null, refetch }),
-  useCategoryLeadTimes: () => ({ data: { leadTimes: {} }, isLoading: false }),
+  useCategoryLeadTimes: () => ({ data: { categories: [], leadTimes: {} }, isLoading: false }),
   useUpdateCategoryLeadTime: () => ({ mutate: () => {}, isPending: false }),
   useRegenerateMrp: () => ({ mutate: regenerateMutate, isPending: false }),
 }));

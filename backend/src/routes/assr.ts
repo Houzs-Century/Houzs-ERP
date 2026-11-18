@@ -66,6 +66,7 @@ import { pickupTrackingError } from "../scm/shared/assr-pickup-tracking";
 import { verificationFieldsError } from "../scm/shared/assr-verification-fields";
 import { getVerificationNotes, saveVerificationNotes, takeVerificationNotes } from "../services/assrVerificationNotes";
 import { getQcNotes, saveQcNotes, takeQcNotes } from "../services/assrQcNotes";
+import { caseAddressError, getCaseAddress, saveCaseAddress, takeCaseAddress } from "../services/assrCaseAddress";
 import { sendCompletionSurvey } from "../services/assrCompletionSurvey";
 import { sendServiceCaseReceivedAck } from "../services/assrConnectAck";
 import { overviewFilter, withOverviewFilter } from "./lib/assr-overview-filter";
@@ -1557,7 +1558,7 @@ app.get("/:id{[0-9]+}", requireServiceCaseAccess(), async (c) => {
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
   const detail = await getAssrDetail(c.env, id);
   if (!detail) return c.json({ error: "Not found" }, 404);
-  Object.assign((detail as { case: Record<string, unknown> }).case, await getVerificationNotes(c.env, id), await getQcNotes(c.env, id));
+  Object.assign((detail as { case: Record<string, unknown> }).case, await getVerificationNotes(c.env, id), await getQcNotes(c.env, id), await getCaseAddress(c.env, id));
   /* Multi-company: a case must fall inside the caller's ASSR company scope
      (same rule as the list). Rank-and-file SALES are pinned to HOUZS; office /
      backend / directors get their allowed set. A case tagged with a company
@@ -1887,7 +1888,7 @@ app.patch("/:id{[0-9]+}", requirePermission("service_cases.write"), async (c) =>
   ) {
     return c.json({ error: "Unknown sub-status" }, 400);
   }
-  const trackingError = pickupTrackingError(body) ?? verificationFieldsError(body) ?? qcInspectionFieldsError(body);
+  const trackingError = pickupTrackingError(body) ?? verificationFieldsError(body) ?? qcInspectionFieldsError(body) ?? caseAddressError(body);
   if (trackingError) return c.json({ error: trackingError }, 400);
   // Snapshot the responsible fields BEFORE the patch so we notify only on an
   // ACTUAL change (owner 2026-07-15). A doc_no re-match inside patchAssrCase can
@@ -1896,19 +1897,18 @@ app.patch("/:id{[0-9]+}", requirePermission("service_cases.write"), async (c) =>
   // snake_case (D1-compat shim).
   // Company scope: another company's case is "not found" before anything is written.
   const patchCoSql = assrCompanySql(c);
-  const before = await c.env.DB.prepare(
-    `SELECT assigned_to, assigned_to_2, sales_agent FROM assr_cases WHERE id = ?${patchCoSql}`,
-  )
+  const before = await c.env.DB.prepare(`SELECT assigned_to, assigned_to_2, sales_agent FROM assr_cases WHERE id = ?${patchCoSql}`)
     .bind(id)
     .first<{ assigned_to: number | null; assigned_to_2: number | null; sales_agent: string | null }>();
   if (!before) return c.json({ error: "Not found or no changes" }, 404);
 
   const notes = takeVerificationNotes(body);
   const qcNotes = takeQcNotes(body);
-  const ok = await patchAssrCase(c.env, id, body, userId);
+  const ok = await patchAssrCase(c.env, id, body, userId); // a new SO No. adds the SO's postcode / city / state to body
   const notesOk = notes ? await saveVerificationNotes(c.env, id, notes, userId) : false;
   const qcNotesOk = qcNotes ? await saveQcNotes(c.env, id, qcNotes, userId) : false;
-  if (!ok && !notesOk && !qcNotesOk) return c.json({ error: "Not found or no changes" }, 404);
+  const addr = takeCaseAddress(body), addrOk = addr ? await saveCaseAddress(c.env, id, addr, userId, true) : false;
+  if (!ok && !notesOk && !qcNotesOk && !addrOk) return c.json({ error: "Not found or no changes" }, 404);
 
   // Notify newly-responsible people (+ their recursive upline) when an assignee
   // or the sales_agent changed. Best-effort: never fails the PATCH.

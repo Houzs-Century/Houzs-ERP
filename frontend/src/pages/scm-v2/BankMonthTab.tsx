@@ -32,7 +32,7 @@ import { useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { AlertTriangle, Check, Download, Link2, Lock, Printer, Unlock } from 'lucide-react';
 import {
-  useBankSetup, useBankMonths, useBankMonth, useLockBankMonth, useUnlockBankMonth, useAutoMatchStatement, useTypeMonthClosing, useLeaveOutRepeats,
+  useBankSetup, useBankMonths, useBankMonth, useLockBankMonth, useUnlockBankMonth, useAutoMatchStatement, useTypeMonthClosing, useLeaveOutRepeats, useBankCardPayments,
   type BankMonthAssembly, type BankMonthBalances, type BankMonthLock, type BankLine,
   type BankBalanceSource, type BankTypedBalance, type Reconciliation,
 } from './bank-queries';
@@ -197,7 +197,11 @@ const MonthView = ({ picked, bank, missingSince, onUpload }: {
   const entries = data?.unmatchedEntries ?? [];
   /* The redesign's six tabs; the tab lives in the address (?tab=) and a month
      opens on the first with lines to work. */
-  const counts = tabCounts(lines, entries, chooseAnyway);
+  /* The card payments no merchant report has carried — a movement may take them
+     in itself, its difference to terminal charges (owner 2026-11-17). */
+  const cardQ = useBankCardPayments(true);
+  const cards = cardQ.data?.payments ?? [];
+  const counts = tabCounts(lines, entries, chooseAnyway, cards.length);
   const tab = openingTab(params.get('tab'), counts);
   const setTab = (t: LineTab) => setParams((prev) => { const next = new URLSearchParams(prev); next.set('tab', t); return next; }, { replace: true });
   const showTab = (t: LineTab) => { setTab(t); goTo(tabsRef); };
@@ -233,7 +237,7 @@ const MonthView = ({ picked, bank, missingSince, onUpload }: {
   ]));
 
   return (
-    <ReconcilePickProvider lines={ordered} entries={entries}>
+    <ReconcilePickProvider lines={ordered} entries={entries} cards={cards} cardSetup={cardQ.data ?? null}>
     <section className={look.panel} aria-label={`${monthTitle(picked.month)} · ${picked.accountCode}`}>
       {missing && <MissingBanner bank={bank} a={a} from={missing} onUpload={onUpload} />}
       <MonthHeader data={data} picked={picked} bank={bank} open={open.length} asideSen={f.asideSen} onPrint={() => setPrinting(true)} onExport={exportCsv} />
@@ -317,7 +321,7 @@ const MonthView = ({ picked, bank, missingSince, onUpload }: {
       <div ref={tabsRef} className={look.section}>
         <LineTabs tab={tab} counts={counts} locked={data.lock != null} onTab={setTab} />
         <LineTabBody tab={tab} lines={byDateThenLine(lines)} entries={entries} locked={data.lock != null} periodTo={a.periodTo}
-          chooseAnyway={chooseAnyway} onNotThis={(id) => setChooseAnyway((was) => new Set(was).add(id))} accountCode={data.accountCode} />
+          chooseAnyway={chooseAnyway} onNotThis={(id) => setChooseAnyway((was) => new Set(was).add(id))} accountCode={data.accountCode} cards={cards} />
       </div>
 
       {data.statements.length > 0 && <TheFiles data={data} />}

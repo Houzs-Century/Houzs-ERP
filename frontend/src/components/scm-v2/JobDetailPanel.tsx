@@ -6,10 +6,13 @@ import { fieldPhotoContext, uploadFieldPhoto } from "../../vendor/scm/lib/slip";
 import { serverFieldPhotoRestore, useFieldPhotos } from "../../lib/fieldPhotos";
 import { FieldPhotos } from "../FieldPhotos";
 import {
-  jobKey, jobRefOf, LEG_LABEL, detailRows, str, hm, type JobRef, type JobResponse,
+  jobKey, jobRefOf, LEG_LABEL, jobSectionRows, str, hm, type JobRef,
 } from "../../vendor/scm/lib/delivery-job";
+import { jobApiPath, useDeliveryJob } from "../../vendor/scm/lib/delivery-job-queries";
 import { PodPhotoAlbum } from "./PodPhotoAlbum";
+import { DpJobDetails } from "./DpJobDetails";
 import { DoProofOfDeliveryCard, type DoPodFields } from "../../pages/scm-v2/DoProofOfDeliveryCard";
+import { DoPodUpload } from "./DoPodUpload";
 
 /* The right-hand panel a single click opens on Delivery Planning, DP Orders,
    Date / Time Arrangement and Last Mile (owner, 2026-10-08): what the job is,
@@ -39,8 +42,6 @@ export function rowDocumentPath(o: Parameters<typeof panelTargetOf>[0]): string 
   return ref ? jobDocumentPath(ref, null) : `/scm/sales-orders/${o.so_doc_no}`;
 }
 
-const jobApiPath = (r: JobRef) =>
-  `/delivery-jobs/${r.sourceType}/${encodeURIComponent(r.sourceId)}/${encodeURIComponent(r.leg)}`;
 
 /** The document a job belongs to, for "Open document" and the row double-click. */
 export function jobDocumentPath(r: JobRef, ctx?: Record<string, unknown> | null): string | null {
@@ -72,7 +73,7 @@ export function JobDetailPanel({ target, onClose }: { target: JobPanelTarget | n
           </div>
           <button type="button" onClick={onClose} aria-label="Close" className="rounded border border-border px-2 py-1 text-[12.5px] text-ink-muted">Close</button>
         </div>
-        {target.kind === "job" ? <JobBody key={jobKey(target.ref)} jobRef={target.ref} /> : <SoBody soDocNo={target.soDocNo} doId={target.doId} />}
+        {target.kind === "job" ? <JobBody key={jobKey(target.ref)} jobRef={target.ref} inStopDrawer={false} /> : <SoBody soDocNo={target.soDocNo} doId={target.doId} />}
       </aside>
     </div>
   );
@@ -96,11 +97,13 @@ function Row({ k, v }: { k: string; v: string | null }) {
   );
 }
 
-function JobBody({ jobRef }: { jobRef: JobRef }) {
+/** `inStopDrawer`: embedded in the Last Mile stop drawer, which already shows the
+ *  job's address, contact and date: the Job section then shows only the rest. */
+export function JobBody({ jobRef, inStopDrawer }: { jobRef: JobRef; inStopDrawer: boolean }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const base = jobApiPath(jobRef);
-  const q = useQuery({ queryKey: ["delivery-job", jobKey(jobRef)], queryFn: () => authedFetch<JobResponse>(base), staleTime: 15_000 });
+  const q = useDeliveryJob(jobRef);
   /* Same upload-on-pick block as the phone (lib/fieldPhotos.ts). Not stamped:
      the office uploads photos it was sent, so the time burned in would be the
      office's, not the photo's. Limits mirror delivery-job-progress.ts: 10 to
@@ -124,6 +127,9 @@ function JobBody({ jobRef }: { jobRef: JobRef }) {
   const photos = p?.pod_photo_keys ?? [];
   const docPath = jobDocumentPath(jobRef, ctx);
   const done = !!p?.completed_at;
+  const jobRows = jobSectionRows(ctx, jobRef.sourceType, inStopDrawer);
+  const lineCount = Array.isArray(ctx.lines) ? ctx.lines.length : 0;
+  const hasLines = lineCount > 0;
 
   const upload = async () => {
     const gate = picked.gate("Choose at least one photo.");
@@ -153,12 +159,13 @@ function JobBody({ jobRef }: { jobRef: JobRef }) {
           Open {jobRef.sourceType === "project" ? "project" : jobRef.sourceType === "assr" ? "service case" : jobRef.leg === "TRANSFER" ? "stock transfer" : "lorry record"} →
         </button>
       )}
-      <Section title="Job">
-        {detailRows(ctx).map(([k, v]) => <Row key={k} k={k} v={v} />)}
-        {Array.isArray(ctx.lines) && ctx.lines.length > 0 && (
-          <div className="mt-2 text-[12.5px] text-ink-muted">{ctx.lines.length} item line{ctx.lines.length === 1 ? "" : "s"} on the transfer</div>
+      {(jobRows.length > 0 || jobRef.sourceType === "dp" || hasLines) && <Section title="Job">
+        {jobRows.map(([k, v]) => <Row key={k} k={k} v={v} />)}
+        {jobRef.sourceType === "dp" && <DpJobDetails dpId={jobRef.sourceId} showFacts={!inStopDrawer} />}
+        {hasLines && (
+          <div className="mt-2 text-[12.5px] text-ink-muted">{lineCount} item line{lineCount === 1 ? "" : "s"} on the transfer</div>
         )}
-      </Section>
+      </Section>}
       <Section title="Timeline">
         <Row k="On the way" v={when(p?.departed_at, p?.departed_by)} />
         <Row k="Arrived" v={when(p?.arrived_at, p?.arrived_by)} />
@@ -207,10 +214,11 @@ function SoBody({ soDocNo, doId }: { soDocNo: string; doId: string | null }) {
             className="flex-1 rounded-md border border-border py-2 text-[13px] font-semibold text-accent">Open delivery order →</button>
         )}
       </div>
-      {!doId && <div className="text-[12.5px] text-ink-muted">No delivery order yet — the POD is recorded on the DO once it is cut.</div>}
+      {!doId && <div className="text-[12.5px] text-ink-muted">No delivery order yet. Cut the delivery order first; its POD is uploaded here once it has shipped.</div>}
       {doId && q.isPending && <div className="text-[12.5px] text-ink-muted">Loading…</div>}
       {doId && q.error && <div className="text-[12.5px] text-red-600 dark:text-red-300">{(q.error as Error).message}</div>}
       {q.data && <DoProofOfDeliveryCard h={q.data.deliveryOrder} />}
+      {q.data && <DoPodUpload key={q.data.deliveryOrder.id} h={q.data.deliveryOrder} />}
     </>
   );
 }

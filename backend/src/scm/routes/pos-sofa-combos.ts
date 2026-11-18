@@ -23,7 +23,7 @@ import { todayMyt } from '../lib/my-time';
 import { requireActiveCompanyId } from '../lib/companyScope';
 import { POS_COMBO_COLUMNS, posOwnsSellingCombos, type PosComboRow } from '../lib/pos-sofa-combos';
 import { comboSlotsKey, parseDefaultFreeGifts, type SofaPriceTier } from '../shared';
-import { validateComboModules, validatePricesByHeight } from './sofa-combos';
+import { onePieceSetRefusal, validateComboModules, validatePricesByHeight } from './sofa-combos';
 import { validateComboAccessories, comboAccessoriesKey } from '../lib/sofa-saved-layout';
 
 // pos_sofa_combos.tier has its own CHECK (PRICE_1..PRICE_3); PRICE_4 is cost-side only.
@@ -198,6 +198,8 @@ export const posSofaCombosCreateHandler = async (c: AppContext) => {
   if (!baseModel) return c.json({ error: 'base_model_required' }, 400);
   const modules = validateComboModules(body.modules);
   if (!modules) return c.json({ error: 'modules_required' }, 400);
+  const shape = onePieceSetRefusal(modules);
+  if (shape) return c.json(shape, 400);
   const accessories = validateComboAccessories(body.accessories);
   if (!accessories) return c.json({ error: 'accessories_invalid' }, 400);
   const tier = body.tier != null && TIERS.has(body.tier) ? body.tier : null;
@@ -242,6 +244,8 @@ export const posSofaCombosEditHandler = async (c: AppContext) => {
   if (findErr) return c.json({ error: 'load_failed', reason: findErr.message }, 500);
   if (!orig) return c.json({ error: 'not_found' }, 404);
   const o = orig as unknown as PosComboRow;
+  const shape = onePieceSetRefusal(o.modules);
+  if (shape) return c.json(shape, 400);
 
   const body = await readBody(c);
   if (!body) return c.json({ error: 'invalid_json' }, 400);

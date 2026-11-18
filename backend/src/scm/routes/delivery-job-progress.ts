@@ -22,6 +22,7 @@ import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { scopeToAllowedCompanies, allowedCompaniesSql, allowedCompanyIds } from '../lib/companyScope';
 import { claimPodPhotos, jobStopContext } from '../lib/pod-photo-claim';
+import { appendDoPodPhotos } from '../lib/do-pod-photos';
 import { houzsUserIdOf, mytClock } from '../lib/crew-stop-complete';
 import { ASSR_LEG_BY_STOP, podPhotoResponse } from './delivery-pod-context';
 import { resolveDeliveryScope, scopeMatchesAssignment, type CrewAssignment } from '../lib/deliveryScope';
@@ -31,6 +32,7 @@ import { setChecklistStatus, getUserPhasesOnProject } from '../../services/proje
 import { sendCompletionSurvey } from '../../services/assrCompletionSurvey';
 import { todayMyt } from '../lib/my-time';
 import { paginateAll } from '../lib/paginate-all';
+import { formatCaseAddress, type CaseAddressParts } from '../shared/assr-case-address';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 export const JOB_SOURCE_TYPES = ['dp', 'project', 'assr'] as const;
@@ -125,8 +127,9 @@ export async function loadJob(c: Ctx, sourceType: SourceType, sourceId: string, 
   const row = await c.env.DB.prepare(
     `SELECT id, assr_no, customer_name, phone, addr1, addr2, addr3, addr4, location, item_code,
             complaint_issue, issue_category, doc_no, stage, sub_status, company_id,
-            customer_pickup_at, inspection_visit_at, do_date
-       FROM assr_cases WHERE id = ?${allowedCompaniesSql(c)}`,
+            customer_pickup_at, inspection_visit_at, do_date, ca.postcode, ca.city, ca.state
+       FROM assr_cases LEFT JOIN assr_case_address ca ON ca.assr_id = assr_cases.id
+      WHERE assr_cases.id = ?${allowedCompaniesSql(c)}`,
   ).bind(Number(sourceId)).first<Record<string, unknown>>();
   if (!row) return { ok: false, status: 404, error: 'not_found', reason: 'This service case could not be found.' };
   // The case's leg rides the trip its stop was put on by Time Arrangement.
@@ -166,7 +169,7 @@ async function contextFor(c: Ctx, sourceType: SourceType, leg: string, row: Reco
     return {
       kind: leg, title: row.customer_name, ref: row.assr_no,
       contact_name: row.customer_name, contact_phone: row.phone,
-      address: [row.addr1, row.addr2, row.addr3, row.addr4].filter(Boolean).join(', '), state: row.location,
+      address: formatCaseAddress(row as unknown as CaseAddressParts) ?? '', state: row.state ?? row.location,
       product: row.item_code, issue: row.complaint_issue, issue_category: row.issue_category, so_doc_no: row.doc_no,
       stage: row.stage, sub_status: row.sub_status,
       date: leg === 'customer_pickup' ? row.customer_pickup_at : leg === 'inspection' ? row.inspection_visit_at : row.do_date,
@@ -308,6 +311,7 @@ deliveryJobProgress.post('/:sourceType/:sourceId/:leg/arrive', (c) => stamp(c, '
      project SETUP/DISMANTLE -> project_phase_photos (phase setup / dismantle)
      assr leg                -> assr_attachments (category 'completion') + timeline
      dp LORRY_SERVICE        -> lorry_work_orders.photo_refs (when linked)
+     dp linked to a document -> that DO's POD / Service Case / project phase (fileDpLinkedPhotos)
      dp (every type)         -> dp_orders.status = 'COMPLETED'
    and then makes the ONE move a person would otherwise make right after that
    job (owner, 2026-10-08) — see advanceServiceCase / tickProjectImageRow. */
@@ -423,41 +427,85 @@ async function tickProjectImageRow(c: Ctx, projectId: number, leg: string, me: n
 
 /* Files POD photos where the job's own document keeps photos (the complete
    step and a later add both come through here; neither the stage move nor the
-   checklist tick does). Throws on a failed write. */
+   checklist tick does). Every write is idempotent on the photo key, so a re-run
+   files nothing twice. Throws on a failed write. */
 async function fileJobPhotos(c: Ctx, job: { sourceType: SourceType; sourceId: string; leg: string },
   row: Record<string, unknown>, photoKeys: string[], me: number | null, what: string) {
   if (job.sourceType === 'project') {
-    const phase = job.leg === 'SETUP' ? 'setup' : 'dismantle';
-    const have = await c.env.DB.prepare(
-      `SELECT r2_key FROM project_phase_photos WHERE project_id = ? AND r2_key IN (${photoKeys.map(() => '?').join(',')})`,
-    ).bind(Number(job.sourceId), ...photoKeys).all<{ r2_key: string }>();
-    const filed = new Set((have.results ?? []).map((r) => r.r2_key));
-    for (const key of photoKeys.filter((k) => !filed.has(k))) {
-      await c.env.DB.prepare(
-        `INSERT INTO project_phase_photos (project_id, phase, r2_key, content_type, caption, uploaded_by) VALUES (?, ?, ?, ?, ?, ?)`,
-      ).bind(Number(job.sourceId), phase, key, 'image/jpeg', 'POD', me).run();
-    }
+    await fileProjectPhotos(c, Number(job.sourceId), job.leg === 'SETUP' ? 'setup' : 'dismantle', photoKeys, me);
   } else if (job.sourceType === 'assr') {
     const legWord = job.leg === 'customer_pickup' ? 'Pickup' : job.leg === 'inspection' ? 'Inspection' : 'Delivery / service';
-    const have = await c.env.DB.prepare(
-      `SELECT r2_key FROM assr_attachments WHERE assr_id = ? AND r2_key IN (${photoKeys.map(() => '?').join(',')})`,
-    ).bind(Number(job.sourceId), ...photoKeys).all<{ r2_key: string }>();
-    const filed = new Set((have.results ?? []).map((r) => r.r2_key));
-    const fresh = photoKeys.filter((k) => !filed.has(k));
-    if (!fresh.length) return;
-    for (const key of fresh) await saveAttachment(c.env, Number(job.sourceId), key, null, 'image/jpeg', 'completion', me);
-    await logActivity(c.env, Number(job.sourceId), 'attachment_added', null, `${legWord} POD`,
-      `${legWord} ${what} (${fresh.length} POD photo${fresh.length === 1 ? '' : 's'})`,
-      me, { category: 'service', source_channel: 'app' });
-  } else if (job.leg === 'LORRY_SERVICE' && row.work_order_id) {
-    const sb = c.get('supabase');
-    const { data: wo, error: woErr } = await sb.from('lorry_work_orders').select('photo_refs').eq('id', row.work_order_id).maybeSingle();
-    if (woErr) throw new Error(woErr.message);
-    const refs = Array.isArray(wo?.photo_refs) ? (wo.photo_refs as string[]) : [];
-    const { error: upErr } = await sb.from('lorry_work_orders')
-      .update({ photo_refs: [...refs, ...photoKeys.filter((k) => !refs.includes(k))], updated_at: new Date().toISOString() })
-      .eq('id', row.work_order_id);
-    if (upErr) throw new Error(upErr.message);
+    await fileAssrPhotos(c, Number(job.sourceId), photoKeys, me, `${legWord} POD`, `${legWord} ${what}`);
+  } else {
+    if (job.leg === 'LORRY_SERVICE' && row.work_order_id) {
+      const sb = c.get('supabase');
+      const { data: wo, error: woErr } = await sb.from('lorry_work_orders').select('photo_refs').eq('id', row.work_order_id).maybeSingle();
+      if (woErr) throw new Error(woErr.message);
+      const refs = Array.isArray(wo?.photo_refs) ? (wo.photo_refs as string[]) : [];
+      const { error: upErr } = await sb.from('lorry_work_orders')
+        .update({ photo_refs: [...refs, ...photoKeys.filter((k) => !refs.includes(k))], updated_at: new Date().toISOString() })
+        .eq('id', row.work_order_id);
+      if (upErr) throw new Error(upErr.message);
+    }
+    await fileDpLinkedPhotos(c, job.leg, row, photoKeys, me, what);
+  }
+}
+
+async function fileProjectPhotos(c: Ctx, projectId: number, phase: string, photoKeys: string[], me: number | null) {
+  // company-scope: callers pass a project already read under the caller's company predicate
+  const have = await c.env.DB.prepare(
+    `SELECT r2_key FROM project_phase_photos WHERE project_id = ? AND r2_key IN (${photoKeys.map(() => '?').join(',')})`,
+  ).bind(projectId, ...photoKeys).all<{ r2_key: string }>();
+  const filed = new Set((have.results ?? []).map((r) => r.r2_key));
+  for (const key of photoKeys.filter((k) => !filed.has(k))) {
+    await c.env.DB.prepare(
+      `INSERT INTO project_phase_photos (project_id, phase, r2_key, content_type, caption, uploaded_by) VALUES (?, ?, ?, ?, ?, ?)`,
+    ).bind(projectId, phase, key, 'image/jpeg', 'POD', me).run();
+  }
+}
+
+/* A service case's completion attachments + one timeline entry per batch of new photos. */
+async function fileAssrPhotos(c: Ctx, caseId: number, photoKeys: string[], me: number | null, title: string, what: string) {
+  // company-scope: callers pass a case already read under the caller's company predicate
+  const have = await c.env.DB.prepare(
+    `SELECT r2_key FROM assr_attachments WHERE assr_id = ? AND r2_key IN (${photoKeys.map(() => '?').join(',')})`,
+  ).bind(caseId, ...photoKeys).all<{ r2_key: string }>();
+  const filed = new Set((have.results ?? []).map((r) => r.r2_key));
+  const fresh = photoKeys.filter((k) => !filed.has(k));
+  if (!fresh.length) return;
+  for (const key of fresh) await saveAttachment(c.env, caseId, key, null, 'image/jpeg', 'completion', me);
+  await logActivity(c.env, caseId, 'attachment_added', null, title,
+    `${what} (${fresh.length} POD photo${fresh.length === 1 ? '' : 's'})`,
+    me, { category: 'service', source_channel: 'app' });
+}
+
+/* A Delivery Planning project job's photos land on the phase the job belongs to;
+   a job type with no phase on a project keeps them on the job only. */
+const DP_PROJECT_PHASE: Record<string, string> = {
+  SETUP: 'setup', DELIVERY: 'setup', DISMANTLE: 'dismantle', PICKUP: 'dismantle', SERVICE: 'service',
+};
+
+/* A Delivery Planning job made from another document (owner, 2026-11-17: the POD
+   goes back to the related document too): the Delivery Order's POD, the Service
+   Case's completion photos + timeline, the project's phase photos. Each target is
+   re-read under the caller's companies (and the job's own company for the DO); a
+   link to a document outside them files nothing there. */
+async function fileDpLinkedPhotos(c: Ctx, jobType: string, row: Record<string, unknown>, photoKeys: string[], me: number | null, what: string) {
+  const jobWord = `${jobType.charAt(0)}${jobType.slice(1).toLowerCase().replace(/_/g, ' ')} job${row.dp_no ? ` ${String(row.dp_no)}` : ''}`;
+  if (row.do_id) {
+    const r = await appendDoPodPhotos(c.get('supabase'), c, String(row.do_id), (row.company_id as number | null) ?? null, photoKeys);
+    if (!r.ok) throw new Error(r.reason);
+  }
+  if (row.assr_case_id != null) {
+    const hit = await c.env.DB.prepare(`SELECT id FROM assr_cases WHERE id = ?${allowedCompaniesSql(c)}`)
+      .bind(Number(row.assr_case_id)).first<{ id: number }>();
+    if (hit) await fileAssrPhotos(c, Number(hit.id), photoKeys, me, `${jobWord} POD`, `${jobWord} ${what}`);
+  }
+  const phase = DP_PROJECT_PHASE[jobType];
+  if (row.project_id != null && phase) {
+    const hit = await c.env.DB.prepare(`SELECT id FROM projects WHERE id = ?${allowedCompaniesSql(c)}`)
+      .bind(Number(row.project_id)).first<{ id: number }>();
+    if (hit) await fileProjectPhotos(c, Number(hit.id), phase, photoKeys, me);
   }
 }
 
