@@ -529,38 +529,47 @@ function VenueManager() {
           overflow the owner reported: a bare <input> in a fixed 110px grid cell
           keeps min-width:auto, refuses to shrink below its content box, and
           spills past the cell. min-w-0 lets it size to the track. */}
-      <div className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_170px_150px_120px_110px_auto]">
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && add()}
-          placeholder="Venue name…"
-          className="h-9 min-w-0 rounded-md border border-border bg-surface px-3 text-[12.5px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
-        />
+      {/* Two rows (owner 2026-11-18, the venue name was squeezed to one word per
+          line): the name, size and Add on the first, the Sales Order's State /
+          City / Postcode on the second, so no track has to share the width. */}
+      <div className="mb-3 space-y-2">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_8rem_auto]">
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && add()}
+            placeholder="Venue name…"
+            aria-label="Venue name"
+            className="h-9 min-w-0 rounded-md border border-border bg-surface px-3 text-[12.5px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
+          />
+          <input
+            value={sizeField}
+            onChange={(e) => setSizeField(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && add()}
+            placeholder="Size"
+            aria-label="Venue size"
+            className="h-9 min-w-0 rounded-md border border-border bg-surface px-3 text-[12.5px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
+          />
+          <Button variant="primary" onClick={add} disabled={adding || !name.trim()}>
+            Add
+          </Button>
+        </div>
         {/* State / City / Postcode in the Sales Order's controls (owner
             2026-11-17): a postcode fills City and State back, and Country
             follows the State. Delivery Planning reads them for SETUP / DISMANTLE. */}
-        <AddressTripleFields
-          country=""
-          value={{ state: stateField, city: cityField, postcode: postcodeField }}
-          onChange={(next, derivedCountry) => {
-            setStateField(next.state);
-            setCityField(next.city);
-            setPostcodeField(next.postcode);
-            setCountryField(derivedCountry ?? "");
-          }}
-          classes={VENUE_TRIPLE_CLASSES}
-        />
-        <input
-          value={sizeField}
-          onChange={(e) => setSizeField(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && add()}
-          placeholder="size"
-          className="h-9 min-w-0 rounded-md border border-border bg-surface px-3 text-[12.5px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
-        />
-        <Button variant="primary" onClick={add} disabled={adding || !name.trim()}>
-          Add
-        </Button>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+          <AddressTripleFields
+            country=""
+            value={{ state: stateField, city: cityField, postcode: postcodeField }}
+            onChange={(next, derivedCountry) => {
+              setStateField(next.state);
+              setCityField(next.city);
+              setPostcodeField(next.postcode);
+              setCountryField(derivedCountry ?? "");
+            }}
+            classes={VENUE_TRIPLE_CLASSES}
+          />
+        </div>
       </div>
 
       <ul className="divide-y divide-border-subtle rounded-md border border-border bg-bg/40">
