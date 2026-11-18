@@ -53,9 +53,9 @@ const REQUESTED_COL: Record<AssrLeg, 'customer_pickup_at' | 'inspection_visit_at
 
 /** What the customer reads after "We have arranged the ...". */
 export const ASSR_LEG_CUSTOMER_LABEL: Record<AssrLeg, string> = {
-  customer_pickup: 'furniture pickup',
+  customer_pickup: 'service item pickup',
   inspection: 'inspection visit',
-  delivery: 'return delivery',
+  delivery: 'service item delivery',
 };
 
 /** What staff read on the timeline — the board's own names (ASSR_JOB_KIND_LABEL). */
