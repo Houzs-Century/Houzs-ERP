@@ -45,7 +45,7 @@ export function salesReportFormatIssues(note: string | null | undefined): SalesR
       code: "summary_only",
       tone: "hint",
       message:
-        "Summary only — can't tally per-bill or detect who hasn't opened. Use format: `date - bill# - name - RM amount` per line.",
+        "Summary only — can't tally per-bill or detect who hasn't opened. Put the date on its own line, then one bill per line: bill no, RM amount, name, e.g. `1) ZNT5839 RM5888 Anthony`.",
     });
   }
 

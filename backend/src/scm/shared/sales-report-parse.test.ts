@@ -183,6 +183,23 @@ describe('a summary with a disposal charge and a lost parenthesis (Homedec @ Zan
     expect(summaryTotalOf(r)).toEqual({ total_sen: 2371400, days_sen: 2371400 });
   });
 
+  test('HC-0239: two bare-tag extras ("+150D+800T") on a day and on the Total are read, so the Total fills Total Sales', () => {
+    const r = parseSalesReport('Zanotti@Bighome\n\n13/11 - RM35,315\n14/11 - RM46,290+150D+800T\n15/11 - RM29,376\n\nTotal:RM110,981+150D+800T');
+    expect(r.days.map((d) => [d.day, d.amount_sen, d.extra_sen, d.extra_tag])).toEqual([
+      [13, 3531500, null, null], [14, 4629000, 95000, 'D+T'], [15, 2937600, null, null],
+    ]);
+    expect(r.total_sen).toBe(11098100);
+    expect(r.skipped.map((s) => s.text)).toEqual(['Zanotti@Bighome']);
+    expect(summaryTotalOf(r)).toEqual({ total_sen: 11098100, days_sen: 11098100 });
+  });
+
+  test('a bare one-letter tag never eats a name, and mixes with a bracketed tag', () => {
+    const r = parseSalesReport('1. HC1001 RM100+50T Ethan\n2. HC1002 RM200+10(D)+20T Ali');
+    expect(r.bills.map((b) => [b.extra_sen, b.extra_tag, b.salesperson_name])).toEqual([
+      [5000, 'T', 'Ethan'], [3000, 'D+T', 'Ali'],
+    ]);
+  });
+
   test('a bill message is never a summary, and a summary with no total is not one either', () => {
     expect(summaryTotalOf(parseSalesReport(REPORT))).toBeNull();
     expect(summaryTotalOf(parseSalesReport('2/10 - RM6288'))).toBeNull();
