@@ -36,6 +36,14 @@ const num = (v: unknown): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 
+type RawDevice = { imei?: unknown; platenumber?: unknown; devicename?: unknown };
+
+/** PURE. The device's plate field, or its name when the plate is blank (Houzs's iTrack devices carry the plate only in the name, 18 Nov 2026). A name that is not an ERP plate stays unmatched and is logged. */
+export function devicePlate(d: RawDevice): string {
+  const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+  return str(d.platenumber) || str(d.devicename);
+}
+
 /** PURE. /api/track body + imei->plate (from /api/device/list) -> fixes. Devices with no plate on iTrack are returned in noPlate. */
 export function parseTrack(
   body: { record?: RawTrack[] } | null | undefined,
@@ -98,8 +106,8 @@ export async function pollItrack(env: Env): Promise<{ skipped?: true; devices?: 
   const fixes: VelocityFix[] = [];
   const noPlate: string[] = [];
   try {
-    const list = await call<{ record?: { imei?: unknown; platenumber?: unknown }[] }>('/api/device/list', { access_token });
-    const plateByImei = new Map((list.record ?? []).map((d) => [String(d.imei ?? ''), typeof d.platenumber === 'string' ? d.platenumber : '']));
+    const list = await call<{ record?: RawDevice[] }>('/api/device/list', { access_token });
+    const plateByImei = new Map((list.record ?? []).map((d) => [String(d.imei ?? ''), devicePlate(d)]));
     const imeis = [...plateByImei.keys()].filter(Boolean);
     for (let i = 0; i < imeis.length; i += 100) { // /api/track takes at most 100 IMEIs
       const track = await call<{ record?: RawTrack[] }>('/api/track', { access_token, imeis: imeis.slice(i, i + 100).join(',') });

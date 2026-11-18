@@ -94,6 +94,26 @@ export function parseGroups(text) {
   return { ok: true, groups };
 }
 
+export const live = (alias) => `upper(btrim(coalesce(${alias}.status::text, ''))) <> 'CANCELLED'`;
+
+/* The document lock, as SQL over alias x — the same questions soHasDownstream /
+   doHasDownstream (src/scm/lib/downstream-lock.ts) ask. A parent predicate is
+   not company scope, so the so_doc_no joins also match the company. */
+export const LOCK_SQL = {
+  so: `CASE WHEN NOT ${live('x')} THEN 'cancelled'
+            WHEN EXISTS (SELECT 1 FROM scm.delivery_orders d WHERE d.so_doc_no = x.doc_no AND d.company_id = x.company_id AND ${live('d')}) THEN 'a live Delivery Order carries it'
+            WHEN EXISTS (SELECT 1 FROM scm.sales_invoices s WHERE s.so_doc_no = x.doc_no AND s.company_id = x.company_id AND ${live('s')}) THEN 'a live Sales Invoice carries it'
+       END`,
+  do: `CASE WHEN NOT ${live('x')} THEN 'cancelled'
+            WHEN EXISTS (SELECT 1 FROM scm.delivery_returns r WHERE r.delivery_order_id = x.id AND ${live('r')}) THEN 'a live Delivery Return carries it'
+            WHEN EXISTS (SELECT 1 FROM scm.sales_invoices s WHERE s.delivery_order_id = x.id AND ${live('s')}) THEN 'a live Sales Invoice carries it'
+            WHEN EXISTS (SELECT 1 FROM scm.sales_invoice_items si JOIN scm.delivery_order_items di ON di.id = si.do_item_id
+                                  JOIN scm.sales_invoices s ON s.id = si.sales_invoice_id
+                          WHERE di.delivery_order_id = x.id AND ${live('s')}) THEN 'a live Sales Invoice carries one of its lines'
+       END`,
+};
+/* (Also read by fold-address-lines.mjs: one lock for every script that edits a document's address.) */
+
 const t = (v) => (v == null ? '' : String(v)).trim();
 export const stateKey = (s) => t(canonicalizeMyState(t(s)) ?? '').toUpperCase();
 

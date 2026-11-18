@@ -25,6 +25,7 @@ import {
 import {
   DEBTOR_PARTY_GROUPS, debtorPartyBody, debtorPartyFrom, emptyDebtorParty, suggestDebtorCode, type DebtorPartyField, type DebtorPartyValues,
 } from '../../../vendor/scm/lib/debtor-party';
+import { AddressTripleFields } from '../../../vendor/scm/components/AddressTripleFields';
 import { useSaveHotkey, SAVE_HOTKEY_HINT } from '../../../vendor/scm/lib/use-save-hotkey';
 import { useToastOptional } from '../../../hooks/useToast';
 import { DocFormShell } from './MoneyInDocPage';
@@ -146,9 +147,13 @@ export function DebtorFormPage({ debtor, backLabel, onClose, onAdded }: {
             <div className={`${ui.formFull} ${ui.formSub}`}>Address · bill to</div>
             {box('address1', { placeholder: 'Street' })}
             {box('address2')}
-            {box('postcode')}
-            {box('city')}
-            {box('state')}
+            {/* The Sales Order's State / City / Postcode controls and cascade (owner 2026-11-18). */}
+            <AddressTripleFields
+              country={v.country}
+              value={{ state: v.state, city: v.city, postcode: v.postcode }}
+              onChange={(t, derived) => setV((p) => ({ ...p, ...t, ...(derived ? { country: derived } : {}) }))}
+              classes={{ field: ui.formField, label: ui.formLabel, select: ui.formInput, input: ui.formInput }}
+            />
             {box('country')}
           </div>
           <section className={ui.formCard} aria-label="More details">

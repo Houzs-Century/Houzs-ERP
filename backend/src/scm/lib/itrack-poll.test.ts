@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../../types';
-import { itrackSignature, parseTrack, pollItrack } from './itrack-poll';
+import { devicePlate, itrackSignature, parseTrack, pollItrack } from './itrack-poll';
 
 describe('itrackSignature', () => {
   it('is md5(md5(password) + time), lower-case hex (worked example in the iTrack doc, 2.1)', () => {
@@ -13,6 +13,14 @@ const rec = {
   imei: '358899123456789', course: 195, gpstime: 1419906052, speed: 40,
   longitude: 101.886634, latitude: 2.703637, accstatus: 1, datastatus: 2,
 };
+
+describe('devicePlate', () => {
+  it('uses the plate field, and the device name when the plate is blank (live device list, 18 Nov 2026)', () => {
+    expect(devicePlate({ imei: '355229560356053', platenumber: '', devicename: 'VQE 9058' })).toBe('VQE 9058');
+    expect(devicePlate({ platenumber: 'VNB 9058', devicename: 'VT05S-01234' })).toBe('VNB 9058');
+    expect(devicePlate({ platenumber: '  ', devicename: undefined })).toBe('');
+  });
+});
 
 describe('parseTrack', () => {
   const plates = new Map([['358899123456789', 'VRH 9058']]);

@@ -27,6 +27,7 @@ import {
 import { useNotify } from './NotifyDialog';
 import { writeFailedAs } from '../lib/mutation-error';
 import { DateField } from './DateField';
+import { addressLineTwoView, hasLegacyLines } from '../../shared/address-two-lines';
 import { PostcodeCascadeField } from './PostcodeCascadeField';
 import { DP_POSTCODE_REQUIRED_JOB_TYPES } from '../lib/postcode-in-address';
 import styles from '../../../pages/scm-v2/Suppliers.module.css';
@@ -43,8 +44,8 @@ export const EditDpOrderDrawer = ({ row, onClose }: { row: DpOrderRow; onClose: 
     contactPhone: row.contact_phone ?? '',
     address1: row.address1 ?? '',
     address2: row.address2 ?? '',
-    // Kept (not shown) so an existing line 3/4 passes through unchanged, exactly
-    // as NewDpOrderDrawer only exposes line 1 and line 2.
+    // Kept so an existing line 3/4 passes through unchanged; Address line 2
+    // shows it and editing line 2 clears it (shared/address-two-lines).
     address3: row.address3 ?? '',
     address4: row.address4 ?? '',
     city: row.city ?? '',
@@ -63,6 +64,10 @@ export const EditDpOrderDrawer = ({ row, onClose }: { row: DpOrderRow; onClose: 
   });
   const set = <K extends keyof typeof form>(k: K, v: (typeof form)[K]) =>
     setForm((s) => ({ ...s, [k]: v }));
+  /* Address line 2 shows what lines 3 / 4 still hold (two lines on every
+     address form, owner 2026-11-18); editing it moves all of it to line 2. */
+  const setLineTwo = (v: string) =>
+    setForm((f) => (hasLegacyLines(f.address3, f.address4) ? { ...f, address2: v, address3: '', address4: '' } : { ...f, address2: v }));
 
   const isTransfer = row.job_type === 'TRANSFER';
   const isPending = row.status === 'PENDING_SCHEDULE';
@@ -212,7 +217,7 @@ export const EditDpOrderDrawer = ({ row, onClose }: { row: DpOrderRow; onClose: 
           </label>
           <label style={fieldRow}>
             <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>Address line 2</div>
-            <input className={styles.searchInput} style={inputStyle} value={form.address2} onChange={(e) => set('address2', e.target.value)} />
+            <input className={styles.searchInput} style={inputStyle} value={addressLineTwoView(form.address2, form.address3, form.address4, form)} onChange={(e) => setLineTwo(e.target.value)} />
           </label>
           <div style={row2}>
             <div style={fieldRow}>

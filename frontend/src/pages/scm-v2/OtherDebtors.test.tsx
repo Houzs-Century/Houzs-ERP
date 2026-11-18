@@ -109,6 +109,11 @@ vi.mock('../../vendor/scm/lib/event-queries', async (importOriginal) => ({
   useEventLabels: () => ({ data: new Map() }),
 }));
 const PERMS = { value: new Set<string>(['*']) };
+/* The debtor form's State / City / Postcode are the Sales Order's cascade (owner 2026-11-18). */
+vi.mock('../../vendor/scm/lib/localities-queries', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../vendor/scm/lib/localities-queries')>()),
+  useLocalities: () => ({ data: [{ postcode: '47810', city: 'PETALING JAYA', state: 'Selangor', stateCode: 'SGR', country: 'Malaysia' }], isLoading: false }),
+}));
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ can: (p: string) => PERMS.value.has('*') || PERMS.value.has(p) }) }));
 
 const { OtherDebtors } = await import('./OtherDebtors');
@@ -232,9 +237,15 @@ describe('the debtor form, in place of the list', () => {
     expect((screen.getByRole('button', { name: 'Save debtor' }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText('Account code — · bills and receipts post to the 305-0000 Other Debtors control')).toBeTruthy();
     expect(screen.getByPlaceholderText('As it prints on the invoice')).toBeTruthy();
-    for (const [label, value] of [['Name', 'LIM AH KOW'], ['Registration no.', '850101-14-5678'], ['Phone', '012-777'], ['Address line 1', '12, JALAN SATU'], ['Postcode', '47810'], ['City', 'PETALING JAYA'], ['State', 'Selangor']]) {
+    for (const [label, value] of [['Name', 'LIM AH KOW'], ['Registration no.', '850101-14-5678'], ['Phone', '012-777'], ['Address line 1', '12, JALAN SATU']]) {
       fireEvent.change(screen.getByLabelText(label!), { target: { value } });
     }
+    expect(screen.queryByLabelText('Address line 3')).toBeNull();
+    /* Picking the postcode fills City and State, as on the Sales Order. */
+    const postcode = screen.getAllByRole('combobox').find((el) => (el as HTMLInputElement).placeholder.startsWith('Pick postcode'))!;
+    fireEvent.focus(postcode);
+    fireEvent.change(postcode, { target: { value: '47810' } });
+    fireEvent.keyDown(postcode, { key: 'Enter' });
     expect(screen.queryByLabelText('TIN Number')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /More details/ }));
     fireEvent.change(screen.getByLabelText('TIN Number'), { target: { value: 'IG999' } });

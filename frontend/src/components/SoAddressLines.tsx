@@ -1,16 +1,19 @@
 import type { CSSProperties } from 'react';
-import { addressLineProps } from '../lib/acColumnWidths';
+import { ADDRESS_LINE_MAX, addressLineProps } from '../lib/acColumnWidths';
+import { addressLineTwoView, hasLegacyLines, type AddressTown } from '../vendor/shared/address-two-lines';
 
-const PLACEHOLDERS = ['Unit, street, area', 'Apt, floor, building (optional)', 'Optional', 'Optional'];
+const PLACEHOLDERS = ['Unit, street, area', 'Apt, floor, building (optional)'];
 type Line = 1 | 2 | 3 | 4;
 
 /**
- * A sales order's four address lines, as the account book holds them: 40
- * characters each, a long paste spilling 1 -> 2 -> 3 -> 4.
+ * A sales order's address lines: TWO inputs, as on every address form (owner
+ * 2026-11-18). The order still stores four lines because the account book has
+ * four of 40 characters; the save fit spills a long address into 3 / 4.
  *
- * Lines 3 and 4 were stored but had no input, so a POS address the save fit
- * spilled past line 2 printed on the order and could not be seen or corrected
- * on the form (2990-0036).
+ * Nothing stored is hidden: Address line 2 SHOWS lines 3 / 4 after line 2
+ * (shared/address-two-lines.ts), and editing it writes all of it to line 2 and
+ * clears 3 / 4 — the server re-fits it on save. Line 2 has nowhere to spill, so
+ * a long paste stays whole there (addressLineProps, spill null).
  *
  * KEEP CHROME'S ADDRESS AUTOFILL OFF THIS BLOCK. Chrome classifies a form by
  * its FIELDS, so a bare address input makes it treat the group as an address
@@ -18,8 +21,10 @@ type Line = 1 | 2 | 3 | 4;
  * overridden once the form looks like an address; an UNRECOGNISED token is
  * what stops the heuristic.
  */
-export function SoAddressLines({ lines, onChange, fieldClassName, labelClassName, inputClassName, style, disabled }: {
+export function SoAddressLines({ lines, town, onChange, fieldClassName, labelClassName, inputClassName, style, disabled }: {
   lines: readonly [string, string, string, string];
+  /** The order's postcode / city / state: a line 3 / 4 that only repeats them is not shown twice. */
+  town: AddressTown;
   onChange: (line: Line, value: string) => void;
   fieldClassName: string;
   labelClassName: string;
@@ -27,17 +32,30 @@ export function SoAddressLines({ lines, onChange, fieldClassName, labelClassName
   style?: CSSProperties;
   disabled?: boolean;
 }) {
+  const [l1, l2, l3, l4] = lines;
+  const lineTwo = addressLineTwoView(l2, l3, l4, town);
+  const setLineTwo = (v: string) => {
+    onChange(2, v);
+    if (hasLegacyLines(l3, l4)) { onChange(3, ''); onChange(4, ''); }
+  };
+  const inputs: Array<{ value: string; set: (v: string) => void; spill: { value: string; set: (v: string) => void } | null }> = [
+    { value: l1, set: (v) => onChange(1, v), spill: { value: lineTwo, set: setLineTwo } },
+    { value: lineTwo, set: setLineTwo, spill: null },
+  ];
   return (
     <>
-      {lines.map((value, i) => { const line = (i + 1) as Line; return (
+      {inputs.map(({ value, set, spill }, i) => (
         <label key={i} className={fieldClassName} style={{ gridColumn: 'span 4', ...style }}>
-          <span className={labelClassName}>Address Line {line}</span>
+          <span className={labelClassName}>Address Line {i + 1}</span>
           <input className={inputClassName(i)} value={value} placeholder={PLACEHOLDERS[i]}
             autoComplete="houzs-no-autofill" disabled={disabled}
-            {...addressLineProps((v) => onChange(line, v), line < 4 ? { value: lines[i + 1] ?? '', set: (v) => onChange((line + 1) as Line, v) } : null)}
-            onChange={(e) => onChange(line, e.target.value)} />
+            {...addressLineProps(set, spill)}
+            /* A line 2 that already carries lines 3 / 4 can be longer than one
+               book column; the cap must not stop it being edited. */
+            maxLength={value.length > ADDRESS_LINE_MAX ? undefined : ADDRESS_LINE_MAX}
+            onChange={(e) => set(e.target.value)} />
         </label>
-      ); })}
+      ))}
     </>
   );
 }
