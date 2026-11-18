@@ -270,7 +270,7 @@ export function RoleMatrixTab() {
     for (const m of modules) {
       const top = m.pages.find((p) => p.key === m.topPageKey) ?? null;
       const selfMatch =
-        hit(m.labelZh) || hit(m.labelEn) || hit(m.id) || (top ? hit(top.label) || hit(top.key) : false);
+        hit(m.labelEn) || hit(m.id) || (top ? hit(top.label) || hit(top.key) : false);
       const subs = m.pages.filter((p) => p.key !== m.topPageKey);
       const matched = subs.filter((p) => hit(p.label) || hit(p.key));
       if (selfMatch) out.push({ m, subset: null });

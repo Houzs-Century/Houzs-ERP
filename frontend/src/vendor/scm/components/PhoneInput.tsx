@@ -262,7 +262,7 @@ export const PhoneInput = ({
                 setActive(0);
               }}
               onKeyDown={onSearchKey}
-              placeholder="搜索 / search (my · 马 · 60)"
+              placeholder="Search (country, code or 60)"
               style={{
                 width: '100%',
                 boxSizing: 'border-box',
@@ -279,7 +279,7 @@ export const PhoneInput = ({
           <div style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', padding: 4 }}>
             {filtered.length === 0 ? (
               <div style={{ padding: '10px 8px', fontSize: 12, color: C.inkMuted }}>
-                没有匹配 / no match
+                No match
               </div>
             ) : (
               filtered.map((c, i) => {

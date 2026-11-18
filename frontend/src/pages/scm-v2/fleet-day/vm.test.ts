@@ -220,15 +220,16 @@ describe('buildLorryRoutes — per-lorry numbered route + surfaced unlocated sto
     ['C', { lat: 3.3, lng: 101.8 }],
     // 'B' deliberately missing — it must surface, not vanish.
   ]);
-  const { routes, unlocated } = buildLorryRoutes(cards, pointByRef, depot, () => null, (k) => `col:${k}`);
+  const { routes, unlocated, noByRef } = buildLorryRoutes(cards, pointByRef, new Set(), new Map(), depot, () => null, (k) => `col:${k}`);
 
   test('one route per working lorry; an empty pinned lorry has none', () => {
     expect(routes.map((r) => r.id)).toEqual(['VQE9058']); // VRH is empty -> no route
   });
-  test('stops are the geocoded drops in run order, numbered consecutively past a gap', () => {
+  test('every stop is numbered by its place in the run; the pin carries the same number as the card', () => {
     const vqe = routes[0]!;
-    expect(vqe.stops.map((s) => s.ref)).toEqual(['A', 'C']);     // B dropped from the line
-    expect(vqe.stops.map((s) => s.order)).toEqual([1, 2]);       // renumbered 1,2 — no gap at the hole
+    expect(vqe.stops.map((s) => s.ref)).toEqual(['A', 'C']);     // B has no point, so no pin
+    expect(vqe.stops.map((s) => s.order)).toEqual([1, 3]);       // C is the 3rd stop, on the card and the map
+    expect([...noByRef]).toEqual([['A', 1], ['B', 2], ['C', 3]]); // B keeps its number on the card
     expect(vqe.stops.map((s) => s.label)).toEqual(['Ada', 'Cho']);
     expect(vqe.stops[0]!.windowLabel).toBe('AM');
   });
@@ -244,23 +245,53 @@ describe('buildLorryRoutes — per-lorry numbered route + surfaced unlocated sto
   });
   test('a lorry with a home warehouse starts and ends its route there, not at the day depot', () => {
     const penang: MapLatLng = { lat: 5.4, lng: 100.3 };
-    const out = buildLorryRoutes(cards, pointByRef, depot, (k) => (k === 'VQE9058' ? penang : null), (k) => k);
+    const out = buildLorryRoutes(cards, pointByRef, new Set(), new Map(), depot, (k) => (k === 'VQE9058' ? penang : null), (k) => k);
     expect(out.routes[0]!.depot).toEqual(penang);
+  });
+  test('two stops at the same address share one pin labelled "1, 3"', () => {
+    const same = new Map<string, MapLatLng>([['A', { lat: 3.2, lng: 101.7 }], ['B', { lat: 3.25, lng: 101.75 }], ['C', { lat: 3.2, lng: 101.7 }]]);
+    const out = buildLorryRoutes(cards, same, new Set(), new Map(), depot, () => null, (k) => k);
+    const stops = out.routes[0]!.stops;
+    expect(stops.map((st) => st.pinLabel ?? String(st.order))).toEqual(['1, 3', '2', '3']);
+    expect(stops.map((st) => st.covered === true)).toEqual([false, false, true]);
   });
   test('the ungeocoded drop is surfaced with a reason, never dropped', () => {
     expect(unlocated).toEqual([{ ref: 'B', label: 'B · HC-DO-9 · pg0791', reason: 'Address could not be located' }]);
   });
-  test('a non-SO job with no pin says so (not a geocode miss)', () => {
-    const jobDocs: DocRowVM[] = [
-      docRowVM(order({
-        row_type: 'assr', so_doc_no: 'ASSR/1#delivery', assr_id: 1, job_kind: 'delivery',
-        ref: 'ASSR/1', trip_id: 't1', trip_stop_no: 1, delivery_orders: [], local_total_sen: 0,
-      }), 'scheduled', CLOCK, null),
-    ];
-    const jobCards = buildLorryCards([trip()], jobDocs, lorries, drivers, () => '#000');
-    const out = buildLorryRoutes(jobCards, new Map(), null, () => null, (k) => k);
-    expect(out.routes.find((r) => r.id === 'VQE9058')!.stops).toEqual([]);
-    expect(out.unlocated).toEqual([{ ref: 'ASSR/1#delivery', label: 'ASSR/1', reason: 'Non-delivery job — no location' }]);
+  const jobDocs: DocRowVM[] = [
+    docRowVM(order({ so_doc_no: 'HC-SO-1', trip_id: 't1', trip_stop_no: 1, time_range: '9am-11am', debtor_name: 'Jack Gun' }), 'scheduled', CLOCK, null),
+    docRowVM(order({
+      row_type: 'assr', so_doc_no: 'ASSR/2610-054#delivery', assr_id: 1, job_kind: 'delivery',
+      ref: 'ASSR/2610-054', trip_id: null, trip_stop_no: null, time_range: '2pm-4pm', delivery_orders: [], local_total_sen: 0,
+      crew: { lorry_plate: 'VQE9058' } as DocRowVM['order']['crew'],
+    }), 'scheduled', CLOCK, null),
+    docRowVM(order({
+      row_type: 'project', so_doc_no: 'PRJ:7#SETUP', dp_job_type: 'SETUP', ref: '2026-11-MEGAHOME-MELAKA',
+      trip_id: null, trip_stop_no: null, time_range: '5pm', delivery_orders: [], local_total_sen: 0,
+      crew: { lorry_plate: 'VQE9058' } as DocRowVM['order']['crew'],
+    }), 'scheduled', CLOCK, null),
+  ];
+  const jobCards = buildLorryCards([trip()], jobDocs, lorries, drivers, () => '#000');
+
+  test('a service-case leg and a setup are numbered in run order and passed to the map like an SO (owner 2026-11-18)', () => {
+    const points = new Map<string, MapLatLng>([
+      ['HC-SO-1', { lat: 3.2, lng: 101.7 }],
+      ['ASSR/2610-054#delivery', { lat: 1.53, lng: 103.66 }],
+      ['PRJ:7#SETUP', { lat: 2.27, lng: 102.28 }],
+    ]);
+    const out = buildLorryRoutes(jobCards, points, new Set(['ASSR/2610-054#delivery']), new Map(), null, () => null, (k) => k);
+    const vqe = out.routes.find((r) => r.id === 'VQE9058')!;
+    expect(vqe.stops.map((s) => [s.ref, s.order])).toEqual([['HC-SO-1', 1], ['ASSR/2610-054#delivery', 2], ['PRJ:7#SETUP', 3]]);
+    expect(vqe.stops.map((s) => s.approximate)).toEqual([false, true, false]);
+    expect(out.noByRef.get('PRJ:7#SETUP')).toBe(3);
+    expect(out.unlocated).toEqual([]);
+  });
+
+  test('a stop nothing could locate keeps its number and is listed with the server reason', () => {
+    const out = buildLorryRoutes(jobCards, new Map([['HC-SO-1', { lat: 3.2, lng: 101.7 }]]), new Set(),
+      new Map([['ASSR/2610-054#delivery', 'no address, postcode or city on file']]), null, () => null, (k) => k);
+    expect(out.noByRef.get('ASSR/2610-054#delivery')).toBe(2);
+    expect(out.unlocated[0]).toEqual({ ref: 'ASSR/2610-054#delivery', label: 'ASSR/2610-054', reason: 'no address, postcode or city on file' });
   });
 });
 

@@ -59,6 +59,9 @@ export interface Column<T, L = never> {
   newestFirst?: boolean;
   /** Excluded from the column chooser AND pinned to the front (unreorderable). */
   alwaysVisible?: boolean;
+  /** false: always shown, yet still listed and movable in the chooser (a column
+   *  holding a control the page cannot work without). */
+  canHide?: boolean;
   /** Opt-out of sort for columns that have getValue but aren't meaningfully
    *  sortable (e.g. a selection checkbox column).
    *
@@ -105,6 +108,17 @@ export interface Column<T, L = never> {
   /** What the column means, shown when the header is hovered (a dotted
    *  underline marks a header that has one). */
   description?: string;
+}
+
+export interface DataTableChildRow {
+  key: string;
+  /** Cell content by column key. A column with no entry stays blank. */
+  cells: Readonly<Partial<Record<string, ReactNode>>>;
+  /** The chevron cell (a nested toggle). */
+  lead?: ReactNode;
+  /** A full-width line instead of cells (a caption between child rows). */
+  caption?: ReactNode;
+  className?: string;
 }
 
 /**
@@ -397,8 +411,11 @@ export interface DataTableProps<T, L = never> {
    * (default) = no chevron column, layout byte-identical to before.
    */
   expandable?: {
-    /** Render the expanded sub-row body. */
-    render: (row: T) => ReactNode;
+    /** Render the expanded sub-row body. Give this or `childRows`. */
+    render?: (row: T) => ReactNode;
+    /** Rows drawn under the row in the table's OWN columns, so they follow the
+     *  user's column order, widths and hiding. Wins over `render`. */
+    childRows?: (row: T) => readonly DataTableChildRow[];
     /** Stable id for expansion state. Defaults to `getRowKey`. */
     rowKey?: (row: T) => string;
     /** Controlled expansion (opt-in). When BOTH are provided, DataTable renders

@@ -11,7 +11,7 @@
 // ----------------------------------------------------------------------------
 
 import type { PlanningOrder } from './delivery-planning-queries';
-import type { DeliveryGeoPoint } from './delivery-geo-queries';
+import type { DeliveryGeoPoint, JobGeoPoint } from './delivery-geo-queries';
 import type { AnonymousRun } from './anonymous-runs';
 import { estWindowOf } from './anonymous-runs';
 import { FLEET_ROUTE_COLORS } from './fleet-colors';
@@ -34,6 +34,8 @@ export type MapPin = {
     revenueSen: number;
     address: string | null;
     zone: string | null;
+    /** Pinned at the postcode area, not the address. */
+    approximate?: boolean;
   };
 };
 
@@ -47,6 +49,14 @@ export type MapRouteStop = {
   order: number;
   label: string;
   windowLabel: string | null;
+  /** Pinned at the postcode area, not the address (Last Mile). */
+  approximate?: boolean;
+  /** Same-spot stops of one route share ONE pin (mergeSameSpotStops): the first
+   *  carries the combined label ("6, 7") and every ref at the spot in `spotRefs`;
+   *  the others are `covered` and draw no marker of their own. */
+  pinLabel?: string | null;
+  spotRefs?: string[];
+  covered?: boolean;
 };
 
 /** One coloured route (a proposed run / a staged or live trip). `crewLabel`
@@ -111,7 +121,20 @@ export function pinsFromGeoPoints(points: readonly DeliveryGeoPoint[]): MapPin[]
       revenueSen: p.revenueSen,
       address: p.address ?? null,
       zone: p.zone,
+      approximate: p.approximate === true,
     },
+  }));
+}
+
+/** Located non-SO stops -> pins, so the hover card works on a job's route stop
+ *  too. A job carries no sets or revenue; colour follows its state. PURE. */
+export function pinsFromJobPoints(points: readonly JobGeoPoint[]): MapPin[] {
+  return points.map((p) => ({
+    ref: p.ref,
+    lat: p.lat,
+    lng: p.lng,
+    color: zoneColorFor(null, p.state),
+    card: { soDocNo: p.ref, customer: p.customer, sets: 0, revenueSen: 0, address: p.address, zone: null, approximate: p.approximate },
   }));
 }
 
@@ -368,6 +391,34 @@ export function viewportForPins(
     if (p.lng < west) west = p.lng;
   }
   return { kind: 'bounds', bounds: { north, south, east, west } };
+}
+
+/** Stops of one route at the same spot (to ~1 m) fold onto one pin labelled with
+ *  every run number there ("6, 7"), so a second stop at the same address is not
+ *  hidden under the first (owner 2026-11-18). The polyline keeps every stop. PURE. */
+export function mergeSameSpotStops(stops: readonly MapRouteStop[]): MapRouteStop[] {
+  const spotKey = (s: MapRouteStop) => `${s.lat.toFixed(5)},${s.lng.toFixed(5)}`;
+  const bySpot = new Map<string, MapRouteStop[]>();
+  for (const s of stops) {
+    const k = spotKey(s);
+    (bySpot.get(k) ?? bySpot.set(k, []).get(k)!).push(s);
+  }
+  return stops.map((s) => {
+    const group = bySpot.get(spotKey(s))!;
+    if (group.length < 2) return s;
+    if (group[0] !== s) return { ...s, covered: true };
+    return { ...s, pinLabel: group.map((g) => g.order).join(', '), spotRefs: group.map((g) => g.ref) };
+  });
+}
+
+/** The refs of the stops in one region bucket — what a region chip above the map
+ *  fits the view to. null / 'ALL' = no narrowing (null back). PURE. */
+export function refsInZone(
+  points: readonly { ref: string; region: string | null | undefined }[],
+  zoneKey: string | null,
+): string[] | null {
+  if (zoneKey == null || zoneKey === 'ALL') return null;
+  return points.filter((p) => p.region === zoneKey).map((p) => p.ref);
 }
 
 /* ── Per-zone summary strip (owner feedback 2026-08-08: on every load, where

@@ -321,7 +321,7 @@ describe('the reconcile tab', () => {
      four times. It is one payment: one row, marked 未标, counted once. */
   test('a payment keyed in without a bank is one row, marked 未标, and counted once', () => {
     draw();
-    expect(screen.getByText('未标')).toBeTruthy();
+    expect(screen.getByText('Untagged')).toBeTruthy();
     expect(screen.getByText('SO-2606-013')).toBeTruthy();
     expect(screen.getByText(/RM 3,715\.00 in total/)).toBeTruthy();
     expect(screen.getByText(/1 keyed in without a bank/)).toBeTruthy();
@@ -417,11 +417,11 @@ describe('the reconcile tab', () => {
     draw();
     fireEvent.click(screen.getByText('Reconcile'));
     openTab('To choose');
-    expect(screen.getAllByText('未标 merchant')).toHaveLength(1);
+    expect(screen.getAllByText('Untagged merchant')).toHaveLength(1);
     const cell = screen.getByText(/SO-2608-001/).closest('td') as HTMLElement;
-    expect(cell.textContent).toContain('未标 merchant');
+    expect(cell.textContent).toContain('Untagged merchant');
     const tagged = screen.getByText(/SO-2608-002/).closest('td') as HTMLElement;
-    expect(tagged.textContent).not.toContain('未标 merchant');
+    expect(tagged.textContent).not.toContain('Untagged merchant');
   });
 
   /* The approval code may be mistyped, so the system falls back to amount+date
@@ -868,7 +868,7 @@ describe('finding the sale the window could not offer', () => {
     const hit = within(card).getByLabelText('Select 2990-SO-2606-011').closest('tr') as HTMLElement;
     expect(within(hit).getByText('possible')).toBeTruthy();
     expect(within(hit).getByText('Chou Mun Yee')).toBeTruthy();
-    expect(within(hit).getByText('未标 merchant')).toBeTruthy();
+    expect(within(hit).getByText('Untagged merchant')).toBeTruthy();
     const other = within(card).getByLabelText('Select 2990-SO-2606-013').closest('tr') as HTMLElement;
     expect(within(other).queryByText('possible')).toBeNull();
   });
@@ -1080,11 +1080,11 @@ describe('a DuitNow QR line', () => {
     fireEvent.click(screen.getByText('Reconcile'));
     openTab('To choose');
     const line = screen.getByLabelText('Select 2990-SO-2611-041').closest('section') as HTMLElement;
-    expect(within(line).queryByText('未标 merchant')).toBeNull();
+    expect(within(line).queryByText('Untagged merchant')).toBeNull();
     fireEvent.click(within(line).getByText('Find the sale'));
     expect(within(line).getByText(/Any Online payment of this company not yet on the bank statement/)).toBeTruthy();
     expect(within(line).getAllByLabelText(/^Select /).length).toBeGreaterThan(1);
-    expect(within(line).queryByText('未标 merchant')).toBeNull();
+    expect(within(line).queryByText('Untagged merchant')).toBeNull();
   }));
 
   test('with no Online sale keyed it says to key the sale as Online', () => withQr(() => {

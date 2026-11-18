@@ -7,11 +7,18 @@
 // row (Rental, Setup, Transport S&D, the COGS rows) is clicked in the Total
 // Sales column and saving consolidates that category into one line. The Sales
 // Orders column is never typed into — it is what the orders say.
+//
+// THREE LAYERS (owner 2026-11-18, forecastLayers.ts): when the server sends
+// `layers`, the Total Sales column shows each line's best figure so far — the
+// actual, else the typed Forecast, else the last same-organiser-venue-and-brand
+// event's actual — tagged "Forecast" / "Last event", and its totals say when
+// they include an estimate. A line's label opens its Forecast to set or clear.
 // ----------------------------------------------------------------------------
 
 import { useState } from "react";
 import { cn, formatCurrency } from "../../lib/utils";
 import type { EventPnl, PnlColumn, PnlPctRow } from "./types";
+import { ESTIMATE_NOTE, parseForecastInput, sourceTag, type DetailForecast, type ForecastLine, type LineSource } from "./forecastLayers";
 
 type Editable = { onSave: (n: number) => Promise<void> } | undefined;
 
@@ -19,7 +26,7 @@ const pct = (n: number): string => `${Number.isInteger(n) ? n.toFixed(0) : Strin
 
 /** Where a % row's figure came from, in a few words. */
 function pctNote(r: PnlPctRow & { boost?: boolean }): string | undefined {
-  if (r.from === "books") return "入账";
+  if (r.from === "books") return "booked";
   if (r.from === "typed") return "typed";
   if (r.from === "rate" && r.pct != null) return `${pct(r.pct)} of sales${r.boost ? " · boost" : ""}`;
   return undefined;
@@ -49,13 +56,90 @@ const SALES_FROM: Record<PnlColumn["salesFrom"], string | undefined> = {
   none: undefined,
 };
 
-function Cell({ value, note, editable, busy, tone, bold }: {
+/** The layer tag under a figure: muted for the last event, warm for a forecast. */
+export function SourceTag({ source }: { source: LineSource }) {
+  const label = sourceTag(source);
+  if (!label) return null;
+  return (
+    <span
+      className={cn(
+        "ml-1 inline-block rounded px-1 py-px font-sans text-[9.5px] font-semibold",
+        source === "forecast" ? "bg-warning-bg text-warning-text" : "bg-surface-2 text-ink-muted",
+      )}
+      title={source === "forecast" ? "A figure typed for this line until the real one is in" : "The last event at this venue with this organiser — its actual figure"}
+    >
+      {label}
+    </span>
+  );
+}
+
+/** Set or clear one line's Forecast, inline under its label. Shows its failure. */
+function ForecastEditor({ line, current, onForecast }: {
+  line: ForecastLine;
+  current: number | null;
+  onForecast: (line: ForecastLine, amount: number | null) => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function run(amount: number | null) {
+    setBusy(true);
+    setError(null);
+    try {
+      await onForecast(line, amount);
+      setOpen(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "The forecast was not saved.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  function save() {
+    const parsed = parseForecastInput(draft);
+    if (!parsed.ok) { setError(parsed.error); return; }
+    void run(parsed.amount);
+  }
+  if (!open) {
+    return (
+      <button
+        type="button"
+        className="ml-1.5 rounded px-1 text-[10px] font-semibold text-accent hover:bg-accent-soft/40"
+        onClick={() => { setDraft(current != null ? String(current) : ""); setError(null); setOpen(true); }}
+        title="Set or clear the Forecast for this line"
+      >
+        {current != null ? `Forecast ${formatCurrency(current)}` : "+ Forecast"}
+      </button>
+    );
+  }
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-1.5 font-normal">
+      <input
+        type="text" inputMode="decimal" autoFocus value={draft} disabled={busy}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter") save(); else if (e.key === "Escape") setOpen(false); }}
+        className="w-28 rounded border border-accent bg-surface px-2 py-0.5 text-right font-mono tabular-nums outline-none"
+        aria-label="Forecast amount" placeholder="RM"
+      />
+      <button type="button" disabled={busy} onClick={save} className="rounded bg-accent px-2 py-0.5 text-[11px] font-semibold text-white disabled:opacity-50">Save</button>
+      {current != null && <button type="button" disabled={busy} onClick={() => void run(null)} className="rounded border border-border px-2 py-0.5 text-[11px] disabled:opacity-50">Clear</button>}
+      <button type="button" disabled={busy} onClick={() => setOpen(false)} className="px-1 text-[11px] text-ink-muted">Cancel</button>
+      {error && <div role="alert" className="w-full text-[11px] text-err">{error}</div>}
+    </div>
+  );
+}
+
+function Cell({ value, note, editable, busy, tone, bold, source, draftFrom }: {
   value: number | null;
   note?: string;
   editable?: Editable;
   busy?: boolean;
   tone?: "synced" | "err";
   bold?: boolean;
+  /** The layer the shown figure came from; an actual shows no tag. */
+  source?: LineSource;
+  /** What the typed-row editor starts from (the actual, not an estimate). */
+  draftFrom?: number;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -76,7 +160,7 @@ function Cell({ value, note, editable, busy, tone, bold }: {
   return (
     <td
       className={cn("px-3 py-1.5 text-right align-top", editable && !editing && !busy && "cursor-pointer hover:bg-accent-soft/30")}
-      onClick={editable && !editing ? () => { setDraft(value > 0 ? String(value) : ""); setEditing(true); } : undefined}
+      onClick={editable && !editing ? () => { const v = draftFrom ?? value; setDraft(v > 0 ? String(v) : ""); setEditing(true); } : undefined}
       title={editable ? "Click to edit" : undefined}
     >
       {editing ? (
@@ -92,13 +176,20 @@ function Cell({ value, note, editable, busy, tone, bold }: {
           {busy ? "…" : formatCurrency(value)}
         </span>
       )}
+      {source && !editing && <SourceTag source={source} />}
       {note && !editing && <div className="font-mono text-[9.5px] text-ink-muted">{note}</div>}
     </td>
   );
 }
 
-export function EventPnlTable({ pnl, editable, busyCategory, books, rentalNote }: {
+type TotalKey = keyof DetailForecast["totals"];
+
+export function EventPnlTable({ pnl, editable, busyCategory, books, rentalNote, layers, onForecast }: {
   pnl: EventPnl;
+  /** The three layers over the Total Sales column; null = actuals only. */
+  layers: DetailForecast | null;
+  /** Set / clear a line's Forecast; null when the caller may not. */
+  onForecast: ((line: ForecastLine, amount: number | null) => Promise<void>) | null;
   /** The typed row's save, or undefined when the books fill it. */
   editable: (category: string, row: string) => Editable;
   busyCategory: string | null;
@@ -110,27 +201,40 @@ export function EventPnlTable({ pnl, editable, busyCategory, books, rentalNote }
   const b = pnl.by_so;
   const row = (label: string, pick: (c: PnlColumn) => number, opts: {
     category?: string; bookRow?: string; noteA?: string; noteB?: string; sub?: boolean; indent?: boolean; tone?: (n: number) => "synced" | "err" | undefined;
+    line?: ForecastLine; total?: TotalKey;
   } = {}) => {
-    const va = pick(a);
+    const actualA = pick(a);
+    const layered = layers && opts.line ? layers.lines[opts.line] : null;
+    const total = layers && opts.total ? layers.totals[opts.total] : null;
+    const va = layered ? layered.amount : total ? total.amount : actualA;
+    const noteA = total?.estimated ? [opts.noteA, ESTIMATE_NOTE].filter(Boolean).join(" · ") : layered && layered.source !== "actual" ? undefined : opts.noteA;
     const vb = b ? pick(b) : null;
     return (
       <tr key={label} className={cn("border-b border-border-subtle", opts.sub && "bg-bg/50")}>
         <th scope="row" className={cn("py-1.5 text-left font-normal", opts.indent ? "pl-8 pr-3" : "px-4", opts.sub ? "font-bold text-ink" : "text-ink-secondary")}>
           {label}
           {opts.bookRow && books.has(opts.bookRow) && (
-            <span className="ml-1.5 rounded bg-accent-soft px-1 py-px text-[10px] font-semibold text-accent" title="From the books — Finance's figure replaces the typed one">入账</span>
+            <span className="ml-1.5 rounded bg-accent-soft px-1 py-px text-[10px] font-semibold text-accent" title="From the books — Finance's figure replaces the typed one">Booked</span>
+          )}
+          {layers && opts.line && onForecast && (
+            <ForecastEditor line={opts.line} current={layers.lines[opts.line].forecast} onForecast={onForecast} />
           )}
         </th>
-        <Cell value={va} note={opts.noteA} bold={opts.sub} tone={opts.tone?.(va)}
+        <Cell value={va} note={noteA} bold={opts.sub} tone={opts.tone?.(va)}
           editable={opts.category ? editable(opts.category, opts.bookRow ?? opts.category) : undefined}
-          busy={!!opts.category && busyCategory === opts.category} />
+          busy={!!opts.category && busyCategory === opts.category}
+          source={layered?.source} draftFrom={actualA} />
         <Cell value={vb} note={opts.noteB} bold={opts.sub} tone={vb == null ? undefined : opts.tone?.(vb)} />
       </tr>
     );
   };
   const profitTone = (n: number): "synced" | "err" => (n >= 0 ? "synced" : "err");
-  const gp = (c: PnlColumn | null) => (c && c.sales > 0 ? ` (${((c.grossProfit / c.sales) * 100).toFixed(1)}%)` : "");
-  const np = (c: PnlColumn | null) => (c && c.sales > 0 ? `${((c.netProfit / c.sales) * 100).toFixed(1)}% bottom line` : undefined);
+  /* The Total Sales column's own figures — the layered ones when sent. */
+  const salesA = layers ? layers.lines.sales.amount : a.sales;
+  const gpA = layers ? layers.totals.gross_profit.amount : a.grossProfit;
+  const npA = layers ? layers.totals.net_profit.amount : a.netProfit;
+  const gpOf = (sales: number, g: number) => (sales > 0 ? `(${((g / sales) * 100).toFixed(1)}%)` : undefined);
+  const npOf = (sales: number, n: number) => (sales > 0 ? `${((n / sales) * 100).toFixed(1)}% bottom line` : undefined);
   const showOther = a.cogs.other !== 0 || (b?.cogs.other ?? 0) !== 0;
 
   return (
@@ -145,23 +249,23 @@ export function EventPnlTable({ pnl, editable, busyCategory, books, rentalNote }
         </tr>
       </thead>
       <tbody>
-        {row("Total Sales", (c) => c.sales, { noteA: SALES_FROM[a.salesFrom], noteB: b ? "goods, service lines apart" : "no order opened", sub: true })}
+        {row("Total Sales", (c) => c.sales, { line: "sales", noteA: SALES_FROM[a.salesFrom], noteB: b ? "goods, service lines apart" : "no order opened", sub: true })}
         {(a.serviceRevenue !== 0 || (b?.serviceRevenue ?? 0) !== 0) && row("Service Revenue", (c) => c.serviceRevenue, { indent: true, noteB: "orders' service lines" })}
-        {row("COGS — Matt/Sofa", (c) => c.cogs.mattSofa, { category: "cogs_matt_sofa", indent: true })}
-        {row("COGS — Bedframe", (c) => c.cogs.bedframe, { category: "cogs_bedframe", indent: true })}
-        {row("COGS — Accessories", (c) => c.cogs.accessories, { category: "cogs_accessories", indent: true })}
+        {row("COGS — Matt/Sofa", (c) => c.cogs.mattSofa, { category: "cogs_matt_sofa", line: "cogs_matt_sofa", indent: true })}
+        {row("COGS — Bedframe", (c) => c.cogs.bedframe, { category: "cogs_bedframe", line: "cogs_bedframe", indent: true })}
+        {row("COGS — Accessories", (c) => c.cogs.accessories, { category: "cogs_accessories", line: "cogs_accessories", indent: true })}
         {showOther && row("COGS — Other", (c) => c.cogs.other, { indent: true })}
-        {row("COGS Total", (c) => c.cogs.total, { sub: true, noteA: cogsNote(a, b), noteB: b ? cogsNote(b, b) : undefined })}
-        {row("Gross Profit", (c) => c.grossProfit, { sub: true, tone: profitTone, noteA: gp(a).trim() || undefined, noteB: gp(b).trim() || undefined })}
-        {row("Rental", (c) => c.rental, { category: "rental", bookRow: "rental", noteA: rentalNote })}
-        {row("Setup", (c) => c.setup, { category: "setup", bookRow: "setup" })}
-        {row("Transport Fee", (c) => c.transportFee.amount, { bookRow: "transport_fee", noteA: transportNote(a.transportFee), noteB: b ? transportNote(b.transportFee) : undefined })}
-        {row("Transport Setup & Dismantle", (c) => c.transportSetupDismantle, { category: "transport_setup_dismantle", bookRow: "transport_setup_dismantle" })}
-        {row("Commission", (c) => c.commission.amount, { bookRow: "commission", noteA: pctNote(a.commission), noteB: b ? pctNote(b.commission) : undefined })}
-        {row("Merchandise", (c) => c.merchandise.amount, { noteA: pctNote(a.merchandise), noteB: b ? pctNote(b.merchandise) : undefined })}
-        {row("Others Costing", (c) => c.others, { bookRow: "others" })}
-        {row("Total Cost", (c) => c.totalCost, { sub: true })}
-        {row("Net Profit", (c) => c.netProfit, { sub: true, tone: profitTone, noteA: np(a), noteB: np(b) })}
+        {row("COGS Total", (c) => c.cogs.total, { sub: true, total: "cogs_total", noteA: cogsNote(a, b), noteB: b ? cogsNote(b, b) : undefined })}
+        {row("Gross Profit", (c) => c.grossProfit, { sub: true, total: "gross_profit", tone: profitTone, noteA: gpOf(salesA, gpA), noteB: b ? gpOf(b.sales, b.grossProfit) : undefined })}
+        {row("Rental", (c) => c.rental, { category: "rental", bookRow: "rental", line: "rental", noteA: rentalNote })}
+        {row("Setup", (c) => c.setup, { category: "setup", bookRow: "setup", line: "setup" })}
+        {row("Transport Fee", (c) => c.transportFee.amount, { bookRow: "transport_fee", line: "transport_fee", noteA: transportNote(a.transportFee), noteB: b ? transportNote(b.transportFee) : undefined })}
+        {row("Transport Setup & Dismantle", (c) => c.transportSetupDismantle, { category: "transport_setup_dismantle", bookRow: "transport_setup_dismantle", line: "transport_setup_dismantle" })}
+        {row("Commission", (c) => c.commission.amount, { bookRow: "commission", line: "commission", noteA: pctNote(a.commission), noteB: b ? pctNote(b.commission) : undefined })}
+        {row("Merchandise", (c) => c.merchandise.amount, { line: "merchandise", noteA: pctNote(a.merchandise), noteB: b ? pctNote(b.merchandise) : undefined })}
+        {row("Others Costing", (c) => c.others, { bookRow: "others", line: "others" })}
+        {row("Total Cost", (c) => c.totalCost, { sub: true, total: "total_cost" })}
+        {row("Net Profit", (c) => c.netProfit, { sub: true, total: "net_profit", tone: profitTone, noteA: npOf(salesA, npA), noteB: b ? npOf(b.sales, b.netProfit) : undefined })}
       </tbody>
     </table>
   );

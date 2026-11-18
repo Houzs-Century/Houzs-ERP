@@ -1,4 +1,5 @@
 import { pickComboMatch, splitSofaCode, spreadComboTotal } from '../../src/scm/shared/sofa-combo-pricing.ts';
+import { planComboCostSpread } from '../../src/scm/lib/sofa-combo-cost-spread.ts';
 
 const heightOf = (variants) => variants?.depth ?? variants?.seatHeight ?? variants?.seat_height ?? null;
 const clean = (h) => String(h).replace(/"/g, '').trim();
@@ -94,6 +95,40 @@ export function comboLineCosts(lines, combos) {
     if (total <= 0) continue;
     const spread = spreadComboTotal(matched.map((m) => m.lineCostSen), total);
     matched.forEach((m, i) => out.set(m.id, spread[i] ?? 0));
+  }
+  return out;
+}
+
+/**
+ * A POS set whose piece is about to be stamped costs its combo, spread over every
+ * covered piece by its own product cost, exactly as the order's next save prices
+ * it (planComboCostSpread), pieces already costed included.
+ *
+ * Why: the POS shared a set's cost over its pieces by selling price, so a piece
+ * with no selling price kept RM 0 cost while its siblings carried its share, and
+ * a save then spread the combo over the pieces by their cost, giving it none.
+ * Stamping that piece with its own cost counted it twice (2990-SO-2611-107,
+ * KABBIN 2A + L, 2026-11-18). Only a piece with the POS build mark (buildKey)
+ * starts this: an order without one is stamped exactly as before.
+ *
+ * `lines`: { id, item_code, item_group, variants, qty, held, own } where `held` is
+ * the unit cost the line carries and `own` its product's unit cost (unitCostSen).
+ * `combos`: cost-priced master combos with dates as YYYY-MM-DD. Returns line id ->
+ * new line cost for every covered piece of such sets.
+ */
+export function posSetCosts(lines, combos, tierOfFabric) {
+  const out = new Map();
+  const qtyOf = (l) => Math.max(1, Number(l.qty) || 1);
+  const sofa = lines.filter((l) => String(l.item_group ?? '').toLowerCase() === 'sofa');
+  const wanting = sofa.filter((l) => l.variants?.buildKey != null && Number(l.held) === 0 && Number(l.own) > 0);
+  if (wanting.length === 0) return out;
+  const spread = planComboCostSpread(sofa.map((l) => ({
+    id: l.id, item_code: l.item_code, item_group: 'sofa', variants: l.variants, qty: qtyOf(l),
+    line_cost_sen: (Number(l.own) || 0) * qtyOf(l),
+  })), combos, tierOfFabric, null);
+  const models = new Set(wanting.filter((l) => spread.has(l.id)).map((l) => modelOf(l.item_code).toUpperCase()));
+  for (const l of sofa) {
+    if (spread.has(l.id) && models.has(modelOf(l.item_code).toUpperCase())) out.set(l.id, spread.get(l.id));
   }
   return out;
 }

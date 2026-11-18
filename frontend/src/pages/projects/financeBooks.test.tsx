@@ -63,7 +63,7 @@ describe("the cost lines under the snapshot", () => {
       />,
     );
     const box = screen.getByTestId("books-lines");
-    expect(within(box).getByText("From the books · 入账 (2)")).toBeTruthy();
+    expect(within(box).getByText("From the books (2)")).toBeTruthy();
     expect(within(box).getByText("PV-2610-001")).toBeTruthy();
     expect(within(box).getByText("HC-API-2610-001")).toBeTruthy();
     expect(box.textContent).toContain("900-R032 RENTAL - EXHIBITION");
@@ -114,7 +114,7 @@ describe("the cost lines under the snapshot", () => {
 describe("a snapshot row the books fill", () => {
   it("is marked 入账 and cannot be typed over", () => {
     render(<SnapshotRow label="Rental" value={8000} books />);
-    expect(screen.getByText("入账")).toBeTruthy();
+    expect(screen.getByText("Booked")).toBeTruthy();
     fireEvent.click(screen.getByText("Rental"));
     expect(screen.queryByRole("spinbutton")).toBeNull();
   });

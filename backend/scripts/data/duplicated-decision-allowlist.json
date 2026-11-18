@@ -1889,6 +1889,16 @@
       "check": "D2",
       "key": "DRIVER_INFO,POSTPONE,REMINDER_1,REMINDER_2,REMINDER_3 ~ POSTPONE,REMINDER_1,REMINDER_2,REMINDER_3",
       "why": "INTENDED, two homes in separate FE/BE bundles. backend/src/scm/lib/delivery-message-kinds.ts ASSR_LEG_SEND_KINDS is which message kinds POST /delivery-messages/send splits a Service Case leg's row keys to the ASSR sender for; frontend DeliveryPlanning.tsx ASSR_DIRECT_KINDS is which of those the board's Send menu offers to an ASSR row AS THEMSELVES. They differ by DRIVER_INFO on purpose: the board already includes ASSR rows for driver_info on its own explicit line (its own modal), so ASSR_DIRECT_KINDS need not repeat it, while the backend must still route driver_info ASSR keys. A kind in one set but not the other at worst greys a menu entry; the server still validates the kind and skips a non-ASSR send, never a wrong message."
+    },
+    {
+      "check": "D1",
+      "key": "COGS_ACCESSORIES,COGS_BEDFRAME,COGS_MATT_SOFA,COMMISSION,MERCHANDISE,OTHERS,RENTAL,SALES,SETUP,TRANSPORT_FEE,TRANSPORT_SETUP_DISMANTLE|backend/src/services/eventForecast.ts frontend/src/pages/projects/forecastLayers.ts",
+      "why": "THE FORECAST LINE KEYS of the three-layer Financial Snapshot, mirrored across the FE/BE boundary. eventForecast.ts is the server's list (which keys a forecast may be stored under and how each line layers); forecastLayers.ts is the page's copy, which names the lines and builds the save URL. They cannot share a module; frontend/src/pages/projects/forecastLayers.test.ts reads the backend file and fails unless the two lists are equal in order. Cost of divergence is a line the page cannot set (the server answers 400), never a wrong figure."
+    },
+    {
+      "check": "D2",
+      "key": "COGS_ACCESSORIES,COGS_BEDFRAME,COGS_MATT_SOFA ~ COGS_ACCESSORIES,COGS_BEDFRAME,COGS_MATT_SOFA,SALES",
+      "why": "NOT one rule at N-1 places: eventForecast.ts COGS_LINES is the three COGS lines a COGS Total adds up; FairReportFill.tsx CAT_LABEL labels the categories a fair report can be filled into, which include Sales. Different questions that share the COGS category names."
     }
   ]
 }

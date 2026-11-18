@@ -117,6 +117,8 @@ type OverlayProps = {
   /** Changes on every (date, region) pick — the auto-fit trigger, so a data
    *  load always lands on the default picture. */
   viewKey: string;
+  /** Fit the view to these refs' points only (a region chip); null = everything. */
+  fitRefs: readonly string[] | null;
   onPinClick?: (ref: string) => void;
   onRouteClick?: (routeId: string) => void;
   onHoverRef?: (ref: string | null) => void;
@@ -136,7 +138,7 @@ type OverlayProps = {
    focus dimming, the selected-pin outline, and now zoom-aware clustering +
    direction arrows + the region fly-to). */
 function PanelOverlay({
-  pins, routes, depot, focus, selectedRef, emphasisRouteId, regionKey, viewKey,
+  pins, routes, depot, focus, selectedRef, emphasisRouteId, regionKey, viewKey, fitRefs,
   onPinClick, onRouteClick, onHoverRef, onMapTypeChange, statusByRef, ringStops, vehicles, onVehicleClick,
 }: OverlayProps) {
   const map = useMap();
@@ -176,8 +178,9 @@ function PanelOverlay({
       routes.map((r) => [r.id, r.stops.length]),
       depot ? [depot.lat, depot.lng] : null,
       focus?.routeId ?? null,
+      fitRefs,
     ]),
-    [viewKey, pins, routes, depot, focus],
+    [viewKey, pins, routes, depot, focus, fitRefs],
   );
   const appliedFitSigRef = useRef<string | null>(null);
 
@@ -274,7 +277,11 @@ function PanelOverlay({
         const p = { lat: s.lat, lng: s.lng };
         path.push(p);
         extend(p, countsForFit);
-        const isSel = selectedRef != null && s.ref === selectedRef;
+        /* A second stop at the same spot rides the first one's pin ("6, 7"). */
+        if (s.covered) continue;
+        const spotRefs = s.spotRefs ?? [s.ref];
+        const pinText = s.pinLabel ?? String(s.order);
+        const isSel = selectedRef != null && spotRefs.includes(selectedRef);
         const st = statusOf(s.ref);
         /* Ring convention (Last Mile per-lorry): the lorry colour identifies the
            run; a FILLED dot is delivered, an OPEN ring is still to deliver, a RED
@@ -296,12 +303,12 @@ function PanelOverlay({
         const marker = new google.maps.Marker({
           position: p,
           map,
-          title: `${route.title} · ${s.order}. ${s.label}${s.windowLabel ? ` (${s.windowLabel})` : ''}`,
+          title: `${route.title} · ${s.pinLabel ? `Stops ${s.pinLabel} (same address)` : `${s.order}.`} ${s.label}${s.windowLabel ? ` (${s.windowLabel})` : ''}${s.approximate ? ' · approximate location (postcode area)' : ''}`,
           zIndex: isSel ? 3000 : dimmed ? 1 : 500,
-          label: { text: String(s.order), color: labelColor, fontWeight: 'bold', fontSize: '12px' },
+          label: { text: pinText, color: labelColor, fontWeight: 'bold', fontSize: pinText.length > 3 ? '10px' : '12px' },
           icon: {
             path: google.maps.SymbolPath.CIRCLE,
-            scale: isSel ? 15 : 12,
+            scale: (isSel ? 15 : 12) + (pinText.length > 3 ? 4 : 0),
             fillColor,
             fillOpacity: opacity,
             strokeColor,
@@ -426,7 +433,18 @@ function PanelOverlay({
        legend hovers never re-fit under the operator. */
     if (appliedFitSigRef.current !== fitSig) {
       appliedFitSigRef.current = fitSig;
-      const vp = viewportForPins(fitPoints, regionKey);
+      /* A region chip narrows the fit to that region's stops (falls back to all
+         when none of them is on the map). */
+      let pointsToFit = fitPoints;
+      if (fitRefs) {
+        const want = new Set(fitRefs);
+        const zone = [
+          ...routes.flatMap((r) => r.stops).filter((st) => want.has(st.ref)),
+          ...pins.filter((pn) => want.has(pn.ref)),
+        ].map((pt) => ({ lat: pt.lat, lng: pt.lng }));
+        if (zone.length > 0) pointsToFit = zone;
+      }
+      const vp = viewportForPins(pointsToFit, regionKey);
       if (vp.kind === 'center') {
         map.setCenter(vp.center);
         map.setZoom(SINGLE_PIN_ZOOM);
@@ -491,6 +509,12 @@ export type DeliveryMapPanelProps = {
   viewKey?: string;
   /** The per-zone count strip above the map (zoneSummary fold). */
   zoneSummary?: ZoneSummary | null;
+  /** Makes the zone chips clickable: a chip fits the map to its region's stops,
+   *  "All" (null) fits everything. Absent = the chips are a plain count strip. */
+  onZoneClick?: (key: string | null) => void;
+  activeZoneKey?: string | null;
+  /** The refs the view fits to (the picked chip's stops); null = everything. */
+  fitRefs?: readonly string[] | null;
   /** Compact-columns pill (owner rule: the map-open narrowing is a DEFAULT,
    *  never a lock). Absent → no pill (a page without narrowing). */
   compactColumns?: boolean | null;
@@ -537,6 +561,9 @@ export function DeliveryMapPanel({
   regionKey = null,
   viewKey = '',
   zoneSummary = null,
+  onZoneClick,
+  activeZoneKey = null,
+  fitRefs = null,
   compactColumns = null,
   onCompactColumnsChange,
   ungeocoded = [],
@@ -599,7 +626,7 @@ export function DeliveryMapPanel({
     if (!cardRef) return null;
     for (const r of routes) {
       const s = r.stops.find((st) => st.ref === cardRef);
-      if (s) return { title: r.title, order: s.order, windowLabel: s.windowLabel };
+      if (s) return { title: r.title, order: s.order, windowLabel: s.windowLabel, approximate: s.approximate === true };
     }
     return null;
   }, [routes, cardRef]);
@@ -673,11 +700,32 @@ export function DeliveryMapPanel({
           {zoneSummary.entries.length === 0 && (
             <span className="text-[11.5px] text-ink-muted">No orders this day</span>
           )}
-          {zoneSummary.entries.map((e) => (
+          {onZoneClick && zoneSummary.entries.length > 0 && (
+            <button
+              type="button"
+              onClick={() => onZoneClick(null)}
+              aria-pressed={activeZoneKey == null}
+              className={['rounded-full border px-2 py-0.5 text-[11px]', activeZoneKey == null ? 'border-accent bg-accent/10 font-semibold text-accent' : 'border-transparent bg-surface-dim text-ink-secondary hover:bg-surface-raised'].join(' ')}
+            >
+              All
+            </button>
+          )}
+          {zoneSummary.entries.map((e) => (onZoneClick ? (
+            <button
+              key={e.key}
+              type="button"
+              onClick={() => onZoneClick(e.key)}
+              aria-pressed={activeZoneKey === e.key}
+              title={`Fit the map to ${e.label}`}
+              className={['rounded-full border px-2 py-0.5 text-[11px]', activeZoneKey === e.key ? 'border-accent bg-accent/10 font-semibold text-accent' : 'border-transparent bg-surface-dim text-ink-secondary hover:bg-surface-raised'].join(' ')}
+            >
+              {e.label} <span className="font-semibold text-ink">{e.count}</span>
+            </button>
+          ) : (
             <span key={e.key} className="rounded-full bg-surface-dim px-2 py-0.5 text-[11px] text-ink-secondary">
               {e.label} <span className="font-semibold text-ink">{e.count}</span>
             </span>
-          ))}
+          )))}
           {zoneSummary.zeroCount > 0 && zoneSummary.entries.length > 0 && (
             <span className="text-[11px] text-ink-muted">rest 0</span>
           )}
@@ -713,6 +761,7 @@ export function DeliveryMapPanel({
                 emphasisRouteId={legendHoverId}
                 regionKey={regionKey}
                 viewKey={viewKey}
+                fitRefs={fitRefs}
                 onPinClick={onPinClick}
                 onRouteClick={onRouteClick}
                 onHoverRef={setHoverRef}
@@ -765,6 +814,9 @@ export function DeliveryMapPanel({
               {card.sets} set{card.sets === 1 ? '' : 's'} · {fmtSen(card.revenueSen)}
             </div>
             {card.address && <div className="text-[11px] text-ink-muted">{card.address}</div>}
+            {(card.approximate || cardStop?.approximate) && (
+              <div className="text-[11px] font-semibold text-warning-text">Approximate location — postcode area, not the address</div>
+            )}
           </div>
         )}
       </div>

@@ -131,6 +131,9 @@ export const BROWSER_STORAGE_KEY_REGISTRY: readonly StorageKeyRegistration[] = [
   // per-device layout preference the user can toggle off (and any explicit
   // Columns-panel choice switches it off). Same class as dmap-open; '0'/'1'.
   { id: "delivery-map-compact-columns", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "dmap-compact.<page>.v1", matches: prefix("dmap-compact.") },
+  // Last Mile lorry cards: whether done stops are folded away ("Hide done") — a
+  // per-viewer layout preference (true/false), no identity/company data.
+  { id: "fleet-day-hide-done", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "fleet-day.hide-done.v1", matches: exact("fleet-day.hide-done.v1") },
   // The Finance grids' dragged column widths (owner's redesign, batch 6 §1.3:
   // Journal entries, General ledger, Merchant charges, Collection) — an array
   // of px per column. A layout preference; no identity/company data.

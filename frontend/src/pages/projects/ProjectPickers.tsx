@@ -74,7 +74,7 @@ export function OrganizerPicker({
           {o.name}
         </option>
       ))}
-      <option value={SENTINEL_NEW}>＋ Add new organizer…</option>
+      <option value={SENTINEL_NEW}>+ Add new organizer…</option>
     </select>
   );
 }
@@ -156,7 +156,7 @@ export function VenuePicker({
           {o.state ? ` · ${o.state}` : ""}
         </option>
       ))}
-      <option value={SENTINEL_NEW}>＋ Add new venue…</option>
+      <option value={SENTINEL_NEW}>+ Add new venue…</option>
     </select>
   );
 }

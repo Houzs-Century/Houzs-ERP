@@ -97,7 +97,7 @@ export function QuickRentalField({
           }}
         />
         <span className="whitespace-nowrap text-[11.5px] text-ink-muted" title={`Taken off — from the books: ${docs}`}>
-          − {fmt(-back)} <span className="rounded bg-accent-soft px-1 py-px text-[10px] font-semibold text-accent">入账</span> = <span className="font-semibold text-ink">{fmt(current + back)}</span>
+          − {fmt(-back)} <span className="rounded bg-accent-soft px-1 py-px text-[10px] font-semibold text-accent">Booked</span> = <span className="font-semibold text-ink">{fmt(current + back)}</span>
         </span>
       </span>
     );
@@ -111,7 +111,7 @@ export function QuickRentalField({
         title={`From the books — ${docs}`}
       >
         {fromBooks.reduce((s, l) => s + (l.amount || 0), 0).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-        <span className="rounded bg-accent-soft px-1 py-px text-[10px] font-semibold text-accent">入账</span>
+        <span className="rounded bg-accent-soft px-1 py-px text-[10px] font-semibold text-accent">Booked</span>
       </span>
     );
   }

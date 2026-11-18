@@ -53,6 +53,7 @@ describe("task section chip counts days from the Malaysian today", () => {
         <TasklistSections
           projectId={1}
           projectName="Expo"
+          lastEventExpoMap={null}
           projectStartDate={null}
           projectEndDate={null}
           checklist={[{ id: 1, title: "Book hall", status: "pending", due_date: due, section_id: null }] as unknown as SectionsProps["checklist"]}

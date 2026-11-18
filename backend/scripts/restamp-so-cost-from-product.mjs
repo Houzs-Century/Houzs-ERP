@@ -24,7 +24,19 @@
             spread over its lines, as saving the order does.
      other  base_price_sen -> cost_price_sen
    line_cost = unit x qty; then the header's category aggregates + total_cost +
-   margin (revenue - cost) are recomputed. This mirrors restamp-imported-so-costs
+   margin (revenue - cost) are recomputed.
+
+   A POS SET (2026-11-18, lib/so-line-unit-cost.mjs posSetCosts). When a piece
+   being stamped carries the POS build mark (variants.buildKey) and a combo
+   covers its set, the set costs the combo, spread over every covered piece by
+   its own product cost, the pieces already costed moving too. Stamping the
+   piece with its own cost counted it twice: the POS had shared the set's cost
+   over the pieces by selling price, so a piece with no selling price kept RM 0
+   while its siblings carried its share (2990-SO-2611-107). Such an order is
+   written in its own transaction, every UPDATE guarded on the value the plan
+   read, with an audit row naming each line's cost before and after. Lines
+   without the mark (every Houzs order) are stamped as before; each company's
+   count of orders taken by this rule is printed. This mirrors restamp-imported-so-costs
    (the company-1 import stamp) but works for any company and is release-safe.
 
    MODE=plan (default) reports what it WOULD stamp, per company, incl. the total
@@ -34,7 +46,8 @@
    then RE-READS on a fresh connection and asserts no target line still reads 0
    where its product has a cost.
 
-   REVERSAL: the printed lines/headers were all 0 before, so restore with
+   REVERSAL: the printed lines/headers were all 0 before (a POS set's moved
+   lines: their audit row's "from"), so restore with
      UPDATE scm.mfg_sales_order_items SET unit_cost_sen=0, line_cost_sen=0 WHERE id IN (<printed ids>);
      UPDATE scm.mfg_sales_orders SET mattress_sofa_cost_sen=0, bedframe_cost_sen=0,
        accessories_cost_sen=0, service_cost_sen=0, others_cost_sen=0, total_cost_sen=0,
@@ -47,7 +60,8 @@
    stamps nothing (every gap the products can fill is already filled). */
 import "./lib/public-log-guard.mjs";
 import postgres from 'postgres';
-import { comboLineCosts, costHeight, unitCostSen, usualHeights } from './lib/so-line-unit-cost.mjs';
+import { comboLineCosts, costHeight, posSetCosts, unitCostSen, usualHeights } from './lib/so-line-unit-cost.mjs';
+import { costCombos } from './lib/sofa-combo-set-cost.mjs';
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error('need DATABASE_URL'); process.exit(2); }
@@ -97,12 +111,15 @@ async function main() {
       id: r.id, baseModel: r.base_model, modules: r.modules, tier: r.tier, customerId: r.customer_id, pricesByHeight: r.prices_by_height,
       pwpPricesByHeight: {}, label: r.label, effectiveFrom: String(r.effective_from).slice(0, 10), createdAt: r.created_at, deletedAt: null, defaultFreeGifts: [],
     }));
+    // The POS-set rule reads the combos as the order's save does (dates as dates).
+    const setCombos = costCombos(comboRows);
     const tierRows = await sql`SELECT fabric_code, coalesce(sofa_price_tier, price_tier, 'PRICE_2') AS tier FROM scm.fabric_trackings WHERE company_id = ${co}`;
     const tierOf = new Map(tierRows.map((f) => [f.fabric_code, f.tier]));
+    const tierOfFabric = (code) => tierOf.get(code) ?? 'PRICE_2';
 
     // Every order that has at least one zero-cost line — a fully-zero order OR a
     // partly-costed one with a few kosong lines. Both show a gap in the report.
-    const sos = await sql`SELECT h.doc_no, h.total_revenue_sen, h.total_cost_sen
+    const sos = await sql`SELECT h.doc_no, h.status, h.total_revenue_sen, h.total_cost_sen
                           FROM scm.mfg_sales_orders h
                           WHERE h.company_id = ${co}
                             AND EXISTS (SELECT 1 FROM scm.mfg_sales_order_items i
@@ -119,13 +136,14 @@ async function main() {
     // per-SO transactions is no longer needed.
     const wIds = [], wUc = [], wLc = [];
     const hDoc = [], hMs = [], hBf = [], hAcc = [], hSvc = [], hOth = [], hTot = [], hMar = [];
+    const setOrders = []; // POS sets costed as one set: written per order, below
 
     // Read every line for the affected orders in ONE query, grouped by doc_no —
     // a per-SO query would be thousands of round-trips on company 1.
     const linesByDoc = new Map();
     const docNos = sos.map((s) => s.doc_no);
     if (docNos.length > 0) {
-      const allLines = await sql`SELECT id, doc_no, item_code, qty, variants, unit_cost_sen
+      const allLines = await sql`SELECT id, doc_no, item_code, item_group, qty, variants, unit_cost_sen, line_cost_sen, total_sen
                                  FROM scm.mfg_sales_order_items
                                  WHERE company_id = ${co} AND doc_no = ANY(${docNos})`;
       for (const l of allLines) {
@@ -145,7 +163,7 @@ async function main() {
         const uc = unitCostSen(p, l.variants, usual);
         return { l, p, qty, uc, lc: uc * qty, fresh: uc > 0 };
       });
-      // Only a group with no cost yet takes a combo: a stamped line is never moved.
+      // Only a group with no cost yet takes a combo here; a POS set is re-costed whole below (posSetCosts).
       const sofas = costed.filter((c) => String(c.p?.category || '').toUpperCase() === 'SOFA');
       const comboCost = sofas.length > 0 && sofas.every((c) => c.fresh)
         ? comboLineCosts(sofas.map((c) => ({
@@ -153,10 +171,18 @@ async function main() {
           tier: tierOf.get(String(c.l.variants?.fabricCode ?? '')) ?? 'PRICE_2', height: costHeight(c.p, c.l.variants, usual),
         })), combos)
         : new Map();
+      const setCost = posSetCosts(costed.map((c) => ({
+        id: c.l.id, item_code: c.l.item_code, item_group: c.l.item_group, variants: c.l.variants, qty: c.qty,
+        held: Number(c.l.unit_cost_sen) || 0, own: unitCostSen(c.p, c.l.variants, usual),
+      })), setCombos, tierOfFabric);
+      const moves = [];
       for (const c of costed) {
-        if (comboCost.has(c.l.id)) { c.lc = comboCost.get(c.l.id); c.uc = Math.round(c.lc / c.qty); }
-        if (c.fresh) { plan.anyStamp = true; stamped++; plan.lineWrites.push({ id: c.l.id, uc: c.uc, lc: c.lc }); }
-        else if (c.uc === 0) noCost++;
+        if (setCost.has(c.l.id)) { c.lc = setCost.get(c.l.id); c.uc = Math.round(c.lc / c.qty); }
+        else if (comboCost.has(c.l.id)) { c.lc = comboCost.get(c.l.id); c.uc = Math.round(c.lc / c.qty); }
+        if (c.fresh) { plan.anyStamp = true; stamped++; plan.lineWrites.push({ id: c.l.id, uc: c.uc, lc: c.lc, from: 0, code: c.l.item_code }); }
+        else if (setCost.has(c.l.id) && c.lc !== Number(c.l.line_cost_sen)) {
+          plan.anyStamp = true; moves.push({ id: c.l.id, uc: c.uc, lc: c.lc, from: Number(c.l.line_cost_sen), code: c.l.item_code, total: Number(c.l.total_sen) || 0 });
+        } else if (c.uc === 0) noCost++;
         const col = CAT_COL[String(c.p?.category || '').toUpperCase()] || 'others';
         plan.agg[col] += c.lc;
       }
@@ -168,9 +194,13 @@ async function main() {
       // disturb its existing correct lines — it only adds the newly-stamped ones.
       const headerChanged = plan.anyStamp && total !== oldTotal;
       if (headerChanged) { headers++; marginDrop += total - oldTotal; if (shownDocs.length < LIST_LIMIT) shownDocs.push(`${so.doc_no} (cost ${rm(oldTotal)} -> ${rm(total)})`); }
-      if (plan.anyStamp) for (const w of plan.lineWrites) touchedLineIds.push(w.id);
+      if (plan.anyStamp) for (const w of [...plan.lineWrites, ...moves]) touchedLineIds.push(w.id);
       if (headerChanged) touchedDocNos.push(so.doc_no);
 
+      if (setCost.size > 0 && plan.anyStamp) {
+        setOrders.push({ so, plan, moves, total, oldTotal });
+        continue;
+      }
       if (APPLY && plan.anyStamp) {
         for (const w of plan.lineWrites) { wIds.push(w.id); wUc.push(w.uc); wLc.push(w.lc); }
         if (headerChanged) {
@@ -189,6 +219,37 @@ async function main() {
                 FROM unnest(${wIds}::uuid[], ${wUc}::bigint[], ${wLc}::bigint[]) AS d(id, uc, lc)
                 WHERE t.id = d.id AND coalesce(t.unit_cost_sen,0) = 0`;
     }
+    for (const o of APPLY ? setOrders : []) {
+      try {
+        await sql.begin(async (tx) => {
+          for (const w of o.plan.lineWrites) {
+            const hit = await tx`UPDATE scm.mfg_sales_order_items SET unit_cost_sen = ${w.uc}, line_cost_sen = ${w.lc}
+                                  WHERE id = ${w.id} AND company_id = ${co} AND coalesce(unit_cost_sen,0) = 0 RETURNING id`;
+            if (!hit.length) throw new Error(`line ${w.code} changed since the plan`);
+          }
+          for (const m of o.moves) {
+            const hit = await tx`UPDATE scm.mfg_sales_order_items
+                                    SET unit_cost_sen = ${m.uc}, line_cost_sen = ${m.lc}, line_margin_sen = ${m.total - m.lc}
+                                  WHERE id = ${m.id} AND company_id = ${co} AND line_cost_sen = ${m.from} RETURNING id`;
+            if (!hit.length) throw new Error(`line ${m.code} changed since the plan`);
+          }
+          const a = o.plan.agg;
+          const head = await tx`UPDATE scm.mfg_sales_orders SET
+                                   mattress_sofa_cost_sen = ${a.mattress_sofa}, bedframe_cost_sen = ${a.bedframe}, accessories_cost_sen = ${a.accessories},
+                                   service_cost_sen = ${a.service}, others_cost_sen = ${a.others}, total_cost_sen = ${o.total},
+                                   total_margin_sen = ${(Number(o.so.total_revenue_sen) || 0) - o.total}, updated_at = now()
+                                 WHERE doc_no = ${o.so.doc_no} AND company_id = ${co} AND total_cost_sen = ${o.oldTotal} RETURNING doc_no`;
+          if (!head.length) throw new Error('header changed since the plan');
+          await tx`INSERT INTO scm.mfg_so_audit_log (so_doc_no, company_id, action, actor_name_snapshot, field_changes, status_snapshot, source, note)
+                   VALUES (${o.so.doc_no}, ${co}, 'UPDATE_LINE', 'System (nightly cost fill)',
+                           ${tx.json([...o.plan.lineWrites, ...o.moves].map((w) => ({ field: `line_${w.code}_line_cost_sen`, from: w.from, to: w.lc })))},
+                           ${o.so.status}, 'script:restamp-so-cost-from-product',
+                           ${'Cost filled: a POS sofa set costs its set price, spread over its pieces; a piece sold at RM 0 is not costed again on top'})`;
+        });
+      } catch (e) {
+        bad(`  SKIP ${o.so.doc_no}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
     if (APPLY && hDoc.length > 0) {
       await sql`UPDATE scm.mfg_sales_orders AS t SET
                   mattress_sofa_cost_sen = d.ms, bedframe_cost_sen = d.bf, accessories_cost_sen = d.acc,
@@ -200,6 +261,7 @@ async function main() {
 
     note(`===== Company ${co} =====`);
     note(`zero-cost headers: ${sos.length}; lines to stamp: ${stamped}; product-has-no-cost: ${noCost}; headers to fill: ${headers}; margin reduction: RM ${rm(marginDrop)}`);
+    note(`POS sets costed as one set (rule of 2026-11-18): ${setOrders.length} order(s)${setOrders.length ? `: ${setOrders.map((o) => o.so.doc_no).join(', ')}` : ''}`);
     shownDocs.forEach((d) => note(`  ${d}`));
     if (headers > shownDocs.length) note(`  ... ${headers - shownDocs.length} more.`);
     grandStamp += stamped; grandNoCost += noCost; grandHeaders += headers; grandMarginDrop += marginDrop;

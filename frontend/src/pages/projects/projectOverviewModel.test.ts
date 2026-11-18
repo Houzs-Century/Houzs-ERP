@@ -63,3 +63,35 @@ describe("Project Overview figures", () => {
   });
 });
 
+
+describe("Project Overview — future events in three layers (owner 2026-11-18)", () => {
+  const pnl = (o: Partial<NonNullable<OvProject["pnl"]>>): NonNullable<OvProject["pnl"]> => ({
+    fromOrders: false, sales: 0, serviceRevenue: 0, cogs: { mattSofa: 0, bedframe: 0, accessories: 0, other: 0 },
+    rental: 0, setup: 0, transportSetup: 0, others: 0, transportFee: 0, commission: 0, merchandise: 0, ...o,
+  });
+
+  it("a future event's layered figures count, and the totals split into Actual / Forecast / Last event", () => {
+    const future = p({ id: 2, startDate: "2027-01-10", endDate: "2027-01-12", pnl: pnl({
+      sales: 90000, rental: 12000, cogs: { mattSofa: 30000, bedframe: 0, accessories: 0, other: 0 },
+      layers: { estimated: true, lastEvent: { id: 1, code: "P0" }, split: {
+        sales: { actual: 0, forecast: 90000, last_event: 0 },
+        cost: { actual: 0, forecast: 0, last_event: 42000 },
+        net: { actual: 0, forecast: 90000, last_event: -42000 },
+      } },
+    }) });
+    const past = p({ id: 3, pnl: pnl({ sales: 10000, rental: 2000 }) });
+    const t = totalsOf([future, past]);
+    expect(t.sales).toBe(100000);
+    expect(t.np).toBe(90000 - 42000 + 8000);
+    expect(t.estimated).toBe(1);
+    expect(t.split.sales).toEqual({ actual: 10000, forecast: 90000, last_event: 0 });
+    expect(t.split.cost).toEqual({ actual: 2000, forecast: 0, last_event: 42000 });
+    expect(t.split.net.actual + t.split.net.forecast + t.split.net.last_event).toBe(t.np);
+  });
+
+  it("a period in the future includes the events that start in it", () => {
+    const ps = [p({ id: 4, startDate: "2027-02-03", pnl: pnl({ sales: 5000 }) }), p({ id: 5, startDate: "2026-10-02", pnl: pnl({ sales: 1 }) })];
+    const inNextQuarter = ps.filter((x) => !!x.startDate && x.startDate >= "2027-01-01" && x.startDate <= "2027-03-31");
+    expect(totalsOf(inNextQuarter)).toMatchObject({ projects: 1, sales: 5000 });
+  });
+});

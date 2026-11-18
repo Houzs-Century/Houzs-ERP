@@ -509,7 +509,7 @@ export function recordedNotArrived(
 
 /** The list key for card money recorded without a bank — the word the batch
     detail already puts beside such a candidate (未标 merchant). */
-export const UNTAGGED_LIST = '未标';
+export const UNTAGGED_LIST = 'Untagged';
 
 /**
  * Put an UNTAGGED payment on a watch list ONCE. loadPaymentCandidates hands a

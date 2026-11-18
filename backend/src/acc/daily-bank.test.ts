@@ -93,7 +93,7 @@ describe('computeDailyBank — by bank', () => {
     { acquirerCode: 'MBB', account_code: '326-0020', account_name: 'CARD MACHINE CLEARING — MBB', bankAccountCode: '310-0010' },
     { acquirerCode: 'PBB', account_code: '326-0010', account_name: 'CARD MACHINE CLEARING — PBB', bankAccountCode: '310-0020' },
     { acquirerCode: 'GHL', account_code: '326-0030', account_name: 'CARD MACHINE CLEARING — GHL', bankAccountCode: '310-0020' },
-    { acquirerCode: '未标银行', account_code: '326-0000', account_name: 'CARD MACHINE CLEARING (EDC)', bankAccountCode: null },
+    { acquirerCode: 'Untagged bank', account_code: '326-0000', account_name: 'CARD MACHINE CLEARING (EDC)', bankAccountCode: null },
   ];
   const DAY = '2026-09-29';
   const LEDGER: GlLine[] = [
@@ -151,7 +151,7 @@ describe('computeDailyBank — by bank', () => {
 
   it('what names no bank on the board stays in its own list, still inside the totals', () => {
     const board = computeDailyBank(DAY, BANKS, ACQUIRERS, LEDGER, PENDING);
-    expect(board.unassignedTransit.map((t) => [t.acquirerCode, t.balanceSen])).toEqual([['未标银行', 336_500]]);
+    expect(board.unassignedTransit.map((t) => [t.acquirerCode, t.balanceSen])).toEqual([['Untagged bank', 336_500]]);
     /* Cash in hand is not on this board's list, so its voucher waits in the bottom list. */
     expect(board.unassignedPending.map((p) => [p.pvNumber, p.accountCode])).toEqual([['HPV-040', '320-0000']]);
     expect(board.totalTransitSen).toBe(4_677_417 + 3_750_352 + 4_220_064 + 336_500);

@@ -88,7 +88,7 @@ export const monthColumns = (latest: string, count: number, withCumulative: bool
   const oldest = months[months.length - 1]!;
   const cols: MonthColumn[] = months.map((ym) => ({ key: ym, label: monthLabel(ym), from: monthStartOf(ym), to: monthEnd(ym), cumulative: false }));
   if (withCumulative) {
-    cols.unshift({ key: 'cumulative', label: `累计 ${monthLabel(oldest)} – ${monthLabel(latest)}`, from: monthStartOf(oldest), to: monthEnd(latest), cumulative: true });
+    cols.unshift({ key: 'cumulative', label: `Cumulative ${monthLabel(oldest)} – ${monthLabel(latest)}`, from: monthStartOf(oldest), to: monthEnd(latest), cumulative: true });
   }
   return cols;
 };

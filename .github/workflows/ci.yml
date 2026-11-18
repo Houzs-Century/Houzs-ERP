@@ -951,6 +951,12 @@ jobs:
       # the input, and a limit kept by remembering is a limit the next address
       # input will not have. Zero dependencies, reads two files and the tsx tree.
       - run: node scripts/check-ac-column-widths.mjs
+      # The interface is English only (owner 2026-11-18). Every string literal and
+      # JSX text in src is read with the TypeScript parser (comments excluded);
+      # Chinese that must stay (it matches Chinese input) is listed with a reason
+      # in scripts/cjk-ui-allowlist.json. Needs typescript, so after npm ci.
+      - run: node scripts/check-no-cjk-ui.mjs
+      - run: node --test scripts/check-no-cjk-ui.test.mjs
 
   # The typecheck half of what used to be one `frontend-checks` job.
   #

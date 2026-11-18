@@ -1192,7 +1192,7 @@ describe('the batch detail and the watchlists', () => {
     expect(Object.fromEntries(t.lines.map((l) => [l.paymentId, l.acquirerCode]))).toEqual({ p1: 'MBB', u1: null });
     expect(t.lines).toHaveLength(2);
     expect(t.totalSen).toBe(436500);
-    expect(Object.keys(t.ageing).sort()).toEqual(['MBB', '未标']);
+    expect(Object.keys(t.ageing).sort()).toEqual(['MBB', 'Untagged']);
   });
 });
 

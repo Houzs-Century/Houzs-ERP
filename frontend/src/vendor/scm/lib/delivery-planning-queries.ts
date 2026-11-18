@@ -141,6 +141,8 @@ export type PlanningOrder = {
      SO/ASSR rows. */
   dp_job_type?: string | null;
   dp_no?: string | null;
+  /* A TRANSFER DP job's origin (dp_orders.from_name); null when not recorded and on other rows. */
+  dp_from_name?: string | null;
   /* ASSR-only. The service case's NUMERIC id (drives the /assr/:id detail route)
      and its human ref (= assr_no, shown in the SO No. cell). null on SO rows. */
   assr_id: number | null;

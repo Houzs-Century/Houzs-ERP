@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
-import { comboLineCosts, costHeight, unitCostSen, usualHeights } from '../scripts/lib/so-line-unit-cost.mjs';
+import { comboLineCosts, costHeight, posSetCosts, unitCostSen, usualHeights } from '../scripts/lib/so-line-unit-cost.mjs';
+import { costCombos } from '../scripts/lib/sofa-combo-set-cost.mjs';
 
 const grid = (...rows: Array<[string, number]>) => rows.flatMap(([height, priceSen]) => [
   { tier: 'PRICE_2', height, priceSen }, { tier: 'PRICE_3', height, priceSen: priceSen + 5000 },
@@ -65,5 +66,35 @@ describe('comboLineCosts', () => {
   test('mixed heights or no combo for the model keep the piece costs', () => {
     expect(comboLineCosts([line('a', '9058-2A(LHF)', 100000), line('b', '9058-L(RHF)', 100000, { height: '24' })], [combo]).size).toBe(0);
     expect(comboLineCosts([line('a', '5535-2A(LHF)', 100000)], [combo]).size).toBe(0);
+  });
+});
+
+/* 2990-SO-2611-107 (KABBIN 2A + L, 2026-11-18): the POS left the L at RM 0 cost
+   while the 2A carried the whole set; stamping the L with its own cost counted it
+   twice. Amounts are illustrative. */
+describe('posSetCosts', () => {
+  // As the database driver hands the rows over: dates arrive as Date objects.
+  const combos = costCombos([{
+    id: 'k', base_model: 'KABBIN', modules: [['2A(LHF)', '2A(RHF)'], ['L(LHF)', 'L(RHF)']], tier: 'PRICE_2', customer_id: null,
+    prices_by_height: { 24: 188000, 28: 200000 }, label: null, effective_from: new Date('2026-10-19T00:00:00Z'), created_at: new Date('2026-10-19T07:20:07Z'),
+  }]);
+  const tier = () => 'PRICE_2';
+  const v = (seatHeight: string, buildKey: string | null = 'build-1') => ({ seatHeight, fabricCode: 'EM-02', ...(buildKey ? { buildKey } : {}) });
+  const piece = (id: string, item_code: string, held: number, own: number, variants: object) => ({ id, item_code, item_group: 'sofa', variants, qty: 1, held, own });
+
+  test('a POS set costs its combo, spread by each piece\'s own cost: the 2A gives the L its share back', () => {
+    const out = posSetCosts([piece('a', 'KABBIN-2A(LHF)', 200000, 95000, v('28')), piece('b', 'KABBIN-L(RHF)', 0, 105000, v('28'))], combos, tier);
+    expect(Object.fromEntries(out)).toEqual({ a: 95000, b: 105000 });
+  });
+  test('at a height one piece has no cost of its own, the set price is shared by the costs the pieces do have', () => {
+    const out = posSetCosts([piece('a', 'KABBIN-2A(LHF)', 188000, 95000, v('24')), piece('b', 'KABBIN-L(RHF)', 0, 95000, v('24'))], combos, tier);
+    expect(Object.fromEntries(out)).toEqual({ a: 94000, b: 94000 });
+  });
+  test('an order without the POS build mark (every Houzs order) is left to the stamp as before', () => {
+    expect(posSetCosts([piece('a', 'KABBIN-2A(LHF)', 200000, 95000, v('28', null)), piece('b', 'KABBIN-L(RHF)', 0, 105000, v('28', null))], combos, tier).size).toBe(0);
+  });
+  test('nothing to stamp, or no combo covering the set: left as before', () => {
+    expect(posSetCosts([piece('a', 'KABBIN-2A(LHF)', 95000, 95000, v('28')), piece('b', 'KABBIN-L(RHF)', 105000, 105000, v('28'))], combos, tier).size).toBe(0);
+    expect(posSetCosts([piece('a', 'KABBIN-2A(LHF)', 200000, 95000, v('28')), piece('b', 'KABBIN-1NA', 0, 65000, v('28'))], combos, tier).size).toBe(0);
   });
 });

@@ -166,6 +166,7 @@ import { publicDoScan } from "./routes/publicDoScan";
 import { publicContractorCalendar } from "./routes/publicContractorCalendar";
 import { publicBrandCalendar } from "./routes/publicBrandCalendar";
 import { brandShare } from "./routes/brandShare";
+import { projectForecast } from "./routes/projectForecast";
 import { drainEmailOutbox } from "./services/email";
 import { backfillOutboundMessageIds } from "./lib/mail-threading";
 import { pollVelocity } from "./scm/lib/velocity-poll";
@@ -572,6 +573,9 @@ app.route("/api/projects", projects);
 // The office side of a brand's share link (generate / revoke). Own file because
 // routes/projects.ts is at its size ceiling. See routes/brandShare.ts.
 app.route("/api/brand-share", brandShare);
+// The Forecast figure of a Financial Snapshot line (own prefix, same size-ceiling
+// reason). See routes/projectForecast.ts.
+app.route("/api/project-forecast", projectForecast);
 // The Sales Orders written at one exhibition, read from inside the project page.
 // Same read gate as GET /api/sales/entries so the section and its data admit the
 // same people; own prefix because routes/projects.ts is at its size ceiling and

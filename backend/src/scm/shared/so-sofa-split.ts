@@ -17,6 +17,11 @@
 // per line. When no module price is loadable (catalog gap), fall back to an
 // equal split — still proportional, degenerate weights.
 //
+// The COST is distributed by each module's own COST, the figures the build's
+// cost was summed from. By selling price, a module with no selling price got
+// RM 0 cost while the others carried its share, and the nightly cost fill then
+// costed it again on top (2990-SO-2611-107, KABBIN 2A + L, 2026-11-18).
+//
 // Pure + shared so tests pin the distribution math.
 // ----------------------------------------------------------------------------
 
@@ -142,13 +147,16 @@ export function splitSofaBuildIntoModuleLines(args: {
   cells: unknown;
   /** Authoritative per-build SELLING price (sen) from the server recompute. */
   buildUnitPriceSen: number;
-  /** Per-build COST (sen); distributed with the same weights so margins stay
-   *  sensible per line (recomputeTotals' master-combo spread may later
-   *  re-derive costs — that path already works on per-module lines). */
+  /** Per-build COST (sen); distributed by `moduleCostsSen` (recomputeTotals'
+   *  master-combo spread may later re-derive costs on the per-module lines). */
   buildUnitCostSen: number;
   /** Module sell prices by normalized code (loadModelSofaModulePrices) —
    *  null/missing entries degrade to the equal-split fallback. */
   modulePrices: Record<string, number> | null;
+  /** Module costs by normalized code that `buildUnitCostSen` was summed from
+   *  (RecomputedLine.sofa_module_costs_sen). Null, or none of the build's
+   *  modules costed: the cost follows the selling weights, as it did before. */
+  moduleCostsSen: Record<string, number> | null;
   /** D4 one-shot path: split the SELLING price EVENLY across modules (cost stays
    *  on the catalog-weight split). Default false = legacy proportional split. */
   evenSplitPrice?: boolean;
@@ -207,7 +215,11 @@ export function splitSofaBuildIntoModuleLines(args: {
   });
   const priceWeights = args.evenSplitPrice ? codes.map(() => 1) : weights;
   const priceShares = distributeProportionally(args.buildUnitPriceSen, priceWeights);
-  const costShares = distributeProportionally(args.buildUnitCostSen, weights);
+  const costWeights = codes.map((code) => {
+    const w = args.moduleCostsSen?.[code];
+    return typeof w === 'number' && w > 0 ? w : 0;
+  });
+  const costShares = distributeProportionally(args.buildUnitCostSen, costWeights.some((w) => w > 0) ? costWeights : weights);
 
   return cells.map((cell, i) => ({
     cellIndex: i,

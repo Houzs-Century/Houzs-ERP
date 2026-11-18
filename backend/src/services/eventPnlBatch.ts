@@ -33,7 +33,7 @@ export async function pnlForProjects(
 /** Each event's P&L and the lines it summed (the books in), by event id — the
  *  Logistics report's Setup & Dismantle opens a fair's rows into these. A failed
  *  read says why. */
-export type PnlWithLines = { pnl: EventPnl; lines: PnlLine[] };
+export type PnlWithLines = { pnl: EventPnl; lines: PnlLine[]; booksRows: string[] };
 export async function pnlAndLinesForProjects(
   env: Env,
   rows: ReadonlyArray<{ id: number; brand?: string | null; total_sales?: number | string | null }>,
@@ -78,6 +78,7 @@ export async function pnlAndLinesForProjects(
       const lines = [...applied.lines, ...(salesOf.get(id) ?? [])];
       out.set(id, {
         lines,
+        booksRows: [...applied.books.rows],
         pnl: eventPnl({
           lines,
           booksRows: new Set(applied.books.rows),

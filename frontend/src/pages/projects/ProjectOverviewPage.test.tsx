@@ -34,6 +34,20 @@ const PROJECTS: OvProject[] = [
     startDate: "2026-10-09", endDate: "2026-10-11",
     keyed: keyed({ income: 12930, cogs: 5580, rental: 18000, commission: 1680.9, transport: 646.5, merchandise: 258.6 }),
   }),
+  /* A future event (owner 2026-11-18): its figures are a typed Forecast and the
+     last same-venue event's actuals, already layered by the server. */
+  project({
+    id: 3001, name: "Selangor [AKEMI] MYHOME @ MITEC", venue: "MITEC", startDate: "2027-01-10", endDate: "2027-01-12",
+    pnl: {
+      fromOrders: false, sales: 90000, serviceRevenue: 0, cogs: { mattSofa: 30000, bedframe: 0, accessories: 0, other: 0 },
+      rental: 12000, setup: 0, transportSetup: 0, others: 0, transportFee: 0, commission: 0, merchandise: 0,
+      layers: { estimated: true, lastEvent: { id: 361, code: "P1" }, split: {
+        sales: { actual: 0, forecast: 90000, last_event: 0 },
+        cost: { actual: 0, forecast: 0, last_event: 42000 },
+        net: { actual: 0, forecast: 90000, last_event: -42000 },
+      } },
+    },
+  }),
 ];
 
 vi.mock("../../hooks/useQuery", () => ({
@@ -155,5 +169,24 @@ describe("Project Overview — a project's Back comes back here", () => {
     fireEvent.click(within(projectsTable()).getByText("[AKEMI] MYHOME"));
     expect(projectBackTo(361)).toBe(`/projects${PERIOD}`);
     expect(projectBackTo(2260)).toBe("/projects");
+  });
+});
+
+describe("Project Overview — future date ranges (owner 2026-11-18)", () => {
+  it("a range past today lists the future event, tags its estimate and splits the totals by layer", () => {
+    show("?view=finances&af_from=2027-01-01&af_to=2027-03-31");
+    expect(titles()).toHaveLength(1);
+    const row = within(projectsTable()).getByText("[AKEMI] MYHOME").closest("tr") as HTMLTableRowElement;
+    expect(within(row).getByText("Estimate")).toBeTruthy();
+    const split = screen.getByTestId("layer-split");
+    expect(split.textContent).toContain("1 of 1 projects include estimates");
+    for (const h of ["Actual", "Forecast", "Last event"]) expect(within(split).getByText(h)).toBeTruthy();
+    const sales = within(split).getByText("Sales").closest("tr") as HTMLTableRowElement;
+    expect(sales.textContent).toContain("90,000");
+  });
+
+  it("a past period has no layer split when nothing in it is an estimate", () => {
+    show(PERIOD);
+    expect(screen.queryByTestId("layer-split")).toBeNull();
   });
 });

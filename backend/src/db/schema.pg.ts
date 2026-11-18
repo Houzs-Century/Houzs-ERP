@@ -655,6 +655,23 @@ export const project_sales_bills = pgTable(
   (t) => [uniqueIndex("uq_project_sales_bills_token").on(t.company_id, t.project_id, t.ref_token)],
 );
 
+// ── project_forecast (owner 2026-11-18) ─────────────────────
+// The figure typed for one line of an event's Financial Snapshot while the real
+// one is not in yet (services/eventForecast.ts). One row per event and line.
+export const project_forecast = pgTable(
+  "project_forecast",
+  {
+    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    company_id: bigint("company_id", { mode: "number" }).notNull(),
+    project_id: bigint("project_id", { mode: "number" }).notNull(),
+    line_key: text("line_key").notNull(),
+    amount_sen: bigint("amount_sen", { mode: "number" }).notNull(),
+    updated_by: bigint("updated_by", { mode: "number" }),
+    updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("uq_project_forecast_line").on(t.project_id, t.line_key)],
+);
+
 // ── Houzs POS (mig 20261014T1147) ──────────────────────────
 // The cash & carry booth app's bills, synced from the device into the ERP's
 // own database. Money is integer sen. A bill is VOIDed, never deleted; its

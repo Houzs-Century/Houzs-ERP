@@ -452,7 +452,7 @@ const AGE_BUCKETS: AgeBucket[] = ['0-7', '8-14', '15-30', 'over-30'];
 
 const TRANSIT_COLUMNS: Column<InTransitLine>[] = [
   /* null = keyed in without a bank; listed once (docs/bugs/0688). */
-  { key: 'acquirer', label: 'Acquirer', render: (l) => <span className={styles.codeChip}>{l.acquirerCode ?? '未标'}</span>, getValue: (l) => l.acquirerCode ?? '未标' },
+  { key: 'acquirer', label: 'Acquirer', render: (l) => <span className={styles.codeChip}>{l.acquirerCode ?? 'Untagged'}</span>, getValue: (l) => l.acquirerCode ?? 'Untagged' },
   { key: 'document', label: 'Document', render: (l) => l.docNo, getValue: (l) => l.docNo },
   { key: 'paidOn', label: 'Customer paid on', render: (l) => fmtDate(l.paidOn), getValue: (l) => l.paidOn, exportFormat: 'date' },
   {
@@ -476,7 +476,7 @@ const InTransitTab = () => {
 
   const exportCsv = () => {
     downloadCSV('paid-not-yet-in-the-bank.csv', toCSV(lines, [
-      { key: 'acq', label: 'Acquirer', getValue: (l) => l.acquirerCode ?? '未标' },
+      { key: 'acq', label: 'Acquirer', getValue: (l) => l.acquirerCode ?? 'Untagged' },
       { key: 'doc', label: 'Document', getValue: (l) => l.docNo },
       { key: 'paid', label: 'Customer paid on', getValue: (l) => l.paidOn },
       { key: 'age', label: 'Days', getValue: (l) => l.ageDays },

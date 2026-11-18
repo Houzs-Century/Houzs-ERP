@@ -190,7 +190,7 @@ export function RequestForm({ initial, hasEvents, onDone, onCancel, seed }: {
         <div style={{ color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))', fontSize: 'var(--fs-13)' }}>Finance returned it: {initial.finance_note}</div>
       )}
       {!initial && (
-        <FormSection n={stepNo('bill')} title="单据 · The bill" required first>
+        <FormSection n={stepNo('bill')} title="The bill" required first>
           {/* A second pick adds to the first (the same file picked again is not
               added twice); the ✕ takes one file off. */}
           <input ref={fileRef} type="file" multiple accept={PV_FILE_ACCEPT} aria-label="Bill files" style={{ display: 'none' }}
@@ -219,7 +219,7 @@ export function RequestForm({ initial, hasEvents, onDone, onCancel, seed }: {
         </FormSection>
       )}
 
-      <FormSection n={stepNo('payee')} title="付给谁 · Pay to" first={!!initial}>
+      <FormSection n={stepNo('payee')} title="Who is paid" first={!!initial}>
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Pay to *</span>
           <input data-upper className={styles.fieldInput} value={v.payeeName} onChange={(e) => set({ payeeName: e.target.value })} aria-label="Pay to" placeholder="e.g. MLE EVENTS SDN BHD" />
@@ -241,7 +241,7 @@ export function RequestForm({ initial, hasEvents, onDone, onCancel, seed }: {
       </FormSection>
 
       {/* 一张单付两次 (item 2): the bill's total, and this payment as an amount or a percent of it. */}
-      <FormSection n={stepNo('amount')} title="付多少 · Amount">
+      <FormSection n={stepNo('amount')} title="How much">
         <div style={grid(140)}>
           {!isBalance && (
             <label className={styles.field}>
@@ -268,7 +268,7 @@ export function RequestForm({ initial, hasEvents, onDone, onCancel, seed }: {
         </div>
       </FormSection>
 
-      <FormSection n={stepNo('purpose')} title="用途 · What for">
+      <FormSection n={stepNo('purpose')} title="What for">
         <label className={styles.field}>
           <span className={styles.fieldLabel}>What is it for *</span>
           <textarea data-upper className={styles.fieldInput} rows={2} value={v.purpose} onChange={(e) => set({ purpose: e.target.value })} aria-label="What is it for"
@@ -293,7 +293,7 @@ export function RequestForm({ initial, hasEvents, onDone, onCancel, seed }: {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             <label style={{ ...soft, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
               <input type="checkbox" checked={noEvent} onChange={(e) => setNoEvent(e.target.checked)} aria-label="I cannot find this event" />
-              I cannot find this event · 找不到这场活动
+              I cannot find this event
             </label>
             {noEvent && (
               <input data-upper className={styles.fieldInput} value={noEventReason} onChange={(e) => setNoEventReason(e.target.value)} aria-label="Why there is no event"
@@ -304,11 +304,11 @@ export function RequestForm({ initial, hasEvents, onDone, onCancel, seed }: {
       </FormSection>
 
       {/* ⑤ The requester's own words to Finance (owner 2026-10-02: 多一个第五给他们写note). */}
-      <FormSection n={stepNo('note')} title="备注 · Note">
+      <FormSection n={stepNo('note')} title="Note to Finance">
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Note to Finance (optional)</span>
           <textarea data-upper className={styles.fieldInput} rows={3} value={v.note ?? ''} onChange={(e) => set({ note: e.target.value })} aria-label="Note"
-            maxLength={2000} placeholder="e.g. Please pay before the fair starts · 已跟对方讲好分两期付" />
+            maxLength={2000} placeholder="e.g. Please pay before the fair starts; agreed with them to pay in two instalments" />
         </label>
       </FormSection>
       <div style={{ display: 'flex', gap: 'var(--space-2)', justifyContent: 'flex-end', paddingTop: 'var(--space-3)', borderTop: '1px solid var(--line, #ece9e2)' }}>

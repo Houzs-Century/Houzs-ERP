@@ -13,7 +13,7 @@ import { retryUnlessClientError } from '../../../lib/retryPolicy';
 
 export type OpeningBucket = 'customer' | 'display' | 'service' | 'showroom' | 'others';
 export const OPENING_BUCKETS: ReadonlyArray<[OpeningBucket, string]> = [
-  ['customer', 'Customer · 客户货'], ['display', 'Display · 展示'], ['service', 'Service · 维修'], ['showroom', 'Showroom · 门市'], ['others', 'Others · 其他'],
+  ['customer', 'Customer'], ['display', 'Display'], ['service', 'Service'], ['showroom', 'Showroom'], ['others', 'Others'],
 ];
 
 export type OpeningPaperKind = 'API' | 'SCN' | 'ODB' | 'ODR';

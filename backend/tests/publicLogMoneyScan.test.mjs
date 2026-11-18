@@ -40,6 +40,15 @@ test("money keys are told from count keys by word part", () => {
   for (const k of ["costless_count", "lots", "qty", "item_code", "cost_lots", "total"]) assert.ok(!isMoneyKey(k), k);
 });
 
+test("a key ending in a money unit is money even after a count word", () => {
+  for (const k of ["lines_sen", "sofa_lines_sen", "items_cost_sen", "rowsSen", "lines_rm"]) assert.ok(isMoneyKey(k), k);
+  for (const k of ["lines", "line_count", "cost_lots", "sen_count"]) assert.ok(!isMoneyKey(k), k);
+  assert.equal(
+    redactMoney("  2990-SO-1: header total_cost_sen=900 vs lines_sen=900; mattress_sofa_cost_sen=900 vs sofa_lines_sen=900; line margins off 1"),
+    "  2990-SO-1: header total_cost_sen=[hidden] vs lines_sen=[hidden]; mattress_sofa_cost_sen=[hidden] vs sofa_lines_sen=[hidden]; line margins off 1",
+  );
+});
+
 test("console.table rows lose money values, keep the rest", () => {
   assert.deepEqual(redactRow([{ item_code: "A", unit_cost_sen: 10, qty: 2 }]), [{ item_code: "A", unit_cost_sen: "[hidden]", qty: 2 }]);
 });

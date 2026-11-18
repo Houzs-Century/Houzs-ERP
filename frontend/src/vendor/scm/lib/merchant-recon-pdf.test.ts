@@ -79,8 +79,8 @@ describe('the card payments list', () => {
   });
 
   test('the sentence on top says how many have no bank, and which merchant the list was cut to', () => {
-    const withUntagged = view([['未标', 'A', null, null, '2026-08-01', 1, 1, null, null], ...WAITING]);
-    expect(waitingCardsSubtitle(withUntagged, null)).toBe('Card payments no merchant report has reported yet. 1 keyed in without a bank (未标). All amounts in RM.');
+    const withUntagged = view([['Untagged', 'A', null, null, '2026-08-01', 1, 1, null, null], ...WAITING]);
+    expect(waitingCardsSubtitle(withUntagged, null)).toBe('Card payments no merchant report has reported yet. 1 keyed in without a bank (Untagged). All amounts in RM.');
     expect(waitingCardsSubtitle(view(WAITING), 'AEON')).toBe('Merchant: AEON. Card payments no merchant report has reported yet. All amounts in RM.');
   });
 
@@ -98,12 +98,12 @@ describe('the card payments list', () => {
     expect(pages[0]).toContain('CARD PAYMENTS NOT REPORTED');
   });
 
-  test('未标 draws in the embedded Chinese face, the sentence on top included', async () => {
+  test('a Chinese name in a cell still draws in the embedded Chinese face', async () => {
     vi.stubGlobal('fetch', async (url: string) => {
       const buf = fs.readFileSync(`public${url}`);
       return { ok: true, status: 200, arrayBuffer: async () => buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) };
     });
-    await generateWaitingCardsPdf(view([['未标', 'HC-SO-1', 'HC1', 'Esther', '2026-08-01', 20, 100, '393020', 'A1']]), { merchant: null });
+    await generateWaitingCardsPdf(view([['Untagged', 'HC-SO-1', 'HC1', '陈大文', '2026-08-01', 20, 100, '393020', 'A1']]), { merchant: null });
     const [doc] = drawn();
     expect(Object.keys(doc.getFontList())).toContain('NotoSansSC');
   }, 30000);

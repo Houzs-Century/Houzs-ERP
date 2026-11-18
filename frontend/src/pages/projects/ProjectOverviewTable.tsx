@@ -57,7 +57,13 @@ function Daily({ r }: { r: OvProject["chatReport"] }) {
 export const PROJECT_COLUMNS: Column<OverviewRow>[] = [
   {
     key: "project", label: "Project", alwaysVisible: true, group: "Project",
-    render: (r) => <span className="whitespace-nowrap font-semibold text-primary" title={r.p.name}>{projectLines(r.p).title}</span>,
+    render: (r) => (
+      <span className="whitespace-nowrap font-semibold text-primary" title={r.p.name}>
+        {projectLines(r.p).title}
+        {/* Owner 2026-11-18: the row's figures hold a Forecast or a Last event estimate. */}
+        {r.f.estimated && <span className="ml-1.5 rounded bg-warning-bg px-1 py-px text-[10px] font-semibold text-warning-text" title="Some figures are a typed Forecast or the last same-venue event's actual">Estimate</span>}
+      </span>
+    ),
     getValue: (r) => projectLines(r.p).title, sortValue: (r) => projectLines(r.p).title, searchValue: (r) => r.p.name,
     total: (rows) => <span className="whitespace-nowrap">Total · {rows.length} project{rows.length === 1 ? "" : "s"}</span>,
   },

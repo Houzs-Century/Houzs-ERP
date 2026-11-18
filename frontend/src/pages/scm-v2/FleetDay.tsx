@@ -23,9 +23,9 @@ import { todayMY } from '../../vendor/shared/format';
 import { useFleetDay } from '../../vendor/scm/lib/fleet-day-queries';
 import { assignRouteColors, routeColorFor } from '../../vendor/scm/lib/fleet-colors';
 import { DeliveryMapPanel, useMapPanelOpen } from '../../components/scm-v2/DeliveryMapPanel';
-import { useDeliveryGeo } from '../../vendor/scm/lib/delivery-geo-queries';
+import { useDeliveryGeo, useJobGeo } from '../../vendor/scm/lib/delivery-geo-queries';
 import {
-  pinsFromGeoPoints, geoTotals, zoneSummary, type MapFocus, type MapLatLng,
+  pinsFromGeoPoints, pinsFromJobPoints, geoTotals, zoneSummary, refsInZone, type MapFocus, type MapLatLng,
 } from '../../vendor/scm/lib/delivery-map-model';
 import { type PlanningOrder } from '../../vendor/scm/lib/delivery-planning-queries';
 import { useBandedBoard, bandOfDay } from '../../vendor/scm/lib/delivery-board-bands';
@@ -58,8 +58,11 @@ import { ToArrangeTab } from './fleet-day/ToArrange';
 import { AllOrdersTab, type AllOrderRow } from './fleet-day/AllOrders';
 import { HistoryTab } from './fleet-day/History';
 import { useRemarkFlags } from '../../vendor/scm/lib/delivery-remarks-queries';
+import { useLocalStorage } from '../../hooks/useLocalStorage';
 
 type Tab = 'lorries' | 'arrange' | 'all' | 'history';
+
+const EMPTY_REFS: ReadonlySet<string> = new Set();
 
 /** date (YYYY-MM-DD) shifted by whole days, Malaysian calendar. */
 function shiftDate(date: string, delta: number): string {
@@ -88,6 +91,11 @@ export function FleetDay() {
   const [selected, setSelected] = useState<DocRowVM | null>(null);
   const [crewRun, setCrewRun] = useState<LorryRunVM | null>(null);
   const [mapOpen, setMapOpen] = useMapPanelOpen('last-mile');
+  /* Per-viewer: fold done stops away on every lorry card. */
+  const [hideDone, setHideDone] = useLocalStorage<boolean>('fleet-day.hide-done.v1', false, undefined, (v) => v === true);
+  /* The region chip above the map the view is fitted to (null = all stops); the
+     nonce re-fits when the same chip is clicked again after a pan. */
+  const [mapZone, setMapZone] = useState<{ key: string | null; n: number }>({ key: null, n: 0 });
 
   // ── Feeds ────────────────────────────────────────────────────────────────
   const query = useFleetDay({ date, warehouseId: warehouseId || null });
@@ -214,14 +222,39 @@ export function FleetDay() {
     () => (geo.data?.points ?? []).filter((p) => !isEastMalaysiaOrSingaporeStop({ region: p.region, state: p.state, country: p.country })),
     [geo.data?.points],
   );
-  const mapPins = useMemo(() => pinsFromGeoPoints(geoPoints), [geoPoints]);
+  // The lorries' NON-SO stops (service legs, setup / dismantle, supplier pickup,
+  // transfer, lorry service): /geo above locates SOs only, so these are located
+  // by their row keys (owner 2026-11-18: every stop gets a pin).
+  const jobRefs = useMemo(() => runs.flatMap((r) => r.docs).filter((d) => d.rowType !== 'so').map((d) => d.soDocNo), [runs]);
+  const jobGeo = useJobGeo(jobRefs, mapOpen);
+  const jobPoints = useMemo(() => jobGeo.data?.points ?? [], [jobGeo.data?.points]);
+  const mapPins = useMemo(() => [...pinsFromGeoPoints(geoPoints), ...pinsFromJobPoints(jobPoints)], [geoPoints, jobPoints]);
   const mapTotals = useMemo(() => geoTotals(geoPoints), [geoPoints]);
-  const mapZones = useMemo(() => zoneSummary(geoPoints, regionTabs, filters.region), [geoPoints, regionTabs, filters.region]);
+  /* Every located stop with its region bucket — SOs from /geo, jobs by their row's region —
+     so the chips count and fit every job type, not only SOs. */
+  const zonePoints = useMemo(() => {
+    const regionOf = new Map(dayDocs.map((d) => [d.soDocNo, d.region] as const));
+    return [
+      ...geoPoints.map((p) => ({ ref: p.ref, region: p.region })),
+      ...jobPoints.map((p) => ({ ref: p.ref, region: regionOf.get(p.ref) ?? '' })),
+    ];
+  }, [geoPoints, jobPoints, dayDocs]);
+  const mapZones = useMemo(() => zoneSummary(zonePoints, regionTabs, filters.region), [zonePoints, regionTabs, filters.region]);
+  const zoneFitRefs = useMemo(() => refsInZone(zonePoints, mapZone.key), [zonePoints, mapZone.key]);
   const pointByRef = useMemo(() => {
     const m = new Map<string, MapLatLng>();
     for (const p of geoPoints) m.set(p.ref, { lat: p.lat, lng: p.lng });
+    for (const p of jobPoints) m.set(p.ref, { lat: p.lat, lng: p.lng });
     return m;
-  }, [geoPoints]);
+  }, [geoPoints, jobPoints]);
+  const approxRefs = useMemo(
+    () => new Set([...geoPoints, ...jobPoints].filter((p) => p.approximate === true).map((p) => p.ref)),
+    [geoPoints, jobPoints],
+  );
+  const reasonByRef = useMemo(
+    () => new Map([...(geo.data?.ungeocoded ?? []), ...(jobGeo.data?.ungeocoded ?? [])].map((u) => [u.ref, u.reason] as const)),
+    [geo.data?.ungeocoded, jobGeo.data?.ungeocoded],
+  );
   const depotLL = useMemo<MapLatLng | null>(
     () => (geo.data?.depot ? { lat: geo.data.depot.lat, lng: geo.data.depot.lng } : null),
     [geo.data?.depot],
@@ -238,8 +271,8 @@ export function FleetDay() {
   // lorry's run as its own numbered, coloured route — not the per-trip dots — and
   // surfaces every drop it could not locate instead of silently dropping it.
   const lorryRoutes = useMemo(
-    () => buildLorryRoutes(runs, pointByRef, depotLL, (k) => { const h = geo.data?.lorryDepots?.[k.replace(/[^A-Z0-9]/g, "")]; return h ? { lat: h.lat, lng: h.lng } : null; }, colorForPlate),
-    [runs, pointByRef, depotLL, geo.data?.lorryDepots, colorForPlate],
+    () => buildLorryRoutes(runs, pointByRef, approxRefs, reasonByRef, depotLL, (k) => { const h = geo.data?.lorryDepots?.[k.replace(/[^A-Z0-9]/g, "")]; return h ? { lat: h.lat, lng: h.lng } : null; }, colorForPlate),
+    [runs, pointByRef, approxRefs, reasonByRef, depotLL, geo.data?.lorryDepots, colorForPlate],
   );
   /* Each lorry's run by road, from its home and back (owner 2026-11-08), worked out on
      the server for the whole day; the board's region filter does not change it. */
@@ -254,7 +287,7 @@ export function FleetDay() {
     return figs.length ? `All lorries, Google: ${fmtKm(figs.reduce((a, f) => a + f.distanceM, 0))} · ${fmtDrive(figs.reduce((a, f) => a + f.durationS, 0))}` : null;
   })();
   const legByRef = useMemo(() => legLabelsByRef(roadDay.data?.values() ?? []), [roadDay.data]);
-  const mapNoByRef = useMemo(() => new Map(lorryRoutes.routes.flatMap((r) => r.stops.map((st) => [st.ref, st.order] as const))), [lorryRoutes.routes]);
+  const mapNoByRef = lorryRoutes.noByRef;
   const panelRoutes = lorryRoutes.routes.map((r) => ({ ...r, roadLabel: roadLabelOf(r.title) }));
   // The board's own drops that could not be placed (surfaced, never dropped),
   // then any server-ungeocoded order not already named.
@@ -282,7 +315,25 @@ export function FleetDay() {
     return { routeId: focusedPlate, refs: run.docs.map((d) => d.soDocNo) };
   }, [focusedPlate, runByPlate]);
   const vehicles = useVehiclePositions(trips, mapOpen);
-  const toggleFocus = (routeId: string) => setParam('lorry', focusedPlate === routeId ? null : routeId);
+  const toggleFocus = (routeId: string) => {
+    setMapZone((z) => ({ key: null, n: z.n }));
+    setParam('lorry', focusedPlate === routeId ? null : routeId);
+  };
+  /* A region chip fits the map to that region's stops; "All" fits everything again.
+     It replaces a lorry focus (one view at a time). */
+  const pickZone = (key: string | null) => {
+    if (focusedPlate) setParam('lorry', null);
+    setMapZone((z) => ({ key, n: z.n + 1 }));
+  };
+  /* Where the map put each stop, for the row's circle and meta — only once the map
+     has looked (it locates only while open). */
+  const locatedKnown = mapOpen && geo.data != null && (jobRefs.length === 0 || jobGeo.data != null);
+  const unlocatedRefs = useMemo(
+    () => new Set(locatedKnown ? lorryRoutes.unlocated.map((u) => u.ref) : []),
+    [locatedKnown, lorryRoutes.unlocated],
+  );
+  const rowApproxRefs = locatedKnown ? approxRefs : EMPTY_REFS;
+  const rowClock = { now: new Date(), day: date, today: clock.today };
 
   const goPrint = (tripId?: string) => {
     const p = new URLSearchParams();
@@ -309,7 +360,6 @@ export function FleetDay() {
     <LorryCard
       key={r.trip?.id ?? `lorry:${platekey(r.plate)}`}
       run={r}
-      routeColor={colorForPlate(platekey(r.plate))}
       visibleDocs={active ? (filteredByCard.get(platekey(r.plate)) ?? []) : r.docs}
       filtersActive={active}
       searchActive={filters.query.trim().length >= 2}
@@ -320,6 +370,11 @@ export function FleetDay() {
       road={roadLabelOf(r.plate)}
       legByRef={legByRef}
       mapNoByRef={mapNoByRef}
+      approxRefs={rowApproxRefs}
+      unlocatedRefs={unlocatedRefs}
+      clock={rowClock}
+      hideDone={hideDone}
+      onToggleHideDone={() => setHideDone(!hideDone)}
       onFocus={() => toggleFocus(platekey(r.plate))}
       onOpenDoc={(d) => setSelected(d)}
       onCrew={() => setCrewRun(r)}
@@ -378,8 +433,11 @@ export function FleetDay() {
           onPinClick={(ref) => { const d = dayDocs.find((x) => x.soDocNo === ref); if (d) setSelected(d); }}
           totals={mapTotals}
           regionKey={filters.region}
-          viewKey={`${date}|${filters.region}`}
+          viewKey={`${date}|${filters.region}|${mapZone.key ?? 'ALL'}|${mapZone.n}`}
           zoneSummary={mapZones}
+          activeZoneKey={mapZone.key}
+          onZoneClick={pickZone}
+          fitRefs={zoneFitRefs}
           ungeocoded={mapUnlocated}
           serverConfigured={geo.data?.configured ?? true}
           isLoading={geo.isLoading || query.isLoading}

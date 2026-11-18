@@ -28,7 +28,7 @@
 //
 // The hook is mocked at the module seam, the way DailyBank.test.tsx does it.
 
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import type { MrpResponse } from '../../vendor/scm/lib/mrp-queries';
@@ -117,7 +117,8 @@ describe('MRP — undated demand', () => {
     // …and only the undated one carries the tag.
     expect(screen.getAllByText('No date')).toHaveLength(1);
     // The dated line keeps a real date rather than being swept into the tag.
-    expect(screen.getByText('2026/12/01')).toBeTruthy();
+    const datedLine = screen.getByText('SO-DATED').closest('tr') as HTMLTableRowElement;
+    expect(within(datedLine).getByText('2026/12/01')).toBeTruthy();
   });
 
   /* The owner removed the summary banner (2026-08-20). Pinned as a NEGATIVE so

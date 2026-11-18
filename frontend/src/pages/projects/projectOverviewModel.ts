@@ -31,7 +31,20 @@ export interface OvPnl {
   cogs: { mattSofa: number; bedframe: number; accessories: number; other: number };
   rental: number; setup: number; transportSetup: number; others: number;
   transportFee: number; commission: number; merchandise: number;
+  /** The three layers (owner 2026-11-18): the figures above are already each
+   *  line's best so far; this says how much of them is an estimate. */
+  layers?: OvLayers;
 }
+
+export interface LayerSplit { actual: number; forecast: number; last_event: number }
+export interface OvLayers {
+  estimated: boolean;
+  split: { sales: LayerSplit; cost: LayerSplit; net: LayerSplit };
+  lastEvent: { id: number; code: string } | null;
+}
+
+const zeroSplit = (): LayerSplit => ({ actual: 0, forecast: 0, last_event: 0 });
+const addSplit = (a: LayerSplit, b: LayerSplit) => { a.actual += b.actual; a.forecast += b.forecast; a.last_event += b.last_event; };
 
 export type SalesSource = "keyed" | "sales_orders" | "none";
 
@@ -42,7 +55,15 @@ export interface Figures {
   serviceRevenue: number;
   cogsLines: { mattSofa: number; bedframe: number; accessories: number; other: number };
   transportFee: number; transportSetup: number;
+  /** Sales, cost and net profit by layer: Actual / Forecast / Last event. */
+  split: { sales: LayerSplit; cost: LayerSplit; net: LayerSplit };
+  estimated: boolean;
 }
+
+/** All actual: the split of a project the server sent no layers for. */
+const actualSplit = (sales: number, cost: number, np: number) => ({
+  sales: { ...zeroSplit(), actual: sales }, cost: { ...zeroSplit(), actual: cost }, net: { ...zeroSplit(), actual: np },
+});
 
 /** One project's figures, in ringgit: the event page's P&L when the server sent
  *  it (owner 2026-10-20: the costs follow the orders opened), else the keyed
@@ -53,11 +74,13 @@ export function figuresOf(p: OvProject): Figures {
     const cogs = e.cogs.mattSofa + e.cogs.bedframe + e.cogs.accessories + e.cogs.other;
     const transport = e.transportFee + e.transportSetup;
     const otherCost = e.setup + transport + e.commission + e.merchandise + e.others;
+    const np = e.sales + e.serviceRevenue - cogs - e.rental - otherCost;
     return {
       sales: e.sales, cogs, rental: e.rental, commission: e.commission, setup: e.setup, transport, merchandise: e.merchandise, other: e.others,
-      otherCost, gp: e.sales - cogs, np: e.sales + e.serviceRevenue - cogs - e.rental - otherCost,
+      otherCost, gp: e.sales - cogs, np,
       salesSource: e.fromOrders ? "sales_orders" : e.sales > 0 ? "keyed" : "none", cogsFromSalesOrders: e.fromOrders,
       serviceRevenue: e.serviceRevenue, cogsLines: e.cogs, transportFee: e.transportFee, transportSetup: e.transportSetup,
+      split: e.layers?.split ?? actualSplit(e.sales, cogs + e.rental + otherCost, np), estimated: e.layers?.estimated ?? false,
     };
   }
   const k = p.keyed;
@@ -71,8 +94,10 @@ export function figuresOf(p: OvProject): Figures {
   const cogsLines = cogsFromSalesOrders
     ? { mattSofa: sp.mattSofa / 100, bedframe: sp.bedframe / 100, accessories: sp.accessories / 100, other: cogs - (sp.mattSofa + sp.bedframe + sp.accessories) / 100 }
     : { mattSofa: k.cogsMattSofa, bedframe: k.cogsBedframe, accessories: k.cogsAccessories, other: 0 };
-  return { sales, cogs, rental: k.rental, commission: k.commission, setup: k.setup, transport: k.transport, merchandise: k.merchandise, other: k.other, otherCost, gp, np: gp - k.rental - otherCost, salesSource, cogsFromSalesOrders,
-    serviceRevenue: 0, cogsLines, transportFee: k.transportFee, transportSetup: k.transportSetup };
+  const np = gp - k.rental - otherCost;
+  return { sales, cogs, rental: k.rental, commission: k.commission, setup: k.setup, transport: k.transport, merchandise: k.merchandise, other: k.other, otherCost, gp, np, salesSource, cogsFromSalesOrders,
+    serviceRevenue: 0, cogsLines, transportFee: k.transportFee, transportSetup: k.transportSetup,
+    split: actualSplit(sales, cogs + k.rental + otherCost, np), estimated: false };
 }
 
 export interface Totals {
@@ -81,11 +106,15 @@ export interface Totals {
    *  cogsFromSo = the part of that cost no line accounts for (order total above its lines). */
   cogsMattSofa: number; cogsBedframe: number; cogsAccessories: number; cogsFromSo: number; transportFee: number; transportSetup: number;
   serviceRevenue: number;
+  /** Sales, cost and net profit by layer, and how many projects hold an estimate. */
+  split: { sales: LayerSplit; cost: LayerSplit; net: LayerSplit };
+  estimated: number;
 }
 
 export function totalsOf(ps: OvProject[]): Totals {
   const t: Totals = { projects: ps.length, sales: 0, cogs: 0, rental: 0, commission: 0, setup: 0, transport: 0, merchandise: 0, other: 0, otherCost: 0, gp: 0, np: 0, fromSalesOrders: 0, noSales: 0,
-    cogsMattSofa: 0, cogsBedframe: 0, cogsAccessories: 0, cogsFromSo: 0, transportFee: 0, transportSetup: 0, serviceRevenue: 0 };
+    cogsMattSofa: 0, cogsBedframe: 0, cogsAccessories: 0, cogsFromSo: 0, transportFee: 0, transportSetup: 0, serviceRevenue: 0,
+    split: { sales: zeroSplit(), cost: zeroSplit(), net: zeroSplit() }, estimated: 0 };
   for (const p of ps) {
     const f = figuresOf(p);
     t.sales += f.sales; t.cogs += f.cogs; t.rental += f.rental; t.commission += f.commission; t.setup += f.setup;
@@ -94,6 +123,8 @@ export function totalsOf(ps: OvProject[]): Totals {
     t.transportFee += f.transportFee; t.transportSetup += f.transportSetup; t.serviceRevenue += f.serviceRevenue;
     if (f.salesSource === "sales_orders") t.fromSalesOrders += 1;
     if (f.salesSource === "none") t.noSales += 1;
+    addSplit(t.split.sales, f.split.sales); addSplit(t.split.cost, f.split.cost); addSplit(t.split.net, f.split.net);
+    if (f.estimated) t.estimated += 1;
   }
   return t;
 }
