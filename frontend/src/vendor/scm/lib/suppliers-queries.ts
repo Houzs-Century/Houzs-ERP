@@ -54,6 +54,12 @@ export type SupplierRow = {
   contact_person: string | null;
   phone: string | null;
   address: string | null;
+  /* Mig 0131 — structured lines (detail / create / patch reads only). Forms
+     show two; 3 / 4 are kept for older rows (shared/address-two-lines). */
+  address1?: string | null;
+  address2?: string | null;
+  address3?: string | null;
+  address4?: string | null;
   state: string | null;
   payment_terms: string | null;
   status: SupplierStatus;

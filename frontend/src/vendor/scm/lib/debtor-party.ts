@@ -5,6 +5,7 @@
 // BILL TO can carry an address. Pure: the form, the page's party card and the
 // bill print all read it; the server stores a blank as NULL.
 // ----------------------------------------------------------------------------
+import { addressLineTwoView } from '../../shared/address-two-lines';
 
 /** The columns scm.acc_debtors gained (migration 20260921T1600), as the API returns them. */
 export type DebtorPartyColumns = {
@@ -47,8 +48,6 @@ export const DEBTOR_PARTY_GROUPS: ReadonlyArray<{ title: string; fields: Readonl
   { title: 'Address', fields: [
     { key: 'address1', label: 'Address line 1', wide: true },
     { key: 'address2', label: 'Address line 2', wide: true },
-    { key: 'address3', label: 'Address line 3', wide: true },
-    { key: 'address4', label: 'Address line 4', wide: true },
     { key: 'city', label: 'City' },
     { key: 'postcode', label: 'Postcode' },
     { key: 'state', label: 'State' },
@@ -73,7 +72,9 @@ export const debtorPartyFrom = (d: Partial<DebtorPartyColumns> & { name: string;
   name: text(d.name), code: text(d.code), phone: text(d.phone), notes: text(d.notes),
   tinNumber: text(d.tin_number), businessRegNo: text(d.business_reg_no), contactPerson: text(d.contact_person), attention: text(d.attention),
   email: text(d.email), phone2: text(d.phone2), mobile: text(d.mobile), whatsappNumber: text(d.whatsapp_number), fax: text(d.fax),
-  address1: text(d.address1), address2: text(d.address2), address3: text(d.address3), address4: text(d.address4),
+  /* Two lines on the form (owner 2026-11-18): an older debtor's lines 3 / 4 show
+     in line 2, and the save writes them there and clears 3 / 4. */
+  address1: text(d.address1), address2: addressLineTwoView(text(d.address2), d.address3, d.address4, { postcode: d.postcode, city: d.city, state: d.state }), address3: '', address4: '',
   city: text(d.city), postcode: text(d.postcode), state: text(d.state), country: text(d.country),
 });
 

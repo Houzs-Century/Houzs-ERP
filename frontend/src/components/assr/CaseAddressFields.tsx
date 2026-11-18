@@ -3,8 +3,10 @@
 // my_localities cascade (address-cascade.ts + StatePicker + SearchableSelect +
 // AddressPostcodeField): a postcode fills City and State, a state narrows the
 // rest. Picking the case's SO No. fills all of it from the SO on the server.
-// Lines 3 / 4 show only while an old case still holds text there (the free-text
-// box mapped onto four lines), so nothing typed before is hidden.
+// Two lines only (owner 2026-11-18). An old case can still hold text in lines
+// 3 / 4 (the free-text box mapped onto four lines): Address line 2 shows it after
+// line 2, and editing line 2 saves all of it there and clears 3 / 4, so nothing
+// typed before is hidden (shared/address-two-lines.ts).
 //
 // One component for the desktop case page and the phone; `classes` carries each
 // host's control styling.
@@ -17,6 +19,7 @@ import { StatePicker } from "../../vendor/scm/components/StatePicker";
 import { SearchableSelect } from "../../vendor/scm/components/SearchableSelect";
 import { AddressPostcodeField } from "../../vendor/scm/components/AddressPostcodeField";
 import { caseAddressPatch, seedCaseAddressForm, type CaseAddressForm } from "../../lib/assrCaseAddressForm";
+import { addressLineTwoView, hasLegacyLines } from "../../vendor/shared/address-two-lines";
 
 export interface CaseAddressFieldsClasses {
   field: string;
@@ -97,20 +100,20 @@ export function CaseAddressFields({ c, onSave, classes }: {
     }
   };
 
-  const line = (key: "addr1" | "addr2" | "addr3" | "addr4", label: string, placeholder: string) => (
+  const lineTwo = addressLineTwoView(form.addr2, form.addr3, form.addr4, triple);
+  const line = (label: string, value: string, placeholder: string, onChange: (v: string) => void) => (
     <label className={classes.field}>
       <span className={classes.label}>{label}</span>
-      <input className={classes.input} aria-label={label} value={form[key]} placeholder={placeholder}
-        onChange={(e) => set({ [key]: e.target.value })} />
+      <input className={classes.input} aria-label={label} value={value} placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value)} />
     </label>
   );
 
   return (
     <>
-      {line("addr1", "Address line 1", "Unit, street, area")}
-      {line("addr2", "Address line 2", "Apt, floor, building (optional)")}
-      {seed.addr3 !== "" && line("addr3", "Address line 3", "")}
-      {seed.addr4 !== "" && line("addr4", "Address line 4", "")}
+      {line("Address line 1", form.addr1, "Unit, street, area", (v) => set({ addr1: v }))}
+      {line("Address line 2", lineTwo, "Apt, floor, building (optional)",
+        (v) => set(hasLegacyLines(form.addr3, form.addr4) ? { addr2: v, addr3: "", addr4: "" } : { addr2: v }))}
       <label className={classes.field}>
         <span className={classes.label}>State</span>
         <StatePicker value={form.state} placeholder="Pick state" selectClassName={classes.input}

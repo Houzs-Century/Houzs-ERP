@@ -29,7 +29,8 @@ import { FairFallback } from "../components/FairFallback";
 import { fairDayCheck, fairEditPatch, fairEventOf, fairPickValue, isScannedOrder, linkedEvent, type LinkedFair } from "../components/fairPick";
 import { useStateWarehouseMappings } from "../vendor/scm/lib/state-warehouse-queries";
 import { todayMyt } from "../vendor/scm/lib/dates";
-import { addressLineProps } from "../lib/acColumnWidths";
+import { ADDRESS_LINE_MAX, addressLineProps } from "../lib/acColumnWidths";
+import { addressLineTwoView, hasLegacyLines } from "../vendor/shared/address-two-lines";
 import { deriveProcessingDate } from "../lib/processingDate";
 import { paymentMethodCodeForValue } from "../vendor/scm/lib/payment-methods";
 import { companyRequiresStockLocation } from "../vendor/scm/lib/so-form-validate";
@@ -773,6 +774,9 @@ export function MobileNewSO({
   const [state, setState] = useState(scanPrefill?.state ?? "");
   const [city, setCity] = useState(scanPrefill?.city ?? "");
   const [postcode, setPostcode] = useState(scanPrefill?.postcode ?? "");
+  /* Two lines (owner 2026-11-18): line 2 shows lines 3 / 4; editing it moves them into line 2. */
+  const addrLineTwo = addressLineTwoView(addr2, addr3, addr4, { postcode, city, state });
+  const setAddrLineTwo = (v: string) => { setAddr2(v); if (hasLegacyLines(addr3, addr4)) { setAddr3(""); setAddr4(""); } };
 
   // Lines + payments
   const [lines, setLines] = useState<LineItem[]>(() =>
@@ -2481,16 +2485,10 @@ export function MobileNewSO({
                     the persistent "Can't save — N to fix" pill by Save. The rule
                     itself is unchanged (still in the backend collector). */}
                 <Field label={addressRequired ? "Address Line 1 *" : "Address Line 1"} error={touched && addressRequired && !addr1.trim()} scanned={scanned("addr1", addr1)}>
-                      <input className="fld-i" value={addr1} disabled={custLocked} {...addressLineProps(setAddr1, { value: addr2, set: setAddr2 })} onChange={(e) => setAddr1(e.target.value)} placeholder="Unit, street, area" />
+                      <input className="fld-i" value={addr1} disabled={custLocked} {...addressLineProps(setAddr1, { value: addrLineTwo, set: setAddrLineTwo })} onChange={(e) => setAddr1(e.target.value)} placeholder="Unit, street, area" />
                     </Field>
                     <Field label="Address Line 2">
-                      <input className="fld-i" value={addr2} disabled={custLocked} {...addressLineProps(setAddr2, { value: addr3, set: setAddr3 })} onChange={(e) => setAddr2(e.target.value)} placeholder="Apt, floor, building (optional)" />
-                    </Field>
-                    <Field label="Address Line 3">
-                      <input className="fld-i" value={addr3} disabled={custLocked} {...addressLineProps(setAddr3, { value: addr4, set: setAddr4 })} onChange={(e) => setAddr3(e.target.value)} placeholder="Optional" />
-                    </Field>
-                    <Field label="Address Line 4">
-                      <input className="fld-i" value={addr4} disabled={custLocked} {...addressLineProps(setAddr4, null)} onChange={(e) => setAddr4(e.target.value)} placeholder="Optional" />
+                      <input className="fld-i" value={addrLineTwo} disabled={custLocked} {...addressLineProps(setAddrLineTwo, null)} maxLength={addrLineTwo.length > ADDRESS_LINE_MAX ? undefined : ADDRESS_LINE_MAX} onChange={(e) => setAddrLineTwo(e.target.value)} placeholder="Apt, floor, building (optional)" />
                     </Field>
                     {/* FIX A — cascading State → City → Postcode from my_localities
                         (desktop parity). When the dataset is present these are
