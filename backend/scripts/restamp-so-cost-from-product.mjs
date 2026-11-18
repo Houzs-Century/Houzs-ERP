@@ -20,23 +20,22 @@
    they are and only the newly-stamped cost is added. Per line the cost is:
      SOFA   seat grid PRICE_2 at the ordered height (variants.seatHeight), the nearest
             the grid holds when it has no price there, or with no height the one the SKU, model or all sofas sell at most -> base_price_sen
-            -> cost_price_sen. A set that matches its model's combo costs the combo,
-            spread over its lines, as saving the order does.
+            -> cost_price_sen. A set a combo covers costs its set price (below).
      other  base_price_sen -> cost_price_sen
    line_cost = unit x qty; then the header's category aggregates + total_cost +
    margin (revenue - cost) are recomputed.
 
-   A POS SET (2026-11-18, lib/so-line-unit-cost.mjs posSetCosts). When a piece
-   being stamped carries the POS build mark (variants.buildKey) and a combo
-   covers its set, the set costs the combo, spread over every covered piece by
-   its own product cost, the pieces already costed moving too. Stamping the
-   piece with its own cost counted it twice: the POS had shared the set's cost
-   over the pieces by selling price, so a piece with no selling price kept RM 0
-   while its siblings carried its share (2990-SO-2611-107). Such an order is
-   written in its own transaction, every UPDATE guarded on the value the plan
-   read, with an audit row naming each line's cost before and after. Lines
-   without the mark (every Houzs order) are stamped as before; each company's
-   count of orders taken by this rule is printed. This mirrors restamp-imported-so-costs
+   A SOFA SET (lib/so-line-unit-cost.mjs wholeSetCosts), on every order. When a
+   piece being stamped belongs to a set a combo covers, the set costs the combo
+   as a save prices it (planComboCostSpread), shared by each piece's own product
+   cost, the pieces already costed moving too. Stamping piece by piece missed the
+   set price: a set with every piece at RM 0 got the sum of its pieces (the combos
+   were read with their start date as "Mon Oct 19", so none was ever in effect),
+   and a piece left at RM 0 beside a sibling carrying the whole set price was
+   costed again on top (HC-SO-2609-359; 2990-SO-2611-107 on the POS). Such an
+   order is written in its own transaction, every UPDATE guarded on the value the
+   plan read, with an audit row naming each line's cost before and after; each
+   company's count of such orders is printed. This mirrors restamp-imported-so-costs
    (the company-1 import stamp) but works for any company and is release-safe.
 
    MODE=plan (default) reports what it WOULD stamp, per company, incl. the total
@@ -46,7 +45,7 @@
    then RE-READS on a fresh connection and asserts no target line still reads 0
    where its product has a cost.
 
-   REVERSAL: the printed lines/headers were all 0 before (a POS set's moved
+   REVERSAL: the printed lines/headers were all 0 before (a set's moved
    lines: their audit row's "from"), so restore with
      UPDATE scm.mfg_sales_order_items SET unit_cost_sen=0, line_cost_sen=0 WHERE id IN (<printed ids>);
      UPDATE scm.mfg_sales_orders SET mattress_sofa_cost_sen=0, bedframe_cost_sen=0,
@@ -60,7 +59,7 @@
    stamps nothing (every gap the products can fill is already filled). */
 import "./lib/public-log-guard.mjs";
 import postgres from 'postgres';
-import { comboLineCosts, costHeight, posSetCosts, unitCostSen, usualHeights } from './lib/so-line-unit-cost.mjs';
+import { unitCostSen, usualHeights, wholeSetCosts } from './lib/so-line-unit-cost.mjs';
 import { costCombos } from './lib/sofa-combo-set-cost.mjs';
 
 const DSN = process.env.DATABASE_URL;
@@ -107,11 +106,8 @@ async function main() {
     const comboRows = await sql`SELECT id, base_model, modules, tier, customer_id, prices_by_height, label, effective_from, created_at
                                 FROM scm.sofa_combo_pricing
                                 WHERE company_id = ${co} AND deleted_at IS NULL AND customer_id IS NULL AND supplier_id IS NULL`;
-    const combos = comboRows.map((r) => ({
-      id: r.id, baseModel: r.base_model, modules: r.modules, tier: r.tier, customerId: r.customer_id, pricesByHeight: r.prices_by_height,
-      pwpPricesByHeight: {}, label: r.label, effectiveFrom: String(r.effective_from).slice(0, 10), createdAt: r.created_at, deletedAt: null, defaultFreeGifts: [],
-    }));
-    // The POS-set rule reads the combos as the order's save does (dates as dates).
+    // Read as the order's save reads them: effective_from arrives as a Date, and
+    // String(Date) ("Mon Oct 19") put every combo in the future.
     const setCombos = costCombos(comboRows);
     const tierRows = await sql`SELECT fabric_code, coalesce(sofa_price_tier, price_tier, 'PRICE_2') AS tier FROM scm.fabric_trackings WHERE company_id = ${co}`;
     const tierOf = new Map(tierRows.map((f) => [f.fabric_code, f.tier]));
@@ -136,14 +132,14 @@ async function main() {
     // per-SO transactions is no longer needed.
     const wIds = [], wUc = [], wLc = [];
     const hDoc = [], hMs = [], hBf = [], hAcc = [], hSvc = [], hOth = [], hTot = [], hMar = [];
-    const setOrders = []; // POS sets costed as one set: written per order, below
+    const setOrders = []; // sofa sets costed at their set price: written per order, below
 
     // Read every line for the affected orders in ONE query, grouped by doc_no —
     // a per-SO query would be thousands of round-trips on company 1.
     const linesByDoc = new Map();
     const docNos = sos.map((s) => s.doc_no);
     if (docNos.length > 0) {
-      const allLines = await sql`SELECT id, doc_no, item_code, item_group, qty, variants, unit_cost_sen, line_cost_sen, total_sen
+      const allLines = await sql`SELECT id, doc_no, item_code, item_group, qty, variants, unit_cost_sen, line_cost_sen, total_sen, cancelled
                                  FROM scm.mfg_sales_order_items
                                  WHERE company_id = ${co} AND doc_no = ANY(${docNos})`;
       for (const l of allLines) {
@@ -163,22 +159,13 @@ async function main() {
         const uc = unitCostSen(p, l.variants, usual);
         return { l, p, qty, uc, lc: uc * qty, fresh: uc > 0 };
       });
-      // Only a group with no cost yet takes a combo here; a POS set is re-costed whole below (posSetCosts).
-      const sofas = costed.filter((c) => String(c.p?.category || '').toUpperCase() === 'SOFA');
-      const comboCost = sofas.length > 0 && sofas.every((c) => c.fresh)
-        ? comboLineCosts(sofas.map((c) => ({
-          id: c.l.id, itemCode: c.l.item_code, qty: c.qty, lineCostSen: c.lc,
-          tier: tierOf.get(String(c.l.variants?.fabricCode ?? '')) ?? 'PRICE_2', height: costHeight(c.p, c.l.variants, usual),
-        })), combos)
-        : new Map();
-      const setCost = posSetCosts(costed.map((c) => ({
-        id: c.l.id, item_code: c.l.item_code, item_group: c.l.item_group, variants: c.l.variants, qty: c.qty,
+      const setCost = wholeSetCosts(costed.map((c) => ({
+        id: c.l.id, item_code: c.l.item_code, item_group: c.l.item_group, variants: c.l.variants, qty: c.qty, cancelled: c.l.cancelled,
         held: Number(c.l.unit_cost_sen) || 0, own: unitCostSen(c.p, c.l.variants, usual),
       })), setCombos, tierOfFabric);
       const moves = [];
       for (const c of costed) {
         if (setCost.has(c.l.id)) { c.lc = setCost.get(c.l.id); c.uc = Math.round(c.lc / c.qty); }
-        else if (comboCost.has(c.l.id)) { c.lc = comboCost.get(c.l.id); c.uc = Math.round(c.lc / c.qty); }
         if (c.fresh) { plan.anyStamp = true; stamped++; plan.lineWrites.push({ id: c.l.id, uc: c.uc, lc: c.lc, from: 0, code: c.l.item_code }); }
         else if (setCost.has(c.l.id) && c.lc !== Number(c.l.line_cost_sen)) {
           plan.anyStamp = true; moves.push({ id: c.l.id, uc: c.uc, lc: c.lc, from: Number(c.l.line_cost_sen), code: c.l.item_code, total: Number(c.l.total_sen) || 0 });
@@ -244,7 +231,7 @@ async function main() {
                    VALUES (${o.so.doc_no}, ${co}, 'UPDATE_LINE', 'System (nightly cost fill)',
                            ${tx.json([...o.plan.lineWrites, ...o.moves].map((w) => ({ field: `line_${w.code}_line_cost_sen`, from: w.from, to: w.lc })))},
                            ${o.so.status}, 'script:restamp-so-cost-from-product',
-                           ${'Cost filled: a POS sofa set costs its set price, spread over its pieces; a piece sold at RM 0 is not costed again on top'})`;
+                           ${'Cost filled: the sofa set costs its set price, spread over its pieces by their own cost; a piece at RM 0 is not costed again on top'})`;
         });
       } catch (e) {
         bad(`  SKIP ${o.so.doc_no}: ${e instanceof Error ? e.message : String(e)}`);
@@ -261,7 +248,7 @@ async function main() {
 
     note(`===== Company ${co} =====`);
     note(`zero-cost headers: ${sos.length}; lines to stamp: ${stamped}; product-has-no-cost: ${noCost}; headers to fill: ${headers}; margin reduction: RM ${rm(marginDrop)}`);
-    note(`POS sets costed as one set (rule of 2026-11-18): ${setOrders.length} order(s)${setOrders.length ? `: ${setOrders.map((o) => o.so.doc_no).join(', ')}` : ''}`);
+    note(`sofa sets costed at their set price: ${setOrders.length} order(s)${setOrders.length ? `: ${setOrders.map((o) => o.so.doc_no).join(', ')}` : ''}`);
     shownDocs.forEach((d) => note(`  ${d}`));
     if (headers > shownDocs.length) note(`  ... ${headers - shownDocs.length} more.`);
     grandStamp += stamped; grandNoCost += noCost; grandHeaders += headers; grandMarginDrop += marginDrop;
