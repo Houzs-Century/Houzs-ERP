@@ -18,7 +18,7 @@ import { VenueRentPanel } from "./VenueRentPanel";
 import { Columns, TONE, PALETTE } from "../../components/scm-v2/Charts";
 import { useDashboardPeriod } from "../../components/scm-v2/DashboardPeriod";
 import { DateRangeButton } from "../../components/DateRangeButton";
-import { REPORT_RANGE_PRESETS } from "../../lib/dateRangePresets";
+import { PROJECT_REPORT_RANGE_PRESETS } from "../../lib/dateRangePresets";
 import { ProjectOverviewTable } from "./ProjectOverviewTable";
 import { ProjectDataGapsPanel, ProjectStuckPanel } from "./ProjectOverviewParts";
 import { figuresOf, totalsOf, groupBy, drillOf, pctOf, type OvProject, type Drill } from "./projectOverviewModel";
@@ -82,8 +82,10 @@ export function ProjectOverviewPage() {
   const gSort = useTableSort(groups, (g, k) =>
     k === "key" ? g.key : k === "projects" ? g.projects : k === "sales" ? g.sales : k === "gpPct" ? pctOf(g.gp, g.sales)
       : k === "rental" ? g.rental : k === "rentalPct" ? pctOf(g.rental, g.sales) : k === "cost" ? g.rental + g.otherCost : k === "np" ? g.np : pctOf(g.np, g.sales));
-  /* A month that has not started is left off: a few early bookings drew a huge NP % (owner 2026-11-05). */
-  const trend = drillOf(all, drill, today).filter((b) => b.from <= today);
+  /* A month that has not started is left off: a few early bookings drew a huge NP % (owner 2026-11-05) -
+     unless the period picked reaches it, where its events carry their forecast (owner 2026-11-18). */
+  const trendEnd = period.to > today ? period.to : today;
+  const trend = drillOf(all, drill, today).filter((b) => b.from <= trendEnd);
   /* Breadcrumb back up the drill: All years > 2026 > Q4 > Oct. */
   const crumbs: Array<[string, Drill]> = [["All years", { level: "years" }]];
   if (drill.level !== "years") {
@@ -95,7 +97,7 @@ export function ProjectOverviewPage() {
   }
   const unit = drill.level === "years" ? "Year" : drill.level === "quarters" ? "Quarter" : drill.level === "months" || drill.level === "yearMonths" ? "Month" : "Week";
   const yearView = drill.level === "quarters" || drill.level === "yearMonths" ? drill.year : null;
-  const openBucket = (b: (typeof trend)[number]) => { if (b.next) setDrill(b.next); else setPeriod(b.from, b.to > today ? today : b.to); };
+  const openBucket = (b: (typeof trend)[number]) => { if (b.next) setDrill(b.next); else setPeriod(b.from, b.to); };
   /* Running costs after COGS, only the ones that are not zero. */
   /* The lines of the Financial Snapshot, each against sales (owner 2026-10-19). */
   const cogsLines: Array<[string, number, string]> = [
@@ -117,7 +119,7 @@ export function ProjectOverviewPage() {
   return (
     <div ref={rootRef} className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <DateRangeButton from={period.from} to={period.to} presets={REPORT_RANGE_PRESETS} today={today} label="Event dates"
+        <DateRangeButton from={period.from} to={period.to} presets={PROJECT_REPORT_RANGE_PRESETS} today={today} label="Event dates"
           onChange={(f, to) => { if (f && to) setPeriod(f, to); }} />
         <select className={SELECT_CLS} value={brand} onChange={(e) => setView({ brand: e.target.value })} aria-label="Brand"><option value="">All brands</option>{options("brand").map((b) => <option key={b}>{b}</option>)}</select>
         <select className={SELECT_CLS} value={type} onChange={(e) => setView({ type: e.target.value })} aria-label="Event type"><option value="">All event types</option>{options("eventType").map((b) => <option key={b}>{b}</option>)}</select>
@@ -137,11 +139,12 @@ export function ProjectOverviewPage() {
         <div className="relative">
           <div className="font-mono text-[10px] font-bold uppercase tracking-brand text-accent-bright">{period.label} · {t.projects} projects</div>
           <div className="mt-3 grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-4">
-            <Hero label="Sales" value={money(t.sales)} sub={t.fromSalesOrders ? `${t.fromSalesOrders} projects from Sales Orders` : "all from keyed books"} />
+            <Hero label="Sales" value={money(t.sales)} sub={t.split.sales.forecast + t.split.sales.last_event !== 0 ? "includes estimates, split below" : t.fromSalesOrders ? `${t.fromSalesOrders} projects from Sales Orders` : "all from keyed books"} />
             <Hero label="Gross profit %" value={pctTxt(pctOf(t.gp, t.sales))} sub={`GP ${money(t.gp)}`} tone={t.gp >= 0 ? "good" : "bad"} />
             <Hero label="Net profit" value={money(t.np)} sub={`NP ${pctTxt(pctOf(t.np, t.sales))}`} tone={t.np >= 0 ? "good" : "bad"} />
             <Hero label="Collected" value={pctTxt(pctOf(paidSen, orderedSen))} sub={`${money(paidSen / 100)} of ${money(orderedSen / 100)} ordered`} />
           </div>
+          {t.estimated > 0 && <LayerSplitRow t={t} />}
           {t.noSales > 0 && <p className="mt-3 text-[11.5px] text-sidebar-ink/70">{t.noSales} projects in this period have neither keyed sales nor Sales Orders yet.</p>}
         </div>
       </section>
@@ -226,6 +229,25 @@ export function ProjectOverviewPage() {
 
       <ProjectStuckPanel onOpen={openProject} />
       <ProjectDataGapsPanel onOpen={openProject} />
+    </div>
+  );
+}
+
+/** The period's totals cut by layer (owner 2026-11-18): what is real, what was
+ *  typed as a forecast, and what is borrowed from the last same-venue event. */
+function LayerSplitRow({ t }: { t: ReturnType<typeof totalsOf> }) {
+  const rows: Array<[string, ReturnType<typeof totalsOf>["split"]["sales"]]> = [["Sales", t.split.sales], ["Total cost", t.split.cost], ["Net profit", t.split.net]];
+  return (
+    <div className="mt-4 overflow-x-auto rounded-lg bg-white/5 px-3 py-2" data-testid="layer-split">
+      <div className="mb-1 text-[11px] text-sidebar-ink/70">{t.estimated} of {t.projects} projects include estimates</div>
+      <table className="w-full min-w-[420px] border-collapse text-[12px] tabular-nums">
+        <thead><tr className="text-left text-[10.5px] uppercase tracking-wider text-sidebar-ink/70">
+          <th className="py-0.5 font-semibold"> </th><th className="py-0.5 text-right font-semibold">Actual</th><th className="py-0.5 text-right font-semibold">Forecast</th><th className="py-0.5 text-right font-semibold">Last event</th>
+        </tr></thead>
+        <tbody>{rows.map(([label, s]) => (
+          <tr key={label}><td className="py-0.5 text-sidebar-ink/80">{label}</td><td className="py-0.5 text-right">{money(s.actual)}</td><td className="py-0.5 text-right">{money(s.forecast)}</td><td className="py-0.5 text-right">{money(s.last_event)}</td></tr>
+        ))}</tbody>
+      </table>
     </div>
   );
 }

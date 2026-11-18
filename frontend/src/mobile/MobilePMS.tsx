@@ -46,6 +46,9 @@ import { fmtRmSen, notOpenedByRepId } from "../lib/projectSalesBills";
 import { saleAmountRm, validateSaleAmount } from "./saleAmount";
 import { SoloSafeName, useCanSeeSoloOrganizer, isSoloMasked, shownProjectName } from "../pages/projects/SoloSafeName";
 import type { EventPnl } from "../pages/projects/types";
+import type { DetailForecast, LastEventExpoMap } from "../pages/projects/forecastLayers";
+import { LastEventExpoMapBlock } from "../pages/projects/LastEventExpoMap";
+import { MobileForecastLines } from "./MobilePmsForecast";
 
 /* ------------------------------------------------------------------ *
  * Mobile Project (PMS) — list + detail.
@@ -197,6 +200,8 @@ type ProjectDetail = {
   /** The two P&Ls (owner 2026-10-16; backend services/eventPnl.ts) — the same
    *  figures the desktop event page shows. Null on an older server. */
   finance_pnl?: EventPnl | null;
+  finance_forecast?: DetailForecast | null;
+  last_event_expo_map?: LastEventExpoMap | null;
   checklist?: ChecklistItem[];
   checklist_attachments?: TaskAttachment[];
   sections?: TasklistSection[];
@@ -1458,6 +1463,7 @@ function ProjectDetailView({
               prompt={prompt}
               projectId={id}
               reload={reload}
+              lastEventExpoMap={data.last_event_expo_map ?? null}
             />}
 
             {/* setup & dismantle (logistic) — FIELD cohort position (sales/
@@ -1712,6 +1718,7 @@ function ProjectDetailView({
                 finance={data.finance!}
                 lines={data.finance_lines}
                 pnl={data.finance_pnl ?? null}
+                forecast={data.finance_forecast ?? null}
                 canWrite={canWrite && financeCanEdit}
                 busy={busy}
                 setBusy={setBusy}
@@ -2190,9 +2197,10 @@ const NEXT_STATUS: Record<string, "pending" | "done" | "na"> = {
 };
 
 function TasklistSectionView({
-  projectId, sections, items, progress, attachments, projectStart, projectEnd, canTick, can, busy, setBusy, notify, prompt, reload,
+  projectId, sections, items, progress, attachments, projectStart, projectEnd, canTick, can, busy, setBusy, notify, prompt, reload, lastEventExpoMap,
 }: {
   projectId: number;
+  lastEventExpoMap: LastEventExpoMap | null;
   sections?: TasklistSection[];
   items?: ChecklistItem[];
   progress?: SectionProgress[];
@@ -2311,6 +2319,7 @@ function TasklistSectionView({
                     <span style={{ fontSize: 11, fontWeight: 800, color: "var(--hz-c-ink)" }}>{(sec.name || "").replace(/\s+documents$/i, "")}</span>
                     {prog && <span style={{ marginLeft: "auto", fontSize: 10, fontWeight: 700, color: "var(--hz-c-ink-soft)" }}>{prog.done}/{prog.total}</span>}
                   </div>
+                  {/^expo map/i.test((sec.name || "").trim()) && lastEventExpoMap && <LastEventExpoMapBlock data={lastEventExpoMap} />}
                   {renderRows(rows)}
                 </div>
               );
@@ -3976,12 +3985,14 @@ function QuickRentalField({
 }
 
 function FinancialSnapshot({
-  projectId, finance, lines, pnl, canWrite, busy, setBusy, notify, reload,
+  projectId, finance, lines, pnl, forecast, canWrite, busy, setBusy, notify, reload,
 }: {
   projectId: number;
   finance: NonNullable<ProjectDetail["finance"]>;
   lines?: FinanceLine[];
   pnl: EventPnl | null;
+  /** The three layers (owner 2026-11-18); null = actuals only. */
+  forecast: DetailForecast | null;
   canWrite: boolean;
   busy: boolean;
   setBusy: SetBusy;
@@ -4002,8 +4013,8 @@ function FinancialSnapshot({
   /* The server's P&L by Total Sales when it sent one — the desktop page's own
      figures, Finance's books and the orders' cost included; else the old
      cached rollup. */
-  const sales = pnl ? pnl.by_sales.sales : finance.total_sales ?? 0;
-  const cost = pnl ? pnl.by_sales.totalCost :
+  const sales = forecast ? forecast.lines.sales.amount : pnl ? pnl.by_sales.sales : finance.total_sales ?? 0;
+  const cost = forecast ? forecast.totals.total_cost.amount : pnl ? pnl.by_sales.totalCost :
     (finance.rental ?? 0) +
     (finance.contractor_cost ?? 0) +
     (finance.license_fee ?? 0) +
@@ -4044,6 +4055,16 @@ function FinancialSnapshot({
             <div className="money" style={{ fontSize: 16, fontWeight: 800, color: netColor, marginTop: 3 }}>{marginPct == null ? "—" : `${marginPct.toFixed(1)}%`}</div>
           </div>
         </div>
+        {/* The lines in three layers (owner 2026-11-18): Last event, Forecast, Actual. */}
+        {forecast && (
+          <>
+            <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--hz-c-ink-soft)", margin: "12px 0 6px" }}>
+              Snapshot by Total Sales{forecast.estimated ? " · includes estimates" : ""}
+            </div>
+            {forecast.last_event_error && <div style={{ fontSize: 11, color: "#b23a3a", marginBottom: 6 }}>The last event&apos;s figures could not be read: {forecast.last_event_error}</div>}
+            <MobileForecastLines projectId={projectId} layers={forecast} canWrite={canWrite} reload={reload} />
+          </>
+        )}
         {/* The second P&L (owner 2026-10-16): the Sales Orders opened at the fair. */}
         {pnl?.by_so && (
           <div style={{ fontSize: 11, color: "#6b7064", marginTop: 8 }}>

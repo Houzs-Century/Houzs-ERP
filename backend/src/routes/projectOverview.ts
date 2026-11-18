@@ -16,7 +16,9 @@ import type { AuthUser } from "../services/auth";
 import { supabaseAuth } from "../scm/middleware/auth";
 import { scopeToCompany, activeCompanySql, activeCompanyId } from "../scm/lib/companyScope";
 import { chunkIn, paginateAll } from "../scm/lib/paginate-all";
-import { pnlForProjects } from "../services/eventPnlBatch";
+import { pnlAndLinesForProjects, type PnlWithLines } from "../services/eventPnlBatch";
+import { readForecasts } from "../services/eventForecastLoad";
+import { lastEventsOf, lastEventValues, layerPnl, usesLastEvent, type ForecastLayers } from "../services/eventForecast";
 import { soDisplayTotalSen, soPaidInputsOf, soPaidSen } from "../scm/shared/so-outstanding";
 import type { PnlColumn } from "../services/eventPnl";
 import { LEDGER_COST_CATEGORIES } from "../services/projects";
@@ -46,7 +48,7 @@ projectOverview.use("*", async (c, next) => {
 projectOverview.use("*", supabaseAuth);
 
 type ProjectRow = {
-  id: number; code: string; name: string; brand: string | null; organizer: string | null; venue: string | null;
+  id: number; company_id: number | null; code: string; name: string; brand: string | null; organizer: string | null; venue: string | null;
   state: string | null; stage: string | null; start_date: string | null; end_date: string | null; event_type: string | null;
   size_sqm: number | null;
   income: number; cogs: number; rental: number; commission: number; setup: number; transport: number; merchandise: number; other_cost: number;
@@ -67,7 +69,7 @@ async function buildProjectOverview(c: Context<{ Bindings: Env; Variables: Varia
     `COALESCE((SELECT SUM(l.amount) FROM project_finance_lines l WHERE l.project_id = p.id AND l.archived_at IS NULL AND ${where}), 0)`;
   // company-scope: finance lines are read per project of the active company (activeCompanySql on p.company_id at the end of this statement).
   const rows = await c.env.DB.prepare(
-    `SELECT p.id, p.code, p.name, p.brand, p.organizer, p.venue, p.state, p.stage, p.start_date, p.end_date, p.size_sqm,
+    `SELECT p.id, p.company_id, p.code, p.name, p.brand, p.organizer, p.venue, p.state, p.stage, p.start_date, p.end_date, p.size_sqm,
             et.name AS event_type,
             (SELECT f.total_sales FROM project_finance f WHERE f.project_id = p.id LIMIT 1) AS total_sales,
             ${sum("l.kind = 'income'")} AS income,
@@ -225,23 +227,58 @@ async function buildProjectOverview(c: Context<{ Bindings: Env; Variables: Varia
      orders' goods; Finance's figure when the books fill the row). An event with
      no order keeps its own costs (rental, setup, books) at zero sales. Empty on a
      failed read: the page then falls back to the keyed lines below. */
-  const pnls = await pnlForProjects(c.env as unknown as Parameters<typeof pnlForProjects>[0], projects.map((p) => ({ id: p.id, brand: p.brand, total_sales: p.total_sales })), activeCompanyId(c) ?? null, LEDGER_COST_CATEGORIES);
-  const compact = (p: { id: number; start_date: string | null; end_date: string | null; income: unknown }) => {
+  const pnlRead = await pnlAndLinesForProjects(c.env as unknown as Parameters<typeof pnlAndLinesForProjects>[0], projects.map((p) => ({ id: p.id, brand: p.brand, total_sales: p.total_sales })), activeCompanyId(c) ?? null, LEDGER_COST_CATEGORIES);
+  const pnls: Map<number, PnlWithLines> = pnlRead.ok ? pnlRead.byId : new Map();
+  /* The three layers (owner 2026-11-18; services/eventForecast.ts) over the
+     column the page reads: the event's own figure, else its typed Forecast,
+     else - while it has not ended - the last same-organiser-same-venue event's
+     actual, from that event's same column. */
+  let forecasts: Awaited<ReturnType<typeof readForecasts>>;
+  try {
+    forecasts = await readForecasts(c.env.DB, projects.map((p) => p.id), activeCompanyId(c) ?? null);
+  } catch (e) {
+    return { ok: false, status: 500, body: { error: "load_failed", reason: `forecasts: ${e instanceof Error ? e.message : String(e)}` } };
+  }
+  const rowsById = new Map(projects.map((p) => [p.id, p]));
+  const lastOf = lastEventsOf(projects.map((p) => ({ ...p, id: Number(p.id), company_id: p.company_id == null ? null : Number(p.company_id) })));
+  const columnOf = (p: ProjectRow): { col: PnlColumn; fromOrders: boolean; booksRows: Set<string> } | null => {
     const e = pnls.get(p.id);
     if (!e) return null;
     /* An event with an order opened reads By Sales Orders; one with none (most
        events before August, whose orders were never linked to the fair) reads
        its books - By Total Sales - so the history is not blank (owner
        2026-10-20: "之前的数据全部都是空的吗？"). */
-    const col: PnlColumn = readsTypedFirst(p) ? e.by_sales : e.by_so ?? e.by_sales;
-    const fromOrders = col === e.by_so;
+    const col: PnlColumn = readsTypedFirst(p) ? e.pnl.by_sales : e.pnl.by_so ?? e.pnl.by_sales;
+    return { col, fromOrders: col === e.pnl.by_so, booksRows: new Set(e.booksRows) };
+  };
+  const today = todayMyt();
+  const compact = (p: ProjectRow) => {
+    const own = columnOf(p);
+    if (!own) return null;
+    const last = lastOf.get(Number(p.id));
+    const lastRow = last ? rowsById.get(last.id) : undefined;
+    const lastCol = lastRow ? columnOf(lastRow) : null;
+    const layers: ForecastLayers = layerPnl({
+      col: own.col,
+      booksRows: own.booksRows,
+      forecast: forecasts.get(p.id) ?? {},
+      lastEvent: lastCol ? lastEventValues(lastCol.col, lastCol.booksRows) : null,
+      useLastEvent: usesLastEvent(p, today),
+    });
+    const v = (k: keyof ForecastLayers["lines"]) => layers.lines[k].amount;
     return {
-      fromOrders,
-      sales: col.sales,
-      serviceRevenue: col.serviceRevenue,
-      cogs: { mattSofa: col.cogs.mattSofa, bedframe: col.cogs.bedframe, accessories: col.cogs.accessories, other: col.cogs.other },
-      rental: col.rental, setup: col.setup, transportSetup: col.transportSetupDismantle, others: col.others,
-      transportFee: col.transportFee.amount, commission: col.commission.amount, merchandise: col.merchandise.amount,
+      fromOrders: own.fromOrders,
+      sales: v("sales"),
+      serviceRevenue: own.col.serviceRevenue,
+      cogs: { mattSofa: v("cogs_matt_sofa"), bedframe: v("cogs_bedframe"), accessories: v("cogs_accessories"), other: own.col.cogs.other },
+      rental: v("rental"), setup: v("setup"), transportSetup: v("transport_setup_dismantle"), others: v("others"),
+      transportFee: v("transport_fee"), commission: v("commission"), merchandise: v("merchandise"),
+      layers: {
+        estimated: layers.estimated,
+        split: layers.split,
+        sources: Object.fromEntries(Object.entries(layers.lines).map(([k, l]) => [k, l.source])),
+        lastEvent: last && layers.uses_last_event ? { id: last.id, code: last.code } : null,
+      },
     };
   };
 

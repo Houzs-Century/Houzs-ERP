@@ -1,7 +1,7 @@
 // The date-range presets and the day arithmetic behind DateRangeButton.
 import { describe, expect, test } from 'vitest';
 import {
-  OUTSTANDING_DEFAULT_PRESET, OUTSTANDING_RANGE_PRESETS, REPORT_RANGE_PRESETS,
+  OUTSTANDING_DEFAULT_PRESET, OUTSTANDING_RANGE_PRESETS, PROJECT_REPORT_RANGE_PRESETS, REPORT_RANGE_PRESETS,
   addDays, dayDiff, daysInRange, isIsoDay, monthEnd, monthStart, presetLabel, presetOf, presetRange, quarterStart,
 } from './dateRangePresets';
 
@@ -84,5 +84,23 @@ describe('day arithmetic', () => {
     expect(isIsoDay('2026-02-30')).toBe(false);
     expect(isIsoDay('2026/02/28')).toBe(false);
     expect(isIsoDay('')).toBe(false);
+  });
+});
+
+describe('future ranges (Project Overview, owner 2026-11-18)', () => {
+  test('Next month, Next quarter and Next 12 months run past today', () => {
+    expect(presetRange('nextMonth', '2026-11-18')).toEqual({ from: '2026-12-01', to: '2026-12-31' });
+    expect(presetRange('nextMonth', '2026-12-18')).toEqual({ from: '2027-01-01', to: '2027-01-31' });
+    expect(presetRange('nextQuarter', '2026-11-18')).toEqual({ from: '2027-01-01', to: '2027-03-31' });
+    expect(presetRange('next12Months', '2026-11-18')).toEqual({ from: '2026-11-18', to: '2027-11-18' });
+    expect(presetLabel('nextQuarter')).toBe('Next quarter');
+  });
+
+  test('the project report offers them after the reports\' own list, and recognises a future range', () => {
+    expect(PROJECT_REPORT_RANGE_PRESETS.slice(0, REPORT_RANGE_PRESETS.length)).toEqual([...REPORT_RANGE_PRESETS]);
+    expect(PROJECT_REPORT_RANGE_PRESETS).toEqual(expect.arrayContaining(['nextMonth', 'nextQuarter', 'next12Months']));
+    expect(presetOf({ from: '2026-12-01', to: '2026-12-31' }, PROJECT_REPORT_RANGE_PRESETS, '2026-11-18')).toBe('nextMonth');
+    /* The Finance reports keep their past-only list. */
+    expect(REPORT_RANGE_PRESETS).not.toContain('nextMonth');
   });
 });
