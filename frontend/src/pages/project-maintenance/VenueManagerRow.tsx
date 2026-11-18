@@ -67,7 +67,10 @@ export function VenueManagerRow({
   }
 
   return (
-    <li className="flex flex-wrap items-center justify-between gap-3 px-3 py-2">
+    <li className="px-3 py-2">
+      {/* Name and the row menu on the first line, the fields under it: side by
+          side the name was squeezed to one word per line (owner 2026-11-18). */}
+      <div className="flex items-center justify-between gap-3">
       <div className="min-w-0 flex-1">
         {editing ? (
           <div className="flex items-center gap-1.5">
@@ -97,14 +100,27 @@ export function VenueManagerRow({
             </button>
           </div>
         ) : (
-          <div className="text-[13px] font-medium text-ink">{v.name}</div>
+          <div className="truncate text-[13px] font-medium text-ink" title={v.name}>{v.name}</div>
         )}
       </div>
+      <RowActionsMenu
+        items={[
+          { type: "action", icon: Pencil, label: "Edit", onClick: startEdit },
+          {
+            type: "action",
+            icon: Trash2,
+            label: "Remove",
+            danger: true,
+            onClick: () => onRemove(v),
+          },
+        ]}
+      />
+      </div>
+      <div className="mt-1.5 grid grid-cols-1 gap-1.5 sm:grid-cols-[repeat(3,minmax(0,1fr))_8rem]">
       {/* Inline State / City / Postcode — the Sales Order's controls (owner
           2026-11-17). Each pick saves the WHOLE triple in one PATCH, so a
           postcode that fills City and State back lands as one change; Country
           follows the State. Values must live in my_localities. */}
-      <div className="grid w-full grid-cols-3 gap-1.5 sm:w-[26rem]">
         <AddressTripleFields
           country=""
           value={{ state: v.state ?? "", city: v.city ?? "", postcode: v.postcode ?? "" }}
@@ -118,7 +134,6 @@ export function VenueManagerRow({
           }
           classes={VENUE_TRIPLE_CLASSES}
         />
-      </div>
       {/* Inline size edit (mig 0222). Free text, committed on blur so the
           operator can type "12,000 sqft" without a PATCH per character. key
           includes the saved value so a reload after save re-seeds defaultValue. */}
@@ -129,21 +144,11 @@ export function VenueManagerRow({
           const next = e.target.value.trim();
           if (next !== (v.size ?? "")) onPatch(v.id, { size: next || null });
         }}
-        placeholder="size"
-        className="h-8 w-28 min-w-0 rounded-md border border-border bg-surface px-2 text-[12px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
+        placeholder="Size"
+        aria-label="Venue size"
+        className="h-8 w-full min-w-0 rounded-md border border-border bg-surface px-2 text-[12px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
       />
-      <RowActionsMenu
-        items={[
-          { type: "action", icon: Pencil, label: "Edit", onClick: startEdit },
-          {
-            type: "action",
-            icon: Trash2,
-            label: "Remove",
-            danger: true,
-            onClick: () => onRemove(v),
-          },
-        ]}
-      />
+      </div>
     </li>
   );
 }
