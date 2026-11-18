@@ -35,6 +35,7 @@ export const IMPORT_COLUMNS: ReadonlyArray<{ key: string; header: string; aliase
   { key: "pcb", header: "PCB (Yes/No)", aliases: ["pcb", "income tax", "所得税"] },
   { key: "nationality", header: "Nationality", aliases: ["citizenship", "国籍"] },
   { key: "icNumber", header: "IC Number", aliases: ["ic", "ic no", "mykad", "nric", "身份证"] },
+  { key: "passportNumber", header: "Passport Number", aliases: ["passport", "passport no", "passport number", "护照", "护照号"] },
   { key: "outsource", header: "Outsourced (Yes/No)", aliases: ["outsource", "osc", "外包", "外劳"] },
 ];
 
@@ -112,30 +113,31 @@ export function mapImportGrid(grid: string[][], departmentsByName: ReadonlyMap<s
     const deptText = cell("department");
     const salaryText = cell("basicSalary");
     const dailyText = cell("dailyRate");
-    const payMode: "MONTHLY" | "DAILY" = DAILY.test(cell("payBasis")) ? "DAILY" : "MONTHLY";
+    const payText = cell("payBasis");
+    const payMode: "MONTHLY" | "DAILY" = DAILY.test(payText) ? "DAILY" : "MONTHLY";
 
     const departmentId = deptText ? departmentsByName.get(deptText.toLowerCase()) ?? null : null;
     const deptUnknown = deptText !== "" && departmentId === null;
 
-    const row: ImportEmployeeRow = {
-      empNo,
-      name,
-      accountEmail,
-      phone: cell("phone"),
-      position: cell("position"),
-      nationality: cell("nationality"),
-      icNumber: cell("icNumber"),
-      departmentId,
-      joinDate: toIso(cell("joinDate")),
-      payMode,
-      bankName: cell("bank"),
-      bankAccount: cell("bankAccount"),
-      epfEnabled: YES.test(cell("epf")),
-      socsoEnabled: YES.test(cell("socso")),
-      eisEnabled: YES.test(cell("eis")),
-      pcbEnabled: YES.test(cell("pcb")),
-      isOutsource: YES.test(cell("outsource")),
-    };
+    // Only the cells the sheet actually filled go on the wire, so a re-import of
+    // someone already in the book patches just those and leaves each blank cell
+    // as it is. Name and Emp No identify the row and always travel.
+    const row: ImportEmployeeRow = { empNo, name, accountEmail };
+    const phone = cell("phone"); if (phone) row.phone = phone;
+    const position = cell("position"); if (position) row.position = position;
+    const nationality = cell("nationality"); if (nationality) row.nationality = nationality;
+    const icNumber = cell("icNumber"); if (icNumber) row.icNumber = icNumber;
+    const passportNumber = cell("passportNumber"); if (passportNumber) row.passportNumber = passportNumber;
+    const bankName = cell("bank"); if (bankName) row.bankName = bankName;
+    const bankAccount = cell("bankAccount"); if (bankAccount) row.bankAccount = bankAccount;
+    const joinText = cell("joinDate"); if (joinText) row.joinDate = toIso(joinText);
+    if (deptText) row.departmentId = departmentId;
+    if (payText) row.payMode = payMode;
+    const epf = cell("epf"); if (epf) row.epfEnabled = YES.test(epf);
+    const socso = cell("socso"); if (socso) row.socsoEnabled = YES.test(socso);
+    const eis = cell("eis"); if (eis) row.eisEnabled = YES.test(eis);
+    const pcb = cell("pcb"); if (pcb) row.pcbEnabled = YES.test(pcb);
+    const outsource = cell("outsource"); if (outsource) row.isOutsource = YES.test(outsource);
     if (salaryText) row.basicSalarySen = senFromRm(salaryText);
     if (dailyText) row.dailyRateSen = senFromRm(dailyText);
 

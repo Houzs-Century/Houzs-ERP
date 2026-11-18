@@ -32,7 +32,7 @@ import { hasPermission } from "../services/permissions";
 import { audit } from "../services/audit";
 import { employeeInputProblem, nextEmpNo, parseEmployeeInput, type EmployeeInput } from "../scm/shared/hr-employee";
 import { DEFAULT_PAY_RULES, normalizePayRules, payRulesProblem, resolvePayRulesAsOf } from "../scm/shared/hr-pay-rules";
-import { employeeColumns, employeeDiff, planBulkImport, planBulkLink, rowToEmployee, salaryAsOf, type BulkAccount, type EmployeeOut, type EmployeeRow, type ImportRowIn } from "./lib/hr-rules";
+import { employeeColumns, employeeDiff, employeeUpdateColumns, planBulkImport, planBulkLink, rowToEmployee, salaryAsOf, type BulkAccount, type EmployeeOut, type EmployeeRow, type ExistingEmp, type ImportRowIn } from "./lib/hr-rules";
 
 type Ctx = Context<{ Bindings: Env }>;
 type Db = ReturnType<typeof getDb>;
@@ -248,9 +248,16 @@ hr.post("/employees/bulk-link", async (c) => {
   return c.json({ created, skipped }, 201);
 });
 
-/* Bulk add from a spreadsheet (option 2). The browser maps the file to rows and
-   previews them; the server is the authority and re-checks every row, so the
-   result lists exactly what went in and what was refused and why. */
+/* Bulk add OR enrich from a spreadsheet (option 2). The browser maps the file
+   to rows and previews them; the server is the authority and re-checks every
+   row. A row that matches someone already in the book — by its linked ERP
+   account, else by an exact Emp No — updates that record in place with only the
+   cells the sheet filled (salary and the Emp No are never touched); every other
+   row is created. The result lists what was created, what was updated, and what
+   was refused and why. */
+const IMPORT_UPDATABLE: ReadonlyArray<keyof EmployeeInput> = [
+  "name", "phone", "departmentId", "position", "joinDate", "nationality", "icNumber", "passportNumber", "bankName", "bankAccount", "epfEnabled", "socsoEnabled", "eisEnabled", "pcbEnabled", "tripNames",
+];
 hr.post("/employees/bulk-import", async (c) => {
   if (!canManage(c)) return c.json(FORBIDDEN, 403);
   const co = requireActiveCompanyId(c);
@@ -266,18 +273,20 @@ hr.post("/employees/bulk-import", async (c) => {
     const input = parseEmployeeInput(rec, today);
     if (!input.joinDate) input.joinDate = today;
     const email = typeof rec.accountEmail === "string" ? rec.accountEmail.trim() : "";
-    return { input, accountEmail: email || null };
+    // Which fields the sheet actually gave, so a re-import patches only those.
+    const provided = new Set<keyof EmployeeInput>(IMPORT_UPDATABLE.filter((k) => k in rec && rec[k] != null));
+    return { input, provided, accountEmail: email || null };
   });
-  const [linked, activeUsers] = await Promise.all([
-    db.select({ user_id: hr_employees.user_id, emp_no: hr_employees.emp_no }).from(hr_employees).where(eq(hr_employees.company_id, co.companyId)),
+  const [existing, activeUsers] = await Promise.all([
+    db.select({ id: hr_employees.id, user_id: hr_employees.user_id, emp_no: hr_employees.emp_no }).from(hr_employees).where(eq(hr_employees.company_id, co.companyId)),
     db.select({ id: users.id, email: users.email }).from(users).where(eq(users.status, "active")),
   ]);
-  const linkedUserIds = new Set(linked.filter((l) => l.user_id != null).map((l) => l.user_id as number));
-  const existingEmpNos = linked.map((l) => l.emp_no);
+  const existingEmps: ExistingEmp[] = existing.map((e) => ({ id: e.id, empNo: e.emp_no, userId: e.user_id }));
   const userIdByEmail = new Map(activeUsers.filter((u) => u.email).map((u) => [u.email.toLowerCase(), u.id]));
-  const plan = planBulkImport(parsed, { existingEmpNos, linkedUserIds, userIdByEmail });
+  const plan = planBulkImport(parsed, { existing: existingEmps, userIdByEmail });
   const by = c.get("user").id;
   const created: Array<{ index: number; id: number; empNo: string; name: string }> = [];
+  const updated: Array<{ index: number; id: number; empNo: string; name: string }> = [];
   const errors = [...plan.errors];
   for (const { index, input } of plan.create) {
     try {
@@ -291,17 +300,24 @@ hr.post("/employees/bulk-import", async (c) => {
       throw e;
     }
   }
+  for (const u of plan.update) {
+    const cols = employeeUpdateColumns(u.patch);
+    if (Object.keys(cols).length > 0) {
+      await db.update(hr_employees).set({ ...cols, updated_by: by }).where(and(eq(hr_employees.company_id, co.companyId), eq(hr_employees.id, u.employeeId)));
+    }
+    updated.push({ index: u.index, id: u.employeeId, empNo: u.empNo, name: u.name });
+  }
   errors.sort((a, b) => a.index - b.index);
-  if (created.length) {
+  if (created.length || updated.length) {
     await audit(c, {
       action: "hr.employee.bulk_import",
       entityType: "hr_employee",
       entityId: co.companyId,
-      summary: `Imported ${created.length} ${created.length === 1 ? "employee" : "employees"}`,
-      meta: { created: created.map((r) => r.empNo), errors: errors.length },
+      summary: `Imported ${created.length} new, updated ${updated.length} from a spreadsheet`,
+      meta: { created: created.map((r) => r.empNo), updated: updated.map((r) => r.empNo), errors: errors.length },
     });
   }
-  return c.json({ created, errors }, 201);
+  return c.json({ created, updated, errors }, 201);
 });
 
 hr.patch("/employees/:id", async (c) => {

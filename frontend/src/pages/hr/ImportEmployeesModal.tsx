@@ -22,14 +22,14 @@ type State =
   | { step: "pick"; error: string | null }
   | { step: "reading"; fileName: string }
   | { step: "preview"; fileName: string; mapping: ImportMapping; submitting: boolean }
-  | { step: "done"; fileName: string; created: number; skippedForProblems: number; failures: { rowNumber: number; message: string }[] };
+  | { step: "done"; fileName: string; created: number; updated: number; skippedForProblems: number; failures: { rowNumber: number; message: string }[] };
 
 async function downloadTemplate(): Promise<void> {
   const XLSX = await import("../../lib/xlsx-runtime");
   const headers = IMPORT_COLUMNS.map((c) => c.header);
   const example = [
     "Ahmad bin Ali", "", "ahmad@houzscentury.com", "0121234567", "", "Driver", "2026-01-15",
-    "Monthly", "1800", "", "Maybank", "1234567890", "Yes", "Yes", "Yes", "No", "Malaysian", "900101-14-5501", "No",
+    "Monthly", "1800", "", "Maybank", "1234567890", "Yes", "Yes", "Yes", "No", "Malaysian", "900101-14-5501", "", "No",
   ];
   const ws = XLSX.utils.aoa_to_sheet([headers, example]);
   const wb = XLSX.utils.book_new();
@@ -51,6 +51,13 @@ export function ImportEmployeesModal({ open, onClose, onDone }: { open: boolean;
     () => new Map((options.data?.departments ?? []).map((d) => [d.name.trim().toLowerCase(), d.id])),
     [options.data],
   );
+  // The ERP accounts already tied to an employee, by email: a row naming one of
+  // these updates that person rather than adding a duplicate.
+  const linkedByEmail = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const a of options.data?.accounts ?? []) if (a.linkedEmpNo) m.set(a.email.toLowerCase(), a.linkedEmpNo);
+    return m;
+  }, [options.data]);
 
   async function chooseFile(file: File) {
     setState({ step: "reading", fileName: file.name });
@@ -78,11 +85,12 @@ export function ImportEmployeesModal({ open, onClose, onDone }: { open: boolean;
     try {
       const res = await bulkImportEmployees(valid.map((v) => v.row));
       const failures = res.errors.map((e) => ({ rowNumber: valid[e.index]?.rowNumber ?? e.index + 1, message: e.message }));
-      if (res.created.length > 0) onDone();
+      if (res.created.length > 0 || res.updated.length > 0) onDone();
       setState({
         step: "done",
         fileName: state.fileName,
         created: res.created.length,
+        updated: res.updated.length,
         skippedForProblems: state.mapping.rows.length - valid.length,
         failures,
       });
@@ -125,7 +133,8 @@ export function ImportEmployeesModal({ open, onClose, onDone }: { open: boolean;
           <p className="text-ink-secondary">
             Download the template, fill one row per person, then upload it. Only <strong className="text-ink">Name</strong> is required; leave Employee No blank
             and it is numbered for you. Put the person’s ERP account email in <strong className="text-ink">ERP Account Email</strong> to link it so they can punch
-            in. Money is in RM. You will see every row before anything is saved.
+            in. A row that matches someone already here — same ERP account, or same Employee No — updates that person with the cells you filled instead of adding
+            a duplicate; salary is never changed. Money is in RM. You will see every row before anything is saved.
           </p>
           <input
             ref={fileInput}
@@ -188,22 +197,32 @@ export function ImportEmployeesModal({ open, onClose, onDone }: { open: boolean;
                 </tr>
               </thead>
               <tbody>
-                {state.mapping.rows.map((r) => (
+                {state.mapping.rows.map((r) => {
+                  const existingEmpNo = r.row.accountEmail ? linkedByEmail.get(r.row.accountEmail.toLowerCase()) : undefined;
+                  const willUpdate = !r.problem && existingEmpNo != null;
+                  return (
                   <tr
                     key={r.rowNumber}
                     className={`border-t border-border-subtle ${r.problem ? "bg-rose-50/70 dark:bg-rose-950/20" : ""}`}
-                    data-status={r.problem ? "problem" : "ready"}
+                    data-status={r.problem ? "problem" : willUpdate ? "update" : "ready"}
                   >
                     <td className="px-2.5 py-1.5 tabular-nums text-ink-muted">{r.rowNumber}</td>
-                    <td className="px-2.5 py-1.5 font-mono">{r.display.empNo}</td>
+                    <td className="px-2.5 py-1.5 font-mono">{willUpdate ? existingEmpNo : r.display.empNo}</td>
                     <td className="px-2.5 py-1.5">{r.display.name}</td>
                     <td className="px-2.5 py-1.5">{r.display.link ? r.display.account : <span className="text-ink-muted">not linked</span>}</td>
-                    <td className="px-2.5 py-1.5">{r.display.pay}</td>
+                    <td className="px-2.5 py-1.5">{willUpdate ? <span className="text-ink-muted">unchanged</span> : r.display.pay}</td>
                     <td className="px-2.5 py-1.5">
-                      {r.problem ? <span className="text-rose-700 dark:text-rose-300">{r.problem}</span> : <span className="text-emerald-700 dark:text-emerald-300">Ready</span>}
+                      {r.problem ? (
+                        <span className="text-rose-700 dark:text-rose-300">{r.problem}</span>
+                      ) : willUpdate ? (
+                        <span className="text-sky-700 dark:text-sky-300">Will update</span>
+                      ) : (
+                        <span className="text-emerald-700 dark:text-emerald-300">New</span>
+                      )}
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -216,7 +235,7 @@ export function ImportEmployeesModal({ open, onClose, onDone }: { open: boolean;
       {state.step === "done" && (
         <div className="flex flex-col gap-2 text-[13px]" role="status">
           <p className="font-semibold text-ink">
-            Imported {state.created} {state.created === 1 ? "employee" : "employees"} from {state.fileName}.
+            {state.fileName}: added {state.created} new {state.created === 1 ? "employee" : "employees"}, updated {state.updated} existing.
           </p>
           {state.skippedForProblems > 0 && (
             <p className="text-ink-secondary">{state.skippedForProblems} row{state.skippedForProblems === 1 ? "" : "s"} were left out for the reasons shown in the preview.</p>
