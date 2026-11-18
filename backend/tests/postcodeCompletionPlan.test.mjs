@@ -12,6 +12,8 @@ import {
   countByField,
   DEFAULT_GROUPS,
   parseGroups,
+  planVenueRenames,
+  VENUE_RENAMES,
   venueCoverage,
   verifyWritten,
 } from "../scripts/lib/postcode-completion.mjs";
@@ -162,7 +164,9 @@ describe("TABLES=", () => {
   });
   test("names, all, and a typo", () => {
     expect(parseGroups("so, DO")).toEqual({ ok: true, groups: ["so", "do"] });
-    expect(parseGroups("all")).toEqual({ ok: true, groups: ALL_GROUPS });
+    expect(parseGroups("all")).toEqual({ ok: true, groups: ["masters", "dp", "case", "so", "do"] });
+    expect(parseGroups("all,venue_rename").groups).toContain("venue_rename");
+    expect(ALL_GROUPS).toContain("venue_rename");
     expect(parseGroups("masters,sos").ok).toBe(false);
   });
   test("every target belongs to a known group, and only masters print names", () => {
@@ -213,5 +217,41 @@ describe("venueCoverage", () => {
       projects: 7, noVenue: 1, matched: 3, matchedVenues: 2, withPostcode: 3, withState: 2, withCity: 2, withStateAfterPlan: 3,
       unmatched: [["Unknown Hall", 2], ["Other Hall", 1]],
     });
+  });
+});
+
+describe("project venue rename (IOIGECC)", () => {
+  const MASTER = ["IOI GRAND EXHIBITION & CONVENTION CENTRE", "MID VALLEY"];
+  const proj = (id, code, venue) => ({ id, code, venue });
+  test("all six IOIGECC projects, the IOI-MALL-PUTRAJAYA-coded one included, get the official name; others untouched", () => {
+    const projects = [
+      proj(1, "2026-10-HOMELOVE-PUTRAJAYA-IOIGECC-AKEMI", "IOIGECC"),
+      proj(2, "2026-10-HOMELOVE-PUTRAJAYA-IOIGECC-ZANOTTI", "ioigecc "),
+      proj(3, "2026-12-X", "IOIGECC"),
+      proj(4, "2027-03-X", "IOIGECC"),
+      proj(5, "2027-07-HOMELOVE-PUTRAJAYA-IOI-MALL-PUTRAJAYA-AKEMI", "IOIGECC"),
+      proj(6, "2027-10-X", "IOIGECC"),
+      proj(7, "MV", "MID VALLEY"),
+      proj(8, "NEAR", "IOIGECC HALL 2"),
+    ];
+    const { planned, refused } = planVenueRenames(projects, MASTER);
+    expect(refused).toEqual([]);
+    expect(planned.map((p) => p.id)).toEqual(["1", "2", "3", "4", "5", "6"]);
+    expect(new Set(planned.map((p) => p.to))).toEqual(new Set(["IOI GRAND EXHIBITION & CONVENTION CENTRE"]));
+    expect(planned[1]).toEqual({ id: "2", code: "2026-10-HOMELOVE-PUTRAJAYA-IOIGECC-ZANOTTI", from: "ioigecc", to: "IOI GRAND EXHIBITION & CONVENTION CENTRE" });
+  });
+  test("refused when the company's venue master lacks the official name, or already has an IOIGECC row", () => {
+    expect(planVenueRenames([proj(1, "A", "IOIGECC")], ["MID VALLEY"])).toEqual({
+      planned: [], refused: [expect.objectContaining({ projects: 1, reason: expect.stringMatching(/has no "IOI GRAND/) })],
+    });
+    expect(planVenueRenames([proj(1, "A", "IOIGECC")], [...MASTER, "ioigecc"]).planned).toEqual([]);
+  });
+  test("a second run plans nothing", () => {
+    expect(planVenueRenames([proj(1, "A", "IOI GRAND EXHIBITION & CONVENTION CENTRE")], MASTER)).toEqual({ planned: [], refused: [] });
+  });
+  test("the rename list is the owner's one rename, and TABLES knows venue_rename without running it by default", () => {
+    expect(VENUE_RENAMES).toEqual([{ from: "IOIGECC", to: "IOI GRAND EXHIBITION & CONVENTION CENTRE" }]);
+    expect(parseGroups("venue_rename")).toEqual({ ok: true, groups: ["venue_rename"] });
+    expect(DEFAULT_GROUPS).not.toContain("venue_rename");
   });
 });

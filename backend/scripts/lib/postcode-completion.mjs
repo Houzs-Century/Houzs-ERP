@@ -80,15 +80,17 @@ export const COMPLETION_TARGETS = [
    financial documents mirrored to AutoCount: the owner applies the masters
    first and opts into those two by name. */
 export const DEFAULT_GROUPS = ['masters', 'dp', 'case'];
-export const ALL_GROUPS = ['masters', 'dp', 'case', 'so', 'do'];
+export const ALL_GROUPS = ['masters', 'dp', 'case', 'so', 'do', 'venue_rename'];
+/* TABLES=all is every fill; the project venue rename is a decision, named on its own. */
+const ALL_FILLS = ['masters', 'dp', 'case', 'so', 'do'];
 
 /** TABLES= text -> the groups to run, or an error. Empty = DEFAULT_GROUPS. */
 export function parseGroups(text) {
   const raw = String(text ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
   if (raw.length === 0) return { ok: true, groups: [...DEFAULT_GROUPS] };
-  const groups = raw.includes('all') ? [...ALL_GROUPS] : [...new Set(raw)];
+  const groups = [...new Set(raw.flatMap((g) => (g === 'all' ? ALL_FILLS : [g])))];
   const bad = groups.filter((g) => !ALL_GROUPS.includes(g));
-  if (bad.length) return { ok: false, why: `unknown TABLES value(s) ${bad.join(', ')}; use ${ALL_GROUPS.join(', ')} or all` };
+  if (bad.length) return { ok: false, why: `unknown TABLES value(s) ${bad.join(', ')}; use ${ALL_GROUPS.join(', ')} or all (= every fill, not venue_rename)` };
   return { ok: true, groups };
 }
 
@@ -278,4 +280,44 @@ export function verifyWritten(targetKey, changes, read, localities) {
     if (spec.city in changes && !loc.cities.includes(t(read[spec.city]))) problems.push(`${spec.city} "${t(read[spec.city])}" is not a city of postcode ${pc}`);
   }
   return problems;
+}
+
+/* PROJECT VENUE RENAME (owner 2026-11-18). A project names its venue by text
+   and finds the venue master row through PROJECT_VENUE_JOIN (same company,
+   lower(trim(name))). Six projects say "IOIGECC", a name the master does not
+   have, so their Setup / Dismantle jobs get no postcode; the master's row is
+   "IOI GRAND EXHIBITION & CONVENTION CENTRE" (62502). The owner chose to rename
+   the project venue to that name, all six included (the 2027-07 one whose code
+   says IOI-MALL-PUTRAJAYA is also IOIGECC, owner 2026-11-18). Only the venue
+   field moves; project names and codes stay. Runs only with TABLES=venue_rename. */
+export const VENUE_RENAMES = [
+  { from: 'IOIGECC', to: 'IOI GRAND EXHIBITION & CONVENTION CENTRE' },
+];
+
+const venueKey = (s) => t(s).toLowerCase();
+
+/**
+ * `projects`: live (not archived) projects of one company, { id, code, venue }.
+ * `masterNames`: the company's project_venues names. A rename is planned only
+ * when the target name exists in the master (else the rename would not help and
+ * is refused). Returns { planned: [{id, code, from, to}], refused: [{from, to, projects, reason}] }.
+ */
+export function planVenueRenames(projects, masterNames, renames = VENUE_RENAMES) {
+  const master = new Set((masterNames ?? []).map(venueKey));
+  const planned = [];
+  const refused = [];
+  for (const rn of renames) {
+    const hits = projects.filter((p) => venueKey(p.venue) === venueKey(rn.from) && t(p.venue) !== rn.to);
+    if (hits.length === 0) continue;
+    if (!master.has(venueKey(rn.to))) {
+      refused.push({ ...rn, projects: hits.length, reason: `the venue master has no "${rn.to}" in this company` });
+      continue;
+    }
+    if (master.has(venueKey(rn.from))) {
+      refused.push({ ...rn, projects: hits.length, reason: `the venue master already has a "${rn.from}" row; the projects resolve to it` });
+      continue;
+    }
+    for (const p of hits) planned.push({ id: String(p.id), code: t(p.code), from: t(p.venue), to: rn.to });
+  }
+  return { planned, refused };
 }

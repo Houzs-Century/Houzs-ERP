@@ -46,6 +46,22 @@
    a my_localities postcode, the State is its state and the City one of its
    cities.
 
+   PROJECT VENUE RENAME (TABLES=venue_rename, never in the default or in
+   `all`; same CONFIRM): the owner chose (2026-11-18) to rename the project
+   venue "IOIGECC" (any case, surrounding spaces ignored) on every live project
+   of COMPANY_ID to the venue master's "IOI GRAND EXHIBITION & CONVENTION
+   CENTRE", so PROJECT_VENUE_JOIN finds its postcode (62502) for Setup /
+   Dismantle. Only public.projects.venue changes; names and codes do not.
+   Refused when the company's venue master lacks that name. The plan also
+   counts the Sales Orders whose own venue text is IOIGECC: the fair picker and
+   the fair reconcile match an order to a project by venue text, so an order
+   still saying IOIGECC no longer matches these projects by venue (an order
+   already linked keeps its project_id; the fair check may then say the slip
+   venue differs). Sales Orders are not changed. Re-read on a fresh
+   connection: the venue reads exactly the new name and resolves to a venue
+   master row. A renamed project no longer says IOIGECC, so it is not planned
+   again.
+
    RE-RUN: safe. Only empty fields are planned and each write requires them to
    be still empty, so a second run proposes only what the first left (the
    unresolved, flagged and locked rows) and never touches a value someone
@@ -53,7 +69,7 @@
 import postgres from 'postgres';
 import { PROJECT_VENUE_JOIN } from '../src/scm/lib/project-venue-join.ts';
 import {
-  COMPLETION_TARGETS, buildCompletionPlan, completionIndex, countByField, parseGroups, venueCoverage, verifyWritten,
+  COMPLETION_TARGETS, buildCompletionPlan, completionIndex, countByField, parseGroups, planVenueRenames, venueCoverage, verifyWritten,
 } from './lib/postcode-completion.mjs';
 
 const DSN = process.env.DATABASE_URL;
@@ -191,6 +207,27 @@ async function main() {
 
   const { planned, locked, unresolved, flagged } = buildCompletionPlan({ rows, localities });
 
+  let renames = [];
+  if (GROUPS.includes('venue_rename')) {
+    const projects = await sql`SELECT id::text AS id, code, venue FROM public.projects
+                                WHERE company_id = ${CO} AND archived_at IS NULL AND venue IS NOT NULL AND btrim(venue) <> ''`;
+    const master = await sql`SELECT name FROM public.project_venues WHERE company_id = ${CO}`;
+    const rp = planVenueRenames(projects, master.map((m) => m.name));
+    renames = rp.planned;
+    say(`\n=== PROJECT VENUE RENAME (${renames.length}) — project id | code | venue -> new venue ===`);
+    for (const r of renames) say(`  ${r.id} | ${r.code} | ${r.from} -> ${r.to}`);
+    for (const f of rp.refused) say(`  REFUSED ${f.from} -> ${f.to} (${f.projects} project(s)): ${f.reason}`);
+    if (renames.length) {
+      const froms = [...new Set(renames.map((r) => r.from.toLowerCase()))];
+      const [so] = await sql`SELECT count(*)::int AS total,
+                                    count(*) FILTER (WHERE project_id::text = ANY(${renames.map((r) => r.id)}))::int AS linked,
+                                    count(*) FILTER (WHERE project_id IS NULL)::int AS unlinked
+                               FROM scm.mfg_sales_orders
+                              WHERE company_id = ${CO} AND lower(btrim(venue)) = ANY(${froms})`;
+      say(`  Sales Orders whose venue text says ${froms.join(' / ')}: ${so.total} (linked to one of these projects: ${so.linked}; linked to no project: ${so.unlinked}) — not changed`);
+    }
+  }
+
   const willFillState = new Set(planned.filter((p) => p.target === 'venues' && 'state' in p.changes).map((p) => p.id));
   const cov = await coverage(willFillState);
   say(`\n=== PROJECT VENUES (company ${CO}, projects not archived) ===`);
@@ -222,12 +259,26 @@ async function main() {
   for (const u of unresolved) say(`  ${who(u)} | ${why(u)}`);
   say(`\n=== FLAGGED (${flagged.length}) — State disagrees with the postcode, nothing on that side written ===`);
   for (const f of flagged) say(`  ${who(f)} | ${why(f)}`);
-  note(`\nplanned ${planned.length}, locked ${locked.length}, unresolved ${unresolved.length}, flagged ${flagged.length}`);
+  note(`\nplanned ${planned.length}, locked ${locked.length}, unresolved ${unresolved.length}, flagged ${flagged.length}${GROUPS.includes('venue_rename') ? `; project venue renames ${renames.length}` : ''}`);
 
   if (!APPLY) {
     note(`\nPLAN ONLY: nothing written. Re-run with MODE=apply CONFIRM="${CONFIRM_PHRASE}" COMPANY_ID=${CO}${process.env.TABLES ? ` TABLES=${process.env.TABLES}` : ''}.`);
     await sql.end({ timeout: 5 });
     return;
+  }
+
+  const renamed = [];
+  if (renames.length) {
+    note(`\n=== RENAMING ${renames.length} PROJECT VENUE(S) ===`);
+    for (const r of renames) {
+      const back = await sql`UPDATE public.projects SET venue = ${r.to}
+                              WHERE id::text = ${r.id} AND company_id = ${CO} AND archived_at IS NULL
+                                AND lower(btrim(venue)) = ${r.from.toLowerCase()}
+                             RETURNING id::text AS id`;
+      if (back.length === 1) renamed.push(r);
+      note(`  ${back.length === 1 ? 'OK  ' : 'SKIP (venue changed or archived meanwhile)'} project ${r.id} ${r.code}`);
+    }
+    note(`  renamed: ${renamed.length} of ${renames.length}`);
   }
 
   note(`\n=== WRITING ${planned.length} ROW(S) ===`);
@@ -267,6 +318,17 @@ async function main() {
       if (problems.length) { wrong += 1; bad(`  ${p.target} ${p.id}: ${target.printName ? problems.join('; ') : `${problems.length} check(s) failed on ${Object.keys(p.changes).join(', ')}`}`); }
     }
     note(`  ${written.length - wrong} of ${written.length} written rows read back exactly as planned, in my_localities' shape`);
+    let badRename = 0;
+    for (const r of renamed) {
+      const [row] = await check.unsafe(
+        `SELECT p.venue, pv.id::text AS venue_id, pv.name AS venue_name
+           FROM public.projects p ${PROJECT_VENUE_JOIN.replaceAll('project_venues', 'public.project_venues')}
+          WHERE p.id::text = $1 AND p.company_id = $2`, [r.id, CO]);
+      const ok = row && row.venue === r.to && row.venue_id != null && String(row.venue_name ?? '').trim().toLowerCase() === r.to.toLowerCase();
+      if (!ok) { badRename += 1; bad(`  project ${r.id}: reads ${JSON.stringify(row ?? null)}, planned venue ${JSON.stringify(r.to)} resolving to a venue master row`); }
+    }
+    if (renamed.length) note(`  ${renamed.length - badRename} of ${renamed.length} renamed projects read the new venue and resolve to its venue master row`);
+    wrong += badRename;
   } finally {
     await check.end({ timeout: 5 });
   }

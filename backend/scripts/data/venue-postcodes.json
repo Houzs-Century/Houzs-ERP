@@ -377,6 +377,17 @@
       "note": "single directory (Cvent, as PICCA at Butterworth Arena) Same building as PICCA; Cvent and yopki.com listings agree on PMT 5144 Lorong Ampang Jajar 13400."
     },
     {
+      "id": 59,
+      "name": "DATARAN CENTRIO",
+      "postcode": "70300",
+      "city": "Seremban",
+      "state": "Negeri Sembilan",
+      "address": "Pusat Dagangan Centrio (Jalan S2 B22), Seremban 2",
+      "source": "https://seremban2.ijmland.com/ikon-centrio",
+      "confidence": "medium",
+      "note": "owner confirmed 2026-11-18 it is Centrio, Seremban 2; 70300 is the IKON @ Centrio (IJM Land) address in the same township; listings put IKON on Jalan S2 B21, next to S2 B22"
+    },
+    {
       "id": 91,
       "name": "DATARAN PAHLAWAN MELAKA MEGAMALL",
       "postcode": "75000",
@@ -773,6 +784,17 @@
       "note": "Google listing and ticketing site agree; Bukit Jalil National Stadium"
     },
     {
+      "id": 68,
+      "name": "STADIUM INDERA MULIA",
+      "postcode": "31400",
+      "city": "Ipoh",
+      "state": "Perak",
+      "address": "Persiaran Bulan, Kompleks Sukan Ipoh",
+      "source": "https://visitperak.com.my/?p=10511",
+      "confidence": "high",
+      "note": "owner confirmed 2026-11-18"
+    },
+    {
       "id": 73,
       "name": "STRAITS QUAY",
       "postcode": "10470",
@@ -934,11 +956,6 @@
       "reason": "owner: leave out if unsure. Ambiguous: Centre Point Sabah (88000 Kota Kinabalu) vs Centrepoint Bandar Utama (47800 Petaling Jaya)"
     },
     {
-      "id": 59,
-      "name": "DATARAN CENTRIO",
-      "reason": "no Malaysian venue named 'Dataran Centrio' found in 4 searches; only Centrio Avenue (residential, Gelugor Penang) and Centrio Mall (Philippines); possibly a typo for Centro (Klang) - needs owner to identify"
-    },
-    {
       "id": 76,
       "name": "DEWAN MILLENNIUM KEPALA BATAS",
       "reason": "owner: leave out if unsure. No source gives the hall's own address; only the Kepala Batas town postcode (13200)"
@@ -967,11 +984,6 @@
       "id": 21,
       "name": "PARADIGM MALL",
       "reason": "owner: leave out if unsure. Paradigm Mall exists in Johor Bahru (81200) and Petaling Jaya (row 109); which one is a guess"
-    },
-    {
-      "id": 68,
-      "name": "STADIUM INDERA MULIA",
-      "reason": "owner: leave out if unsure. Only one source, and it gives the Kompleks Sukan Ipoh address (31400), which may be Stadium Perak rather than Indera Mulia"
     },
     {
       "id": 106,
