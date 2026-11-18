@@ -9,6 +9,8 @@ import { PageHeader } from "../components/Layout";
 import { Button } from "../components/Button";
 import { ListSkeleton } from "../components/Skeleton";
 import { DataTable, type Column } from "../components/DataTable";
+import { ResizableDrawer } from "../components/ResizableDrawer";
+import { OrderSlipPhoto } from "../vendor/scm/components/OrderSlipPhoto";
 import { useQuery } from "../hooks/useQuery";
 import { api } from "../api/client";
 import { cn } from "../lib/utils";
@@ -39,6 +41,8 @@ type ProblemScan = {
   detail: string | null;
   /** Before/after per changed field; null for scans with no draft snapshot. */
   changes: FieldChange[] | null;
+  /** The slip photo the scan read; null when none was kept. */
+  slipImageKey: string | null;
 };
 export type OcrReport = {
   month: string;
@@ -123,7 +127,47 @@ function ProblemDetail({ scan }: { scan: ProblemScan }) {
   );
 }
 
-function ProblemScanCard({ scan, docLabel }: { scan: ProblemScan; docLabel: string }) {
+const salesOrderPath = (docNo: string) => `/scm/sales-orders/${encodeURIComponent(docNo)}`;
+const outcomeLabel = (scan: ProblemScan) => (scan.outcome === "failed" ? "Failed" : "Corrected");
+const sectionTitle = "mb-2 text-[11px] font-bold uppercase tracking-wide text-ink-muted";
+
+function SlipPreviewDrawer({ scan, docNo, onClose }: { scan: ProblemScan; docNo: string; onClose: () => void }) {
+  const changeCount = scan.changes?.length ?? 0;
+  return (
+    <ResizableDrawer
+      onClose={onClose}
+      storageKey="ocr-slip-preview-drawer"
+      defaultWidth={1100}
+      minWidth={720}
+      maxWidth={1600}
+      ariaLabel={`Slip check for ${docNo}`}
+      title={docNo}
+      subtitle={`${outcomeLabel(scan)} · scanned ${scanTime(scan.at)}`}
+      headerActions={
+        <Link to={salesOrderPath(docNo)} className="rounded-md border border-white/40 px-3 py-1.5 text-[12.5px] font-semibold text-white">
+          Open sales order
+        </Link>
+      }
+    >
+      <div className="grid gap-6 p-5 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+        <section aria-label="Scanned slip">
+          <div className={sectionTitle}>Scanned slip</div>
+          {scan.slipImageKey ? (
+            <OrderSlipPhoto imageKey={scan.slipImageKey} title="Scanned slip" alt={`The scanned slip for ${docNo}`} maxWidth={1200} />
+          ) : (
+            <p className="text-[12px] text-ink-muted">No slip photo was kept for this scan.</p>
+          )}
+        </section>
+        <section aria-label="What changed" className="lg:sticky lg:top-5 lg:self-start">
+          <div className={sectionTitle}>{changeCount ? `What changed · ${plural(changeCount, "change")}` : "What changed"}</div>
+          <ProblemDetail scan={scan} />
+        </section>
+      </div>
+    </ResizableDrawer>
+  );
+}
+
+function ProblemScanCard({ scan, docLabel, onPreview }: { scan: ProblemScan; docLabel: string; onPreview: (scanId: string) => void }) {
   const isFailed = scan.outcome === "failed";
   return (
     <details className="group rounded-lg border border-border bg-surface">
@@ -131,11 +175,17 @@ function ProblemScanCard({ scan, docLabel }: { scan: ProblemScan; docLabel: stri
         <ChevronRight size={16} aria-hidden className="mt-0.5 shrink-0 text-ink-muted transition-transform group-open:rotate-90" />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[12.5px]">
-            <span className={cn("font-semibold", isFailed ? "text-err" : "text-warning-text")}>{isFailed ? "Failed" : "Corrected"}</span>
+            <span className={cn("font-semibold", isFailed ? "text-err" : "text-warning-text")}>{outcomeLabel(scan)}</span>
             {!scan.docNo ? (
               <span className="text-ink-muted">none created</span>
             ) : scan.documentType === "SO" ? (
-              <Link to={`/scm/sales-orders/${encodeURIComponent(scan.docNo)}`} className="font-semibold text-primary underline">{scan.docNo}</Link>
+              <button
+                type="button"
+                onClick={(event) => { event.preventDefault(); onPreview(scan.id); }}
+                className="rounded-sm font-semibold text-primary underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
+              >
+                {scan.docNo}
+              </button>
             ) : (
               <span className="font-semibold text-ink">{scan.docNo}</span>
             )}
@@ -165,6 +215,9 @@ export function OcrDashboard() {
   const reviewed = r?.fieldMisses.reviewed ?? 0;
   const labels = new Map(r?.docTypes.map((d) => [d.documentType, d.label]));
   const docLabel = (t: string) => labels.get(t) ?? t;
+  const previewScan = r?.problems.find((scan) => scan.id === params.get("slip"));
+  const setPreview = (scanId: string | null) =>
+    setParams((p) => { if (scanId) p.set("slip", scanId); else p.delete("slip"); return p; }, { replace: true });
 
   return (
     <div className="space-y-5">
@@ -238,20 +291,22 @@ export function OcrDashboard() {
             <div className={card}>
               <div className={cardTitle}>Recent problem scans</div>
               <div className={cardNote}>
-                The latest failed or corrected scans. Tap a scan to see what changed. Open the sales order to see the slip photo and judge whether it was the photo or the AI.
+                The latest failed or corrected scans. Tap a scan to see what changed. Tap the order number to see the slip beside the changes and judge whether it was the photo or the AI.
                 Failed scans someone cleared with "Clear failed" are gone and not counted.
               </div>
               {r.problems.length === 0 ? (
                 <div className="py-6 text-center text-[12px] text-ink-muted">No problem scans this month.</div>
               ) : (
                 <div className="space-y-2">
-                  {r.problems.map((scan) => <ProblemScanCard key={scan.id} scan={scan} docLabel={docLabel(scan.documentType)} />)}
+                  {r.problems.map((scan) => <ProblemScanCard key={scan.id} scan={scan} docLabel={docLabel(scan.documentType)} onPreview={setPreview} />)}
                 </div>
               )}
             </div>
           </>
         )
       )}
+
+      {previewScan?.docNo && <SlipPreviewDrawer scan={previewScan} docNo={previewScan.docNo} onClose={() => setPreview(null)} />}
     </div>
   );
 }

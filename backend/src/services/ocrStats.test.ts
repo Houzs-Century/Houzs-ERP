@@ -15,6 +15,7 @@ const row = (over: Partial<ScanRow>): ScanRow => ({
   corrected: null,
   draft_baseline: null,
   so_missing: false,
+  slip_image_key: null,
   ...over,
 });
 
@@ -89,5 +90,11 @@ describe("buildOcrReport", () => {
     expect(r.docTypes[1]).toMatchObject({ imported: 1, accuracy: null });
     expect(r.fieldMisses).toEqual({ reviewed: 2, fields: [{ field: "Product code", count: 1 }] });
     expect(r.problems.map((p) => [p.id, p.outcome])).toEqual([["b", "corrected"], ["c", "failed"]]);
+  });
+
+  it("carries the slip photo key so the page can show the slip beside the changes", () => {
+    const corrected = row({ id: "a", sample_status: "CONFIRMED", extracted: slip("A"), corrected: slip("B"), slip_image_key: "scan-slips/s1" });
+    const failed = row({ id: "b", status: "error", error: "boom" });
+    expect(buildOcrReport("2026-10", "m", [corrected, failed]).problems.map((p) => p.slipImageKey)).toEqual(["scan-slips/s1", null]);
   });
 });
