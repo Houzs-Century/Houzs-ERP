@@ -27,6 +27,19 @@ try {
      ORDER BY d.do_number`;
   console.log(`DOs found: ${dos.length} of ${doNos.length}`);
   for (const r of dos) console.log(JSON.stringify(r));
+  const crew = await sql`
+    SELECT d.do_number, dr.in_house AS driver_1_in_house,
+           (cr.driver_1_id = (SELECT c2.driver_1_id FROM scm.delivery_order_crew c2 JOIN scm.delivery_orders d2 ON d2.id = c2.do_id WHERE d2.do_number = ${doNos[doNos.length - 1]})) AS same_driver_as_last,
+           l.is_internal, l.active, to_jsonb(l) ? 'threepl_company_id' AS lorry_has_3pl_col,
+           (to_jsonb(l) ->> 'threepl_company_id') IS NOT NULL AS lorry_linked_3pl
+      FROM scm.delivery_orders d
+      JOIN scm.delivery_order_crew cr ON cr.do_id = d.id
+      LEFT JOIN scm.drivers dr ON dr.id = cr.driver_1_id
+      LEFT JOIN scm.lorries l ON l.id = cr.lorry_id
+     WHERE d.do_number IN ${sql(doNos)}
+     ORDER BY d.do_number`;
+  console.log("crew / lorry flags:");
+  for (const r of crew) console.log(JSON.stringify(r));
   const stops = await sql`
     SELECT d.do_number, s.stop_no, s.stop_type::text AS stop_type, s.company_id AS stop_company,
            s.assr_case_id IS NOT NULL AS is_case, t.trip_no, t.status::text AS trip_status, LEFT(t.trip_date::text, 10) AS trip_date,
