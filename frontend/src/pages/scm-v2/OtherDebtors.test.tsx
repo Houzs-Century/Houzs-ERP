@@ -242,7 +242,7 @@ describe('the debtor form, in place of the list', () => {
     }
     expect(screen.queryByLabelText('Address line 3')).toBeNull();
     /* Picking the postcode fills City and State, as on the Sales Order. */
-    const postcode = screen.getAllByRole('combobox').find((el) => (el as HTMLInputElement).placeholder?.startsWith('Pick postcode'))!;
+    const postcode = screen.getAllByRole('combobox').find((el) => (el as HTMLInputElement).placeholder.startsWith('Pick postcode'))!;
     fireEvent.focus(postcode);
     fireEvent.change(postcode, { target: { value: '47810' } });
     fireEvent.keyDown(postcode, { key: 'Enter' });
