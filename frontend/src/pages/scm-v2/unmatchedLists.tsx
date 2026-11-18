@@ -194,7 +194,7 @@ export const PAYMENT_STAGES: ReadonlyArray<{ key: UnmatchedState; label: string 
 
 /** "Card · GHL", "Card · 未标", "Transfer · TNG". */
 export const methodText = (r: UnmatchedPayment): string =>
-  (r.kind === 'card' ? `Card · ${r.channel ?? '未标'}` : `Transfer${r.channel ? ` · ${r.channel}` : ''}`);
+  (r.kind === 'card' ? `Card · ${r.channel ?? 'Untagged'}` : `Transfer${r.channel ? ` · ${r.channel}` : ''}`);
 
 /* ── The same money on another list (owner 2026-11-10: 会不会duplicate) ─────────
    A payment not matched yet is often the very money another list holds from its

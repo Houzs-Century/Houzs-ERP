@@ -85,7 +85,7 @@ export const isRefundRequest = (r: Pick<PaymentRequest, 'refund_source_doc_no'>)
 
 /** The stage in words — a refund Finance returned was rejected (owner: 我可能还会拒绝). */
 export const stageLabel = (r: Pick<PaymentRequest, 'stage' | 'refund_source_doc_no'>): string =>
-  isRefundRequest(r) && r.stage === 'RETURNED' ? 'Rejected · 已拒绝' : STAGE[r.stage].label;
+  isRefundRequest(r) && r.stage === 'RETURNED' ? 'Rejected' : STAGE[r.stage].label;
 
 /** The same words in English only — Finance's Money out view (the redesign,
     batch 4); the requester keeps both languages. */
@@ -154,15 +154,15 @@ export type StageTagTone = 'calm' | 'warn' | 'info' | 'late';
     colour it reads in, and the tone of its tag on Finance's list — one home
     for all three. */
 export const STAGE: Record<RequestStage, { label: string; tone: string; tag: StageTagTone }> = {
-  SUBMITTED: { label: 'Submitted · 已提交', tone: 'var(--fg-muted)', tag: 'info' },
-  PROCESSING: { label: 'Finance processing · 处理中', tone: 'var(--c-orange)', tag: 'warn' },
-  BOOKED: { label: 'Booked, not paid yet · 已入账、未付', tone: 'var(--c-orange)', tag: 'warn' },
-  PARTLY_PAID: { label: 'Partly paid · 部分已付', tone: 'var(--c-orange)', tag: 'warn' },
-  PAID: { label: 'Paid · 已付', tone: 'var(--c-green, #2f7d32)', tag: 'calm' },
-  BANK_CONFIRMED: { label: 'Bank confirmed · 银行已确认', tone: 'var(--c-green-deep, #1b5e20)', tag: 'calm' },
-  RETURNED: { label: 'Returned · 已退回', tone: 'var(--c-festive-b, #B8331F)', tag: 'late' },
-  WITHDRAWN: { label: 'Withdrawn · 已撤回', tone: 'var(--fg-muted)', tag: 'calm' },
-  VOUCHER_CANCELLED: { label: 'Cancelled — Finance makes the next · 单据已取消', tone: 'var(--c-festive-b, #B8331F)', tag: 'late' },
+  SUBMITTED: { label: 'Submitted', tone: 'var(--fg-muted)', tag: 'info' },
+  PROCESSING: { label: 'Finance processing', tone: 'var(--c-orange)', tag: 'warn' },
+  BOOKED: { label: 'Booked, not paid yet', tone: 'var(--c-orange)', tag: 'warn' },
+  PARTLY_PAID: { label: 'Partly paid', tone: 'var(--c-orange)', tag: 'warn' },
+  PAID: { label: 'Paid', tone: 'var(--c-green, #2f7d32)', tag: 'calm' },
+  BANK_CONFIRMED: { label: 'Bank confirmed', tone: 'var(--c-green-deep, #1b5e20)', tag: 'calm' },
+  RETURNED: { label: 'Returned', tone: 'var(--c-festive-b, #B8331F)', tag: 'late' },
+  WITHDRAWN: { label: 'Withdrawn', tone: 'var(--fg-muted)', tag: 'calm' },
+  VOUCHER_CANCELLED: { label: 'Cancelled — Finance makes the next', tone: 'var(--c-festive-b, #B8331F)', tag: 'late' },
 };
 
 /** Finance's to-do: nothing answers these yet. */

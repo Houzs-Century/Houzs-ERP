@@ -60,7 +60,7 @@ vi.mock('./settlement-queries', () => ({
   }),
   useMarkBatchReceived: () => ({ mutate: receivedMutate, isPending: false, isError: false, error: null }),
   useUndoReceipt: () => ({ mutate: undoMutate, isPending: false }),
-  useInTransit: () => ({ data: { from: '2026-02-17', to: '2026-08-17', totalSen: 694400, ageing: { MBB: { '0-7': { count: 1, sen: 230000 } }, GHL: { 'over-30': { count: 1, sen: 29400 } }, '未标': { 'over-30': { count: 1, sen: 336500 } } }, lines: [
+  useInTransit: () => ({ data: { from: '2026-02-17', to: '2026-08-17', totalSen: 694400, ageing: { MBB: { '0-7': { count: 1, sen: 230000 } }, GHL: { 'over-30': { count: 1, sen: 29400 } }, 'Untagged': { 'over-30': { count: 1, sen: 336500 } } }, lines: [
     /* Keyed in without a bank — the server lists it once, under no acquirer (docs/bugs/0688). */
     { acquirerCode: null, source: 'SOPAY', paymentId: 'u1', docNo: 'SO-2606-013', paidOn: '2026-06-14', amountSen: 336500, approvalCode: '009577', recordedBy: null, recordedById: null, ageDays: 64, state: 'NOT_ON_A_STATEMENT' },
     { acquirerCode: 'MBB', source: 'SOPAY', paymentId: 'm1', docNo: 'SO-2608-040', paidOn: '2026-08-14', amountSen: 230000, approvalCode: '861777', recordedBy: 'Siti at the KL till', recordedById: 'u1', ageDays: 3, state: 'MATCHED_NOT_POSTED' },
@@ -221,7 +221,7 @@ describe('paid, not yet in the bank', () => {
   test('money keyed in without a bank sits on the list once, under 未标', () => {
     draw();
     fireEvent.click(screen.getByText('Still with the merchants'));
-    expect(screen.getAllByText('未标')).toHaveLength(2); // the ageing row and the line
+    expect(screen.getAllByText('Untagged')).toHaveLength(2); // the ageing row and the line
     expect(screen.getByText('SO-2606-013')).toBeTruthy();
     expect(screen.getByText('4 payments')).toBeTruthy();
   });

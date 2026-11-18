@@ -57,7 +57,7 @@ describe('dailyBankSections', () => {
     const sections = dailyBankSections(board({
       blocks: [block({})],
       unassignedPending: [{ id: 'p', pvNumber: 'HPV-9', payee: 'PETTY', description: 'Float', voucherDate: null, accountCode: '320-0000', amountSen: 70 }],
-      unassignedTransit: [{ acquirerCode: '未标银行', accountCode: '326-0000', accountName: 'EDC', balanceSen: 30, bankAccountCode: null }],
+      unassignedTransit: [{ acquirerCode: 'Untagged bank', accountCode: '326-0000', accountName: 'EDC', balanceSen: 30, bankAccountCode: null }],
     }));
     const last = sections.at(-1)!;
     expect(last).toMatchObject({ key: 'unassigned', title: 'Not tied to a bank', code: null, bankBalanceSen: null });
@@ -65,7 +65,7 @@ describe('dailyBankSections', () => {
       ['pendingHead', 'Pending payment (checked, awaiting approval)', '', 70, null],
       ['pending', 'PETTY', '320-0000 · Float', 70, null],
       ['transitHead', 'In transit (no bank named for it)', '', null, 30],
-      ['transit', '未标银行', 'EDC', null, 30],
+      ['transit', 'Untagged bank', 'EDC', null, 30],
     ]);
   });
 });

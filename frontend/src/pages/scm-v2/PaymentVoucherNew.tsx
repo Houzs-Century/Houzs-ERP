@@ -977,7 +977,7 @@ export const PaymentVoucherNew = () => {
             {showBill && (
               <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-12)', color: 'var(--fg-muted)', alignSelf: 'end' }}>
                 <input type="checkbox" checked={officialOwed} onChange={(e) => setOfficialOwed(e.target.checked)} aria-label="Official invoice owed" />
-                Proforma / quotation — official invoice owed · 欠正式单
+                Proforma / quotation — official invoice owed
               </label>
             )}
             {showBill && officialOwed && (
@@ -1056,7 +1056,7 @@ export const PaymentVoucherNew = () => {
           <div className={styles.cardHeader}>
             <h2 className={styles.cardTitle}>Refunds</h2>
             <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
-              {refundSrc ? `${fmtRm(refundSrc.refundableSen)} refundable` : '认单为主 — name the order or the cancelled invoice'}
+              {refundSrc ? `${fmtRm(refundSrc.refundableSen)} refundable` : 'The order comes first — name the order or the cancelled invoice'}
             </span>
           </div>
           <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>

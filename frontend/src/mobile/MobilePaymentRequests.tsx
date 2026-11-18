@@ -105,7 +105,7 @@ function RequestListScreen({ onBack, onNew, onOpen }: { onBack: () => void; onNe
           /* 欠正式单 (item 3): still owes the official invoice, or it waits to be checked. */
           : filter === "official" ? r.officialDoc?.state === "OWED" || r.officialDoc?.state === "RECEIVED"
             : r.stage === "RETURNED" || r.stage === "WITHDRAWN");
-  const chips: Array<[Filter, string]> = [["all", "All"], ["waiting", "Waiting"], ["paid", "Paid"], ["returned", "Returned"], ["official", "欠正式单"]];
+  const chips: Array<[Filter, string]> = [["all", "All"], ["waiting", "Waiting"], ["paid", "Paid"], ["returned", "Returned"], ["official", "Invoice owed"]];
 
   const body = () => {
     if (q.isLoading) return <Note>Loading requests…</Note>;
@@ -133,7 +133,7 @@ function RequestListScreen({ onBack, onNew, onOpen }: { onBack: () => void; onNe
   };
 
   return (
-    <Shell eyebrow="Payments · 申请付款" title="Payment requests" onBack={onBack}
+    <Shell eyebrow="Payments · Request payment" title="Payment requests" onBack={onBack}
       footer={mayRaise ? <button className="btn" style={{ flex: 1 }} onClick={onNew}>New request</button> : undefined}>
       <div className="chips" style={{ flex: "none" }}>
         {chips.map(([k, label]) => (
@@ -229,7 +229,7 @@ function RequestDetailScreen({ id, onBack, onEdit, onBalance }: { id: string; on
   };
   const onReturn = async () => {
     const note = await askPrompt(refund
-      ? { title: `Reject ${r.request_no} · 拒绝?`, body: `The money stays on ${r.refund_source_doc_no}; the requester reads your reason.`, confirmLabel: "Reject", input: { label: "Why it is rejected", required: true } }
+      ? { title: `Reject ${r.request_no}?`, body: `The money stays on ${r.refund_source_doc_no}; the requester reads your reason.`, confirmLabel: "Reject", input: { label: "Why it is rejected", required: true } }
       : { title: `Return ${r.request_no}?`, body: "The requester reads your note and sends it again.", confirmLabel: "Send back", input: { label: "Why it goes back", required: true } });
     if (note) sendBack.mutate({ id: r.id, note });
   };
@@ -248,7 +248,7 @@ function RequestDetailScreen({ id, onBack, onEdit, onBalance }: { id: string; on
           {mayChange && <button className="btn" style={{ flex: 1 }} onClick={() => onEdit(r)}>{r.status === "REJECTED" ? "Fix and send again" : "Edit"}</button>}
           {mayWithdraw && <button className="btn" style={{ flex: 1, background: "var(--bg)", color: "var(--ink)" }} onClick={() => void onWithdraw()} disabled={withdraw.isPending}>Withdraw</button>}
           {!mayWithdraw && finance && awaitsFinance(r) && <button className="btn" style={{ flex: 1 }} onClick={() => void onReturn()} disabled={sendBack.isPending}>{refund ? "Reject…" : "Return…"}</button>}
-          {!mayChange && mayBalance && <button className="btn" style={{ flex: 1 }} onClick={() => onBalance(r)}>申请付余额 · Balance</button>}
+          {!mayChange && mayBalance && <button className="btn" style={{ flex: 1 }} onClick={() => onBalance(r)}>Request the balance</button>}
         </>
       ) : undefined}>
       <div><StageText r={r} /></div>
@@ -265,12 +265,12 @@ function RequestDetailScreen({ id, onBack, onEdit, onBalance }: { id: string; on
       {!refund && row("Pay by", fmtDateOrDash(r.due_date))}
       {!refund && row("Event", eventCellText(labels.data, r.project_id))}
       {row(refund ? "Reason" : "For", r.purpose)}
-      {r.note && row("Note · 备注", r.note)}
+      {r.note && row("Note", r.note)}
       {!refund && row("The bill", r.bill_no || r.bill_date || r.bill_total_sen != null ? billFactsLine({ billNo: r.bill_no, billDate: r.bill_date, totalSen: r.bill_total_sen }) : "— not read")}
       {r.project_id == null && r.no_event_reason && row("No event — why", r.no_event_reason)}
       {hasInstalments(r.family) && <BillInstalments family={r.family} currentId={r.id} />}
       {mayChange && mayBalance && (
-        <button type="button" className="btn" style={{ background: "var(--bg)", color: "var(--ink)" }} onClick={() => onBalance(r)}>申请付余额 · Request the balance</button>
+        <button type="button" className="btn" style={{ background: "var(--bg)", color: "var(--ink)" }} onClick={() => onBalance(r)}>Request the balance</button>
       )}
       <BillMatchesNote matches={r.billMatches} />
       {/* 欠正式单 (item 3): paid on a proforma — the official invoice is uploaded here, Finance checks it. */}
@@ -282,7 +282,7 @@ function RequestDetailScreen({ id, onBack, onEdit, onBalance }: { id: string; on
             <>
               <input ref={offRef} type="file" accept={PV_FILE_ACCEPT} style={{ display: "none" }} aria-label="Upload the official invoice"
                 onChange={(e) => { void sendOfficial(e.target.files); e.target.value = ""; }} />
-              <button type="button" className="btn" onClick={() => offRef.current?.click()} disabled={official.isPending}>补正式单 · Upload the official invoice</button>
+              <button type="button" className="btn" onClick={() => offRef.current?.click()} disabled={official.isPending}>Upload the official invoice</button>
             </>
           )}
         </div>
@@ -425,7 +425,7 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: PaymentReques
   );
 
   return (
-    <Shell eyebrow="Payments · 申请付款" title={initial ? `Edit ${initial.request_no}` : "New payment request"} onBack={onBack}
+    <Shell eyebrow="Payments · Request payment" title={initial ? `Edit ${initial.request_no}` : "New payment request"} onBack={onBack}
       footer={<button className="btn" style={{ flex: 1, opacity: busy || !ready ? 0.5 : 1 }} disabled={busy || reading} onClick={() => void save()}>
         {busy ? "Sending…" : reading ? "Reading the bill…" : initial ? (initial.status === "REJECTED" ? "Send again" : "Save") : "Send to Finance"}
       </button>}>
@@ -436,7 +436,7 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: PaymentReques
          what for. */}
       {!initial && (
         <>
-          <div className="sc-sl"><span className="t">① 单据 · The bill *</span><span className="ln" /></div>
+          <div className="sc-sl"><span className="t">① The bill *</span><span className="ln" /></div>
           <input ref={camRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} aria-label="Take a photo of the bill"
             onChange={(e) => { void takeFiles([...files, ...(e.target.files ?? [])]); e.target.value = ""; }} />
           <input ref={libRef} type="file" accept={PV_FILE_ACCEPT} multiple style={{ display: "none" }} aria-label="Pick bill files"
@@ -454,18 +454,18 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: PaymentReques
           <BillReadPanel state={billRead.state} filled={filledFields} />
         </>
       )}
-      <div className="sc-sl"><span className="t">{initial ? "付给谁 · Pay to" : "② 付给谁 · Pay to"}</span><span className="ln" /></div>
+      <div className="sc-sl"><span className="t">{initial ? "Who is paid" : "② Who is paid"}</span><span className="ln" /></div>
       {field("Pay to *", <input data-upper className="cal-sel" aria-label="Pay to" value={v.payeeName} onChange={(e) => set({ payeeName: e.target.value })} placeholder="e.g. MLE EVENTS SDN BHD" />)}
       {field("Payee's bank", <input data-upper className="cal-sel" aria-label="Payee's bank" value={v.bankName ?? ""} onChange={(e) => set({ bankName: e.target.value || null })} placeholder="e.g. Maybank" />)}
       {field("Account no.", <input className="cal-sel" aria-label="Account no." inputMode="numeric" value={v.bankAccountNo ?? ""} onChange={(e) => set({ bankAccountNo: e.target.value || null })} />)}
       {field("Account name", <input data-upper className="cal-sel" aria-label="Account name" value={v.bankAccountName ?? ""} onChange={(e) => set({ bankAccountName: e.target.value || null })} />)}
-      <div className="sc-sl"><span className="t">{initial ? "付多少 · Amount" : "③ 付多少 · Amount"}</span><span className="ln" /></div>
+      <div className="sc-sl"><span className="t">{initial ? "How much" : "③ How much"}</span><span className="ln" /></div>
       {!isBalance && field("Bill total (MYR)", <MoneyInput bare valueSen={billTotal ?? 0} inputClassName="cal-sel" selectOnFocus aria-label="Bill total"
         onCommit={(sen) => { const t = sen != null && sen > 0 ? sen : null; setBillTotal(t); if (pct) applyPct(pct, t); }} />)}
       {field("Pay now (MYR) *", <MoneyInput bare valueSen={v.amountSen} onCommit={(sen) => set({ amountSen: sen ?? 0 })} inputClassName="cal-sel" selectOnFocus aria-label="Amount" />)}
       {billTotal != null && field("…or a percent of the bill", <input className="cal-sel" inputMode="decimal" aria-label="Percent of the bill" value={pct} placeholder="e.g. 50" onChange={(e) => applyPct(e.target.value, billTotal)} />)}
       {field("Pay by", <DateField fullWidth className="cal-sel" aria-label="Pay by" value={v.dueDate ?? ""} onChange={(iso) => set({ dueDate: iso || null })} />)}
-      <div className="sc-sl"><span className="t">{initial ? "用途 · What for" : "④ 用途 · What for"}</span><span className="ln" /></div>
+      <div className="sc-sl"><span className="t">{initial ? "What for" : "④ What for"}</span><span className="ln" /></div>
       {field("What is it for *", <textarea data-upper className="cal-sel" rows={2} aria-label="What is it for" value={v.purpose} onChange={(e) => set({ purpose: e.target.value })} placeholder="e.g. Booth F1 rental, balance 50%" />)}
       {hasEvents && field(eventNeeded ? "Event * — this bill is for an event" : "Event", <EventSelect value={v.projectId} around={v.dueDate || today} optionsPath={EVENTS_PATH} className="cal-sel" aria-label="Event" onChange={(id) => set({ projectId: id })} />)}
       {eventNeeded && billRead.state.status === "done" && (
@@ -475,12 +475,12 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: PaymentReques
         <>
           <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5 }}>
             <input type="checkbox" checked={noEvent} onChange={(e) => setNoEvent(e.target.checked)} aria-label="I cannot find this event" />
-            I cannot find this event · 找不到这场活动
+            I cannot find this event
           </label>
           {noEvent && field("Why there is no event *", <input data-upper className="cal-sel" aria-label="Why there is no event" value={noEventReason} onChange={(e) => setNoEventReason(e.target.value)} placeholder="e.g. the fair is not in PMS yet" />)}
         </>
       )}
-      <div className="sc-sl"><span className="t">{initial ? "备注 · Note" : "⑤ 备注 · Note"}</span><span className="ln" /></div>
+      <div className="sc-sl"><span className="t">{initial ? "Note to Finance" : "⑤ Note to Finance"}</span><span className="ln" /></div>
       {field("Note to Finance (optional)", <textarea data-upper className="cal-sel" rows={3} aria-label="Note" maxLength={2000} value={v.note ?? ""} onChange={(e) => set({ note: e.target.value })} placeholder="e.g. Please pay before the fair starts" />)}
     </Shell>
   );
@@ -532,7 +532,7 @@ function BalanceScreen({ request, onBack, onDone }: { request: PaymentRequest; o
     </div>
   );
   return (
-    <Shell eyebrow={`申请付余额 · ${fam?.rootNo ?? request.request_no}`} title="Request the balance" onBack={onBack}
+    <Shell eyebrow={`Request the balance · ${fam?.rootNo ?? request.request_no}`} title="Request the balance" onBack={onBack}
       footer={<button className="btn" style={{ flex: 1 }} disabled={busy} onClick={() => void save()}>{busy ? "Sending…" : "Send to Finance"}</button>}>
       {error && <div className="st-warn" role="alert">{error}</div>}
       {fam && hasInstalments(fam) && <BillInstalments family={fam} currentId={request.id} />}

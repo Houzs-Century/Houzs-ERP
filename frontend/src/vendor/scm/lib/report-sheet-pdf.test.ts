@@ -10,7 +10,7 @@ import { isLandscape, pageFor, printedColumns, printedStyle, printedTable } from
 
 const monthly: SheetTable = {
   columns: [
-    { label: '累计 08/2026 – 09/2026', kind: 'amount' }, { label: '%', kind: 'pct', beside: true, edge: true },
+    { label: 'Cumulative 08/2026 – 09/2026', kind: 'amount' }, { label: '%', kind: 'pct', beside: true, edge: true },
     { label: '09/2026', kind: 'amount' }, { label: '%', kind: 'pct', beside: true },
   ],
   rows: [
@@ -23,11 +23,11 @@ const monthly: SheetTable = {
 describe('the printed table', () => {
   it('merges a % beside its amount into one printed column — the amount as the text, the % beside it — keeps the 累计 edge, and blanks a block', () => {
     expect(printedColumns(monthly)).toEqual([
-      { label: '累计 08/2026 – 09/2026', cols: [0, 1], edge: true },
+      { label: 'Cumulative 08/2026 – 09/2026', cols: [0, 1], edge: true },
       { label: '09/2026', cols: [2, 3], edge: false },
     ]);
     const p = printedTable(monthly);
-    expect(p.head).toEqual(['', '累计 08/2026 – 09/2026', '09/2026']);
+    expect(p.head).toEqual(['', 'Cumulative 08/2026 – 09/2026', '09/2026']);
     expect(p.body).toEqual([
       ['Expenses', '', ''],
       ['RENT', '2,000.00', '-'],
@@ -95,7 +95,7 @@ describe('the printed table', () => {
     /* The % beside Total stays beside it; a merged cell has none. */
     expect(p.beside[1]).toEqual([null, '2.5%', null, null, null, null]);
     /* Without headings, one head row — as before. */
-    expect(printedTable(monthly).headRows).toEqual([['', '累计 08/2026 – 09/2026', '09/2026']]);
+    expect(printedTable(monthly).headRows).toEqual([['', 'Cumulative 08/2026 – 09/2026', '09/2026']]);
   });
 });
 

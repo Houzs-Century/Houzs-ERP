@@ -180,7 +180,7 @@ describe('the requester', () => {
     ];
     isFinance = false; withdrawAsync.mockClear();
     draw();
-    expect(screen.getByText('Paid · 已付')).toBeTruthy();
+    expect(screen.getAllByText('Paid')).toHaveLength(2); // the filter chip and the stage
     expect(screen.getByText(/HC-PV-2609-014/)).toBeTruthy();
     expect(screen.queryByText('Requested by')).toBeNull();
     fireEvent.click(screen.getByText('HC-PRQ-2609-001'));
@@ -242,7 +242,7 @@ describe('the requester', () => {
     const d = screen.getByRole('dialog');
     fillBasics(d);
     attach(d);
-    await waitFor(() => expect(within(d).getByText('Same bill already asked for or paid · 这张单已经有了')).toBeTruthy());
+    await waitFor(() => expect(within(d).getByText('Same bill already asked for or paid')).toBeTruthy());
     expect(within(d).getByText('Request HC-PRQ-2609-003 · RM 4,250.00 → HC-PV-2609-010 · answered')).toBeTruthy();
     fireEvent.click(within(d).getByText('Send to Finance'));
     await waitFor(() => expect(createAsync).toHaveBeenCalledTimes(1));
@@ -286,8 +286,8 @@ describe('the requester', () => {
     fireEvent.click(screen.getByText('HC-PRQ-2609-001'));
     const d = screen.getByRole('dialog');
     expect(within(d).getByText('Total RM 10,000.00 · Paid RM 5,000.00 · Left to ask RM 5,000.00')).toBeTruthy();
-    expect(within(d).getByText('#1 · HC-PRQ-2609-001 · RM 5,000.00 (50%) · Paid · 已付')).toBeTruthy();
-    fireEvent.click(within(d).getByText('Request the balance · 申请付余额'));
+    expect(within(d).getByText('#1 · HC-PRQ-2609-001 · RM 5,000.00 (50%) · Paid')).toBeTruthy();
+    fireEvent.click(within(d).getByText('Request the balance'));
     const b = screen.getByRole('dialog', { name: 'Request the balance' });
     expect(within(b).getByText(/Left to ask on this bill: RM 5,000\.00 of RM 10,000\.00\./)).toBeTruthy();
     /* 漏洞 3: the official invoice attached here goes up AS the official invoice, on the new balance. */
@@ -308,8 +308,8 @@ describe('the requester', () => {
     ];
     isFinance = false; uploadOfficialAsync.mockClear();
     draw();
-    expect(screen.getAllByText('Official invoice owed · 欠正式单').length).toBeGreaterThan(0);
-    fireEvent.click(screen.getByRole('button', { name: 'Official invoice owed · 欠正式单' }));
+    expect(screen.getAllByText('Official invoice owed').length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole('button', { name: 'Official invoice owed' }));
     expect(screen.getByText('HC-PRQ-2609-001')).toBeTruthy();
     expect(screen.queryByText('HC-PRQ-2609-002')).toBeNull();
     fireEvent.click(screen.getByText('HC-PRQ-2609-001'));
@@ -356,7 +356,6 @@ describe('Finance', () => {
     expect(screen.getByText('Maybank ···· 8901')).toBeTruthy();
     /* The stage reads English only on Finance's list. */
     expect(screen.getByText('Submitted')).toBeTruthy();
-    expect(screen.queryByText(/已提交/)).toBeNull();
     expect(screen.getByLabelText('Only my requests')).toBeTruthy();
   });
 
@@ -550,7 +549,7 @@ describe('the form filled from the bill', () => {
     fireEvent.change(within(d).getByLabelText('Bill files'), { target: { files: [new File(['%PDF'], 'invoice-HV-INV-202608-0051.pdf', { type: 'application/pdf' })] } });
     const note = await within(d).findByLabelText('Filled in from the bill');
     expect(note.textContent).toContain("Pay to · Amount · Pay by · Payee's bank · Account no. · Account name");
-    expect(note.textContent).toContain('都可以自己改');
+    expect(note.textContent).toContain('you can change any of them');
     expect((within(d).getByLabelText('Pay to') as HTMLInputElement).value).toBe('HOUZS VENTURE HOLDINGS SDN BHD');
     expect((within(d).getByLabelText('What is it for') as HTMLTextAreaElement).value).toBe('HC share of Aug payroll');
     expect((within(d).getByLabelText('Account no.') as HTMLInputElement).value).toBe('123-4567-8901');
@@ -570,7 +569,7 @@ describe('the form filled from the bill', () => {
 /* Owner 2026-10-02: 看了有点乱，整齐一点 — the form in the order it is filled: the
    bill (it fills the rest), who is paid with their bank, how much, what for. */
 describe('the form in the order it is filled', () => {
-  const STEPS = ['单据 · The bill', '付给谁 · Pay to', '付多少 · Amount', '用途 · What for'];
+  const STEPS = ['The bill', 'Who is paid', 'How much', 'What for'];
   const pdf = (name: string) => new File(['%PDF'], name, { type: 'application/pdf' });
 
   test('four steps; the bank sits with who is paid; a second file adds to the first and ✕ takes one off', async () => {
@@ -579,10 +578,10 @@ describe('the form in the order it is filled', () => {
     fireEvent.click(screen.getByText('New request'));
     const d = screen.getByRole('dialog');
     expect(within(d).getAllByRole('region').map((r) => r.getAttribute('aria-label')).filter((l) => STEPS.includes(l ?? ''))).toEqual(STEPS);
-    const payTo = within(d).getByRole('region', { name: '付给谁 · Pay to' });
+    const payTo = within(d).getByRole('region', { name: 'Who is paid' });
     expect(within(payTo).getByLabelText("Payee's bank")).toBeTruthy();
     expect(within(payTo).getByLabelText('Account no.')).toBeTruthy();
-    const amount = within(d).getByRole('region', { name: '付多少 · Amount' });
+    const amount = within(d).getByRole('region', { name: 'How much' });
     expect(['Bill total', 'Amount', 'Percent of the bill', 'Pay by'].every((l) => within(amount).queryByLabelText(l) != null)).toBe(true);
 
     fireEvent.change(within(d).getByLabelText('Bill files'), { target: { files: [pdf('page-1.pdf')] } });
@@ -599,7 +598,7 @@ describe('the form in the order it is filled', () => {
     expect(readAsync.mock.calls[2]![0]).toEqual({ files: [{ name: 'page-2.pdf', mime: 'application/pdf', dataBase64: 'b64:page-2.pdf' }] });
     expect(within(d).queryByText('page-1.pdf')).toBeNull();
     /* What was read is said once, under the bill. */
-    const bill = within(d).getByRole('region', { name: '单据 · The bill' });
+    const bill = within(d).getByRole('region', { name: 'The bill' });
     await waitFor(() => expect(within(bill).getByText(/Read from the bill: No\. MLE-0925/)).toBeTruthy());
   });
 
@@ -608,8 +607,8 @@ describe('the form in the order it is filled', () => {
     draw();
     fireEvent.click(screen.getByText('HC-PRQ-2609-001'));
     fireEvent.click(within(screen.getByRole('dialog')).getByText('Edit'));
-    expect(screen.queryByRole('region', { name: '单据 · The bill' })).toBeNull();
-    const payTo = screen.getByRole('region', { name: '付给谁 · Pay to' });
+    expect(screen.queryByRole('region', { name: 'The bill' })).toBeNull();
+    const payTo = screen.getByRole('region', { name: 'Who is paid' });
     expect(within(payTo).getByText('1')).toBeTruthy();
     expect((within(payTo).getByLabelText('Pay to') as HTMLInputElement).value).toBe('MLE EVENTS SDN BHD');
   });
@@ -622,7 +621,7 @@ describe('⑤ the note to Finance', () => {
     draw();
     fireEvent.click(screen.getByText('New request'));
     const d = screen.getByRole('dialog');
-    const step = within(d).getByRole('region', { name: '备注 · Note' });
+    const step = within(d).getByRole('region', { name: 'Note to Finance' });
     expect(within(step).getByText('5')).toBeTruthy();
     fireEvent.change(within(step).getByLabelText('Note'), { target: { value: '  Please pay before the fair starts.  ' } });
     fireEvent.change(within(d).getByLabelText('Pay to'), { target: { value: 'MLE EVENTS SDN BHD' } });
@@ -702,7 +701,7 @@ describe('a refund request', () => {
   test('rejected, it reads Rejected with Finance\'s reason; with nothing raised the page says where refunds come from', () => {
     requests = [refund({ status: 'REJECTED', stage: 'RETURNED', finance_note: 'Convert to a new order instead', decided_by: 'Chew' })]; isFinance = false; mayRaise = false;
     const first = draw();
-    expect(screen.getAllByText('Rejected · 已拒绝').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Rejected').length).toBeGreaterThan(0);
     fireEvent.click(screen.getByText('HC-PRQ-2610-009'));
     const d = screen.getByRole('dialog');
     expect(within(d).getByText(/Rejected by Chew/)).toBeTruthy();

@@ -88,7 +88,7 @@ describe("snapshotFromApi", () => {
 });
 
 describe("buildWorkbook", () => {
-  it("writes the three sheets with Name\\n(N人) role headers", () => {
+  it("writes the three sheets with Name\\n(N members) role headers", () => {
     const wb = buildWorkbook(snap());
     expect(wb.sheets.map((x) => x.name)).toEqual([
       EXCEL_SHEET_FUNCTIONS,
@@ -96,8 +96,8 @@ describe("buildWorkbook", () => {
       EXCEL_SHEET_ROLES,
     ]);
     const fn = sheet(wb.sheets, EXCEL_SHEET_FUNCTIONS);
-    expect(fn.aoa[0]!.slice(0, 4)).toEqual(["模块", "功能", "说明", "key"]);
-    expect(fn.aoa[0]!.slice(4)).toEqual(["Sales Person\n(0人)", "Storekeeper\n(0人)", "Owner\n(0人)"]);
+    expect(fn.aoa[0]!.slice(0, 4)).toEqual(["Module", "Function", "Description", "key"]);
+    expect(fn.aoa[0]!.slice(4)).toEqual(["Sales Person\n(0 members)", "Storekeeper\n(0 members)", "Owner\n(0 members)"]);
   });
 
   it("ticks granted functions and leaves the rest BLANK", () => {
@@ -113,7 +113,7 @@ describe("buildWorkbook", () => {
     const pg = sheet(wb.sheets, EXCEL_SHEET_PAGES);
     expect(pg.aoa.some((r) => r[PG_KEY] === "scm")).toBe(false);
     const warehouse = rowFor(pg, PG_KEY, "scm.warehouse");
-    expect(warehouse[5]).toBe("改"); // Storekeeper edit
+    expect(warehouse[5]).toBe("Edit"); // Storekeeper edit
     const sales = rowFor(pg, PG_KEY, "sales");
     expect(sales[4]).toBe(""); // Sales Person none → blank
   });
@@ -121,14 +121,14 @@ describe("buildWorkbook", () => {
   it("flags dormant pages in the status column", () => {
     const wb = buildWorkbook(snap());
     const pnl = rowFor(sheet(wb.sheets, EXCEL_SHEET_PAGES), PG_KEY, "service_cases.pnl");
-    expect(pnl[3]).toBe("停用 dormant");
+    expect(pnl[3]).toBe("Dormant");
   });
 
   it("writes a role legend with ids and the locked flag", () => {
     const roles = sheet(buildWorkbook(snap()).sheets, EXCEL_SHEET_ROLES);
     const owner = roles.aoa.find((r) => r[0] === 1);
     expect(owner?.[1]).toBe("Owner");
-    expect(owner?.[4]).toBe("是"); // locked
+    expect(owner?.[4]).toBe("Yes"); // locked
   });
 });
 
@@ -235,6 +235,20 @@ describe("parse: robust column + sheet detection", () => {
       name: "whatever",
       aoa: [
         ["key", "Sales Person\n(39人)"],
+        ["service_cases.write", "✓"],
+        ["service_cases.read", "✓"],
+      ],
+    };
+    const sales = parseMatrixWorkbook([sheetData], s).changedRoles.find((r) => r.roleId === 10)!;
+    expect(sales.functionsAdded).toContain("service_cases.write");
+  });
+
+  it("matches a one-line English (N members) decoration", () => {
+    const s = snap();
+    const sheetData: SheetData = {
+      name: "whatever",
+      aoa: [
+        ["key", "Sales Person (39 members)"],
         ["service_cases.write", "✓"],
         ["service_cases.read", "✓"],
       ],
@@ -356,6 +370,6 @@ describe("sensitiveKeysOf", () => {
 
 describe("roleColumnHeader", () => {
   it("is name over the member count", () => {
-    expect(roleColumnHeader({ id: 7, name: "Finance", locked: false, memberCount: 2 })).toBe("Finance\n(2人)");
+    expect(roleColumnHeader({ id: 7, name: "Finance", locked: false, memberCount: 2 })).toBe("Finance\n(2 members)");
   });
 });

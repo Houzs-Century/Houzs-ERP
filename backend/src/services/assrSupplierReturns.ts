@@ -185,7 +185,7 @@ export async function openSupplierReturn(
   // never clears it, so a re-return on a completed/voided case clears the
   // terminal marker itself.
   await reprojectLatestSupplierReturn(env, assrId);
-  await transitionStage(env, assrId, "pending_supplier_pickup", userId, `第 ${roundNo} 次返厂`, "app");
+  await transitionStage(env, assrId, "pending_supplier_pickup", userId, `Supplier return round ${roundNo}`, "app");
   if (before.closed_at) {
     await env.DB.prepare(
       `UPDATE assr_cases
@@ -199,7 +199,7 @@ export async function openSupplierReturn(
 
   await logActivity(
     env, assrId, "supplier_return_opened", null, `round ${roundNo}`,
-    input.reason ? `第 ${roundNo} 次返厂 — ${input.reason}` : `第 ${roundNo} 次返厂`,
+    input.reason ? `Supplier return round ${roundNo} — ${input.reason}` : `Supplier return round ${roundNo}`,
     userId, { category: "supplier" },
   );
   const round = await env.DB.prepare(

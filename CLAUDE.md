@@ -51,7 +51,7 @@ Loaded into every session, so it stays short. Adding a rule means removing or me
 - If a PR body pastes an ```enumeration block, CI re-runs it and fails on any difference.
 
 ## Code conventions
-- No emoji anywhere.
+- No emoji anywhere. UI text is English only: `frontend/scripts/check-no-cjk-ui.mjs` fails on Chinese in a frontend string (exceptions in `cjk-ui-allowlist.json`, each with a reason).
 - A parameter that decides something is required (`x: T | null`), never optional.
 - Drizzle for new backend code (`backend/src/db/schema.ts`, `getDb(env)`); don't mix with raw SQL in one function.
 - Modules imported by tests live in `backend/scripts/lib/` with no shebang.

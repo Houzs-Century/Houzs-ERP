@@ -353,7 +353,7 @@ export const ApInvoiceForm = ({
         {mode !== 'edit' && (
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-12)', color: 'var(--fg-muted)', alignSelf: 'end' }}>
             <input type="checkbox" checked={!!v.officialDocOwed} onChange={(e) => set({ officialDocOwed: e.target.checked })} aria-label="Official invoice owed" />
-            Proforma / quotation — official invoice owed · 欠正式单
+            Proforma / quotation — official invoice owed
           </label>
         )}
         {mode !== 'edit' && v.officialDocOwed && (

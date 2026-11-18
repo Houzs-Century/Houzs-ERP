@@ -188,7 +188,7 @@ export function NoteKnockOff({ noteId, posted, totalSen, who = 'supplier' }: { n
   return (
     <section aria-label="Knock off" style={{ display: 'grid', gap: 6, fontSize: 'var(--fs-13)' }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
-        <strong>Knock off · 扣发票</strong>
+        <strong>Knock off</strong>
         <span style={soft}>{posted ? w.posted : 'carried out when the note posts'}</span>
       </div>
       {q.isLoading && <div style={soft}>{w.loading}</div>}
@@ -200,7 +200,7 @@ export function NoteKnockOff({ noteId, posted, totalSen, who = 'supplier' }: { n
         <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
           <Button size="sm" disabled={save.isPending || pickSen(pick) > totalSen}
             onClick={() => save.mutate({ noteId, targets: pickTargets(pick) }, { onSuccess: () => setEdit(null) })}>
-            {save.isPending ? 'Saving…' : 'Save knock-off · 保存'}
+            {save.isPending ? 'Saving…' : 'Save knock-off'}
           </Button>
           <Button variant="ghost" size="sm" disabled={save.isPending} onClick={() => setEdit(null)}>Undo changes</Button>
         </div>
@@ -230,7 +230,7 @@ export function FormKnockOff({ who, partyId, by, partyName, noteId, totalSen, pi
   return (
     <section aria-label="Knock off" style={{ display: 'grid', gap: 6, fontSize: 'var(--fs-13)' }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
-        <strong>{who === 'customer' ? named.table : 'Knock off · 扣发票'}</strong>
+        <strong>{who === 'customer' ? named.table : 'Knock off'}</strong>
         <span style={soft}>{w.planned}</span>
       </div>
       {!partyId && <div style={soft}>{w.pick}</div>}

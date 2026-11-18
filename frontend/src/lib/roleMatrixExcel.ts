@@ -31,7 +31,7 @@ import type { PermissionDef, Role } from "../types";
 import {
   type MatrixLevel,
   type PageLite,
-  MATRIX_LEVEL_LABEL,
+  MATRIX_LEVEL_LABEL_EN,
   PARENT_DERIVED_KEYS,
   buildMatrixModules,
   normalizeStoredLevel,
@@ -74,9 +74,9 @@ export interface MatrixSnapshot {
 
 // Sheet names mirror the owner's own draft (他的 v3) so the exported file reads
 // like the one he already configures in.
-export const EXCEL_SHEET_FUNCTIONS = "功能清单 (能做什么)";
-export const EXCEL_SHEET_PAGES = "页面清单 (能看什么)";
-export const EXCEL_SHEET_ROLES = "现有角色";
+export const EXCEL_SHEET_FUNCTIONS = "Functions (what they can do)";
+export const EXCEL_SHEET_PAGES = "Pages (what they can see)";
+export const EXCEL_SHEET_ROLES = "Roles";
 export const ROLE_MATRIX_IMPORT_ACCEPT = ".xlsx,.xls,.csv";
 
 const GRANT_MARK = "✓";
@@ -94,11 +94,11 @@ const GRANT_MARK = "✓";
  */
 export type BlankMode = "none" | "unchanged";
 
-/** The column header for a role, in the owner's style: `Sales Director\n(1人)`.
+/** The column header for a role: `Sales Director\n(1 member)`.
  *  The member count is a human hint; the parser matches on the name (and an
  *  `id ·` prefix if one is present). */
 export function roleColumnHeader(r: RoleLite): string {
-  return `${r.name}\n(${r.memberCount}人)`;
+  return `${r.name}\n(${r.memberCount} ${r.memberCount === 1 ? "member" : "members"})`;
 }
 
 // ── Building a snapshot from the three API payloads ────────────────────────
@@ -147,7 +147,7 @@ function editablePages(pages: PageLite[]): PageLite[] {
 function pageModuleLabels(snap: MatrixSnapshot): Map<string, string> {
   const out = new Map<string, string>();
   for (const m of buildMatrixModules(snap.pages, snap.permissions)) {
-    for (const p of m.pages) out.set(p.key, m.labelZh);
+    for (const p of m.pages) out.set(p.key, m.labelEn);
   }
   return out;
 }
@@ -161,7 +161,7 @@ function exportablePermissions(permissions: PermissionDef[]): PermissionDef[] {
 /** The page cell the owner reads: none is BLANK (他的「空=不可见」), the rest
  *  their Chinese level. */
 function pageLevelCell(level: MatrixLevel): string {
-  return level === "none" ? "" : MATRIX_LEVEL_LABEL[level];
+  return level === "none" ? "" : MATRIX_LEVEL_LABEL_EN[level];
 }
 
 /** The whole live matrix as a three-sheet workbook (功能 / 页面 / 角色),
@@ -171,7 +171,7 @@ export function buildWorkbook(snap: MatrixSnapshot): WorkbookData {
   const roleHeaders = roleCols.map(roleColumnHeader);
 
   // 功能 — one row per permission key, ✓ (给) / 空 (不给) per role.
-  const fnHeader: CellValue[] = ["模块", "功能", "说明", "key", ...roleHeaders];
+  const fnHeader: CellValue[] = ["Module", "Function", "Description", "key", ...roleHeaders];
   const fnRows: CellValue[][] = exportablePermissions(snap.permissions).map((perm) => {
     const cells = roleCols.map((r) =>
       (snap.permsByRole.get(r.id) ?? new Set()).has(perm.key) ? GRANT_MARK : "",
@@ -181,20 +181,20 @@ export function buildWorkbook(snap: MatrixSnapshot): WorkbookData {
 
   // 页面 — one row per editable page, 看/改/批 per role (空 = 不可见).
   const moduleLabels = pageModuleLabels(snap);
-  const pgHeader: CellValue[] = ["模块", "页面", "key", "状态", ...roleHeaders];
+  const pgHeader: CellValue[] = ["Module", "Page", "key", "Status", ...roleHeaders];
   const pgRows: CellValue[][] = editablePages(snap.pages).map((p) => {
     const cells = roleCols.map((r) => pageLevelCell((snap.levelsByRole.get(r.id) ?? {})[p.key] ?? "none"));
-    return [moduleLabels.get(p.key) ?? "", p.label, p.key, p.dormant ? "停用 dormant" : "", ...cells];
+    return [moduleLabels.get(p.key) ?? "", p.label, p.key, p.dormant ? "Dormant" : "", ...cells];
   });
 
   // 角色 — the legend tying each column to a role id, and which are locked.
-  const roleHeaderRow: CellValue[] = ["ID", "角色名", "系统", "成员数", "锁定"];
+  const roleHeaderRow: CellValue[] = ["ID", "Role", "System", "Members", "Locked"];
   const roleRows: CellValue[][] = roleCols.map((r) => [
     r.id,
     r.name,
-    r.locked ? "是" : "",
+    r.locked ? "Yes" : "",
     r.memberCount,
-    r.locked ? "是" : "",
+    r.locked ? "Yes" : "",
   ]);
 
   return {
@@ -266,7 +266,7 @@ function stripIdPrefix(header: string): string {
  *  name and kept. */
 function roleNameInHeader(header: string): string {
   const firstLine = header.split(/\r?\n/)[0] ?? header;
-  return firstLine.replace(/\s*[(（]\s*\d+\s*人?\s*[)）]\s*$/, "").trim();
+  return firstLine.replace(/\s*[(（]\s*\d+\s*(?:人|members?)?\s*[)）]\s*$/i, "").trim();
 }
 
 type ColumnMatch =

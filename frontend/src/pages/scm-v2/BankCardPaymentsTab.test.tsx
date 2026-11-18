@@ -41,7 +41,7 @@ describe('the Card payments tab', () => {
   test('lists every payment, untagged ones under 未标', () => {
     renderTab();
     expect(rows()).toEqual(['Card payment 2990-SO-2611-028 for the picked movement', 'Card payment 2990-SO-2611-017 for the picked movement', 'Card payment 2990-SO-2611-081 for the picked movement']);
-    expect(screen.getAllByText('未标')).toHaveLength(2);
+    expect(screen.getAllByText('Untagged')).toHaveLength(2);
   });
 
   test('finds by approval code or amount, and keeps a ticked payment in view', () => {

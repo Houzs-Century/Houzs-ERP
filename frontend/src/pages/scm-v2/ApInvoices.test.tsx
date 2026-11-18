@@ -594,7 +594,7 @@ describe('the same bill already entered', () => {
       );
       const d = dialog();
       const note = within(d).getByRole('alert', { name: 'Same bill elsewhere' });
-      expect(note.textContent).toContain('这张单已经有了');
+      expect(note.textContent).toContain('Same bill already asked for or paid');
       expect(note.textContent).toContain('AP invoice 2990-API-2609-009 · RM 1,500.00 · posted');
       /* Only a warning: the bill still saves. */
       fireEvent.click(within(d).getByText('Save as draft'));

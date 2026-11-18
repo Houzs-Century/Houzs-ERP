@@ -36,7 +36,7 @@ beforeEach(() => {
 describe('「2990 的单」 on a Merchant Recon line', () => {
   test('is offered on an open card line, for each company with an account that can take it', () => {
     render(<SoldByButtons row={R21077} />);
-    expect(screen.getAllByRole('button').map((b) => b.textContent)).toEqual(['2990 的单']);
+    expect(screen.getAllByRole('button').map((b) => b.textContent)).toEqual(["2990's order"]);
   });
 
   test('is not offered on a confirmed line, a QR line, a set-aside line or a line holding this company\'s sale', () => {
@@ -52,32 +52,32 @@ describe('「2990 的单」 on a Merchant Recon line', () => {
 
   test('asks first, saying where the money goes, then books with the order typed', () => {
     render(<SoldByButtons row={R21077} />);
-    fireEvent.click(screen.getByRole('button', { name: '2990 的单' }));
+    fireEvent.click(screen.getByRole('button', { name: "2990's order" }));
     const ask = screen.getByTestId('sold-by-confirm');
     expect(ask.textContent).toContain("Book this line as 2990's Home’s sale?");
     expect(ask.textContent).toContain('350-0070 LOAN TO RELATED PARTY - 2990 HOME SDN BHD');
     fireEvent.change(screen.getByLabelText("2990's order"), { target: { value: ' 2990-SO-2611-017 ' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Book as 2990 的单' }));
+    fireEvent.click(screen.getByRole('button', { name: "Book as 2990's order" }));
     expect(sold.mutate).toHaveBeenCalledWith({ rowId: 11, companyId: 2, note: '2990-SO-2611-017' }, expect.anything());
   });
 
   test('says what was booked', () => {
     sold.data = { ok: true, status: 'confirmed', jeNo: 'JE-2610-3001', owedSen: 383519, chargeShareSen: 10693, accountCode: '350-0070', soldBy: '2990' };
     render(<SoldByButtons row={R21077} />);
-    fireEvent.click(screen.getByRole('button', { name: '2990 的单' }));
+    fireEvent.click(screen.getByRole('button', { name: "2990's order" }));
     expect(screen.getByTestId('sold-by-confirm').textContent).toContain('Booked JE-2610-3001: RM 3,835.19 owed to 2990 on 350-0070.');
   });
 
   test('shows the server\'s refusal in its own words', () => {
     sold.mutate = vi.fn((_vars, opts: { onError: (e: unknown) => void }) => opts.onError({ body: JSON.stringify({ error: 'linked', message: 'This line is matched to one of this company\'s own sales.' }) }));
     render(<SoldByButtons row={R21077} />);
-    fireEvent.click(screen.getByRole('button', { name: '2990 的单' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Book as 2990 的单' }));
+    fireEvent.click(screen.getByRole('button', { name: "2990's order" }));
+    fireEvent.click(screen.getByRole('button', { name: "Book as 2990's order" }));
     expect(screen.getByRole('alert').textContent).toBe('This line is matched to one of this company\'s own sales.');
   });
 
   test('a booked line says whose sale it is', () => {
     render(<SoldByTag companyId={2} />);
-    expect(screen.getByText('2990 的单').getAttribute('title')).toBe("2990's Home's sale, owed to it on 350-0070");
+    expect(screen.getByText("2990's order").getAttribute('title')).toBe("2990's Home's sale, owed to it on 350-0070");
   });
 });

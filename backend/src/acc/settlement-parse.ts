@@ -228,7 +228,7 @@ export function parseStatement(cfg: ParseConfig, text: string): ParseResult {
      reconciled. */
   const format = (cfg.statement_format ?? '').toUpperCase();
   if (!format) {
-    return { ok: false, reason: `${cfg.code} has no statement format configured yet — fill in its acquirer setup (决定4) before uploading.` };
+    return { ok: false, reason: `${cfg.code} has no statement format configured yet — fill in its acquirer setup before uploading.` };
   }
   if (format !== 'CSV') {
     return { ok: false, reason: `${cfg.code} is configured to send ${format} statements, which this screen cannot read yet. Export the statement as CSV, or change the acquirer's configured format.` };

@@ -110,8 +110,8 @@ describe('MobilePaymentRequests', () => {
     ];
     isFinance = false;
     render(<MobilePaymentRequests onBack={() => undefined} />);
-    expect(screen.getByText('Bank confirmed · 银行已确认')).toBeTruthy();
-    fireEvent.click(screen.getByText('Returned · 已退回').closest('button')!);
+    expect(screen.getByText('Bank confirmed')).toBeTruthy();
+    fireEvent.click(screen.getAllByText('Returned').at(-1)!.closest('button')!); // the row, not the filter chip
     expect(screen.getByText('Returned by Chew: Attach the organiser invoice')).toBeTruthy();
     fireEvent.click(screen.getByText('Fix and send again'));
     expect(screen.getByText('Send again')).toBeTruthy();
@@ -127,7 +127,7 @@ describe('MobilePaymentRequests', () => {
     render(<MobilePaymentRequests onBack={() => undefined} />);
     fireEvent.click(screen.getByText('MLE EVENTS SDN BHD').closest('button')!);
     expect(screen.getByText('Total RM 10,000.00 · Paid RM 4,000.00 · Left to ask RM 6,000.00')).toBeTruthy();
-    fireEvent.click(screen.getByText('申请付余额 · Balance'));
+    fireEvent.click(screen.getByText('Request the balance'));
     expect(screen.getByText(/Left to ask: RM 6,000\.00 of RM 10,000\.00\./)).toBeTruthy();
     /* 漏洞 3: the official invoice goes up AS the official invoice. */
     fireEvent.change(screen.getByLabelText('Official invoice files'), { target: { files: [new File(['x'], 'official.jpg', { type: 'image/jpeg' })] } });
@@ -144,7 +144,7 @@ describe('MobilePaymentRequests', () => {
     requests = [base({ status: 'VOUCHERED', stage: 'PAID', officialDoc: { state: 'OWED', note: null } })];
     isFinance = false; uploadOfficialAsync.mockClear();
     render(<MobilePaymentRequests onBack={() => undefined} />);
-    expect(screen.getByText('Official invoice owed · 欠正式单')).toBeTruthy();
+    expect(screen.getByText('Official invoice owed')).toBeTruthy();
     fireEvent.click(screen.getByText('MLE EVENTS SDN BHD').closest('button')!);
     fireEvent.change(screen.getByLabelText('Upload the official invoice'), { target: { files: [new File(['jpg'], 'official.jpg', { type: 'image/jpeg' })] } });
     await waitFor(() => expect(uploadOfficialAsync).toHaveBeenCalledWith({ requestId: 'r1', file: { name: 'official.jpg', mime: 'image/jpeg', dataBase64: 'b64:official.jpg' } }));
@@ -196,7 +196,7 @@ test('the phone form runs bill, who is paid (with the bank), how much, what for'
   requests = []; isFinance = false;
   render(<MobilePaymentRequests onBack={() => undefined} />);
   fireEvent.click(screen.getByText('New request'));
-  const heads = ['① 单据 · The bill *', '② 付给谁 · Pay to', '③ 付多少 · Amount', '④ 用途 · What for'].map((t) => screen.getByText(t));
+  const heads = ['① The bill *', '② Who is paid', '③ How much', '④ What for'].map((t) => screen.getByText(t));
   const before = (a: Node, b: Node) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
   for (let i = 1; i < heads.length; i += 1) expect(before(heads[i - 1]!, heads[i]!)).toBe(true);
   expect(before(screen.getByLabelText("Payee's bank"), screen.getByLabelText('Amount'))).toBe(true);
@@ -208,7 +208,7 @@ test('the phone form takes a note to Finance, sent trimmed; the request shows it
   requests = []; isFinance = false; createAsync.mockClear();
   render(<MobilePaymentRequests onBack={() => undefined} />);
   fireEvent.click(screen.getByText('New request'));
-  expect(screen.getByText('⑤ 备注 · Note')).toBeTruthy();
+  expect(screen.getByText('⑤ Note to Finance')).toBeTruthy();
   fireEvent.change(screen.getByLabelText('Note'), { target: { value: ' Pay before Friday ' } });
   fireEvent.change(screen.getByLabelText('Pay to'), { target: { value: 'MLE EVENTS SDN BHD' } });
   const amount = screen.getByLabelText('Amount');

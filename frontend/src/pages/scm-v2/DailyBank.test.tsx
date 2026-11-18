@@ -34,13 +34,13 @@ const BOARD: DailyBankBoard = {
   ],
   transit: [
     { acquirerCode: 'PBB', accountCode: '326-0010', accountName: 'CARD MACHINE CLEARING — PBB', balanceSen: 3_750_352, bankAccountCode: '310-0020' },
-    { acquirerCode: '未标银行', accountCode: '326-0000', accountName: 'CARD MACHINE CLEARING (EDC)', balanceSen: 336_500, bankAccountCode: null },
+    { acquirerCode: 'Untagged bank', accountCode: '326-0000', accountName: 'CARD MACHINE CLEARING (EDC)', balanceSen: 336_500, bankAccountCode: null },
   ],
   totalClosingSen: 8_847_290,
   totalTransitSen: 4_086_852,
   pendingApprovalSen: 1_083_600,
   availableSen: 7_763_690,
-  unassignedTransit: [{ acquirerCode: '未标银行', accountCode: '326-0000', accountName: 'CARD MACHINE CLEARING (EDC)', balanceSen: 336_500, bankAccountCode: null }],
+  unassignedTransit: [{ acquirerCode: 'Untagged bank', accountCode: '326-0000', accountName: 'CARD MACHINE CLEARING (EDC)', balanceSen: 336_500, bankAccountCode: null }],
   unassignedPending: [],
   note: 'test note',
 };
@@ -95,7 +95,7 @@ describe('DailyBank Accounts, a block per account', () => {
     expect(all.textContent).toContain('Opening 86,065.54 + In 2,850.00 − Out 442.64 · 2 movements');
     expect(all.textContent).toContain('88,472.90');
     const loose = screen.getByLabelText('Not tied to a bank');
-    expect(loose.textContent).toContain('In transit · 未标银行 card money · CARD MACHINE CLEARING (EDC)');
+    expect(loose.textContent).toContain('In transit · Untagged bank card money · CARD MACHINE CLEARING (EDC)');
     expect(loose.textContent).toContain('3,365.00');
   });
 
@@ -187,7 +187,7 @@ describe("DailyBank Board (the redesign's Money today)", () => {
     const transit = screen.getByLabelText('On its way · card machines');
     expect(within(transit).getByText('PBB')).toBeTruthy();
     expect(within(transit).getByText('RM 37,503.52')).toBeTruthy();
-    expect(within(transit).getByText('未标银行')).toBeTruthy();
+    expect(within(transit).getByText('Untagged bank')).toBeTruthy();
     const awaiting = screen.getByLabelText('Awaiting your approval');
     expect(awaiting.textContent).toContain('UNICOM MARKETING SDN BHD · BILL IV2026-09-007 · 2990-HPV-2609-023');
     expect(within(awaiting).getByRole('link', { name: /Review vouchers/ }).getAttribute('href')).toBe('/scm/payment-vouchers?status=CHECKED');

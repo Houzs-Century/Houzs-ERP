@@ -57,7 +57,7 @@ export async function loadDailyBankBoard(
      money the board cannot see is money nobody chases. Named 未标银行 so the
      line reads as what it is, not as a machine. */
   const genericTransit = (await resolveRoles(sb, co.companyId)).TRANSIT_EDC;
-  if (!transitByAccount.has(genericTransit)) transitByAccount.set(genericTransit, '未标银行');
+  if (!transitByAccount.has(genericTransit)) transitByAccount.set(genericTransit, 'Untagged bank');
   const transitCodes = [...transitByAccount.keys()];
   const { data: transitNamesRaw, error: tErr } = await sb.from('accounts')
     .select('account_code, account_name')
