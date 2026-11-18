@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { salesReportFormatIssues } from "./salesReportFormatIssues";
+import { parseSalesReport } from "../vendor/shared/sales-report-parse";
 
 describe("salesReportFormatIssues", () => {
   it("regular chat note → no issues", () => {
@@ -21,6 +22,13 @@ describe("salesReportFormatIssues", () => {
     ].join("\n");
     const issues = salesReportFormatIssues(summary);
     expect(issues.map((i) => i.code)).toContain("summary_only");
+  });
+
+  it("the summary_only hint's example is itself read as a bill (HC-0239: the old example was not)", () => {
+    const hint = salesReportFormatIssues("13/11 - RM35,315\nTotal RM35,315").find((i) => i.code === "summary_only");
+    const example = hint?.message.match(/`([^`]+)`/)?.[1] ?? "";
+    const bills = parseSalesReport(`13/11\n${example}`).bills;
+    expect(bills.map((b) => [b.ref_token, b.amount_sen, b.salesperson_name])).toEqual([["ZNT5839", 588800, "Anthony"]]);
   });
 
   it("bill lines missing names → bills_missing_name hint", () => {
