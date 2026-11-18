@@ -184,9 +184,10 @@ async function main() {
         });
         const again = replan.get(o.doc_no);
         const settled = again?.status === 'refused' && /nothing to change/.test(again.why);
-        if (!head || sum !== Number(head.total_cost_sen) || off.length || !settled) {
+        const headerMatches = head != null && sum === Number(head.total_cost_sen);
+        if (!headerMatches || off.length || !settled) {
           wrong++;
-          bad(`  ${o.doc_no}: header equals its lines ${head ? sum === Number(head.total_cost_sen) : false}; lines not as planned ${off.length}; a new plan finds nothing to change ${settled}`);
+          bad(`  ${o.doc_no}: header equals its lines ${headerMatches}; lines not as planned ${off.length}; a new plan finds nothing to change ${settled}`);
         }
       }
     }
