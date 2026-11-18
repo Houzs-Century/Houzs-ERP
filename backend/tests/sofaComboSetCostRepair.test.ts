@@ -6,7 +6,7 @@
 // public and a cost is not. Sen.
 import { describe, expect, it } from 'vitest';
 import {
-  costCombos, listCostOf, onePieceSetPrices, repairOrder, setPriceOn,
+  costCombos, listCostOf, onePieceSetPrices, repairOrder, setPriceOn, wholeSetPriceOn, wholeSetPrices,
 } from '../scripts/lib/sofa-combo-set-cost.mjs';
 
 type Row = Record<string, any>;
@@ -35,6 +35,7 @@ const PRODUCTS: Record<string, Row> = {
 };
 const ctx = {
   setPrices: onePieceSetPrices(COMBOS),
+  wholePrices: wholeSetPrices(COMBOS),
   combos: costCombos(COMBOS),
   tierOfFabric: () => 'PRICE_2' as const,
   listCost: (l: Row) => listCostOf(PRODUCTS[l.item_code], l, 'PRICE_2'),
@@ -138,5 +139,67 @@ describe('re-costing the real orders', () => {
   it('refuses a piece it cannot price at all', () => {
     const lines = [line('PLLAO-L(LHF)', 190000, 249000, { seatHeight: 'Flat' }), line('PLLAO-1B(LHF)', 80000, 0, { seatHeight: 'Flat' })];
     expect((repairOrder(order('W', lines, 249000), lines, ctx) as Row).status).toBe('refused');
+  });
+});
+
+/* The second shape, found 2026-11-18 on 2990-SO-2611-107: the combo is right
+   (one slot per piece), yet the old costing put its whole-set price on the 2A
+   and left the L its own cost, so the set was counted once and a half. */
+describe('a whole-set price on one piece of a correctly shaped combo', () => {
+  const KABBIN: Row[] = [
+    combo('k-2l', 'KABBIN', [['2A(LHF)', '2A(RHF)'], ['L(LHF)', 'L(RHF)']], { 24: 190000, 28: 200000 }, {}, '2026-10-19', '2026-10-19T00:00:00Z'),
+    combo('k-2l-sup', 'KABBIN', [['2A(LHF)', '2A(RHF)'], ['L(LHF)', 'L(RHF)']], { 24: 190000, 28: 200000 }, { 24: 190000, 28: 200000 }, '2026-10-19', '2026-10-19T00:00:00Z', { supplier_id: 'sup-2' }),
+  ];
+  const list: Record<string, Row> = {
+    'KABBIN-2A(LHF)': { seat_height_prices: [{ tier: 'PRICE_2', height: '28', priceSen: 95000 }] },
+    'KABBIN-L(RHF)': { seat_height_prices: [{ tier: 'PRICE_2', height: '24', priceSen: 95000 }, { tier: 'PRICE_2', height: '28', priceSen: 105000 }] },
+  };
+  const kctx = {
+    setPrices: onePieceSetPrices(KABBIN),
+    wholePrices: wholeSetPrices(KABBIN),
+    combos: costCombos(KABBIN),
+    tierOfFabric: () => 'PRICE_2' as const,
+    listCost: (l: Row) => listCostOf(list[l.item_code], l, 'PRICE_2'),
+    asOf: '2026-11-18',
+  };
+  const gift = () => line('MAKOTO RC(S)-FVI OLIVE', 50000, 0, null, { item_group: 'accessory' });
+
+  it('the 2990-SO-2611-107 shape, 2A + L at 28": the set price leaves the 2A and the pair costs one set', () => {
+    const v = { seatHeight: '28', fabricCode: 'HG1313-11', buildKey: 'build-1' };
+    const lines = [line('KABBIN-2A(LHF)', 200000, 299000, v), line('KABBIN-L(RHF)', 105000, 0, v), gift(), fee()];
+    const r = repairOrder(order('2990-SO-2611-107', lines, 324000), lines, kctx) as Row;
+    expect(r.status).toBe('repair');
+    expect(r.changes).toEqual([expect.objectContaining({ item_code: 'KABBIN-2A(LHF)', from: 200000, to: 95000, how: 'set combo' })]);
+    expect(r.header.total_cost_sen).toBe(250000); // the set + the free chair
+  });
+
+  it('the 24" shape: no list cost for the 2A at that height, and the set combo still prices the pair', () => {
+    const v = { seatHeight: '24', fabricCode: 'HG1313-11', buildKey: 'build-1' };
+    const lines = [line('KABBIN-2A(LHF)', 190000, 299000, v), line('KABBIN-L(RHF)', 95000, 0, v), fee()];
+    const r = repairOrder(order('2990-SO-2611-085', lines, 324000), lines, kctx) as Row;
+    expect(r.status).toBe('repair');
+    expect(r.header.total_cost_sen).toBe(190000);
+  });
+
+  it('leaves an order the fixed costing already spread over the set alone', () => {
+    const v = { seatHeight: '28', fabricCode: 'HG1313-11', buildKey: 'build-1' };
+    const lines = [line('KABBIN-2A(LHF)', 131600, 311500, v), line('KABBIN-L(RHF)', 68400, 0, v)];
+    expect(repairOrder(order('2990-SO-2610-051', lines, 311500), lines, kctx)).toEqual({ status: 'clean' });
+  });
+
+  it('counts the set price on one piece only beside a costed partner in the same build', () => {
+    const v = { seatHeight: '28', buildKey: 'build-1' };
+    const twoA = line('KABBIN-2A(LHF)', 200000, 299000, v);
+    const otherBuild = line('KABBIN-L(RHF)', 105000, 0, { seatHeight: '28', buildKey: 'build-2' });
+    const uncosted = line('KABBIN-L(RHF)', 0, 0, v);
+    expect(wholeSetPriceOn(twoA, [twoA, otherBuild], kctx.wholePrices)).toBeNull();
+    expect(wholeSetPriceOn(twoA, [twoA, uncosted], kctx.wholePrices)).toBeNull();
+    expect(wholeSetPriceOn(twoA, [twoA, line('KABBIN-L(RHF)', 105000, 0, v)], kctx.wholePrices)).not.toBeNull();
+  });
+
+  it('takes whole-set prices from live, correctly shaped combos only', () => {
+    expect(wholeSetPrices(COMBOS).has('LOTTI|30')).toBe(false);
+    expect(wholeSetPrices(COMBOS).get('BOAAT|32')!.map((p: Row) => p.sen)).toEqual([180000]);
+    expect(wholeSetPrices([{ ...KABBIN[0], deleted_at: '2026-11-18' }]).size).toBe(0);
   });
 });

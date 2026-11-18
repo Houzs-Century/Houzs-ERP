@@ -8,7 +8,11 @@
    to a single piece of an order and wrote the whole set's price on it, while
    the order's other pieces kept their own cost: 2990-SO-2610-057 (LOTTI 2A + L)
    showed a cost above its selling price and a negative margin. 17 of 235 live
-   2990 multi-piece sofa orders carried it.
+   2990 multi-piece sofa orders carried it. The old costing did the same with
+   some correctly shaped combos (2990-SO-2611-107, KABBIN 2A + L: the 2+L set
+   price on the 2A, the L's own cost beside it; found 2026-11-18), so step 2
+   also looks for a whole-set price on one piece whose set partner in the same
+   build still carries a cost of its own.
 
    THE FIX IN THE APP (same PR) stops new damage: a one-slot, several-code
    combo is refused on entry and never prices cost, the combo covering the most
@@ -52,7 +56,7 @@ import postgres from 'postgres';
 import { isOnePieceSetCombo } from '../src/scm/shared/sofa-combo-pricing.ts';
 import { todayMyt } from '../src/scm/lib/my-time.ts';
 import {
-  costCombos, isoDay, listCostOf, onePieceSetPrices, repairOrder, setPriceOn,
+  costCombos, isoDay, listCostOf, onePieceSetPrices, repairOrder, setPriceOn, wholeSetPriceOn, wholeSetPrices,
 } from './lib/sofa-combo-set-cost.mjs';
 
 const DSN = process.env.DATABASE_URL;
@@ -84,12 +88,16 @@ async function readState(db) {
       FROM scm.sofa_combo_pricing c LEFT JOIN scm.suppliers s ON s.id = c.supplier_id
      WHERE c.company_id = ${CO}`;
   const setPrices = onePieceSetPrices(combos);
+  const wholePrices = wholeSetPrices(combos);
   const sofaLines = await db`
     SELECT i.id::text, i.doc_no, i.item_code, i.item_group, i.qty, i.line_cost_sen, i.variants, i.cancelled
       FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders o ON o.doc_no = i.doc_no AND o.company_id = ${CO}
      WHERE i.company_id = ${CO} AND NOT i.cancelled AND lower(i.item_group) = 'sofa'
        AND o.status NOT IN ('DRAFT', 'CANCELLED')`;
-  const docs = [...new Set(sofaLines.filter((l) => setPriceOn(l, setPrices)).map((l) => l.doc_no))].sort();
+  const byDoc = Map.groupBy(sofaLines, (l) => l.doc_no);
+  const docs = [...new Set(sofaLines
+    .filter((l) => setPriceOn(l, setPrices) || wholeSetPriceOn(l, byDoc.get(l.doc_no) ?? [], wholePrices))
+    .map((l) => l.doc_no))].sort();
   const orders = docs.length ? await db`
     SELECT doc_no, so_date, status, venue, local_total_sen, total_cost_sen, total_margin_sen, service_cost_sen,
            mattress_sofa_cost_sen, mattress_sofa_sen, bedframe_sen, accessories_sen, others_sen
@@ -101,7 +109,7 @@ async function readState(db) {
   const products = codes.length ? await db`
     SELECT code, seat_height_prices FROM scm.mfg_products WHERE company_id = ${CO} AND code = ANY(${codes}::text[])` : [];
   const fabrics = await db`SELECT fabric_code, sofa_price_tier, price_tier FROM scm.fabric_trackings WHERE company_id = ${CO}`;
-  return { combos, setPrices, orders, lines, products, fabrics };
+  return { combos, setPrices, wholePrices, orders, lines, products, fabrics };
 }
 
 function planAll(state) {
@@ -110,6 +118,7 @@ function planAll(state) {
   const tierOfFabric = (code) => tierByFabric.get(code) ?? 'PRICE_2';
   const ctx = {
     setPrices: state.setPrices,
+    wholePrices: state.wholePrices,
     combos: costCombos(state.combos),
     tierOfFabric,
     listCost: (l) => listCostOf(productByCode.get(l.item_code), l, tierOfFabric(String(l.variants?.fabricCode ?? ''))),
@@ -188,7 +197,7 @@ async function main() {
                  VALUES (${o.doc_no}, ${CO}, 'UPDATE_LINE', 'System (combo set-cost repair)',
                          ${tx.json(r.changes.map((c) => ({ field: `line_${c.item_code}_line_cost_sen`, from: c.from, to: c.to })))},
                          ${o.status}, ${SOURCE},
-                         ${'Cost repaired: a sofa set price had been charged to one piece by a combo stored as one slot listing several codes'})`;
+                         ${'Cost repaired: a sofa set price had been charged to one piece while the set\'s other pieces kept their own cost'})`;
       });
       applied.push(p);
       note(`  OK   ${o.doc_no}`);
@@ -210,13 +219,15 @@ async function main() {
       const heads = await check`SELECT doc_no, total_cost_sen, mattress_sofa_cost_sen FROM scm.mfg_sales_orders WHERE company_id = ${CO} AND doc_no = ANY(${docs}::text[])`;
       const ls = await check`SELECT id::text, doc_no, item_code, item_group, qty, total_sen, line_cost_sen, line_margin_sen, variants, cancelled
                                FROM scm.mfg_sales_order_items WHERE company_id = ${CO} AND doc_no = ANY(${docs}::text[])`;
-      const setPrices = onePieceSetPrices(await check`SELECT id::text, base_model, modules, prices_by_height, selling_prices_by_height FROM scm.sofa_combo_pricing WHERE company_id = ${CO}`);
+      const comboRows = await check`SELECT id::text, base_model, modules, prices_by_height, selling_prices_by_height, deleted_at FROM scm.sofa_combo_pricing WHERE company_id = ${CO}`;
+      const setPrices = onePieceSetPrices(comboRows);
+      const wholePrices = wholeSetPrices(comboRows);
       let wrong = 0;
       for (const h of heads) {
         const mine = ls.filter((l) => l.doc_no === h.doc_no && !l.cancelled);
         const sum = mine.reduce((s, l) => s + Number(l.line_cost_sen), 0);
         const sofaSum = mine.filter((l) => /mattress|sofa/.test(String(l.item_group ?? '').toLowerCase())).reduce((s, l) => s + Number(l.line_cost_sen), 0);
-        const stillSet = mine.filter((l) => setPriceOn(l, setPrices)).length;
+        const stillSet = mine.filter((l) => setPriceOn(l, setPrices) || wholeSetPriceOn(l, mine, wholePrices)).length;
         const marginOff = mine.filter((l) => Number(l.line_margin_sen) !== Number(l.total_sen) - Number(l.line_cost_sen)).length;
         if (sum !== Number(h.total_cost_sen) || sofaSum !== Number(h.mattress_sofa_cost_sen) || stillSet || marginOff) {
           wrong++;
