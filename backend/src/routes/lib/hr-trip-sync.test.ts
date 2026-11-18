@@ -127,3 +127,21 @@ describe("syncTripMonth", () => {
     expect(touched).toEqual([]);
   });
 });
+
+describe("nightly change detection", () => {
+  test("a day whose delivery order or its crew changed is re-read", async () => {
+    const seen: string[] = [];
+    const db = {
+      execute: async (q: { queryChunks: unknown[] }) => {
+        seen.push(q.queryChunks.map((c) => (c && typeof c === "object" && "value" in c ? String((c as { value: unknown }).value) : "")).join(" "));
+        return [{ d: "2026-11-17" }];
+      },
+    };
+    const { changedSourceDays } = await import("./hr-trip-store");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a stub standing in for the Drizzle client
+    const days = await changedSourceDays(db as any, 1, "2026-10-23", "2026-11-22", "2026-11-17T16:05:00Z");
+    expect([...days]).toEqual(["2026-11-17"]);
+    expect(seen[0]).toMatch(/FROM scm\.delivery_orders d\s+LEFT JOIN scm\.delivery_order_crew cr ON cr\.do_id = d\.id/);
+    expect(seen[0]).toMatch(/d\.updated_at > /);
+  });
+});

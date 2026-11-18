@@ -1,10 +1,12 @@
 // Delivery Planning stops and project Setup / Dismantle as trip rows: the job
 // type each becomes, and where its amount, state, postcode and crew come from.
 import { describe, expect, test } from "vitest";
-import { planningRowOf, projectCrewLorries, projectLegRows, rowHrEdited, type PlanningStop, type ProjectLeg } from "./hr-trip-store";
+import { computeTripMonth, DEFAULT_TRIP_RATES } from "../../scm/shared/hr-trip-pay";
+import { deliveryOrderRows, planningRowOf, projectCrewLorries, projectLegRows, rowHrEdited, tripRowOf, type PlanningDo, type PlanningStop, type ProjectLeg } from "./hr-trip-store";
 
 const base: PlanningStop = {
   stop_id: "s1",
+  do_id: null,
   stop_type: "DELIVERY",
   trip_id: "t1",
   trip_date: "2026-11-02",
@@ -137,5 +139,89 @@ describe("rowHrEdited", () => {
     expect(rowHrEdited({ ...r, hr_edited: true })).toBe(true);
     expect(rowHrEdited({ ...r, updated_at: "2026-11-02T00:00:00Z" })).toBe(true);
     expect(rowHrEdited({ ...r, job_type: "SETUP", updated_at: "2026-11-02T00:00:00Z" })).toBe(false);
+  });
+});
+
+describe("delivery orders our lorries ran (Last Mile reaches them through the DO crew, not trip stops)", () => {
+  const doBase: PlanningDo = {
+    do_id: "do-1",
+    do_number: "HC-DO-2611-219",
+    so_doc_no: "HC-SO-2610-500",
+    debtor_name: "TAN",
+    do_status: "DELIVERED",
+    do_date: "2026-11-17",
+    local_total_sen: "1200000",
+    do_state: "Selangor",
+    do_postcode: "47500",
+    is_dropship: false,
+    has_3pl: false,
+    on_live_trip: false,
+    crew_plate: "VNB 9058",
+    lorry_plate: "VNB9058",
+    lorry_internal: true,
+    d1: "drv",
+    d2: null,
+    h1: "hlp1",
+    h2: "hlp2",
+    d1_name: "ALI",
+    d2_name: null,
+    h1_name: "ABU",
+    h2_name: "AHMAD",
+  };
+  const ids: Record<string, number> = { drv: 11, hlp1: 21, hlp2: 22 };
+  const who = (id: string | null, name: string | null) => ({ name: id ? `N-${id}` : (name ?? ""), employeeId: id ? (ids[id] ?? null) : null });
+
+  test("one Delivery order row: the DO's date, Local Total, state, postcode, plate and crew", () => {
+    const [r] = deliveryOrderRows([doBase], new Set(), who);
+    expect(r).toMatchObject({
+      source: "PLANNING",
+      source_ref: "do:do-1",
+      trip_date: "2026-11-17",
+      doc_no: "HC-SO-2610-500",
+      transfer_to: "HC-DO-2611-219",
+      job_type: "DELIVERY_ORDER",
+      local_total_sen: 1200000,
+      state: "Selangor",
+      postcode: "47500",
+      lorry_plate: "VNB9058",
+      trip_ref: "do-run:VNB9058:2026-11-17",
+      driver_1_employee_id: 11,
+      helper_1_employee_id: 21,
+      helper_2_employee_id: 22,
+    });
+  });
+
+  test("a DO a live trip stop already carries is read once, from the stop", () => {
+    expect(deliveryOrderRows([doBase], new Set(["do-1"]), who)).toEqual([]);
+    expect(deliveryOrderRows([{ ...doBase, on_live_trip: true }], new Set(), who)).toEqual([]);
+  });
+
+  test("cancelled, draft, drop-shipped, 3PL, outsourced-lorry and lorry-less DOs earn no row", () => {
+    const out = (p: Partial<PlanningDo>) => deliveryOrderRows([{ ...doBase, ...p }], new Set(), who);
+    expect(out({ do_status: "CANCELLED" })).toEqual([]);
+    expect(out({ do_status: "DRAFT" })).toEqual([]);
+    expect(out({ is_dropship: true })).toEqual([]);
+    expect(out({ has_3pl: true })).toEqual([]);
+    expect(out({ lorry_internal: false })).toEqual([]);
+    expect(out({ crew_plate: null, lorry_plate: null, lorry_internal: null })).toEqual([]);
+    expect(out({ do_date: null })).toEqual([]);
+    // On the lorry but not yet signed for is still a run; a typed plate with no master counts.
+    expect(out({ do_status: "IN_TRANSIT" })).toHaveLength(1);
+    expect(out({ lorry_plate: null, lorry_internal: null })[0]?.lorry_plate).toBe("VNB 9058");
+  });
+
+  test("a seat with no master id keeps the name typed on the crew record", () => {
+    const [r] = deliveryOrderRows([{ ...doBase, d1: null, d1_name: "ALI" }], new Set(), who);
+    expect(r.driver_1_name).toBe("ALI");
+  });
+
+  test("the DO crew count sets the commission rate: 3 people = crew of 3, 2 people = crew of 2", () => {
+    const pay = (p: Partial<PlanningDo>) => {
+      const rows = deliveryOrderRows([{ ...doBase, ...p }], new Set(), who).map((r) => tripRowOf({ ...r, id: 1, hr_edited: false } as unknown as Parameters<typeof tripRowOf>[0]));
+      const out = computeTripMonth({ rows, rates: DEFAULT_TRIP_RATES, employeeOf: (x) => x.employeeId, missedDaysOf: () => 0, punches: new Map() });
+      return out.pay.get(11)?.commission.lines.map((l) => [l.crew, l.baseSen]);
+    };
+    expect(pay({})).toEqual([[3, 1200000]]);
+    expect(pay({ h2: null, h2_name: null })).toEqual([[2, 1200000]]);
   });
 });
