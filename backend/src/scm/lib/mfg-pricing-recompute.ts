@@ -145,6 +145,10 @@ export type RecomputedLine = {
   unit_cost_sen:        number;
   line_cost_sen:        number;
   costBreakdown:        MfgPricingBreakdown;
+  /** The module costs (sen, by normalized module code) a configurator build's
+   *  cost was summed from; null when it was not (no cells, no module cost rows,
+   *  none costed). The build's split shares its cost by these. */
+  sofa_module_costs_sen: Record<string, number> | null;
   /** Drift signal — true means client's submission diverged > 0.5% from
    *  server compute. Caller decides HTTP 400 vs warn vs accept. */
   drift:                boolean;
@@ -626,6 +630,7 @@ export function recomputeFromSnapshot(
      unavailable or none of the build's modules is costed. */
   let unitCostSen = costBreakdown.unitPriceSen;
   let effectiveCostBreakdown = costBreakdown;
+  let sofaModuleCostsSen: Record<string, number> | null = null;
   if (
     category === 'SOFA' &&
     Array.isArray(sofaCells) && sofaCells.length > 0 &&
@@ -651,6 +656,7 @@ export function recomputeFromSnapshot(
       modulesCostSen += costMap[normalizeCompartmentCode(modId)] ?? 0;
     }
     if (modulesCostSen > 0) {
+      sofaModuleCostsSen = costMap;
       const costSurchargesSen = costBreakdown.unitPriceSen - costBreakdown.basePriceSen;
       unitCostSen = modulesCostSen + costSurchargesSen;
       effectiveCostBreakdown = {
@@ -799,6 +805,7 @@ export function recomputeFromSnapshot(
     unit_cost_sen:     unitCostSen,
     line_cost_sen:     unitCostSen * safeQty,
     costBreakdown:     effectiveCostBreakdown,
+    sofa_module_costs_sen: sofaModuleCostsSen,
     drift,
   };
 }

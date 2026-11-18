@@ -3505,7 +3505,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         cells: (it.variants as { cells?: unknown } | null)?.cells,
         buildUnitPriceSen: unit,
         buildUnitCostSen: unitCost,
-        modulePrices,
+        modulePrices, moduleCostsSen: recomputed?.sofa_module_costs_sen ?? null,
         // Task 5 (D4) — when this line mints one-shot SKUs (extra charge), the
         // selling price is split EVENLY across modules; cost stays proportional.
         evenSplitPrice: extraRM > 0,
@@ -7689,7 +7689,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
       cells: addLineCells,
       buildUnitPriceSen: unit,
       buildUnitCostSen: unitCost,
-      modulePrices: sofaModulePricesLite,
+      modulePrices: sofaModulePricesLite, moduleCostsSen: recomputed.sofa_module_costs_sen,
       depth: String((it.variants as { depth?: unknown } | null)?.depth ?? '24'),
     });
     if (split && split.length > 0) {
@@ -9358,7 +9358,7 @@ async function planSofaRewardRevert(
     cells,
     buildUnitPriceSen: rec.unit_price_sen,
     buildUnitCostSen: 0,   // costs stay per-line as already booked
-    modulePrices,
+    modulePrices, moduleCostsSen: null,
   });
   if (!split || split.length !== lines.length) return { ok: false };
   const updates: SofaRewardRevertUpdate[] = lines.map((l, i) => {
@@ -9615,7 +9615,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     cells: newCells,
     buildUnitPriceSen: unit,
     buildUnitCostSen: unitCost,
-    modulePrices,
+    modulePrices, moduleCostsSen: recomputed.sofa_module_costs_sen,
   });
   const newBuildKey = buildKey ?? `build-x${String(itemId).slice(0, 8)}`;
   const newLeadCode = split?.[0]?.itemCode ?? newCode;
