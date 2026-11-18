@@ -79,13 +79,13 @@ describe('placeCandidates — the address tried per job type', () => {
 
 describe('soCandidates', () => {
   it('keeps the composed SO address first (cache parity), then the postcode area', () => {
-    expect(soCandidates('12 Jalan A, 53100, Kuala Lumpur, Malaysia', '53100', 'Kuala Lumpur')).toEqual([
+    expect(soCandidates('12 Jalan A, 53100, Kuala Lumpur, Malaysia', '53100', 'Kuala Lumpur', 'Malaysia')).toEqual([
       { address: '12 Jalan A, 53100, Kuala Lumpur, Malaysia', approximate: false },
       { address: '53100, Kuala Lumpur, Malaysia', approximate: true },
     ]);
   });
   it('an SO with no address and no postcode has nothing to try', () => {
-    expect(soCandidates('', null, 'Selangor')).toEqual([]);
+    expect(soCandidates('', null, 'Selangor', null)).toEqual([]);
   });
 });
 
@@ -177,4 +177,13 @@ describe('locateStops — cache-first, first hit wins, area fallback approximate
     expect(out.get('A#delivery')).toEqual({ ok: false, reason: 'no address, postcode or city on file' });
     expect(out.get('B#delivery')).toEqual({ ok: false, reason: unlocatedReason([{ address: 'x 1', approximate: false }], false) });
   });
+
+describe('Singapore addresses (HC-SO-011153, 2026-11-18)', () => {
+  it('a Singapore order also tries its 6-digit postcode, which names the building', () => {
+    expect(soCandidates('621 woodlans dr052 05-50, 730621, North, Singapore', '730621', 'North', 'Singapore')).toEqual([
+      { address: '621 woodlans dr052 05-50, 730621, North, Singapore', approximate: false },
+      { address: '730621, Singapore', approximate: false },
+    ]);
+  });
+});
 });

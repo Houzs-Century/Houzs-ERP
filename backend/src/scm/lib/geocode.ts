@@ -65,9 +65,17 @@ export function composeAddress(parts: {
     .join(', ');
 }
 
-/** Build the Geocoding API URL. PURE. Malaysia-biased, same shape as scan-so. */
+/** The country an address is in, for the geocoder's country filter: Singapore
+ *  when the address names it, else Malaysia. Pinning every address to MY made a
+ *  Singapore delivery unfindable (HC-SO-011153, Woodlands, 2026-11-18). PURE. */
+export function geocodeCountryOf(address: string): 'MY' | 'SG' {
+  return /(^|[^a-z])singapore($|[^a-z])/i.test(address) ? 'SG' : 'MY';
+}
+
+/** Build the Geocoding API URL. PURE. Biased to the address's country (MY / SG). */
 export function buildGeocodeUrl(address: string, apiKey: string): string {
-  return `${GEOCODE_BASE}?address=${encodeURIComponent(address)}&region=my&components=country:MY&key=${apiKey}`;
+  const cc = geocodeCountryOf(address);
+  return `${GEOCODE_BASE}?address=${encodeURIComponent(address)}&region=${cc.toLowerCase()}&components=country:${cc}&key=${apiKey}`;
 }
 
 interface GeocodeBody {
