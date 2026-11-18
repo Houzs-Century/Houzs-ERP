@@ -54,9 +54,9 @@ export function distinctLineValues(group: ModelGroup, pick: (line: MrpLine) => s
 }
 
 export function rollupLabel(values: string[]): string | null {
-  const [first, ...rest] = values;
+  const first = values.at(0);
   if (first === undefined) return null;
-  return rest.length === 0 ? first : `${first} +${rest.length}`;
+  return values.length === 1 ? first : `${first} +${values.length - 1}`;
 }
 
 function chosenSupplierIdOf(line: MrpLine, controls: MrpLineControls): string | null {
@@ -69,15 +69,16 @@ function supplierNameOf(sku: MrpSku, line: MrpLine, controls: MrpLineControls): 
   const chosenId = chosenSupplierIdOf(line, controls);
   const chosen = sku.suppliers.find((supplier) => supplier.supplierId === chosenId)
     ?? sku.suppliers.find((supplier) => supplier.isMain)
-    ?? sku.suppliers[0];
+    ?? sku.suppliers.at(0);
   return chosen?.name ?? null;
 }
 
 export function supplierRollup(group: ModelGroup, controls: MrpLineControls): string | null {
   const names = group.variants.flatMap((sku) => sku.lines.map((line) => supplierNameOf(sku, line, controls)));
-  const [first, ...rest] = new Set(names.filter((name): name is string => Boolean(name)));
+  const distinct = [...new Set(names.filter((name): name is string => Boolean(name)))];
+  const first = distinct.at(0);
   if (first === undefined) return null;
-  return rest.length === 0 ? first : `${rest.length + 1} suppliers`;
+  return distinct.length === 1 ? first : `${distinct.length} suppliers`;
 }
 
 /* A missing delivery date is NOT the same fact as a missing debtor name, so it
@@ -103,7 +104,7 @@ function LineSupplierSelect({ suppliers, chosenSupplierId, onSupplierChange }: {
   chosenSupplierId: string | null;
   onSupplierChange: (supplierId: string) => void;
 }) {
-  const defaultSupplier = suppliers.find((supplier) => supplier.isMain) ?? suppliers[0];
+  const defaultSupplier = suppliers.find((supplier) => supplier.isMain) ?? suppliers.at(0);
   if (!defaultSupplier) return <span className={styles.noSupplier}>— none —</span>;
   return (
     <select
@@ -256,7 +257,7 @@ function accessoryRows(riders: AccessoryRider[], facts: VaryingHeaderFacts, poMo
     ),
   };
   return [caption, ...riders.map(({ sku, line }, index): DataTableChildRow => {
-    const mainSupplier = sku.suppliers.find((supplier) => supplier.isMain) ?? sku.suppliers[0];
+    const mainSupplier = sku.suppliers.find((supplier) => supplier.isMain) ?? sku.suppliers.at(0);
     return {
       key: `accessory|${sku.itemCode}|${line.soItemId}|${index}`,
       className: styles.childShort,
@@ -307,8 +308,8 @@ export function buildMrpChildRows(group: ModelGroup, options: MrpTreeOptions): D
       ...accessoryRows(options.accessoryRiders, facts, options.poMode),
     ];
   }
-  const [onlyVariant] = group.variants;
-  if (group.variants.length === 1 && onlyVariant) {
+  const onlyVariant = group.variants.at(0);
+  if (group.variants.length === 1 && onlyVariant !== undefined) {
     const showsSpec = options.shape !== 'bedframe' && Boolean(onlyVariant.variantLabel);
     return orderLineRows(onlyVariant, showsSpec ? variantTag(onlyVariant) : null, facts, options);
   }
