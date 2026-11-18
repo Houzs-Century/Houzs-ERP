@@ -119,7 +119,6 @@ import { useFocusFromUrl } from "../hooks/useFocusFromUrl";
 import { useAuth } from "../auth/AuthContext";
 import { isSalesStaff } from "../auth/salesAccess";
 import { api, buildQuery } from "../api/client";
-import { downloadAllPagesCSV } from "../lib/csv";
 import { formatPhone } from "../vendor/shared/phone";
 import { uploadAssrAttachment } from "../lib/assrAttachmentUpload";
 import { isPdfAttachment, openAssrAttachment } from "../lib/assrAttachmentOpen";
@@ -1174,11 +1173,6 @@ function CasesView({
         udfTable="assr"
         udfTableLabel="Service Cases"
         exportName="service-cases"
-        onExport={(cols) =>
-          void downloadAllPagesCSV("service-cases", cols, (pg, per) =>
-            api.get<Paginated<AssrCase>>(`/api/assr${buildQuery({ ...caseFilters, page: pg, per_page: per })}`),
-          ).catch((e) => toast.error(`Export failed: ${e?.message || e}`))
-        }
         search={{
           value: search,
           onChange: (v) => { setSearch(v); },
