@@ -38,7 +38,7 @@ describe('readFacts', () => {
   ]);
 
   it('reads only the boxes the card prices, a blank box as 0', () => {
-    const r = readFacts({ count: '3', sofas: '3, 6', town: 'BINTULU', counts: { DISPOSE: '', SETUP: '2' } }, SET_CARD, priced);
+    const r = readFacts({ job: 'DELIVERY', count: '3', sofas: '3, 6', town: 'BINTULU', counts: { DISPOSE: '', SETUP: '2' } }, SET_CARD, priced);
     expect(r).toEqual({ ok: true, facts: { setCount: 3, sofaCompartments: [3, 6], disposeCount: 0, destinationZone: 'BINTULU' } });
   });
 
@@ -130,7 +130,7 @@ describe('groupBreakdown', () => {
     expect(groups.map((g) => [g.title, g.lines.map((l) => l.label)])).toEqual([
       ['Delivery', ['1st set', '2nd set', '21st set', 'Sofa, 6 compartments']],
       ['Outstation', ['BINTULU, per order']],
-      ['Service calls', ['Supplier pickup × 2']],
+      ['Service calls', ['Supplier × 2']],
       ['Minimum, cap and rounding', ['Rounding (nearest RM)']],
     ]);
   });

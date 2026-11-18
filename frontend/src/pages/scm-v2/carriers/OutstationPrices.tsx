@@ -10,7 +10,8 @@ import { fmtSen } from '@2990s/shared';
 import type { RateArea, RateRule } from '../../../vendor/scm/lib/delivery-rate-card-queries';
 import { cn } from '../../../lib/utils';
 import { hiddenZoneRules, priceBands, type PriceBand, type RuleBlock, type RuleSection, type TownPrice } from './rateCardLayout';
-import { AddRule, Panel, PriceEditor } from './ruleEditors';
+import { AddRule, AppliesToEditor, Panel, PriceEditor } from './ruleEditors';
+import { isDefaultJobs, jobsLabel, jobsOf, sharedJobs } from './appliesTo';
 import { AreaPrices } from './AreaPrices';
 import { usePlaces } from '../../../vendor/scm/lib/delivery-places-queries';
 import { areaTemplate, surchargesInAreas, townLabel, townsInTwoAreas } from './rateCardAreas';
@@ -18,11 +19,11 @@ import { BTN_QUIET, HINT, Pill } from './ui';
 
 type Kind = 'per order' | 'per trip';
 /* Not the taxonomy's hint (shared with the server), which knows town surcharges only. */
-const HINT_TEXT = 'Farther places: areas with prices of their own, then town surcharges per order, per trip, or both.';
+const HINT_TEXT = 'Priced by the area a job goes to, read from its postcode zone or a town in its address: areas with prices of their own, then surcharges per order, per trip, or both.';
 const SEARCH_FROM = 8;
 const townsWord = (n: number) => `${n} ${n === 1 ? 'town' : 'towns'}`;
 
-const TownChip = ({ cardId, town, kind }: { cardId: string; town: TownPrice; kind: Kind }) => {
+const TownChip = ({ cardId, town, kind, showJobs }: { cardId: string; town: TownPrice; kind: Kind; showJobs: boolean }) => {
   const [editing, setEditing] = useState(false);
   const name = `${townLabel(town.zone)} ${kind}`;
   if (editing) {
@@ -30,18 +31,22 @@ const TownChip = ({ cardId, town, kind }: { cardId: string; town: TownPrice; kin
       <span className="flex flex-col gap-1 rounded-xl px-2.5 py-1.5 ring-1 ring-primary">
         <span className="text-[12px] font-semibold text-ink-muted">{townLabel(town.zone)}</span>
         <PriceEditor cardId={cardId} rule={town.rule} name={name} onDone={() => setEditing(false)} />
+        <AppliesToEditor cardId={cardId} rule={town.rule} />
       </span>
     );
   }
+  const jobs = jobsOf(town.rule);
   return (
     <button type="button" onClick={() => setEditing(true)} aria-label={`Edit ${name}, ${fmtSen(town.rule.amountSen)}`}
       className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-border px-3 text-[12px] font-semibold text-ink hover:border-primary hover:text-primary">
-      {townLabel(town.zone)}{town.twice && <Pill tone="amber">Twice</Pill>}
+      {townLabel(town.zone)}
+      {showJobs && !isDefaultJobs(jobs) && <span className="font-medium text-ink-muted">· {jobsLabel(jobs)}</span>}
+      {town.twice && <Pill tone="amber">Twice</Pill>}
     </button>
   );
 };
 
-const Bands = ({ cardId, title, bands, kind }: { cardId: string; title: string; bands: PriceBand[]; kind: Kind }) => (
+const Bands = ({ cardId, title, bands, kind, showJobs }: { cardId: string; title: string; bands: PriceBand[]; kind: Kind; showJobs: boolean }) => (
   <div className="flex flex-col">
     <span className="pb-1.5 text-[12px] font-semibold text-ink-secondary">{title}</span>
     {bands.map((b) => (
@@ -51,7 +56,7 @@ const Bands = ({ cardId, title, bands, kind }: { cardId: string; title: string; 
           <span className={HINT}>{townsWord(b.towns.length)}</span>
         </div>
         <div className="flex flex-wrap items-start gap-1.5">
-          {b.towns.map((t) => <TownChip key={t.rule.id} cardId={cardId} town={t} kind={kind} />)}
+          {b.towns.map((t) => <TownChip key={t.rule.id} cardId={cardId} town={t} kind={kind} showJobs={showJobs} />)}
         </div>
       </div>
     ))}
@@ -105,6 +110,7 @@ export const OutstationPrices = ({ cardId, rules, areas, areaRules, unit, sectio
   const shownAreas = needle
     ? areas.filter((a) => a.name.toLowerCase().includes(needle) || a.towns.some((t) => t.toLowerCase().includes(needle)))
     : areas;
+  const allJobs = sharedJobs(rules);
   const note = [areas.length ? `${areas.length} ${areas.length === 1 ? 'area' : 'areas'}` : null, rows.length ? townsWord(rows.length) : null].filter(Boolean).join(' · ');
 
   return (
@@ -127,8 +133,15 @@ export const OutstationPrices = ({ cardId, rules, areas, areaRules, unit, sectio
           )}
         </>
       }>
-      {rows.length === 0 && areas.length === 0 && !addingArea && (
-        <p className="text-[13px] text-ink-muted">This card has no areas or outstation towns yet, so a delivery costs the same wherever it goes.</p>
+      {rows.length === 0 && areas.length === 0 && !addingArea && adding === null && (
+        <div className="flex flex-col gap-1.5 text-[13px] text-ink-muted">
+          <p>This card has no areas or outstation prices yet, so a job costs the same wherever it goes.</p>
+          <ul className="list-disc pl-5">
+            <li><span className="font-semibold text-ink">Add area</span>: a group of towns with delivery prices of their own, used in place of this card’s.</li>
+            <li><span className="font-semibold text-ink">Add town</span>: a surcharge added on top, for a postcode zone (such as JOHOR) or a town filed under a zone in Delivery Zones (such as BINTULU).</li>
+          </ul>
+          <p>A job’s area is read from its postcode, or a town named in its address. A surcharge adds to Delivery orders unless you tick other jobs under Applies to.</p>
+        </div>
       )}
       <AreaPrices cardId={cardId} areas={shownAreas} rules={areaRules} ownRules={rules} template={template} unit={unit} adding={addingArea} onAdding={setAddingArea} />
       {twice.length > 0 && (
@@ -142,9 +155,16 @@ export const OutstationPrices = ({ cardId, rules, areas, areaRules, unit, sectio
           {onTop.map((t) => `${townLabel(t.town)} (${t.areas.join(', ')})`).join(', ')}: {onTop.length === 1 ? 'its town price adds' : 'their town prices add'} on top of the area’s price — right for a fee such as customs, a double charge otherwise.
         </p>
       )}
-      {perOrder.length > 0 && <Bands cardId={cardId} title="Per order" bands={shownOrder} kind="per order" />}
+      {rows.length > 0 && (
+        <p className={HINT}>
+          {allJobs
+            ? <>Surcharges apply to: <span className="font-semibold text-ink">{jobsLabel(allJobs)}</span>. Open a town to change it.</>
+            : 'Surcharges apply to different jobs by town; each town shows its own. Open a town to change it.'}
+        </p>
+      )}
+      {perOrder.length > 0 && <Bands cardId={cardId} title="Per order" bands={shownOrder} kind="per order" showJobs={allJobs === null} />}
       {perTrip.length > 0
-        ? <Bands cardId={cardId} title="Per trip" bands={shownTrip} kind="per trip" />
+        ? <Bands cardId={cardId} title="Per trip" bands={shownTrip} kind="per trip" showJobs={allJobs === null} />
         : rows.length > 0 && (
           <p className="flex flex-wrap items-center gap-x-1.5 border-t border-border pt-2.5 text-[13px] text-ink-muted">
             Per trip: none ·

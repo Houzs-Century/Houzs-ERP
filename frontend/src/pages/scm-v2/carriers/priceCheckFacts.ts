@@ -5,7 +5,7 @@
 // answer grouped the way the tabs are. Pure.
 import type { CostBreakdown, CostLine, DeliveryFacts, RateArea, RateCard, RateRule } from '../../../vendor/scm/lib/delivery-rate-card-queries';
 import {
-  CATEGORY_LABEL, RULE_CATEGORY, RULE_LABEL, type RateRuleCategory,
+  CATEGORY_LABEL, RULE_CATEGORY, RULE_LABEL, type BillableJobType, type RateRuleCategory,
 } from '../../../vendor/scm/lib/rate-rule-taxonomy';
 import type { ChargingUnit } from './cardSettings';
 import { CATEGORY_ORDER, FLAT_ORDER, ordinal, type FlatRuleType } from './rateCardLayout';
@@ -21,6 +21,9 @@ export const countFact = (t: FlatRuleType): CountFact =>
   `${t.toLowerCase().replace(/_([a-z])/g, (_m, c: string) => c.toUpperCase())}Count` as CountFact;
 
 export interface PriceCheckForm {
+  /** The job being priced (owner 2026-11-18: every job, not only a delivery
+   *  order). An outstation price adds only to the jobs it applies to. */
+  job: BillableJobType;
   /** Sets or items — what a per-unit card counts. */
   count: string;
   /** Compartments of each sofa, comma-separated: "3, 6". */
@@ -30,7 +33,25 @@ export interface PriceCheckForm {
   town: string;
   counts: Partial<Record<FlatRuleType, string>>;
 }
-export const EMPTY_FORM: PriceCheckForm = { count: '1', sofas: '', town: '', counts: {} };
+export const EMPTY_FORM: PriceCheckForm = { job: 'DELIVERY', count: '1', sofas: '', town: '', counts: {} };
+
+/**
+ * The form after the job changes: a non-delivery job carries no sets, and its
+ * own count starts at 1 when the card prices it and the box is empty, so the
+ * answer is that one job; back on Delivery order, one set. The rule that prices
+ * a non-delivery job is named after it (rate-rule-taxonomy RULE_JOB_TYPE).
+ */
+export function withJob(form: PriceCheckForm, job: BillableJobType, priced: ReadonlySet<string>): PriceCheckForm {
+  /* The job left behind takes its count with it, so Setup's 1 does not ride into an ASSR - Service check. */
+  const counts = { ...form.counts };
+  if (form.job !== 'DELIVERY' && form.job !== job) delete counts[form.job as FlatRuleType];
+  if (job === 'DELIVERY') {
+    return { ...form, job, counts, count: form.count.trim() === '' || form.count.trim() === '0' ? '1' : form.count };
+  }
+  const own = job as FlatRuleType;
+  if (priced.has(own) && !(counts[own] ?? '').trim()) counts[own] = '1';
+  return { ...form, job, count: '0', counts };
+}
 
 /** A count box takes 0 to MAX_COUNT: a typo like 10000 sets would otherwise
  *  ask the engine for ten thousand lines on every keystroke. */
@@ -75,6 +96,9 @@ export function readFacts(
     if (priced.has(t)) facts[countFact(t)] = whole(t, form.counts[t] ?? '');
   }
   facts.destinationZone = form.town.trim() || null;
+  /* Delivery order is what the engine assumes when no job is named, so the
+     facts for one stay exactly what they were. */
+  if (form.job !== 'DELIVERY') facts.jobType = form.job;
   const area = areaOfTown(areas, form.town);
   if (area) facts.areaId = area.id;
   return Object.keys(errors).length ? { ok: false, errors } : { ok: true, facts };

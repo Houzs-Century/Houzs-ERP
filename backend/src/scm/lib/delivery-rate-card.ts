@@ -46,6 +46,7 @@
 // ---------------------------------------------------------------------------
 
 import { ZONE_SET } from './zone-classify';
+import { OUTSTATION_DEFAULT_APPLIES_TO } from './rate-rule-taxonomy';
 
 /** A place under a delivery zone: the town a card may price and the zone its
  *  postcodes fall in (null = in no zone, e.g. abroad). */
@@ -59,6 +60,9 @@ export interface PlaceSpec {
 export interface DeliveryStop {
   zone: string | null;
   addressText: string | null;
+  /** The job done at this address (a `scm.trip_stop_type` name). Absent or null
+   *  = a delivery order, which is every stop any caller sent before job types. */
+  jobType?: string | null;
 }
 
 /** The card-level dimensions the calculator needs (a subset of the stored card). */
@@ -128,6 +132,10 @@ export interface RateRuleSpec {
   zone?: string | null;
   /** The area this rule prices in (RateAreaSpec.id); null or absent = the card's own rule. */
   areaId?: string | null;
+  /** OUTSTATION / OUTSTATION_TRIP: the jobs this surcharge adds to. Absent or
+   *  empty = OUTSTATION_DEFAULT_APPLIES_TO (delivery orders), what it reached
+   *  before the setting existed. */
+  appliesTo?: readonly string[] | null;
   /** The price, integer sen. */
   amountSen: number;
 }
@@ -172,6 +180,9 @@ export interface DeliveryFacts {
    *  given, town and area names are read per address (see PLACES above) and
    *  destinationZone(s) / addressText are not read for them. */
   stops?: readonly DeliveryStop[] | null;
+  /** The job being priced when no stops are given (the Price check names one).
+   *  Absent = a delivery order. Only an outstation rule's appliesTo reads it. */
+  jobType?: string | null;
   disposeCount?: number | null;
   setupCount?: number | null;
   dismantleCount?: number | null;
@@ -280,7 +291,7 @@ export function chargingUnitLabel(card: Pick<RateCardSpec, 'basis' | 'aggregatio
 export function farthestZone(
   rules: readonly RateRuleSpec[],
   ruleType: 'OUTSTATION' | 'OUTSTATION_TRIP',
-  facts: Pick<DeliveryFacts, 'destinationZone' | 'destinationZones' | 'addressText' | 'stops'>,
+  facts: Pick<DeliveryFacts, 'destinationZone' | 'destinationZones' | 'addressText' | 'stops' | 'jobType'>,
   places?: readonly PlaceSpec[],
 ): string | null {
   if (facts.stops && facts.stops.length > 0) {
@@ -290,7 +301,8 @@ export function farthestZone(
     for (const r of rules) {
       const z = String(r.zone ?? '').trim().toUpperCase();
       if (r.ruleType !== ruleType || !z) continue;
-      if (!facts.stops.some((s) => reaches(z, s, homes))) continue;
+      /* A stop counts only for a job the rule applies to (Applies to). */
+      if (!facts.stops.some((s) => outstationApplies(r, s.jobType) && reaches(z, s, homes))) continue;
       const amount = intOf(r.amountSen);
       /* Ties keep the first rule, so a re-run prices the same. */
       if (!found || amount > found.amount) found = { zone: z, amount };
@@ -308,7 +320,7 @@ export function farthestZone(
   for (const raw of candidates) {
     const z = String(raw ?? '').trim().toUpperCase();
     if (!z) continue;
-    const rule = rules.find((r) => r.ruleType === ruleType && String(r.zone ?? '').toUpperCase() === z);
+    const rule = rules.find((r) => r.ruleType === ruleType && String(r.zone ?? '').toUpperCase() === z && outstationApplies(r, facts.jobType));
     const amount = rule ? intOf(rule.amountSen) : 0;
     /* Ties keep the FIRST seen so the result is deterministic — the whole point
        is that the same trip must not reconcile differently on a re-run. */
@@ -335,6 +347,18 @@ export function townsInAddress(
       const town = zone.replace(/[^A-Z0-9]+/g, ' ').trim();
       return town && text.includes(` ${town} `);
     });
+}
+
+/** The job a stop or a Price check names; absent = a delivery order. */
+const jobOf = (j: string | null | undefined): string => (j ? String(j).trim().toUpperCase() : 'DELIVERY');
+
+/** Whether an outstation rule adds to this job: the jobs it names, or the
+ *  default (delivery orders) when it names none. PURE. */
+export function outstationApplies(rule: Pick<RateRuleSpec, 'appliesTo'>, jobType: string | null | undefined): boolean {
+  const list: readonly string[] = rule.appliesTo && rule.appliesTo.length > 0
+    ? rule.appliesTo.map((t) => String(t).trim().toUpperCase())
+    : OUTSTATION_DEFAULT_APPLIES_TO;
+  return list.includes(jobOf(jobType));
 }
 
 const asWords = (v: unknown): string => ` ${String(v ?? '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim()} `;
@@ -379,7 +403,9 @@ export function areaOf(
   const areas = card.areas ?? [];
   if (areas.length === 0) return null;
   if (facts.areaId) return areas.find((a) => a.id === facts.areaId) ?? null;
-  const stops = facts.stops ?? [];
+  /* An area is found by the delivery orders' addresses, as it was before stops
+     carried other jobs; a setup stop in an area town does not move the ladder. */
+  const stops = (facts.stops ?? []).filter((s) => jobOf(s.jobType) === 'DELIVERY');
   const homes = placeZones(card.places);
   const text = asWords(facts.addressText);
   const inArea = (a: RateAreaSpec): boolean => (stops.length > 0
@@ -495,9 +521,16 @@ export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts, op
   // query, which is not the first stop on the route — it is arbitrary, so the
   // same trip could reconcile differently on a re-run. A Melaka->Johor trip
   // could be charged Melaka's RM300 when the lorry went to Johor.
-  const farZone = farthestZone(rules, 'OUTSTATION', facts, card.places);
+  /* Only the surcharges that apply to a job this drop or trip does (Applies to):
+     with every rule on its default that is every rule, as before. */
+  const homes = placeZones(card.places);
+  const appliesHere = (r: RateRuleSpec): boolean => (facts.stops && facts.stops.length > 0
+    ? facts.stops.some((st) => outstationApplies(r, st.jobType) && reaches(String(r.zone ?? ''), st, homes))
+    : outstationApplies(r, facts.jobType));
+  const surcharges = rules.filter((r) => (r.ruleType !== 'OUTSTATION' && r.ruleType !== 'OUTSTATION_TRIP') || appliesHere(r));
+  const farZone = farthestZone(surcharges, 'OUTSTATION', facts, card.places);
   if (farZone) {
-    const os = rulesOf('OUTSTATION').find((r) => String(r.zone ?? '').toUpperCase() === farZone);
+    const os = rulesOf('OUTSTATION').find((r) => String(r.zone ?? '').toUpperCase() === farZone && surcharges.includes(r));
     if (os) {
       lines.push({
         ruleType: 'OUTSTATION',
@@ -534,8 +567,8 @@ export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts, op
 
   // ── The fixed per-TRIP outstation fee (once per trip, not per drop) ───────
   if (opts.perTrip) {
-    const tripZone = farthestZone(rules, 'OUTSTATION_TRIP', facts, card.places);
-    const tripFee = tripOutstationFeeSen(rules, tripZone);
+    const tripZone = farthestZone(surcharges, 'OUTSTATION_TRIP', facts, card.places);
+    const tripFee = tripOutstationFeeSen(surcharges, tripZone);
     if (tripFee > 0) {
       lines.push({
         ruleType: 'OUTSTATION_TRIP',

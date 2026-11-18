@@ -54,7 +54,8 @@ import {
   type DeliveryStop,
   type PlaceSpec,
 } from '../lib/delivery-rate-card';
-import { RATE_RULE_TYPES } from '../lib/rate-rule-taxonomy';
+import { BILLABLE_JOB_TYPES, RATE_RULE_TYPES, appliesToOf, type BillableJobType } from '../lib/rate-rule-taxonomy';
+import { jobStopFacts, type TripStopRow } from '../lib/trip-stop-jobs';
 import { ZONE_SET, zoneForAddress } from '../lib/zone-classify';
 import { loadPlaces, placeName, placeRefusal } from './delivery-places';
 import { MAP_COLS, toPrefixMap, type MapRow } from './delivery-zones';
@@ -132,6 +133,9 @@ export function ruleOut(r: Row) {
     areaId: s(r.area_id),
     amountSen: Number(r.amount_sen ?? 0),
     params: (r.params ?? null) as Record<string, unknown> | null,
+    /* The jobs an outstation surcharge adds to (params.appliesTo, its default
+       when unset); null for every other rule. */
+    appliesTo: CARD_ONLY_TYPES.has(String(r.rule_type)) ? appliesToOf(r.params) : null,
     sortOrder: Number(r.sort_order ?? 0),
   };
 }
@@ -159,6 +163,7 @@ function toRuleSpecs(rules: ReturnType<typeof ruleOut>[]): RateRuleSpec[] {
     bracketMax: r.bracketMax,
     zone: r.zone,
     areaId: r.areaId,
+    appliesTo: r.appliesTo,
     amountSen: r.amountSen,
   }));
 }
@@ -422,8 +427,23 @@ const ruleCreateSchema = z.object({
   areaId: z.string().trim().min(1).max(64).nullable().optional(),
   amountSen: z.number().int().min(0),
   params: z.record(z.string(), z.unknown()).nullable().optional(),
+  /* OUTSTATION / OUTSTATION_TRIP: the jobs the surcharge adds to, kept in
+     params.appliesTo; null = back to the default (delivery orders). */
+  appliesTo: z.array(z.enum(BILLABLE_JOB_TYPES as unknown as [BillableJobType, ...BillableJobType[]])).min(1).nullable().optional(),
   sortOrder: z.number().int().optional(),
 });
+
+const APPLIES_TO_ONLY_SURCHARGE = {
+  error: 'applies_to_not_for_rule',
+  reason: 'Applies to is a setting of an outstation price. Every other price already names its job.',
+} as const;
+
+/** params with appliesTo set (a list) or removed (null). */
+function withAppliesTo(params: Record<string, unknown> | null, appliesTo: BillableJobType[] | null): Record<string, unknown> | null {
+  const { appliesTo: _old, ...rest } = params ?? {};
+  if (appliesTo) return { ...rest, appliesTo: BILLABLE_JOB_TYPES.filter((t) => appliesTo.includes(t)) };
+  return Object.keys(rest).length > 0 ? rest : null;
+}
 
 async function loadCardForWrite(c: any, id: string, companyId: number) {
   const sb = c.get('supabase');
@@ -457,6 +477,7 @@ deliveryRateCards.post('/:id/rules', async (c) => {
   const parsed = ruleCreateSchema.safeParse(body);
   if (!parsed.success) return c.json({ error: 'invalid_body', issues: parsed.error.issues }, 400);
   const p = parsed.data;
+  if (p.appliesTo != null && !CARD_ONLY_TYPES.has(p.ruleType)) return c.json(APPLIES_TO_ONLY_SURCHARGE, 400);
   if (!(await loadCardForWrite(c, id, co.companyId))) return c.json(NOT_THIS_COMPANY, 404);
   const noArea = await areaRefusal(c, id, co.companyId, p.areaId, p.ruleType);
   if (noArea) return c.json(noArea.body, noArea.status);
@@ -476,7 +497,7 @@ deliveryRateCards.post('/:id/rules', async (c) => {
     zone: (p.ruleType === 'OUTSTATION' || p.ruleType === 'OUTSTATION_TRIP') && p.zone ? p.zone.toUpperCase() : (p.zone ?? null),
     area_id: p.areaId ?? null,
     amount_sen: p.amountSen,
-    params: p.params ?? null,
+    params: p.appliesTo !== undefined ? withAppliesTo(p.params ?? null, p.appliesTo) : (p.params ?? null),
     sort_order: p.sortOrder ?? 0,
   }).select(RULE_COLS).single();
   if (error) {
@@ -534,6 +555,17 @@ deliveryRateCards.patch('/:id/rules/:ruleId', async (c) => {
   }
   if (p.amountSen !== undefined) updates.amount_sen = p.amountSen;
   if (p.params !== undefined) updates.params = p.params;
+  if (p.appliesTo !== undefined) {
+    /* Merged into the stored params, and only on an outstation price. */
+    const { data: held, error: heldErr } = await scopeToCompanyId(
+      rc(c.get('supabase')).from('delivery_rate_rules').select('rule_type, params').eq('id', ruleId).eq('card_id', id), co.companyId,
+    ).maybeSingle();
+    if (heldErr) return c.json({ error: 'read_failed', reason: heldErr.message }, 500);
+    if (!held) return c.json(NOT_THIS_COMPANY, 404);
+    if (!CARD_ONLY_TYPES.has(String(p.ruleType ?? (held as Row).rule_type))) return c.json(APPLIES_TO_ONLY_SURCHARGE, 400);
+    const base = p.params !== undefined ? p.params : ((held as Row).params ?? null) as Record<string, unknown> | null;
+    updates.params = withAppliesTo(base, p.appliesTo);
+  }
   if (p.sortOrder !== undefined) updates.sort_order = p.sortOrder;
   if (Object.keys(updates).length === 0) return c.json({ error: 'no_changes' }, 400);
   updates.updated_at = new Date().toISOString();
@@ -658,6 +690,8 @@ const factsSchema = z.object({
   destinationZone: z.string().trim().max(40).nullable().optional(),
   /* The Price check names the area to price in. */
   areaId: z.string().trim().min(1).max(64).nullable().optional(),
+  /* The job being priced (Delivery order when absent): an outstation price adds only to the jobs it applies to. */
+  jobType: z.enum(BILLABLE_JOB_TYPES as unknown as [BillableJobType, ...BillableJobType[]]).nullable().optional(),
   disposeCount: z.number().int().min(0).nullable().optional(),
   setupCount: z.number().int().min(0).nullable().optional(),
   dismantleCount: z.number().int().min(0).nullable().optional(),
@@ -689,7 +723,7 @@ deliveryRateCards.post('/:id/compute', async (c) => {
   const spec = toCardSpec(cardO, (rules ?? []).map(ruleOut), areas.areas, places.places);
   /* The destination it names is one stop, read in its zone (a town in its place's). */
   const stop = priceCheckStop(parsed.data.destinationZone, places.places);
-  const facts: DeliveryFacts = { ...parsed.data, ...(stop ? { stops: [stop] } : {}) };
+  const facts: DeliveryFacts = { ...parsed.data, ...(stop ? { stops: [{ ...stop, jobType: parsed.data.jobType ?? null }] } : {}) };
   /* perTrip: the calculator on the Rate Cards page could NEVER show an
      OUTSTATION_TRIP line — the rules editor let you create one and this
      endpoint never applied it, so the figure on screen silently disagreed
@@ -786,10 +820,15 @@ deliveryRateCards.get('/reconcile', async (c) => {
   // 3) Stops -> SO doc numbers per trip, then SO lines for set/zone derivation.
   const tripIds = trips.map((t) => String(t.id));
   const { data: stopData } = await sb.from('trip_stops')
-    .select('trip_id, stop_type, do_id, so_id').in('trip_id', tripIds);
+    .select('trip_id, stop_type, do_id, so_id, assr_case_id, address').in('trip_id', tripIds);
   const doIdsByTrip = new Map<string, string[]>();
   const allDoIds = new Set<string>();
+  /* Every stop, for the jobs that are not delivery orders (trip-stop-jobs.ts). */
+  const jobStopsByTrip = new Map<string, TripStopRow[]>();
   for (const st of (stopData ?? []) as Row[]) {
+    const jobRows = jobStopsByTrip.get(String(st.trip_id)) ?? [];
+    jobRows.push({ stopType: s(st.stop_type), doId: s(st.do_id), assrCaseId: s(st.assr_case_id), address: s(st.address) });
+    jobStopsByTrip.set(String(st.trip_id), jobRows);
     if (String(st.stop_type ?? '') !== 'DELIVERY') continue;
     const tripId = String(st.trip_id);
     const doId = s(st.do_id);
@@ -879,11 +918,15 @@ deliveryRateCards.get('/reconcile', async (c) => {
       const spec = toCardSpec(card, rulesByCard.get(card.id) ?? [], cardAreas.areas, places.places);
       /* Each drop's address with its postcode zone: a town counts only inside
          its own zone (Delivery Zones places), so Jalan Ipoh in KL is not Ipoh. */
-      const stops: DeliveryStop[] = soDocs.map((d) => ({ zone: zoneBySo.get(d) ?? null, addressText: addressBySo.get(d) ?? '' }));
+      const doStops: DeliveryStop[] = soDocs.map((d) => ({ zone: zoneBySo.get(d) ?? null, addressText: addressBySo.get(d) ?? '', jobType: 'DELIVERY' }));
+      /* The trip's other jobs: each one occurrence of its rule, and an address
+         an outstation price reaches only if it applies to that job. */
+      const jobs = jobStopFacts(jobStopsByTrip.get(tripId) ?? [], (address) => zoneForAddress({ postcode: null, address1: address, address2: null }, zoneMapRules).zone);
+      const stops: DeliveryStop[] = [...doStops, ...jobs.stops];
       /* perTrip: the FIXED per-trip outstation fee is now emitted INSIDE the
          calculator, before the min/cap/rounding envelope. It used to be added
          here afterwards, which let a capped card bill above its own cap. */
-      breakdown = computeDeliveryCost(spec, { setCount, dropCount, customerCount, destinationZone, destinationZones: zones, addressText: soDocs.map((d) => addressBySo.get(d) ?? '').join(' | '), stops }, { perTrip: true });
+      breakdown = computeDeliveryCost(spec, { setCount, dropCount, customerCount, destinationZone, destinationZones: zones, addressText: soDocs.map((d) => addressBySo.get(d) ?? '').join(' | '), stops, ...jobs.counts }, { perTrip: true });
       expectedSen = breakdown.totalSen;
     }
     const deltaSen = expectedSen == null ? null : billedSen - expectedSen;

@@ -1899,6 +1899,41 @@
       "check": "D2",
       "key": "COGS_ACCESSORIES,COGS_BEDFRAME,COGS_MATT_SOFA ~ COGS_ACCESSORIES,COGS_BEDFRAME,COGS_MATT_SOFA,SALES",
       "why": "NOT one rule at N-1 places: eventForecast.ts COGS_LINES is the three COGS lines a COGS Total adds up; FairReportFill.tsx CAT_LABEL labels the categories a fair report can be filled into, which include Sales. Different questions that share the COGS category names."
+    },
+    {
+      "check": "D1",
+      "key": "DELIVERY,DISMANTLE,INSPECTION,PICKUP,SERVICE,SETUP,SUPPLIER_PICKUP,TRANSFER|backend/src/scm/lib/rate-rule-taxonomy.ts frontend/src/vendor/scm/lib/rate-rule-taxonomy.ts",
+      "why": "THE BILLABLE JOBS (BILLABLE_JOB_TYPES and their DP names, JOB_LABEL) in the rate-rule taxonomy and its frontend mirror, which cannot share a module across the FE/BE boundary. The backend test delivery-rate-card.jobs.test.ts holds BILLABLE_JOB_TYPES to DISPATCHABLE_JOB_TYPES less NON_BILLABLE_JOB_TYPES; the server refuses an appliesTo outside its own list. Cost of divergence is a tick the editor shows that the server refuses with 400, never a wrong price."
+    },
+    {
+      "check": "D2",
+      "key": "DELIVERY,DISMANTLE,INSPECTION,LORRY_SERVICE,PICKUP,SERVICE,SETUP,SUPPLIER_PICKUP,TRANSFER ~ DELIVERY,DISMANTLE,INSPECTION,PICKUP,SERVICE,SETUP,SUPPLIER_PICKUP,TRANSFER",
+      "why": "DISPATCHABLE vs BILLABLE JOBS, different by LORRY_SERVICE on purpose: we pay the workshop for a lorry service, no carrier bills us for it (NON_BILLABLE_JOB_TYPES). delivery-rate-card.jobs.test.ts asserts BILLABLE = DISPATCHABLE less NON_BILLABLE, so a new job type that is billable fails there until it is added."
+    },
+    {
+      "check": "D2",
+      "key": "DELIVERY,DISMANTLE,INSPECTION,PICKUP,SERVICE,SETUP,SUPPLIER_PICKUP,TRANSFER ~ DISMANTLE,INSPECTION,PICKUP,SERVICE,SETUP,SUPPLIER_PICKUP,TRANSFER",
+      "why": "THE BILLABLE JOBS vs the jobs a trip stop COUNTS (trip-stop-jobs.ts JOB_COUNT_FACT), different by DELIVERY on purpose: a delivery order is priced from its DO lines by the set ladder, never as an occurrence count. JOB_COUNT_FACT is typed Record<Exclude<BillableJobType, DELIVERY>, ...>, so a new billable job fails typecheck until it has a count."
+    },
+    {
+      "check": "D2",
+      "key": "DISMANTLE,DISPOSE,INSPECTION,PICKUP,SERVICE,SETUP,SUPPLIER_PICKUP,TRANSFER ~ DISMANTLE,INSPECTION,PICKUP,SERVICE,SETUP,SUPPLIER_PICKUP,TRANSFER",
+      "why": "THE JOBS A TRIP STOP COUNTS vs the flat price tiles (rateCardLayout FLAT_ORDER), different by DISPOSE on purpose: dispose is an add-on carried by a delivery, not a job a stop is dispatched for, so no stop counts it. Cost of divergence is none; the tile list is what a card can price, the count list is what a stop can be."
+    },
+    {
+      "check": "D2",
+      "key": "DELIVERY,DISMANTLE,INSPECTION,LORRY_SERVICE,PICKUP,SERVICE,SETUP,SUPPLIER_PICKUP,TRANSFER ~ DISMANTLE,INSPECTION,PICKUP,SERVICE,SETUP,SUPPLIER_PICKUP,TRANSFER",
+      "why": "DISPATCHABLE JOBS vs the jobs a trip stop COUNTS (trip-stop-jobs.ts JOB_COUNT_FACT): DELIVERY is priced from DO lines, LORRY_SERVICE is not billable. JOB_COUNT_FACT is typed off BillableJobType, so a new billable job fails typecheck until it has a count."
+    },
+    {
+      "check": "D2",
+      "key": "DELIVERY,DISMANTLE,INSPECTION,PICKUP,SERVICE,SETUP,SUPPLIER_PICKUP,TRANSFER ~ DISMANTLE,DISPOSE,INSPECTION,PICKUP,SERVICE,SETUP,SUPPLIER_PICKUP,TRANSFER",
+      "why": "THE BILLABLE JOBS vs the flat price tiles (rateCardLayout FLAT_ORDER): a delivery order is priced by the set ladder, not a flat tile, and DISPOSE is a tile that is not a job. Two different questions, which jobs exist and which prices are one amount."
+    },
+    {
+      "check": "D2",
+      "key": "DELIVERY,DISMANTLE,INSPECTION,PICKUP,SERVICE,SETUP,SUPPLIER_PICKUP,TRANSFER ~ DELIVERY,INSPECTION,PICKUP,SERVICE,SUPPLIER_PICKUP,TRANSFER",
+      "why": "THE BILLABLE JOBS vs POSTCODE_REQUIRED_JOB_TYPES (dp-postcode-rule.ts): which jobs a carrier is paid for, and which DP jobs must carry a postcode before they are saved. Different questions: the postcode rule leaving setup and dismantle out never stops a carrier being paid for them."
     }
   ]
 }

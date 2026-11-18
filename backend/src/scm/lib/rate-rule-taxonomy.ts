@@ -82,10 +82,10 @@ export const CATEGORY_LABEL: Record<RateRuleCategory, string> = {
 };
 
 export const CATEGORY_HINT: Record<RateRuleCategory, string> = {
-  DELIVERY: 'What it costs to deliver the goods — priced by position, with sofas on their own bracket.',
-  SITE_WORK: 'Work done at the address, charged per occurrence.',
-  SERVICE_CALL: 'A trip made for a reason other than delivering an order.',
-  OUTSTATION: 'Distance surcharges by destination zone. Per order, per trip, or both.',
+  DELIVERY: 'Prices the Delivery order job: by position, with sofas on their own bracket.',
+  SITE_WORK: 'Prices the Setup and Dismantle jobs, each time one is done.',
+  SERVICE_CALL: 'Prices the Supplier, Transfer item and ASSR (Inspection, Pickup, Service) jobs, each time one is done.',
+  OUTSTATION: 'A surcharge by the area a job goes to: its postcode zone or a town. Per order, per trip, or both.',
 };
 
 /** rule type -> its group. The single place this mapping exists. */
@@ -114,11 +114,11 @@ export const RULE_LABEL: Record<RateRuleType, string> = {
   DISPOSE: 'Dispose',
   SETUP: 'Setup',
   DISMANTLE: 'Dismantle',
-  SERVICE: 'Service',
-  PICKUP: 'Pickup',
-  INSPECTION: 'Inspection',
-  SUPPLIER_PICKUP: 'Supplier pickup',
-  TRANSFER: 'Transfer',
+  SERVICE: 'ASSR - Service',
+  PICKUP: 'ASSR - Pickup',
+  INSPECTION: 'ASSR - Inspection',
+  SUPPLIER_PICKUP: 'Supplier',
+  TRANSFER: 'Transfer item',
   OUTSTATION: 'Outstation zone (per order)',
   OUTSTATION_TRIP: 'Outstation trip (fixed, per trip)',
 };
@@ -171,4 +171,47 @@ export function rulesByCategory(): Array<{ category: RateRuleCategory; types: Ra
  *  dispatch this — can we charge for it?" without hand-maintaining a list. */
 export function pricedJobTypes(): string[] {
   return [...new Set(Object.values(RULE_JOB_TYPE).filter((v): v is string => v !== null))];
+}
+
+/**
+ * The jobs a card can price, in the order Delivery Planning's New DP Order menu
+ * lists them (owner 2026-11-18: "the rate card is bound to all my jobs"). The
+ * dispatchable jobs less the non-billable ones (LORRY_SERVICE); spelled as
+ * `scm.trip_stop_type` spells them. The three ASSR legs ride PICKUP (customer
+ * pickup), INSPECTION and SERVICE (the delivery back, which DP calls ASSR - Service).
+ */
+export const BILLABLE_JOB_TYPES = [
+  'DELIVERY', 'SETUP', 'DISMANTLE', 'SUPPLIER_PICKUP', 'TRANSFER', 'INSPECTION', 'PICKUP', 'SERVICE',
+] as const;
+export type BillableJobType = (typeof BILLABLE_JOB_TYPES)[number];
+
+/** A job's name as Delivery Planning shows it. */
+export const JOB_LABEL: Record<BillableJobType, string> = {
+  DELIVERY: 'Delivery order',
+  SETUP: 'Setup',
+  DISMANTLE: 'Dismantle',
+  SUPPLIER_PICKUP: 'Supplier',
+  TRANSFER: 'Transfer item',
+  INSPECTION: 'ASSR - Inspection',
+  PICKUP: 'ASSR - Pickup',
+  SERVICE: 'ASSR - Service',
+};
+
+/**
+ * Which jobs an outstation price adds to when the rule names none: delivery
+ * orders. That is all it ever reached before the setting existed — the 3PL
+ * invoices tab and the trip reconciliation priced delivery orders alone — so a
+ * card saved before it prices exactly as it did.
+ */
+export const OUTSTATION_DEFAULT_APPLIES_TO: readonly BillableJobType[] = ['DELIVERY'];
+
+const BILLABLE_SET: ReadonlySet<string> = new Set(BILLABLE_JOB_TYPES);
+
+/** The jobs an outstation rule applies to, read from its stored `params.appliesTo`.
+ *  Unknown names are dropped; nothing left reads as the default. PURE. */
+export function appliesToOf(params: unknown): BillableJobType[] {
+  const raw = params && typeof params === 'object' ? (params as Record<string, unknown>).appliesTo : null;
+  const list = Array.isArray(raw) ? raw.map((v) => String(v).toUpperCase()).filter((v) => BILLABLE_SET.has(v)) : [];
+  const picked = BILLABLE_JOB_TYPES.filter((t) => list.includes(t));
+  return picked.length > 0 ? picked : [...OUTSTATION_DEFAULT_APPLIES_TO];
 }
