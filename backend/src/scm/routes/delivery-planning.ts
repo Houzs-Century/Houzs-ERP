@@ -1101,7 +1101,7 @@ deliveryPlanning.get('/geo', async (c) => {
       country: r.customerCountry ?? r.customer_country ?? null,
     });
     addrByDoc.set(dn, addr);
-    candidatesByDoc.set(dn, soCandidates(addr, r.postcode, r.customerState ?? r.customer_state ?? null));
+    candidatesByDoc.set(dn, soCandidates(addr, r.postcode, r.customerState ?? r.customer_state ?? null, r.customerCountry ?? r.customer_country ?? null));
   }
   const located = await locateStops(sb, c.env, candidatesByDoc);
 

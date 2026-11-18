@@ -10,7 +10,7 @@
 //
 // THREE LAYERS (owner 2026-11-18, forecastLayers.ts): when the server sends
 // `layers`, the Total Sales column shows each line's best figure so far — the
-// actual, else the typed Forecast, else the last same-organiser-same-venue
+// actual, else the typed Forecast, else the last same-organiser-venue-and-brand
 // event's actual — tagged "Forecast" / "Last event", and its totals say when
 // they include an estimate. A line's label opens its Forecast to set or clear.
 // ----------------------------------------------------------------------------

@@ -17,12 +17,12 @@ beforeAll(async () => {
 });
 
 const tag = Math.random().toString(36).slice(2, 8);
-async function project(o: { company: number; organizer: string | null; venue: string | null; start: string | null; status?: string; archived?: boolean }): Promise<number> {
+async function project(o: { company: number; organizer: string | null; venue: string | null; start: string | null; status?: string; archived?: boolean; brand?: string }): Promise<number> {
   const r = await env.DB.prepare(
-    `INSERT INTO projects (code, name, stage, status, start_date, organizer, venue, company_id, archived_at)
-     VALUES (?, ?, 'draft', ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO projects (code, name, stage, status, start_date, organizer, venue, company_id, archived_at, brand)
+     VALUES (?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?)`,
   ).bind(`FC-${tag}-${Math.random().toString(36).slice(2, 8)}`, "Fair", o.status ?? "pending", o.start, o.organizer, o.venue, o.company,
-    o.archived ? "2026-01-01 00:00:00" : null).run();
+    o.archived ? "2026-01-01 00:00:00" : null, o.brand ?? "AKEMI").run();
   return r.meta.last_row_id as number;
 }
 
@@ -36,9 +36,10 @@ describe("findLastEvent — the SQL narrowing", () => {
     await project({ company: 2, organizer: org, venue: "MITEC", start: "2026-10-01" });
     await project({ company: 1, organizer: org, venue: "KLCC", start: "2026-10-01" });
     await project({ company: 1, organizer: org, venue: "MITEC", start: "2027-02-01" });
+    await project({ company: 1, organizer: org, venue: "MITEC", start: "2026-11-01", brand: "ZANOTTI" });
     const cur = await project({ company: 1, organizer: org, venue: "MITEC", start: "2026-12-05" });
 
-    const got = await findLastEvent(env.DB, { id: cur, company_id: 1, organizer: org, venue: "MITEC", start_date: "2026-12-05" });
+    const got = await findLastEvent(env.DB, { id: cur, company_id: 1, organizer: org, venue: "MITEC", start_date: "2026-12-05", brand: "AKEMI" });
     expect(got?.id).toBe(latest);
     expect(got?.id).not.toBe(older);
   });
@@ -47,8 +48,8 @@ describe("findLastEvent — the SQL narrowing", () => {
     const org = `Lonely ${tag}`;
     const cur = await project({ company: 1, organizer: org, venue: "SPICE", start: "2026-12-05" });
     await project({ company: 1, organizer: "Someone else", venue: "SPICE", start: "2026-01-05" });
-    expect(await findLastEvent(env.DB, { id: cur, company_id: 1, organizer: org, venue: "SPICE", start_date: "2026-12-05" })).toBeNull();
-    expect(await findLastEvent(env.DB, { id: cur, company_id: 1, organizer: null, venue: "SPICE", start_date: "2026-12-05" })).toBeNull();
+    expect(await findLastEvent(env.DB, { id: cur, company_id: 1, organizer: org, venue: "SPICE", start_date: "2026-12-05", brand: "AKEMI" })).toBeNull();
+    expect(await findLastEvent(env.DB, { id: cur, company_id: 1, organizer: null, venue: "SPICE", start_date: "2026-12-05", brand: "AKEMI" })).toBeNull();
   });
 });
 

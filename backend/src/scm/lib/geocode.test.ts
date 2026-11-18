@@ -60,3 +60,10 @@ describe('parseGeocode', () => {
     expect(parseGeocode({ status: 'OK', results: [{ geometry: {} }] })).toBeNull();
   });
 });
+
+describe('buildGeocodeUrl — Singapore', () => {
+  it('a Singapore address is searched in Singapore, a Malaysian one in Malaysia', () => {
+    expect(buildGeocodeUrl('621 Woodlands Drive 52, 730621, Singapore', 'K')).toContain('components=country:SG');
+    expect(buildGeocodeUrl('12 Jalan A, 53100, Kuala Lumpur, Malaysia', 'K')).toContain('components=country:MY');
+  });
+});

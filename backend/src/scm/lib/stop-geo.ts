@@ -115,13 +115,16 @@ export function placeCandidates(p: StopPlace): GeoCandidate[] {
 /** A sales order's addresses: the composed address the scheduler and the geo
  *  feed have always cached (kept byte-for-byte for cache parity), then its
  *  postcode area. PURE. */
-export function soCandidates(composed: string, postcode: string | null, state: string | null): GeoCandidate[] {
+export function soCandidates(composed: string, postcode: string | null, state: string | null, country: string | null): GeoCandidate[] {
   const out: GeoCandidate[] = [];
   if (composed.trim() !== '') out.push({ address: composed, approximate: false });
   const pc = tidy(postcode);
   if (pc !== '') {
-    const area = [pc, tidy(state), 'Malaysia'].filter(Boolean).join(', ');
-    if (normalizeAddress(area) !== normalizeAddress(composed)) out.push({ address: area, approximate: true });
+    /* A Singapore postcode names one building, so "730621, Singapore" lands on
+       the door even when the street is misspelt; a Malaysian one is an area. */
+    const sg = /singapore/i.test(tidy(country)) || /^\d{6}$/.test(pc);
+    const area = sg ? `${pc}, Singapore` : [pc, tidy(state), 'Malaysia'].filter(Boolean).join(', ');
+    if (normalizeAddress(area) !== normalizeAddress(composed)) out.push({ address: area, approximate: !sg });
   }
   return out;
 }

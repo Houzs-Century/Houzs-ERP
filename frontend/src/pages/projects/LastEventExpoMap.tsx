@@ -1,4 +1,4 @@
-// "From last event" — the previous same-organiser-same-venue event's Expo Map
+// "From last event" — the previous same-organiser-venue-and-brand event's Expo Map
 // files (Blank / Filled Floorplan), shown read-only in this event's EXPO MAP
 // section while it has none of its own (owner 2026-11-18). The server decides
 // which event and whether to send it (backend services/eventForecastLoad.ts).
