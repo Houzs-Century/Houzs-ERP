@@ -863,8 +863,27 @@ export async function renderDeliveryOrderInto(
     const pageOf = { page: p - startPage + 1, total };
     if (p === pageCount) drawClosing(doc, header, pageOf);
     else drawFooterOnly(doc, header, pageOf);
+    if (isDraftDo(header.status)) drawDraftWatermark(doc);
   }
   setInk(doc, T.ink);
+}
+
+/* A DRAFT DO can go out with the lorry before its goods are received and
+   confirmed (owner 2026-11-18), so its paper says DRAFT across every page and
+   can never pass for the shipped document. Same mark as a draft credit note. */
+export const isDraftDo = (status: string | null | undefined): boolean => String(status ?? '').toUpperCase() === 'DRAFT';
+
+export function drawDraftWatermark(doc: Pick<Doc, 'saveGraphicsState' | 'setGState' | 'GState' | 'setFont' | 'setFontSize' | 'setTextColor' | 'text' | 'restoreGraphicsState' | 'internal'>): void {
+  const pageW = doc.internal.pageSize.getWidth();
+  const pageH = doc.internal.pageSize.getHeight();
+  doc.saveGraphicsState();
+  doc.setGState(doc.GState({ opacity: 0.14 }));
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(72);
+  doc.setTextColor(180, 30, 30);
+  doc.text('DRAFT', pageW / 2, pageH / 2, { align: 'center', angle: 30 });
+  doc.restoreGraphicsState();
+  doc.setTextColor(0, 0, 0);
 }
 
 /* Single DO → its own file (unchanged behaviour). */
