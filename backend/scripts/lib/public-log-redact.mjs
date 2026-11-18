@@ -13,8 +13,14 @@ function parts(key) {
   return String(key).split(/_+|(?<=[a-z0-9])(?=[A-Z])/).map((p) => p.toLowerCase()).filter(Boolean);
 }
 
+// A key ending in a money unit is money whatever counts it names first:
+// `lines_sen` (a sum of line costs) once read as a count because of "lines",
+// and order costs went out unredacted (repair-sofa-combo-set-cost, 2026-11-18).
+const UNIT_PARTS = new Set(["sen", "rm", "myr"]);
+
 export function isMoneyKey(key) {
   const p = parts(key);
+  if (UNIT_PARTS.has(p[p.length - 1])) return true;
   return p.some((x) => MONEY_PARTS.has(x)) && !p.some((x) => COUNT_PARTS.has(x));
 }
 
@@ -57,6 +63,7 @@ const PROBES = [
   ["qty 3  price 4500  total 9000", "qty 3  price [hidden]  total 9000"],
   ["cost 12.5 RM", "cost [hidden] RM"],
   ["discount_sen 300 cost_count 4", "discount_sen [hidden] cost_count 4"],
+  ["vs lines_sen=900; sofa_lines_sen=900; lines=3", "vs lines_sen=[hidden]; sofa_lines_sen=[hidden]; lines=3"],
   ["lots=12 qty=3 costless_count=4 2026-11-10T12:00:00.000Z 12.5%", "lots=12 qty=3 costless_count=4 2026-11-10T12:00:00.000Z 12.5%"],
 ];
 export function selfTest() {
