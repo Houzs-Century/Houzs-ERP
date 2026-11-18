@@ -195,7 +195,7 @@ list. Holding `projects.write` escapes crew scoping entirely on both.
   `services/eventForecast.ts`, reads `eventForecastLoad.ts`): the event's actual, else its typed
   Forecast (`project_forecast`, `PUT|DELETE /api/project-forecast/:id/:line`, `projects.write` +
   finance viewer), else - only until the event ends - the ACTUAL of the latest earlier event with the
-  same company, organiser and venue (trimmed, case-insensitive, as `project-venue-join.ts`). No such
+  same company, organiser, venue and brand (trimmed, case-insensitive, as `project-venue-join.ts`). No such
   event = no layer, never another venue. Totals add the shown lines and flag estimates. Project
   Overview layers its column the same way and splits totals Actual / Forecast / Last event; that
   event's Expo Map files show read-only in this event's EXPO MAP section while it has none.

@@ -231,7 +231,7 @@ async function buildProjectOverview(c: Context<{ Bindings: Env; Variables: Varia
   const pnls: Map<number, PnlWithLines> = pnlRead.ok ? pnlRead.byId : new Map();
   /* The three layers (owner 2026-11-18; services/eventForecast.ts) over the
      column the page reads: the event's own figure, else its typed Forecast,
-     else - while it has not ended - the last same-organiser-same-venue event's
+     else - while it has not ended - the last same-organiser-venue-and-brand event's
      actual, from that event's same column. */
   let forecasts: Awaited<ReturnType<typeof readForecasts>>;
   try {

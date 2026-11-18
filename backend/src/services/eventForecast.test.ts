@@ -23,9 +23,9 @@ const LAST = col([
 const EMPTY = col([], null);
 
 describe('pickLastEvent — the most recent EARLIER event, same company, organiser and venue', () => {
-  const cur: BaselineCandidate = { id: 10, company_id: 1, organizer: 'Expo Sdn Bhd', venue: 'MITEC', start_date: '2026-12-05' };
+  const cur: BaselineCandidate = { id: 10, company_id: 1, organizer: 'Expo Sdn Bhd', venue: 'MITEC', start_date: '2026-12-05', brand: 'AKEMI' };
   const c = (o: Partial<BaselineCandidate> & { id: number }): BaselineCandidate =>
-    ({ company_id: 1, organizer: 'Expo Sdn Bhd', venue: 'MITEC', start_date: '2026-06-01', ...o });
+    ({ company_id: 1, organizer: 'Expo Sdn Bhd', venue: 'MITEC', start_date: '2026-06-01', brand: 'AKEMI', ...o });
 
   it('takes the latest one before, matching case and spaces the way the venue join does', () => {
     const got = pickLastEvent(cur, [
@@ -47,6 +47,13 @@ describe('pickLastEvent — the most recent EARLIER event, same company, organis
       c({ id: 2, organizer: 'Other Org' }),
       c({ id: 3, venue: 'KLCC' }),
     ])).toBeNull();
+  });
+
+  it('only the same brand counts: another brand at the same fair is never taken', () => {
+    const cands = [c({ id: 89, start_date: '2026-06-10', brand: 'akemi ' }), c({ id: 90, start_date: '2026-06-10', brand: 'ZANOTTI' }), c({ id: 95, start_date: '2026-09-01', brand: 'ZANOTTI' })];
+    expect(pickLastEvent(cur, cands)?.id).toBe(89);
+    expect(pickLastEvent({ ...cur, brand: 'DUNLOPILLO' }, cands)).toBeNull();
+    expect(pickLastEvent({ ...cur, brand: null }, cands)).toBeNull();
   });
 
   it('none found when the event has no organiser, venue, start or company', () => {

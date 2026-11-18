@@ -12,7 +12,7 @@
 //                  the rate card on real sales). It beats both, as soon as it
 //                  exists for that line.
 //
-// No earlier same-organiser-same-venue event = no Last event layer: nothing is
+// No earlier same-organiser-venue-and-brand event = no Last event layer: nothing is
 // borrowed from another venue. The totals (COGS Total, GP, Total Cost, Net
 // Profit) are added up from the shown lines and say whether they include an
 // estimate; `split` cuts Sales, Cost and Net Profit by layer for the reports.
@@ -182,6 +182,9 @@ export type BaselineCandidate = {
   organizer: string | null;
   venue: string | null;
   start_date: string | null;
+  /** The brand (AKEMI, ZANOTTI...): an earlier event of the SAME brand wins over
+   *  one of another brand at the same fair (owner 2026-11-18). */
+  brand: string | null;
 };
 
 /** A venue / organiser compared the way a project's venue meets the venue
@@ -192,19 +195,22 @@ const isDay = (v: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(v);
 
 /**
  * The last event for `current`: the candidate of the SAME company, SAME
- * organiser and SAME venue whose start date is the latest one BEFORE the
- * current event's start (a tie goes to the higher id). Null when the current
- * event has no organiser, venue, start date or company, or no candidate fits.
+ * organiser, SAME venue and SAME brand whose start date is the latest one BEFORE
+ * the current event's start (a tie goes to the higher id). Brands at one fair
+ * sell very differently, so another brand never counts (owner 2026-11-18:
+ * "organiser + venue + branding"). Null when the current event has no organiser,
+ * venue, brand, start date or company, or no candidate fits.
  */
 export function pickLastEvent<T extends BaselineCandidate>(current: BaselineCandidate, candidates: readonly T[]): T | null {
   const org = matchKey(current.organizer);
   const venue = matchKey(current.venue);
+  const brand = matchKey(current.brand);
   const start = day(current.start_date);
-  if (!org || !venue || !isDay(start) || current.company_id == null) return null;
+  if (!org || !venue || !brand || !isDay(start) || current.company_id == null) return null;
   let best: T | null = null;
   for (const c of candidates) {
     if (c.id === current.id || c.company_id !== current.company_id) continue;
-    if (matchKey(c.organizer) !== org || matchKey(c.venue) !== venue) continue;
+    if (matchKey(c.organizer) !== org || matchKey(c.venue) !== venue || matchKey(c.brand) !== brand) continue;
     const s = day(c.start_date);
     if (!isDay(s) || s >= start) continue;
     const b = best ? day(best.start_date) : '';
@@ -234,15 +240,9 @@ export function lastEventsOf<T extends BaselineCandidate>(rows: readonly T[]): M
   }
   const out = new Map<number, T>();
   for (const g of groups.values()) {
-    g.sort((a, b) => day(a.start_date).localeCompare(day(b.start_date)) || a.id - b.id);
-    let best: T | null = null; // the latest event that started strictly before the run below
-    for (let i = 0; i < g.length;) {
-      const s = day(g[i]!.start_date);
-      let j = i;
-      while (j < g.length && day(g[j]!.start_date) === s) j++;
-      if (best) for (let k = i; k < j; k++) out.set(g[k]!.id, best);
-      best = g[j - 1]!;
-      i = j;
+    for (const r of g) {
+      const last = pickLastEvent(r, g);
+      if (last) out.set(r.id, last);
     }
   }
   return out;
