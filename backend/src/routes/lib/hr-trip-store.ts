@@ -3,11 +3,12 @@
  * and each driver's missed working days (no hours logged and no leave keyed
  * on the Attendance tab, or HR's own count when the punches cannot say). Used by the Trip Pay tab, by payroll
  * (the trip month of the same name lands on that payslip) and by My pay.
- * Also reads Delivery Planning's lorry runs into rows. */
+ * Also reads Delivery Planning's lorry runs and the delivery orders our lorries ran into rows. */
 import { and, asc, eq, gte, inArray, isNotNull, isNull, lte, ne, sql } from "drizzle-orm";
 import { APPROVED_LEAVE_STATUSES } from "../../scm/shared/hr-attendance";
 import { asDate } from "./hr-attendance-view";
 import { ASSR_LEG_BY_STOP, assrBoardLocation } from "../../scm/lib/assr-board-scope";
+import { doCountsAsDelivered } from "../../scm/shared/do-shipped-states";
 import { getDb } from "../../db/client";
 import { hr_attendance, hr_employees, hr_payslips, hr_public_holidays, hr_trip_missed_days, hr_trip_rate_versions, hr_trip_rows, hr_working_hours } from "../../db/schema";
 import {
@@ -246,6 +247,8 @@ const CASE_LEG_KIND: Partial<Record<string, TripJobType>> = { customer_pickup: "
 
 export type PlanningStop = {
   stop_id: string;
+  /** The DO the stop delivers (null for a job that is not a DO). */
+  do_id: string | null;
   stop_type: string;
   trip_id: string;
   trip_date: string;
@@ -348,6 +351,115 @@ export function planningRowOf(s: PlanningStop, who: (id: string | null) => Seat)
   };
 }
 
+/** A delivery order as Trip Pay reads it: the DO itself, its crew record
+ *  (scm.delivery_order_crew) and the lorry that crew names. */
+export type PlanningDo = {
+  do_id: string;
+  do_number: string | null;
+  so_doc_no: string | null;
+  debtor_name: string | null;
+  do_status: string | null;
+  /** The SO's due date (amended, else the customer's): the day Last Mile puts it on the lorry. */
+  so_due_date: string | null;
+  /** This is its SO's newest live DO (not cancelled, newest created_at, ties by id), the one Last Mile shows. */
+  is_latest_live: boolean | null;
+  /** The Malaysia date of delivered_at. */
+  delivered_day: string | null;
+  do_date: string | null;
+  local_total_sen: string | number | null;
+  do_state: string | null;
+  do_postcode: string | null;
+  is_dropship: boolean | null;
+  /** A 3PL carrier billed this DO (scm.threepl_do_charges). */
+  has_3pl: boolean | null;
+  /** A stop on a trip that is not cancelled carries this DO: that stop is its row. */
+  on_live_trip: boolean | null;
+  /** The plate typed on the crew record, and the lorry master it resolves to. */
+  crew_plate: string | null;
+  lorry_plate: string | null;
+  lorry_internal: boolean | null;
+  d1: string | null;
+  d2: string | null;
+  h1: string | null;
+  h2: string | null;
+  d1_name: string | null;
+  d2_name: string | null;
+  h1_name: string | null;
+  h2_name: string | null;
+};
+
+const ymdOf = (v: string | null): string | null => (/^\d{4}-\d{2}-\d{2}/.test(String(v ?? "")) ? String(v).slice(0, 10) : null);
+
+/** The day a DO ran, the day Last Mile shows it on its lorry: an SO assigned to a
+ *  lorry with no trip sits on the lorry's card on the SO's due date (amended, else
+ *  the customer's; lorry-day-runs.ts, isAssignedNoTripRow), shown with its newest
+ *  live DO. An older DO of the SO (a partial delivery Last Mile no longer shows)
+ *  ran the day it was delivered (Malaysia date), else its DO date. Pure. */
+export function doRunDate(d: Pick<PlanningDo, "so_due_date" | "is_latest_live" | "delivered_day" | "do_date">): string | null {
+  const due = ymdOf(d.so_due_date);
+  if (d.is_latest_live === true && due) return due;
+  return ymdOf(d.delivered_day) ?? ymdOf(d.do_date);
+}
+
+/** Does this DO count as a run of one of our own lorries? Shipped (not draft,
+ *  not cancelled), a run date, not drop-shipped, not billed by a 3PL, a lorry on
+ *  its crew that is not an outsourced lorry, and on no live trip stop (`stopDoIds`
+ *  or `on_live_trip`: that stop is its row). Pure. */
+export function isOwnLorryDoRun(d: PlanningDo, stopDoIds: ReadonlySet<string>): boolean {
+  if (!doCountsAsDelivered(d.do_status) || !doRunDate(d)) return false;
+  if (d.is_dropship === true || d.has_3pl === true || d.lorry_internal === false) return false;
+  if (!(d.lorry_plate || d.crew_plate || "").trim()) return false;
+  return d.on_live_trip !== true && !stopDoIds.has(d.do_id);
+}
+
+/** Each delivery order our own lorries ran on a day of [first, last], as a
+ *  Delivery order row: the date is its run date (doRunDate), the amount its Local
+ *  Total, state and postcode its own, crew its crew record (driver 1 falling back
+ *  to the DO's own driver; a seat with no master id keeps the name typed on the
+ *  record). Delivery orders reach Last Mile through their crew, not through trip
+ *  stops, so this is where commission comes from. Pure. */
+export function deliveryOrderRows(
+  dos: ReadonlyArray<PlanningDo>,
+  first: string,
+  last: string,
+  stopDoIds: ReadonlySet<string>,
+  who: (id: string | null, name: string | null) => Seat,
+): SourceRow[] {
+  return dos
+    .filter((d) => isOwnLorryDoRun(d, stopDoIds))
+    .flatMap((d): SourceRow[] => {
+      const date = doRunDate(d) ?? "";
+      if (date < first || date > last) return [];
+      const [d1, d2, h1, h2] = [who(d.d1, d.d1_name), who(d.d2, d.d2_name), who(d.h1, d.h1_name), who(d.h2, d.h2_name)];
+      const plate = (d.lorry_plate || d.crew_plate || "").trim();
+      return [{
+        source: "PLANNING",
+        source_ref: `do:${d.do_id}`,
+        trip_date: date,
+        doc_no: d.so_doc_no ?? d.do_number ?? d.debtor_name ?? "",
+        transfer_to: d.do_number ?? "",
+        ref_no: d.do_number ?? "",
+        kind: kindOfJobType("DELIVERY_ORDER"),
+        job_type: "DELIVERY_ORDER",
+        event_type: null,
+        local_total_sen: Math.max(0, Math.round(Number(d.local_total_sen ?? 0)) || 0),
+        state: d.do_state ?? "",
+        postcode: d.do_postcode ?? "",
+        lorry_plate: plate,
+        trip_ref: `do-run:${plate.replace(/\s+/g, "").toUpperCase()}:${date}`,
+        venue_key: "",
+        driver_1_name: d1.name,
+        driver_2_name: d2.name,
+        helper_1_name: h1.name,
+        helper_2_name: h2.name,
+        driver_1_employee_id: d1.employeeId,
+        driver_2_employee_id: d2.employeeId,
+        helper_1_employee_id: h1.employeeId,
+        helper_2_employee_id: h2.employeeId,
+      }];
+    });
+}
+
 /** The crew the Projects module stored for one phase (projects.setup_crew /
  *  dismantle_crew), one entry per lorry: the per-lorry arm when present, else
  *  the flattened top-level arrays as one lorry. Names only; any parse failure
@@ -441,15 +553,35 @@ export function projectLegRows(p: ProjectLeg, first: string, last: string, plann
   return out;
 }
 
+/* The company's shipped DOs with every date doRunDate may pick (its SO's due
+   date, whether it is the SO's newest live DO, the Malaysia day it was delivered,
+   its DO date). SQL only narrows to DOs with any of them in range; doRunDate decides. */
+const doRunCandidates = (companyId: number) => sql`
+    live AS (
+      SELECT l.id, ROW_NUMBER() OVER (PARTITION BY l.so_doc_no ORDER BY l.created_at DESC, l.id DESC) AS rn
+        FROM scm.delivery_orders l
+       WHERE l.company_id = ${companyId} AND l.status::text <> 'CANCELLED' AND l.so_doc_no IS NOT NULL),
+    runs AS (
+      SELECT d.id,
+             LEFT(COALESCE(so.amended_delivery_date::text, NULLIF(so.customer_delivery_date::text, '')), 10) AS so_due_date,
+             (lv.rn = 1) AS is_latest_live,
+             LEFT((d.delivered_at::timestamptz AT TIME ZONE 'Asia/Kuala_Lumpur')::text, 10) AS delivered_day,
+             LEFT(d.do_date::text, 10) AS do_date
+        FROM scm.delivery_orders d
+        LEFT JOIN live lv ON lv.id = d.id
+        LEFT JOIN scm.mfg_sales_orders so ON so.doc_no = d.so_doc_no AND so.company_id = d.company_id
+       WHERE d.company_id = ${companyId} AND d.status::text NOT IN ('DRAFT', 'CANCELLED'))`;
+
 /** Everything Delivery Planning and the Projects module say a trip month's crews
  *  did: each stop of our own lorry runs (crew from the DO's crew record, else the
- *  run's; outsourced and cancelled runs and cancelled DOs left out), and each
- *  project Setup / Dismantle no stop carries. */
+ *  run's; outsourced and cancelled runs and cancelled DOs left out), each
+ *  delivery order our own lorries ran that no stop carries (deliveryOrderRows),
+ *  and each project Setup / Dismantle no stop carries. */
 export async function planningRows(db: Db, companyId: number, month: string, people: ReadonlyArray<Person>): Promise<SourceRow[]> {
   const { first, last } = tripMonthBounds(month);
-  const [stops, projects] = await Promise.all([
+  const [stops, projects, dos] = await Promise.all([
     db.execute<PlanningStop>(sql`
-    SELECT s.id::text AS stop_id, s.stop_type::text AS stop_type, t.id::text AS trip_id, t.trip_date::text AS trip_date, t.trip_no,
+    SELECT s.id::text AS stop_id, s.do_id::text AS do_id, s.stop_type::text AS stop_type, t.id::text AS trip_id, t.trip_date::text AS trip_date, t.trip_no,
            l.plate, s.revenue_sen, s.customer_name, s.dp_no AS stop_dp_no,
            d.do_number, d.so_doc_no, d.status::text AS do_status, d.local_total_sen,
            COALESCE(NULLIF(d.state, ''), d.customer_state) AS do_state, d.postcode AS do_postcode,
@@ -489,8 +621,31 @@ export async function planningRows(db: Db, companyId: number, month: string, peo
      WHERE p.company_id = ${companyId} AND p.archived_at IS NULL
        AND (LEFT(p.setup_start_at, 10) BETWEEN ${first} AND ${last} OR LEFT(p.dismantle_start_at, 10) BETWEEN ${first} AND ${last})
      ORDER BY p.id`),
+    db.execute<PlanningDo>(sql`
+    WITH ${doRunCandidates(companyId)}
+    SELECT d.id::text AS do_id, d.do_number, d.so_doc_no, d.debtor_name, d.status::text AS do_status,
+           r.so_due_date, r.is_latest_live, r.delivered_day, r.do_date, d.local_total_sen,
+           COALESCE(NULLIF(d.state, ''), d.customer_state) AS do_state, d.postcode AS do_postcode, d.is_dropship,
+           EXISTS (SELECT 1 FROM scm.threepl_do_charges x WHERE x.do_id = d.id) AS has_3pl,
+           EXISTS (SELECT 1 FROM scm.trip_stops s JOIN scm.trips t ON t.id = s.trip_id
+                    WHERE s.do_id = d.id AND s.company_id = ${companyId} AND t.status::text <> 'CANCELLED') AS on_live_trip,
+           cr.lorry_plate AS crew_plate, lm.plate AS lorry_plate, lm.is_internal AS lorry_internal,
+           COALESCE(cr.driver_1_id::text, d.driver_id::text) AS d1, cr.driver_2_id::text AS d2,
+           cr.helper_1_id::text AS h1, cr.helper_2_id::text AS h2,
+           cr.driver_1_name AS d1_name, cr.driver_2_name AS d2_name, cr.helper_1_name AS h1_name, cr.helper_2_name AS h2_name
+      FROM runs r
+      JOIN scm.delivery_orders d ON d.id = r.id
+      LEFT JOIN scm.delivery_order_crew cr ON cr.do_id = d.id
+      LEFT JOIN LATERAL (
+           SELECT l.plate, l.is_internal FROM scm.lorries l
+            WHERE l.id = cr.lorry_id
+               OR (cr.lorry_id IS NULL AND UPPER(REPLACE(l.plate, ' ', '')) = UPPER(REPLACE(cr.lorry_plate, ' ', '')))
+            ORDER BY (l.id = cr.lorry_id) DESC NULLS LAST
+            LIMIT 1) lm ON cr.do_id IS NOT NULL
+     WHERE r.so_due_date BETWEEN ${first} AND ${last} OR r.delivered_day BETWEEN ${first} AND ${last} OR r.do_date BETWEEN ${first} AND ${last}
+     ORDER BY d.do_number`),
   ]);
-  const crewIds = [...new Set(stops.flatMap((s) => [s.d1, s.d2, s.h1, s.h2]).filter((x): x is string => !!x))];
+  const crewIds = [...new Set([...stops, ...dos].flatMap((s) => [s.d1, s.d2, s.h1, s.h2]).filter((x): x is string => !!x))];
   const crew = crewIds.length
     ? await db.execute<{ id: string; name: string; user_id: number | null }>(sql`
         SELECT id::text, name, user_id FROM scm.drivers WHERE company_id = ${companyId} AND id::text IN ${crewIds}
@@ -506,12 +661,19 @@ export async function planningRows(db: Db, companyId: number, month: string, peo
   const stopRows = stops.filter((s) => s.do_status !== "CANCELLED").map((s) => planningRowOf(s, who));
   const planned = new Set(stopRows.filter((r) => isFairJob(r.job_type) && r.venue_key).map((r) => `${r.venue_key.slice(1)}|${r.job_type}|${r.trip_date}`));
   const byName = nameIndex(people);
-  return [...stopRows, ...projects.flatMap((p) => projectLegRows(p, first, last, planned, byName))];
+  const stopDoIds = new Set(stops.map((s) => s.do_id).filter((x): x is string => !!x));
+  const doSeat = (id: string | null, typed: string | null): Seat => {
+    const seat = who(id);
+    const name = typed?.trim() ?? "";
+    return seat.name || !name ? seat : { name, employeeId: byName(name) };
+  };
+  return [...stopRows, ...deliveryOrderRows(dos, first, last, stopDoIds, doSeat), ...projects.flatMap((p) => projectLegRows(p, first, last, planned, byName))];
 }
 
-/** The days of [first, last] whose Delivery Planning / Projects source changed after `since`. */
+/** The days of [first, last] whose Delivery Planning / delivery order / Projects source changed after `since`. */
 export async function changedSourceDays(db: Db, companyId: number, first: string, last: string, since: string): Promise<Set<string>> {
   const rows = await db.execute<{ d: string }>(sql`
+    WITH ${doRunCandidates(companyId)}
     SELECT DISTINCT t.trip_date::text AS d
       FROM scm.trips t
       JOIN scm.trip_stops s ON s.trip_id = t.id AND s.company_id = ${companyId}
@@ -520,6 +682,14 @@ export async function changedSourceDays(db: Db, companyId: number, first: string
      WHERE t.company_id = ${companyId} AND t.trip_date BETWEEN ${first} AND ${last}
        AND (t.updated_at > ${since}::timestamptz OR s.created_at > ${since}::timestamptz
             OR dp.updated_at > ${since}::timestamptz OR cr.updated_at > ${since}::timestamptz)
+    UNION
+    SELECT x.day AS d
+      FROM runs r
+      JOIN scm.delivery_orders d ON d.id = r.id
+      LEFT JOIN scm.delivery_order_crew cr ON cr.do_id = d.id
+      CROSS JOIN LATERAL (VALUES (r.so_due_date), (r.delivered_day), (r.do_date)) AS x(day)
+     WHERE (d.updated_at > ${since}::timestamptz OR cr.updated_at > ${since}::timestamptz)
+       AND x.day BETWEEN ${first} AND ${last}
     UNION
     SELECT LEFT(x.at, 10) AS d
       FROM public.projects p

@@ -7,7 +7,7 @@
  *   - a month whose payroll is approved is never touched.
  * Every night at 00:05 MYT (index.ts, "5 16 * * *") the read adds YESTERDAY and
  * re-reads only older days of the open trip months whose source changed since the
- * company's last run (updated_at on trips / dp_orders / delivery_order_crew /
+ * company's last run (updated_at on trips / dp_orders / delivery_orders / delivery_order_crew /
  * projects, created_at on trip_stops) or whose set of stops differs from the
  * rows. "Read Delivery Planning" runs the same rules over the whole month at once.
  * A month filled by pasting the Trip Report is left alone by the nightly read.
