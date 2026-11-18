@@ -306,7 +306,7 @@ export const useConvertSoToDoDraft = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (docNo: string) => {
-      const { lines } = await authedFetch<{ lines: DeliverableSoLine[] }>(
+      const { lines } = await authedFetch<{ lines?: DeliverableSoLine[] }>(
         `/delivery-orders-mfg/deliverable-so-lines?docNos=${encodeURIComponent(docNo)}`,
       );
       const picks = soDraftPicks(lines ?? []);
@@ -316,7 +316,7 @@ export const useConvertSoToDoDraft = () => {
         idempotentInit(newIdempotencyKey(), { method: 'POST', body: JSON.stringify({ asDraft: true, picks }) }));
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['mfg-delivery-orders'] });
+      void qc.invalidateQueries({ queryKey: ['mfg-delivery-orders'] });
       releaseSoSideQueries(qc);
     },
   });
