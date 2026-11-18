@@ -421,6 +421,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           job_kind: leg.jobKind,
           dp_job_type: null,
           dp_no: null,
+          dp_from_name: null,
           assr_id: a.id != null ? Number(a.id) : null,
           so_doc_no: rowKey,
           debtor_code: null,
@@ -573,6 +574,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         job_kind: null,
         dp_job_type: (d.job_type as string | null) ?? null,
         dp_no: (d.dp_no as string | null) ?? null,
+        dp_from_name: (d.from_name as string | null) ?? null,
         assr_id: null,
         // Stable, unique React key — DP orders have no SO doc number.
         so_doc_no: `DP:${String(d.id)}`,
@@ -712,6 +714,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           job_kind: null,
           dp_job_type: leg.jobType,
           dp_no: null,
+          dp_from_name: null,
           assr_id: null,
           so_doc_no: rowKey,
           debtor_code: null,

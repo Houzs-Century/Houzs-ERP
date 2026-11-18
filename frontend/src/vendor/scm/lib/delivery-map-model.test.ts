@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   pinsFromJobPoints,
+  mergeSameSpotStops,
+  refsInZone,
   zoneColorFor,
   pinsFromGeoPoints,
   geoTotals,
@@ -388,5 +390,30 @@ describe('pinsFromJobPoints — a non-SO stop gets a pin and a hover card (owner
       soDocNo: 'PRJ:7#SETUP', customer: 'MELAKA INTERNATIONAL TRADE CENTRE', sets: 0, revenueSen: 0,
       address: '75450 Ayer Keroh, Melaka, Malaysia', zone: null, approximate: true,
     });
+  });
+});
+
+describe('mergeSameSpotStops — two stops at one address share a pin "6, 7" (owner 2026-11-18)', () => {
+  const stop = (ref: string, order: number, lat: number, lng: number) => ({ ref, order, lat, lng, label: ref, windowLabel: null });
+  it('the first stop at the spot carries the combined label and every ref; the second draws no pin', () => {
+    const out = mergeSameSpotStops([stop('A', 5, 3.1, 101.6), stop('B', 6, 3.2, 101.7), stop('C', 7, 3.2, 101.7)]);
+    expect(out.map((s) => s.pinLabel ?? null)).toEqual([null, '6, 7', null]);
+    expect(out[1]!.spotRefs).toEqual(['B', 'C']);
+    expect(out.map((s) => s.covered === true)).toEqual([false, false, true]);
+  });
+  it('stops at different spots are left alone', () => {
+    const out = mergeSameSpotStops([stop('A', 1, 3.1, 101.6), stop('B', 2, 3.1001, 101.6)]);
+    expect(out.every((s) => s.pinLabel == null && !s.covered)).toBe(true);
+  });
+});
+
+describe('refsInZone — a region chip fits the map to its stops', () => {
+  const pts = [{ ref: 'A', region: 'KL' }, { ref: 'B', region: 'NORTHERN' }, { ref: 'C', region: 'KL' }];
+  it("a chip picks that region's refs", () => {
+    expect(refsInZone(pts, 'KL')).toEqual(['A', 'C']);
+  });
+  it('"All" (null / ALL) narrows nothing', () => {
+    expect(refsInZone(pts, null)).toBeNull();
+    expect(refsInZone(pts, 'ALL')).toBeNull();
   });
 });

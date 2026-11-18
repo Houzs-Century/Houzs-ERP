@@ -140,6 +140,8 @@ export function assembleSoOrders(soRows: SoHeaderRow[], m: SoBoardMaps, x: SoRow
       // DP-Order job type (DELIVERY/PICKUP/SERVICE/SETUP/DISMANTLE/SUPPLIER_PICKUP)
       // — only 'dp' rows carry it; SO/ASSR rows are null (union parity).
       dp_job_type: null as string | null,
+      // A TRANSFER DP job's origin (dp_orders.from_name) — Last Mile titles it "From -> To"; null elsewhere.
+      dp_from_name: null as string | null,
       /* SO rows DO carry a DP number now — it is minted onto their trip_stop at
          schedule time, same rule and same number space as a manual DP order.
          null = not scheduled yet (or the lorry was not known), never a guess. */

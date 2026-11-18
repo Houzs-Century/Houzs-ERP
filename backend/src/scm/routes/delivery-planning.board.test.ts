@@ -380,6 +380,8 @@ describe('GET /delivery-planning — the ASSR / DP / project sub-boards union on
         address1: 'Jln Setup', address2: null, address3: null, address4: null, city: 'KL', postcode: '50000',
         state: 'Selangor', requested_date: '2026-09-08', status: 'PENDING', trip_id: null,
         so_doc_no: null, assr_case_id: null, do_id: null,
+        // The job's origin — Last Mile titles a transfer "From -> To" from it.
+        from_name: 'KL Warehouse',
         // Hand-set message status (owner 2026-10-29) — surfaces on the DP row.
         delivery_message_status: 'To Send Delivery Date',
       }],
@@ -406,6 +408,7 @@ describe('GET /delivery-planning — the ASSR / DP / project sub-boards union on
     expect(byType('so').map((o) => o.so_doc_no)).toEqual(['HC-SO-2608-001']);
     expect(byType('assr')).toHaveLength(1);       // the fake ASSR union row, delivery leg
     expect(byType('dp').map((o) => o.dp_no)).toEqual(['DP-1']);
+    expect(byType('dp').map((o) => (o as unknown as { dp_from_name: string | null }).dp_from_name)).toEqual(['KL Warehouse']);
     expect(byType('project').map((o) => o.so_doc_no)).toEqual(['PRJ:10#SETUP']);
     // Branding column fills for a project leg from the PMS project's brand (read-only).
     expect(byType('project').map((o) => o.branding)).toEqual(['AKEMI']);
