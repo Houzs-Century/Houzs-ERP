@@ -69,7 +69,7 @@
 import postgres from 'postgres';
 import { PROJECT_VENUE_JOIN } from '../src/scm/lib/project-venue-join.ts';
 import {
-  COMPLETION_TARGETS, buildCompletionPlan, completionIndex, countByField, parseGroups, planVenueRenames, venueCoverage, verifyWritten,
+  COMPLETION_TARGETS, LOCK_SQL, buildCompletionPlan, completionIndex, countByField, parseGroups, planVenueRenames, venueCoverage, verifyWritten,
 } from './lib/postcode-completion.mjs';
 
 const DSN = process.env.DATABASE_URL;
@@ -92,24 +92,6 @@ if (!parsed.ok) { bad(parsed.why); process.exit(2); }
 const GROUPS = parsed.groups;
 
 const blank = (col) => `(${col} IS NULL OR btrim(${col}::text) = '')`;
-const live = (alias) => `upper(btrim(coalesce(${alias}.status::text, ''))) <> 'CANCELLED'`;
-
-/* The lock, as SQL over alias x — the same questions soHasDownstream /
-   doHasDownstream (src/scm/lib/downstream-lock.ts) ask. A parent predicate is
-   not company scope, so the so_doc_no joins also match the company. */
-const LOCK_SQL = {
-  so: `CASE WHEN NOT ${live('x')} THEN 'cancelled'
-            WHEN EXISTS (SELECT 1 FROM scm.delivery_orders d WHERE d.so_doc_no = x.doc_no AND d.company_id = x.company_id AND ${live('d')}) THEN 'a live Delivery Order carries it'
-            WHEN EXISTS (SELECT 1 FROM scm.sales_invoices s WHERE s.so_doc_no = x.doc_no AND s.company_id = x.company_id AND ${live('s')}) THEN 'a live Sales Invoice carries it'
-       END`,
-  do: `CASE WHEN NOT ${live('x')} THEN 'cancelled'
-            WHEN EXISTS (SELECT 1 FROM scm.delivery_returns r WHERE r.delivery_order_id = x.id AND ${live('r')}) THEN 'a live Delivery Return carries it'
-            WHEN EXISTS (SELECT 1 FROM scm.sales_invoices s WHERE s.delivery_order_id = x.id AND ${live('s')}) THEN 'a live Sales Invoice carries it'
-            WHEN EXISTS (SELECT 1 FROM scm.sales_invoice_items si JOIN scm.delivery_order_items di ON di.id = si.do_item_id
-                                  JOIN scm.sales_invoices s ON s.id = si.sales_invoice_id
-                          WHERE di.delivery_order_id = x.id AND ${live('s')}) THEN 'a live Sales Invoice carries one of its lines'
-       END`,
-};
 
 const NAME_SQL = {
   suppliers: 'x.name', venues: 'x.name', warehouses: "coalesce(NULLIF(btrim(x.name), ''), x.code)", threepl: 'x.name',
