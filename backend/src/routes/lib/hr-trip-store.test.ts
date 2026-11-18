@@ -2,7 +2,7 @@
 // type each becomes, and where its amount, state, postcode and crew come from.
 import { describe, expect, test } from "vitest";
 import { computeTripMonth, DEFAULT_TRIP_RATES } from "../../scm/shared/hr-trip-pay";
-import { deliveryOrderRows, planningRowOf, projectCrewLorries, projectLegRows, rowHrEdited, tripRowOf, type PlanningDo, type PlanningStop, type ProjectLeg } from "./hr-trip-store";
+import { deliveryOrderRows, doRunDate, planningRowOf, projectCrewLorries, projectLegRows, rowHrEdited, tripRowOf, type PlanningDo, type PlanningStop, type ProjectLeg } from "./hr-trip-store";
 
 const base: PlanningStop = {
   stop_id: "s1",
@@ -149,7 +149,10 @@ describe("delivery orders our lorries ran (Last Mile reaches them through the DO
     so_doc_no: "HC-SO-2610-500",
     debtor_name: "TAN",
     do_status: "DELIVERED",
-    do_date: "2026-11-17",
+    so_due_date: "2026-11-17",
+    is_latest_live: true,
+    delivered_day: "2026-11-17",
+    do_date: "2026-11-18",
     local_total_sen: "1200000",
     do_state: "Selangor",
     do_postcode: "47500",
@@ -170,9 +173,25 @@ describe("delivery orders our lorries ran (Last Mile reaches them through the DO
   };
   const ids: Record<string, number> = { drv: 11, hlp1: 21, hlp2: 22 };
   const who = (id: string | null, name: string | null) => ({ name: id ? `N-${id}` : (name ?? ""), employeeId: id ? (ids[id] ?? null) : null });
+  const rowsOf = (dos: PlanningDo[], stops: Set<string>) => deliveryOrderRows(dos, "2026-10-23", "2026-11-22", stops, who);
+
+  test("the run date is the day Last Mile shows it on the lorry: the SO's due date for its newest live DO", () => {
+    // HC-DO-2611-219 is cut 2026-11-18 but its SO is due, and run, 2026-11-17.
+    expect(doRunDate(doBase)).toBe("2026-11-17");
+    // An older DO of the SO (a partial delivery Last Mile no longer shows): the day it was delivered, else its DO date.
+    expect(doRunDate({ ...doBase, is_latest_live: false, delivered_day: "2026-11-05" })).toBe("2026-11-05");
+    expect(doRunDate({ ...doBase, is_latest_live: false, delivered_day: null })).toBe("2026-11-18");
+    expect(doRunDate({ ...doBase, so_due_date: null, delivered_day: null })).toBe("2026-11-18");
+    expect(doRunDate({ ...doBase, so_due_date: null, delivered_day: null, do_date: null })).toBeNull();
+  });
+
+  test("a DO whose run date falls outside the trip month is not in it", () => {
+    expect(rowsOf([{ ...doBase, so_due_date: "2026-11-23" }], new Set())).toEqual([]);
+    expect(rowsOf([{ ...doBase, so_due_date: "2026-10-23" }], new Set())[0]?.trip_date).toBe("2026-10-23");
+  });
 
   test("one Delivery order row: the DO's date, Local Total, state, postcode, plate and crew", () => {
-    const [r] = deliveryOrderRows([doBase], new Set(), who);
+    const [r] = rowsOf([doBase], new Set());
     expect(r).toMatchObject({
       source: "PLANNING",
       source_ref: "do:do-1",
@@ -192,32 +211,32 @@ describe("delivery orders our lorries ran (Last Mile reaches them through the DO
   });
 
   test("a DO a live trip stop already carries is read once, from the stop", () => {
-    expect(deliveryOrderRows([doBase], new Set(["do-1"]), who)).toEqual([]);
-    expect(deliveryOrderRows([{ ...doBase, on_live_trip: true }], new Set(), who)).toEqual([]);
+    expect(rowsOf([doBase], new Set(["do-1"]))).toEqual([]);
+    expect(rowsOf([{ ...doBase, on_live_trip: true }], new Set())).toEqual([]);
   });
 
   test("cancelled, draft, drop-shipped, 3PL, outsourced-lorry and lorry-less DOs earn no row", () => {
-    const out = (p: Partial<PlanningDo>) => deliveryOrderRows([{ ...doBase, ...p }], new Set(), who);
+    const out = (p: Partial<PlanningDo>) => rowsOf([{ ...doBase, ...p }], new Set());
     expect(out({ do_status: "CANCELLED" })).toEqual([]);
     expect(out({ do_status: "DRAFT" })).toEqual([]);
     expect(out({ is_dropship: true })).toEqual([]);
     expect(out({ has_3pl: true })).toEqual([]);
     expect(out({ lorry_internal: false })).toEqual([]);
     expect(out({ crew_plate: null, lorry_plate: null, lorry_internal: null })).toEqual([]);
-    expect(out({ do_date: null })).toEqual([]);
+    expect(out({ so_due_date: null, delivered_day: null, do_date: null })).toEqual([]);
     // On the lorry but not yet signed for is still a run; a typed plate with no master counts.
     expect(out({ do_status: "IN_TRANSIT" })).toHaveLength(1);
     expect(out({ lorry_plate: null, lorry_internal: null })[0]?.lorry_plate).toBe("VNB 9058");
   });
 
   test("a seat with no master id keeps the name typed on the crew record", () => {
-    const [r] = deliveryOrderRows([{ ...doBase, d1: null, d1_name: "ALI" }], new Set(), who);
+    const [r] = rowsOf([{ ...doBase, d1: null, d1_name: "ALI" }], new Set());
     expect(r.driver_1_name).toBe("ALI");
   });
 
   test("the DO crew count sets the commission rate: 3 people = crew of 3, 2 people = crew of 2", () => {
     const pay = (p: Partial<PlanningDo>) => {
-      const rows = deliveryOrderRows([{ ...doBase, ...p }], new Set(), who).map((r) => tripRowOf({ ...r, id: 1, hr_edited: false } as unknown as Parameters<typeof tripRowOf>[0]));
+      const rows = rowsOf([{ ...doBase, ...p }], new Set()).map((r) => tripRowOf({ ...r, id: 1, hr_edited: false } as unknown as Parameters<typeof tripRowOf>[0]));
       const out = computeTripMonth({ rows, rates: DEFAULT_TRIP_RATES, employeeOf: (x) => x.employeeId, missedDaysOf: () => 0, punches: new Map() });
       return out.pay.get(11)?.commission.lines.map((l) => [l.crew, l.baseSen]);
     };

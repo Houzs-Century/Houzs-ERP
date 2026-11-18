@@ -141,7 +141,9 @@ describe("nightly change detection", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a stub standing in for the Drizzle client
     const days = await changedSourceDays(db as any, 1, "2026-10-23", "2026-11-22", "2026-11-17T16:05:00Z");
     expect([...days]).toEqual(["2026-11-17"]);
-    expect(seen[0]).toMatch(/FROM scm\.delivery_orders d\s+LEFT JOIN scm\.delivery_order_crew cr ON cr\.do_id = d\.id/);
+    expect(seen[0]).toMatch(/JOIN scm\.delivery_orders d ON d\.id = r\.id\s+LEFT JOIN scm\.delivery_order_crew cr ON cr\.do_id = d\.id/);
     expect(seen[0]).toMatch(/d\.updated_at > /);
+    // Keyed on the run date's candidates (doRunDate picks one), not the DO date alone.
+    expect(seen[0]).toMatch(/VALUES \(r\.so_due_date\), \(r\.delivered_day\), \(r\.do_date\)/);
   });
 });

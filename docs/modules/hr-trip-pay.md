@@ -49,7 +49,9 @@ copy in `frontend/src/vendor/shared/hr-trip-pay.ts`), `backend/src/routes/lib/hr
   by user id, else by name (`trip_names`, then the full name).
 - Delivery orders (`deliveryOrderRows`): SO deliveries reach Last Mile through the DO
   crew record, not trip stops, so each DO our own lorries ran is a Delivery order row
-  (`source_ref` `do:<id>`): date = `do_date` (as the Last Mile History tab), Local Total,
+  (`source_ref` `do:<id>`): date = the day Last Mile shows it on the lorry (`doRunDate`:
+  the SO's due date, amended else the customer's, for the SO's newest live DO; an older
+  DO of the SO = the Malaysia day of `delivered_at`, else `do_date`), Local Total,
   the DO's state / postcode, crew from `delivery_order_crew` (driver 1 falls back to the
   DO's driver; a seat with no master id keeps the typed name), crew size from that crew.
   Counted: shipped (not DRAFT / CANCELLED), a lorry on the crew. Left out: drop-ship, a
@@ -72,7 +74,8 @@ copy in `frontend/src/vendor/shared/hr-trip-pay.ts`), `backend/src/routes/lib/hr
   pasted rows skipped (HR chose the sheet).
 - Days touched (`selectSyncDays`): yesterday; older days whose source changed since the
   company's watermark (`hr_trip_sync_state.watermark`: `updated_at` on trips, dp_orders,
-  delivery_orders, delivery_order_crew, projects; `created_at` on trip_stops); and days whose set of stops
+  delivery_orders, delivery_order_crew, projects; `created_at` on trip_stops; a changed
+  DO marks each day its run date could be); and days whose set of stops
   differs from the stored rows (catches deletions). Never today or later. No watermark
   yet = every day up to yesterday.
 
