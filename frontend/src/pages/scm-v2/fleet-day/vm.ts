@@ -377,46 +377,55 @@ export type UnlocatedStop = { ref: string; label: string; reason: string };
 
 /** The lorry cards -> per-lorry map routes (one coloured, numbered polyline per
  *  lorry), in the SAME delivery-time order the cards show (run.docs is already
- *  sorted). A drop with a geocoded address becomes a numbered stop; one without
- *  joins `unlocated` (surfaced, never dropped) — an SO with no pin because its
- *  address won't geocode, or a non-SO job the geo feed doesn't locate. A lorry
- *  with no drops has no route. `allRefs` keeps EVERY drop (located or not) so the
- *  by-lorry focus still filters the board to the whole run. PURE. */
+ *  sorted). EVERY stop of every job type — SO drop, service-case leg, setup /
+ *  dismantle, supplier pickup, transfer, lorry service — is numbered by its
+ *  place in the run (owner 2026-11-18), so the card and the pin carry the same
+ *  number; `noByRef` holds it for the card. A stop with a point becomes a pin
+ *  (`approxRefs` = pinned at its postcode area); one without joins `unlocated`
+ *  with the server's reason (surfaced, never dropped) and keeps its number. A
+ *  lorry with no drops has no route. `allRefs` keeps EVERY drop so the by-lorry
+ *  focus still filters the board to the whole run. PURE. */
 export function buildLorryRoutes(
   runs: readonly LorryRunVM[],
   pointByRef: ReadonlyMap<string, MapLatLng>,
+  approxRefs: ReadonlySet<string>,
+  reasonByRef: ReadonlyMap<string, string>,
   depot: MapLatLng | null,
   homeOf: (plateKey: string) => MapLatLng | null,
   colorForPlate: (plateKey: string) => string,
-): { routes: MapRoute[]; unlocated: UnlocatedStop[] } {
+): { routes: MapRoute[]; unlocated: UnlocatedStop[]; noByRef: Map<string, number> } {
   const routes: MapRoute[] = [];
   const unlocated: UnlocatedStop[] = [];
+  const noByRef = new Map<string, number>();
   for (const run of runs) {
     if (run.docs.length === 0) continue;
     const key = platekey(run.plate);
     const stops: MapRouteStop[] = [];
-    for (const d of run.docs) {
+    run.docs.forEach((d, idx) => {
+      const order = idx + 1;
+      noByRef.set(d.soDocNo, order);
       const pt = pointByRef.get(d.soDocNo);
       const label = d.customer || d.codeLine || d.soDocNo;
       if (!pt) {
         unlocated.push({
           ref: d.soDocNo,
           label: d.codeLine || d.soDocNo,
-          reason: d.rowType === 'so' ? 'Address could not be located' : 'Non-delivery job — no location',
+          reason: reasonByRef.get(d.soDocNo) ?? 'Address could not be located',
         });
-        continue;
+        return;
       }
       stops.push({
         ref: d.soDocNo,
         lat: pt.lat,
         lng: pt.lng,
-        order: stops.length + 1,
+        order,
         label,
         // Condensed for the day-map legend ("10:30AM to 12:30PM" -> "10:30–12:30");
         // the lorry card keeps the full slotLabel.
         windowLabel: condenseWindow(d.slotLabel) || null,
+        approximate: approxRefs.has(d.soDocNo),
       });
-    }
+    });
     routes.push({
       id: key,
       color: colorForPlate(key),
@@ -430,7 +439,7 @@ export function buildLorryRoutes(
       total: run.rollup.drops,
     });
   }
-  return { routes, unlocated };
+  return { routes, unlocated, noByRef };
 }
 
 /* ── Filter row + search ──────────────────────────────────────────────────*/

@@ -296,7 +296,7 @@ function PanelOverlay({
         const marker = new google.maps.Marker({
           position: p,
           map,
-          title: `${route.title} · ${s.order}. ${s.label}${s.windowLabel ? ` (${s.windowLabel})` : ''}`,
+          title: `${route.title} · ${s.order}. ${s.label}${s.windowLabel ? ` (${s.windowLabel})` : ''}${s.approximate ? ' · approximate location (postcode area)' : ''}`,
           zIndex: isSel ? 3000 : dimmed ? 1 : 500,
           label: { text: String(s.order), color: labelColor, fontWeight: 'bold', fontSize: '12px' },
           icon: {
@@ -599,7 +599,7 @@ export function DeliveryMapPanel({
     if (!cardRef) return null;
     for (const r of routes) {
       const s = r.stops.find((st) => st.ref === cardRef);
-      if (s) return { title: r.title, order: s.order, windowLabel: s.windowLabel };
+      if (s) return { title: r.title, order: s.order, windowLabel: s.windowLabel, approximate: s.approximate === true };
     }
     return null;
   }, [routes, cardRef]);
@@ -765,6 +765,9 @@ export function DeliveryMapPanel({
               {card.sets} set{card.sets === 1 ? '' : 's'} · {fmtSen(card.revenueSen)}
             </div>
             {card.address && <div className="text-[11px] text-ink-muted">{card.address}</div>}
+            {(card.approximate || cardStop?.approximate) && (
+              <div className="text-[11px] font-semibold text-warning-text">Approximate location — postcode area, not the address</div>
+            )}
           </div>
         )}
       </div>

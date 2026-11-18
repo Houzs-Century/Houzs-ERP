@@ -23,9 +23,9 @@ import { todayMY } from '../../vendor/shared/format';
 import { useFleetDay } from '../../vendor/scm/lib/fleet-day-queries';
 import { assignRouteColors, routeColorFor } from '../../vendor/scm/lib/fleet-colors';
 import { DeliveryMapPanel, useMapPanelOpen } from '../../components/scm-v2/DeliveryMapPanel';
-import { useDeliveryGeo } from '../../vendor/scm/lib/delivery-geo-queries';
+import { useDeliveryGeo, useJobGeo } from '../../vendor/scm/lib/delivery-geo-queries';
 import {
-  pinsFromGeoPoints, geoTotals, zoneSummary, type MapFocus, type MapLatLng,
+  pinsFromGeoPoints, pinsFromJobPoints, geoTotals, zoneSummary, type MapFocus, type MapLatLng,
 } from '../../vendor/scm/lib/delivery-map-model';
 import { type PlanningOrder } from '../../vendor/scm/lib/delivery-planning-queries';
 import { useBandedBoard, bandOfDay } from '../../vendor/scm/lib/delivery-board-bands';
@@ -214,14 +214,29 @@ export function FleetDay() {
     () => (geo.data?.points ?? []).filter((p) => !isEastMalaysiaOrSingaporeStop({ region: p.region, state: p.state, country: p.country })),
     [geo.data?.points],
   );
-  const mapPins = useMemo(() => pinsFromGeoPoints(geoPoints), [geoPoints]);
+  // The lorries' NON-SO stops (service legs, setup / dismantle, supplier pickup,
+  // transfer, lorry service): /geo above locates SOs only, so these are located
+  // by their row keys (owner 2026-11-18: every stop gets a pin).
+  const jobRefs = useMemo(() => runs.flatMap((r) => r.docs).filter((d) => d.rowType !== 'so').map((d) => d.soDocNo), [runs]);
+  const jobGeo = useJobGeo(jobRefs, mapOpen);
+  const jobPoints = useMemo(() => jobGeo.data?.points ?? [], [jobGeo.data?.points]);
+  const mapPins = useMemo(() => [...pinsFromGeoPoints(geoPoints), ...pinsFromJobPoints(jobPoints)], [geoPoints, jobPoints]);
   const mapTotals = useMemo(() => geoTotals(geoPoints), [geoPoints]);
   const mapZones = useMemo(() => zoneSummary(geoPoints, regionTabs, filters.region), [geoPoints, regionTabs, filters.region]);
   const pointByRef = useMemo(() => {
     const m = new Map<string, MapLatLng>();
     for (const p of geoPoints) m.set(p.ref, { lat: p.lat, lng: p.lng });
+    for (const p of jobPoints) m.set(p.ref, { lat: p.lat, lng: p.lng });
     return m;
-  }, [geoPoints]);
+  }, [geoPoints, jobPoints]);
+  const approxRefs = useMemo(
+    () => new Set([...geoPoints, ...jobPoints].filter((p) => p.approximate === true).map((p) => p.ref)),
+    [geoPoints, jobPoints],
+  );
+  const reasonByRef = useMemo(
+    () => new Map([...(geo.data?.ungeocoded ?? []), ...(jobGeo.data?.ungeocoded ?? [])].map((u) => [u.ref, u.reason] as const)),
+    [geo.data?.ungeocoded, jobGeo.data?.ungeocoded],
+  );
   const depotLL = useMemo<MapLatLng | null>(
     () => (geo.data?.depot ? { lat: geo.data.depot.lat, lng: geo.data.depot.lng } : null),
     [geo.data?.depot],
@@ -238,8 +253,8 @@ export function FleetDay() {
   // lorry's run as its own numbered, coloured route — not the per-trip dots — and
   // surfaces every drop it could not locate instead of silently dropping it.
   const lorryRoutes = useMemo(
-    () => buildLorryRoutes(runs, pointByRef, depotLL, (k) => { const h = geo.data?.lorryDepots?.[k.replace(/[^A-Z0-9]/g, "")]; return h ? { lat: h.lat, lng: h.lng } : null; }, colorForPlate),
-    [runs, pointByRef, depotLL, geo.data?.lorryDepots, colorForPlate],
+    () => buildLorryRoutes(runs, pointByRef, approxRefs, reasonByRef, depotLL, (k) => { const h = geo.data?.lorryDepots?.[k.replace(/[^A-Z0-9]/g, "")]; return h ? { lat: h.lat, lng: h.lng } : null; }, colorForPlate),
+    [runs, pointByRef, approxRefs, reasonByRef, depotLL, geo.data?.lorryDepots, colorForPlate],
   );
   /* Each lorry's run by road, from its home and back (owner 2026-11-08), worked out on
      the server for the whole day; the board's region filter does not change it. */
@@ -254,7 +269,7 @@ export function FleetDay() {
     return figs.length ? `All lorries, Google: ${fmtKm(figs.reduce((a, f) => a + f.distanceM, 0))} · ${fmtDrive(figs.reduce((a, f) => a + f.durationS, 0))}` : null;
   })();
   const legByRef = useMemo(() => legLabelsByRef(roadDay.data?.values() ?? []), [roadDay.data]);
-  const mapNoByRef = useMemo(() => new Map(lorryRoutes.routes.flatMap((r) => r.stops.map((st) => [st.ref, st.order] as const))), [lorryRoutes.routes]);
+  const mapNoByRef = lorryRoutes.noByRef;
   const panelRoutes = lorryRoutes.routes.map((r) => ({ ...r, roadLabel: roadLabelOf(r.title) }));
   // The board's own drops that could not be placed (surfaced, never dropped),
   // then any server-ungeocoded order not already named.
