@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { figuresOf, totalsOf, trendOf, groupBy, drillOf, type OvProject } from "./projectOverviewModel";
+import { figuresOf, totalsOf, trendOf, groupBy, drillOf, heldVsComing, type OvProject } from "./projectOverviewModel";
 
 const NO_SPLIT = { mattSofa: 0, bedframe: 0, accessories: 0 };
 
@@ -93,5 +93,22 @@ describe("Project Overview — future events in three layers (owner 2026-11-18)"
     const ps = [p({ id: 4, startDate: "2027-02-03", pnl: pnl({ sales: 5000 }) }), p({ id: 5, startDate: "2026-10-02", pnl: pnl({ sales: 1 }) })];
     const inNextQuarter = ps.filter((x) => !!x.startDate && x.startDate >= "2027-01-01" && x.startDate <= "2027-03-31");
     expect(totalsOf(inNextQuarter)).toMatchObject({ projects: 1, sales: 5000 });
+  });
+});
+
+describe("Project Overview - this month cut at today (owner 2026-11-19)", () => {
+  const so = (rm: number) => ({ salesOrders: { sen: rm * 100, costSen: 0, count: 1, costSplit: NO_SPLIT } });
+  it("splits held from still to come, an event starting today counted as held", () => {
+    const s = heldVsComing([
+      p({ id: 1, startDate: "2026-11-06", ...so(1000) }),
+      p({ id: 2, startDate: "2026-11-19", ...so(500) }),
+      p({ id: 3, startDate: "2026-11-27", ...so(300) }),
+    ], "2026-11-19");
+    expect(s?.held).toMatchObject({ projects: 2, sales: 1500 });
+    expect(s?.coming).toMatchObject({ projects: 1, sales: 300 });
+  });
+  it("needs no split when every event is on one side of today", () => {
+    expect(heldVsComing([p({ startDate: "2026-10-02" })], "2026-11-19")).toBeNull();
+    expect(heldVsComing([p({ startDate: "2026-12-02" })], "2026-11-19")).toBeNull();
   });
 });

@@ -97,7 +97,13 @@ describe('future ranges (Project Overview, owner 2026-11-18)', () => {
   });
 
   test('the project report offers them after the reports\' own list, and recognises a future range', () => {
-    expect(PROJECT_REPORT_RANGE_PRESETS.slice(0, REPORT_RANGE_PRESETS.length)).toEqual([...REPORT_RANGE_PRESETS]);
+    /* This month / quarter / year run to their last day (owner 2026-11-19). */
+    expect(PROJECT_REPORT_RANGE_PRESETS[0]).toBe('wholeMonth');
+    expect(PROJECT_REPORT_RANGE_PRESETS).not.toContain('thisMonth');
+    expect(presetRange('wholeMonth', '2026-11-19')).toEqual({ from: '2026-11-01', to: '2026-11-30' });
+    expect(presetRange('wholeQuarter', '2026-11-19')).toEqual({ from: '2026-10-01', to: '2026-12-31' });
+    expect(presetRange('wholeYear', '2026-11-19')).toEqual({ from: '2026-01-01', to: '2026-12-31' });
+    expect(presetLabel('wholeMonth')).toBe('This month');
     expect(PROJECT_REPORT_RANGE_PRESETS).toEqual(expect.arrayContaining(['nextMonth', 'nextQuarter', 'next12Months']));
     expect(presetOf({ from: '2026-12-01', to: '2026-12-31' }, PROJECT_REPORT_RANGE_PRESETS, '2026-11-18')).toBe('nextMonth');
     /* The Finance reports keep their past-only list. */
