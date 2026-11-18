@@ -179,8 +179,10 @@ describe("Project Overview — future date ranges (owner 2026-11-18)", () => {
     const row = within(projectsTable()).getByText("[AKEMI] MYHOME").closest("tr") as HTMLTableRowElement;
     expect(within(row).getByText("Estimate")).toBeTruthy();
     const split = screen.getByTestId("layer-split");
-    expect(split.textContent).toContain("1 of 1 projects include estimates");
-    for (const h of ["Actual", "Forecast", "Last event"]) expect(within(split).getByText(h)).toBeTruthy();
+    expect(split.textContent).toContain("1 of 1 projects include a forecast");
+    /* A last event's result is a forecast (owner 2026-11-19): two columns, not three. */
+    for (const h of ["Actual", "Forecast"]) expect(within(split).getByText(h)).toBeTruthy();
+    expect(within(split).queryByText("Last event")).toBeNull();
     const sales = within(split).getByText("Sales").closest("tr") as HTMLTableRowElement;
     expect(sales.textContent).toContain("90,000");
   });

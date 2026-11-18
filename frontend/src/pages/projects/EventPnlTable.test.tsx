@@ -106,12 +106,12 @@ const FUTURE: EventPnl = {
 };
 
 describe("EventPnlTable — three layers", () => {
-  it("tags a Forecast and a Last event figure; an actual carries no tag", () => {
+  it("tags a typed forecast and a last-event figure both Forecast; an actual carries no tag", () => {
     render(<EventPnlTable pnl={FUTURE} editable={() => undefined} busyCategory={null} books={new Set()} layers={LAYERS} onForecast={null} />);
     const sales = within(rowOf("Total Sales")).getAllByRole("cell")[0]!;
     expect(sales.textContent).toContain("90,000");
     expect(within(sales).getByText("Forecast")).toBeTruthy();
-    expect(within(within(rowOf("COGS — Matt/Sofa")).getAllByRole("cell")[0]!).getByText("Last event")).toBeTruthy();
+    expect(within(within(rowOf("COGS — Matt/Sofa")).getAllByRole("cell")[0]!).getByText("Forecast")).toBeTruthy();
     const rental = within(rowOf("Rental")).getAllByRole("cell")[0]!;
     expect(rental.textContent).toContain("15,000");
     expect(within(rental).queryByText("Forecast")).toBeNull();

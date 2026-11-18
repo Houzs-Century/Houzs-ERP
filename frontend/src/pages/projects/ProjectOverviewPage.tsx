@@ -24,6 +24,8 @@ import { ProjectDataGapsPanel, ProjectStuckPanel } from "./ProjectOverviewParts"
 import { figuresOf, totalsOf, groupBy, drillOf, heldVsComing, pctOf, type OvProject, type Drill } from "./projectOverviewModel";
 import { VIEW_PARAMS, readView, rememberOpenedFrom, takeScroll, writeView, type Dim, type OverviewView } from "./projectOverviewView";
 
+type Part = "all" | "held" | "coming";
+const PART_PARAM = "af_part";
 const DIMS: Array<[Dim, string]> = [["brand", "Brand"], ["eventType", "Event type"], ["organizer", "Organizer"], ["venue", "Venue"], ["state", "State"]];
 const money = formatCurrency;
 const pctTxt = (x: number | null) => (x == null ? "—" : `${x.toFixed(1)}%`);
@@ -31,7 +33,7 @@ export function ProjectOverviewPage() {
   const navigate = useNavigate();
   const today = todayMY();
   /* A new period drops the breakdown pick in the same URL write. */
-  const [period, setPeriod] = useDashboardPeriod(today, "af_from", "af_to", [VIEW_PARAMS.pick]);
+  const [period, setPeriod] = useDashboardPeriod(today, "af_from", "af_to", [VIEW_PARAMS.pick, PART_PARAM]);
   /* "This month" is the WHOLE month (owner 2026-11-19: 下个礼拜的 project 没进来):
      an event booked for next week belongs to it and carries its forecast. The
      shared period reads "This month" as the 1st to today, so that one (and the
@@ -85,7 +87,15 @@ export function ProjectOverviewPage() {
   const inPeriod = useMemo(() => all.filter((p) => !!p.startDate && p.startDate >= win.from && p.startDate <= win.to), [all, win.from, win.to]);
   const t = totalsOf(inPeriod);
   const split = heldVsComing(inPeriod, today);
-  const groups = groupBy(inPeriod, (p) => p[dim]);
+  /* Clicking Held so far / Still to come in the hero narrows every panel below
+     to that part; Projected total (the default) shows all (owner 2026-11-19). */
+  const partParam = params.get(PART_PARAM);
+  const part: Part = split && (partParam === "held" || partParam === "coming") ? partParam : "all";
+  const setPart = (next: Part) => setParams((prev) => { const n = new URLSearchParams(prev); if (next === "all") n.delete(PART_PARAM); else n.set(PART_PARAM, next); return n; }, { replace: true });
+  const shown = useMemo(() => (part === "all" ? inPeriod : inPeriod.filter((p) => (part === "held" ? (p.startDate ?? "") <= today : (p.startDate ?? "") > today))), [inPeriod, part, today]);
+  const ts = part === "all" ? t : totalsOf(shown);
+  const partLabel = part === "held" ? " · held so far" : part === "coming" ? " · still to come" : "";
+  const groups = groupBy(shown, (p) => p[dim]);
   /* Click a Breakdown header to rank by it (owner 2026-10-23). */
   const gSort = useTableSort(groups, (g, k) =>
     k === "key" ? g.key : k === "projects" ? g.projects : k === "sales" ? g.sales : k === "gpPct" ? pctOf(g.gp, g.sales)
@@ -94,6 +104,9 @@ export function ProjectOverviewPage() {
      unless the period picked reaches it, where its events carry their forecast (owner 2026-11-18). */
   const trendEnd = win.to > today ? win.to : today;
   const trend = drillOf(all, drill, today).filter((b) => b.from <= trendEnd);
+  /* The part of each bucket's sales still to come (events after today), on forecast. */
+  const toCome = trend.map((b) => totalsOf(all.filter((p) => !!p.startDate && p.startDate > today && p.startDate >= b.from && p.startDate <= b.to)).sales);
+  const anyToCome = toCome.some((v) => v !== 0);
   /* Breadcrumb back up the drill: All years > 2026 > Q4 > Oct. */
   const crumbs: Array<[string, Drill]> = [["All years", { level: "years" }]];
   if (drill.level !== "years") {
@@ -109,16 +122,16 @@ export function ProjectOverviewPage() {
   /* Running costs after COGS, only the ones that are not zero. */
   /* The lines of the Financial Snapshot, each against sales (owner 2026-10-19). */
   const cogsLines: Array<[string, number, string]> = [
-    ["COGS — Matt / Sofa", t.cogsMattSofa, PALETTE[1]!], ["COGS — Bedframe", t.cogsBedframe, "#c98a4b"], ["COGS — Accessories", t.cogsAccessories, "#e0b184"],
-    ...(Math.abs(t.cogsFromSo) >= 1 ? [["COGS — order cost not on a line", t.cogsFromSo, "#b07a3f"] as [string, number, string]] : []),
+    ["COGS — Matt / Sofa", ts.cogsMattSofa, PALETTE[1]!], ["COGS — Bedframe", ts.cogsBedframe, "#c98a4b"], ["COGS — Accessories", ts.cogsAccessories, "#e0b184"],
+    ...(Math.abs(ts.cogsFromSo) >= 1 ? [["COGS — order cost not on a line", ts.cogsFromSo, "#b07a3f"] as [string, number, string]] : []),
   ];
   const costLines: Array<[string, number, string]> = [
-    ["Rental", t.rental, PALETTE[2]!], ["Setup", t.setup, PALETTE[5]!], ["Transport fee", t.transportFee, PALETTE[8]!],
-    ["Transport setup & dismantle", t.transportSetup, "#7a9cc6"], ["Commission", t.commission, PALETTE[3]!], ["Merchandise", t.merchandise, PALETTE[7]!], ["Others costing", t.other, "#c9cdc4"],
+    ["Rental", ts.rental, PALETTE[2]!], ["Setup", ts.setup, PALETTE[5]!], ["Transport fee", ts.transportFee, PALETTE[8]!],
+    ["Transport setup & dismantle", ts.transportSetup, "#7a9cc6"], ["Commission", ts.commission, PALETTE[3]!], ["Merchandise", ts.merchandise, PALETTE[7]!], ["Others costing", ts.other, "#c9cdc4"],
   ];
   const running = costLines.reduce((a, [, v]) => a + v, 0);
   const npMax = Math.max(1, ...groups.map((g) => Math.abs(g.np)));
-  const listed = inPeriod.filter((p) => !pick || (p[dim] || "—") === pick).map((p) => ({ p, f: figuresOf(p) }));
+  const listed = shown.filter((p) => !pick || (p[dim] || "—") === pick).map((p) => ({ p, f: figuresOf(p) }));
   /* Collected: what the period's orders have been paid, of what they ordered. */
   const paidSen = inPeriod.reduce((a, p) => a + p.collection.paidSen, 0);
   const orderedSen = inPeriod.reduce((a, p) => a + p.collection.totalSen, 0);
@@ -152,7 +165,7 @@ export function ProjectOverviewPage() {
             <Hero label="Net profit" value={money(t.np)} sub={`NP ${pctTxt(pctOf(t.np, t.sales))}`} tone={t.np >= 0 ? "good" : "bad"} />
             <Hero label="Collected" value={pctTxt(pctOf(paidSen, orderedSen))} sub={`${money(paidSen / 100)} of ${money(orderedSen / 100)} ordered`} />
           </div>
-          {split && <HeldComingRow held={split.held} coming={split.coming} total={t} today={today} />}
+          {split && <HeldComingRow held={split.held} coming={split.coming} total={t} today={today} part={part} onPart={setPart} />}
           {t.estimated > 0 && <LayerSplitRow t={t} />}
           {t.noSales > 0 && <p className="mt-3 text-[11.5px] text-sidebar-ink/70">{t.noSales} projects in this period have neither keyed sales nor Sales Orders yet.</p>}
         </div>
@@ -176,33 +189,33 @@ export function ProjectOverviewPage() {
             line={{ name: "Net profit %", color: PALETTE[1]!, values: trend.map((b) => pctOf(b.np, b.sales)), format: (x) => `${x.toFixed(1)}%` }} />
           <div className="mt-2 overflow-x-auto">
             <table className="w-full border-collapse">
-              <thead><tr><Th left>{unit}</Th><Th>Projects</Th><Th>Sales</Th><Th>GP</Th><Th>GP %</Th><Th>NP</Th><Th>NP %</Th></tr></thead>
-              <tbody>{trend.slice().reverse().map((b) => (
+              <thead><tr><Th left>{unit}</Th><Th>Projects</Th><Th>Sales</Th>{anyToCome && <Th>To come</Th>}<Th>GP</Th><Th>GP %</Th><Th>NP</Th><Th>NP %</Th></tr></thead>
+              <tbody>{trend.map((b, i) => ({ b, come: toCome[i] ?? 0 })).reverse().map(({ b, come }) => (
                 <tr key={b.key} className="cursor-pointer hover:bg-surface-2/50" onClick={() => openBucket(b)}>
-                  <Td left className="text-primary">{b.label}{b.next ? " ›" : ""}</Td><Td>{b.projects}</Td><Td>{money(b.sales)}</Td><Td>{money(b.gp)}</Td><Td>{pctTxt(pctOf(b.gp, b.sales))}</Td>
+                  <Td left className="text-primary">{b.label}{b.next ? " ›" : ""}</Td><Td>{b.projects}</Td><Td>{money(b.sales)}</Td>{anyToCome && <Td className="text-ink-muted">{come ? money(come) : "—"}</Td>}<Td>{money(b.gp)}</Td><Td>{pctTxt(pctOf(b.gp, b.sales))}</Td>
                   <Td className={b.np < 0 ? "text-err" : ""}>{money(b.np)}</Td><Td>{pctTxt(pctOf(b.np, b.sales))}</Td>
                 </tr>))}</tbody>
             </table>
-            <p className="mt-1 text-[11px] text-ink-muted">{drill.level === "weeks" ? "Click a week to show its projects across the page." : "Year, then its quarters, then its months, then the weeks of a month."}</p>
+            <p className="mt-1 text-[11px] text-ink-muted">{drill.level === "weeks" ? "Click a week to show its projects across the page." : "Year, then its quarters, then its months, then the weeks of a month."}{anyToCome ? " To come = events not started yet, on their forecast." : ""}</p>
           </div>
         </Panel>
-        <Panel title="Where each ringgit of sales goes" hint={winLabel}>
-          <RinggitBar sales={t.sales} parts={[["COGS", t.cogs, PALETTE[1]!], ...costLines.map(([l, v, c]) => [l, v, c] as [string, number, string]), ["Net profit", Math.max(0, t.np), "#2f8a5b"]]} />
+        <Panel title="Where each ringgit of sales goes" hint={`${winLabel}${partLabel}`}>
+          <RinggitBar sales={ts.sales} parts={[["COGS", ts.cogs, PALETTE[1]!], ...costLines.map(([l, v, c]) => [l, v, c] as [string, number, string]), ["Net profit", Math.max(0, ts.np), "#2f8a5b"]]} />
           <table className="mt-3 w-full border-collapse text-[12.5px] tabular-nums"><tbody>
-            <tr className="font-semibold"><Td left>Sales</Td><Td>{money(t.sales)}</Td><Td className="w-[64px] text-ink-muted">100.0%</Td></tr>
-            {cogsLines.map(([l, v]) => <tr key={l} className={v ? "" : "text-ink-muted"}><Td left className="pl-6">{l}</Td><Td>{money(v)}</Td><Td className="text-ink-muted">{pctTxt(pctOf(v, t.sales))}</Td></tr>)}
-            <tr className="bg-surface-2/70 font-semibold"><Td left className="border-t border-border">Total COGS</Td><Td className="border-t border-border">{money(t.cogs)}</Td><Td className="border-t border-border">{pctTxt(pctOf(t.cogs, t.sales))}</Td></tr>
-            <tr className="bg-surface-2 font-bold"><Td left>Gross profit</Td><Td>{money(t.gp)}</Td><Td>{pctTxt(pctOf(t.gp, t.sales))}</Td></tr>
-            {t.serviceRevenue !== 0 && <tr><Td left className="pl-6">Service revenue</Td><Td>{money(t.serviceRevenue)}</Td><Td className="text-ink-muted">{pctTxt(pctOf(t.serviceRevenue, t.sales))}</Td></tr>}
-            {costLines.map(([l, v]) => <tr key={l} className={v ? "" : "text-ink-muted"}><Td left className="pl-6">{l}</Td><Td>{money(v)}</Td><Td className="text-ink-muted">{pctTxt(pctOf(v, t.sales))}</Td></tr>)}
-            <tr className="bg-surface-2/70 font-semibold"><Td left className="border-t border-border">Total cost</Td><Td className="border-t border-border">{money(running)}</Td><Td className="border-t border-border">{pctTxt(pctOf(running, t.sales))}</Td></tr>
-            <tr className="bg-primary-soft/60 font-bold"><Td left className="border-t-2 border-primary/50">Net profit</Td><Td className={cn("border-t-2 border-primary/50", t.np < 0 ? "text-err" : "text-synced")}>{money(t.np)}</Td><Td className="border-t-2 border-primary/50">{pctTxt(pctOf(t.np, t.sales))}</Td></tr>
+            <tr className="font-semibold"><Td left>Sales</Td><Td>{money(ts.sales)}</Td><Td className="w-[64px] text-ink-muted">100.0%</Td></tr>
+            {cogsLines.map(([l, v]) => <tr key={l} className={v ? "" : "text-ink-muted"}><Td left className="pl-6">{l}</Td><Td>{money(v)}</Td><Td className="text-ink-muted">{pctTxt(pctOf(v, ts.sales))}</Td></tr>)}
+            <tr className="bg-surface-2/70 font-semibold"><Td left className="border-t border-border">Total COGS</Td><Td className="border-t border-border">{money(ts.cogs)}</Td><Td className="border-t border-border">{pctTxt(pctOf(ts.cogs, ts.sales))}</Td></tr>
+            <tr className="bg-surface-2 font-bold"><Td left>Gross profit</Td><Td>{money(ts.gp)}</Td><Td>{pctTxt(pctOf(ts.gp, ts.sales))}</Td></tr>
+            {ts.serviceRevenue !== 0 && <tr><Td left className="pl-6">Service revenue</Td><Td>{money(ts.serviceRevenue)}</Td><Td className="text-ink-muted">{pctTxt(pctOf(ts.serviceRevenue, ts.sales))}</Td></tr>}
+            {costLines.map(([l, v]) => <tr key={l} className={v ? "" : "text-ink-muted"}><Td left className="pl-6">{l}</Td><Td>{money(v)}</Td><Td className="text-ink-muted">{pctTxt(pctOf(v, ts.sales))}</Td></tr>)}
+            <tr className="bg-surface-2/70 font-semibold"><Td left className="border-t border-border">Total cost</Td><Td className="border-t border-border">{money(running)}</Td><Td className="border-t border-border">{pctTxt(pctOf(running, ts.sales))}</Td></tr>
+            <tr className="bg-primary-soft/60 font-bold"><Td left className="border-t-2 border-primary/50">Net profit</Td><Td className={cn("border-t-2 border-primary/50", ts.np < 0 ? "text-err" : "text-synced")}>{money(ts.np)}</Td><Td className="border-t-2 border-primary/50">{pctTxt(pctOf(ts.np, ts.sales))}</Td></tr>
           </tbody></table>
           <p className="mt-2 pb-14 text-[11.5px] text-ink-muted">The lines of each event&apos;s Financial Snapshot, added up; % = share of sales. A grey line has nothing in this period.</p>
         </Panel>
       </div>
 
-      <Panel title="Breakdown" hint="largest sales first · click a header to rank · click a row to list its projects below" right={<Toggle value={dim} options={DIMS} onChange={(v) => setView({ dim: v, pick: null })} />}>
+      <Panel title={`Breakdown${partLabel}`} hint="largest sales first · click a header to rank · click a row to list its projects below" right={<Toggle value={dim} options={DIMS} onChange={(v) => setView({ dim: v, pick: null })} />}>
         <div className="max-h-[420px] overflow-auto">
           <table className="w-full border-collapse">
             <thead className="sticky top-0 bg-surface"><tr>
@@ -227,14 +240,14 @@ export function ProjectOverviewPage() {
 
       {/* The project list first, the venue rent after it (owner 2026-10-25:
           把venue rent 和 project 倒反位置). */}
-      <Panel title={`Projects${pick ? ` · ${pick}` : ""}`} hint={`${listed.length} projects · amounts in RM · click one to open it`}
+      <Panel title={`Projects${pick ? ` · ${pick}` : ""}${partLabel}`} hint={`${listed.length} projects · amounts in RM · click one to open it`}
         right={pick ? <button type="button" className="text-[12px] text-primary hover:underline" onClick={() => setView({ pick: null })}>Show all</button> : undefined}>
         <div ref={tableRef}>
           <ProjectOverviewTable rows={listed} loading={q.loading} onOpen={openProject} />
         </div>
       </Panel>
 
-      <VenueRentPanel projects={inPeriod} periodLabel={winLabel} />
+      <VenueRentPanel projects={shown} periodLabel={`${winLabel}${partLabel}`} />
 
       <ProjectStuckPanel onOpen={openProject} />
       <ProjectDataGapsPanel onOpen={openProject} />
@@ -244,41 +257,46 @@ export function ProjectOverviewPage() {
 
 /** A period that runs past today, in three plain figures (owner 2026-11-19):
  *  what has been held, what is still to come, and the projected total. */
-function HeldComingRow({ held, coming, total, today }: { held: ReturnType<typeof totalsOf>; coming: ReturnType<typeof totalsOf>; total: ReturnType<typeof totalsOf>; today: string }) {
-  const cells: Array<[string, string, ReturnType<typeof totalsOf>]> = [
-    ["Held so far", `${held.projects} project${held.projects === 1 ? "" : "s"} started by ${today.slice(8)}/${today.slice(5, 7)}`, held],
-    ["Still to come", `${coming.projects} project${coming.projects === 1 ? "" : "s"} · forecast / last event`, coming],
-    ["Projected total", "held + still to come", total],
+function HeldComingRow({ held, coming, total, today, part, onPart }: { held: ReturnType<typeof totalsOf>; coming: ReturnType<typeof totalsOf>; total: ReturnType<typeof totalsOf>; today: string; part: Part; onPart: (p: Part) => void }) {
+  const cells: Array<[Part, string, string, ReturnType<typeof totalsOf>]> = [
+    ["held", "Held so far", `${held.projects} project${held.projects === 1 ? "" : "s"} started by ${today.slice(8)}/${today.slice(5, 7)}`, held],
+    ["coming", "Still to come", `${coming.projects} project${coming.projects === 1 ? "" : "s"} · on forecast`, coming],
+    ["all", "Projected total", "held + still to come", total],
   ];
   return (
-    <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3" data-testid="held-coming">
-      {cells.map(([label, sub, x], i) => (
-        <div key={label} className={cn("rounded-lg px-3 py-2", i === 2 ? "bg-white/10" : "bg-white/5")}>
+    <div className="mt-4" data-testid="held-coming">
+    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+      {cells.map(([key, label, sub, x]) => (
+        <button type="button" key={key} onClick={() => onPart(key)} aria-pressed={part === key}
+          className={cn("rounded-lg px-3 py-2 text-left ring-1 transition-colors", part === key ? "bg-white/15 ring-accent-bright" : "bg-white/5 ring-transparent hover:bg-white/10")}>
           <div className="text-[10.5px] font-semibold uppercase tracking-wider text-sidebar-ink/70">{label}</div>
           <div className="mt-0.5 font-display text-[17px] font-bold tabular-nums">{money(x.sales)}</div>
           <div className="text-[11.5px] tabular-nums text-sidebar-ink/80">
             NP <span className={x.np < 0 ? "text-[#f0a39b]" : "text-[#8fe0b5]"}>{money(x.np)}</span> · {pctTxt(pctOf(x.np, x.sales))}
           </div>
           <div className="text-[11px] text-sidebar-ink/60">{sub}</div>
-        </div>
+        </button>
       ))}
+    </div>
+    <p className="mt-1.5 text-[11px] text-sidebar-ink/60">Click one to show only that part in the panels below.</p>
     </div>
   );
 }
 
-/** The period's totals cut by layer (owner 2026-11-18): what is real, what was
- *  typed as a forecast, and what is borrowed from the last same-venue event. */
+/** The period's totals cut in two (owner 2026-11-19: last event 就是 forecast
+ *  来的): what is real, and what is forecast - typed, or the last same event's
+ *  result standing in for one. */
 function LayerSplitRow({ t }: { t: ReturnType<typeof totalsOf> }) {
   const rows: Array<[string, ReturnType<typeof totalsOf>["split"]["sales"]]> = [["Sales", t.split.sales], ["Total cost", t.split.cost], ["Net profit", t.split.net]];
   return (
     <div className="mt-4 overflow-x-auto rounded-lg bg-white/5 px-3 py-2" data-testid="layer-split">
-      <div className="mb-1 text-[11px] text-sidebar-ink/70">{t.estimated} of {t.projects} projects include estimates</div>
+      <div className="mb-1 text-[11px] text-sidebar-ink/70">{t.estimated} of {t.projects} projects include a forecast (typed, or the last same event&apos;s result)</div>
       <table className="w-full min-w-[420px] border-collapse text-[12px] tabular-nums">
         <thead><tr className="text-left text-[10.5px] uppercase tracking-wider text-sidebar-ink/70">
-          <th className="py-0.5 font-semibold"> </th><th className="py-0.5 text-right font-semibold">Actual</th><th className="py-0.5 text-right font-semibold">Forecast</th><th className="py-0.5 text-right font-semibold">Last event</th>
+          <th className="py-0.5 font-semibold"> </th><th className="py-0.5 text-right font-semibold">Actual</th><th className="py-0.5 text-right font-semibold">Forecast</th>
         </tr></thead>
         <tbody>{rows.map(([label, s]) => (
-          <tr key={label}><td className="py-0.5 text-sidebar-ink/80">{label}</td><td className="py-0.5 text-right">{money(s.actual)}</td><td className="py-0.5 text-right">{money(s.forecast)}</td><td className="py-0.5 text-right">{money(s.last_event)}</td></tr>
+          <tr key={label}><td className="py-0.5 text-sidebar-ink/80">{label}</td><td className="py-0.5 text-right">{money(s.actual)}</td><td className="py-0.5 text-right">{money(s.forecast + s.last_event)}</td></tr>
         ))}</tbody>
       </table>
     </div>

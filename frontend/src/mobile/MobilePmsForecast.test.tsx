@@ -31,8 +31,9 @@ const LAYERS: DetailForecast = {
 describe("MobileForecastLines", () => {
   it("tags each estimate and marks the totals that include one", () => {
     render(<MobileForecastLines projectId={9} layers={LAYERS} canWrite={false} reload={() => {}} />);
-    expect(screen.getByText("Forecast")).toBeTruthy();
-    expect(screen.getByText("Last event")).toBeTruthy();
+    /* A typed forecast and a last event's result both read Forecast (owner 2026-11-19). */
+    expect(screen.getAllByText("Forecast")).toHaveLength(2);
+    expect(screen.queryByText("Last event")).toBeNull();
     expect(screen.getAllByText("incl. estimates")).toHaveLength(4);
     expect((screen.getByRole("button", { name: /^Rental/ }) as HTMLButtonElement).disabled).toBe(true);
   });

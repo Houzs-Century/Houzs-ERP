@@ -33,6 +33,6 @@ describe("forecast input and tags", () => {
   it("an actual carries no tag", () => {
     expect(sourceTag("actual")).toBeNull();
     expect(sourceTag("forecast")).toBe("Forecast");
-    expect(sourceTag("last_event")).toBe("Last event");
+    expect(sourceTag("last_event")).toBe("Forecast");
   });
 });

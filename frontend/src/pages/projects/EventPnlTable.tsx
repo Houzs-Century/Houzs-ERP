@@ -64,9 +64,9 @@ export function SourceTag({ source }: { source: LineSource }) {
     <span
       className={cn(
         "ml-1 inline-block rounded px-1 py-px font-sans text-[9.5px] font-semibold",
-        source === "forecast" ? "bg-warning-bg text-warning-text" : "bg-surface-2 text-ink-muted",
+        "bg-warning-bg text-warning-text",
       )}
-      title={source === "forecast" ? "A figure typed for this line until the real one is in" : "The last event at this venue with this organiser — its actual figure"}
+      title={source === "forecast" ? "Forecast typed for this line, until the real figure is in" : "Forecast from the last event with the same organiser, venue and brand (its actual), until the real figure is in"}
     >
       {label}
     </span>
