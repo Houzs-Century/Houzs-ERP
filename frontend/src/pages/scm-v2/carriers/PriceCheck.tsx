@@ -11,10 +11,11 @@ import {
   useComputeCost, type CostBreakdown, type DeliveryFacts, type RateArea, type RateCard, type RateRule,
 } from '../../../vendor/scm/lib/delivery-rate-card-queries';
 import { cn } from '../../../lib/utils';
-import { RULE_LABEL } from '../../../vendor/scm/lib/rate-rule-taxonomy';
+import { BILLABLE_JOB_TYPES, JOB_LABEL, RULE_LABEL, type BillableJobType } from '../../../vendor/scm/lib/rate-rule-taxonomy';
 import { chargingUnit } from './cardSettings';
 import { FLAT_ORDER, type FlatRuleType } from './rateCardLayout';
-import { destinationGroups, groupBreakdown, pricedTypes, readFacts, type CheckErrors, type PriceCheckForm } from './priceCheckFacts';
+import { destinationGroups, groupBreakdown, pricedTypes, readFacts, withJob, type CheckErrors, type PriceCheckForm } from './priceCheckFacts';
+import { surchargeSkipped } from './appliesTo';
 import { Panel } from './ruleEditors';
 import { EYEBROW, Field, INPUT, LABEL } from './ui';
 
@@ -63,7 +64,7 @@ export const PriceCheck = ({ card, rules, areas, areaRules, form, onForm }: {
   const factsKey = read.ok ? JSON.stringify(read.facts) : null;
   const cardKey = JSON.stringify([
     card.basis, card.aggregation, card.minChargeSen, card.capSen, card.rounding,
-    rules.map((r) => [r.id, r.amountSen, r.tierPosition, r.bracketMin, r.bracketMax, r.zone]),
+    rules.map((r) => [r.id, r.amountSen, r.tierPosition, r.bracketMin, r.bracketMax, r.zone, r.appliesTo ?? null]),
     areaRules.map((r) => [r.id, r.amountSen, r.tierPosition, r.bracketMin, r.bracketMax, r.areaId]),
     areas.map((a) => [a.id, a.towns]),
   ]);
@@ -79,11 +80,17 @@ export const PriceCheck = ({ card, rules, areas, areaRules, form, onForm }: {
 
   const setCount = (t: FlatRuleType, v: string) => onForm({ ...form, counts: { ...form.counts, [t]: v } });
   const groups = result ? groupBreakdown(result, unit) : [];
+  const skipped = surchargeSkipped(rules, form.town, form.job);
 
   return (
     <Panel section="PRICE_CHECK" title="Price check" note={null}
-      hint="Type what one delivery carried. The card says what it should cost — hold a 3PL bill against it." actions={null}>
+      hint="Pick the job and type what it carried. The card says what it should cost — hold a 3PL bill against it." actions={null}>
       <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(210px,1fr))]">
+        <Field label="Job">
+          <select className={INPUT} value={form.job} onChange={(e) => onForm(withJob(form, e.target.value as BillableJobType, priced))}>
+            {BILLABLE_JOB_TYPES.map((j) => <option key={j} value={j}>{JOB_LABEL[j]}</option>)}
+          </select>
+        </Field>
         {card.aggregation === 'UNIT' && (
           <Box label={unit === 'item' ? 'Items' : 'Sets'} value={form.count} placeholder="0" error={errors.count} inputMode="numeric"
             onChange={(v) => onForm({ ...form, count: v })} />
@@ -97,7 +104,7 @@ export const PriceCheck = ({ card, rules, areas, areaRules, form, onForm }: {
             onChange={(v) => setCount(t, v)} />
         ))}
         {destinations.length > 0 && (
-          <Field label="Destination">
+          <Field label="Area (destination)">
             <select className={INPUT} value={form.town} onChange={(e) => onForm({ ...form, town: e.target.value })}>
               <option value="">In town</option>
               {destinations.map((g) => (g.label == null
@@ -120,7 +127,7 @@ export const PriceCheck = ({ card, rules, areas, areaRules, form, onForm }: {
           <p className="text-[13px] text-ink-muted">Working out the price…</p>
         ) : (
           <>
-            {groups.length === 0 && <p className="text-[13px] text-ink-muted">Nothing on this card charges for this delivery.</p>}
+            {groups.length === 0 && <p className="text-[13px] text-ink-muted">Nothing on this card charges for this job.</p>}
             {groups.map((g) => (
               <div key={g.id} className="flex flex-col gap-1">
                 <span className={EYEBROW}>{g.title}</span>
@@ -132,9 +139,14 @@ export const PriceCheck = ({ card, rules, areas, areaRules, form, onForm }: {
                 ))}
               </div>
             ))}
+            {skipped && (
+              <p className="text-[12px] text-ink-muted">
+                The outstation price for {form.town.trim()} does not apply to {JOB_LABEL[form.job]}. Change it under Applies to on the Outstation tab.
+              </p>
+            )}
             {result.area && <p className="text-[12px] text-ink-muted">Priced in the area {result.area.name}.</p>}
             <div className="flex justify-between gap-3 border-t border-border pt-2.5 text-[15px] font-semibold text-ink" aria-live="polite">
-              <span>This delivery should cost</span>
+              <span>This {form.job === 'DELIVERY' ? 'delivery' : 'job'} should cost</span>
               <span className="tabular-nums">{fmtSen(result.totalSen)}</span>
             </div>
           </>

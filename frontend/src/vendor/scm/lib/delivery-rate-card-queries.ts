@@ -48,6 +48,9 @@ export type RateRule = {
   zone: string | null;
   amountSen: number;
   params: Record<string, unknown> | null;
+  /** An outstation price's jobs (its default, Delivery order, when it names
+   *  none); null for every other price. */
+  appliesTo?: string[] | null;
   sortOrder: number;
   /** Set when the price belongs to one AREA of the card (its own towns), absent
    *  or null for the card's own price. Area prices are shown with their area,
@@ -90,6 +93,8 @@ export type DeliveryFacts = {
   destinationZone?: string | null;
   /** The area to price in (Price check names it); otherwise the address decides. */
   areaId?: string | null;
+  /** The job being priced; absent = Delivery order. */
+  jobType?: string | null;
   disposeCount?: number | null;
   setupCount?: number | null;
   dismantleCount?: number | null;
@@ -206,6 +211,8 @@ export type NewRateRule = {
   sortOrder?: number;
   /** The area this price is for; absent or null = the card's own price. */
   areaId?: string | null;
+  /** Outstation only: the jobs it adds to; null = back to Delivery order. */
+  appliesTo?: string[] | null;
 };
 
 export function useCreateRateRule(cardId: string) {

@@ -10,8 +10,11 @@ import {
 } from '../../../vendor/scm/lib/delivery-rate-card-queries';
 import { writeFailedAs } from '../../../vendor/scm/lib/mutation-error';
 import { cn } from '../../../lib/utils';
-import { RULE_LABEL, rulesByCategory, type RateRuleCategory } from '../../../vendor/scm/lib/rate-rule-taxonomy';
+import {
+  BILLABLE_JOB_TYPES, JOB_LABEL, OUTSTATION_DEFAULT_APPLIES_TO, RULE_LABEL, rulesByCategory, type BillableJobType, type RateRuleCategory,
+} from '../../../vendor/scm/lib/rate-rule-taxonomy';
 import { centiToRM, rmToSen } from './cardSettings';
+import { isDefaultJobs, jobsOf, toggleJob } from './appliesTo';
 import type { FlatRuleType, PriceCell } from './rateCardLayout';
 import { BTN_PRI, BTN_QUIET, CARD, HINT, INPUT, LABEL, Pill } from './ui';
 
@@ -136,7 +139,47 @@ export const AddPriceCell = ({ cardId, rule, label, scope }: {
   );
 };
 
-type AddForm = { ruleType: RateRuleType; tierPosition: string; bracketMin: string; bracketMax: string; zone: string; amountRM: string };
+/** Which jobs an outstation price adds to: one tick per job, named as DP names
+ *  it. The last tick cannot be cleared — a price that applies to nothing is a
+ *  price to remove. */
+export const AppliesToControl = ({ value, onChange, disabled = false }: {
+  value: readonly BillableJobType[]; onChange: (jobs: BillableJobType[]) => void; disabled?: boolean;
+}) => (
+  <fieldset className="flex min-w-0 flex-col gap-1.5" disabled={disabled}>
+    <legend className={cn(LABEL, 'mb-1.5')}>Applies to</legend>
+    <div className="flex flex-wrap gap-x-3 gap-y-1">
+      {BILLABLE_JOB_TYPES.map((j) => {
+        const on = value.includes(j);
+        return (
+          <label key={j} className="inline-flex min-h-[32px] items-center gap-1.5 text-[13px] text-ink">
+            <input type="checkbox" checked={on} disabled={on && value.length === 1}
+              onChange={() => onChange(toggleJob(value, j))} />
+            {JOB_LABEL[j]}
+          </label>
+        );
+      })}
+    </div>
+  </fieldset>
+);
+
+/** An outstation price's Applies to, saved as each tick changes. */
+export const AppliesToEditor = ({ cardId, rule }: { cardId: string; rule: RateRule }) => {
+  const update = useUpdateRateRule(cardId);
+  const [jobs, setJobs] = useState<BillableJobType[]>(() => jobsOf(rule));
+  const change = (next: BillableJobType[]) => {
+    const before = jobs;
+    setJobs(next);
+    /* Back to the default is stored as no setting, so the card reads as it did. */
+    /* The hook's own onError (writeFailed) shows a refusal; the ticks go back. */
+    update.mutate({ id: rule.id, appliesTo: isDefaultJobs(next) ? null : next }, { onError: () => setJobs(before) });
+  };
+  return <AppliesToControl value={jobs} onChange={change} disabled={update.isPending} />;
+};
+
+type AddForm = {
+  ruleType: RateRuleType; tierPosition: string; bracketMin: string; bracketMax: string; zone: string; amountRM: string;
+  appliesTo: BillableJobType[];
+};
 
 /** Add a rule to one category: the rule type list holds only that category's.
  *  For the rules a dashed tile cannot take — a position, a sofa bracket, a town. */
@@ -148,6 +191,7 @@ export const AddRule = ({ cardId, category, zones, initialType, onDone }: {
   const [err, setErr] = useState<string | null>(null);
   const [form, setForm] = useState<AddForm>({
     ruleType: initialType ?? ((types[0] ?? 'POSITIONAL_TIER') as RateRuleType), tierPosition: '1', bracketMin: '', bracketMax: '', zone: '', amountRM: '',
+    appliesTo: [...OUTSTATION_DEFAULT_APPLIES_TO],
   });
   const set = <K extends keyof AddForm>(k: K, v: AddForm[K]) => { setErr(null); setForm((s) => ({ ...s, [k]: v })); };
 
@@ -173,8 +217,9 @@ export const AddRule = ({ cardId, category, zones, initialType, onDone }: {
       body.bracketMax = hi;
     }
     if (needsZone) {
-      if (!form.zone.trim()) { setErr('Enter the town or area zone.'); return; }
+      if (!form.zone.trim()) { setErr('Enter the area: a postcode zone such as JOHOR, or a town such as BINTULU.'); return; }
       body.zone = form.zone.trim();
+      if (!isDefaultJobs(form.appliesTo)) body.appliesTo = form.appliesTo;
     }
     /* A town is added one after another, so the box clears for the next. */
     create.mutate(body, {
@@ -204,12 +249,15 @@ export const AddRule = ({ cardId, category, zones, initialType, onDone }: {
           {field('To (blank = or more)', 'flex-[0_1_160px]', <input className={INPUT} inputMode="numeric" value={form.bracketMax} onChange={(e) => set('bracketMax', e.target.value)} />)}
         </>
       )}
-      {needsZone && field('Town or area zone', 'flex-[1_1_200px]', (
+      {needsZone && field('Area: a postcode zone or a town', 'flex-[1_1_200px]', (
         <>
           <input className={INPUT} list={listId} value={form.zone} onChange={(e) => set('zone', e.target.value)} placeholder="BINTULU" />
           <datalist id={listId}>{zones.map((z) => <option key={z} value={z} />)}</datalist>
         </>
       ))}
+      {needsZone && (
+        <div className="basis-full"><AppliesToControl value={form.appliesTo} onChange={(jobs) => set('appliesTo', jobs)} /></div>
+      )}
       {field('Amount (RM)', 'flex-[0_1_140px]', <input className={INPUT} inputMode="decimal" value={form.amountRM} onChange={(e) => set('amountRM', e.target.value)} />)}
       <div className="flex gap-2">
         <button type="button" className={BTN_PRI} onClick={addRule} disabled={create.isPending}><Plus size={16} strokeWidth={1.75} />{create.isPending ? 'Adding…' : 'Add rule'}</button>
