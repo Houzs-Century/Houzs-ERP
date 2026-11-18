@@ -232,6 +232,15 @@ export async function sendDeliveryMessageForDocs(
       // Headline fields FIRST so this kind's own variables win on any overlap
       // (driver_info sets client_delivery_date itself); both ride on the one send.
       extra: {
+        // Clear any service_job left on the contact by an earlier Service
+        // Arrangement (ASSR). Connect MERGES contact attributes, so a customer
+        // who once had a service case keeps service_job on file; Connect's
+        // postpone/reminder routing (houzs-connect #211) reads service_job to
+        // pick the service template, so a plain SO postpone/reminder to that
+        // customer would be mis-routed to the service version. An SO send is
+        // never a service leg, so it always blanks service_job. The ASSR sender
+        // (assr-arrangement-message.ts) sets the real value on its own sends.
+        service_job: '',
         ...buildSyncHeadline(first, phone, payloadDate(effectiveSoDelivery(first as SoDeliveryDateRow))),
         ...perKind.attributes,
         ...(sentByEmail ? { sent_by_email: sentByEmail } : {}),

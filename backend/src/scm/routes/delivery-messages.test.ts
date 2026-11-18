@@ -118,6 +118,15 @@ describe('sendDeliveryMessageForDocs — company routing', () => {
     expect(posted[0]!.attributes.sent_by_email).toBe('syu.houzs@gmail.com');
     expect(posted[1]!.attributes).not.toHaveProperty('sent_by_email');
   });
+
+  // houzs-connect #211: Connect MERGES contact attributes, so a service_job left
+  // on a contact by an earlier Service Arrangement (ASSR) would mis-route a plain
+  // SO postpone/reminder to the service template. Every SO send blanks it.
+  it('blanks service_job on an SO send so a stale Service Arrangement value cannot mis-route it', async () => {
+    const posted = stubFetch();
+    await sendDeliveryMessageForDocs(ctx(fakeSb(tables()), 1), ['HC-SO-001'], 'reminder_1', {});
+    expect(posted[0]!.attributes.service_job).toBe('');
+  });
 });
 
 /* The send log is what the board's Message column reads. supabase-js returns a
