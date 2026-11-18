@@ -552,7 +552,7 @@ export function eventCommissionSheet(r: EventCommission, period: string, brand: 
     subtitle: `${period} · ${words.toggle.toLowerCase()} · ${brand || 'all brands'} · total ${fmtRm(r.totals.totalSen)} · RM`,
     meta: [{ label: 'Period', value: period }, { label: 'View', value: words.toggle }, { label: 'Brand', value: brand || 'All brands' }],
     tables,
-    notes: [RULE_NOTE.replace(' (补开单)', '')],
+    notes: [RULE_NOTE],
     fmt: fmtRm,
   };
 }
@@ -574,7 +574,7 @@ export const eventCommissionCsv = (r: EventCommission, period = '', brand = ''):
   return `${out.join('\n')}\n`;
 };
 
-export const RULE_NOTE = 'An order earns its goods (no delivery or service) × the fair\'s brand rate once 30% of the order is paid. Upsales and drop sales count from 1/9/2026 (1 September – 19 October read from each order\'s modification history), each in the month it happened, at the fair\'s brand rate; one Finance left out (Don\'t count change) moves no commission and the order earns on the rest. A price wiped to 0 and typed again is no change (typed again at another figure, the difference counts that day). A late bill (补开单) is an order keyed in the range for a fair that had ended before it. By SO date, an order with no fair earns at its own brand\'s rate from 1/10/2026; one opened before then earns only on its upsales and drop sales, whatever has been paid, and cancelled from 1/10/2026 it gives back its goods × that rate (under Earlier orders, in the month it was cancelled). A line added by Finance is an amount of goods typed on an order for one month, at the order\'s own rate.';
+export const RULE_NOTE = 'An order earns its goods (no delivery or service) × the fair\'s brand rate once 30% of the order is paid. Upsales and drop sales count from 1/9/2026 (1 September – 19 October read from each order\'s modification history), each in the month it happened, at the fair\'s brand rate; one Finance left out (Don\'t count change) moves no commission and the order earns on the rest. A price wiped to 0 and typed again is no change (typed again at another figure, the difference counts that day). A late bill is an order keyed in the range for a fair that had ended before it. By SO date, an order with no fair earns at its own brand\'s rate from 1/10/2026; one opened before then earns only on its upsales and drop sales, whatever has been paid, and cancelled from 1/10/2026 it gives back its goods × that rate (under Earlier orders, in the month it was cancelled). A line added by Finance is an amount of goods typed on an order for one month, at the order\'s own rate.';
 
 /** A fair's dates as a sort key: start, end, venue, organizer, brand — the
     fairs at one place and time sit together (owner 2026-11-12). */

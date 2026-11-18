@@ -145,7 +145,7 @@ describe('the Performance P&L as tables', () => {
 
 describe('the monthly grid as a table', () => {
   const columns: MonthColumn[] = [
-    { key: 'cumulative', label: '累计 08/2026 – 09/2026', from: '2026-08-01', to: '2026-09-30', cumulative: true },
+    { key: 'cumulative', label: 'Cumulative 08/2026 – 09/2026', from: '2026-08-01', to: '2026-09-30', cumulative: true },
     { key: '2026-09', label: '09/2026', from: '2026-09-01', to: '2026-09-30', cumulative: false },
     { key: '2026-08', label: '08/2026', from: '2026-08-01', to: '2026-08-31', cumulative: false },
   ];
@@ -158,7 +158,7 @@ describe('the monthly grid as a table', () => {
   it('in amounts mode every month is an amount with its % beside it; 累计 wears the edge; a month a line never had is a dash in both slots', () => {
     const t = monthlyTable(columns, shown, false);
     expect(t.columns).toEqual([
-      { label: '累计 08/2026 – 09/2026', kind: 'amount' }, { label: '%', kind: 'pct', beside: true, edge: true },
+      { label: 'Cumulative 08/2026 – 09/2026', kind: 'amount' }, { label: '%', kind: 'pct', beside: true, edge: true },
       { label: '09/2026', kind: 'amount' }, { label: '%', kind: 'pct', beside: true, edge: false },
       { label: '08/2026', kind: 'amount' }, { label: '%', kind: 'pct', beside: true, edge: false },
     ]);
@@ -170,7 +170,7 @@ describe('the monthly grid as a table', () => {
   it('in % mode every month is its % alone', () => {
     const t = monthlyTable(columns, shown, true);
     expect(t.columns).toEqual([
-      { label: '累计 08/2026 – 09/2026', kind: 'pct', edge: true }, { label: '09/2026', kind: 'pct', edge: false }, { label: '08/2026', kind: 'pct', edge: false },
+      { label: 'Cumulative 08/2026 – 09/2026', kind: 'pct', edge: true }, { label: '09/2026', kind: 'pct', edge: false }, { label: '08/2026', kind: 'pct', edge: false },
     ]);
     expect(t.rows[2]!.cells).toEqual([0.5, null, 2]);
   });

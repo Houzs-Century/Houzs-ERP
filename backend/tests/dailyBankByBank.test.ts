@@ -132,7 +132,7 @@ describe('GET /accounting/daily-bank — by bank', () => {
     expect(may.transit.map((t) => [t.acquirerCode, t.balanceSen])).toEqual([['MBB', 0]]);
     expect(may.pending).toEqual([]);
     /* The generic clearing account names no bank. */
-    expect(b.unassignedTransit.map((t) => [t.acquirerCode, t.balanceSen])).toEqual([['未标银行', 3_365]]);
+    expect(b.unassignedTransit.map((t) => [t.acquirerCode, t.balanceSen])).toEqual([['Untagged bank', 3_365]]);
     expect(b.pendingApprovalSen).toBe(1_083_600);
   });
 

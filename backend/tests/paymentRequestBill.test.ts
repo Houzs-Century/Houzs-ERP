@@ -608,7 +608,7 @@ describe('需要 Event — decided on the chart, asked at approval', () => {
     const boss = as(w, APPROVER);
     const refused = await boss(`/payment-vouchers/${pv.body.id}/approve`, 'POST');
     expect(refused.status).toBe(409);
-    expect(refused.body).toEqual({ error: 'event_required_on_line', message: 'Line 1 (900-R032 RENTAL - EXHIBITION) needs its Event — pick it, or untick 需要 Event on the account.' });
+    expect(refused.body).toEqual({ error: 'event_required_on_line', message: 'Line 1 (900-R032 RENTAL - EXHIBITION) needs its Event — pick it, or untick Needs event on the account.' });
     expect(w.sb.tables.payment_vouchers[0]!.approved_at ?? null).toBeNull();
     w.sb.tables.payment_voucher_lines.find((l) => l.pv_id === pv.body.id)!.project_id = 348;
     expect((await boss(`/payment-vouchers/${pv.body.id}/approve`, 'POST')).status).toBe(200);

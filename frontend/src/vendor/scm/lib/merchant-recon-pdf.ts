@@ -44,11 +44,11 @@ export function waitingCardsTable(view: WaitingCardsView): {
 /** The sentence on top: what the list is, how many have no bank, which merchant it was cut to. */
 export function waitingCardsSubtitle({ keys, matrix }: WaitingCardsView, merchant: string | null): string {
   const m = keys.indexOf('merchant');
-  const untagged = m < 0 ? 0 : matrix.body.filter((row) => row[m] === '未标').length;
+  const untagged = m < 0 ? 0 : matrix.body.filter((row) => row[m] === 'Untagged').length;
   return [
     merchant ? `Merchant: ${merchant}.` : '',
     'Card payments no merchant report has reported yet.',
-    untagged > 0 ? `${untagged} keyed in without a bank (未标).` : '',
+    untagged > 0 ? `${untagged} keyed in without a bank (Untagged).` : '',
     'All amounts in RM.',
   ].filter(Boolean).join(' ');
 }

@@ -67,7 +67,7 @@ export function RequestPaymentButton({ itemId, itemTitle, attachments, projectId
       <button
         type="button"
         onClick={() => { if (files.length === 0) onNoFiles(); else setOpen(true); }}
-        title="Ask Finance to pay the bill on this row · 申请付款"
+        title="Ask Finance to pay the bill on this row"
         className={className}
       >
         <HandCoins size={12} />
@@ -115,7 +115,7 @@ export function RowRequests({ requests, attachments, finance, meId }: {
                 onClick={() => setOfficialFor(r)}
                 className="rounded border border-accent/40 bg-surface px-1.5 py-0.5 text-[10px] font-semibold text-accent hover:bg-accent/5"
               >
-                Send the actual invoice · 补正式单
+                Send the actual invoice
               </button>
             )}
           </div>

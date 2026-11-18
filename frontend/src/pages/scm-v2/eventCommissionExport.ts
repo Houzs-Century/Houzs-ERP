@@ -237,7 +237,7 @@ export const ecMeta = (input: Pick<EcInput, 'report' | 'period' | 'brand' | 'who
   { label: 'Brand', value: input.brand || 'All brands' }, { label: 'For', value: forText(input.who) },
 ];
 /* In English: the PDF's Chinese face has no 补开单, and refused the whole export over it. */
-const NOTES = [RULE_NOTE.replace(' (补开单)', '')];
+const NOTES = [RULE_NOTE];
 
 /** Excel: Summary, then a sheet per table — for everyone, for one salesperson, or each
     table's rows by salesperson with a subtotal each. A table with no row has no sheet. */

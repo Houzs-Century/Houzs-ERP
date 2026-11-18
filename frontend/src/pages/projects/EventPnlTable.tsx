@@ -19,7 +19,7 @@ const pct = (n: number): string => `${Number.isInteger(n) ? n.toFixed(0) : Strin
 
 /** Where a % row's figure came from, in a few words. */
 function pctNote(r: PnlPctRow & { boost?: boolean }): string | undefined {
-  if (r.from === "books") return "入账";
+  if (r.from === "books") return "booked";
   if (r.from === "typed") return "typed";
   if (r.from === "rate" && r.pct != null) return `${pct(r.pct)} of sales${r.boost ? " · boost" : ""}`;
   return undefined;
@@ -118,7 +118,7 @@ export function EventPnlTable({ pnl, editable, busyCategory, books, rentalNote }
         <th scope="row" className={cn("py-1.5 text-left font-normal", opts.indent ? "pl-8 pr-3" : "px-4", opts.sub ? "font-bold text-ink" : "text-ink-secondary")}>
           {label}
           {opts.bookRow && books.has(opts.bookRow) && (
-            <span className="ml-1.5 rounded bg-accent-soft px-1 py-px text-[10px] font-semibold text-accent" title="From the books — Finance's figure replaces the typed one">入账</span>
+            <span className="ml-1.5 rounded bg-accent-soft px-1 py-px text-[10px] font-semibold text-accent" title="From the books — Finance's figure replaces the typed one">Booked</span>
           )}
         </th>
         <Cell value={va} note={opts.noteA} bold={opts.sub} tone={opts.tone?.(va)}

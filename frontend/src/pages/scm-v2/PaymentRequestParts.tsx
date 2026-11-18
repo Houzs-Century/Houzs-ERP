@@ -95,7 +95,7 @@ export function BalanceForm({ request, onDone, onCancel }: { request: PaymentReq
       for (const f of files) {
         const payload: PvFilePayload = { name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) };
         try { await official.mutateAsync({ requestId: res.request.id, file: payload }); } catch (e) {
-          void notify({ title: `${f.name} did not attach`, body: e instanceof Error ? e.message : 'Upload it from the request — 补正式单.', tone: 'error' });
+          void notify({ title: `${f.name} did not attach`, body: e instanceof Error ? e.message : 'Upload it from the request (Upload the official invoice).', tone: 'error' });
         }
       }
       onDone(res.request.id);
@@ -176,7 +176,7 @@ export function OfficialDocPanel({ request, finance, mayUpload }: { request: Pay
       {mayUpload && (state === 'OWED' || state === 'RECEIVED') && (
         <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 'var(--fs-12)', flexWrap: 'wrap' }}>
           {/* Finance reads English (the redesign); the requester keeps both. */}
-          <span style={{ fontWeight: 600 }}>{finance ? 'Upload the official invoice' : 'Upload the official invoice · 补正式单'}</span>
+          <span style={{ fontWeight: 600 }}>{finance ? 'Upload the official invoice' : 'Upload the official invoice'}</span>
           <input type="file" accept={PV_FILE_ACCEPT} aria-label="Upload the official invoice" disabled={upload.isPending}
             onChange={(e) => { void pick(e.target.files); e.target.value = ''; }} />
         </label>

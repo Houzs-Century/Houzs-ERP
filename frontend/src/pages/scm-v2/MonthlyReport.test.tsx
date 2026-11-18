@@ -66,7 +66,7 @@ describe('the monthly view', () => {
       draw();
     } finally { vi.useRealTimers(); }
     const heads = screen.getAllByRole('columnheader').map((h) => h.textContent);
-    expect(heads.slice(0, 4)).toEqual(['P&L', '累计 04/2026 – 09/2026', '09/2026', '08/2026']);
+    expect(heads.slice(0, 4)).toEqual(['P&L', 'Cumulative 04/2026 – 09/2026', '09/2026', '08/2026']);
     /* Six months by default: the range asks Apr..Sep; the fixture only knows three of them — those show, the rest report an error. */
     expect(seen).toContain('2026-04-01..2026-09-30');
     expect(screen.getByText(/did not load/).textContent).toContain('4 column(s)');
@@ -95,7 +95,7 @@ describe('the monthly view', () => {
       fireEvent.click(within(screen.getByRole('group', { name: 'Months' })).getByRole('button', { name: '3' }));
     } finally { vi.useRealTimers(); }
     const heads = screen.getAllByRole('columnheader').map((h) => h.textContent);
-    expect(heads).toEqual(['P&L', '累计 07/2026 – 09/2026', '09/2026', '08/2026', '07/2026']);
+    expect(heads).toEqual(['P&L', 'Cumulative 07/2026 – 09/2026', '09/2026', '08/2026', '07/2026']);
     expect(screen.queryByText(/did not load/)).toBeNull();
     const rent = () => within(screen.getByText('RENT').closest('tr')!).getAllByRole('cell').map(amountOf);
     expect(rent()).toEqual(['RENT', 'RM 3000.00', 'RM 1000.00', 'RM 1000.00', 'RM 1000.00']);
@@ -119,7 +119,7 @@ describe('the monthly view', () => {
     expect(name).toBe('pnl-monthly-2026-07-2026-09.xlsx');
     expect(sheet.title).toBe('P&L');
     expect(sheet.subtitle).toContain('07/2026 – 09/2026');
-    expect(sheet.tables[0]!.columns.map((c) => c.label)).toEqual(['累计 07/2026 – 09/2026', '09/2026', '08/2026', '07/2026']);
+    expect(sheet.tables[0]!.columns.map((c) => c.label)).toEqual(['Cumulative 07/2026 – 09/2026', '09/2026', '08/2026', '07/2026']);
     expect(sheet.tables[0]!.columns.every((c) => c.kind === 'pct')).toBe(true);
     expect(sheet.tables[0]!.rows.find((r) => r.label === 'RENT')!.cells).toEqual([30, 25, 40, 20]);
     /* Amounts mode: an amount column with the % beside it per month; a block line carries no cells. */
@@ -128,7 +128,7 @@ describe('the monthly view', () => {
     expect(pdf).toHaveBeenCalledTimes(1);
     const [printed, o] = pdf.mock.calls[0]! as [Sheet, { fileName: string }];
     expect(o.fileName).toBe('pnl-monthly-2026-07-2026-09.pdf');
-    expect(printed.tables[0]!.columns.map((c) => c.label)).toEqual(['累计 07/2026 – 09/2026', '%', '09/2026', '%', '08/2026', '%', '07/2026', '%']);
+    expect(printed.tables[0]!.columns.map((c) => c.label)).toEqual(['Cumulative 07/2026 – 09/2026', '%', '09/2026', '%', '08/2026', '%', '07/2026', '%']);
     expect(printed.tables[0]!.rows.find((r) => r.label === 'RENT')!.cells).toEqual([300_000, 30, 100_000, 25, 100_000, 40, 100_000, 20]);
     expect(printed.tables[0]!.rows.find((r) => r.label === 'Expenses')!.cells).toEqual([]);
   });
@@ -161,7 +161,7 @@ describe('the monthly view', () => {
     expect(within(august).getAllByRole('cell').map((c) => c.textContent)).toEqual(['2026/08/05 · Rent AugustPV-1', 'RM 1000.00', '-', 'RM 1000.00', '-']);
     expect(within(lineRows()[1]!).getAllByRole('cell').map((c) => c.textContent)).toEqual(['2026/09/02 · Rent SeptemberPV-2', 'RM 1000.00', 'RM 1000.00', '-', '-']);
     const foot = () => document.querySelector('tr[data-lines-foot="900-A001"]') as HTMLElement;
-    expect(within(foot()).getAllByRole('cell').map((c) => c.textContent)).toEqual(['共 2 笔在 GL 打开', 'RM 2000.00', 'RM 1000.00', 'RM 1000.00', '-']);
+    expect(within(foot()).getAllByRole('cell').map((c) => c.textContent)).toEqual(['2 entriesOpen in GL', 'RM 2000.00', 'RM 1000.00', 'RM 1000.00', '-']);
     /* The lines wear their own shade; the description is cut at the column, the whole text its tooltip; every figure keeps the % slot empty, so it sits under the amount, never under the % (owner 2026-09-19). */
     expect(august.className).toMatch(/lines/);
     expect(within(august).getAllByRole('cell')[0]!.className).toMatch(/clip/);
@@ -171,7 +171,7 @@ describe('the monthly view', () => {
     /* August's figure: that month's line alone; the same figure again closes; the name reopens the range. */
     fireEvent.click(screen.getByRole('button', { name: 'Lines of 900-A001 — RENT · 08/2026' }));
     expect(lineRows()).toHaveLength(1);
-    expect(within(foot()).getAllByRole('cell')[0]!.textContent).toBe('共 1 笔 · 08/2026在 GL 打开');
+    expect(within(foot()).getAllByRole('cell')[0]!.textContent).toBe('1 entry · 08/2026Open in GL');
     expect((screen.getByRole('button', { name: 'Lines of 900-A001 — RENT · 08/2026' }) as HTMLButtonElement).getAttribute('aria-pressed')).toBe('true');
     fireEvent.click(screen.getByRole('button', { name: 'Lines of 900-A001 — RENT · 08/2026' }));
     expect(lineRows()).toHaveLength(0);

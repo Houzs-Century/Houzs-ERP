@@ -1764,7 +1764,7 @@ export async function postBatchReceipt(
   if (!bankAccount) {
     bankAccount = roles.BANK_DEFAULT;
     /* eslint-disable-next-line no-console */
-    console.error(`[acc/settlement] ${batch.acquirer_code} has no receiving bank account configured — payout booked to ${bankAccount}; fill in the acquirer setup (决定4)`);
+    console.error(`[acc/settlement] ${batch.acquirer_code} has no receiving bank account configured — payout booked to ${bankAccount}; fill in the acquirer setup`);
   }
 
   /* The row first, so the entry can be keyed on it: two credits of the same

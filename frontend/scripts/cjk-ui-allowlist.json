@@ -1,0 +1,400 @@
+{
+  "_about": "Strings in frontend/src that stay Chinese on purpose. The interface is English only (owner 2026-11-18); every entry here matches Chinese input or data, or belongs to the opt-in mobile language feature. Checked by scripts/check-no-cjk-ui.mjs, which also fails on an entry that matches nothing.",
+  "entries": [
+    {
+      "file": "src/lib/roleMatrixExcel.ts",
+      "text": "有",
+      "reason": "Import parser: reads role-matrix spreadsheets the owner filled in by hand in Chinese (tick/level words, full-width punctuation, member-count suffix). The export is English; these only recognise old or hand-made files."
+    },
+    {
+      "file": "src/lib/roleMatrixExcel.ts",
+      "text": "是",
+      "reason": "Import parser: reads role-matrix spreadsheets the owner filled in by hand in Chinese (tick/level words, full-width punctuation, member-count suffix). The export is English; these only recognise old or hand-made files."
+    },
+    {
+      "file": "src/lib/roleMatrixExcel.ts",
+      "text": "否",
+      "reason": "Import parser: reads role-matrix spreadsheets the owner filled in by hand in Chinese (tick/level words, full-width punctuation, member-count suffix). The export is English; these only recognise old or hand-made files."
+    },
+    {
+      "file": "src/lib/roleMatrixExcel.ts",
+      "text": "无",
+      "reason": "Import parser: reads role-matrix spreadsheets the owner filled in by hand in Chinese (tick/level words, full-width punctuation, member-count suffix). The export is English; these only recognise old or hand-made files."
+    },
+    {
+      "file": "src/lib/roleMatrixExcel.ts",
+      "text": "看",
+      "reason": "Import parser: reads role-matrix spreadsheets the owner filled in by hand in Chinese (tick/level words, full-width punctuation, member-count suffix). The export is English; these only recognise old or hand-made files."
+    },
+    {
+      "file": "src/lib/roleMatrixExcel.ts",
+      "text": "改",
+      "reason": "Import parser: reads role-matrix spreadsheets the owner filled in by hand in Chinese (tick/level words, full-width punctuation, member-count suffix). The export is English; these only recognise old or hand-made files."
+    },
+    {
+      "file": "src/lib/roleMatrixExcel.ts",
+      "text": "批",
+      "reason": "Import parser: reads role-matrix spreadsheets the owner filled in by hand in Chinese (tick/level words, full-width punctuation, member-count suffix). The export is English; these only recognise old or hand-made files."
+    },
+    {
+      "file": "src/lib/roleMatrixExcel.ts",
+      "text": "/^\\s*#?\\s*\\d+\\s*[·.\\-:：]?\\s*/",
+      "reason": "Import parser: reads role-matrix spreadsheets the owner filled in by hand in Chinese (tick/level words, full-width punctuation, member-count suffix). The export is English; these only recognise old or hand-made files."
+    },
+    {
+      "file": "src/lib/roleMatrixExcel.ts",
+      "text": "/\\s*[(（]\\s*\\d+\\s*(?:人|members?)?\\s*[)）]\\s*$/i",
+      "reason": "Import parser: reads role-matrix spreadsheets the owner filled in by hand in Chinese (tick/level words, full-width punctuation, member-count suffix). The export is English; these only recognise old or hand-made files."
+    },
+    {
+      "file": "src/mobile/mobileI18n.ts",
+      "text": "中文",
+      "reason": "Mobile worker language feature (owner 2026-07-17): Chinese is one of four languages a phone user can pick; the label is the language in its own script and the zh dictionary is shown only to someone who chose it. Default is English."
+    },
+    {
+      "file": "src/mobile/mobileI18n.ts",
+      "text": "语言",
+      "reason": "Mobile worker language feature (owner 2026-07-17): Chinese is one of four languages a phone user can pick; the label is the language in its own script and the zh dictionary is shown only to someone who chose it. Default is English."
+    },
+    {
+      "file": "src/mobile/mobileI18n.ts",
+      "text": "保存在本设备。有译文时，公告将以此语言显示。",
+      "reason": "Mobile worker language feature (owner 2026-07-17): Chinese is one of four languages a phone user can pick; the label is the language in its own script and the zh dictionary is shown only to someone who chose it. Default is English."
+    },
+    {
+      "file": "src/mobile/mobileI18n.ts",
+      "text": "日期与金额仍使用马来西亚格式。",
+      "reason": "Mobile worker language feature (owner 2026-07-17): Chinese is one of four languages a phone user can pick; the label is the language in its own script and the zh dictionary is shown only to someone who chose it. Default is English."
+    },
+    {
+      "file": "src/mobile/mobileI18n.ts",
+      "text": "公告",
+      "reason": "Mobile worker language feature (owner 2026-07-17): Chinese is one of four languages a phone user can pick; the label is the language in its own script and the zh dictionary is shown only to someone who chose it. Default is English."
+    },
+    {
+      "file": "src/mobile/mobileI18n.ts",
+      "text": "自动翻译",
+      "reason": "Mobile worker language feature (owner 2026-07-17): Chinese is one of four languages a phone user can pick; the label is the language in its own script and the zh dictionary is shown only to someone who chose it. Default is English."
+    },
+    {
+      "file": "src/mobile/mobileI18n.ts",
+      "text": "查看原文",
+      "reason": "Mobile worker language feature (owner 2026-07-17): Chinese is one of four languages a phone user can pick; the label is the language in its own script and the zh dictionary is shown only to someone who chose it. Default is English."
+    },
+    {
+      "file": "src/mobile/mobileI18n.ts",
+      "text": "查看译文",
+      "reason": "Mobile worker language feature (owner 2026-07-17): Chinese is one of four languages a phone user can pick; the label is the language in its own script and the zh dictionary is shown only to someone who chose it. Default is English."
+    },
+    {
+      "file": "src/mobile/mobileI18n.ts",
+      "text": "暂无译文 —— 显示原文。",
+      "reason": "Mobile worker language feature (owner 2026-07-17): Chinese is one of four languages a phone user can pick; the label is the language in its own script and the zh dictionary is shown only to someone who chose it. Default is English."
+    },
+    {
+      "file": "src/pages/hr/employeeImport.ts",
+      "text": "姓名",
+      "reason": "Employee import: recognises Chinese column headers and yes/daily words in an uploaded HR spreadsheet. Matches input, never shown."
+    },
+    {
+      "file": "src/pages/hr/employeeImport.ts",
+      "text": "名字",
+      "reason": "Employee import: recognises Chinese column headers and yes/daily words in an uploaded HR spreadsheet. Matches input, never shown."
+    },
+    {
+      "file": "src/pages/hr/employeeImport.ts",
+      "text": "编号",
+      "reason": "Employee import: recognises Chinese column headers and yes/daily words in an uploaded HR spreadsheet. Matches input, never shown."
+    },
+    {
+      "file": "src/pages/hr/employeeImport.ts",
+      "text": "员工编号",
+      "reason": "Employee import: recognises Chinese column headers and yes/daily words in an uploaded HR spreadsheet. Matches input, never shown."
+    },
+    {
+      "file": "src/pages/hr/employeeImport.ts",
+      "text": "邮箱",
+      "reason": "Employee import: recognises Chinese column headers and yes/daily words in an uploaded HR spreadsheet. Matches input, never shown."
+    },
+    {
+      "file": "src/pages/hr/employeeImport.ts",
+      "text": "电邮",
+      "reason": "Employee import: recognises Chinese column headers and yes/daily words in an uploaded HR spreadsheet. Matches input, never shown."
+    },
+    {
+      "file": "src/pages/hr/employeeImport.ts",
+      "text": "账号",
+      "reason": "Employee import: recognises Chinese column headers and yes/daily words in an uploaded HR spreadsheet. Matches input, never shown."
+    },
+    {
+      "file": "src/pages/hr/employeeImport.ts",
+      "text": "电话",
+      "reason": "Employee import: recognises Chinese column headers and yes/daily words in an uploaded HR spreadsheet. Matches input, never shown."
+    },
+    {
+      "file": "src/pages/hr/employeeImport.ts",
+      "text": "手机",
+      "reason": "Employee import: recognises Chinese column headers and yes/daily words in an uploaded HR spreadsheet. Matches input, never shown."
+    },
+    {
+      "file": "src/pages/hr/employeeImport.ts",
+      "text": "部门",
+      "reason": "Employee import: recognises Chinese column headers and yes/daily words in an uploaded HR spreadsheet. Matches input, never shown."
+    },
+    {
+      "file": "src/pages/hr/employeeImport.ts",
+      "text": "职位",
+      "reason": "Employee import: recognises Chinese column headers and yes/daily words in an uploaded HR spreadsheet. Matches input, never shown."
+    },
+    {
+      "file": "src/pages/hr/employeeImport.ts",
+      "text": "岗位",
+      "reason": "Employee import: recognises Chinese column headers and yes/daily words in an uploaded HR spreadsheet. Matches input, never shown."
+    },
+    {
+      "file": "src/pages/hr/employeeImport.ts",
+      "text": "入职日期",
+      "reason": "Employee import: recognises Chinese column headers and yes/daily words in an uploaded HR spreadsheet. Matches input, never shown."
+    },
+    {
+      "file": "src/pages/hr/employeeImport.ts",
+      "text": "入职",
+      "reason": "Employee import: recognises Chinese column headers and yes/daily words in an uploaded HR spreadsheet. Matches input, never shown."
+    },
+    {
+      "file": "src/pages/hr/employeeImport.ts",
+      "text": "薪酬方式",
+      "reason": "Employee import: recognises Chinese column headers and yes/daily words in an uploaded HR spreadsheet. Matches input, never shown."
+    },
+    {
+      "file": "src/pages/hr/employeeImport.ts",
+      "text": "计薪方式",
+      "reason": "Employee import: recognises Chinese column headers and yes/daily words in an uploaded HR spreadsheet. Matches input, never shown."
+    },
+    {
+      "file": "src/pages/hr/employeeImport.ts",
+      "text": "底薪",
+      "reason": "Employee import: recognises Chinese column headers and yes/daily words in an uploaded HR spreadsheet. Matches input, never shown."
+    },
+    {
+      "file": "src/pages/hr/employeeImport.ts",
+      "text": "月薪",
+      "reason": "Employee import: recognises Chinese column headers and yes/daily words in an uploaded HR spreadsheet. Matches input, never shown."
+    },
+    {
+      "file": "src/pages/hr/employeeImport.ts",
+      "text": "日薪",
+      "reason": "Employee import: recognises Chinese column headers and yes/daily words in an uploaded HR spreadsheet. Matches input, never shown."
+    },
+    {
+      "file": "src/pages/hr/employeeImport.ts",
+      "text": "日工资",
+      "reason": "Employee import: recognises Chinese column headers and yes/daily words in an uploaded HR spreadsheet. Matches input, never shown."
+    },
+    {
+      "file": "src/pages/hr/employeeImport.ts",
+      "text": "银行",
+      "reason": "Employee import: recognises Chinese column headers and yes/daily words in an uploaded HR spreadsheet. Matches input, never shown."
+    },
+    {
+      "file": "src/pages/hr/employeeImport.ts",
+      "text": "银行账号",
+      "reason": "Employee import: recognises Chinese column headers and yes/daily words in an uploaded HR spreadsheet. Matches input, never shown."
+    },
+    {
+      "file": "src/pages/hr/employeeImport.ts",
+      "text": "账户号码",
+      "reason": "Employee import: recognises Chinese column headers and yes/daily words in an uploaded HR spreadsheet. Matches input, never shown."
+    },
+    {
+      "file": "src/pages/hr/employeeImport.ts",
+      "text": "公积金",
+      "reason": "Employee import: recognises Chinese column headers and yes/daily words in an uploaded HR spreadsheet. Matches input, never shown."
+    },
+    {
+      "file": "src/pages/hr/employeeImport.ts",
+      "text": "社险",
+      "reason": "Employee import: recognises Chinese column headers and yes/daily words in an uploaded HR spreadsheet. Matches input, never shown."
+    },
+    {
+      "file": "src/pages/hr/employeeImport.ts",
+      "text": "所得税",
+      "reason": "Employee import: recognises Chinese column headers and yes/daily words in an uploaded HR spreadsheet. Matches input, never shown."
+    },
+    {
+      "file": "src/pages/hr/employeeImport.ts",
+      "text": "国籍",
+      "reason": "Employee import: recognises Chinese column headers and yes/daily words in an uploaded HR spreadsheet. Matches input, never shown."
+    },
+    {
+      "file": "src/pages/hr/employeeImport.ts",
+      "text": "身份证",
+      "reason": "Employee import: recognises Chinese column headers and yes/daily words in an uploaded HR spreadsheet. Matches input, never shown."
+    },
+    {
+      "file": "src/pages/hr/employeeImport.ts",
+      "text": "护照",
+      "reason": "Employee import: recognises Chinese column headers and yes/daily words in an uploaded HR spreadsheet. Matches input, never shown."
+    },
+    {
+      "file": "src/pages/hr/employeeImport.ts",
+      "text": "护照号",
+      "reason": "Employee import: recognises Chinese column headers and yes/daily words in an uploaded HR spreadsheet. Matches input, never shown."
+    },
+    {
+      "file": "src/pages/hr/employeeImport.ts",
+      "text": "外包",
+      "reason": "Employee import: recognises Chinese column headers and yes/daily words in an uploaded HR spreadsheet. Matches input, never shown."
+    },
+    {
+      "file": "src/pages/hr/employeeImport.ts",
+      "text": "外劳",
+      "reason": "Employee import: recognises Chinese column headers and yes/daily words in an uploaded HR spreadsheet. Matches input, never shown."
+    },
+    {
+      "file": "src/pages/hr/employeeImport.ts",
+      "text": "/^(y|yes|true|1|✓|on|是|有|要|ya)$/i",
+      "reason": "Employee import: recognises Chinese column headers and yes/daily words in an uploaded HR spreadsheet. Matches input, never shown."
+    },
+    {
+      "file": "src/pages/hr/employeeImport.ts",
+      "text": "/daily|per day|day|日|天/i",
+      "reason": "Employee import: recognises Chinese column headers and yes/daily words in an uploaded HR spreadsheet. Matches input, never shown."
+    },
+    {
+      "file": "src/vendor/scm/components/PhoneInput.tsx",
+      "text": "马来西亚 大马",
+      "reason": "Country picker search keywords so a Chinese-typed country name still finds the dial code. Matches input, never shown."
+    },
+    {
+      "file": "src/vendor/scm/components/PhoneInput.tsx",
+      "text": "新加坡 星",
+      "reason": "Country picker search keywords so a Chinese-typed country name still finds the dial code. Matches input, never shown."
+    },
+    {
+      "file": "src/vendor/scm/components/PhoneInput.tsx",
+      "text": "印尼 印度尼西亚",
+      "reason": "Country picker search keywords so a Chinese-typed country name still finds the dial code. Matches input, never shown."
+    },
+    {
+      "file": "src/vendor/scm/components/PhoneInput.tsx",
+      "text": "泰国",
+      "reason": "Country picker search keywords so a Chinese-typed country name still finds the dial code. Matches input, never shown."
+    },
+    {
+      "file": "src/vendor/scm/components/PhoneInput.tsx",
+      "text": "文莱",
+      "reason": "Country picker search keywords so a Chinese-typed country name still finds the dial code. Matches input, never shown."
+    },
+    {
+      "file": "src/vendor/scm/components/PhoneInput.tsx",
+      "text": "越南",
+      "reason": "Country picker search keywords so a Chinese-typed country name still finds the dial code. Matches input, never shown."
+    },
+    {
+      "file": "src/vendor/scm/components/PhoneInput.tsx",
+      "text": "菲律宾",
+      "reason": "Country picker search keywords so a Chinese-typed country name still finds the dial code. Matches input, never shown."
+    },
+    {
+      "file": "src/vendor/scm/components/PhoneInput.tsx",
+      "text": "柬埔寨",
+      "reason": "Country picker search keywords so a Chinese-typed country name still finds the dial code. Matches input, never shown."
+    },
+    {
+      "file": "src/vendor/scm/components/PhoneInput.tsx",
+      "text": "缅甸",
+      "reason": "Country picker search keywords so a Chinese-typed country name still finds the dial code. Matches input, never shown."
+    },
+    {
+      "file": "src/vendor/scm/components/PhoneInput.tsx",
+      "text": "老挝",
+      "reason": "Country picker search keywords so a Chinese-typed country name still finds the dial code. Matches input, never shown."
+    },
+    {
+      "file": "src/vendor/scm/components/PhoneInput.tsx",
+      "text": "中国 中",
+      "reason": "Country picker search keywords so a Chinese-typed country name still finds the dial code. Matches input, never shown."
+    },
+    {
+      "file": "src/vendor/scm/components/PhoneInput.tsx",
+      "text": "香港",
+      "reason": "Country picker search keywords so a Chinese-typed country name still finds the dial code. Matches input, never shown."
+    },
+    {
+      "file": "src/vendor/scm/components/PhoneInput.tsx",
+      "text": "台湾 台",
+      "reason": "Country picker search keywords so a Chinese-typed country name still finds the dial code. Matches input, never shown."
+    },
+    {
+      "file": "src/vendor/scm/components/PhoneInput.tsx",
+      "text": "印度",
+      "reason": "Country picker search keywords so a Chinese-typed country name still finds the dial code. Matches input, never shown."
+    },
+    {
+      "file": "src/vendor/scm/components/PhoneInput.tsx",
+      "text": "孟加拉",
+      "reason": "Country picker search keywords so a Chinese-typed country name still finds the dial code. Matches input, never shown."
+    },
+    {
+      "file": "src/vendor/scm/components/PhoneInput.tsx",
+      "text": "巴基斯坦",
+      "reason": "Country picker search keywords so a Chinese-typed country name still finds the dial code. Matches input, never shown."
+    },
+    {
+      "file": "src/vendor/scm/components/PhoneInput.tsx",
+      "text": "斯里兰卡",
+      "reason": "Country picker search keywords so a Chinese-typed country name still finds the dial code. Matches input, never shown."
+    },
+    {
+      "file": "src/vendor/scm/components/PhoneInput.tsx",
+      "text": "澳大利亚 澳洲",
+      "reason": "Country picker search keywords so a Chinese-typed country name still finds the dial code. Matches input, never shown."
+    },
+    {
+      "file": "src/vendor/scm/components/PhoneInput.tsx",
+      "text": "新西兰",
+      "reason": "Country picker search keywords so a Chinese-typed country name still finds the dial code. Matches input, never shown."
+    },
+    {
+      "file": "src/vendor/scm/components/PhoneInput.tsx",
+      "text": "日本",
+      "reason": "Country picker search keywords so a Chinese-typed country name still finds the dial code. Matches input, never shown."
+    },
+    {
+      "file": "src/vendor/scm/components/PhoneInput.tsx",
+      "text": "韩国 南韩",
+      "reason": "Country picker search keywords so a Chinese-typed country name still finds the dial code. Matches input, never shown."
+    },
+    {
+      "file": "src/vendor/scm/components/PhoneInput.tsx",
+      "text": "阿联酋 阿拉伯联合酋长国",
+      "reason": "Country picker search keywords so a Chinese-typed country name still finds the dial code. Matches input, never shown."
+    },
+    {
+      "file": "src/vendor/scm/components/PhoneInput.tsx",
+      "text": "沙特 沙特阿拉伯",
+      "reason": "Country picker search keywords so a Chinese-typed country name still finds the dial code. Matches input, never shown."
+    },
+    {
+      "file": "src/vendor/scm/components/PhoneInput.tsx",
+      "text": "英国 英",
+      "reason": "Country picker search keywords so a Chinese-typed country name still finds the dial code. Matches input, never shown."
+    },
+    {
+      "file": "src/vendor/scm/components/PhoneInput.tsx",
+      "text": "美国 加拿大 美",
+      "reason": "Country picker search keywords so a Chinese-typed country name still finds the dial code. Matches input, never shown."
+    },
+    {
+      "file": "src/vendor/scm/lib/book-text.ts",
+      "text": "账本原文",
+      "reason": "Marker AutoCount writes into stored line remarks; used to strip book text from customer PDFs. Matches data, never shown."
+    },
+    {
+      "file": "src/vendor/scm/lib/pdf-common.ts",
+      "text": "/[ -   　]/g",
+      "reason": "Regex folding the ideographic space (U+3000) to a plain space before PDF printing. Not text."
+    }
+  ]
+}

@@ -382,13 +382,13 @@ describe('a posted supplier note\'s knock-off', () => {
     expect((within(ko).getByLabelText('Knock off 2990-PI-2609-004') as HTMLInputElement).checked).toBe(true);
     expect((within(ko).getByLabelText('Knock off 2990-PI-2609-007') as HTMLInputElement).checked).toBe(false);
     expect(screen.getByLabelText('Knock-off total').textContent).toContain('credit left RM 300.00 of RM 500.00');
-    expect(screen.queryByText('Save knock-off · 保存')).toBeNull();
+    expect(screen.queryByText('Save knock-off')).toBeNull();
 
     fireEvent.click(within(ko).getByLabelText('Knock off 2990-PI-2609-004'));
     fireEvent.click(within(ko).getByLabelText('Knock off 2990-PI-2609-007'));
     /* PI-007 owes RM 400.00 and the whole RM 500.00 is free — it takes RM 400.00. */
     expect((within(ko).getByLabelText('Amount off 2990-PI-2609-007') as HTMLInputElement).value).toBe('400.00');
-    fireEvent.click(screen.getByText('Save knock-off · 保存'));
+    fireEvent.click(screen.getByText('Save knock-off'));
     expect(setMutate).toHaveBeenCalledWith({ noteId: 'n2', targets: [{ kind: 'PI', id: 'pi-2', amountSen: 40_000 }] }, expect.anything());
   });
 
@@ -402,11 +402,11 @@ describe('a posted supplier note\'s knock-off', () => {
     /* PI-004 keeps RM 200.00 of the RM 500.00 — RM 300.00 is all PI-007 can take. */
     await waitFor(() => expect((within(ko).getByLabelText('Amount off 2990-PI-2609-007') as HTMLInputElement).value).toBe('300.00'));
     expect(screen.getByLabelText('Knock-off total').textContent).toContain('credit left RM 0.00 of RM 500.00');
-    fireEvent.click(screen.getByText('Save knock-off · 保存'));
+    fireEvent.click(screen.getByText('Save knock-off'));
     expect(setMutate).toHaveBeenCalledWith({ noteId: 'n2', targets: [{ kind: 'PI', id: 'pi-1', amountSen: 20_000 }, { kind: 'PI', id: 'pi-2', amountSen: 30_000 }] }, expect.anything());
     fireEvent.click(screen.getByText('Undo changes'));
     expect((within(ko).getByLabelText('Knock off 2990-PI-2609-007') as HTMLInputElement).checked).toBe(false);
-    expect(screen.queryByText('Save knock-off · 保存')).toBeNull();
+    expect(screen.queryByText('Save knock-off')).toBeNull();
   });
 });
 
@@ -462,7 +462,7 @@ describe("an other debtor's credit note", () => {
     expect(within(dialog).getByText('tick to knock a bill off, untick to give it back — like a receipt')).toBeTruthy();
     fireEvent.click(within(ko).getByLabelText('Knock off HC-ODB-2608-005'));
     expect(within(dialog).getByLabelText('Knock-off total').textContent).toContain('credit left RM 2,000.00 of RM 2,000.00 — it stays with the debtor.');
-    fireEvent.click(within(dialog).getByText('Save knock-off · 保存'));
+    fireEvent.click(within(dialog).getByText('Save knock-off'));
     expect(setMutate).toHaveBeenCalledWith({ noteId: 'n4', targets: [] }, expect.anything());
   });
 });

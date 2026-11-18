@@ -29,7 +29,7 @@ export function BillMatchesNote({ matches }: { matches: BillMatch[] | undefined 
   if (!matches || matches.length === 0) return null;
   return (
     <div role="alert" aria-label="Same bill elsewhere" style={box('warn')}>
-      <div style={{ fontWeight: 600 }}>Same bill already asked for or paid · 这张单已经有了</div>
+      <div style={{ fontWeight: 600 }}>Same bill already asked for or paid</div>
       {matches.map((m) => <div key={`${m.kind}-${m.id}`}>{billMatchText(m)}</div>)}
       <div style={{ marginTop: 2, color: 'var(--fg-muted, #666)' }}>A balance on the same bill is fine — otherwise check it is not paid twice.</div>
     </div>
@@ -47,7 +47,7 @@ export function BillInstalments({ family, currentId }: { family: BillFamily; cur
   ].filter(Boolean).join(' · ');
   return (
     <div role="group" aria-label="Instalments of this bill" style={box('note')}>
-      <div style={{ fontWeight: 600 }}>This bill, in instalments · 分期</div>
+      <div style={{ fontWeight: 600 }}>This bill, in instalments</div>
       <div>{figures}</div>
       {family.installments.map((m) => (
         <div key={m.id} style={{ fontWeight: m.id === currentId ? 600 : 400 }}>
@@ -72,7 +72,7 @@ export function BillReadPanel({ state, filled }: { state: BillReadState; filled:
       <div role="status" style={box('read')}>
         <div>✓ Read from the bill: {billFactsLine(state.result.bill)}</div>
         {filled.length > 0 && (
-          <div aria-label="Filled in from the bill">Filled in below: {filled.join(' · ')} — 都可以自己改</div>
+          <div aria-label="Filled in from the bill">Filled in below: {filled.join(' · ')} — you can change any of them</div>
         )}
       </div>
       <BillMatchesNote matches={state.result.matches} />

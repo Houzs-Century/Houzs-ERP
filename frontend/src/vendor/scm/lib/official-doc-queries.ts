@@ -13,9 +13,9 @@ export type OfficialState = 'OWED' | 'RECEIVED' | 'CHECKED';
 
 /** Each state in the owner's words, and the colour it reads in. */
 export const OFFICIAL_LABEL: Record<OfficialState, { label: string; tone: string }> = {
-  OWED: { label: 'Official invoice owed · 欠正式单', tone: 'var(--c-festive-b, #B8331F)' },
-  RECEIVED: { label: 'Official invoice received — to check · 待核对', tone: 'var(--c-orange)' },
-  CHECKED: { label: 'Official invoice checked · 已核对', tone: 'var(--c-green, #2f7d32)' },
+  OWED: { label: 'Official invoice owed', tone: 'var(--c-festive-b, #B8331F)' },
+  RECEIVED: { label: 'Official invoice received — to check', tone: 'var(--c-orange)' },
+  CHECKED: { label: 'Official invoice checked', tone: 'var(--c-green, #2f7d32)' },
 };
 export const isOfficialState = (v: unknown): v is OfficialState => v === 'OWED' || v === 'RECEIVED' || v === 'CHECKED';
 

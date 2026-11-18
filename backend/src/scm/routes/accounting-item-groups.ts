@@ -117,7 +117,7 @@ async function verifyBinding(
       controlRole: controlRoleOf.get(code),
     });
     if (blocked?.kind === 'header') {
-      return { ok: false, message: `${SLOT_LABEL[slot]} account ${code} is a header with sub-accounts — 父户不记账: bind one of its sub-accounts instead.` };
+      return { ok: false, message: `${SLOT_LABEL[slot]} account ${code} is a header with sub-accounts — a header account takes no postings: bind one of its sub-accounts instead.` };
     }
     if (blocked?.kind === 'control') {
       return { ok: false, message: `${SLOT_LABEL[slot]} account ${code} is a control account (${blocked.label}) — its balance belongs to its own module; bind an ordinary ${slot === 'sales' || slot === 'salesReturn' ? 'sales' : 'purchase'} account instead.` };

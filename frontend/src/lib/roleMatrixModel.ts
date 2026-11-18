@@ -24,15 +24,7 @@ export type MatrixLevel = "none" | "view" | "edit" | "full";
 /** Writable levels, lowest → highest. */
 export const MATRIX_LEVELS: readonly MatrixLevel[] = ["none", "view", "edit", "full"] as const;
 
-/** Chinese labels the owner sees (business-first per CLAUDE.md). */
-export const MATRIX_LEVEL_LABEL: Record<MatrixLevel, string> = {
-  none: "无",
-  view: "看",
-  edit: "改",
-  full: "批",
-};
-
-/** English sub-label for the dropdown / tooltip. */
+/** The level names the matrix, its dropdowns and its Excel export show. */
 export const MATRIX_LEVEL_LABEL_EN: Record<MatrixLevel, string> = {
   none: "None",
   view: "View",
@@ -106,7 +98,6 @@ export const PARENT_DERIVED_KEYS: readonly string[] = ["scm"] as const;
 
 interface ModuleSpec {
   id: string;
-  labelZh: string;
   labelEn: string;
   /** A page belongs to this module when its key equals, or starts with
    *  `<prefix>.`, any of these. Order matters: first spec to claim a page wins. */
@@ -121,21 +112,21 @@ interface ModuleSpec {
 // has no page key and its only permissions are scm.hr.* (all isNeverByLevel), so
 // a matrix cell for it would control nothing — it stays in the Roles tab.
 const MODULE_SPECS: ModuleSpec[] = [
-  { id: "service_cases", labelZh: "售后", labelEn: "Service Cases", pagePrefixes: ["service_cases"], resources: ["Service Cases"] },
-  { id: "projects", labelZh: "项目", labelEn: "Projects", pagePrefixes: ["projects"], resources: ["Projects"] },
-  { id: "sales", labelZh: "销售录入", labelEn: "Sales Entries", pagePrefixes: ["sales"], resources: ["Sales Entries"] },
-  { id: "scm.sales", labelZh: "供应链·销售", labelEn: "SCM · Sales", pagePrefixes: ["scm.sales"], resources: [], scmArea: true },
-  { id: "scm.consignment", labelZh: "供应链·寄售", labelEn: "SCM · Consignment", pagePrefixes: ["scm.consignment"], resources: [], scmArea: true },
-  { id: "scm.procurement", labelZh: "供应链·采购", labelEn: "SCM · Procurement", pagePrefixes: ["scm.procurement"], resources: [], scmArea: true },
-  { id: "scm.transportation", labelZh: "供应链·运输", labelEn: "SCM · Transport", pagePrefixes: ["scm.transportation"], resources: [], scmArea: true },
-  { id: "scm.warehouse", labelZh: "供应链·仓库", labelEn: "SCM · Warehouse", pagePrefixes: ["scm.warehouse"], resources: [], scmArea: true },
-  { id: "scm.finance", labelZh: "供应链·财务", labelEn: "SCM · Finance", pagePrefixes: ["scm.finance"], resources: [], scmArea: true },
-  { id: "mail", labelZh: "邮件", labelEn: "Mail Center", pagePrefixes: [], resources: ["Mail Center"] },
-  { id: "announcements", labelZh: "公告", labelEn: "Announcements", pagePrefixes: [], resources: ["Announcements", "Memos"] },
-  { id: "fleet", labelZh: "车队", labelEn: "Fleet", pagePrefixes: [], resources: ["Fleet Maintenance"] },
-  { id: "pos", labelZh: "POS", labelEn: "POS", pagePrefixes: [], resources: ["POS Admin"] },
-  { id: "team", labelZh: "团队与角色", labelEn: "Team & Roles", pagePrefixes: ["team"], resources: ["Team", "Roles"] },
-  { id: "system", labelZh: "系统 / IT", labelEn: "System / IT", pagePrefixes: ["settings", "system_health"], resources: ["Settings", "IT", "Activity Log", "Custom Fields"] },
+  { id: "service_cases", labelEn: "Service Cases", pagePrefixes: ["service_cases"], resources: ["Service Cases"] },
+  { id: "projects", labelEn: "Projects", pagePrefixes: ["projects"], resources: ["Projects"] },
+  { id: "sales", labelEn: "Sales Entries", pagePrefixes: ["sales"], resources: ["Sales Entries"] },
+  { id: "scm.sales", labelEn: "SCM · Sales", pagePrefixes: ["scm.sales"], resources: [], scmArea: true },
+  { id: "scm.consignment", labelEn: "SCM · Consignment", pagePrefixes: ["scm.consignment"], resources: [], scmArea: true },
+  { id: "scm.procurement", labelEn: "SCM · Procurement", pagePrefixes: ["scm.procurement"], resources: [], scmArea: true },
+  { id: "scm.transportation", labelEn: "SCM · Transport", pagePrefixes: ["scm.transportation"], resources: [], scmArea: true },
+  { id: "scm.warehouse", labelEn: "SCM · Warehouse", pagePrefixes: ["scm.warehouse"], resources: [], scmArea: true },
+  { id: "scm.finance", labelEn: "SCM · Finance", pagePrefixes: ["scm.finance"], resources: [], scmArea: true },
+  { id: "mail", labelEn: "Mail Center", pagePrefixes: [], resources: ["Mail Center"] },
+  { id: "announcements", labelEn: "Announcements", pagePrefixes: [], resources: ["Announcements", "Memos"] },
+  { id: "fleet", labelEn: "Fleet", pagePrefixes: [], resources: ["Fleet Maintenance"] },
+  { id: "pos", labelEn: "POS", pagePrefixes: [], resources: ["POS Admin"] },
+  { id: "team", labelEn: "Team & Roles", pagePrefixes: ["team"], resources: ["Team", "Roles"] },
+  { id: "system", labelEn: "System / IT", pagePrefixes: ["settings", "system_health"], resources: ["Settings", "IT", "Activity Log", "Custom Fields"] },
 ];
 
 /** CRUD permission keys of a module, split by tier, with never-by-level keys and
@@ -148,7 +139,6 @@ export interface ModulePermKeys {
 
 export interface MatrixModule {
   id: string;
-  labelZh: string;
   labelEn: string;
   scmArea: boolean;
   /** Pages this module governs, catalogue order, parents before children. */
@@ -211,7 +201,6 @@ export function buildMatrixModules(
     const top = modPages.find((p) => !p.parent) ?? modPages.at(0) ?? null;
     return {
       id: spec.id,
-      labelZh: spec.labelZh,
       labelEn: spec.labelEn,
       scmArea: !!spec.scmArea,
       pages: modPages,

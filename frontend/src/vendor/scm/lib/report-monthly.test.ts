@@ -31,7 +31,7 @@ describe('months', () => {
     expect(monthsBack('2026-09', 0)).toEqual(['2026-09']);
     const cols = monthColumns('2026-09', 3, true);
     expect(cols.map((c) => c.key)).toEqual(['cumulative', '2026-09', '2026-08', '2026-07']);
-    expect(cols[0]).toMatchObject({ label: '累计 07/2026 – 09/2026', from: '2026-07-01', to: '2026-09-30', cumulative: true });
+    expect(cols[0]).toMatchObject({ label: 'Cumulative 07/2026 – 09/2026', from: '2026-07-01', to: '2026-09-30', cumulative: true });
     expect(cols[1]).toMatchObject({ label: '09/2026', from: '2026-09-01', to: '2026-09-30', cumulative: false });
     expect(cols[3]).toMatchObject({ from: '2026-07-01', to: '2026-07-31' });
     expect(monthColumns('2026-09', 2, false).map((c) => c.key)).toEqual(['2026-09', '2026-08']);
@@ -222,7 +222,7 @@ describe('the CSV', () => {
     const fmt = (sen: number) => (sen / 100).toFixed(2);
     const pct = (p: number | null) => (p === null ? '—' : `${p.toFixed(1)}%`);
     const csv = monthlyCsv('P&L', cols, lines, false, fmt, pct);
-    expect(csv.split('\r\n')[0]).toBe('P&L,累计 08/2026 – 09/2026,09/2026,08/2026');
+    expect(csv.split('\r\n')[0]).toBe('P&L,Cumulative 08/2026 – 09/2026,09/2026,08/2026');
     expect(csv).toContain('Expenses,,,');
     expect(csv).toContain('Ops,30.00,10.00,');
     expect(csv).toContain('"  Rent, ""big""",30.00,10.00,');

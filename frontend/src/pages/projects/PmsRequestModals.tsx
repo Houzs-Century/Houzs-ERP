@@ -108,7 +108,7 @@ function Inner(props: PmsModalProps) {
             hasEvents
             seed={seed}
             onDone={() => {
-              void notify({ title: 'Sent to Finance · 已提交', body: 'The request shows under this row; Finance answers it from Payment Requests.', tone: 'info' });
+              void notify({ title: 'Sent to Finance', body: 'The request shows under this row; Finance answers it from Payment Requests.', tone: 'info' });
               props.onClose();
             }}
             onCancel={props.onClose}
@@ -121,7 +121,7 @@ function Inner(props: PmsModalProps) {
       if (files) setSeed({ files, projectId: props.projectId, eventLabel: props.eventLabel, checklistItemId: props.itemId });
     };
     return (
-      <Modal title="Request payment · 申请付款 — which file is the bill?" onClose={props.onClose} width="min(560px, 100%)" ariaLabel="Request payment — pick the bill">
+      <Modal title="Request payment — which file is the bill?" onClose={props.onClose} width="min(560px, 100%)" ariaLabel="Request payment — pick the bill">
         <div style={soft}>Tick the invoice Finance should pay — several files are one bill's pages. A proforma or quotation is fine; Finance marks it to follow up the actual invoice.</div>
         <FilePicker attachments={props.attachments} ticked={ticked} onTick={onTick} />
         {problem && <div role="alert" style={{ color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))', fontSize: 'var(--fs-12)' }}>{problem}</div>}
@@ -147,14 +147,14 @@ function Inner(props: PmsModalProps) {
         if (res.note) { notes.push(res.note); differs = true; }
         else if (res.received.length > 0) notes.push(`Finance checks it on ${res.received.map((d) => d.number ?? d.kind).join(', ')}.`);
       }
-      void notify({ title: 'Official invoice sent · 已补正式单', body: notes.join(' ') || 'It is kept with the request and its payment.', tone: differs ? 'error' : 'info' });
+      void notify({ title: 'Official invoice sent', body: notes.join(' ') || 'It is kept with the request and its payment.', tone: differs ? 'error' : 'info' });
       props.onClose();
     } catch { /* the mutation's own onError told the user */ } finally {
       setBusy(false);
     }
   };
   return (
-    <Modal title={`Send the actual invoice · 补正式单 — ${props.requestNo}`} onClose={props.onClose} width="min(560px, 100%)" ariaLabel="Send the actual invoice">
+    <Modal title={`Send the actual invoice — ${props.requestNo}`} onClose={props.onClose} width="min(560px, 100%)" ariaLabel="Send the actual invoice">
       <div style={soft}>Tick the actual invoice — attach it to this row first (Attach) if it is not here yet. It goes to the request as its official invoice, and Finance checks it.</div>
       {props.attachments.length > 0
         ? <FilePicker attachments={props.attachments} ticked={ticked} onTick={onTick} />

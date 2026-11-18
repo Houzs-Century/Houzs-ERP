@@ -91,14 +91,14 @@ describe('the row\'s requests', () => {
     const box = screen.getByLabelText('Payment requests from this row');
     const link = within(box).getByRole('link', { name: 'HC-PRQ-2610-002' });
     expect(link.getAttribute('href')).toBe('/scm/payment-requests?open=r1');
-    expect(box.textContent).toContain('Finance processing · 处理中');
+    expect(box.textContent).toContain('Finance processing');
     expect(box.textContent).toContain('RM 12,720.00');
     expect(box.textContent).toContain('HC-HPV-2610-004');
-    expect(box.textContent).toContain('Official invoice owed · 欠正式单');
+    expect(box.textContent).toContain('Official invoice owed');
     expect(box.textContent).toContain('Proforma only — follow up the actual invoice');
     expect(box.textContent).toContain('#2 · balance');
     /* One owed request, one button. */
-    const send = within(box).getAllByRole('button', { name: 'Send the actual invoice · 补正式单' });
+    const send = within(box).getAllByRole('button', { name: 'Send the actual invoice' });
     expect(send).toHaveLength(1);
     fireEvent.click(send[0]!);
     const dialog = await screen.findByRole('dialog', { name: 'modal official' });
@@ -108,10 +108,10 @@ describe('the row\'s requests', () => {
   test('another requester\'s owed request: no button for them, the button for Finance; none at all, nothing shows', () => {
     const theirs = { ...owed, requested_by: 32 };
     const { unmount } = render(<MemoryRouter><RowRequests requests={[theirs]} attachments={[]} finance={false} meId={31} /></MemoryRouter>);
-    expect(screen.queryByRole('button', { name: 'Send the actual invoice · 补正式单' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send the actual invoice' })).toBeNull();
     unmount();
     const again = render(<MemoryRouter><RowRequests requests={[theirs]} attachments={[]} finance meId={9} /></MemoryRouter>);
-    expect(screen.getByRole('button', { name: 'Send the actual invoice · 补正式单' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Send the actual invoice' })).toBeTruthy();
     again.unmount();
     const { container } = render(<MemoryRouter><RowRequests requests={[]} attachments={[]} finance meId={9} /></MemoryRouter>);
     expect(container.textContent).toBe('');

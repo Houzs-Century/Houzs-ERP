@@ -432,7 +432,7 @@ export const requireLeafAccount = async (
   if (whyNotPostable({ hasChildren: ((kids ?? []) as unknown[]).length > 0 })) {
     return c.json({
       error: 'not_a_leaf_account',
-      message: `${code} is a header with sub-accounts (retired ones count too) — 父户不记账: pick the specific sub-account instead.`,
+      message: `${code} is a header with sub-accounts (retired ones count too) — a header account takes no postings: pick the specific sub-account instead.`,
     }, 400);
   }
   const selfRes: { data: unknown; error: { message: string } | null } = await sb
@@ -448,7 +448,7 @@ export const requireLeafAccount = async (
   if (blocked?.kind === 'control') {
     return c.json({
       error: 'control_account_locked',
-      message: `${code} is a control account (${blocked.label}) — 由模块自动过账 (AR/AP/stock post through their own flows); pick an ordinary account instead.`,
+      message: `${code} is a control account (${blocked.label}) — its module posts to it automatically (AR/AP/stock post through their own flows); pick an ordinary account instead.`,
     }, 400);
   }
   return null;
@@ -559,7 +559,7 @@ export const chartCreateHandler = async (c: any): Promise<Response> => {
      split the tree across two headers on the page. */
   const header = chain.length > 0 ? chain[chain.length - 1] : undefined;
   if (header?.section && header.section !== section) {
-    return c.json({ error: 'section_mismatch', message: `${parent} sits under ${header.section} — a child takes its header's section (子户跟着 header 走).` }, 400);
+    return c.json({ error: 'section_mismatch', message: `${parent} sits under ${header.section} — a child takes its header's section.` }, 400);
   }
 
   /* SBK/SCH ARE money — the import applies the same equivalence; a manual
@@ -717,7 +717,7 @@ export const chartUpdateHandler = async (c: any): Promise<Response> => {
     const self = rows.find((r) => r.account_code === code);
     if (!self) return c.json({ error: 'code_unknown', message: `${code} exists in no company's chart.` }, 404);
     if (self.parent_code && (body.parentCode === undefined || body.parentCode)) {
-      return c.json({ error: 'section_child', message: `${code} sits under ${self.parent_code} — drag its header instead (子户跟着 header 走), or move it to the root first.` }, 400);
+      return c.json({ error: 'section_child', message: `${code} sits under ${self.parent_code} — drag its header instead (a child moves with its header), or move it to the root first.` }, 400);
     }
     /* The subtree: every code whose parent chain reaches this one. */
     const kidsOf = new Map<string, string[]>();
@@ -797,7 +797,7 @@ export const chartUpdateHandler = async (c: any): Promise<Response> => {
         if (used.length > 0) {
           return c.json({
             error: 'parent_has_postings',
-            message: `${parent} cannot become a header — 父户不记账, and it is referenced by: ${used.join(', ')}.`,
+            message: `${parent} cannot become a header — a header account takes no postings, and it is referenced by: ${used.join(', ')}.`,
             used,
           }, 409);
         }
