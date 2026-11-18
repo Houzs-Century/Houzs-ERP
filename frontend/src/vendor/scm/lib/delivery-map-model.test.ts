@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  pinsFromJobPoints,
   zoneColorFor,
   pinsFromGeoPoints,
   geoTotals,
@@ -53,7 +54,7 @@ describe('pinsFromGeoPoints + geoTotals — the geo point model', () => {
     expect(pins).toHaveLength(2);
     expect(pins[0].card).toEqual({
       soDocNo: 'SO-1', customer: 'Ali', sets: 2, revenueSen: 100_000,
-      address: '1 Jalan A', zone: 'KL',
+      address: '1 Jalan A', zone: 'KL', approximate: false,
     });
     // Unzoned pin colours by region, not by a phantom zone.
     expect(pins[1].color).toBe(zoneColorFor(null, 'SOUTHERN'));
@@ -373,5 +374,19 @@ describe('map-open essential columns', () => {
   });
   it('the Time page adds its trip + window columns', () => {
     expect(MAP_ESSENTIAL_COLUMNS_TIME).toEqual([...MAP_ESSENTIAL_COLUMNS, 'trip_no', 'time_range']);
+  });
+});
+
+describe('pinsFromJobPoints — a non-SO stop gets a pin and a hover card (owner 2026-11-18)', () => {
+  it('carries the job ref, place, address and the approximate flag', () => {
+    const [pin] = pinsFromJobPoints([{
+      ref: 'PRJ:7#SETUP', lat: 2.27, lng: 102.28, approximate: true,
+      address: '75450 Ayer Keroh, Melaka, Malaysia', customer: 'MELAKA INTERNATIONAL TRADE CENTRE', postcode: '75450', state: 'Melaka',
+    }]);
+    expect(pin).toMatchObject({ ref: 'PRJ:7#SETUP', lat: 2.27, lng: 102.28 });
+    expect(pin!.card).toEqual({
+      soDocNo: 'PRJ:7#SETUP', customer: 'MELAKA INTERNATIONAL TRADE CENTRE', sets: 0, revenueSen: 0,
+      address: '75450 Ayer Keroh, Melaka, Malaysia', zone: null, approximate: true,
+    });
   });
 });

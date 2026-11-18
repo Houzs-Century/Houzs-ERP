@@ -34,6 +34,8 @@ export type DeliveryGeoPoint = {
   revenueSen: number;
   customer: string | null;
   address: string;
+  /** Pinned at the postcode area because the address itself could not be located. */
+  approximate?: boolean;
 };
 
 export type DeliveryGeoDepot = {
@@ -74,6 +76,43 @@ export function useDeliveryGeo(opts: { date: string | null; region?: string; ena
       return authedFetch<DeliveryGeoResponse>(`/delivery-planning/geo?${p.toString()}`);
     },
     staleTime: 30_000,
+    placeholderData: (prev) => prev,
+  });
+}
+
+/** One located non-SO stop (service-case leg, setup / dismantle, supplier
+ *  pickup, transfer, lorry service), keyed by its board row key. `approximate`
+ *  = pinned at the postcode area, not the address. */
+export type JobGeoPoint = {
+  ref: string;
+  lat: number;
+  lng: number;
+  approximate: boolean;
+  address: string;
+  customer: string | null;
+  postcode: string | null;
+  state: string | null;
+};
+
+export type JobGeoResponse = {
+  configured: boolean;
+  points: JobGeoPoint[];
+  ungeocoded: Array<{ ref: string; reason: string }>;
+};
+
+/** The Last Mile map's pins for the lorries' NON-SO stops, by row key
+ *  (GET /delivery-planning/geo/jobs). The server reads each job's own address
+ *  and locates it cache-first. Keyed on the sorted refs, so a board poll that
+ *  returns the same stops refetches nothing; disabled with no refs or while the
+ *  map is closed. */
+export function useJobGeo(refs: readonly string[], enabled: boolean) {
+  const sorted = [...new Set(refs)].sort();
+  return useQuery({
+    queryKey: ['delivery-planning', 'geo-jobs', sorted.join('|')],
+    enabled: enabled && sorted.length > 0,
+    queryFn: () => authedFetch<JobGeoResponse>(`/delivery-planning/geo/jobs?refs=${encodeURIComponent(sorted.join(','))}`),
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
     placeholderData: (prev) => prev,
   });
 }
