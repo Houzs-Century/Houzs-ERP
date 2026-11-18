@@ -111,7 +111,9 @@ async function main() {
   const plans = planAll(state);
   const repair = plans.filter((p) => p.result.status === 'repair');
   const refused = plans.filter((p) => p.result.status === 'refused');
-  note(`\n=== ORDERS TO RE-COST TO THEIR SET PRICE: ${repair.length} (refused ${refused.length}, not found ${missing.length}) ===`);
+  // A count right after a money word ("PRICE: 7") reads as money to the log guard.
+  note(`\n=== SOFA SETS TO RE-COST TO THEIR SET PRICE ===`);
+  note(`  orders: ${repair.length}, refused: ${refused.length}, not found: ${missing.length}`);
   let before = 0, after = 0;
   for (const p of repair) {
     const o = p.order; const r = p.result;

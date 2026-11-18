@@ -248,7 +248,7 @@ async function main() {
 
     note(`===== Company ${co} =====`);
     note(`zero-cost headers: ${sos.length}; lines to stamp: ${stamped}; product-has-no-cost: ${noCost}; headers to fill: ${headers}; margin reduction: RM ${rm(marginDrop)}`);
-    note(`sofa sets costed at their set price: ${setOrders.length} order(s)${setOrders.length ? `: ${setOrders.map((o) => o.so.doc_no).join(', ')}` : ''}`);
+    note(`sofa sets re-costed whole: ${setOrders.length} order(s)${setOrders.length ? `: ${setOrders.map((o) => o.so.doc_no).join(', ')}` : ''}`);
     shownDocs.forEach((d) => note(`  ${d}`));
     if (headers > shownDocs.length) note(`  ... ${headers - shownDocs.length} more.`);
     grandStamp += stamped; grandNoCost += noCost; grandHeaders += headers; grandMarginDrop += marginDrop;
