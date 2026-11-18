@@ -3,7 +3,7 @@
 // (services/eventForecast.ts holds the rules; owner 2026-11-18).
 //
 //   readForecasts      the typed figures (project_forecast), by event.
-//   findLastEvents     the earlier same-organiser-same-venue event, by event.
+//   findLastEvents     the earlier same-organiser-venue-and-brand event, by event.
 //   loadDetailLayers   the event page: layers + the last event's Expo Map.
 //
 // These run on env.DB (the D1-compatible connection over the same Postgres),
@@ -47,21 +47,21 @@ export async function readForecasts(db: Db, projectIds: readonly number[], compa
   return out;
 }
 
-export type LastEventRow = BaselineCandidate & { code: string | null; name: string | null; brand: string | null; total_sales: number | null };
+export type LastEventRow = BaselineCandidate & { code: string | null; name: string | null; total_sales: number | null };
 
 /** The last event of ONE event (pickLastEvent's rule, narrowed in SQL to the same
- *  company, organiser and venue first). Throws on a failed read. */
+ *  company, organiser, venue and brand first). Throws on a failed read. */
 export async function findLastEvent(db: Db, current: BaselineCandidate): Promise<LastEventRow | null> {
-  if (current.company_id == null || !current.organizer?.trim() || !current.venue?.trim() || !current.start_date) return null;
+  if (current.company_id == null || !current.organizer?.trim() || !current.venue?.trim() || !current.brand?.trim() || !current.start_date) return null;
   const res = await db.prepare(
     `SELECT p.id, p.company_id, p.organizer, p.venue, p.start_date, p.code, p.name, p.brand,
             (SELECT f.total_sales FROM project_finance f WHERE f.project_id = p.id LIMIT 1) AS total_sales
        FROM projects p
       WHERE p.company_id = ? AND p.id <> ? AND p.archived_at IS NULL AND COALESCE(p.status, '') <> 'cancelled'
-        AND lower(trim(p.organizer)) = lower(trim(?)) AND lower(trim(p.venue)) = lower(trim(?))
+        AND lower(trim(p.organizer)) = lower(trim(?)) AND lower(trim(p.venue)) = lower(trim(?)) AND lower(trim(p.brand)) = lower(trim(?))
         AND substr(p.start_date, 1, 10) < substr(?, 1, 10)
       ORDER BY p.start_date DESC, p.id DESC LIMIT 5`,
-  ).bind(current.company_id, current.id, current.organizer, current.venue, current.start_date).all<LastEventRow>();
+  ).bind(current.company_id, current.id, current.organizer, current.venue, current.brand, current.start_date).all<LastEventRow>();
   return pickLastEvent(current, res.results.map((r) => ({ ...r, id: Number(r.id), company_id: Number(r.company_id) })));
 }
 
