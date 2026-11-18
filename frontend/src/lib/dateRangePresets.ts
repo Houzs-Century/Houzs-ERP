@@ -26,6 +26,9 @@ export type RangePresetKey =
   | 'nextMonth'
   | 'nextQuarter'
   | 'next12Months'
+  | 'wholeMonth'
+  | 'wholeQuarter'
+  | 'wholeYear'
   | 'all';
 
 export type DateRange = { from: string; to: string };
@@ -75,6 +78,9 @@ export function presetLabel(key: RangePresetKey): string {
     case 'nextMonth': return 'Next month';
     case 'nextQuarter': return 'Next quarter';
     case 'next12Months': return 'Next 12 months';
+    case 'wholeMonth': return 'This month';
+    case 'wholeQuarter': return 'This quarter';
+    case 'wholeYear': return 'This year';
     case 'all': return 'All dates';
   }
 }
@@ -101,6 +107,11 @@ export function presetRange(key: RangePresetKey, today: string): DateRange {
     case 'nextMonth': return { from: monthStart(today, 1), to: monthEnd(today, 1) };
     case 'nextQuarter': return { from: quarterStart(today, 1), to: addDays(quarterStart(today, 2), -1) };
     case 'next12Months': return { from: today, to: addDays(today, 365) };
+    /* The whole of this month / quarter / year, days still to come included -
+       an event booked for next week belongs to this month (owner 2026-11-19). */
+    case 'wholeMonth': return { from: monthStart(today), to: monthEnd(today) };
+    case 'wholeQuarter': return { from: quarterStart(today), to: addDays(quarterStart(today, 1), -1) };
+    case 'wholeYear': return { from: isoOfMs(Date.UTC(Number(today.slice(0, 4)), 0, 1)), to: isoOfMs(Date.UTC(Number(today.slice(0, 4)), 11, 31)) };
     /* No from, no to: the page sends neither and the server reads every date. */
     case 'all': return { from: '', to: '' };
   }
@@ -128,8 +139,10 @@ export const REPORT_RANGE_PRESETS: readonly RangePresetKey[] = [
   'thisMonth', 'lastMonth', 'thisQuarter', 'lastQuarter', 'yearToDate', 'last12Months', 'lastYear',
 ];
 
-/** Project Overview's presets: the reports' list plus the months ahead, where
- *  future events show their forecast (owner 2026-11-18). */
+/** Project Overview's presets: this month / quarter / year run to their LAST
+ *  day, since events still to come carry their forecast (owner 2026-11-19:
+ *  下个礼拜的 project 没进来), then the months ahead (owner 2026-11-18). */
 export const PROJECT_REPORT_RANGE_PRESETS: readonly RangePresetKey[] = [
-  ...REPORT_RANGE_PRESETS, 'nextMonth', 'nextQuarter', 'next12Months',
+  'wholeMonth', 'lastMonth', 'wholeQuarter', 'lastQuarter', 'wholeYear', 'yearToDate', 'last12Months', 'lastYear',
+  'nextMonth', 'nextQuarter', 'next12Months',
 ];

@@ -18,10 +18,10 @@ import { VenueRentPanel } from "./VenueRentPanel";
 import { Columns, TONE, PALETTE } from "../../components/scm-v2/Charts";
 import { useDashboardPeriod } from "../../components/scm-v2/DashboardPeriod";
 import { DateRangeButton } from "../../components/DateRangeButton";
-import { PROJECT_REPORT_RANGE_PRESETS } from "../../lib/dateRangePresets";
+import { PROJECT_REPORT_RANGE_PRESETS, monthEnd, presetLabel, presetOf } from "../../lib/dateRangePresets";
 import { ProjectOverviewTable } from "./ProjectOverviewTable";
 import { ProjectDataGapsPanel, ProjectStuckPanel } from "./ProjectOverviewParts";
-import { figuresOf, totalsOf, groupBy, drillOf, pctOf, type OvProject, type Drill } from "./projectOverviewModel";
+import { figuresOf, totalsOf, groupBy, drillOf, heldVsComing, pctOf, type OvProject, type Drill } from "./projectOverviewModel";
 import { VIEW_PARAMS, readView, rememberOpenedFrom, takeScroll, writeView, type Dim, type OverviewView } from "./projectOverviewView";
 
 const DIMS: Array<[Dim, string]> = [["brand", "Brand"], ["eventType", "Event type"], ["organizer", "Organizer"], ["venue", "Venue"], ["state", "State"]];
@@ -32,6 +32,13 @@ export function ProjectOverviewPage() {
   const today = todayMY();
   /* A new period drops the breakdown pick in the same URL write. */
   const [period, setPeriod] = useDashboardPeriod(today, "af_from", "af_to", [VIEW_PARAMS.pick]);
+  /* "This month" is the WHOLE month (owner 2026-11-19: 下个礼拜的 project 没进来):
+     an event booked for next week belongs to it and carries its forecast. The
+     shared period reads "This month" as the 1st to today, so that one (and the
+     empty-URL default) widens here to the month's last day. */
+  const win = period.key === "month" ? { from: period.from, to: monthEnd(today) } : { from: period.from, to: period.to };
+  const winPreset = presetOf(win, PROJECT_REPORT_RANGE_PRESETS, today);
+  const winLabel = winPreset === "wholeMonth" ? `This month (${today.slice(0, 7)})` : winPreset ? presetLabel(winPreset) : period.label;
   const q = useQuery<{ projects: OvProject[]; cachedAt?: string }>("/api/projects/overview", () => api.get("/api/projects/overview"));
   /* Served from a copy up to 2 h old: say when, and offer figures computed now. */
   const { refresh, refreshing } = useCacheRefresh();
@@ -75,8 +82,9 @@ export function ProjectOverviewPage() {
   const all = useMemo(() => (q.data?.projects ?? []).filter((p) =>
     (!brand || p.brand === brand) && (!type || p.eventType === type) && (!organizer || p.organizer === organizer)
     && (!venue || p.venue === venue) && (!state || p.state === state) && (!stage || p.stage === stage)), [q.data, brand, type, organizer, venue, state, stage]);
-  const inPeriod = useMemo(() => all.filter((p) => !!p.startDate && p.startDate >= period.from && p.startDate <= period.to), [all, period.from, period.to]);
+  const inPeriod = useMemo(() => all.filter((p) => !!p.startDate && p.startDate >= win.from && p.startDate <= win.to), [all, win.from, win.to]);
   const t = totalsOf(inPeriod);
+  const split = heldVsComing(inPeriod, today);
   const groups = groupBy(inPeriod, (p) => p[dim]);
   /* Click a Breakdown header to rank by it (owner 2026-10-23). */
   const gSort = useTableSort(groups, (g, k) =>
@@ -84,7 +92,7 @@ export function ProjectOverviewPage() {
       : k === "rental" ? g.rental : k === "rentalPct" ? pctOf(g.rental, g.sales) : k === "cost" ? g.rental + g.otherCost : k === "np" ? g.np : pctOf(g.np, g.sales));
   /* A month that has not started is left off: a few early bookings drew a huge NP % (owner 2026-11-05) -
      unless the period picked reaches it, where its events carry their forecast (owner 2026-11-18). */
-  const trendEnd = period.to > today ? period.to : today;
+  const trendEnd = win.to > today ? win.to : today;
   const trend = drillOf(all, drill, today).filter((b) => b.from <= trendEnd);
   /* Breadcrumb back up the drill: All years > 2026 > Q4 > Oct. */
   const crumbs: Array<[string, Drill]> = [["All years", { level: "years" }]];
@@ -119,7 +127,7 @@ export function ProjectOverviewPage() {
   return (
     <div ref={rootRef} className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <DateRangeButton from={period.from} to={period.to} presets={PROJECT_REPORT_RANGE_PRESETS} today={today} label="Event dates"
+        <DateRangeButton from={win.from} to={win.to} presets={PROJECT_REPORT_RANGE_PRESETS} today={today} label="Event dates"
           onChange={(f, to) => { if (f && to) setPeriod(f, to); }} />
         <select className={SELECT_CLS} value={brand} onChange={(e) => setView({ brand: e.target.value })} aria-label="Brand"><option value="">All brands</option>{options("brand").map((b) => <option key={b}>{b}</option>)}</select>
         <select className={SELECT_CLS} value={type} onChange={(e) => setView({ type: e.target.value })} aria-label="Event type"><option value="">All event types</option>{options("eventType").map((b) => <option key={b}>{b}</option>)}</select>
@@ -137,13 +145,14 @@ export function ProjectOverviewPage() {
       <section className="relative overflow-hidden rounded-2xl bg-sidebar px-5 py-5 text-sidebar-ink shadow-slab sm:px-7">
         <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full opacity-50 blur-2xl" style={{ background: "radial-gradient(circle, rgba(22,105,95,0.6), transparent 70%)" }} />
         <div className="relative">
-          <div className="font-mono text-[10px] font-bold uppercase tracking-brand text-accent-bright">{period.label} · {t.projects} projects</div>
+          <div className="font-mono text-[10px] font-bold uppercase tracking-brand text-accent-bright">{winLabel} · {t.projects} projects</div>
           <div className="mt-3 grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-4">
             <Hero label="Sales" value={money(t.sales)} sub={t.split.sales.forecast + t.split.sales.last_event !== 0 ? "includes estimates, split below" : t.fromSalesOrders ? `${t.fromSalesOrders} projects from Sales Orders` : "all from keyed books"} />
             <Hero label="Gross profit %" value={pctTxt(pctOf(t.gp, t.sales))} sub={`GP ${money(t.gp)}`} tone={t.gp >= 0 ? "good" : "bad"} />
             <Hero label="Net profit" value={money(t.np)} sub={`NP ${pctTxt(pctOf(t.np, t.sales))}`} tone={t.np >= 0 ? "good" : "bad"} />
             <Hero label="Collected" value={pctTxt(pctOf(paidSen, orderedSen))} sub={`${money(paidSen / 100)} of ${money(orderedSen / 100)} ordered`} />
           </div>
+          {split && <HeldComingRow held={split.held} coming={split.coming} total={t} today={today} />}
           {t.estimated > 0 && <LayerSplitRow t={t} />}
           {t.noSales > 0 && <p className="mt-3 text-[11.5px] text-sidebar-ink/70">{t.noSales} projects in this period have neither keyed sales nor Sales Orders yet.</p>}
         </div>
@@ -177,7 +186,7 @@ export function ProjectOverviewPage() {
             <p className="mt-1 text-[11px] text-ink-muted">{drill.level === "weeks" ? "Click a week to show its projects across the page." : "Year, then its quarters, then its months, then the weeks of a month."}</p>
           </div>
         </Panel>
-        <Panel title="Where each ringgit of sales goes" hint={period.label}>
+        <Panel title="Where each ringgit of sales goes" hint={winLabel}>
           <RinggitBar sales={t.sales} parts={[["COGS", t.cogs, PALETTE[1]!], ...costLines.map(([l, v, c]) => [l, v, c] as [string, number, string]), ["Net profit", Math.max(0, t.np), "#2f8a5b"]]} />
           <table className="mt-3 w-full border-collapse text-[12.5px] tabular-nums"><tbody>
             <tr className="font-semibold"><Td left>Sales</Td><Td>{money(t.sales)}</Td><Td className="w-[64px] text-ink-muted">100.0%</Td></tr>
@@ -225,10 +234,34 @@ export function ProjectOverviewPage() {
         </div>
       </Panel>
 
-      <VenueRentPanel projects={inPeriod} periodLabel={period.label} />
+      <VenueRentPanel projects={inPeriod} periodLabel={winLabel} />
 
       <ProjectStuckPanel onOpen={openProject} />
       <ProjectDataGapsPanel onOpen={openProject} />
+    </div>
+  );
+}
+
+/** A period that runs past today, in three plain figures (owner 2026-11-19):
+ *  what has been held, what is still to come, and the projected total. */
+function HeldComingRow({ held, coming, total, today }: { held: ReturnType<typeof totalsOf>; coming: ReturnType<typeof totalsOf>; total: ReturnType<typeof totalsOf>; today: string }) {
+  const cells: Array<[string, string, ReturnType<typeof totalsOf>]> = [
+    ["Held so far", `${held.projects} project${held.projects === 1 ? "" : "s"} started by ${today.slice(8)}/${today.slice(5, 7)}`, held],
+    ["Still to come", `${coming.projects} project${coming.projects === 1 ? "" : "s"} · forecast / last event`, coming],
+    ["Projected total", "held + still to come", total],
+  ];
+  return (
+    <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3" data-testid="held-coming">
+      {cells.map(([label, sub, x], i) => (
+        <div key={label} className={cn("rounded-lg px-3 py-2", i === 2 ? "bg-white/10" : "bg-white/5")}>
+          <div className="text-[10.5px] font-semibold uppercase tracking-wider text-sidebar-ink/70">{label}</div>
+          <div className="mt-0.5 font-display text-[17px] font-bold tabular-nums">{money(x.sales)}</div>
+          <div className="text-[11.5px] tabular-nums text-sidebar-ink/80">
+            NP <span className={x.np < 0 ? "text-[#f0a39b]" : "text-[#8fe0b5]"}>{money(x.np)}</span> · {pctTxt(pctOf(x.np, x.sales))}
+          </div>
+          <div className="text-[11px] text-sidebar-ink/60">{sub}</div>
+        </div>
+      ))}
     </div>
   );
 }

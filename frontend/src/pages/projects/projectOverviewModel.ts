@@ -198,3 +198,14 @@ export function drillOf(ps: OvProject[], drill: Drill, today: string) {
   }
   return buckets.map((b) => ({ ...b, ...totalsOf(ps.filter((p) => !!p.startDate && p.startDate >= b.from && p.startDate <= b.to)) }));
 }
+
+/** A period that reaches past today, cut at today (owner 2026-11-19: 当月 —
+ *  what has been held, what is still to come on its forecast, and the two
+ *  together as the projected total). Null when nothing in it is still to come
+ *  or nothing has started yet - one side alone needs no split. */
+export function heldVsComing(ps: OvProject[], today: string): { held: Totals; coming: Totals } | null {
+  const held = ps.filter((p) => !!p.startDate && p.startDate <= today);
+  const coming = ps.filter((p) => !!p.startDate && p.startDate > today);
+  if (held.length === 0 || coming.length === 0) return null;
+  return { held: totalsOf(held), coming: totalsOf(coming) };
+}
