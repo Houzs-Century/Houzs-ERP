@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ASSR_LEG_SEND_KINDS,
   KIND_AUTOMATION,
   MESSAGE_KINDS,
   OPENER_KINDS,
@@ -30,6 +31,16 @@ describe('message kinds → Connect automation names', () => {
     expect([...OPENER_KINDS].sort()).toEqual(['amend', 'assr_arrangement', 'delivery', 'postpone']);
     expect(OPENER_KINDS.has('driver_info')).toBe(false);
     expect(OPENER_KINDS.has('balance_reminder')).toBe(false);
+  });
+
+  it('a Service Case leg can be sent Postpone, the Reminders and Driver Info; SO-only sends are excluded', () => {
+    expect([...ASSR_LEG_SEND_KINDS].sort()).toEqual(['driver_info', 'postpone', 'reminder_1', 'reminder_2', 'reminder_3']);
+    // The date confirms (delivery/amend) become Service Arrangement, handled on
+    // their own path, and the money / address sends read a Sales Order, so none
+    // of these split out to the ASSR sender.
+    for (const k of ['delivery', 'amend', 'balance_reminder', 'postage', 'delivery_completed', 'overdue_order', 'assr_arrangement'] as const) {
+      expect(ASSR_LEG_SEND_KINDS.has(k)).toBe(false);
+    }
   });
 });
 

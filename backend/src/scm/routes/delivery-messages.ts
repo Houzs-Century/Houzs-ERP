@@ -28,6 +28,7 @@ import { supabaseAuth } from '../middleware/auth';
 import { effectiveSoDelivery, type SoDeliveryDateRow } from '../shared';
 import { normalizePhone } from '../shared/phone';
 import {
+  ASSR_LEG_SEND_KINDS,
   KIND_AFTER_STATUS,
   KIND_AUTOMATION,
   MESSAGE_KINDS,
@@ -467,18 +468,20 @@ deliveryMessages.post('/send', async (c) => {
   // nothing went out.
   if (kind === 'assr_arrangement') {
     try {
-      return c.json(await sendAssrArrangement(c, docNos));
+      return c.json(await sendAssrArrangement(c, docNos, 'assr_arrangement'));
     } catch (e) {
       return c.json({ error: 'load_failed', reason: String((e as Error).message).slice(0, 200) }, 500);
     }
   }
-  // Driver Info also serves a Service Case leg (its trip's driver): those row
-  // keys go to the ASSR sender, which reads the case, not mfg_sales_orders.
-  const assrKeys = kind === 'driver_info' ? docNos.filter((k) => parseAssrRowKey(k)) : [];
+  // These kinds also serve a Service Case leg — Driver Info (its trip's driver),
+  // Postpone (the leg's Amend Reason + new date) and the three Reminders — so a
+  // mixed selection's ASSR row keys go to the ASSR sender, which reads the case,
+  // not mfg_sales_orders, while the SO docs go on to the SO sender below.
+  const assrKeys = ASSR_LEG_SEND_KINDS.has(kind) ? docNos.filter((k) => parseAssrRowKey(k)) : [];
   let assrResult = { sent: [], failed: [], skipped: [] } as Awaited<ReturnType<typeof sendAssrArrangement>>;
   if (assrKeys.length > 0) {
     try {
-      assrResult = await sendAssrArrangement(c, assrKeys, extras.driverInfo);
+      assrResult = await sendAssrArrangement(c, assrKeys, kind, extras.driverInfo);
     } catch (e) {
       return c.json({ error: 'load_failed', reason: String((e as Error).message).slice(0, 200) }, 500);
     }
