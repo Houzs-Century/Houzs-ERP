@@ -40,6 +40,12 @@ describe('assrChatStateFromLog', () => {
     expect(assrChatStateFromLog([send, amend, driver]).get('A#inspection')?.delivery_message_status).toBe('Done Driver Information');
     expect(assrChatStateFromLog([driver, { ...send, created_at: '2026-10-28T11:00:00Z' }]).get('A#inspection')?.delivery_message_status).toBe('Done Send');
   });
+  it('a Postpone send reads Done Postpone Reason; a Reminder reads its Done Remind (N)', () => {
+    const postpone = { ...send, payload: JSON.stringify({ automation: 'Postpone' }), created_at: '2026-10-28T10:00:00Z' };
+    expect(assrChatStateFromLog([send, postpone]).get('A#inspection')?.delivery_message_status).toBe('Done Postpone Reason');
+    const r2 = { ...send, payload: JSON.stringify({ automation: 'Reminder 2' }), created_at: '2026-10-28T10:30:00Z' };
+    expect(assrChatStateFromLog([send, r2]).get('A#inspection')?.delivery_message_status).toBe('Done Remind (2)');
+  });
   it('a send alone reads Done Send', () => {
     expect(assrChatStateFromLog([send]).get('A#inspection')).toEqual({
       delivery_message_status: 'Done Send', amend_date_from_customer: null, amend_reason_from_customer: null,
