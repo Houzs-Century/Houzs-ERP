@@ -184,10 +184,30 @@ describe("curated venue postcodes", () => {
     });
   });
 
-  test("the name must match exactly; a near name is not used", () => {
+  test("the name must match; a near name is not used", () => {
     const { planned, unresolved } = run([venue({ name: "SUNWAY PYRAMID" })], [entry()]);
     expect(planned).toEqual([]);
-    expect(unresolved[0].reason).toMatch(/no curated entry with this exact name/);
+    expect(unresolved[0].reason).toMatch(/no curated entry with this name/);
+  });
+
+  test("case and surrounding spaces are ignored (company 2's Penang Waterfront Convention Centre), nothing else", () => {
+    const pwcc = entry({ id: 70, name: "PENANG WATERFRONT CONVENTION CENTRE", postcode: "10050", city: "George Town", state: "Pulau Pinang" });
+    const ok = run([venue({ id: "512", companyId: 2, name: "  Penang Waterfront Convention Centre " })], [pwcc]);
+    expect(ok.planned[0]).toMatchObject({ id: "512", source: "curated list", proposed: { postcode: "10050", state: "Pulau Pinang" } });
+    for (const name of ["Penang Waterfront Convention Center", "Penang  Waterfront Convention Centre", "PENANG WATERFRONT CONVENTION CENTRE (PWCC)"]) {
+      expect(run([venue({ name })], [pwcc]).planned, name).toEqual([]);
+    }
+  });
+
+  test("two entries that differ only in case are a duplicate, dropped", () => {
+    const idx = curatedIndex([entry(), entry({ name: "Sunway Pyramid Convention Centre", postcode: "50000" })]);
+    expect(idx.duplicates).toEqual(["SUNWAY PYRAMID CONVENTION CENTRE"]);
+    expect(idx.byName.size).toBe(0);
+  });
+
+  test("the committed list has THE STARLING MALL (id 33) at 47400 Petaling Jaya, Selangor", () => {
+    const data = JSON.parse(readFileSync(new URL("../scripts/data/venue-postcodes.json", import.meta.url), "utf8"));
+    expect(curatedIndex(data.entries).byName.get("the starling mall")).toMatchObject({ id: "33", postcode: "47400", city: "Petaling Jaya", state: "Selangor", confidence: "high" });
   });
 
   test("the id is only a hint: a different id with the same name is planned and noted", () => {
