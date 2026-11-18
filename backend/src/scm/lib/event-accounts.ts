@@ -54,7 +54,7 @@ export async function eventAccountRefusal(c: any, companyId: number, lines: Even
   const acct = needing.get(String(line.debit_account_code))!;
   return c.json({
     error: 'event_required_on_line',
-    message: `Line ${line.line_no ?? at + 1} (${acct.account_code} ${acct.account_name}) needs its Event — pick it, or untick 需要 Event on the account.`,
+    message: `Line ${line.line_no ?? at + 1} (${acct.account_code} ${acct.account_name}) needs its Event — pick it, or untick Needs event on the account.`,
   }, 409);
 }
 

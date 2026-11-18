@@ -16,7 +16,7 @@ import { bankFollowsText } from './bank-follows';
 import { btn, danger, fmt, good, refusalText } from './settlement-ui';
 
 /** 「2990 的单」 — the owner's own words for such a line. */
-export const soldByWords = (code: string): string => `${code} 的单`;
+export const soldByWords = (code: string): string => `${code}'s order`;
 
 /** Whether a line can still be booked as another company's sale: an open card
     sale that holds no sale of this company. */

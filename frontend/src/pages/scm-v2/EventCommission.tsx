@@ -967,7 +967,7 @@ export const EventCommissionTab = () => {
       )}
 
       {r && deferredRows.length > 0 && (
-        <Card title={TITLE.deferredIn} hint={`${HINT.deferredIn} (「这个算下个月」) · paid in this month · amounts in RM`}>
+        <Card title={TITLE.deferredIn} hint={`${HINT.deferredIn} ("count this next month") · paid in this month · amounts in RM`}>
           <DataTable<CommissionDeferredIn>
             tableId="event-commission-moved-in" {...tables.tell('movedIn')} exportName={`event-commission-moved-in-${range.from}-${range.to}`} freezeHeight="screen"
             columns={DEFERRED_COLUMNS} rows={deferredRows} getRowKey={(d) => `${d.fromMonth}-${d.docNo}`}

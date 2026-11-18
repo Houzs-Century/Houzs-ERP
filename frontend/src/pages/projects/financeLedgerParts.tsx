@@ -106,7 +106,7 @@ function BooksLines({ lines, replaced }: { lines: FinanceLine[]; replaced: Finan
   return (
     <div className="border-t border-border px-4 py-3" data-testid="books-lines">
       <h4 className="mb-2 text-[10.5px] font-bold uppercase tracking-brand text-ink-muted">
-        From the books · 入账 ({lines.length})
+        From the books ({lines.length})
       </h4>
       <div className="space-y-1">
         {lines.map((l) => (
@@ -340,7 +340,7 @@ export function SnapshotRow({
             className="ml-1.5 rounded bg-accent-soft px-1 py-px text-[10px] font-semibold text-accent"
             title="From the books — payment vouchers once checked, and posted AP invoices, on this event replace the typed figure"
           >
-            入账
+            Booked
           </span>
         )}
         {annotation && (

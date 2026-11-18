@@ -64,7 +64,7 @@ const StageChip = ({ r }: { r: PaymentRequest }) => (
 
 const FILTERS: Array<[StageFilter, string]> = [
   ['all', 'All'], ['waiting', 'Waiting for Finance'], ['processing', 'Processing'], ['paid', 'Paid'], ['returned', 'Returned / withdrawn'],
-  ['official', 'Official invoice owed · 欠正式单'],
+  ['official', 'Official invoice owed'],
 ];
 
 const Meta = ({ label, value }: { label: string; value: React.ReactNode }) => (
@@ -206,7 +206,7 @@ function RequesterRequests({ listQ }: { listQ: RequestListQuery }) {
               )}
               {/* 申请付余额 (item 2): the next instalment of the same bill — no second upload. */}
               {mine(detail) && !isRefundRequest(detail) && mayAskBalance(detail) && (
-                <Button variant="secondary" size="sm" onClick={() => setBalanceOf(detail)}>Request the balance · 申请付余额</Button>
+                <Button variant="secondary" size="sm" onClick={() => setBalanceOf(detail)}>Request the balance</Button>
               )}
             </>
           )}
@@ -226,7 +226,7 @@ function RequesterRequests({ listQ }: { listQ: RequestListQuery }) {
             {!isRefundRequest(detail) && <Meta label="Pay by" value={fmtDateOrDash(detail.due_date)} />}
             {!isRefundRequest(detail) && <Meta label="Event" value={eventCellText(labelsQ.data, detail.project_id)} />}
             <Meta label={isRefundRequest(detail) ? 'Reason' : 'For'} value={detail.purpose} />
-            {detail.note && <Meta label="Note · 备注" value={detail.note} />}
+            {detail.note && <Meta label="Note" value={detail.note} />}
             {!isRefundRequest(detail) && (
               <Meta label="The bill" value={detail.bill_no || detail.bill_date || detail.bill_total_sen != null
                 ? billFactsLine({ billNo: detail.bill_no, billDate: detail.bill_date, totalSen: detail.bill_total_sen })
@@ -258,7 +258,7 @@ function RequesterRequests({ listQ }: { listQ: RequestListQuery }) {
       )}
 
       {balanceOf && (
-        <Modal title={`Request the balance · 申请付余额 — ${balanceOf.family?.rootNo ?? balanceOf.request_no}`} onClose={() => setBalanceOf(null)} width="min(640px, 100%)"
+        <Modal title={`Request the balance — ${balanceOf.family?.rootNo ?? balanceOf.request_no}`} onClose={() => setBalanceOf(null)} width="min(640px, 100%)"
           ariaLabel="Request the balance">
           <BalanceForm request={balanceOf} onDone={(id) => { setBalanceOf(null); setOpenId(id); }} onCancel={() => setBalanceOf(null)} />
         </Modal>

@@ -201,7 +201,7 @@ export const PERMISSIONS: PermissionDef[] = [
   // their own requests only. Nobody holds it by default except '*' — grant it to
   // a ROLE under Team > Roles & Permissions (Roles). It is also the one SCM door
   // such a person has: requireScmAccess admits it for /payment-requests alone.
-  { key: "scm.payment_request.create", resource: "Supply Chain", verb: "create", label: "Request a payment (申请付款)", description: "Ask Finance to pay a bill — payee, amount, due date, the event it is for, the payee's bank details and the bill itself; see your own requests move from Submitted to Paid and Bank confirmed" },
+  { key: "scm.payment_request.create", resource: "Supply Chain", verb: "create", label: "Request a payment", description: "Ask Finance to pay a bill — payee, amount, due date, the event it is for, the payee's bank details and the bill itself; see your own requests move from Submitted to Paid and Bank confirmed" },
 
   // Product request (owner 2026-10-06: to request new product / repack product;
   // Sales 都能提, Purchaser 批). Every Sales caller may raise one without this

@@ -51,7 +51,7 @@ export function BankCardPaymentsTab({ cards }: { cards: BankCardPayment[] }) {
                 <td className={look.dateCell}>{fmtDateOrDash(p.paidOn)}</td>
                 <td><b><EntryDocument text={p.docNo} /></b></td>
                 <td>{p.customerName ?? '—'}</td>
-                <td>{p.acquirerCode ?? '未标'}</td>
+                <td>{p.acquirerCode ?? 'Untagged'}</td>
                 <td>{p.approvalCode ?? '—'}</td>
                 <td className={grid.num}>{fmt(p.amountSen)}</td>
                 <td className={grid.num}>{p.ageDays}</td>

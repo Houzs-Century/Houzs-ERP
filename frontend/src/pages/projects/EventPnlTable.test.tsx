@@ -65,6 +65,6 @@ describe("EventPnlTable — two P&Ls", () => {
 
   it("a row Finance filled is marked 入账", () => {
     render(<EventPnlTable pnl={PNL} editable={() => undefined} busyCategory={null} books={new Set(["rental"])} />);
-    expect(within(rowOf("Rental")).getByText("入账")).toBeTruthy();
+    expect(within(rowOf("Rental")).getByText("Booked")).toBeTruthy();
   });
 });

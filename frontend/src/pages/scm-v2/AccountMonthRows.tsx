@@ -89,8 +89,8 @@ export const AccountMonthRows = ({ code, columns, from, to, month, rowSen, fmt, 
       })}
       <tr data-lines-foot={code} className={rowClass}>
         <td className={styles.name} style={{ ...name, fontWeight: 600 }}>
-          共 {lines.length} 笔{month ? ` · ${month.slice(5, 7)}/${month.slice(0, 4)}` : ''}
-          <Link to={ledgerHref([code], from, to)} style={{ marginLeft: 12, fontWeight: 400, color: 'var(--c-orange)' }}>在 GL 打开</Link>
+          {lines.length} {lines.length === 1 ? 'entry' : 'entries'}{month ? ` · ${month.slice(5, 7)}/${month.slice(0, 4)}` : ''}
+          <Link to={ledgerHref([code], from, to)} style={{ marginLeft: 12, fontWeight: 400, color: 'var(--c-orange)' }}>Open in GL</Link>
         </td>
         {columns.map((c) => {
           const here = lines.filter((l) => inColumn(c, l.date));

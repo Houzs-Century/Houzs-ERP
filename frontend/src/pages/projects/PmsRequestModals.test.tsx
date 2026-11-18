@@ -76,7 +76,7 @@ describe('Request payment', () => {
     ]);
     expect(form.textContent).toContain('MITEC rental invoice.pdf|application/pdf,Quotation.JPG|image/jpeg · 348 · 5001 · Kuala Lumpur [ZANOTTI] REX @ MITEC');
     fireEvent.click(screen.getByRole('button', { name: 'sent' }));
-    expect(notifyFn).toHaveBeenCalledWith(expect.objectContaining({ title: 'Sent to Finance · 已提交' }));
+    expect(notifyFn).toHaveBeenCalledWith(expect.objectContaining({ title: 'Sent to Finance' }));
     expect(onClose).toHaveBeenCalled();
   });
 
@@ -96,7 +96,7 @@ describe('补正式单 from the row', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send as the official invoice' }));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(uploadOfficial).toHaveBeenCalledWith({ requestId: 'r1', file: { name: 'MITEC tax invoice.pdf', mime: 'application/pdf', dataBase64: 'b64:MITEC tax invoice.pdf' } });
-    expect(notifyFn).toHaveBeenCalledWith({ title: 'Official invoice sent · 已补正式单', body: 'Finance checks it on HC-HPV-2610-004.', tone: 'info' });
+    expect(notifyFn).toHaveBeenCalledWith({ title: 'Official invoice sent', body: 'Finance checks it on HC-HPV-2610-004.', tone: 'info' });
   });
 
   test('a difference the reader saw is said as a warning', async () => {

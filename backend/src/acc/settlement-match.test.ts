@@ -183,7 +183,7 @@ describe('watchlist 1 — recorded, not arrived', () => {
     const ghl = listOnce([untagged], 'GHL', listed);
     expect(mbb.map((p) => [p.id, p.acquirerCode])).toEqual([['p1', 'MBB'], ['u1', null]]);
     expect(ghl).toEqual([]);
-    expect(UNTAGGED_LIST).toBe('未标');
+    expect(UNTAGGED_LIST).toBe('Untagged');
   });
 });
 

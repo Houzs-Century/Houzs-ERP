@@ -3947,7 +3947,7 @@ function QuickRentalField({
   if (fromBooks.length > 0) {
     return (
       <div style={{ background: "var(--hz-c-surface-2)", borderRadius: 10, padding: 11 }}>
-        <span className="pkv-l">Rental (RM) · 入账</span>
+        <span className="pkv-l">Rental (RM) · From the books</span>
         <div className="money" style={{ fontSize: 15, fontWeight: 700, color: "var(--hz-c-ink)", marginTop: 4 }}>
           {formatCurrency(fromBooks.reduce((s, l) => s + (l.amount || 0), 0))}
         </div>
@@ -4082,7 +4082,7 @@ function FinancialSnapshot({
                   <span style={{ flex: 1, minWidth: 90, fontSize: 12, color: "var(--hz-c-ink-secondary)" }}>
                     {line.description || ledgerCategoryLabel(line.category)}
                     {auto && <span style={{ marginLeft: 5, fontSize: 9, color: "var(--hz-c-ink-soft)" }}>auto</span>}
-                    {fromBooks && <span style={{ marginLeft: 5, fontSize: 9, color: "#8a4b12" }}>入账 {line.doc_no}</span>}
+                    {fromBooks && <span style={{ marginLeft: 5, fontSize: 9, color: "#8a4b12" }}>Booked {line.doc_no}</span>}
                   </span>
                   <span className="money" style={{ fontSize: 12, fontWeight: 700 }}>{formatCurrency(line.amount)}</span>
                   {receiptKey && <button className="tinybtn" disabled={busy} onClick={() => openReceipt(line)}>Receipt</button>}

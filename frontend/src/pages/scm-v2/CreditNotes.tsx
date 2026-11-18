@@ -319,7 +319,7 @@ export const CreditNotes = ({ side = 'AR' }: { side?: NoteSide }) => {
             <input ref={scanRef} type="file" multiple accept={PV_FILE_ACCEPT} style={{ display: 'none' }} aria-label="Supplier credit note pages"
               onChange={(e) => { const picked = [...(e.target.files ?? [])]; e.target.value = ''; void scanFiles(picked); }} />
             <Button variant="ghost" size="sm" onClick={() => scanRef.current?.click()} disabled={scan.isPending}>
-              <FileText size={16} strokeWidth={1.75} /> {scan.isPending ? (scanStage ? aiReadStageNote(scanStage, 'the credit note') : 'Sending the credit note…') : 'Scan supplier CN · 扫描 CN'}
+              <FileText size={16} strokeWidth={1.75} /> {scan.isPending ? (scanStage ? aiReadStageNote(scanStage, 'the credit note') : 'Sending the credit note…') : 'Scan supplier CN'}
             </Button>
           </>
         ) : undefined}

@@ -136,7 +136,7 @@ describe("ProjectDetail — Request payment on the CONTRACT row", () => {
     const box = screen.getByLabelText("Payment requests from this row");
     expect(box.textContent).toContain("HC-PRQ-2610-002");
     expect(box.textContent).toContain("Proforma only — follow up the actual invoice");
-    expect(within(box).getByRole("button", { name: "Send the actual invoice · 补正式单" })).toBeTruthy();
+    expect(within(box).getByRole("button", { name: "Send the actual invoice" })).toBeTruthy();
   });
 
   it("without the request key: no button, nothing read", async () => {

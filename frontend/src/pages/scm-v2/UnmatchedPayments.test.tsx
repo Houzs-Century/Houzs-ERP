@@ -172,7 +172,7 @@ describe('Payments', () => {
 
     /* Keyed in without a bank: 未标, as Merchant Recon names it. */
     const untagged = within(rowOf('2990-SO-2609-050'));
-    expect(untagged.getByText('Card · 未标')).toBeTruthy();
+    expect(untagged.getByText('Card · Untagged')).toBeTruthy();
     expect(untagged.getByText('Not on a merchant report yet')).toBeTruthy();
   });
 
