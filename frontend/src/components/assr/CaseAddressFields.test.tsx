@@ -22,9 +22,10 @@ describe("CaseAddressFields", () => {
   test("picking a postcode fills City and State, and Save sends only what changed", async () => {
     const onSave = vi.fn(async () => {});
     render(<CaseAddressFields c={OLD_CASE} onSave={onSave} classes={CASE_ADDRESS_DESKTOP} />);
-    // The old case's third line stays visible and editable.
-    expect((screen.getByLabelText("Address line 3") as HTMLInputElement).value).toBe("11900 Bayan Lepas");
+    // Two lines only (owner 2026-11-18); the old case's third line shows inside line 2.
+    expect(screen.queryByLabelText("Address line 3")).toBeNull();
     expect(screen.queryByLabelText("Address line 4")).toBeNull();
+    expect((screen.getByLabelText("Address line 2") as HTMLInputElement).value).toBe("lebuh nipah 2, 11900 Bayan Lepas");
 
     const postcode = screen.getAllByRole("combobox").find((el) => (el as HTMLInputElement).placeholder.startsWith("Pick postcode"))!;
     fireEvent.focus(postcode);
@@ -32,8 +33,20 @@ describe("CaseAddressFields", () => {
     fireEvent.keyDown(postcode, { key: "Enter" });
 
     expect((screen.getByLabelText("City") as HTMLInputElement).value).toBe("Bayan Lepas");
+    // Line 3 now only repeats the postcode and city, so line 2 stops showing it twice.
+    expect((screen.getByLabelText("Address line 2") as HTMLInputElement).value).toBe("lebuh nipah 2");
     fireEvent.click(screen.getByRole("button", { name: "Save address" }));
     expect(onSave).toHaveBeenCalledWith({ postcode: "11900", city: "Bayan Lepas", state: "Pulau Pinang" });
+  });
+
+  test("editing line 2 saves all of it there and clears lines 3 / 4 — nothing typed is lost", () => {
+    const onSave = vi.fn(async () => {});
+    render(<CaseAddressFields c={{ ...OLD_CASE, addr4: "Taman Lama" }} onSave={onSave} classes={CASE_ADDRESS_DESKTOP} />);
+    const line2 = screen.getByLabelText("Address line 2") as HTMLInputElement;
+    expect(line2.value).toBe("lebuh nipah 2, 11900 Bayan Lepas, Taman Lama");
+    fireEvent.change(line2, { target: { value: "lebuh nipah 2, Taman Lama" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save address" }));
+    expect(onSave).toHaveBeenCalledWith({ addr2: "lebuh nipah 2, Taman Lama", addr3: null, addr4: null });
   });
 
   test("no change, no Save button", () => {

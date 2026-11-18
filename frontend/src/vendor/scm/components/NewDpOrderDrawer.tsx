@@ -50,6 +50,7 @@ import { splitHighlight } from '../lib/split-highlight';
 import { api } from '../../../api/client';
 import styles from '../../../pages/scm-v2/Suppliers.module.css';
 import { DateField } from "./DateField";
+import { addressLineTwoView, hasLegacyLines } from '../../shared/address-two-lines';
 import { PostcodeCascadeField } from './PostcodeCascadeField';
 import { useLocalities, resolvePostcode } from '../lib/localities-queries';
 import { knownPostcodeInText, DP_POSTCODE_REQUIRED_JOB_TYPES } from '../lib/postcode-in-address';
@@ -175,6 +176,10 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
   });
   const set = <K extends keyof typeof form>(k: K, v: (typeof form)[K]) =>
     setForm((s) => ({ ...s, [k]: v }));
+  /* Address line 2 shows what lines 3 / 4 still hold (two lines on every
+     address form, owner 2026-11-18); editing it moves all of it to line 2. */
+  const setLineTwo = (v: string) =>
+    setForm((f) => (hasLegacyLines(f.address3, f.address4) ? { ...f, address2: v, address3: '', address4: '' } : { ...f, address2: v }));
 
   const src = sourceMeta(form.jobType);
 
@@ -1080,7 +1085,7 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
           </label>
           <label style={fieldRow}>
             <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>Address line 2</div>
-            <input className={styles.searchInput} style={inputStyle} value={form.address2} onChange={(e) => set('address2', e.target.value)} />
+            <input className={styles.searchInput} style={inputStyle} value={addressLineTwoView(form.address2, form.address3, form.address4, form)} onChange={(e) => setLineTwo(e.target.value)} />
           </label>
           <div style={row2}>
             <div style={fieldRow}>
