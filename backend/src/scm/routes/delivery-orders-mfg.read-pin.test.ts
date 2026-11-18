@@ -330,8 +330,9 @@ describe('POST /from-sos — pinned', () => {
     ['mixed customers', { picks: [{ soItemId: 'a2', qty: 1 }, { soItemId: 'b2', qty: 1 }], asDraft: true, confirmShortStock: true, confirmNotReady: true }],
     ['undeliverable (draft) order', { picks: [{ soItemId: 'c1', qty: 1 }], asDraft: true, confirmShortStock: true, confirmNotReady: true }],
     ['unknown line', { picks: [{ soItemId: 'nope', qty: 1 }], asDraft: true }],
-    ['short stock without confirmation', { picks: [{ soItemId: 'b2', qty: 1 }], asDraft: true, confirmNotReady: true }],
-    ['not-ready without confirmation', { picks: [{ soItemId: 'b2', qty: 1 }], asDraft: true, confirmShortStock: true }],
+    // A draft is not asked (owner 2026-11-18, tests/doDraftBeforeStock.test.ts): these two pin the shipped create.
+    ['short stock without confirmation', { picks: [{ soItemId: 'b2', qty: 1 }], asDraft: false, confirmNotReady: true }],
+    ['not-ready without confirmation', { picks: [{ soItemId: 'b2', qty: 1 }], asDraft: false, confirmShortStock: true }],
   ];
   it.each(cases)('%s', async (_name, body) => {
     const r = await call('POST', '/from-sos', body);
@@ -350,8 +351,9 @@ describe('POST / (create DO) — pinned', () => {
     ['cross-company order', { ...base, soDocNo: 'SO-X', confirmShortStock: true, confirmNotReady: true, items: [line('x1', 'PIL-1', 1)] }],
     ['unknown item code', { ...base, confirmShortStock: true, confirmNotReady: true, items: [line(null, 'NOPE-9', 1)] }],
     ['wrong item on a line link', { ...base, confirmShortStock: true, confirmNotReady: true, items: [line('a2', 'MAT-1', 1)] }],
-    ['short stock without confirmation', { ...base, confirmNotReady: true, items: [line('a2', 'PIL-1', 1)] }],
-    ['not-ready without confirmation', { ...base, confirmShortStock: true, items: [line('a2', 'PIL-1', 1)] }],
+    // A draft is not asked (owner 2026-11-18): these two pin the shipped create.
+    ['short stock without confirmation', { ...base, asDraft: false, confirmNotReady: true, items: [line('a2', 'PIL-1', 1)] }],
+    ['not-ready without confirmation', { ...base, asDraft: false, confirmShortStock: true, items: [line('a2', 'PIL-1', 1)] }],
     ['no debtor', { items: [] }],
   ];
   it.each(cases)('%s', async (_name, body) => {

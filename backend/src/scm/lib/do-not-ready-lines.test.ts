@@ -115,10 +115,11 @@ describe('the 409 and the routes', () => {
     expect(body.lines).toBe(lines);
   });
 
-  test('both create paths ask, and both honour confirmNotReady', () => {
+  test('both create paths ask (not a draft), and both honour confirmNotReady', () => {
     const src = routeSrc as string;
-    /* The read STARTS with the create's read wave (only when not confirmed) and is gated where it always was. */
-    expect(src.match(/const notReadyProm = body\.confirmNotReady \? null : eager\(findNotReadySoLines/g)).toHaveLength(2);
+    /* The read STARTS with the create's read wave (only when not confirmed and not a
+       draft: a draft is asked at Confirm, lib/do-confirm-preflight.ts) and is gated where it always was. */
+    expect(src.match(/const notReadyProm = \(body\.confirmNotReady \|\| body\.asDraft === true\) \? null : eager\(findNotReadySoLines/g)).toHaveLength(2);
     expect(src.match(/if \(notReadyProm\) \{\s*const notReady = \(await notReadyProm\)\(\);/g)).toHaveLength(2);
     expect(src.match(/return c\.json\(itemsNotReadyResponse\(notReady\), 409\)/g)).toHaveLength(2);
   });
