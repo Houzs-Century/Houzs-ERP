@@ -1912,7 +1912,7 @@
     },
     {
       "check": "D2",
-      "key": "DISMANTLE,INSPECTION,PICKUP,SERVICE,SETUP,SUPPLIER_PICKUP,TRANSFER ~ DISMANTLE,DISPOSE,INSPECTION,PICKUP,SERVICE,SETUP,SUPPLIER_PICKUP,TRANSFER",
+      "key": "DISMANTLE,DISPOSE,INSPECTION,PICKUP,SERVICE,SETUP,SUPPLIER_PICKUP,TRANSFER ~ DISMANTLE,INSPECTION,PICKUP,SERVICE,SETUP,SUPPLIER_PICKUP,TRANSFER",
       "why": "THE JOBS A TRIP STOP COUNTS vs the flat price tiles (rateCardLayout FLAT_ORDER), different by DISPOSE on purpose: dispose is an add-on carried by a delivery, not a job a stop is dispatched for, so no stop counts it. Cost of divergence is none; the tile list is what a card can price, the count list is what a stop can be."
     },
     {
