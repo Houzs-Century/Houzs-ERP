@@ -11,7 +11,7 @@
 // ----------------------------------------------------------------------------
 
 import type { PlanningOrder } from './delivery-planning-queries';
-import type { DeliveryGeoPoint } from './delivery-geo-queries';
+import type { DeliveryGeoPoint, JobGeoPoint } from './delivery-geo-queries';
 import type { AnonymousRun } from './anonymous-runs';
 import { estWindowOf } from './anonymous-runs';
 import { FLEET_ROUTE_COLORS } from './fleet-colors';
@@ -34,6 +34,8 @@ export type MapPin = {
     revenueSen: number;
     address: string | null;
     zone: string | null;
+    /** Pinned at the postcode area, not the address. */
+    approximate?: boolean;
   };
 };
 
@@ -47,6 +49,8 @@ export type MapRouteStop = {
   order: number;
   label: string;
   windowLabel: string | null;
+  /** Pinned at the postcode area, not the address (Last Mile). */
+  approximate?: boolean;
 };
 
 /** One coloured route (a proposed run / a staged or live trip). `crewLabel`
@@ -111,7 +115,20 @@ export function pinsFromGeoPoints(points: readonly DeliveryGeoPoint[]): MapPin[]
       revenueSen: p.revenueSen,
       address: p.address ?? null,
       zone: p.zone,
+      approximate: p.approximate === true,
     },
+  }));
+}
+
+/** Located non-SO stops -> pins, so the hover card works on a job's route stop
+ *  too. A job carries no sets or revenue; colour follows its state. PURE. */
+export function pinsFromJobPoints(points: readonly JobGeoPoint[]): MapPin[] {
+  return points.map((p) => ({
+    ref: p.ref,
+    lat: p.lat,
+    lng: p.lng,
+    color: zoneColorFor(null, p.state),
+    card: { soDocNo: p.ref, customer: p.customer, sets: 0, revenueSen: 0, address: p.address, zone: null, approximate: p.approximate },
   }));
 }
 

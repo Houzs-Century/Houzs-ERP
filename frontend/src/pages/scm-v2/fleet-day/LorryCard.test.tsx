@@ -5,7 +5,7 @@
 import { describe, expect, test } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { LorryCard, StopNo } from './LorryCard';
-import type { DocRowVM, LorryRunVM } from './vm';
+import { buildLorryRoutes, type DocRowVM, type LorryRunVM } from './vm';
 import type { PlanningOrder } from '../../../vendor/scm/lib/delivery-planning-queries';
 
 const doc = (over: Partial<DocRowVM>): DocRowVM => ({
@@ -141,5 +141,28 @@ describe('each row carries its map pin number', () => {
     expect(open!.dataset.done).toBe('false');
     expect(open!.style.color).toBe('rgb(37, 99, 235)');
     expect(open!.style.backgroundColor).not.toBe('rgb(37, 99, 235)');
+  });
+});
+
+describe('LorryCard — every job type carries its run number (owner 2026-11-18)', () => {
+  test('a service-case leg and a setup show numbers 2 and 3, not a dot, matching the map', () => {
+    const jobRun: LorryRunVM = {
+      ...run,
+      docs: [
+        doc({ soDocNo: 'HC-SO-010458', stopNo: 1 }),
+        doc({ key: 'assr:ASSR/2610-054#delivery', soDocNo: 'ASSR/2610-054#delivery', rowType: 'assr', jobLabel: 'Service / delivery back', codeLine: 'ASSR/2610-054', customer: 'Zuhaib Hassan', stopNo: null }),
+        doc({ key: 'project:PRJ:7#SETUP', soDocNo: 'PRJ:7#SETUP', rowType: 'project', jobLabel: 'Setup', codeLine: '2026-11-MEGAHOME-MELAKA', customer: 'MELAKA INTERNATIONAL TRADE CENTRE', stopNo: null }),
+      ],
+    };
+    const { noByRef } = buildLorryRoutes([jobRun], new Map(), new Set(), new Map(), null, () => null, (k) => k);
+    const { container } = render(
+      <LorryCard
+        routeColor="#2563eb" run={jobRun} visibleDocs={jobRun.docs} filtersActive={false} searchActive={false}
+        actionable focused={false} selectedKey={null} remarkKeys={new Set()} road={null} legByRef={new Map()}
+        mapNoByRef={noByRef} onFocus={() => {}} onOpenDoc={() => {}} onCrew={() => {}} onRunSheet={() => {}} onQr={() => {}}
+      />,
+    );
+    const numbers = [...container.querySelectorAll('[data-done]')].map((el) => el.textContent);
+    expect(numbers).toEqual(['1', '2', '3']);
   });
 });

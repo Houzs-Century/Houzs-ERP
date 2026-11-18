@@ -108,7 +108,8 @@ import { deriveArrangementStage } from '../lib/arrangement-stage';
 import { MAP_COLS as ZONE_MAP_COLS, toPrefixMap, type MapRow as ZoneMapRow } from './delivery-zones';
 import { zoneForAddress } from '../lib/zone-classify';
 import { deriveSetCount, type SetLine } from '../lib/set-count';
-import { composeAddress, geocodeAddressCached, normalizeAddress } from '../lib/geocode';
+import { composeAddress, geocodeAddressCached } from '../lib/geocode';
+import { loadJobStops, locateStops, soCandidates, type GeoCandidate } from '../lib/stop-geo';
 import { loadLorryDepots } from '../lib/lorry-depots';
 import { dateOrNull } from '../lib/date-coerce';
 import { echoTripCrew, echoAssrCrew } from '../lib/trip-crew-echo';
@@ -1081,12 +1082,14 @@ deliveryPlanning.get('/geo', async (c) => {
     }
   }
 
-  /* 5. Point geocodes — ONE batched cache read over the day's normalized
-        addresses, then geocodeAddressCached ONLY for the misses (each miss is
-        one Google call, once ever; with no key, misses stay ungeocoded). */
+  /* 5. Point geocodes (lib/stop-geo.ts): each order's composed address, then its
+        postcode area (approximate) — ONE batched cache read, then Google only for
+        an address the cache has never seen; with no key only cached ones pin. */
+  const candidatesByDoc = new Map<string, GeoCandidate[]>();
   const addrByDoc = new Map<string, string>();
   for (const r of scopedRows) {
     const dn = String(r.docNo ?? r.doc_no ?? '');
+    if (!dn) continue;
     const addr = composeAddress({
       address1: r.address1,
       address2: r.address2,
@@ -1094,67 +1097,31 @@ deliveryPlanning.get('/geo', async (c) => {
       state: r.customerState ?? r.customer_state ?? null,
       country: r.customerCountry ?? r.customer_country ?? null,
     });
-    if (dn && addr) addrByDoc.set(dn, addr);
+    addrByDoc.set(dn, addr);
+    candidatesByDoc.set(dn, soCandidates(addr, r.postcode, r.customerState ?? r.customer_state ?? null));
   }
-  const cachedByKey = new Map<string, { lat: number; lng: number }>();
-  {
-    const keys = [...new Set([...addrByDoc.values()].map((a) => normalizeAddress(a)).filter((k) => k !== ''))];
-    for (let i = 0; i < keys.length; i += 200) {
-      const chunk = keys.slice(i, i + 200);
-      if (chunk.length === 0) continue;
-      const { data: hits } = await sb.from('geocode_cache')
-        .select('normalized_address, lat, lng')
-        .in('normalized_address', chunk);
-      for (const h of ((hits ?? []) as Array<Record<string, unknown>>)) {
-        const key = String(h.normalizedAddress ?? h.normalized_address ?? '');
-        const lat = Number(h.lat);
-        const lng = Number(h.lng);
-        if (key && Number.isFinite(lat) && Number.isFinite(lng)) cachedByKey.set(key, { lat, lng });
-      }
-    }
-  }
+  const located = await locateStops(sb, c.env, candidatesByDoc);
 
   /* 6. Assemble the points; every failure lands in `ungeocoded` with a reason. */
   const points: Array<{
-    ref: string; so_doc_no: string; lat: number; lng: number;
+    ref: string; so_doc_no: string; lat: number; lng: number; approximate: boolean;
     zone: string | null; region: Region; state: string | null; country: string | null; postcode: string | null;
     sets: number; revenueSen: number; customer: string | null; address: string;
   }> = [];
   const ungeocoded: Array<{ ref: string; reason: string }> = [];
-  const missResolved = new Map<string, { lat: number; lng: number } | null>();
   for (const r of scopedRows) {
     const dn = String(r.docNo ?? r.doc_no ?? '');
-    const addr = addrByDoc.get(dn);
-    if (!addr) { ungeocoded.push({ ref: dn, reason: 'no address on the order' }); continue; }
-    const key = normalizeAddress(addr);
-    let hit = cachedByKey.get(key) ?? null;
-    if (!hit) {
-      if (missResolved.has(key)) {
-        hit = missResolved.get(key) ?? null;
-      } else if (configured) {
-        const g = await geocodeAddressCached(sb, c.env, addr);
-        hit = g ? { lat: g.lat, lng: g.lng } : null;
-        missResolved.set(key, hit);
-      } else {
-        missResolved.set(key, null);
-      }
-    }
-    if (!hit) {
-      ungeocoded.push({
-        ref: dn,
-        reason: configured
-          ? 'address could not be geocoded — check the address'
-          : 'not in the geocode cache and GOOGLE_MAPS_API_KEY is not set',
-      });
-      continue;
-    }
+    const loc = located.get(dn);
+    if (!loc) continue;
+    if (!loc.ok) { ungeocoded.push({ ref: dn, reason: loc.reason }); continue; }
     const zr = zoneForAddress({ postcode: r.postcode, address1: r.address1, address2: r.address2 }, zoneMap);
     const sc = deriveSetCount(setLinesByDoc.get(dn) ?? []);
     points.push({
       ref: dn,
       so_doc_no: dn,
-      lat: hit.lat,
-      lng: hit.lng,
+      lat: loc.lat,
+      lng: loc.lng,
+      approximate: loc.approximate,
       zone: zr.zone,
       region: (regionsByDoc.get(dn) ?? [])[0] ?? FALLBACK_DEFAULT_REGION,
       state: r.customerState ?? r.customer_state ?? null, country: r.customerCountry ?? r.customer_country ?? null, // country: Last Mile map keeps SG off
@@ -1162,11 +1129,48 @@ deliveryPlanning.get('/geo', async (c) => {
       sets: sc.sets,
       revenueSen: Number(r.localTotalSen ?? r.local_total_sen ?? 0) || 0,
       customer: r.debtorName ?? r.debtor_name ?? null,
-      address: addr,
+      address: loc.approximate ? loc.address : (addrByDoc.get(dn) ?? loc.address),
     });
   }
 
   return c.json({ date, region: regionParam, configured, points, depot, depotReason, ...(await loadLorryDepots(sb, c.env)), ungeocoded });
+});
+
+/* ──────────────────────────────────────────────────────────────────────────
+   GET /delivery-planning/geo/jobs?refs=<row key>,<row key>,...
+
+   The Last Mile map's pins for a lorry's NON-SO stops — service-case legs,
+   setup / dismantle, supplier pickups, transfers, lorry service — by their board
+   row keys ("ASSR/2610-054#delivery", "DP:<uuid>", "PRJ:<id>#SETUP"). /geo above
+   locates sales orders only, which is why those stops had no pin (owner
+   2026-11-18). The server reads each job's own address (company predicate on the
+   DP and ASSR reads) — the keys say WHICH job, never what address to bill — and
+   locates it like an SO, cache-first, falling back to the postcode area
+   (approximate). At most 300 keys. A self-scoped Driver / Helper gets no job
+   pins (their job list is scoped on the board, not here).
+   ─────────────────────────────────────────────────────────────────────────*/
+deliveryPlanning.get('/geo/jobs', async (c) => {
+  const sb = c.get('supabase');
+  const configured = !!c.env.GOOGLE_MAPS_API_KEY;
+  const refs = [...new Set((c.req.query('refs') ?? '').split(',').map((r) => r.trim()).filter(Boolean))];
+  if (refs.length > 300) return c.json({ error: 'too_many_refs', reason: 'at most 300 refs' }, 400);
+  const scope = await resolveDeliveryScope(sb, c.get('houzsUser'));
+  if (refs.length === 0 || scope.mode !== 'all') return c.json({ configured, points: [], ungeocoded: [] });
+
+  const { stops, error } = await loadJobStops(c, sb, refs);
+  if (error) return c.json({ error: 'load_failed', reason: error }, 500);
+  const located = await locateStops(sb, c.env, new Map(stops.map((s) => [s.ref, s.candidates])));
+  const points: Array<{ ref: string; lat: number; lng: number; approximate: boolean; address: string; customer: string | null; postcode: string | null; state: string | null }> = [];
+  const ungeocoded: Array<{ ref: string; reason: string }> = [];
+  for (const s of stops) {
+    const loc = located.get(s.ref);
+    if (!loc) continue;
+    if (loc.ok) points.push({ ref: s.ref, lat: loc.lat, lng: loc.lng, approximate: loc.approximate, address: loc.address, customer: s.customer, postcode: s.postcode, state: s.state });
+    else ungeocoded.push({ ref: s.ref, reason: loc.reason });
+  }
+  const found = new Set(stops.map((s) => s.ref));
+  for (const r of refs) if (!found.has(r)) ungeocoded.push({ ref: r, reason: 'job not found' });
+  return c.json({ configured, points, ungeocoded });
 });
 
 /* ──────────────────────────────────────────────────────────────────────────
