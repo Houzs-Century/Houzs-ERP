@@ -1054,7 +1054,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                 (line 2 carries what 3 / 4 hold, owner 2026-11-18); City = city ?? address3;
                 Postcode = postcode ?? address4; State; Country. Em-dashed when blank. */}
             <div className="card"><div className="card-h"><span className="card-t">Delivery address</span></div><div className="card-b">
-              {[h.address1, addressLineTwoView(h.address2, h.address3, h.address4, { postcode: h.postcode ?? h.address4, city: h.city ?? h.address3, state: h.customer_state })].map((v, i) => <RoField key={i} label={`Address line ${i + 1}`} value={val(v || null)} />)}
+              {[h.address1, addressLineTwoView(h.address2, h.address3, h.address4, { postcode: h.postcode ?? h.address4, city: h.city ?? h.address3, state: h.customer_state })].map((v, i) => <RoField key={i} label={i ? "Address line 2" : "Address line 1"} value={val(v || null)} />)}
               <div style={{ display: "flex", gap: 9 }}>
                 <div style={{ flex: 1, minWidth: 0 }}><RoField label="City" value={val(h.city ?? h.address3)} /></div>
                 <div style={{ flex: 1, minWidth: 0 }}><RoField label="Postcode" value={val(h.postcode ?? h.address4)} mono /></div>
