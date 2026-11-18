@@ -415,7 +415,7 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
       if (text.includes('"items_not_ready"') && mergedBody.confirmNotReady !== true) {
         if (!(await confirmNotReady(text))) {
           throw correlateError(
-            new Error('Some lines are not ready, so the delivery order was not created. Untick them and deliver them on a later Delivery Order.'),
+            new Error('Some lines are not ready, so the delivery order was not created or confirmed. Nothing has changed; deliver them on a later Delivery Order, or answer Deliver anyway.'),
             requestIdFromResponse(res),
           );
         }

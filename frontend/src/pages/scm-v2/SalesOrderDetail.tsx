@@ -3583,6 +3583,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
         <div className={styles.cardBody}>
           <div className={styles.formGrid4}>
             <SoAddressLines lines={[form.address1, form.address2, form.address3, form.address4]}
+              town={{ postcode: form.postcode, city: form.city, state: form.state }}
               onChange={(line, v) => set(`address${line}` as const, v)}
               fieldClassName={styles.field} labelClassName={styles.fieldLabel} inputClassName={() => styles.fieldInput} disabled={customerDisabled} />
             {/* Owner spec 2026-07-23 — StatePicker (MY-default, click Others for CN/SG, Search). Same shared component as Warehouse / Supplier / Venue / MobileNewSO / SalesOrderNew. No `(legacy)` sneak-through, no free-text fallback. */}

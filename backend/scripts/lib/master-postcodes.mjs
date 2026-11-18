@@ -133,22 +133,30 @@ export function postcodeFromGeocode(idx, geo, address) {
 /* CURATED VENUE POSTCODES (scripts/data/venue-postcodes.json). Venues hold no
    street address, only a well-known name, so their postcodes were researched by
    hand from the venue's own site or directories. An entry is used only when:
-   the row's name matches the entry's name exactly (after trimming; the id is a
+   the row's name matches the entry's name, ignoring case and surrounding
+   spaces only — the way PROJECT_VENUE_JOIN matches a project to its venue
+   (company 2 keeps "Penang Waterfront Convention Centre" where the list says
+   "PENANG WATERFRONT CONVENTION CENTRE") — and exactly otherwise (the id is a
    hint only), the entry is high or medium confidence, its postcode exists in
    my_localities, and my_localities' state for that postcode agrees with the
    researched state. City and State still come from my_localities. */
 export const CURATED_CONFIDENCE = new Set(['high', 'medium']);
 
-/** The JSON entries -> Map(name -> entry). A name listed twice is dropped (and
- *  reported in `duplicates`), so it can never pick one of two answers. */
+/** The key a venue name is matched by: trimmed, lower-cased, nothing else. */
+export const venueNameKey = (s) => t(s).toLowerCase();
+
+/** The JSON entries -> Map(venueNameKey(name) -> entry). A name listed twice
+ *  (in any case) is dropped and reported in `duplicates` by its first spelling,
+ *  so it can never pick one of two answers. */
 export function curatedIndex(entries) {
   const byName = new Map();
-  const duplicates = new Set();
+  const duplicates = new Map();
   for (const e of entries ?? []) {
     const name = t(e?.name);
     if (!name) continue;
-    if (byName.has(name)) duplicates.add(name);
-    byName.set(name, {
+    const key = venueNameKey(name);
+    if (byName.has(key) && !duplicates.has(key)) duplicates.set(key, byName.get(key).name);
+    byName.set(key, {
       id: e.id == null ? null : String(e.id),
       name,
       postcode: t(e.postcode),
@@ -157,15 +165,15 @@ export function curatedIndex(entries) {
       confidence: t(e.confidence).toLowerCase(),
     });
   }
-  for (const d of duplicates) byName.delete(d);
-  return { byName, duplicates: [...duplicates] };
+  for (const d of duplicates.keys()) byName.delete(d);
+  return { byName, duplicates: [...duplicates.values()] };
 }
 
 /** Decide one venue row from the curated list. `settled` marks a verdict no
  *  geocode may override (the evidence contradicts itself). */
 export function postcodeFromCurated(idx, byName, row) {
-  const entry = byName.get(t(row.name));
-  if (!entry) return { ok: false, why: 'no curated entry with this exact name' };
+  const entry = byName.get(venueNameKey(row.name));
+  if (!entry) return { ok: false, why: 'no curated entry with this name (case and surrounding spaces ignored)' };
   if (!CURATED_CONFIDENCE.has(entry.confidence)) return { ok: false, why: `curated entry is ${entry.confidence || 'unrated'} confidence, not used` };
   if (!/^\d{5}$/.test(entry.postcode)) return { ok: false, why: `curated postcode "${entry.postcode}" is not 5 digits` };
   if (!idx.has(entry.postcode)) return { ok: false, why: `curated postcode ${entry.postcode} is not in my_localities` };

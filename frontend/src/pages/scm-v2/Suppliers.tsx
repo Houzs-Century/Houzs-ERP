@@ -24,8 +24,8 @@ import { FilterPills } from '../../components/FilterPills';
 import { cn } from '../../lib/utils';
 import { formatPhone } from '@2990s/shared/phone';
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
-import { StatePicker } from '../../vendor/scm/components/StatePicker';
-import { PostcodeCascadeField } from '../../vendor/scm/components/PostcodeCascadeField';
+import { AddressTripleFields } from '../../vendor/scm/components/AddressTripleFields';
+import { addressLineTwoView, hasLegacyLines } from '../../vendor/shared/address-two-lines';
 import {
   useSuppliersPaged,
   useCreateSupplier,
@@ -710,34 +710,29 @@ const SupplierFields = ({
     </div>
     <p className={styles.eyebrow} style={{ marginTop: 'var(--space-3)' }}>Address</p>
     <div className={styles.formGrid}>
-      {/* Task #102 — State is the shared my_localities-backed StatePicker
-          (grouped by country, type-to-search), never free text. Matches the
-          full Supplier edit form so both supplier surfaces behave identically. */}
-      <label className={styles.field}>
-        <span className={styles.fieldLabel}>State</span>
-        <StatePicker
-          value={(form.state as string) ?? ''}
-          onChange={(v) => onChange('state', v)}
-          selectClassName={styles.fieldSelect}
-        />
-      </label>
-      <Field label="Area" value={(form.area as string) ?? ''} onChange={(v) => onChange('area', v)} />
-      {/* The Sales Order postcode picker: picking one fills State and City, so a
-          DP supplier pickup copies a real postcode (owner 2026-11-17). */}
-      <PostcodeCascadeField
-        value={String(form.postcode || '')} state={String(form.state || '')} city={String(form.city || '')}
-        label="Postcode"
-        onPick={(t) => { onChange('postcode', t.postcode); onChange('state', t.state); onChange('city', t.city); }}
+      {/* The Sales Order's address block (owner 2026-11-18: two lines, then
+          State / City / Postcode, the same controls everywhere). The structured
+          lines (mig 0131) are what a Supplier-Pickup DP order copies. Line 2 shows
+          what an older supplier still holds in lines 3 / 4; editing it moves all
+          of it to line 2 (shared/address-two-lines). */}
+      <Field label="Address line 1" value={(form.address1 as string) ?? ''} onChange={(v) => onChange('address1', v)} gridFull />
+      <Field
+        label="Address line 2"
+        value={addressLineTwoView(form.address2 as string, form.address3 as string, form.address4 as string,
+          { postcode: form.postcode as string, city: form.city as string, state: form.state as string })}
+        onChange={(v) => {
+          onChange('address2', v);
+          if (hasLegacyLines(form.address3 as string, form.address4 as string)) { onChange('address3', ''); onChange('address4', ''); }
+        }}
+        gridFull
+      />
+      <AddressTripleFields
+        country=""
+        value={{ state: String(form.state || ''), city: String(form.city || ''), postcode: String(form.postcode || '') }}
+        onChange={(t) => { onChange('state', t.state); onChange('city', t.city); onChange('postcode', t.postcode); }}
         classes={{ field: styles.field, label: styles.fieldLabel, select: styles.fieldSelect, selectWrap: styles.selectWrap, chevron: styles.selectChevron, input: styles.fieldInput }}
       />
-      <Field label="City" value={(form.city as string) ?? ''} onChange={(v) => onChange('city', v)} />
-      {/* Structured pickup address (mig 0131) — the SAME shape as the SO header,
-          so a Supplier-Pickup DP order auto-fills it in the SO-Maintenance format.
-          The legacy single-line Billing Address below is kept for billing. */}
-      <Field label="Address 1" value={(form.address1 as string) ?? ''} onChange={(v) => onChange('address1', v)} gridFull />
-      <Field label="Address 2" value={(form.address2 as string) ?? ''} onChange={(v) => onChange('address2', v)} gridFull />
-      <Field label="Address 3" value={(form.address3 as string) ?? ''} onChange={(v) => onChange('address3', v)} gridFull />
-      <Field label="Address 4" value={(form.address4 as string) ?? ''} onChange={(v) => onChange('address4', v)} gridFull />
+      <Field label="Area" value={(form.area as string) ?? ''} onChange={(v) => onChange('area', v)} />
       <Field
         label="Billing Address"
         value={(form.address as string) ?? ''}

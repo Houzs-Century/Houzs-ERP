@@ -81,6 +81,7 @@ import {
 import { SgPostcodeField } from '../../vendor/scm/components/SgPostcodeField';
 import { StatePicker } from '../../vendor/scm/components/StatePicker';
 import { PostcodeCascadeField } from '../../vendor/scm/components/PostcodeCascadeField';
+import { addressLineTwoView, hasLegacyLines } from '../../vendor/shared/address-two-lines';
 import { composeSupplierSku, looksAmbiguous } from '../../vendor/scm/lib/supplier-sku-helpers';
 import { countModelessMatches, modelMatchesSearch } from '../../vendor/scm/lib/model-picker-search';
 import { parseSupplierCategories, displaySupplierCategories } from '../../vendor/scm/lib/supplier-categories';
@@ -2331,6 +2332,10 @@ const SupplierInfoCard = ({
     /* Supplier currency — MYR/RMB/CNY/USD/SGD; flows to PO + PI pricing once set. */
     currency: supplier.currency,
     address: supplier.address ?? '',
+    address1: supplier.address1 ?? '',
+    address2: supplier.address2 ?? '',
+    address3: supplier.address3 ?? '',
+    address4: supplier.address4 ?? '',
     postcode: supplier.postcode ?? '',
     area: supplier.area ?? '',
     city: supplier.city ?? '',
@@ -2505,6 +2510,15 @@ const SupplierInfoCard = ({
                 supplier pickup can copy it; Area
                 (industrial estate name etc.) stays free-text — it's a
                 supplier-specific concept, not the my_localities city. */}
+            {/* Two address lines, as on the Sales Order (owner 2026-11-18). Line 2
+                shows what an older supplier still holds in lines 3 / 4; editing it
+                moves all of it to line 2 (shared/address-two-lines). */}
+            <EditField label="Address line 1" value={form.address1} onChange={(v) => setF('address1', v)} />
+            <EditField
+              label="Address line 2"
+              value={addressLineTwoView(form.address2, form.address3, form.address4, { postcode: form.postcode, city: form.city, state: form.state })}
+              onChange={(v) => setForm((s) => (hasLegacyLines(s.address3, s.address4) ? { ...s, address2: v, address3: '', address4: '' } : { ...s, address2: v }))}
+            />
             <CountrySelect value={form.country} onChange={(v) => {
               setF('country', v);
               // Reset state if country changes (states are country-specific)

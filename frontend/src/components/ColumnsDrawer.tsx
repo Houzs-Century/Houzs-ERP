@@ -65,6 +65,7 @@ export interface DrawerColumn {
   label: string;
   group: string;
   visible: boolean;
+  canHide: boolean;
   /** Effective width in px (user override or the column's own default). */
   width: number;
   /** Which edge it is frozen to, if any. */
@@ -355,10 +356,12 @@ export function ColumnsDrawer({
         <button
           type="button"
           onClick={() => onToggle(col.key)}
+          disabled={!col.canHide}
+          title={col.canHide ? undefined : "Always shown"}
           aria-label={col.visible ? "Hide column" : "Show column"}
           aria-pressed={col.visible}
           className={cn(
-            "grid h-[15px] w-[15px] shrink-0 place-items-center rounded border-[1.5px] transition-colors",
+            "grid h-[15px] w-[15px] shrink-0 place-items-center rounded border-[1.5px] transition-colors disabled:cursor-not-allowed disabled:opacity-60",
             col.visible
               ? "border-primary bg-primary text-white"
               : "border-border-strong bg-surface"
@@ -368,7 +371,7 @@ export function ColumnsDrawer({
         </button>
         <button
           type="button"
-          onClick={() => onToggle(col.key)}
+          onClick={() => { if (col.canHide) onToggle(col.key); }}
           /* Explicit: the search highlight splits the label into text + <mark>,
              and a name computed from those children reads as "Tot al". */
           aria-label={col.label}

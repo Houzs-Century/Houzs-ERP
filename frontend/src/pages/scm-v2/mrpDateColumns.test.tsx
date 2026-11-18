@@ -1,6 +1,7 @@
 // MRP date columns (owner 2026-09-17) — Processing / SO / Delivery Date are
-// offered in the Columns drawer, default-hidden, and render the SO row's
-// earliest date on that basis once enabled.
+// offered in the Columns drawer and render the SO row's earliest date on that
+// basis. Processing and Delivery show by default (the expanded lines carry their
+// own dates in those columns); SO Date is opt-in.
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
@@ -50,12 +51,12 @@ describe('MRP date columns — selectable from the Columns drawer', () => {
   // Column visibility is persisted per table (dt:hidden:mrp); start each test clean.
   beforeEach(() => { try { localStorage.clear(); } catch { /* jsdom */ } });
 
-  test('the three dates are offered in the picker and hidden by default', () => {
+  test('the three dates are offered in the picker; Delivery shows by default, SO Date does not', () => {
     mrpData = base({ sofaSets: [sofaSet()] });
     render(<MemoryRouter><Mrp /></MemoryRouter>);
 
-    // Default view carries no date column, so the SO row's delivery date is absent.
-    expect(screen.queryByText('2026/10/01')).toBeNull();
+    expect(screen.getAllByText('2026/10/01').length).toBeGreaterThan(0);
+    expect(screen.queryByText('2026/09/11')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: /columns/i }));
     const drawer = screen.getByRole('dialog', { name: 'Columns' });
@@ -64,15 +65,14 @@ describe('MRP date columns — selectable from the Columns drawer', () => {
     expect(within(drawer).getByRole('button', { name: 'Delivery Date' })).toBeTruthy();
   });
 
-  test('enabling Delivery Date renders the group\'s earliest delivery date', () => {
+  test('enabling SO Date renders the group\'s earliest SO date', () => {
     mrpData = base({ sofaSets: [sofaSet()] });
     render(<MemoryRouter><Mrp /></MemoryRouter>);
 
     fireEvent.click(screen.getByRole('button', { name: /columns/i }));
     const drawer = screen.getByRole('dialog', { name: 'Columns' });
-    fireEvent.click(within(drawer).getByRole('button', { name: 'Delivery Date' }));
+    fireEvent.click(within(drawer).getByRole('button', { name: 'SO Date' }));
 
-    // The column now renders in the table (value shows outside the drawer).
-    expect(screen.getAllByText('2026/10/01').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('2026/09/11').length).toBeGreaterThan(0);
   });
 });

@@ -8,7 +8,7 @@ import type { FlowNav } from "./relationship-map-model";
 import { fmtAmt } from "../lib/scm";
 import { useQueryClient } from "@tanstack/react-query";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog"; import { passesSoffioReminder } from "../vendor/scm/lib/soffio-reminder";
-import { useNotify } from "../vendor/scm/components/NotifyDialog"; import { notifySaveProblems } from "../vendor/scm/components/SaveProblemsList";
+import { useNotify } from "../vendor/scm/components/NotifyDialog"; import { notifySaveProblems } from "../vendor/scm/components/SaveProblemsList"; import { MobileSoDoDraftButton } from "./MobileSoDoDraftButton";
 import { usePrompt } from "../vendor/scm/components/PromptDialog"; import { CancelRequestPanel } from "../vendor/scm/components/CancelRequestPanel"; import { useCancelRequestAction } from "../pages/scm-v2/use-cancel-request-action"; import { WrongApproverFlagButton } from "../pages/scm-v2/WrongApproverFlagButton";
 import { fetchScanSlipImageBlobUrl } from "../vendor/scm/lib/slip"; import { fairLabel } from "../vendor/scm/lib/fair-options-queries"; import { fairElsewhereLine, type LinkedFair } from "../components/fairPick";
 import { MobileLinePhotos } from "./MobileLinePhotos";
@@ -99,6 +99,7 @@ import "./mobile.css";
 
 import { isFocLine } from '../vendor/scm/lib/foc-line';
 import { soConfirmDateNote } from '../lib/soConfirmDateNote';
+import { addressLineTwoView } from '../vendor/shared/address-two-lines';
 /* Shapes are the subset of the /mfg-sales-orders/:docNo + /:docNo/payments
    responses the mobile detail screen reads. The backend camelCases nothing —
    these are the raw snake_case columns. */
@@ -1049,13 +1050,11 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
               )}
             </div></div>
 
-            {/* Delivery address — the STRUCTURED parts the desktop SO form shows,
-                each labelled (not one concatenated blob). Desktop mapping:
-                address1/2 = free-text lines; City = city ?? address3; Postcode =
-                postcode ?? address4; State = customer_state; Country =
-                customer_country. Individually em-dashed when blank. */}
+            {/* Delivery address — the desktop SO form's parts, each labelled: two lines
+                (line 2 carries what 3 / 4 hold, owner 2026-11-18); City = city ?? address3;
+                Postcode = postcode ?? address4; State; Country. Em-dashed when blank. */}
             <div className="card"><div className="card-h"><span className="card-t">Delivery address</span></div><div className="card-b">
-              {[h.address1, h.address2, h.address3, h.address4].map((v, i) => (i < 2 || v ? <RoField key={i} label={`Address line ${i + 1}`} value={val(v)} /> : null))}
+              {[h.address1, addressLineTwoView(h.address2, h.address3, h.address4, { postcode: h.postcode ?? h.address4, city: h.city ?? h.address3, state: h.customer_state })].map((v, i) => <RoField key={i} label={i ? "Address line 2" : "Address line 1"} value={val(v || null)} />)}
               <div style={{ display: "flex", gap: 9 }}>
                 <div style={{ flex: 1, minWidth: 0 }}><RoField label="City" value={val(h.city ?? h.address3)} /></div>
                 <div style={{ flex: 1, minWidth: 0 }}><RoField label="Postcode" value={val(h.postcode ?? h.address4)} mono /></div>
@@ -1341,7 +1340,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
           {ph === "cancelled" && (
             <div style={{ textAlign: "center", fontSize: 11.5, color: "var(--mut2)", padding: 4 }}>This order was cancelled.</div>
           )}
-          {ph !== "draft" && canWriteSo && onConvert && <button className="btn-ghost" style={{ width: "100%", marginTop: 9 }} disabled={busy} onClick={() => onConvert({ copyFrom: docNo, picks: [] })}>Copy as new</button>}{/* HC-0149: the desktop list's Copy as new, same seed (lib/soCopyLines) */}
+          {ph === "submitted" && <MobileSoDoDraftButton so={{ doc_no: docNo, status: h.status, on_hold: (h as { on_hold?: boolean | null }).on_hold ?? null, has_undelivered: items.some((l) => l.remaining_qty == null) ? null : items.some((l) => (l.remaining_qty ?? 0) > 0) }} onCreated={(id) => { const nav = { kind: "module" as const, moduleKey: "delivery-orders-mfg", id }; if (flowNav?.can(nav)) flowNav.open(nav); }} />}{ph !== "draft" && canWriteSo && onConvert && <button className="btn-ghost" style={{ width: "100%", marginTop: 9 }} disabled={busy} onClick={() => onConvert({ copyFrom: docNo, picks: [] })}>Copy as new</button>}{/* HC-0149: the desktop list's Copy as new, same seed (lib/soCopyLines) */}
         </footer>
       )}
 
