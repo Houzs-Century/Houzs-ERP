@@ -1884,6 +1884,16 @@
       "check": "D1",
       "key": "DELIVERY,DISMANTLE,PICKUP,SERVICE,SETUP|backend/src/scm/routes/delivery-job-progress.ts backend/src/scm/routes/trips.ts",
       "why": "TWO DIFFERENT QUESTIONS keyed by the stop types: trips.ts stopType is the z.enum of stop types POST /trips/:id/stops accepts (the schema of a stop); delivery-job-progress.ts DP_PROJECT_PHASE maps a DP job type to the project phase its POD photos are filed under (setup / dismantle / service). A stop type missing from the photo map files no project photo; it never changes what a stop may be."
+    },
+    {
+      "check": "D1",
+      "key": "COGS_ACCESSORIES,COGS_BEDFRAME,COGS_MATT_SOFA,COMMISSION,MERCHANDISE,OTHERS,RENTAL,SALES,SETUP,TRANSPORT_FEE,TRANSPORT_SETUP_DISMANTLE|backend/src/services/eventForecast.ts frontend/src/pages/projects/forecastLayers.ts",
+      "why": "THE FORECAST LINE KEYS of the three-layer Financial Snapshot, mirrored across the FE/BE boundary. eventForecast.ts is the server's list (which keys a forecast may be stored under and how each line layers); forecastLayers.ts is the page's copy, which names the lines and builds the save URL. They cannot share a module; frontend/src/pages/projects/forecastLayers.test.ts reads the backend file and fails unless the two lists are equal in order. Cost of divergence is a line the page cannot set (the server answers 400), never a wrong figure."
+    },
+    {
+      "check": "D2",
+      "key": "COGS_ACCESSORIES,COGS_BEDFRAME,COGS_MATT_SOFA ~ COGS_ACCESSORIES,COGS_BEDFRAME,COGS_MATT_SOFA,SALES",
+      "why": "NOT one rule at N-1 places: eventForecast.ts COGS_LINES is the three COGS lines a COGS Total adds up; FairReportFill.tsx CAT_LABEL labels the categories a fair report can be filled into, which include Sales. Different questions that share the COGS category names."
     }
   ]
 }

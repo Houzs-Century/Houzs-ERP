@@ -23,6 +23,9 @@ export type RangePresetKey =
   | 'lastQuarter'
   | 'yearToDate'
   | 'lastYear'
+  | 'nextMonth'
+  | 'nextQuarter'
+  | 'next12Months'
   | 'all';
 
 export type DateRange = { from: string; to: string };
@@ -69,6 +72,9 @@ export function presetLabel(key: RangePresetKey): string {
     case 'lastQuarter': return 'Last quarter';
     case 'yearToDate': return 'Year to date';
     case 'lastYear': return 'Last year';
+    case 'nextMonth': return 'Next month';
+    case 'nextQuarter': return 'Next quarter';
+    case 'next12Months': return 'Next 12 months';
     case 'all': return 'All dates';
   }
 }
@@ -91,6 +97,10 @@ export function presetRange(key: RangePresetKey, today: string): DateRange {
     /* The reports' own name for this year so far (the design's list). */
     case 'yearToDate': return { from: isoOfMs(Date.UTC(Number(today.slice(0, 4)), 0, 1)), to: today };
     case 'lastYear': return { from: isoOfMs(Date.UTC(Number(today.slice(0, 4)) - 1, 0, 1)), to: isoOfMs(Date.UTC(Number(today.slice(0, 4)) - 1, 11, 31)) };
+    /* Ahead of today — for reports that carry forecasts (Project Overview). */
+    case 'nextMonth': return { from: monthStart(today, 1), to: monthEnd(today, 1) };
+    case 'nextQuarter': return { from: quarterStart(today, 1), to: addDays(quarterStart(today, 2), -1) };
+    case 'next12Months': return { from: today, to: addDays(today, 365) };
     /* No from, no to: the page sends neither and the server reads every date. */
     case 'all': return { from: '', to: '' };
   }
@@ -116,4 +126,10 @@ export const OUTSTANDING_DEFAULT_PRESET: RangePresetKey = 'last12Months';
  *  Journal entries and the General ledger open on This month. */
 export const REPORT_RANGE_PRESETS: readonly RangePresetKey[] = [
   'thisMonth', 'lastMonth', 'thisQuarter', 'lastQuarter', 'yearToDate', 'last12Months', 'lastYear',
+];
+
+/** Project Overview's presets: the reports' list plus the months ahead, where
+ *  future events show their forecast (owner 2026-11-18). */
+export const PROJECT_REPORT_RANGE_PRESETS: readonly RangePresetKey[] = [
+  ...REPORT_RANGE_PRESETS, 'nextMonth', 'nextQuarter', 'next12Months',
 ];

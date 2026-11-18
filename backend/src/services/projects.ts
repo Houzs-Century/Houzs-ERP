@@ -8,6 +8,7 @@ import { deriveProjectCode, deriveProjectName, syncedNameForOrganizerChange } fr
 import { checklistRowDone } from "./checklistProgress";
 import { eventFinanceLines } from "./projectFinanceLines";
 import { loadEventPnl } from "./eventPnlInputs";
+import { loadDetailLayers } from "./eventForecastLoad";
 import { pnlForProjects, withPnlColumns } from "./eventPnlBatch";
 import { earliestLorryDate } from "./earliest-lorry-date";
 import { applyProjectFleetDates } from "./project-fleet-dates";
@@ -857,15 +858,14 @@ export async function getProjectDetail(env: Env, id: number, companyId?: number)
     comments = c.results ?? [];
   }
 
-  // Finance ledger lines — the new canonical source. Frontend shows
-  // these directly; project_finance is only the cached rollup. With the books
-  // and the sales entries in: services/projectFinanceLines.ts.
+  // Finance ledger lines, with the books and the sales entries in (services/projectFinanceLines.ts).
   const { financeLines, books } = await eventFinanceLines(
-    env, id, project.company_id ?? companyId ?? null, await listLedgerLines(env, id), LEDGER_COST_CATEGORIES,
-  );
-  /* The two P&Ls — by Total Sales and by the Sales Orders (owner 2026-10-16). */
+    env, id, project.company_id ?? companyId ?? null, await listLedgerLines(env, id), LEDGER_COST_CATEGORIES);
+  /* The two P&Ls (owner 2026-10-16), then their three-layer forecast and the last event's Expo Map (eventForecastLoad.ts). */
   const pnl = await loadEventPnl(env, { id, brand: project.brand, companyId: project.company_id ?? companyId ?? null },
     financeLines, books.rows, (finance as { total_sales?: number | null } | null)?.total_sales ?? null);
+  const layered = await loadDetailLayers(env, { ...project, id, company_id: project.company_id ?? companyId ?? null }, pnl, books.rows,
+    { checklist: checklist.results, sections: sections.results, attachments: taskAttachments }, LEDGER_COST_CATEGORIES);
 
   // Stock transfers — OUT + RETURN records, confirmation-tracked.
   const stockTransfers = await env.DB.prepare(
@@ -949,7 +949,7 @@ export async function getProjectDetail(env: Env, id: number, companyId?: number)
     finance: finance ?? null,
     finance_lines: financeLines,
     finance_books: books,
-    finance_pnl: pnl,
+    finance_pnl: pnl, finance_forecast: layered.forecast, last_event_expo_map: layered.expoMap,
     stock_transfers: stockTransfers.results ?? [],
     checklist: checklist.results ?? [],
     checklist_comments: comments,

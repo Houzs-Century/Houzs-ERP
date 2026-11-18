@@ -191,6 +191,14 @@ list. Holding `projects.write` escapes crew scoping entirely on both.
   finance (`services/eventPnlBatch.ts`, one read per input for the page;
   `readEventBooksMany` = posted legs + checked vouchers, the event page's two
   reads); a failed read leaves the list's own SQL figures.
+- The Financial Snapshot's By Total Sales column is three layers per line (owner 2026-11-18;
+  `services/eventForecast.ts`, reads `eventForecastLoad.ts`): the event's actual, else its typed
+  Forecast (`project_forecast`, `PUT|DELETE /api/project-forecast/:id/:line`, `projects.write` +
+  finance viewer), else - only until the event ends - the ACTUAL of the latest earlier event with the
+  same company, organiser and venue (trimmed, case-insensitive, as `project-venue-join.ts`). No such
+  event = no layer, never another venue. Totals add the shown lines and flag estimates. Project
+  Overview layers its column the same way and splits totals Actual / Forecast / Last event; that
+  event's Expo Map files show read-only in this event's EXPO MAP section while it has none.
 - The evening sales report (one bill per line: booklet no, amount, salesperson;
   a "+ N(T)" transport or "(D)" disposal tail is kept apart) is DERIVED from the
   project chat on every read — notes by the Owner position, Ummu or weisiang

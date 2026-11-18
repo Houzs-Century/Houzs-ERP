@@ -2506,6 +2506,7 @@ app.get("/:id", requirePageAccess("projects.list"), async (c) => {
       finance: null,
       finance_lines: [],
       finance_books: null,
+      finance_pnl: null, finance_forecast: null, // the P&L and its forecast layers are money too
     };
   }
   if (stripPayment) {

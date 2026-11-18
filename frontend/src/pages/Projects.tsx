@@ -154,6 +154,8 @@ import {
 import { type PhasePhoto, PhasePhotosSection, PhotoGroup } from "./projects/phasePhotos";
 import { FinanceAttachmentsSection, SnapshotKpi, SnapshotRow } from "./projects/financeLedgerParts";
 import { EventPnlTable } from "./projects/EventPnlTable";
+import { saveForecast, type DetailForecast, type LastEventExpoMap } from "./projects/forecastLayers";
+import { LastEventExpoMapBlock } from "./projects/LastEventExpoMap";
 import { ProjectOverviewPage } from "./projects/ProjectOverviewPage";
 import { projectBackTo, rememberBackTo } from "./projects/projectOverviewView";
 import { todayMyt } from "../vendor/scm/lib/dates";
@@ -266,6 +268,9 @@ interface ProjectDetail {
   finance_books?: FinanceBooks | null;
   /** The two P&Ls (owner 2026-10-16) — services/eventPnl.ts; null on an older server. */
   finance_pnl?: EventPnl | null;
+  /** The P&L's three layers (owner 2026-11-18) and the last event's Expo Map. */
+  finance_forecast?: DetailForecast | null;
+  last_event_expo_map?: LastEventExpoMap | null;
   stock_transfers: StockTransfer[];
   checklist: ChecklistItem[];
   checklist_comments: ChecklistComment[];
@@ -2246,6 +2251,7 @@ function ProjectDetailContent({
                 onItemStatus={setItemStatus}
                 onItemDelete={deleteItem}
                 toast={toast}
+                lastEventExpoMap={detail.data?.last_event_expo_map ?? null}
               />
 
               {/* Setup & Dismantle (crew-per-lorry editor + phase photos).
@@ -2281,6 +2287,8 @@ function ProjectDetailContent({
                   lines={detail.data?.finance_lines ?? []}
                   books={detail.data?.finance_books ?? null}
                   pnl={detail.data?.finance_pnl ?? null}
+                  forecast={detail.data?.finance_forecast ?? null}
+                  canForecast={can("projects.write")}
                   lumpSales={detail.data?.finance?.total_sales ?? null}
                   onChange={() => detail.reload()}
                   toast={toast}
@@ -3581,8 +3589,11 @@ export function TasklistSections({
   onItemStatus,
   onItemDelete,
   toast,
+  lastEventExpoMap,
 }: {
   projectId: number;
+  /** The last same-organiser-same-venue event's Expo Map files, while this one has none (owner 2026-11-18). */
+  lastEventExpoMap: LastEventExpoMap | null;
   /** The event's name — what a payment request raised from its CONTRACT row says it is for. */
   projectName: string;
   projectStartDate: string | null;
@@ -4065,6 +4076,9 @@ export function TasklistSections({
                   </>
                 )}
               </div>
+              {section && /^expo map/i.test(section.name.trim()) && lastEventExpoMap && (
+                <LastEventExpoMapBlock data={lastEventExpoMap} />
+              )}
               {section?.display_mode === "documents" ? (
                 <DocumentTable
                   /* 「Request payment」 on the event's CONTRACT row (owner 2026-10-08). */
@@ -7269,6 +7283,8 @@ function FinanceLedgerSection({
   lines,
   books,
   pnl,
+  forecast,
+  canForecast,
   lumpSales,
   onChange,
   toast,
@@ -7284,6 +7300,9 @@ function FinanceLedgerSection({
    *  Null on an older server or when the orders could not be read: the single
    *  snapshot below is then computed from the lines, as before. */
   pnl: EventPnl | null;
+  /** The three layers over the Total Sales column (owner 2026-11-18); null = actuals only. */
+  forecast: DetailForecast | null;
+  canForecast: boolean;
   /** project_finance.total_sales — the quick lump-sum "Total Sales" box.
    *  Used as the snapshot's sales figure when no individual sales-entry
    *  lines exist, so the green box and the snapshot agree. */
@@ -7431,7 +7450,9 @@ function FinanceLedgerSection({
       : 0;
   /* The tiles read the Total Sales P&L when the server sent it (eventPnl.ts),
      so tiles and table never disagree; else the lines, as before. */
-  const kpi = pnl
+  const kpi = forecast
+    ? { sales: forecast.lines.sales.amount, gp: forecast.totals.gross_profit.amount, cost: forecast.totals.total_cost.amount, net: forecast.totals.net_profit.amount }
+    : pnl
     ? { sales: pnl.by_sales.sales, gp: pnl.by_sales.grossProfit, cost: pnl.by_sales.totalCost, net: pnl.by_sales.netProfit }
     : { sales, gp: grossProfit, cost: totalCost, net: netProfit };
   const kpiGpPct = kpi.sales > 0 ? (kpi.gp / kpi.sales) * 100 : null;
@@ -7455,6 +7476,14 @@ function FinanceLedgerSection({
           <p className="mt-0.5 text-[10.5px] text-ink-muted">
             From Exhibition Report cost model · Sales − COGS = GP · Sales − all costs = Net Profit
           </p>
+          {forecast?.estimated && (
+            <p className="mt-1 text-[10.5px] text-ink-secondary">
+              Includes estimates: a line tagged Forecast is a typed figure, Last event is {forecast.last_event?.code ?? "the last event"}&apos;s actual. Real figures replace them as they come in.
+            </p>
+          )}
+          {forecast?.last_event_error && (
+            <p className="mt-1 text-[10.5px] text-err">The last event&apos;s figures could not be read: {forecast.last_event_error}</p>
+          )}
         </div>
 
         {/* 4 KPI tiles */}
@@ -7500,6 +7529,8 @@ function FinanceLedgerSection({
               busyCategory={savingCat}
               books={filled}
               rentalNote={`${formatCurrency(rentPerSqmPerDay)}/sqm/day`}
+              layers={forecast}
+              onForecast={canForecast ? async (line, amount) => { await saveForecast(projectId, line, amount); onChange(); } : null}
             />
           </div>
         )}
