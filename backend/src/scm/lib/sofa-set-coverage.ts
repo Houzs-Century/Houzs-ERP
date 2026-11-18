@@ -21,6 +21,8 @@
 // variant). Among batches that cover the whole set we pick the FIFO-oldest
 // (earliest received_at) so allocation is deterministic and matches FIFO cost.
 
+import { paginateAll } from './paginate-all';
+
 export type SofaSetLine = { itemCode: string; variantKey: string; need: number };
 
 /** key = `${warehouseId}|${batchNo}|${itemCode}|${variantKey}` → qty_remaining */
@@ -59,12 +61,16 @@ export async function loadSofaBatchStock(
   // sofa-only slice. We deliberately do NOT filter item_code via .in() here:
   // sofa codes contain parentheses (e.g. BOOQIT-1A(LHF)) which break PostgREST's
   // in.(...) list syntax and silently return zero rows. Filter codes in JS.
-  const { data: lots, error } = await sb
+  const { data: lots, error, truncated } = await paginateAll((from, to) => sb
     .from('v_inventory_lots_open')
     .select('warehouse_id, item_code, variant_key, batch_no, qty_remaining, received_at')
     .not('batch_no', 'is', null)
-    .gt('qty_remaining', 0);
+    .gt('qty_remaining', 0)
+    .order('received_at', { ascending: true })
+    .order('id', { ascending: true })
+    .range(from, to));
   if (error) throw new Error(`sofa batch stock load failed: ${error.message}`);
+  if (truncated) throw new Error('sofa batch stock load failed: open batched lots exceed the page guard');
 
   for (const r of (lots ?? []) as Array<{
     warehouse_id: string; item_code: string; variant_key: string | null;
