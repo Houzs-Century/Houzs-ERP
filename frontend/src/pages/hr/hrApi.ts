@@ -265,6 +265,9 @@ export const ALLOWANCE_KINDS = [
   { value: "TRANSPORT", label: "Transport allowance" },
   { value: "OVERNIGHT", label: "Overnight allowance" },
   { value: "KPI", label: "KPI allowance" },
+  // Amount is a PER-DAY rate; payroll pays it per attended day and drops the
+  // whole month if the worker is late on more than 3 days or takes unpaid leave.
+  { value: "ATTENDANCE", label: "Attendance allowance (per day)" },
   { value: "OTHER", label: "Allowance" },
   { value: "BACKPAY", label: "Backpay (company advance)" },
 ] as const;

@@ -19,9 +19,10 @@ import {
   hr_working_hours,
 } from "../../db/schema";
 import { absenceCutoffDay } from "../../scm/shared/hr-payroll";
-import { PAID_LEAVE_STATUSES } from "../../scm/shared/hr-attendance";
+import { PAID_LEAVE_STATUSES, computeAttendanceDay, minutesFromWorkDate, toAttendanceRules, type AttendanceStatus } from "../../scm/shared/hr-attendance";
 import type { PcbCategory } from "../../scm/shared/hr-pcb";
 import { payRulesResolver } from "./hr-attendance-store";
+import { attendanceAllowance, attendanceDayFraction, type AttendanceAllowanceDay } from "./hr-attendance-allowance";
 import { buildPayslip, onPayroll, type AllowanceKind, type PayslipFigures } from "./hr-payslip";
 import { loadTripMonth } from "./hr-trip-store";
 
@@ -41,7 +42,7 @@ export async function lockedPeriods(db: Db, companyId: number): Promise<Set<stri
 export async function computePeriod(db: Db, companyId: number, period: string, today: string, onlyEmployeeId: number | null = null): Promise<PayslipFigures[]> {
   const { first, last, year, month } = periodBounds(period);
   const empWhere = onlyEmployeeId != null ? and(eq(hr_employees.company_id, companyId), eq(hr_employees.id, onlyEmployeeId)) : eq(hr_employees.company_id, companyId);
-  const [employees, holidays, hours, docks, advances, penalties, ytd, rulesOn, allowances, paidLeave, trip] = await Promise.all([
+  const [employees, holidays, hours, docks, advances, penalties, ytd, rulesOn, allowances, paidLeave, trip, attendance] = await Promise.all([
     db
       .select({ e: hr_employees, department: departments.name })
       .from(hr_employees)
@@ -108,6 +109,19 @@ export async function computePeriod(db: Db, companyId: number, period: string, t
         ),
       ),
     loadTripMonth(db, companyId, period, today),
+    /* Every attendance day of the month, for the ATTENDANCE allowance: its
+       status (present / half / unpaid leave) and the punch, from which lateness
+       is computed. Empty until crew start punching — the allowance is then 0. */
+    db
+      .select({
+        employee_id: hr_attendance.employee_id,
+        date: hr_attendance.work_date,
+        status: hr_attendance.status,
+        clock_in_at: hr_attendance.clock_in_at,
+        clock_out_at: hr_attendance.clock_out_at,
+      })
+      .from(hr_attendance)
+      .where(and(eq(hr_attendance.company_id, companyId), gte(hr_attendance.work_date, first), lte(hr_attendance.work_date, last))),
   ]);
   const ids = employees.map((r) => r.e.id);
   const history = ids.length
@@ -128,6 +142,21 @@ export async function computePeriod(db: Db, companyId: number, period: string, t
   const allowBy = by(allowances);
   const leaveBy = by(paidLeave);
   const histBy = by(history);
+  const attBy = by(attendance);
+  /* The month's attendance for one employee, shaped for the ATTENDANCE allowance:
+     lateness is computed from the punch against the day's rules, nothing stored. */
+  const allowanceDaysFor = (empId: number): AttendanceAllowanceDay[] =>
+    (attBy.get(empId) ?? []).map((r) => {
+      const status = r.status as AttendanceStatus;
+      let isLate = false;
+      if (r.clock_in_at) {
+        const rules = toAttendanceRules(rulesOn(r.date));
+        const inMin = minutesFromWorkDate(r.date, new Date(r.clock_in_at));
+        const outMin = r.clock_out_at ? minutesFromWorkDate(r.date, new Date(r.clock_out_at)) : inMin;
+        isLate = computeAttendanceDay(inMin, outMin, rules).isLate;
+      }
+      return { status, isLate, fraction: attendanceDayFraction(status) };
+    });
   const dockBy = new Map(docks.map((d) => [d.employee_id, Number(d.hours)]));
   const penBy = new Map(penalties.map((p) => [p.employee_id, Number(p.amount)]));
   const ytdBy = new Map(ytd.map((y) => [y.employee_id, { remunerationSen: Number(y.rem), epfSen: Number(y.epf), pcbSen: Number(y.pcb) }]));
@@ -171,7 +200,15 @@ export async function computePeriod(db: Db, companyId: number, period: string, t
         penaltySen: penBy.get(e.id) ?? 0,
         paidLeave: new Set((leaveBy.get(e.id) ?? []).map((l) => l.date)),
         trip: trip.pay.get(e.id) ?? null,
-        allowances: (allowBy.get(e.id) ?? []).map((a) => ({ kind: a.kind as AllowanceKind, amountSen: Number(a.amount), note: a.note })),
+        allowances: (allowBy.get(e.id) ?? []).map((a) => {
+          /* ATTENDANCE stores a per-day rate; the month's figure is computed from
+             attendance (rate x attended days, or 0 if late>3 or any unpaid leave). */
+          if (a.kind === "ATTENDANCE") {
+            const r = attendanceAllowance(Number(a.amount), allowanceDaysFor(e.id));
+            return { kind: "ATTENDANCE" as AllowanceKind, amountSen: r.amountSen, note: a.note ? `${a.note} — ${r.note}` : r.note };
+          }
+          return { kind: a.kind as AllowanceKind, amountSen: Number(a.amount), note: a.note };
+        }),
         ytd: ytdBy.get(e.id) ?? { remunerationSen: 0, epfSen: 0, pcbSen: 0 },
       }),
     );

@@ -8,13 +8,15 @@ import { resolvePcb, type PcbCategory, type PcbStatus } from "../../scm/shared/h
 import type { PayRulesConfig } from "../../scm/shared/hr-pay-rules";
 import type { TripPay } from "../../scm/shared/hr-trip-pay";
 
-export const ALLOWANCE_KINDS = ["LEADERSHIP", "TRANSPORT", "OVERNIGHT", "KPI", "OTHER", "BACKPAY"] as const;
+export const ALLOWANCE_KINDS = ["LEADERSHIP", "TRANSPORT", "OVERNIGHT", "KPI", "ATTENDANCE", "OTHER", "BACKPAY"] as const;
 export type AllowanceKind = (typeof ALLOWANCE_KINDS)[number];
 export const ALLOWANCE_LABEL: Record<AllowanceKind, string> = {
   LEADERSHIP: "Leadership allowance",
   TRANSPORT: "Transport allowance",
   OVERNIGHT: "Overnight allowance",
   KPI: "KPI allowance",
+  /* The stored amount is a PER-DAY rate; payroll computes the month from attendance. */
+  ATTENDANCE: "Attendance allowance",
   OTHER: "Allowance",
   BACKPAY: "Backpay (company advance)",
 };
