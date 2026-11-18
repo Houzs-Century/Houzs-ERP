@@ -248,6 +248,13 @@ describe('buildLorryRoutes — per-lorry numbered route + surfaced unlocated sto
     const out = buildLorryRoutes(cards, pointByRef, new Set(), new Map(), depot, (k) => (k === 'VQE9058' ? penang : null), (k) => k);
     expect(out.routes[0]!.depot).toEqual(penang);
   });
+  test('two stops at the same address share one pin labelled "1, 3"', () => {
+    const same = new Map<string, MapLatLng>([['A', { lat: 3.2, lng: 101.7 }], ['B', { lat: 3.25, lng: 101.75 }], ['C', { lat: 3.2, lng: 101.7 }]]);
+    const out = buildLorryRoutes(cards, same, new Set(), new Map(), depot, () => null, (k) => k);
+    const stops = out.routes[0]!.stops;
+    expect(stops.map((st) => st.pinLabel ?? String(st.order))).toEqual(['1, 3', '2', '3']);
+    expect(stops.map((st) => st.covered === true)).toEqual([false, false, true]);
+  });
   test('the ungeocoded drop is surfaced with a reason, never dropped', () => {
     expect(unlocated).toEqual([{ ref: 'B', label: 'B · HC-DO-9 · pg0791', reason: 'Address could not be located' }]);
   });

@@ -13,7 +13,7 @@ import type { StopStatus } from '../../../vendor/scm/lib/delivery-stop-status';
 import { windowEndMinutes } from '../../../vendor/scm/lib/delivery-stop-status';
 import { jobRefOf, LEG_LABEL } from '../../../vendor/scm/lib/delivery-job';
 import { addressOnce } from '../../../vendor/scm/lib/address-once';
-import type { MapRoute, MapRouteStop, MapLatLng } from '../../../vendor/scm/lib/delivery-map-model';
+import { mergeSameSpotStops, type MapRoute, type MapRouteStop, type MapLatLng } from '../../../vendor/scm/lib/delivery-map-model';
 import {
   slotKindOf, slotLabelOf, slotSortKey, condenseWindow, runStatusOf, rollupRun, isLate, lateReason,
   type RunStatus, type SlotKind, type RunRollup,
@@ -106,6 +106,11 @@ export type DocRowVM = {
   arrivedAt: string | null;
   /** The latest non-draft/cancelled DO's id — the POD + crew target; null when none. */
   latestLiveDoId: string | null;
+  /** A delivery whose only DO is still a DRAFT (the card tags it "DRAFT DO"). */
+  draftDo: boolean;
+  /** A job's POD photo count (job progress); null for a delivery order, whose
+   *  photos live on the DO (`hasPod` says whether it has any). */
+  podPhotoCount: number | null;
 };
 
 export type LorryRunVM = {
@@ -204,6 +209,8 @@ export function docRowVM(o: PlanningOrder, status: StopStatus, clock: DayClock, 
     departedAt: o.departure_at ?? progress?.departed_at ?? null,
     arrivedAt: o.arrival_at ?? progress?.arrived_at ?? null,
     latestLiveDoId: live.length > 0 ? live[live.length - 1]!.id : null,
+    draftDo: o.row_type === 'so' && live.length === 0 && o.delivery_orders.some((d) => d.status.toUpperCase() === 'DRAFT'),
+    podPhotoCount: jr ? (progress?.pod_photo_keys?.length ?? 0) : null,
   };
 }
 
@@ -433,7 +440,8 @@ export function buildLorryRoutes(
       crewLabel: run.driverName,
       /* The lorry leaves from and comes back to its own home warehouse when it has one. */
       depot: homeOf(key) ?? depot,
-      stops,
+      /* Two stops at one address share a pin labelled "6, 7" instead of one hiding the other. */
+      stops: mergeSameSpotStops(stops),
       allRefs: run.docs.map((d) => d.soDocNo),
       delivered: run.rollup.delivered,
       total: run.rollup.drops,
