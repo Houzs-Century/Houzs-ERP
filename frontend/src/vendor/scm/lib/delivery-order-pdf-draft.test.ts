@@ -25,6 +25,7 @@ describe('delivery order DRAFT mark', () => {
       setTextColor: () => undefined,
       text: (t: string, x: number, y: number, o: unknown) => { texts.push({ t, x, y, o }); },
     };
+    // eslint-disable-next-line no-restricted-syntax -- a recording stub of the few jsPDF calls the mark makes; a real jsPDF cannot report what text it drew
     drawDraftWatermark(doc as never);
     expect(texts).toEqual([{ t: 'DRAFT', x: 100, y: 150, o: { align: 'center', angle: 30 } }]);
   });
