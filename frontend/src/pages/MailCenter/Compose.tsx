@@ -23,6 +23,7 @@ import { NEEDS_ACK_HINT } from "./mail-acks";
 // To / Cc / Bcc parsing + validation, shared with the phone's composer.
 import { parseRecipients, firstInvalid, addRecipients } from "./mail-recipients";
 import { RecipientPicker } from "./RecipientPicker";
+import { RecipientSuggestInput } from "./RecipientSuggestInput";
 import { PickedAttachmentChip } from "./PickedAttachmentChip";
 import {
   MAIL_ATTACH_MAX_COUNT,
@@ -369,15 +370,14 @@ export function ComposeDialog({
                     )}
                   </div>
                 </div>
-                <input
-                  type="text"
+                <RecipientSuggestInput
                   value={to}
-                  onChange={(e) => setTo(e.target.value)}
+                  onChange={setTo}
                   onBlur={() => setTouchedTo(true)}
                   placeholder="customer@example.com, someone@else.com"
                   disabled={sending}
-                  aria-invalid={toError}
-                  className={
+                  invalid={toError}
+                  inputClassName={
                     "h-10 w-full rounded-md border bg-surface px-3 text-[13px] text-ink outline-none focus:ring-2 focus:ring-primary/20 disabled:opacity-60 " +
                     (toError
                       ? "border-err focus:border-err"
@@ -403,24 +403,24 @@ export function ComposeDialog({
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="space-y-1">
                     <label className="text-xs font-medium text-ink-muted">Cc</label>
-                    <input
-                      type="text"
+                    <RecipientSuggestInput
                       value={cc}
-                      onChange={(e) => setCc(e.target.value)}
+                      onChange={setCc}
                       placeholder="visible to everyone"
                       disabled={sending}
-                      className="h-10 w-full rounded-md border border-border bg-surface px-3 text-[13px] text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:opacity-60"
+                      invalid={false}
+                      inputClassName="h-10 w-full rounded-md border border-border bg-surface px-3 text-[13px] text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:opacity-60"
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-xs font-medium text-ink-muted">Bcc</label>
-                    <input
-                      type="text"
+                    <RecipientSuggestInput
                       value={bcc}
-                      onChange={(e) => setBcc(e.target.value)}
+                      onChange={setBcc}
                       placeholder="hidden from the others"
                       disabled={sending}
-                      className="h-10 w-full rounded-md border border-border bg-surface px-3 text-[13px] text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:opacity-60"
+                      invalid={false}
+                      inputClassName="h-10 w-full rounded-md border border-border bg-surface px-3 text-[13px] text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:opacity-60"
                     />
                   </div>
                   {copyError && (

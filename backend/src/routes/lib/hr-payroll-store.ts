@@ -19,9 +19,10 @@ import {
   hr_working_hours,
 } from "../../db/schema";
 import { absenceCutoffDay } from "../../scm/shared/hr-payroll";
-import { PAID_LEAVE_STATUSES, computeAttendanceDay, minutesFromWorkDate, toAttendanceRules, type AttendanceStatus } from "../../scm/shared/hr-attendance";
+import { PAID_LEAVE_STATUSES, computeAttendanceDay, minutesFromWorkDate, type AttendanceStatus } from "../../scm/shared/hr-attendance";
 import type { PcbCategory } from "../../scm/shared/hr-pcb";
 import { payRulesResolver } from "./hr-attendance-store";
+import { shiftRulesResolver } from "./hr-shift-store";
 import { attendanceAllowance, attendanceDayFraction, type AttendanceAllowanceDay } from "./hr-attendance-allowance";
 import { buildPayslip, onPayroll, type AllowanceKind, type PayslipFigures } from "./hr-payslip";
 import { loadTripMonth } from "./hr-trip-store";
@@ -143,6 +144,9 @@ export async function computePeriod(db: Db, companyId: number, period: string, t
   const leaveBy = by(paidLeave);
   const histBy = by(history);
   const attBy = by(attendance);
+  // Per-employee shift (group + delivery-day) for the month, so lateness is
+  // judged against each person's own shift, not the one global shift.
+  const shiftFor = await shiftRulesResolver(db, companyId, first, last);
   /* The month's attendance for one employee, shaped for the ATTENDANCE allowance:
      lateness is computed from the punch against the day's rules, nothing stored. */
   const allowanceDaysFor = (empId: number): AttendanceAllowanceDay[] =>
@@ -150,7 +154,7 @@ export async function computePeriod(db: Db, companyId: number, period: string, t
       const status = r.status as AttendanceStatus;
       let isLate = false;
       if (r.clock_in_at) {
-        const rules = toAttendanceRules(rulesOn(r.date));
+        const rules = shiftFor.rulesFor(r.date, empId);
         const inMin = minutesFromWorkDate(r.date, new Date(r.clock_in_at));
         const outMin = r.clock_out_at ? minutesFromWorkDate(r.date, new Date(r.clock_out_at)) : inMin;
         isLate = computeAttendanceDay(inMin, outMin, rules).isLate;

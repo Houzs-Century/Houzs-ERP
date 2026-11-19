@@ -4,11 +4,13 @@
 //   GET  /mail-host/pending       personal addresses not yet added in Google (R2)
 //   POST /mail-host/:id/confirm   an admin marks one as added
 //   GET  /directory               the org-chart recipient picker (P4, A5)
+//   GET  /recipients/history      addresses the caller's mailboxes used (HC-0247)
 //   GET  /claim                   what the caller may claim (HC-0157 A)
 //   POST /claim                   the caller claims their own address
 import { Hono } from "hono";
 import type { Env } from "../types";
-import { activeCompanyId, activeCompanySql } from "../scm/lib/companyScope";
+import { activeCompanyId, activeCompanySql, requireActiveCompanyId } from "../scm/lib/companyScope";
+import { loadRecipientHistory, rankRecipientHistory } from "../lib/mail-recipient-history";
 import { loadRoster, type RosterUser } from "../lib/announcementAudience";
 import {
   AliasMailboxCollisionError,
@@ -132,6 +134,21 @@ app.get("/directory", async (c) => {
 
   c.header("Cache-Control", "no-store");
   return c.json({ me: self ? entry(self) : null, department, team, managers, everyone });
+});
+
+app.get("/recipients/history", async (c) => {
+  const user = c.get("user");
+  if (!hasPermission(user.permissions_set, "mail_center.read")) {
+    return c.json({ error: "You do not have access to Mail Center." }, 403);
+  }
+  const company = requireActiveCompanyId(c);
+  if (!company.ok) return c.json(company.refusal, 409);
+  const scope = await getMailScope(c);
+  const alias = await ownAliasFor(c);
+  const mailboxes = alias ? [...scope.addresses, alias] : scope.addresses;
+  const rows = await loadRecipientHistory(c.env.DB, mailboxes, company.companyId);
+  c.header("Cache-Control", "no-store");
+  return c.json({ recipients: rankRecipientHistory(rows) });
 });
 
 app.get("/visibility", async (c) => {
