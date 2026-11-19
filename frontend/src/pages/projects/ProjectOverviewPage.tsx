@@ -247,7 +247,7 @@ export function ProjectOverviewPage() {
 
       {/* The project list first, the venue rent after it (owner 2026-10-25:
           把venue rent 和 project 倒反位置). */}
-      <Panel title={`Projects${pick ? ` · ${pick}` : ""}${partLabel}`} hint={`${listed.length} projects · amounts in RM · click one to open it`}
+      <Panel title={`Projects${pick ? ` · ${pick}` : ""}${partLabel}`} hint={`${listed.length} projects · amounts in RM · click one to open it · yellow = last event's figure, teal = typed forecast`}
         right={pick ? <button type="button" className="text-[12px] text-primary hover:underline" onClick={() => setView({ pick: null })}>Show all</button> : undefined}>
         <div ref={tableRef}>
           <ProjectOverviewTable rows={listed} loading={q.loading} onOpen={openProject} />
