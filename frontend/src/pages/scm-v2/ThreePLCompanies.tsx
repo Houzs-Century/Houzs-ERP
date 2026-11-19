@@ -41,6 +41,7 @@ import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { writeFailedAs } from '../../vendor/scm/lib/mutation-error';
 import { cn } from '../../lib/utils';
 import { LorrySide } from './fleet/Lorry3D';
+import { masterPostcodeError } from '../../vendor/shared/master-postcode-rule';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -73,6 +74,7 @@ const addressOf = (f: Particulars) => {
 /* Postcode / City / State in the Sales Order's controls (owner 2026-11-17). */
 const AddressTriple = ({ form, setForm }: { form: Particulars; setForm: Dispatch<SetStateAction<Particulars>> }) => (
   <AddressTripleFields
+    postcodeRequired
     country=""
     value={{ state: form.state, city: form.city, postcode: form.postcode }}
     onChange={(next) => setForm((p) => ({ ...p, ...next }))}
@@ -97,6 +99,8 @@ export const ThreePLCompanies = ({ embedded = false }: { embedded?: boolean } = 
 
   const submit = () => {
     if (!form.name.trim()) { void notify({ title: 'Name required', body: 'Give the 3PL company a name.', tone: 'error' }); return; }
+    const pcErr = masterPostcodeError(null, form.postcode);
+    if (pcErr) { void notify({ title: pcErr, tone: 'error' }); return; }
     const trimmed = (v: string) => v.trim() || null;
     createCo.mutate(
       {
@@ -243,6 +247,8 @@ const CompanyRow = ({ row, open, onToggleOpen }: { row: ThreePLCompanyRow; open:
 
   const save = () => {
     if (!form.name.trim()) { void notify({ title: 'Name required', tone: 'error' }); return; }
+    const pcErr = masterPostcodeError(null, form.postcode);
+    if (pcErr) { void notify({ title: pcErr, tone: 'error' }); return; }
     const trimmed = (v: string) => v.trim() || null;
     const supplierId = supplier?.id ?? null;
     update.mutate(

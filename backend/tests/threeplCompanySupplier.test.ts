@@ -47,7 +47,7 @@ function harness(missing: Record<string, string[]> = {}) {
   });
   app.route('/threepl-companies', threeplCompanies as unknown as Hono);
   const req = (path: string, method: string, body?: unknown) =>
-    app.request(path, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) }, {});
+    app.request(path, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(method === 'POST' && body && typeof body === 'object' && !('postcode' in body) ? { ...body, postcode: '47000' } : body) }, {});
   return { req, tables: (sb as unknown as { tables: Record<string, Row[]> }).tables };
 }
 

@@ -60,7 +60,7 @@ function harness(who: Row, tables: Record<string, Row[]> = {}) {
 }
 
 const send = (app: Hono, method: 'POST' | 'PATCH', url: string, body: Row) =>
-  app.request(url, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  app.request(url, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(method === 'POST' && !('postcode' in body) ? { ...body, postcode: '47000' } : body) });
 const financeKeysOf = (r: Row) => Object.keys(FINANCE_PART).filter((k) => k in r);
 
 describe('who reads the Finance part', () => {

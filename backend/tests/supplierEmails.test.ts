@@ -30,7 +30,7 @@ function harness(rows: Row[]) {
   return { app, sb };
 }
 const send = (app: Hono, method: 'POST' | 'PATCH', url: string, body: Row) =>
-  app.request(url, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  app.request(url, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(method === 'POST' && !('postcode' in body) ? { ...body, postcode: '47000' } : body) });
 const base = (over: Row = {}): Row => ({ id: 's1', code: '400-K001', name: 'Kilang', company_id: CO, status: 'ACTIVE', email: 'a@k.com', email2: null, email3: null, ...over });
 
 describe('supplier Email 2 / Email 3 — save', () => {
