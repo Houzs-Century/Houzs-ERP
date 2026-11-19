@@ -33,19 +33,30 @@ export async function threadMessageIds(db: D1Database, threadId: string): Promis
   return rows.results.map((r) => r.message_id);
 }
 
-export async function resendMessageId(env: Env, providerId: string): Promise<string | null> {
+export interface ResendEmailState {
+  messageId: string | null;
+  lastEvent: string | null;
+}
+
+export async function fetchResendEmail(env: Env, providerId: string): Promise<ResendEmailState | null> {
   if (!env.RESEND_API_KEY) return null;
   try {
     const resp = await fetch(`https://api.resend.com/emails/${encodeURIComponent(providerId)}`, {
       headers: { Authorization: `Bearer ${env.RESEND_API_KEY}` },
     });
     if (!resp.ok) return null;
-    const data = (await resp.json().catch(() => ({}))) as { message_id?: string | null };
-    const id = (data.message_id ?? "").trim();
-    return id || null;
+    const data = (await resp.json().catch(() => ({}))) as { message_id?: string | null; last_event?: string | null };
+    return {
+      messageId: (data.message_id ?? "").trim() || null,
+      lastEvent: (data.last_event ?? "").trim().toLowerCase() || null,
+    };
   } catch {
     return null;
   }
+}
+
+export async function resendMessageId(env: Env, providerId: string): Promise<string | null> {
+  return (await fetchResendEmail(env, providerId))?.messageId ?? null;
 }
 
 /** Copy Resend's Message-ID onto recent outbound rows that lack one. A queued
@@ -157,12 +168,4 @@ export async function recordOutboundMessage(db: D1Database, m: OutboundMessage):
     )
     .run();
   return id;
-}
-
-/** "queued" while the outbox retries it, "failed" once it gave up; null = sent
- *  (or a row from before the outbox link existed). */
-export function deliveryStatus(outboxStatus: string | null | undefined): "queued" | "failed" | null {
-  if (outboxStatus === "pending") return "queued";
-  if (outboxStatus === "failed") return "failed";
-  return null;
 }
