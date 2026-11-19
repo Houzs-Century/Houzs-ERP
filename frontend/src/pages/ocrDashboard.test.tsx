@@ -56,14 +56,24 @@ describe("OCR page", () => {
     expect((await screen.findAllByText("Sales slip (SO)")).length).toBeGreaterThan(0);
     expect(apiGet).toHaveBeenCalledWith("/api/admin/ocr?month=2026-09");
     expect(screen.getByText("not recorded")).toBeTruthy();
-    expect(screen.getAllByText("Supplier not matched").length).toBeGreaterThan(0);
     expect(screen.getByText("1 change")).toBeTruthy();
     expect(screen.getByText("Line 1 Product code")).toBeTruthy();
     expect(screen.getByText("A1")).toBeTruthy();
-    expect(screen.getByText("none created")).toBeTruthy();
-    expect(screen.getByText("Needs review")).toBeTruthy();
     expect(screen.getByText("30.0%")).toBeTruthy();
     expect(pct(9, 10)).toBe("90.0%");
+  });
+
+  it("lists problem scans one document type at a time", async () => {
+    apiGet.mockResolvedValue(REPORT);
+    renderPage("/ocr?month=2026-09");
+    expect(await screen.findByText("1 change")).toBeTruthy();
+    expect(screen.queryByText("Supplier not matched")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /Supplier invoice \(PI\)/ }));
+
+    expect(screen.getAllByText("Supplier not matched").length).toBeGreaterThan(0);
+    expect(screen.getByText("none created")).toBeTruthy();
+    expect(screen.queryByText("1 change")).toBeNull();
   });
 
   it("opens the slip beside its changes on the same page instead of leaving for the sales order", async () => {

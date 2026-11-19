@@ -108,7 +108,7 @@ export interface OcrReport {
   problems: ProblemScan[];
 }
 
-const PROBLEM_LIMIT = 30;
+const PROBLEM_LIMIT_PER_TYPE = 30;
 const iso = (v: string | Date) => new Date(v).toISOString();
 
 function percentile(sorted: number[], p: number): number {
@@ -122,6 +122,7 @@ export function buildOcrReport(month: string, model: string, rows: ScanRow[]): O
   const misses = new Map<string, number>();
   let reviewed = 0;
   const problems: ProblemScan[] = [];
+  const problemCounts = new Map<string, number>();
 
   for (const r of rows) {
     const t = r.document_type;
@@ -146,7 +147,9 @@ export function buildOcrReport(month: string, model: string, rows: ScanRow[]): O
     if (outcome === "corrected" && detail) {
       for (const f of detail.split(", ")) misses.set(f, (misses.get(f) ?? 0) + 1);
     }
-    if ((outcome === "failed" || outcome === "needsReview" || outcome === "corrected") && problems.length < PROBLEM_LIMIT) {
+    const problemsOfType = problemCounts.get(t) ?? 0;
+    if ((outcome === "failed" || outcome === "needsReview" || outcome === "corrected") && problemsOfType < PROBLEM_LIMIT_PER_TYPE) {
+      problemCounts.set(t, problemsOfType + 1);
       problems.push({ id: r.id, at: iso(r.created_at), documentType: t, docNo: r.doc_no, outcome, detail, changes, slipImageKey: r.slip_image_key });
     }
   }

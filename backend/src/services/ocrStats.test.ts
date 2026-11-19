@@ -106,6 +106,14 @@ describe("buildOcrReport", () => {
     expect(r.problems.map((p) => [p.id, p.outcome])).toEqual([["b", "corrected"], ["c", "failed"], ["f", "needsReview"]]);
   });
 
+  it("keeps up to 30 problem scans per document type so one type cannot crowd out another", () => {
+    const salesSlipFailures = Array.from({ length: 31 }, (_, index) => row({ id: `so-${index}`, status: "error", error: "boom" }));
+    const invoiceNeedsReview = row({ id: "pi-1", document_type: "PI", doc_no: null, error: "No matching goods receipt" });
+    const problems = buildOcrReport("2026-10", "m", [...salesSlipFailures, invoiceNeedsReview]).problems;
+    expect(problems.filter((scan) => scan.documentType === "SO")).toHaveLength(30);
+    expect(problems.filter((scan) => scan.documentType === "PI").map((scan) => scan.id)).toEqual(["pi-1"]);
+  });
+
   it("carries the slip photo key so the page can show the slip beside the changes", () => {
     const corrected = row({ id: "a", sample_status: "CONFIRMED", extracted: slip("A"), corrected: slip("B"), slip_image_key: "scan-slips/s1" });
     const failed = row({ id: "b", status: "error", error: "boom" });

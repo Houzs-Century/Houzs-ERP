@@ -9,6 +9,7 @@ import { PageHeader } from "../components/Layout";
 import { Button } from "../components/Button";
 import { ListSkeleton } from "../components/Skeleton";
 import { DataTable, type Column } from "../components/DataTable";
+import { TabStrip } from "../components/TabStrip";
 import { ResizableDrawer } from "../components/ResizableDrawer";
 import { OrderSlipPhoto } from "../vendor/scm/components/OrderSlipPhoto";
 import { useQuery } from "../hooks/useQuery";
@@ -173,7 +174,7 @@ function SlipPreviewDrawer({ scan, docNo, onClose }: { scan: ProblemScan; docNo:
   );
 }
 
-function ProblemScanCard({ scan, docLabel, onPreview }: { scan: ProblemScan; docLabel: string; onPreview: (scanId: string) => void }) {
+function ProblemScanCard({ scan, onPreview }: { scan: ProblemScan; onPreview: (scanId: string) => void }) {
   const isFailed = scan.outcome === "failed";
   const hasReason = scan.outcome !== "corrected";
   return (
@@ -196,7 +197,6 @@ function ProblemScanCard({ scan, docLabel, onPreview }: { scan: ProblemScan; doc
             ) : (
               <span className="font-semibold text-ink">{scan.docNo}</span>
             )}
-            <span className="text-ink-muted">{docLabel}</span>
             <span className="ml-auto whitespace-nowrap text-[11.5px] text-ink-muted">{scanTime(scan.at)}</span>
           </div>
           <div className={cn("mt-0.5 text-[12px] text-ink", "group-open:hidden", hasReason && "truncate")}>{problemSummary(scan)}</div>
@@ -213,6 +213,37 @@ const card = "rounded-lg border border-border bg-surface px-5 py-5 shadow-stone"
 const cardTitle = "mb-1 text-[13px] font-bold text-ink";
 const cardNote = "mb-4 text-[11px] text-ink-muted";
 
+const problemTotal = (stats: DocTypeStats) => stats.failed + stats.needsReview + stats.corrected;
+
+function ProblemScansByDocument({ report, selectedType, onSelectType, onPreview }: {
+  report: OcrReport;
+  selectedType: string | null;
+  onSelectType: (documentType: string) => void;
+  onPreview: (scanId: string) => void;
+}) {
+  const fallbackType = report.docTypes.find((stats) => problemTotal(stats) > 0)?.documentType ?? report.docTypes[0]?.documentType;
+  const activeType = report.docTypes.some((stats) => stats.documentType === selectedType) ? selectedType : fallbackType;
+  const scans = report.problems.filter((scan) => scan.documentType === activeType);
+  return (
+    <>
+      {report.docTypes.length > 1 && activeType && (
+        <TabStrip
+          value={activeType}
+          onChange={onSelectType}
+          options={report.docTypes.map((stats) => ({ value: stats.documentType, label: stats.label, count: problemTotal(stats) }))}
+        />
+      )}
+      {scans.length === 0 ? (
+        <div className="py-6 text-center text-[12px] text-ink-muted">No problem scans this month.</div>
+      ) : (
+        <div className="space-y-2">
+          {scans.map((scan) => <ProblemScanCard key={scan.id} scan={scan} onPreview={onPreview} />)}
+        </div>
+      )}
+    </>
+  );
+}
+
 export function OcrDashboard() {
   const [params, setParams] = useSearchParams();
   const month = params.get("month") ?? thisMonthMyt();
@@ -220,8 +251,6 @@ export function OcrDashboard() {
   const q = useQuery<OcrReport>(url, () => api.get(url));
   const r = q.data;
   const reviewed = r?.fieldMisses.reviewed ?? 0;
-  const labels = new Map(r?.docTypes.map((d) => [d.documentType, d.label]));
-  const docLabel = (t: string) => labels.get(t) ?? t;
   const previewScan = r?.problems.find((scan) => scan.id === params.get("slip"));
   const setPreview = (scanId: string | null) =>
     setParams((p) => { if (scanId) p.set("slip", scanId); else p.delete("slip"); return p; }, { replace: true });
@@ -303,13 +332,12 @@ export function OcrDashboard() {
                 The latest failed, needs-review or corrected scans. Tap a scan to see what changed. Tap the order number to see the slip beside the changes and judge whether it was the photo or the AI.
                 Failed scans someone cleared with "Clear failed" are gone and not counted.
               </div>
-              {r.problems.length === 0 ? (
-                <div className="py-6 text-center text-[12px] text-ink-muted">No problem scans this month.</div>
-              ) : (
-                <div className="space-y-2">
-                  {r.problems.map((scan) => <ProblemScanCard key={scan.id} scan={scan} docLabel={docLabel(scan.documentType)} onPreview={setPreview} />)}
-                </div>
-              )}
+              <ProblemScansByDocument
+                report={r}
+                selectedType={params.get("problems")}
+                onSelectType={(documentType) => setParams((p) => { p.set("problems", documentType); return p; }, { replace: true })}
+                onPreview={setPreview}
+              />
             </div>
           </>
         )
