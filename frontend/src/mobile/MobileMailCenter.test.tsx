@@ -182,7 +182,7 @@ function threadsPage() {
 }
 
 function fromPicker(): HTMLSelectElement {
-  return screen.getByRole("combobox") as HTMLSelectElement;
+  return screen.getByRole("combobox", { name: "From" }) as HTMLSelectElement;
 }
 
 describe("MobileMailCenter reply-all", () => {

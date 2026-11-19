@@ -171,6 +171,7 @@ import { brandShare } from "./routes/brandShare";
 import { projectForecast } from "./routes/projectForecast";
 import { drainEmailOutbox } from "./services/email";
 import { backfillOutboundMessageIds } from "./lib/mail-threading";
+import { DELIVERY_REFRESH_LIMIT, refreshOutboundDelivery } from "./lib/mail-delivery";
 import { pollVelocity } from "./scm/lib/velocity-poll";
 import { pollItrack } from "./scm/lib/itrack-poll";
 import { runMailAckEscalation } from "./lib/mail-acks";
@@ -770,7 +771,8 @@ export default {
       // without RESEND_API_KEY; bounded to 25 rows / 3 attempts so a bad batch
       // can't stall the slot.
       // Then give Mail Center sends Resend's Message-ID, which a customer's
-      // reply quotes to land back on its thread.
+      // reply quotes to land back on its thread, and ask whether each recent
+      // send was delivered or bounced (HC-0247).
       ctx.waitUntil(
         track("email-outbox", () => drainEmailOutbox(env))
           .then((r) => {
@@ -779,6 +781,11 @@ export default {
           .catch((e) => console.error("[cron email-outbox]", e))
           .then(() => backfillOutboundMessageIds(env.DB, env, null, 10))
           .catch((e) => console.error("[cron mail-message-ids]", e))
+          .then(() => refreshOutboundDelivery(env.DB, env, DELIVERY_REFRESH_LIMIT, Date.now()))
+          .then((r) => {
+            if (r.changed) console.log(`[cron mail-delivery] checked=${r.checked} changed=${r.changed} bounced=${r.bounced} unreachable=${r.unreachable}`);
+          })
+          .catch((e) => console.error("[cron mail-delivery]", e))
       );
       // Health report to the IT Hub: live DB, email backlog, jobs, AI failures,
       // measured as the System Health page measures them (services/healthHub.ts).
