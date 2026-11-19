@@ -242,3 +242,18 @@ export function estimatedColumnsOf(p: OvProject): string[] {
   for (const [line, s] of Object.entries(src)) if (s && s !== "actual") cols.add(columnOfLine(line));
   return MONEY_COLUMNS.filter((c) => cols.has(c));
 }
+
+/** Where a forecast column's figure comes from: "typed" when someone typed a
+ *  Forecast on any of its lines (it wins the colour - it is what they set),
+ *  "last" when it is only the last event's result, null when it is real
+ *  (owner 2026-11-19: 我填写的 ... 也要有另外一个颜色). */
+export function forecastKindOf(p: OvProject, column: string): "typed" | "last" | null {
+  const src = p.pnl?.layers?.sources ?? {};
+  let kind: "typed" | "last" | null = null;
+  for (const [line, s] of Object.entries(src)) {
+    if (!s || s === "actual" || columnOfLine(line) !== column) continue;
+    if (s === "forecast") return "typed";
+    kind = "last";
+  }
+  return kind;
+}

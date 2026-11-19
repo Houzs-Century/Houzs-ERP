@@ -50,7 +50,8 @@ vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
   logisticsRows: [
     { row: 'outsource_pg', label: 'Outsource – Penang', type: 'EXPENSE' }, { row: 'petrol', label: 'Petrol', type: 'EXPENSE' },
     { row: 'instalment', label: 'Lorry Installment', type: 'LIABILITY' }, { row: 'income_kl', label: 'Transport Income – KL', type: 'INCOME' },
-  ] }, isLoading: false, error: null }),
+  ],
+  departmentRows: [{ row: 'ga', label: 'G&A' }, { row: 'op_rental_pg', label: 'Operation – Penang – Rental Warehouse' }] }, isLoading: false, error: null }),
   useChartTick: () => ({ mutateAsync: tickAsync, isPending: false }),
   useChartImport: () => ({ mutateAsync: importAsync, isPending: false }),
   useChartRename: () => ({ mutateAsync: renameAsync, isPending: false }),
@@ -508,5 +509,25 @@ describe('the Logistics row', () => {
     await waitFor(() => expect(updateAsync).toHaveBeenCalledWith({ code: '900-A002', logisticsRow: 'petrol' }));
     fireEvent.change(screen.getByLabelText('900-R032 Logistics row'), { target: { value: '' } });
     await waitFor(() => expect(updateAsync).toHaveBeenCalledWith({ code: '900-R032', logisticsRow: null }));
+  });
+});
+
+/* The Department P&L's department (owner 2026-11-19): G&A or an Operation row in a
+   region, on an expense account; an account the Logistics column claims is Logistics. */
+describe('the Department column', () => {
+  test('an expense account offers the departments; others none; a Logistics account says so; a pick and an empty save on the code', async () => {
+    updateAsync.mockClear();
+    draw();
+    expect(screen.getByText('Department')).toBeTruthy();
+    const select = (code: string) => screen.getByLabelText(`${code} Department`) as HTMLSelectElement;
+    expect([...select('900-A002').options].map((o) => o.value)).toEqual(['', 'ga', 'op_rental_pg']);
+    expect(screen.queryByLabelText('590-0000 Department')).toBeNull();
+    expect(screen.queryByLabelText('310-0010 Department')).toBeNull();
+    expect(select('900-R032').disabled).toBe(true);
+    expect(select('900-R032').options[0]!.textContent).toBe('Logistics');
+    fireEvent.change(select('900-A002'), { target: { value: 'ga' } });
+    await waitFor(() => expect(updateAsync).toHaveBeenCalledWith({ code: '900-A002', departmentRow: 'ga' }));
+    fireEvent.change(select('900-A002'), { target: { value: '' } });
+    await waitFor(() => expect(updateAsync).toHaveBeenCalledWith({ code: '900-A002', departmentRow: null }));
   });
 });
