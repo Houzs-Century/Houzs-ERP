@@ -36,12 +36,12 @@ import { activeCompanyCodePred, activeCompanyId, activeCompanySql } from "../scm
 import { toArray, stripHtml, safeIso, base64ToBytes, safeFilename } from "../services/mail-parse";
 import {
   backfillOutboundMessageIds,
-  deliveryStatus,
   recordOutboundMessage,
   threadForReferences,
   threadingHeaders,
   threadMessageIds,
 } from "../lib/mail-threading";
+import { deliveryStatus } from "../lib/mail-delivery";
 import { MY_READ_JOIN, MY_UNREAD_SQL, isThreadUnreadFor, setThreadRead, threadReaders } from "../lib/mail-reads";
 import { acksForMessages, myOwedOnThread, requestAcks, staffRecipients } from "../lib/mail-acks";
 
@@ -488,6 +488,7 @@ type MessageRow = {
   sent_by_name: string | null;
   created_at: string | null;
   outbox_status?: string | null;
+  delivery_status?: string | null;
 };
 
 function parseJsonArray(s: string | null): string[] {
@@ -519,7 +520,7 @@ function rowToMessage(r: MessageRow) {
     sentByUserId: r.sent_by_user_id ?? undefined,
     sentByName: r.sent_by_name ?? undefined,
     createdAt: r.created_at ?? "",
-    deliveryStatus: deliveryStatus(r.outbox_status),
+    deliveryStatus: deliveryStatus(r.outbox_status ?? null, r.delivery_status ?? null),
   };
 }
 

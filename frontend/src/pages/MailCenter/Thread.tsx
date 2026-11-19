@@ -25,7 +25,13 @@ import { useDialog } from "../../hooks/useDialog";
 import { useBranding } from "../../hooks/useBranding";
 import { cn } from "../../lib/utils";
 import { pickDefaultFromAddress } from "./mail-from-default";
-import { deliveryLabel, sentToast, type DeliveryStatus } from "./mail-delivery";
+import { deliveryLabel, deliveryTone, sentToast, type DeliveryStatus, type DeliveryTone } from "./mail-delivery";
+
+const DELIVERY_TONE_CLASSES: Record<DeliveryTone, string> = {
+  bad: "bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300",
+  waiting: "bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300",
+  good: "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-800 dark:text-emerald-300",
+};
 import { MessageAcks, NEEDS_ACK_HINT, ReadByLine, type AckState, type ThreadReaders } from "./mail-acks";
 import {
   MAIL_ATTACH_MAX_COUNT,
@@ -696,7 +702,7 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
                               <span
                                 className={cn(
                                   "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold",
-                                  m.deliveryStatus === "failed" ? "bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300" : "bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300",
+                                  DELIVERY_TONE_CLASSES[deliveryTone(m.deliveryStatus)],
                                 )}
                               >
                                 {deliveryLabel(m.deliveryStatus)}

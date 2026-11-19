@@ -146,7 +146,7 @@ export function ProjectOverviewPage() {
         <select className={SELECT_CLS} value={type} onChange={(e) => setView({ type: e.target.value })} aria-label="Event type"><option value="">All event types</option>{options("eventType").map((b) => <option key={b}>{b}</option>)}</select>
         <select className={SELECT_CLS} value={organizer} onChange={(e) => setView({ organizer: e.target.value })} aria-label="Organizer"><option value="">All organizers</option>{options("organizer").map((b) => <option key={b}>{b}</option>)}</select>
         {/* Venue, state and stage too (owner 2026-11-01: every filter the page can take). */}
-        <select className={SELECT_CLS} value={venue} onChange={(e) => setView({ venue: e.target.value })} aria-label="Venue"><option value="">All venues</option>{options("venue").map((b) => <option key={b}>{b}</option>)}</select>
+        <select className={cn(SELECT_CLS, "max-w-full")} value={venue} onChange={(e) => setView({ venue: e.target.value })} aria-label="Venue"><option value="">All venues</option>{options("venue").map((b) => <option key={b}>{b}</option>)}</select>
         <select className={SELECT_CLS} value={state} onChange={(e) => setView({ state: e.target.value })} aria-label="State"><option value="">All states</option>{options("state").map((b) => <option key={b}>{b}</option>)}</select>
         <select className={SELECT_CLS} value={stage} onChange={(e) => setView({ stage: e.target.value })} aria-label="Stage"><option value="">All stages</option>{options("stage").map((b) => <option key={b} value={b}>{b.charAt(0).toUpperCase() + b.slice(1)}</option>)}</select>
         {q.loading && <span className="text-[11.5px] text-ink-muted">Loading…</span>}
@@ -172,7 +172,9 @@ export function ProjectOverviewPage() {
         </div>
       </section>
 
-      <div className="grid gap-4 xl:grid-cols-[1.6fr_1fr]">
+      {/* minmax(0, ...): a wide table scrolls inside its panel instead of
+          stretching the column past a phone screen (owner 2026-11-19). */}
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
         <Panel title="Trend" hint="sales, gross and net profit by event start · click a row to go one level down"
           right={<span className="flex flex-wrap items-center gap-1 text-[12px]">{crumbs.map(([label, d], i) => (
             <span key={label} className="flex items-center gap-1">
@@ -293,7 +295,7 @@ function LayerSplitRow({ t }: { t: ReturnType<typeof totalsOf> }) {
   return (
     <div className="mt-4 overflow-x-auto rounded-lg bg-white/5 px-3 py-2" data-testid="layer-split">
       <div className="mb-1 text-[11px] text-sidebar-ink/70">{t.estimated} of {t.projects} projects include a forecast (typed, or the last same event&apos;s result)</div>
-      <table className="w-full min-w-[420px] border-collapse text-[12px] tabular-nums">
+      <table className="w-full border-collapse text-[12px] tabular-nums">
         <thead><tr className="text-left text-[10.5px] uppercase tracking-wider text-sidebar-ink/70">
           <th className="py-0.5 font-semibold"> </th><th className="py-0.5 text-right font-semibold">Actual</th><th className="py-0.5 text-right font-semibold">Forecast</th>
         </tr></thead>
