@@ -59,20 +59,21 @@ export function OvertimeBody() {
     }
   }
   async function remove(id: number) {
+    setErr(null);
     try {
       await api.del(`/api/attendance/ot/${id}`);
       reload();
-    } catch {
-      /* a refetch will show the real state */
-      reload();
+    } catch (e) {
+      setErr(e instanceof Error && e.message ? e.message : "Could not delete that overtime. Please try again.");
     }
   }
   async function review(id: number, decision: "confirm" | "reject") {
+    setErr(null);
     try {
       await api.post(`/api/attendance/ot/${id}/review`, { decision, reason: "" });
       reload();
-    } catch {
-      reload();
+    } catch (e) {
+      setErr(e instanceof Error && e.message ? e.message : "Could not update that overtime. Please try again.");
     }
   }
 
@@ -83,6 +84,7 @@ export function OvertimeBody() {
     <>
       {q.isLoading && <div style={{ color: "var(--mut)", fontSize: 13 }}>Loading...</div>}
       {q.isError && <div className="card" style={{ padding: 14, color: "var(--red)", fontSize: 13 }}>Could not load overtime. Reopen to retry.</div>}
+      {err && <div className="card" style={{ padding: 12, color: "var(--red)", fontSize: 13 }}>{err}</div>}
 
       <div className="card" style={{ padding: 14 }}>
         <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)" }}>Report overtime</div>
@@ -106,7 +108,6 @@ export function OvertimeBody() {
             What did you do?
             <input type="text" value={note} maxLength={200} placeholder="e.g. rushed an order" onChange={(e) => setNote(e.target.value)} style={{ ...input, marginTop: 3 }} />
           </label>
-          {err && <div style={{ fontSize: 12, color: "var(--red)" }}>{err}</div>}
           <button type="button" className="btn" disabled={!canSave} onClick={() => void add()} style={{ minHeight: 44, fontSize: 14 }}>
             {busy ? "Saving..." : "Add overtime"}
           </button>
