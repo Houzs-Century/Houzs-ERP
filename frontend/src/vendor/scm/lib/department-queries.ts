@@ -11,7 +11,16 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { writeFailedAs } from './mutation-error';
 
-export type DeptKey = 'ga' | 'operation' | 'logistics' | 'none';
+/** A department a company can have, or — an expense account no department claims yet — none. */
+export type Department = 'ga' | 'exhibition' | 'showroom' | 'operation' | 'logistics';
+export type DeptKey = Department | 'none';
+
+/** The company's departments and the view each opens: G&A its share, Operation the sheet,
+    the others their own P&L; Logistics is its own report (no view here). */
+export type DepartmentPlan = {
+  departments: Array<{ key: Department; label: string; view: 'ga' | 'operation' | 'dept' | null }>;
+  selling: Department;
+};
 
 /** A node of the P&L's own tree, each figure split by department (All) or by month (G&A). */
 export type DeptNode = {
@@ -23,11 +32,13 @@ export type DeptNode = {
 };
 
 export type DeptBlock = 'tradingIncome' | 'costOfSales' | 'otherIncome' | 'expenses' | 'taxation';
-export type DepartmentsAll = {
+export type DepartmentsAll = DepartmentPlan & {
   from: string; to: string;
-  columns: Array<{ key: DeptKey; label: string }>;
+  columns: Array<{ key: Department; label: string }>;
   tree: Record<DeptBlock, DeptNode[]>;
   blockTotals: Record<DeptBlock, Partial<Record<DeptKey, number>>>;
+  /** Expense accounts no department claims yet: their figures sit in Total only. */
+  unassigned: { label: string; lines: Array<{ code: string; name: string; amountSen: number }> };
   totals: {
     tradingIncomeSen: number; costOfSalesSen: number; grossProfitSen: number; otherIncomeSen: number;
     expensesSen: number; profitBeforeTaxSen: number; taxationSen: number; netProfitSen: number;
@@ -63,7 +74,29 @@ export type DepartmentsOperation = {
   logisticsProblem: string | null;
 };
 
+/** One department's own P&L month by month (the Exhibition P&L, the Showroom P&L). */
+export type DepartmentView = {
+  from: string; to: string; dept: Department; label: string; months: string[];
+  perMonth: Array<{ month: string; salesSen: number; costOfSalesSen: number; grossSen: number; otherIncomeSen: number; expensesSen: number; taxationSen: number; netSen: number }>;
+  tree: Record<DeptBlock, DeptNode[]>;
+};
+
 const KEY = ['acc-events', 'departments'] as const;
+
+export function useDepartmentPlan() {
+  return useQuery({
+    queryKey: [...KEY, 'plan'],
+    queryFn: () => authedFetch<DepartmentPlan>('/acc-events/departments/plan'),
+    staleTime: 60_000,
+  });
+}
+export function useDepartmentView(dept: string, from: string, to: string, enabled: boolean) {
+  return useQuery({
+    queryKey: [...KEY, 'dept', dept, from, to],
+    queryFn: () => authedFetch<DepartmentView>(`/acc-events/departments/dept?d=${encodeURIComponent(dept)}&from=${from}&to=${to}`),
+    staleTime: 30_000, enabled,
+  });
+}
 
 export function useDepartmentsAll(from: string, to: string, enabled: boolean) {
   return useQuery({

@@ -15,7 +15,7 @@ import { Hono } from 'hono';
 import { describe, expect, test } from 'vitest';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
 import {
-  departmentsAllHandler, departmentsGaHandler, departmentsOperationHandler, saveDepartmentRateHandler,
+  departmentViewHandler, departmentsAllHandler, departmentsGaHandler, departmentsOperationHandler, departmentsPlanHandler, saveDepartmentRateHandler,
 } from '../src/scm/routes/acc-departments';
 
 const CO = 1;
@@ -38,7 +38,10 @@ const ACCOUNTS: Row[] = [
   account('900-R004', 'WAREHOUSE - (PENANG)', 'EXPENSES', { department_row: 'op_rental_pg' }),
   account('900-R005', 'WAREHOUSE - (BELAKONG)', 'EXPENSES', { department_row: 'op_rental_kl' }),
   account('900-T005', 'TRANSPORT (PNG, PERLIS, KEDAH, KELATAN, TERENGGANU, PAHANG)', 'EXPENSES', { logistics_row: 'outsource_pg' }),
-  account('900-B003', 'BOOTH SET UP', 'EXPENSES'),
+  account('900-B003', 'BOOTH SET UP', 'EXPENSES', { department_row: 'exhibition' }),
+  account('900-R009', 'SHOW ROOM (KELANA JAYA)', 'EXPENSES', { department_row: 'showroom' }),
+  account('900-A004', 'ADVERTISEMENT - MANAGEMENT FEES', 'EXPENSES', { department_row: 'hire' }),
+  account('900-U014', 'UPKEEP OF LORI - VRH 9058', 'EXPENSES'),
 ];
 
 const LEDGER: Row[] = [
@@ -59,13 +62,19 @@ const LEDGER: Row[] = [
   gl('900-R005', 270_000, 0, { entry_date: '2026-09-07' }),
   gl('900-T005', 150_000, 0),
   gl('900-B003', 400_000, 0),
+  gl('900-R009', 220_000, 0, { entry_date: '2026-09-07' }),
+  gl('900-A004', 6_000, 0, { notes: 'WAREHOUSE ASSISTANT - AUG26' }),
+  gl('900-A004', 2_500, 0, { notes: 'ACCOUNT EXECUTIVE - AUG26' }),
+  gl('900-U014', 20_000, 0),
 ];
+/* Houzs's plan (migration 20261119T2310): its showroom counts in G&A. */
+const HOUZS_PLAN = { departments: ['exhibition', 'operation', 'logistics', 'ga'], selling: 'exhibition', folds: { showroom: 'ga' } };
 
 const world = (over: Record<string, Row[]> = {}) => fakeSb({
   accounts: ACCOUNTS.map((r) => ({ ...r })),
   v_gl_entries: LEDGER.map((r) => ({ ...r })),
   acc_report_layouts: [], inventory_movements: [], warehouses: [], acc_account_roles: [], journal_entries: [], acc_company_settings: [],
-  acc_department_settings: [],
+  acc_department_settings: [{ company_id: CO, ga_share_bp: 800, operation_income_bp: 700, plan: HOUZS_PLAN }],
   lorries: [], acc_logistics_settings: [], acc_logistics_spreads: [], acc_logistics_area_rates: [], acc_logistics_trip_marks: [],
   delivery_orders: [
     { id: 'd1', company_id: CO, do_number: 'HC-DO-1', so_doc_no: null, status: 'LOADED', state: 'Selangor', do_date: '2026-09-10', customer_delivery_date: null },
@@ -97,6 +106,8 @@ function harness(sb: ReturnType<typeof world>, perms: string[] = ['scm.payment_v
     c.set('allowedCompanyIds' as never, [CO] as never);
     await next();
   });
+  app.get('/departments/plan', departmentsPlanHandler as never);
+  app.get('/departments/dept', departmentViewHandler as never);
   app.get('/departments/all', departmentsAllHandler as never);
   app.get('/departments/ga', departmentsGaHandler as never);
   app.get('/departments/operation', departmentsOperationHandler as never);
@@ -111,31 +122,59 @@ function harness(sb: ReturnType<typeof world>, perms: string[] = ['scm.payment_v
 const SEP = '?from=2026-09-01&to=2026-09-30';
 
 describe('GET /departments/all — the whole P&L by department', () => {
-  test("every line split, each block's columns adding up to the P&L's own total", async () => {
+  test("every line split across the company's departments, each block's columns adding up to the P&L's own total", async () => {
     const { status, body } = await harness(world()).get(`/departments/all${SEP}`);
     expect(status).toBe(200);
-    expect(body.columns.map((x: any) => x.key)).toEqual(['ga', 'operation', 'logistics', 'none']);
+    expect(body.columns.map((x: any) => x.key)).toEqual(['exhibition', 'operation', 'logistics', 'ga']);
+    expect(body.departments.map((x: any) => [x.key, x.view])).toEqual([['exhibition', 'dept'], ['operation', 'operation'], ['logistics', null], ['ga', 'ga']]);
     const leaf = (block: string, code: string): any => {
       const walk = (ns: any[]): any[] => ns.flatMap((n: any) => (n.code === code && n.kind === 'account' ? [n] : walk(n.children ?? [])));
       return walk(body.tree[block])[0];
     };
-    expect(leaf('expenses', '900-S100').cells).toEqual({ ga: 80_000, logistics: 50_000, operation: 120_000, none: 20_000 });
-    expect(leaf('expenses', '900-D100').cells).toEqual({ ga: 200_000, operation: 0, logistics: 0, none: 0 });
-    expect(leaf('expenses', '900-P001').cells).toEqual({ ga: 5_000, operation: 0, logistics: 0, none: 0 });
+    /* Finance's team G&A, helpers Logistics, the warehouse teams Operation, the line naming no team the selling department. */
+    expect(leaf('expenses', '900-S100').cells).toEqual({ exhibition: 20_000, operation: 120_000, logistics: 50_000, ga: 80_000, none: 0 });
+    expect(leaf('expenses', '900-D100').cells.ga).toBe(200_000);
     expect(leaf('expenses', '900-R005').cells.operation).toBe(270_000);
     expect(leaf('expenses', '900-T005').cells.logistics).toBe(150_000);
-    expect(leaf('expenses', '900-B003').cells.none).toBe(400_000);
-    expect(leaf('otherIncome', '599-0000').cells).toEqual({ ga: 0, operation: 70_000, logistics: 40_000, none: 1_000 });
-    expect(leaf('tradingIncome', '501-0000').cells).toEqual({ ga: 0, operation: 0, logistics: 0, none: 5_000_000 });
+    expect(leaf('expenses', '900-B003').cells.exhibition).toBe(400_000);
+    /* Houzs's showroom folds into G&A; a warehouse job ad is Operation's, an account executive's G&A's. */
+    expect(leaf('expenses', '900-R009').cells.ga).toBe(220_000);
+    expect(leaf('expenses', '900-A004').cells).toEqual({ exhibition: 0, operation: 6_000, logistics: 0, ga: 2_500, none: 0 });
+    expect(leaf('otherIncome', '599-0000').cells).toEqual({ exhibition: 0, operation: 70_000, logistics: 40_000, ga: 1_000, none: 0 });
+    expect(leaf('tradingIncome', '501-0000').cells.exhibition).toBe(5_000_000);
     for (const [block, key] of [['expenses', 'expensesSen'], ['otherIncome', 'otherIncomeSen'], ['tradingIncome', 'tradingIncomeSen']] as const) {
       const t = body.blockTotals[block];
-      expect(t.ga + t.operation + t.logistics + t.none).toBe(body.totals[key]);
+      expect(t.exhibition + t.operation + t.logistics + t.ga + t.none).toBe(body.totals[key]);
     }
-    expect(body.totals.expensesSen).toBe(80_000 + 50_000 + 90_000 + 30_000 + 20_000 + 200_000 + 5_000 + 180_000 + 270_000 + 150_000 + 400_000);
+    /* An expense account with no department is named, never a column. */
+    expect(body.unassigned).toEqual({ label: 'No department yet', lines: [{ code: '900-U014', name: '900-U014', amountSen: 20_000 }] });
   });
 
   test("the statements' right only", async () => {
     expect((await harness(world(), ['scm.access']).get(`/departments/all${SEP}`)).status).toBe(403);
+  });
+});
+
+describe('GET /departments/plan and /departments/dept — the company\'s departments, one at a time', () => {
+  test('the Exhibition P&L: the fairs\' sales less what Exhibition booked, month by month', async () => {
+    const h = harness(world());
+    const plan = await h.get('/departments/plan');
+    expect(plan.body.departments.map((x: any) => x.label)).toEqual(['Exhibition', 'Operation', 'Logistics', 'G&A']);
+    const { status, body } = await h.get(`/departments/dept?d=exhibition&from=2026-09-01&to=2026-09-30`);
+    expect(status).toBe(200);
+    expect(body.label).toBe('Exhibition');
+    expect(body.perMonth).toEqual([{
+      month: '2026-09', salesSen: 5_000_000, costOfSalesSen: 0, grossSen: 5_000_000, otherIncomeSen: 0,
+      expensesSen: 400_000 + 20_000, taxationSen: 0, netSen: 5_000_000 - 420_000,
+    }]);
+    expect((await h.get(`/departments/dept?d=showroom${SEP.replace('?', '&')}`)).body.error).toBe('bad_department');
+  });
+
+  test('a company with no Operation department has no Operation sheet', async () => {
+    const shop = world({ acc_department_settings: [{ company_id: CO, plan: { departments: ['showroom', 'ga'], selling: 'showroom', folds: { operation: 'showroom' } } }] });
+    const res = await harness(shop).get(`/departments/operation${SEP}`);
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('bad_department');
   });
 });
 
@@ -154,7 +193,9 @@ describe('GET /departments/operation — the Operation sheet', () => {
     /* Shared by the DO value 1 : 3; the storekeeper line names Penang. */
     expect(rows.manpower_operation).toEqual({ PG: 22_500, KL: 67_500, EM: 0 });
     expect(rows.manpower_storekeeper).toEqual({ PG: 30_000, KL: 0, EM: 0 });
-    expect(rows.total_expense).toEqual({ PG: 180_000 + 22_500 + 30_000, KL: 270_000 + 67_500, EM: 0 });
+    /* The warehouse assistant's job ad: the sheet's job-ads row, in KL. */
+    expect(rows.recruitment).toEqual({ PG: 0, KL: 6_000, EM: 0 });
+    expect(rows.total_expense).toEqual({ PG: 180_000 + 22_500 + 30_000, KL: 270_000 + 67_500 + 6_000, EM: 0 });
     expect(body.rows.find((r: any) => r.key === 'do_income').label).toBe('7% Income from Delivery Order');
     expect(body.rows.find((r: any) => r.key === 'manpower_storekeeper').label).toBe('Warehouse Manpower - Storekeeper');
     expect(body.rows.find((r: any) => r.key === 'rental').label).toBe('Rental Warehouse');
@@ -172,9 +213,10 @@ describe('GET /departments/ga — G&A against its share', () => {
     const sep = body.perMonth[0];
     expect(sep.salesSen).toBe(2_500_000);
     expect(sep.shareSen).toBe(200_000);
-    /* Finance's team line, the director's pay and the printing — not the warehouse, the drivers or the showroom staff. */
-    expect(sep.expenseSen).toBe(80_000 + 200_000 + 5_000);
-    expect(sep.surplusSen).toBe(200_000 - 285_000);
+    /* Finance's team line, the director's pay, the printing, the showroom (Houzs's folds into G&A) and the
+       account executive's job ad — not the warehouse, the drivers, the warehouse ad or the selling staff. */
+    expect(sep.expenseSen).toBe(80_000 + 200_000 + 5_000 + 220_000 + 2_500);
+    expect(sep.surplusSen).toBe(200_000 - 507_500);
     expect(body.teams.map((t: any) => t.team)).toEqual(['FINANCE']);
   });
 });

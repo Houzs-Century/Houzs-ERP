@@ -5,8 +5,8 @@
 
 import { describe, expect, test } from 'vitest';
 import {
-  DEPARTMENT_ROWS, accountHome, departmentRowLabel, isDepartmentRow, isTransportRecharge, lineHome, opIncomeOf, opRowOf,
-  payLineOf, payrollAccounts, regionNamed, type DeptAccount,
+  DEFAULT_PLAN, DEPARTMENT_ROWS, accountHome, departmentRowLabel, hireLineOf, isDepartmentRow, isTransportRecharge, lineHome, opIncomeOf, opRowOf,
+  parsePlan, payLineOf, payrollAccounts, regionNamed, resolveDept, type DeptAccount,
 } from './department-rows';
 import { salaryAccounts } from './logistics-pnl';
 
@@ -46,6 +46,11 @@ describe('the salary journal: one line per team', () => {
     expect(payLineOf("OTHER SALARY - OCT'26")).toEqual({ dept: 'ga', team: 'OTHER' });
   });
 
+  test('SHOWROOM and SALES lines are the showroom\'s and the selling department\'s', () => {
+    expect(payLineOf("SHOWROOM - SALARY - NOV'26")).toEqual({ dept: 'showroom' });
+    expect(payLineOf("SALES TEAM SALARY - NOV'26")).toEqual({ dept: 'sales' });
+  });
+
   test("a line naming no team is no team's: 2990's showroom staff, a director's own line", () => {
     expect(payLineOf("GROSS SALARY - SEP'26")).toBeNull();
     expect(payLineOf("EMPLOYER EPF - SEP'26")).toBeNull();
@@ -67,12 +72,15 @@ describe('recharges billed on Other Debtor bills', () => {
 });
 
 describe("the Chart of Accounts' Department column", () => {
-  test('G&A, or one Operation row in one region — the values and how the picker names them', () => {
-    expect(DEPARTMENT_ROWS).toHaveLength(25);
+  test('a nature, Recruitment, or one Operation row in one region — the values and how the picker names them', () => {
+    expect(DEPARTMENT_ROWS).toHaveLength(31);
     expect(DEPARTMENT_ROWS[0]).toBe('ga');
+    expect(DEPARTMENT_ROWS.slice(-6)).toEqual(['exhibition', 'showroom', 'logistics', 'operation', 'sales', 'hire']);
     expect(isDepartmentRow('op_rental_pg')).toBe(true);
     expect(isDepartmentRow('op_rental_sg')).toBe(false);
-    expect(isDepartmentRow('sales')).toBe(false);
+    expect(isDepartmentRow('marketing')).toBe(false);
+    expect(departmentRowLabel('hire')).toBe('Recruitment — by the position its line names');
+    expect(departmentRowLabel('sales')).toBe("Sales — the company's selling department");
     expect(opRowOf('op_utilities_em')).toEqual({ row: 'utilities', region: 'EM' });
     expect(opRowOf('ga')).toBeNull();
     expect(departmentRowLabel('ga')).toBe('G&A');
@@ -96,6 +104,8 @@ describe('where an amount goes', () => {
     expect(accountHome(hp)).toEqual({ dept: 'none' });
     expect(accountHome(staff)).toEqual({ dept: 'none' });
     expect(accountHome(undefined)).toEqual({ dept: 'none' });
+    expect(accountHome(acc('900-R032', 'RENTAL - EXHIBITION', { department_row: 'exhibition' }))).toEqual({ dept: 'exhibition' });
+    expect(accountHome(acc('900-O001', 'OPERATIING EXPENSE', { department_row: 'operation' }))).toEqual({ dept: 'operation', row: 'expenses', region: 'KL' });
   });
 
   test("a payroll line goes by its team, else where its account goes", () => {
@@ -103,7 +113,9 @@ describe('where an amount goes', () => {
     expect(lineHome(staff, "FINANCE - SALARY - OCT2026", pay)).toEqual({ dept: 'ga', team: 'FINANCE' });
     expect(lineHome(staff, "OPERATION HELPER SALARY - OCT'26", pay)).toEqual({ dept: 'logistics' });
     expect(lineHome(staff, "OPERATION STOREKEEPER PG SALARY - NOV'26", pay)).toEqual({ dept: 'operation', row: 'manpower_storekeeper', region: 'PG', income: null });
-    expect(lineHome(staff, "GROSS SALARY - SEP'26", pay)).toEqual({ dept: 'none' });
+    /* No team named: the account's own department, else the selling department (2990's showroom staff). */
+    expect(lineHome(staff, "GROSS SALARY - SEP'26", pay)).toEqual({ dept: 'sales' });
+    expect(lineHome(acc('900-S011', 'S)- PART TIME WORKER / WAGES', { department_row: 'exhibition' }), 'PART TIME WORKERS (2 JOB)', pay)).toEqual({ dept: 'exhibition' });
     expect(lineHome(directorEpf, "EPF - SEP'26", pay)).toEqual({ dept: 'ga', team: null });
     /* Not a payroll account: its words decide nothing. */
     expect(lineHome(office, 'FINANCE - PRINTER INK', { payroll: false, recharge: false })).toEqual({ dept: 'ga', team: null });
@@ -127,5 +139,49 @@ describe('where an amount goes', () => {
     const placed = new Set(chart.filter((a) => a.logistics_row).map((a) => a.account_code));
     expect([...payrollAccounts(chart)].sort()).toEqual(salaryAccounts(chart).filter((c) => !placed.has(c)));
     expect(payrollAccounts(chart).has('900-D100')).toBe(false);
+  });
+});
+
+describe('job ads: by the position they name (owner 2026-11-19: Logistic admin and Warehouse assistant are Operation\'s)', () => {
+  test('warehouse posts are Operation, drivers Logistics, sales the selling department, the rest G&A', () => {
+    expect(hireLineOf('ADVERTISEMENT - LOGISTIC ADMIN - 1-10OCT26')).toBe('operation');
+    expect(hireLineOf('WAREHOUSE ASSISTANT - AUG26')).toBe('operation');
+    expect(hireLineOf('ADVERTISEMENT - DRIVER - NOV26')).toBe('logistics');
+    expect(hireLineOf('ADVERTISEMENT - HR - SALES - 1-10OCT26')).toBe('sales');
+    expect(hireLineOf('ADVERTISEMENT - SALES PERSON - 11-20OCT26')).toBe('sales');
+    expect(hireLineOf("JOB STREET ADVERTISEMENT - ACCOUNT EXECUTIVE - AUG'26")).toBe('ga');
+    expect(hireLineOf('MR LOO - META ADS (HIRING) INTEREST SEPTEMBER 2026')).toBe('ga');
+  });
+
+  test('a recruitment account\'s lines go by that rule; a warehouse post fills the sheet\'s job-ads row', () => {
+    const ads = acc('900-A004', 'ADVERTISEMENT - MANAGEMENT FEES', { department_row: 'hire' });
+    const plain = { payroll: false, recharge: false };
+    expect(lineHome(ads, 'WAREHOUSE ASSISTANT - AUG26', plain)).toEqual({ dept: 'operation', row: 'recruitment', region: null, income: null });
+    expect(lineHome(ads, 'ACCOUNT EXECUTIVE - AUG26', plain)).toEqual({ dept: 'ga', team: null });
+    expect(lineHome(ads, 'ADVERTISEMENT - SALES PERSON', plain)).toEqual({ dept: 'sales' });
+  });
+});
+
+describe("the company's plan", () => {
+  const houzs = parsePlan({ departments: ['exhibition', 'operation', 'logistics', 'ga'], selling: 'exhibition', folds: { showroom: 'ga' } });
+  const shop = parsePlan({ departments: ['showroom', 'ga'], selling: 'showroom', folds: { exhibition: 'showroom', operation: 'showroom', logistics: 'showroom' } });
+
+  test("a nature counts in the company's own department, its fold, else G&A; Sales is whoever sells", () => {
+    expect(resolveDept('showroom', houzs)).toBe('ga');
+    expect(resolveDept('sales', houzs)).toBe('exhibition');
+    expect(resolveDept('operation', houzs)).toBe('operation');
+    expect(resolveDept('operation', shop)).toBe('showroom');
+    expect(resolveDept('logistics', shop)).toBe('showroom');
+    expect(resolveDept('sales', shop)).toBe('showroom');
+    expect(resolveDept('ga', shop)).toBe('ga');
+    expect(resolveDept('none', shop)).toBe('none');
+    expect(resolveDept('exhibition', parsePlan({ departments: ['ga', 'operation'] }))).toBe('ga');
+  });
+
+  test('a stored plan is checked: unknown departments dropped, a fold into a missing department ignored, nothing = the default', () => {
+    expect(parsePlan({ departments: ['ga', 'marketing', 'ga'], selling: 'marketing', folds: { showroom: 'exhibition', operation: 'ga' } }))
+      .toEqual({ departments: ['ga'], selling: 'ga', folds: { operation: 'ga' } });
+    expect(parsePlan(null)).toEqual(DEFAULT_PLAN);
+    expect(parsePlan({ departments: [] })).toEqual(DEFAULT_PLAN);
   });
 });

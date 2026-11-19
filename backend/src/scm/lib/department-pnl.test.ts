@@ -12,9 +12,9 @@
 
 import { describe, expect, test } from 'vitest';
 import {
-  buildGaPnl, buildOperationPnl, opSum, shareByValue, splitLine, type LogisticsMonthIn,
+  buildDeptView, buildGaPnl, buildOperationPnl, opSum, shareByValue, splitLine, type LogisticsMonthIn,
 } from './department-pnl';
-import type { DeptAccount } from './department-rows';
+import { parsePlan, type DeptAccount } from './department-rows';
 import type { BillLine, Leg } from './logistics-pnl';
 import type { LayoutItem } from '../../acc/report-layout';
 
@@ -24,34 +24,50 @@ let seq = 0;
 const leg = (accountCode: string, day: string, debitSen: number, notes: string | null = null, creditSen = 0): Leg =>
   ({ lineId: `l${++seq}`, accountCode, accountName: null, day, debitSen, creditSen, notes, docNo: `JE-${seq}` });
 
-describe('All: one P&L line across the departments', () => {
+const HOUZS = parsePlan({ departments: ['exhibition', 'operation', 'logistics', 'ga'], selling: 'exhibition', folds: { showroom: 'ga' } });
+const SHOP = parsePlan({ departments: ['showroom', 'ga'], selling: 'showroom', folds: { exhibition: 'showroom', operation: 'showroom', logistics: 'showroom' } });
+
+describe('All: one P&L line across the company\'s departments', () => {
   const staff = acc('900-S100', 'STAFF SALARIES & OVERTIME');
-  test('a payroll account splits by its team lines; what the legs do not explain stays with the account', () => {
-    const cells = splitLine({
-      amountSen: 10_000, sign: 1, account: staff, payroll: true, recharge: false,
-      legs: [
-        { accountCode: '900-S100', notes: "FINANCE - SALARY - OCT2026", debitSen: 3_000, creditSen: 0 },
-        { accountCode: '900-S100', notes: "OPERATION HELPER SALARY - OCT'26", debitSen: 2_000, creditSen: 0 },
-        { accountCode: '900-S100', notes: "WAREHOUSE OPERATIONS SALARY - OCT'26", debitSen: 4_000, creditSen: 0 },
-        { accountCode: '900-S100', notes: "GROSS SALARY - OCT'26", debitSen: 500, creditSen: 0 },
-      ],
-    });
-    expect(cells).toEqual({ ga: 3_000, logistics: 2_000, operation: 4_000, none: 1_000 });
-    expect(Object.values(cells).reduce((a, b) => a + b, 0)).toBe(10_000);
+  const payLegs = [
+    { accountCode: '900-S100', notes: 'FINANCE - SALARY - OCT2026', debitSen: 3_000, creditSen: 0 },
+    { accountCode: '900-S100', notes: "OPERATION HELPER SALARY - OCT'26", debitSen: 2_000, creditSen: 0 },
+    { accountCode: '900-S100', notes: "WAREHOUSE OPERATIONS SALARY - OCT'26", debitSen: 4_000, creditSen: 0 },
+    { accountCode: '900-S100', notes: "GROSS SALARY - OCT'26", debitSen: 500, creditSen: 0 },
+  ];
+  test('a payroll account splits by its team lines; a line naming none is the selling department\'s; the cells add up', () => {
+    const cells = splitLine({ amountSen: 9_500, sign: 1, account: staff, payroll: true, recharge: false, mixed: true, fallback: 'none', plan: HOUZS, legs: payLegs });
+    expect(cells).toEqual({ exhibition: 500, operation: 4_000, logistics: 2_000, ga: 3_000, none: 0 });
+    expect(Object.values(cells).reduce((a, b) => a! + b!, 0)).toBe(9_500);
+    /* What the legs do not explain stays with the account — an account with no department says so. */
+    expect(splitLine({ amountSen: 9_600, sign: 1, account: staff, payroll: true, recharge: false, mixed: true, fallback: 'none', plan: HOUZS, legs: payLegs }).none).toBe(100);
   });
 
-  test('an income line reads credit-positive; an account no rule mixes goes whole to its department', () => {
+  test("2990's plan: its operation and logistics count in Showroom, its office in G&A", () => {
+    expect(splitLine({ amountSen: 9_500, sign: 1, account: staff, payroll: true, recharge: false, mixed: true, fallback: 'none', plan: SHOP, legs: payLegs }))
+      .toEqual({ showroom: 6_500, ga: 3_000, none: 0 });
+  });
+
+  test('an income line reads credit-positive: recharges by their words, the rest G&A; sales are the selling department\'s', () => {
     const inc = acc('599-0000', 'ADDITIONAL INCOME', { account_type: 'INCOME' });
     expect(splitLine({
-      amountSen: 1_500, sign: -1, account: inc, payroll: false, recharge: true,
+      amountSen: 1_500, sign: -1, account: inc, payroll: false, recharge: true, mixed: false, fallback: 'ga', plan: HOUZS,
       legs: [
         { accountCode: '599-0000', notes: "OPERATION CHARGES - SEP'26", debitSen: 0, creditSen: 1_000 },
         { accountCode: '599-0000', notes: "LOGISTICS CHARGES - SEP'26", debitSen: 0, creditSen: 600 },
         { accountCode: '599-0000', notes: 'SUNDRY', debitSen: 100, creditSen: 0 },
       ],
-    })).toEqual({ ga: 0, operation: 1_000, logistics: 600, none: -100 });
-    expect(splitLine({ amountSen: 777, sign: 1, account: acc('900-R004', 'WAREHOUSE - (PENANG)', { department_row: 'op_rental_pg' }), payroll: false, recharge: false, legs: undefined }))
-      .toEqual({ ga: 0, operation: 777, logistics: 0, none: 0 });
+    })).toEqual({ exhibition: 0, operation: 1_000, logistics: 600, ga: -100, none: 0 });
+    expect(splitLine({ amountSen: 50_000, sign: -1, account: acc('500-0001', 'SALES OF BEDDING', { account_type: 'INCOME' }), payroll: false, recharge: false, mixed: false, fallback: 'sales', plan: HOUZS, legs: undefined }))
+      .toEqual({ exhibition: 50_000, operation: 0, logistics: 0, ga: 0, none: 0 });
+  });
+
+  test("an account goes whole to its department, the plan folding it; an expense account with none says so", () => {
+    const one = (account: DeptAccount, plan = HOUZS) => splitLine({ amountSen: 777, sign: 1, account, payroll: false, recharge: false, mixed: false, fallback: 'none', plan, legs: undefined });
+    expect(one(acc('900-R004', 'WAREHOUSE - (PENANG)', { department_row: 'op_rental_pg' })).operation).toBe(777);
+    expect(one(acc('900-R009', 'SHOW ROOM (KELANA JAYA)', { department_row: 'showroom' })).ga).toBe(777);
+    expect(one(acc('900-R048', 'RENTAL OF SHOWROOM - 2990S', { department_row: 'showroom' }), SHOP).showroom).toBe(777);
+    expect(one(acc('900-U014', 'UPKEEP OF LORI - VRH 9058')).none).toBe(777);
   });
 });
 
@@ -157,6 +173,18 @@ describe("Operation: the owner's sheet by region", () => {
   });
 });
 
+describe('Operation: the job ads for warehouse posts', () => {
+  test('a recruitment account\'s warehouse ad fills the sheet\'s job-ads row; its other ads are not Operation\'s', () => {
+    const chart = new Map<string, DeptAccount>([['900-A004', acc('900-A004', 'ADVERTISEMENT - MANAGEMENT FEES', { department_row: 'hire' })]]);
+    const p = buildOperationPnl({
+      months: ['2026-10'], incomeBp: 700, logistics: new Map(), bills: [], chart, payroll: new Set(), spreadMonths: new Map(),
+      legs: [leg('900-A004', '2026-10-20', 6_000, 'WAREHOUSE ASSISTANT - AUG26'), leg('900-A004', '2026-10-20', 2_500, 'ACCOUNT EXECUTIVE - AUG26')],
+    });
+    expect(p.perMonth[0]!.rows.recruitment).toEqual({ PG: 0, KL: 6_000, EM: 0 });
+    expect(p.perMonth[0]!.rows.total_expense.KL).toBe(6_000);
+  });
+});
+
 describe('G&A: its share of the Performance sales against what it booked', () => {
   const chart = new Map<string, DeptAccount>([
     ['900-S100', acc('900-S100', 'STAFF SALARIES & OVERTIME')],
@@ -191,7 +219,7 @@ describe('G&A: its share of the Performance sales against what it booked', () =>
       leg('900-R004', '2026-09-07', 18_000),
       leg('900-P001', '2026-11-02', 999),
     ],
-    chart, payroll: new Set(['900-S100', '900-S200']), layout, companyId: 1,
+    chart, payroll: new Set(['900-S100', '900-S200']), plan: HOUZS, layout, companyId: 1,
   });
 
   test('the share, the expenses and the surplus, month by month', () => {
@@ -210,5 +238,43 @@ describe('G&A: its share of the Performance sales against what it booked', () =>
     expect(salary.cells).toEqual({ '2026-09': 9_000, '2026-10': 26_000 });
     expect(admin.amountSen).toBe(35_500);
     expect(g.teams.map((t) => [t.team, t.lines.length])).toEqual([['FINANCE', 2], ['IT', 1]]);
+  });
+});
+
+describe('one department: its column of the P&L, month by month (the Exhibition P&L)', () => {
+  const split = (month: string, k: number) => ({
+    month,
+    blocks: {
+      tradingIncome: [{ code: '500-0001', name: 'SALES OF BEDDING', cells: { exhibition: 100_000 * k, ga: 0, none: 0 } }],
+      costOfSales: [{ code: '601-0001', name: 'PURCHASES OF BEDDING', cells: { exhibition: 60_000 * k } }],
+      otherIncome: [{ code: '599-0000', name: 'ADDITIONAL INCOME', cells: { exhibition: 0, ga: 500 } }],
+      expenses: [
+        { code: '900-R032', name: 'RENTAL - EXHIBITION', cells: { exhibition: 20_000 * k } },
+        { code: '900-S100', name: 'STAFF SALARIES & OVERTIME', cells: { exhibition: 1_000, ga: 8_000 } },
+        { code: '900-P001', name: 'PRINTING & STATIONERY', cells: { ga: 300 } },
+      ],
+      taxation: [],
+    },
+  });
+  const layout = {
+    expenses: [
+      { kind: 'category', id: 'pl:exh', label: 'Exhibition & roadshow expense', children: [{ kind: 'account', code: '900-R032' }] },
+      { kind: 'category', id: 'pl:general:salary', label: 'Salary & related', children: [{ kind: 'account', code: '900-S100' }] },
+    ],
+  } as unknown as Record<string, LayoutItem[]>;
+  const v = buildDeptView({ dept: 'exhibition', months: ['2026-09', '2026-10'], split: [split('2026-09', 1), split('2026-10', 2)], layout, companyId: 1 });
+
+  test('sales less cost of sales less its expenses, each month', () => {
+    expect(v.perMonth).toEqual([
+      { month: '2026-09', salesSen: 100_000, costOfSalesSen: 60_000, grossSen: 40_000, otherIncomeSen: 0, expensesSen: 21_000, taxationSen: 0, netSen: 19_000 },
+      { month: '2026-10', salesSen: 200_000, costOfSalesSen: 120_000, grossSen: 80_000, otherIncomeSen: 0, expensesSen: 41_000, taxationSen: 0, netSen: 39_000 },
+    ]);
+  });
+
+  test("only the department's own lines, on the P&L's tree, each with its figure per month", () => {
+    expect(v.tree.expenses.map((n) => n.id)).toEqual(['pl:exh', 'pl:general:salary']);
+    expect(v.tree.expenses[0]!.cells).toEqual({ '2026-09': 20_000, '2026-10': 40_000 });
+    expect(v.tree.expenses[1]!.children[0]!.cells).toEqual({ '2026-09': 1_000, '2026-10': 1_000 });
+    expect(v.tree.otherIncome).toEqual([]);
   });
 });

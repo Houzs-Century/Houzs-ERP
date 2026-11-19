@@ -4,11 +4,14 @@
 // 「我要可以看全部的，也要可以看单独部门的」). Registered on the /acc-events router
 // beside the Logistics cost report, behind the same Finance › Accounting guard:
 //
-//   GET /departments/all?from=&to=         the P&L, every line split across G&A |
-//                                          Operation | Logistics | no department
+//   GET /departments/plan                  the company's departments (its plan)
+//   GET /departments/all?from=&to=         the P&L, every line split across the
+//                                          company's departments
 //   GET /departments/ga?from=&to=          G&A month by month: its share of the
 //                                          Performance sales against what it booked
 //   GET /departments/operation?from=&to=   the Operation sheet month by month, by region
+//   GET /departments/dept?d=&from=&to=     one department's own P&L month by month
+//                                          (the Exhibition P&L, the Showroom P&L)
 //   PUT /departments/rate                  { dept: 'ga' | 'operation', pct } — G&A's
 //                                          share (8%) or Operation's income (7%)
 //
@@ -24,18 +27,22 @@ import { chunkIn } from '../lib/paginate-all';
 import { todayMyt } from '../lib/my-time';
 import { dateOrNull } from '../lib/date-coerce';
 import { countsInTheBooks } from '../../acc/reversal-pairs';
-import { layOutBlock, type LaidLine, type LaidNode } from '../../acc/report-layout';
-import { buildPnl, dbSources, type ReportLine } from './accounting-reports';
+import { layOutBlock, type LaidLine, type LaidNode, type LayoutItem } from '../../acc/report-layout';
+import { buildPnl, dbSources, type PnlReport } from './accounting-reports';
 import { allowedIds, resolveLayout } from './accounting-report-layouts';
 import { PERFORMANCE_MONTHS_MAX, buildPerformanceMonths, perfDbSources } from './accounting-performance';
 import { loadLogisticsPnl } from './acc-logistics-pnl';
 import { fail } from './acc-logistics';
 import { MAX_SPREAD, addMonths, monthsBetween, type Leg } from '../lib/logistics-pnl';
 import {
-  DEPT_KEYS, DEPT_LABEL, MANPOWER_LABEL, OP_REGIONS, OP_ROW_LABEL, opRowOf, payrollAccounts,
-  type DeptAccount, type ManpowerRow, type OpRow,
+  DEPARTMENT_LABEL, MANPOWER_LABEL, NONE_LABEL, OP_REGIONS, OP_ROW_LABEL, RECRUITMENT_LABEL, accountHome, isMixedAccount,
+  parsePlan, payrollAccounts,
+  type DepartmentPlan, type DeptAccount, type DeptKey, type ManpowerRow, type OpRow,
 } from '../lib/department-rows';
-import { buildGaPnl, buildOperationPnl, operationRows, splitLine, type LogisticsMonthIn, type SplitLeg } from '../lib/department-pnl';
+import {
+  PNL_BLOCKS, buildDeptView, buildGaPnl, buildOperationPnl, operationRows, splitPnlLines,
+  type DeptMonthSplit, type LogisticsMonthIn, type PnlBlock, type SplitLeg,
+} from '../lib/department-pnl';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- PostgREST client, untyped throughout the acc layer */
 type Row = Record<string, any>;
@@ -74,7 +81,7 @@ export const DEFAULT_OPERATION_INCOME_BP = 700;
 /** The chart (every column, so the Department column reads once its migration is in)
     and the company's two rates. */
 async function loadSetup(sb: any, companyId: number): Promise<
-  { ok: true; chart: DeptAccount[]; gaShareBp: number; operationIncomeBp: number } | { ok: false; what: string; reason: string }
+  { ok: true; chart: DeptAccount[]; gaShareBp: number; operationIncomeBp: number; plan: DepartmentPlan } | { ok: false; what: string; reason: string }
 > {
   const [chartRes, setRes] = await Promise.all([
     sb.from('accounts').select('*').eq('company_id', companyId),
@@ -82,14 +89,63 @@ async function loadSetup(sb: any, companyId: number): Promise<
   ]);
   if (chartRes.error) return { ok: false, what: 'chart of accounts', reason: chartRes.error.message };
   if (setRes.error) return { ok: false, what: 'Department P&L settings', reason: setRes.error.message };
-  const set = setRes.data as { ga_share_bp?: number | null; operation_income_bp?: number | null } | null;
+  const set = setRes.data as { ga_share_bp?: number | null; operation_income_bp?: number | null; plan?: unknown } | null;
   return {
     ok: true,
     chart: (chartRes.data ?? []) as DeptAccount[],
     gaShareBp: set?.ga_share_bp == null ? DEFAULT_GA_SHARE_BP : Number(set.ga_share_bp),
     operationIncomeBp: set?.operation_income_bp == null ? DEFAULT_OPERATION_INCOME_BP : Number(set.operation_income_bp),
+    plan: parsePlan(set?.plan),
   };
 }
+
+/** The views a department has: G&A its share, Operation the sheet, the others their own P&L.
+    Logistics is its own report (Logistics cost) and has no view here. */
+const viewOf = (d: string): 'ga' | 'operation' | 'dept' | null => (d === 'ga' ? 'ga' : d === 'operation' ? 'operation' : d === 'logistics' ? null : 'dept');
+const planBody = (plan: DepartmentPlan) => ({
+  departments: plan.departments.map((key) => ({ key, label: DEPARTMENT_LABEL[key], view: viewOf(key) })),
+  selling: plan.selling,
+});
+
+/** The expense accounts' codes, mixed or not, and the chart by code. */
+const chartOf = (chart: readonly DeptAccount[]) => {
+  const byCode = new Map(chart.map((a) => [a.account_code, a] as const));
+  const payroll = payrollAccounts(chart);
+  const mixed = new Set(chart.filter((a) => isMixedAccount(a, payroll)).map((a) => a.account_code));
+  return { byCode, payroll, mixed };
+};
+
+/** One period's P&L split by department: the P&L's lines, read leg by leg where an
+    account mixes departments (payroll, recruitment, other income). */
+async function splitPeriod(sb: any, companyId: number, pnl: PnlReport, setup: { chart: DeptAccount[]; plan: DepartmentPlan }, legs: readonly SplitLeg[] | null) {
+  const { byCode, payroll, mixed } = chartOf(setup.chart);
+  const needed = new Set<string>([...pnl.expenses.filter((l) => mixed.has(l.code)).map((l) => l.code), ...pnl.otherIncome.map((l) => l.code)]);
+  let read: readonly SplitLeg[] = legs ?? [];
+  if (!legs) {
+    const r = await readLegs(sb, companyId, [...needed], pnl.from, pnl.to);
+    if (!r.ok) return { ok: false as const, reason: r.reason };
+    read = r.legs;
+  }
+  const legsOf = new Map<string, SplitLeg[]>();
+  for (const l of read) if (needed.has(l.accountCode)) legsOf.set(l.accountCode, [...(legsOf.get(l.accountCode) ?? []), l]);
+  return {
+    ok: true as const,
+    blocks: splitPnlLines({
+      lines: { tradingIncome: pnl.tradingIncome, costOfSales: pnl.costOfSales, otherIncome: pnl.otherIncome, expenses: pnl.expenses, taxation: pnl.taxation },
+      chart: byCode, payroll, mixed, legsOf, plan: setup.plan,
+    }),
+  };
+}
+
+/* ── GET /departments/plan ────────────────────────────────────────────────── */
+export const departmentsPlanHandler = async (c: any): Promise<Response> => {
+  if (!canRead(c)) return c.json(NO_PERM, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const setup = await loadSetup(c.get('supabase'), co.companyId);
+  if (!setup.ok) return fail(c, setup.what, setup.reason);
+  return c.json(planBody(setup.plan));
+};
 
 /** The legs of some accounts in [from, to] the books count, as the statements count them. */
 async function readLegs(sb: any, companyId: number, codes: readonly string[], from: string, to: string): Promise<{ ok: true; legs: Leg[] } | { ok: false; reason: string }> {
@@ -109,15 +165,6 @@ async function readLegs(sb: any, companyId: number, codes: readonly string[], fr
 }
 
 /* ── GET /departments/all ─────────────────────────────────────────────────── */
-type Block = 'tradingIncome' | 'costOfSales' | 'otherIncome' | 'expenses' | 'taxation';
-const BLOCKS: ReadonlyArray<{ block: Block; sign: 1 | -1; recharge: boolean }> = [
-  { block: 'tradingIncome', sign: -1, recharge: false },
-  { block: 'costOfSales', sign: 1, recharge: false },
-  { block: 'otherIncome', sign: -1, recharge: true },
-  { block: 'expenses', sign: 1, recharge: false },
-  { block: 'taxation', sign: 1, recharge: false },
-];
-
 export const departmentsAllHandler = async (c: any): Promise<Response> => {
   if (!canRead(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -136,35 +183,27 @@ export const departmentsAllHandler = async (c: any): Promise<Response> => {
   if (!setup.ok) return fail(c, setup.what, setup.reason);
   if (!laid.ok) return fail(c, 'P&L layout', laid.reason);
   const pnl = pnlRes.report;
-  const chart = new Map(setup.chart.map((a) => [a.account_code, a] as const));
-  const payroll = payrollAccounts(setup.chart);
+  const split = await splitPeriod(sb, companyId, pnl, setup, null);
+  if (!split.ok) return fail(c, 'ledger', split.reason);
 
-  /* The lines that mix departments: the payroll accounts' (by team) and other income's (by recharge words). */
-  const mixed = new Set<string>([
-    ...pnl.expenses.filter((l) => payroll.has(l.code)).map((l) => l.code),
-    ...pnl.otherIncome.map((l) => l.code),
-  ]);
-  const legsRes = await readLegs(sb, companyId, [...mixed], r.from, r.to);
-  if (!legsRes.ok) return fail(c, 'ledger', legsRes.reason);
-  const legsOf = new Map<string, SplitLeg[]>();
-  for (const l of legsRes.legs) legsOf.set(l.accountCode, [...(legsOf.get(l.accountCode) ?? []), l]);
-
+  const keys: DeptKey[] = [...setup.plan.departments, 'none'];
   const baseSen = pnl.layout.baseSen;
-  const tree: Record<Block, LaidNode[]> = { tradingIncome: [], costOfSales: [], otherIncome: [], expenses: [], taxation: [] };
-  const totals: Record<Block, Record<string, number>> = { tradingIncome: {}, costOfSales: {}, otherIncome: {}, expenses: {}, taxation: {} };
-  for (const { block, sign, recharge } of BLOCKS) {
-    const lines: LaidLine[] = (pnl[block] as ReportLine[]).map((l) => {
-      const isPayroll = block === 'expenses' && payroll.has(l.code);
-      const cells = splitLine({ amountSen: l.amountSen, sign, account: chart.get(l.code), legs: legsOf.get(l.code), payroll: isPayroll, recharge });
-      return { code: l.code, name: l.name, amountSen: l.amountSen, cells };
-    });
+  const tree = {} as Record<PnlBlock, LaidNode[]>;
+  const blockTotals = {} as Record<PnlBlock, Partial<Record<DeptKey, number>>>;
+  for (const { block } of PNL_BLOCKS) {
+    const lines: LaidLine[] = split.blocks[block].map((l) => ({ code: l.code, name: l.name, amountSen: l.amountSen, cells: l.cells as Record<string, number> }));
     tree[block] = layOutBlock(laid.layout.blocks[block] ?? [], lines, companyId, baseSen);
-    for (const k of DEPT_KEYS) totals[block][k] = lines.reduce((s, l) => s + (l.cells?.[k] ?? 0), 0);
+    blockTotals[block] = Object.fromEntries(keys.map((k) => [k, lines.reduce((x, l) => x + (l.cells?.[k] ?? 0), 0)]));
   }
+  /* An expense account no department claims yet: named, never a column of its own. */
+  const unassigned = split.blocks.expenses.filter((l) => (l.cells.none ?? 0) !== 0)
+    .map((l) => ({ code: l.code, name: l.name, amountSen: l.cells.none ?? 0 }));
   return c.json({
     from: r.from, to: r.to,
-    columns: DEPT_KEYS.map((k) => ({ key: k, label: DEPT_LABEL[k] })),
-    tree, blockTotals: totals, totals: pnl.totals, baseSen,
+    ...planBody(setup.plan),
+    columns: setup.plan.departments.map((k) => ({ key: k, label: DEPARTMENT_LABEL[k] })),
+    tree, blockTotals, totals: pnl.totals, baseSen,
+    unassigned: { label: NONE_LABEL, lines: unassigned },
     stock: pnl.stock,
   });
 };
@@ -187,9 +226,9 @@ export const departmentsGaHandler = async (c: any): Promise<Response> => {
   if (!setup.ok) return fail(c, setup.what, setup.reason);
   if (!laid.ok) return fail(c, 'P&L layout', laid.reason);
   if (!perf.ok) return fail(c, 'Performance P&L', perf.reason);
-  const payroll = payrollAccounts(setup.chart);
-  const gaCodes = setup.chart.filter((a) => a.department_row === 'ga').map((a) => a.account_code);
-  const legsRes = await readLegs(sb, companyId, [...new Set([...payroll, ...gaCodes])], r.from, r.to);
+  /* Every expense account: what folds into G&A (Houzs's showroom) is G&A's too. */
+  const expenseCodes = setup.chart.filter((a) => String(a.section ?? '').toUpperCase() === 'EXPENSES').map((a) => a.account_code);
+  const legsRes = await readLegs(sb, companyId, [...new Set(expenseCodes)], r.from, r.to);
   if (!legsRes.ok) return fail(c, 'ledger', legsRes.reason);
 
   const g = buildGaPnl({
@@ -198,11 +237,49 @@ export const departmentsGaHandler = async (c: any): Promise<Response> => {
     shareBp: setup.gaShareBp,
     legs: legsRes.legs,
     chart: new Map(setup.chart.map((a) => [a.account_code, a] as const)),
-    payroll,
-    layout: laid.layout.blocks.expenses ?? [],
+    payroll: payrollAccounts(setup.chart),
+    plan: setup.plan,
+    layout: (laid.layout.blocks as Partial<Record<string, LayoutItem[]>>).expenses ?? [],
     companyId,
   });
   return c.json({ from: r.from, to: r.to, ...g });
+};
+
+/* ── GET /departments/dept?d= ─────────────────────────────────────────────── */
+export const departmentViewHandler = async (c: any): Promise<Response> => {
+  if (!canRead(c)) return c.json(NO_PERM, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const r = rangeOf(c);
+  if (!r.ok) return r.res;
+  const sb = c.get('supabase');
+  const companyId = co.companyId;
+  const [setup, laid] = await Promise.all([loadSetup(sb, companyId), resolveLayout(sb, allowedIds(c), 'pnl')]);
+  if (!setup.ok) return fail(c, setup.what, setup.reason);
+  if (!laid.ok) return fail(c, 'P&L layout', laid.reason);
+  const d = String(c.req.query('d') ?? '');
+  const dept = setup.plan.departments.find((x) => x === d);
+  if (!dept) return c.json({ error: 'bad_department', message: `${d || '(none)'} is not one of this company's departments.` }, 400);
+
+  /* Month by month, each the P&L's own figures split as the All view splits them; the
+     ledger's mixed lines read once for the whole range. */
+  const src = dbSources(sb, companyId, allowedIds(c));
+  const { mixed } = chartOf(setup.chart);
+  const incomeCodes = setup.chart.filter((a) => ['OTHER INCOMES', 'EXTRA-ORDINARY INCOME'].includes(String(a.section ?? '').toUpperCase())).map((a) => a.account_code);
+  const legsRes = await readLegs(sb, companyId, [...new Set([...mixed, ...incomeCodes])], r.from, r.to);
+  if (!legsRes.ok) return fail(c, 'ledger', legsRes.reason);
+  const split: DeptMonthSplit[] = [];
+  for (const m of r.months) {
+    const from = `${m}-01`;
+    const to = monthEnd(from);
+    const p = await buildPnl(src, companyId, from, to);
+    if (!p.ok) return c.json({ error: 'load_failed', message: 'The P&L could not be read — try again.', reason: `${m}: ${p.reason}` }, 500);
+    const sp = await splitPeriod(sb, companyId, p.report, setup, legsRes.legs.filter((l) => l.day >= from && l.day <= to));
+    if (!sp.ok) return fail(c, 'ledger', sp.reason);
+    split.push({ month: m, blocks: sp.blocks });
+  }
+  const view = buildDeptView({ dept, months: r.months, split, layout: laid.layout.blocks, companyId });
+  return c.json({ from: r.from, to: r.to, label: DEPARTMENT_LABEL[dept], ...view });
 };
 
 /* ── GET /departments/operation ───────────────────────────────────────────── */
@@ -224,7 +301,11 @@ export const departmentsOperationHandler = async (c: any): Promise<Response> => 
   if (!lg.ok) return lg.res;
   if (spreadRes.error) return fail(c, 'spreads', spreadRes.error.message);
   const payroll = payrollAccounts(setup.chart);
-  const opCodes = setup.chart.filter((a) => opRowOf(a.department_row) != null).map((a) => a.account_code);
+  if (!setup.plan.departments.includes('operation')) {
+    return c.json({ error: 'bad_department', message: "This company has no Operation department — its operation costs count in another." }, 400);
+  }
+  /* The Operation accounts (each row and region) and the recruitment accounts (warehouse job ads). */
+  const opCodes = setup.chart.filter((a) => { const h = accountHome(a).dept; return h === 'operation' || h === 'hire'; }).map((a) => a.account_code);
   /* From far enough back for the longest spread of an upkeep or insurance bill. */
   const spreadFrom = `${addMonths(r.months[0]!, -(MAX_SPREAD - 1))}-01`;
   const legsRes = await readLegs(sb, companyId, [...new Set([...payroll, ...opCodes])], spreadFrom, r.to);
@@ -253,7 +334,7 @@ export const departmentsOperationHandler = async (c: any): Promise<Response> => 
     payroll,
     spreadMonths: new Map(((spreadRes.data ?? []) as Row[]).map((x) => [String(x.line_id), Number(x.months)] as const)),
   });
-  const labels: Record<string, string> = { ...MANPOWER_LABEL, ...OP_ROW_LABEL };
+  const labels: Record<string, string> = { ...MANPOWER_LABEL, ...OP_ROW_LABEL, recruitment: RECRUITMENT_LABEL };
   return c.json({
     from: r.from, to: r.to,
     ...p,

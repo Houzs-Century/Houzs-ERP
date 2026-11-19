@@ -706,7 +706,7 @@ export const chartUpdateHandler = async (c: any): Promise<Response> => {
      expense account no Logistics row claims — checked below, once the account is read. */
   if (body.departmentRow !== undefined) {
     if (body.departmentRow !== null && body.departmentRow !== '' && !isDepartmentRow(body.departmentRow)) {
-      return c.json({ error: 'bad_department_row', message: 'departmentRow must be G&A (ga), an Operation row (op_<row>_<pg|kl|em>), or empty.' }, 400);
+      return c.json({ error: 'bad_department_row', message: 'departmentRow must be ga, exhibition, showroom, logistics, operation, sales, hire, an Operation row (op_<row>_<pg|kl|em>), or empty.' }, 400);
     }
     patch.department_row = isDepartmentRow(body.departmentRow) ? body.departmentRow : null;
   }

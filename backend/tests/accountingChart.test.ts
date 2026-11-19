@@ -476,7 +476,7 @@ describe('PUT /chart/update — one definition, every company', () => {
       expect(tables.accounts.find((r) => r.company_id === co && r.account_code === '900-R004')!.department_row).toBe('op_rental_kl');
     }
     expect((await put({ code: '900-P001', departmentRow: 'ga' })).status).toBe(200);
-    const bad = await put({ code: '900-P001', departmentRow: 'sales' });
+    const bad = await put({ code: '900-P001', departmentRow: 'marketing' });
     expect(bad.status).toBe(400);
     expect(((await bad.json()) as Row).error).toBe('bad_department_row');
     const income = await put({ code: '599-0000', departmentRow: 'ga' });

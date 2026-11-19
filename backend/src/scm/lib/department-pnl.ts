@@ -34,45 +34,86 @@ import { share, type RegionCode } from './logistics-cost';
 import { addMonths, incomeRowOf, monthNamed, type BillLine, type IncomeRow, type Leg } from './logistics-pnl';
 import { layOutBlock, type LaidLine, type LaidNode, type LayoutItem } from '../../acc/report-layout';
 import {
-  GA_TEAMS, GA_TEAM_LABEL, MANPOWER_ROWS, OP_REGION_CODES, OP_ROWS, accountHome, lineHome,
-  type DeptAccount, type DeptKey, type GaTeam, type LineHome, type ManpowerRow, type OpRegion, type OpRow,
+  GA_TEAMS, GA_TEAM_LABEL, MANPOWER_ROWS, OP_REGION_CODES, OP_ROWS, accountHome, lineHome, resolveDept,
+  type DepartmentPlan, type DeptAccount, type DeptKey, type GaTeam, type LineHome, type ManpowerRow, type Nature, type OpRegion, type OpRow,
 } from './department-rows';
 
 const monthOf = (day: string): string => day.slice(0, 7);
 
 /* ── ALL: one P&L line split across the departments ───────────────────────── */
 
-export type DeptCells = Record<DeptKey, number>;
-export const zeroDeptCells = (): DeptCells => ({ ga: 0, operation: 0, logistics: 0, none: 0 });
+/** A P&L line's figure per department of the company (and `none`), keyed by DeptKey. */
+export type DeptCells = Partial<Record<DeptKey, number>>;
+export const zeroDeptCells = (plan: DepartmentPlan): DeptCells =>
+  Object.fromEntries([...plan.departments, 'none'].map((k) => [k, 0])) as DeptCells;
 
 export type SplitLeg = { accountCode: string; notes: string | null; debitSen: number; creditSen: number };
+
+/** The P&L's blocks, how each reads (debit- or credit-positive) and the nature of a
+    line nothing else places: sales and cost of sales are the selling department's,
+    other income and taxation G&A's; an expense nothing places is in no department yet. */
+export type PnlBlock = 'tradingIncome' | 'costOfSales' | 'otherIncome' | 'expenses' | 'taxation';
+export const PNL_BLOCKS: ReadonlyArray<{ block: PnlBlock; sign: 1 | -1; recharge: boolean; fallback: Nature | 'none' }> = [
+  { block: 'tradingIncome', sign: -1, recharge: false, fallback: 'sales' },
+  { block: 'costOfSales', sign: 1, recharge: false, fallback: 'sales' },
+  { block: 'otherIncome', sign: -1, recharge: true, fallback: 'ga' },
+  { block: 'expenses', sign: 1, recharge: false, fallback: 'none' },
+  { block: 'taxation', sign: 1, recharge: false, fallback: 'ga' },
+];
 
 /**
  * What each department took of one P&L line. `sign` +1 reads a line debit-positive
  * (cost of sales, expenses, taxation), -1 credit-positive (income). A line whose
- * account mixes departments (a payroll account, an income account Other Debtor
- * recharges land on) is split leg by leg; any other goes whole to its account's
- * department. Whatever the legs do not explain goes to the account's own
+ * account mixes departments (a payroll or recruitment account, an income account
+ * Other Debtor recharges land on) is split leg by leg; any other goes whole to its
+ * account's department. A nature the company has no department for counts where
+ * its plan folds it. Whatever the legs do not explain goes to the account's own
  * department, so the cells always add up to the line.
  */
 export function splitLine(input: {
   amountSen: number; sign: 1 | -1; account: DeptAccount | undefined;
-  legs: readonly SplitLeg[] | undefined; payroll: boolean; recharge: boolean;
+  legs: readonly SplitLeg[] | undefined; payroll: boolean; recharge: boolean; mixed: boolean;
+  fallback: Nature | 'none'; plan: DepartmentPlan;
 }): DeptCells {
-  const cells = zeroDeptCells();
-  const own = accountHome(input.account).dept;
+  const cells = zeroDeptCells(input.plan);
+  const home = accountHome(input.account).dept;
+  const ownNature: Nature | 'none' = home === 'none' || home === 'hire' ? input.fallback : home;
+  const add = (nature: Nature | 'none', sen: number) => {
+    const k = resolveDept(nature, input.plan);
+    cells[k] = (cells[k] ?? 0) + sen;
+  };
   let placed = 0;
-  if (input.legs && (input.payroll || input.recharge)) {
+  if (input.legs && (input.mixed || input.recharge)) {
     for (const l of input.legs) {
       const sen = input.sign * (l.debitSen - l.creditSen);
       if (sen === 0) continue;
-      const dept = lineHome(input.account, l.notes, { payroll: input.payroll, recharge: input.recharge }).dept;
-      cells[dept] += sen;
+      const lh = lineHome(input.account, l.notes, { payroll: input.payroll, recharge: input.recharge }).dept;
+      add(lh === 'none' ? input.fallback : lh, sen);
       placed += sen;
     }
   }
-  cells[own] += input.amountSen - placed;
+  add(ownNature, input.amountSen - placed);
   return cells;
+}
+
+/** Each P&L line of each block, split: the lines the P&L printed, their account, legs. */
+export function splitPnlLines(input: {
+  lines: Record<PnlBlock, ReadonlyArray<{ code: string; name: string; amountSen: number }>>;
+  chart: ReadonlyMap<string, DeptAccount>; payroll: ReadonlySet<string>; mixed: ReadonlySet<string>;
+  legsOf: ReadonlyMap<string, readonly SplitLeg[]>; plan: DepartmentPlan;
+}): Record<PnlBlock, Array<{ code: string; name: string; amountSen: number; cells: DeptCells }>> {
+  const out = {} as Record<PnlBlock, Array<{ code: string; name: string; amountSen: number; cells: DeptCells }>>;
+  for (const { block, sign, recharge, fallback } of PNL_BLOCKS) {
+    out[block] = input.lines[block].map((l) => ({
+      code: l.code, name: l.name, amountSen: l.amountSen,
+      cells: splitLine({
+        amountSen: l.amountSen, sign, account: input.chart.get(l.code), legs: input.legsOf.get(l.code),
+        payroll: block === 'expenses' && input.payroll.has(l.code), recharge, mixed: block === 'expenses' && input.mixed.has(l.code),
+        fallback, plan: input.plan,
+      }),
+    }));
+  }
+  return out;
 }
 
 /* ── OPERATION ───────────────────────────────────────────────────────────── */
@@ -90,7 +131,7 @@ const fold = (by: Partial<Record<RegionCode, number>>): OpCells => {
 
 export type OpRowKey =
   | 'do_value' | 'do_income' | 'income_warehouse' | 'income_2990' | 'income_other' | 'logistic_expense' | 'gross'
-  | ManpowerRow | OpRow | 'total_expense' | 'net' | 'logistics_net' | 'sd_net' | 'net_after';
+  | ManpowerRow | 'recruitment' | OpRow | 'total_expense' | 'net' | 'logistics_net' | 'sd_net' | 'net_after';
 
 /** The sheet's rows, in its order. `kind`: what the screen draws it as. */
 export type OpRowGroup = 'head' | 'gross' | 'expense' | 'expense_total' | 'result';
@@ -108,6 +149,7 @@ export function operationRows(incomeBp: number): Array<{ key: OpRowKey; label: s
     { key: 'logistic_expense', label: '(-) Logistic Expense', kind: 'line', group: 'gross' },
     { key: 'gross', label: 'Gross Profit / (Loss)', kind: 'strong', group: 'result' },
     ...MANPOWER_ROWS.map((key) => ({ key, label: '', kind: 'line' as const, group: 'expense' as const })),
+    { key: 'recruitment', label: '', kind: 'line', group: 'expense', optional: true },
     ...OP_ROWS.map((key) => ({ key, label: '', kind: 'line' as const, group: 'expense' as const })),
     { key: 'total_expense', label: 'Total Warehouse Expenses', kind: 'strong', group: 'expense_total' },
     { key: 'net', label: 'Net Profit / (Loss)', kind: 'strong', group: 'result' },
@@ -231,7 +273,7 @@ export function buildOperationPnl(input: OperationInput): OperationPnl {
       manpower.push({ lineId: l.lineId, day: l.day, accountCode: l.accountCode, accountName: l.accountName, notes: l.notes, amountSen: net, row, region: home.region, cells });
       continue;
     }
-    const row = home.row as OpRow;
+    const row = home.row as OpRow | 'recruitment';
     const region = home.region ?? 'KL';
     if (row === 'upkeep' || row === 'insurance') {
       const own = input.spreadMonths.get(l.lineId);
@@ -299,6 +341,8 @@ export type GaInput = {
   legs: readonly Leg[];
   chart: ReadonlyMap<string, DeptAccount>;
   payroll: ReadonlySet<string>;
+  /** The company's departments: what folds into G&A (Houzs's showroom). */
+  plan: DepartmentPlan;
   /** The P&L's expense tree, which G&A's accounts are laid on. */
   layout: readonly LayoutItem[];
   companyId: number;
@@ -327,8 +371,8 @@ export function buildGaPnl(input: GaInput): GaPnl {
     const net = l.debitSen - l.creditSen;
     if (net === 0) continue;
     const home = lineHome(input.chart.get(l.accountCode), l.notes, { payroll: input.payroll.has(l.accountCode), recharge: false });
-    if (home.dept !== 'ga') continue;
-    if (home.team) {
+    if (resolveDept(home.dept, input.plan) !== 'ga') continue;
+    if (home.dept === 'ga' && home.team) {
       add(byTeam.get(home.team) ?? (byTeam.set(home.team, {}), byTeam.get(home.team)!), month, net);
       const ls = teamLines.get(home.team) ?? [];
       ls.push({ lineId: l.lineId, day: l.day, accountCode: l.accountCode, notes: l.notes, amountSen: net });
@@ -348,7 +392,8 @@ export function buildGaPnl(input: GaInput): GaPnl {
     }
   };
   walk(input.layout);
-  const payrollOnTree = [...input.payroll].sort().find((c) => placedCodes.has(c)) ?? [...input.payroll].sort()[0] ?? 'PAYROLL';
+  const sortedPayroll = [...input.payroll].sort();
+  const payrollOnTree = sortedPayroll.find((c) => placedCodes.has(c)) ?? (sortedPayroll.length > 0 ? sortedPayroll[0]! : 'PAYROLL');
   const sum = (cells: Record<string, number>) => Object.values(cells).reduce((a, b) => a + b, 0);
   const lines: LaidLine[] = [
     ...GA_TEAMS.filter((t) => byTeam.has(t)).map((t) => {
@@ -371,4 +416,52 @@ export function buildGaPnl(input: GaInput): GaPnl {
     team: t, label: GA_TEAM_LABEL[t], lines: teamLines.get(t)!.sort((a, b) => a.day.localeCompare(b.day) || a.lineId.localeCompare(b.lineId)),
   }));
   return { months, shareBp: input.shareBp, perMonth, tree, teams };
+}
+
+/* ── ONE DEPARTMENT: its column of the P&L, month by month ─────────────────── */
+
+export type DeptMonthSplit = { month: string; blocks: Record<PnlBlock, ReadonlyArray<{ code: string; name: string; cells: DeptCells }>> };
+export type DeptViewMonth = {
+  month: string; salesSen: number; costOfSalesSen: number; grossSen: number; otherIncomeSen: number;
+  expensesSen: number; taxationSen: number; netSen: number;
+};
+export type DeptView = { dept: DeptKey; months: string[]; perMonth: DeptViewMonth[]; tree: Record<PnlBlock, LaidNode[]> };
+
+/** One department's own P&L (the Exhibition P&L, the Showroom P&L): each block's
+    lines as that department took them month by month — the All view's column, by
+    month — laid on the P&L's own tree, every node's figure per month in `cells`. */
+export function buildDeptView(input: {
+  dept: DeptKey; months: readonly string[]; split: readonly DeptMonthSplit[];
+  layout: Readonly<Record<string, readonly LayoutItem[]>>; companyId: number;
+}): DeptView {
+  const tree = {} as Record<PnlBlock, LaidNode[]>;
+  const perBlock = {} as Record<PnlBlock, Record<string, number>>;
+  for (const { block } of PNL_BLOCKS) {
+    const byCode = new Map<string, { name: string; cells: Record<string, number> }>();
+    const total: Record<string, number> = {};
+    for (const m of input.split) {
+      for (const l of m.blocks[block]) {
+        const v = l.cells[input.dept] ?? 0;
+        if (v === 0) continue;
+        const cur = byCode.get(l.code) ?? { name: l.name, cells: {} };
+        cur.cells[m.month] = (cur.cells[m.month] ?? 0) + v;
+        byCode.set(l.code, cur);
+        total[m.month] = (total[m.month] ?? 0) + v;
+      }
+    }
+    const lines: LaidLine[] = [...byCode.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([code, x]) => ({
+      code, name: x.name, cells: x.cells, amountSen: Object.values(x.cells).reduce((a, b) => a + b, 0),
+    }));
+    tree[block] = layOutBlock([...(input.layout[block] ?? [])] as LayoutItem[], lines, input.companyId, null);
+    perBlock[block] = total;
+  }
+  const perMonth: DeptViewMonth[] = input.months.map((month) => {
+    const v = (b: PnlBlock) => perBlock[b][month] ?? 0;
+    const grossSen = v('tradingIncome') - v('costOfSales');
+    return {
+      month, salesSen: v('tradingIncome'), costOfSalesSen: v('costOfSales'), grossSen, otherIncomeSen: v('otherIncome'),
+      expensesSen: v('expenses'), taxationSen: v('taxation'), netSen: grossSen + v('otherIncome') - v('expenses') - v('taxation'),
+    };
+  });
+  return { dept: input.dept, months: [...input.months], perMonth, tree };
 }

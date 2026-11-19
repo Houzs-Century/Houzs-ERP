@@ -46,7 +46,9 @@ import { logisticsCostHandler } from './acc-logistics';
 import {
   logisticsPnlHandler, saveAreaRateHandler, saveFairIncomeRateHandler, saveIncomeRateHandler, saveSpreadHandler, saveTripMarkHandler,
 } from './acc-logistics-pnl';
-import { departmentsAllHandler, departmentsGaHandler, departmentsOperationHandler, saveDepartmentRateHandler } from './acc-departments';
+import {
+  departmentViewHandler, departmentsAllHandler, departmentsGaHandler, departmentsOperationHandler, departmentsPlanHandler, saveDepartmentRateHandler,
+} from './acc-departments';
 
 export const accEvents = new Hono<{ Bindings: Env; Variables: Variables }>();
 accEvents.use('*', supabaseAuth);
@@ -146,7 +148,9 @@ accEvents.put('/logistics/fair-income-rate', saveFairIncomeRateHandler);
 accEvents.put('/logistics/area-rate', saveAreaRateHandler);
 accEvents.put('/logistics/spread', saveSpreadHandler);
 accEvents.put('/logistics/trip', saveTripMarkHandler);
+accEvents.get('/departments/plan', departmentsPlanHandler);
 accEvents.get('/departments/all', departmentsAllHandler);
+accEvents.get('/departments/dept', departmentViewHandler);
 accEvents.get('/departments/ga', departmentsGaHandler);
 accEvents.get('/departments/operation', departmentsOperationHandler);
 accEvents.put('/departments/rate', saveDepartmentRateHandler);
