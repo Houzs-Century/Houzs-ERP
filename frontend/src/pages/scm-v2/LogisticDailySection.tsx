@@ -36,7 +36,7 @@ export function LogisticDailySection({ days, regions, region, setRegion, day, se
           {day && <button type="button" className="text-[12px] text-primary hover:underline" onClick={() => setDay(null)}>All days</button>}
           <Toggle value={by} options={[["amount", "By amount"], ["orders", "By orders"]]} onChange={setBy} />
         </span>}>
-        <Columns axes={false} valueLabels={by === "orders"} height={190} stacked={false} format={by === "orders" ? (x) => `${x} orders` : fmtSen} highlight={null}
+        <Columns forecast={null} axes={false} valueLabels={by === "orders"} height={190} stacked={false} format={by === "orders" ? (x) => `${x} orders` : fmtSen} highlight={null}
           labels={days.map((x) => dd(x.date))}
           series={[{ name: amt ? "Delivered amount" : "Orders delivered", color: TONE.good }]}
           values={[days.map((x) => (amt ? x.amountSen : x.orders))]}

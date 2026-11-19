@@ -91,10 +91,14 @@ const tickMoney = (v: number): string => {
  *  with every figure of the column under the pointer. */
 export type ChartLine = { name: string; color: string; values: Array<number | null>; format: Fmt };
 
-export function Columns({ labels, series, values, format, stacked, line, highlight, height, valueLabels, axes }: {
+export function Columns({ labels, series, values, format, stacked, line, highlight, height, valueLabels, axes, forecast }: {
   labels: string[]; series: Series[]; values: number[][]; format: Fmt; stacked: boolean;
   line: ChartLine | readonly ChartLine[] | null; highlight: number | null; height: number; valueLabels: boolean;
   axes: boolean;
+  /** Each column's share (0..1) that is a forecast: drawn hatched with a dashed
+   *  outline on top of the solid actual, and the line dashed through it - the
+   *  usual actual-vs-forecast convention (owner 2026-11-19). Null = all actual. */
+  forecast: { share: readonly number[] } | null;
 }) {
   /* Several lines share one scale: they are meant to be the same kind of figure. */
   const lines: readonly ChartLine[] = line == null ? [] : Array.isArray(line) ? line : [line as ChartLine];
@@ -117,6 +121,16 @@ export function Columns({ labels, series, values, format, stacked, line, highlig
   return (
     <div ref={ref} className="relative" onMouseLeave={() => setHover(null)}>
       <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} className="block" role="img" aria-label="Column chart">
+        {forecast && (
+          <defs>
+            {series.map((s, si) => (
+              <pattern key={s.name} id={`fc-hatch-${si}`} width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                <rect width="5" height="5" fill={s.color} opacity="0.18" />
+                <line x1="0" y1="0" x2="0" y2="5" stroke={s.color} strokeWidth="2" />
+              </pattern>
+            ))}
+          </defs>
+        )}
         {[0.25, 0.5, 0.75, 1].map((f) => <line key={f} x1={padL} x2={W - padR} y1={y(max * f)} y2={y(max * f)} stroke="#eceee8" strokeWidth="1" />)}
         {axes && [0, 0.25, 0.5, 0.75, 1].map((f) => (
           <text key={`l${f}`} x={padL - 6} y={y(max * f) + 3.5} textAnchor="end" className="fill-ink-muted" style={{ fontSize: 10 }}>{tickMoney(max * f)}</text>
@@ -137,11 +151,21 @@ export function Columns({ labels, series, values, format, stacked, line, highlig
                 const h = stacked ? y(acc) - y(acc + v) : H - padB - y(v);
                 const x = stacked ? x0 : x0 + si * barW;
                 acc += v;
+                const share = !stacked && forecast ? Math.min(1, Math.max(0, forecast.share[i] ?? 0)) : 0;
+                const bw = Math.max(1, barW - (stacked ? 0 : 1.5));
+                const hf = Math.max(0.5, h) * share;
                 return v > 0 ? (
                   <g key={s.name}>
-                    <rect x={x} y={top} width={Math.max(1, barW - (stacked ? 0 : 1.5))} height={Math.max(0.5, h)} fill={s.color} rx={stacked ? 0 : 1.5}>
-                      <title>{`${lab} · ${s.name}: ${format(v)}`}</title>
-                    </rect>
+                    {share < 1 && (
+                      <rect x={x} y={top + hf} width={bw} height={Math.max(0.5, h) - hf} fill={s.color} rx={stacked ? 0 : 1.5}>
+                        <title>{`${lab} · ${s.name}: ${format(v)}`}</title>
+                      </rect>
+                    )}
+                    {share > 0 && (
+                      <rect x={x + 0.5} y={top + 0.5} width={Math.max(0.5, bw - 1)} height={Math.max(0.5, hf - 0.5)} fill={`url(#fc-hatch-${si})`} stroke={s.color} strokeWidth="1" strokeDasharray="3 2">
+                        <title>{`${lab} · ${s.name}: ${format(v)} (${Math.round(share * 100)}% forecast)`}</title>
+                      </rect>
+                    )}
                     {valueLabels && !stacked && <text x={x + barW / 2} y={top - 3} textAnchor="middle" className="fill-ink-secondary" style={{ fontSize: 10 }}>{v.toLocaleString()}</text>}
                   </g>
                 ) : null;
@@ -154,17 +178,25 @@ export function Columns({ labels, series, values, format, stacked, line, highlig
             </g>
           );
         })}
-        {lines.map((ln) => (
+        {lines.map((ln) => {
+          const pt = (v: number, i: number) => `${padL + i * slot + slot / 2},${ly(v)}`;
+          const isFc = (i: number) => !!forecast && (forecast.share[i] ?? 0) > 0;
+          /* Solid between two actual points, dashed into and through a forecast one. */
+          const segs = ln.values.flatMap((v, i) => {
+            const prev = ln.values[i - 1];
+            return i > 0 && v != null && prev != null ? [{ d: `${pt(prev, i - 1)} ${pt(v, i)}`, dashed: isFc(i) || isFc(i - 1) }] : [];
+          });
+          return (
           <g key={ln.name}>
-            <polyline fill="none" stroke={ln.color} strokeWidth="2" strokeLinejoin="round"
-              points={ln.values.map((v, i) => (v == null ? null : `${padL + i * slot + slot / 2},${ly(v)}`)).filter(Boolean).join(" ")} />
+            {segs.map((sg, k) => <polyline key={k} fill="none" stroke={ln.color} strokeWidth="2" strokeLinejoin="round" strokeDasharray={sg.dashed ? "5 4" : undefined} points={sg.d} />)}
             {ln.values.map((v, i) => v == null ? null : (
               <circle key={i} cx={padL + i * slot + slot / 2} cy={ly(v)} r="3" fill="#fff" stroke={ln.color} strokeWidth="1.5">
                 <title>{`${labels[i]} · ${ln.name}: ${ln.format(v)}`}</title>
               </circle>
             ))}
           </g>
-        ))}
+          );
+        })}
       </svg>
       {axes && hover !== null && (
         <div className="pointer-events-none absolute top-1 z-10 min-w-[150px] rounded-lg border border-border bg-surface px-3 py-2 text-[11.5px] shadow-md"
@@ -174,9 +206,18 @@ export function Columns({ labels, series, values, format, stacked, line, highlig
             <div key={sr.name} className="flex justify-between gap-3 tabular-nums"><span className="text-ink-muted">{sr.name}</span><span>{format(values[si]?.[hover] ?? 0)}</span></div>
           ))}
           {lines.map((ln) => <div key={ln.name} className="flex justify-between gap-3 tabular-nums"><span className="text-ink-muted">{ln.name}</span><span>{ln.values[hover] == null ? "-" : ln.format(ln.values[hover]!)}</span></div>)}
+          {forecast && (forecast.share[hover] ?? 0) > 0 && (
+            <div className="mt-1 border-t border-border-subtle pt-1 text-ink-muted">{Math.round((forecast.share[hover] ?? 0) * 100)}% of sales is forecast</div>
+          )}
         </div>
       )}
       <Legend items={[...series.map((s) => ({ label: s.name, color: s.color, dot: false })), ...lines.map((ln) => ({ label: ln.name, color: ln.color, dot: true }))]} />
+      {forecast && forecast.share.some((x) => x > 0) && (
+        <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-ink-muted">
+          <svg width="22" height="10" aria-hidden="true"><rect x="0.5" y="0.5" width="10" height="9" fill="none" stroke="currentColor" strokeDasharray="2 1.5" /><line x1="13" y1="5" x2="22" y2="5" stroke="currentColor" strokeWidth="1.5" strokeDasharray="3 2" /></svg>
+          Forecast (hatched bar, dashed line); solid = actual
+        </div>
+      )}
     </div>
   );
 }
