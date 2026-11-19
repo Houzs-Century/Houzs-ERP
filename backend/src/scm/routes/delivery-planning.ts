@@ -97,6 +97,7 @@ import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { computeReleaseGate } from '../../services/agents/release-gate';
 import { mintDpNoForLorry } from '../lib/dp-no-mint';
+import { staleLegProgressReset } from '../lib/stale-leg-progress';
 import { scheduleDpDate, writeNonSoFields, writeAssrLegStatus } from '../lib/delivery-planning-nonso-edit';
 import { resolveDeliveryScope, scopeMatchesAssignment, type DeliveryScope, type CrewAssignment } from '../lib/deliveryScope';
 import { fetchDoCrewAssignment, doPodContextHandler, ownServiceAndProjectRowKeys } from './delivery-pod-context';
@@ -2251,6 +2252,25 @@ async function scheduleAssrOntoTrip(
         reason: `the leg was placed on the new trip but the previous one could not be cleared — it may be counted twice: ${String((staleErr as { message?: string }).message ?? staleErr).slice(0, 120)}`,
       };
     }
+
+    /* The run the leg moved OFF keeps no crew progress either. Its On-the-way /
+       Arrived / Delivered + POD in scm.job_progress were for a trip the leg no
+       longer rides, but the Last Mile board keys progress by JOB (not trip) and
+       reads completed_at, so a leftover completion showed the leg "Delivered" on
+       the new run with no way to clear it (case ASSR/2610-048). Reset it beside
+       the stale trip_stop, scoped the SAME way (this leg, trip != the new one),
+       and re-point the row at the new trip. Best-effort + logged: the leg is
+       already on the new trip, so a failed clear is a stale badge, not a
+       capacity error, and must not fail the schedule. company-scope: source_id
+       is this already-authorized case id (assrLegGuardSql 404'd out-of-scope). */
+    const progReset = staleLegProgressReset('assr', caseId, jobKind, tripIdStr);
+    const { error: progErr } = await sb.from('job_progress')
+      .update({ ...progReset.set, updated_at: new Date().toISOString() })
+      .eq('source_type', progReset.match.source_type)
+      .eq('source_id', progReset.match.source_id)
+      .eq('leg', progReset.match.leg)
+      .neq('trip_id', progReset.excludeTripId);
+    if (progErr) console.warn(`[delivery-planning] stale leg progress clear skipped: ${String((progErr as { message?: string }).message ?? progErr).slice(0, 120)}`);
 
     const { data: tNo } = await sb.from('trips').select('id, trip_no').eq('id', tripIdStr).maybeSingle();
     const tr = tNo as { trip_no?: string; tripNo?: string } | null;
