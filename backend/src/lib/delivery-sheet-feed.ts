@@ -258,6 +258,42 @@ WHERE t.status NOT IN (${inList(SO_DELIVERED_OR_BEYOND)})
       )
 ORDER BY t.so_date, t.doc_no`;
 
+/**
+ * The raw `sales_location` values that mean East Malaysia (Sabah / Sarawak).
+ * Derived from LOCATION_MAP so a new book spelling added there is covered, plus
+ * the two short codes themselves. Each is normalised exactly as
+ * services/autocount-writeback `norm` normalises (UPPER, single-spaced, trimmed)
+ * so FEED_EM_TRANSPORTER_SQL can compare a normalised column against them.
+ */
+export const EAST_SALES_LOCATIONS: string[] = [
+  ...new Set(
+    [
+      ...Object.entries(LOCATION_MAP)
+        .filter(([, v]) => v === "SBH" || v === "SRW")
+        .map(([k]) => k),
+      "SBH",
+      "SRW",
+    ].map((s) => s.toUpperCase().replace(/\s+/g, " ").trim()),
+  ),
+];
+
+/**
+ * The East-Malaysia transporter feed (owner 2026-11-19). The ESB / BS
+ * transporter sheets are fed DIRECTLY from the ERP instead of from the HC
+ * Delivery master sheet's EM Order tab. Full state, no cursor — the Apps Script
+ * updates the rows it already has and APPENDS the READY ones each run, the same
+ * gate the master had. East only: `sales_location` whose book spelling is SBH /
+ * SRW (EAST_SALES_LOCATIONS, normalised the same way). The route re-checks
+ * `Region === "EAST"` on the mapped record, so a Singapore-addressed SRW order
+ * (addr3 SINGAPORE, Region SG) is dropped. Bind: ?1 company_id.
+ */
+export const FEED_EM_TRANSPORTER_SQL = `
+SELECT t.*, t.last_modified::text AS last_modified_text
+FROM (${FEED_BASE_SQL}
+) t
+WHERE btrim(regexp_replace(upper(coalesce(t.sales_location, '')), '\\s+', ' ', 'g')) IN (${inList(EAST_SALES_LOCATIONS)})
+ORDER BY t.so_date, t.doc_no`;
+
 /** `from=yyyy-mm-dd`, exactly; anything else is refused before `::date`. */
 export function parseFromDate(raw: string | undefined | null): string | null {
   const s = (raw ?? "").trim();

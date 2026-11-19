@@ -19,7 +19,9 @@ import postgres, { type Sql } from 'postgres';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { toPgPlaceholders } from '../src/db/d1-compat';
 import {
+  EAST_SALES_LOCATIONS,
   FEED_BALANCE_COLLECTION_SQL,
+  FEED_EM_TRANSPORTER_SQL,
   FEED_EPOCH,
   FEED_OVERDUE_SQL,
   FEED_READY_OPEN_SQL,
@@ -460,5 +462,46 @@ describePg('HC Delivery sheet feed SQL — real Postgres', () => {
       ['PO-2608-009', 'PO-2608-009', 'PARTIALLY_RECEIVED', null],
     ]);
     expect(typeof heads[0]!.company_id).toBe('number');
+  });
+
+  test('em-transporter: East (SBH / SRW) live orders only; DRAFT / KL excluded; a Singapore-addressed SRW order is SQL-East but Region SG', async () => {
+    // EAST_SALES_LOCATIONS is derived from LOCATION_MAP + the short codes.
+    expect(EAST_SALES_LOCATIONS).toEqual(expect.arrayContaining(['SRW WAREHOUSE', 'SBH WAREHOUSE', 'SRW', 'SBH', 'KOTA KINABALU']));
+    expect(EAST_SALES_LOCATIONS).not.toContain('KL WAREHOUSE');
+
+    await sql.unsafe(`
+      INSERT INTO scm.mfg_sales_orders
+        (doc_no, linked_ac_docno, company_id, so_date, debtor_name, sales_location, local_total_sen, remark2, status, updated_at, postcode, city, customer_state, address3)
+      VALUES
+        ('HC-SO-EM-01', 'SO-EM-01', 1, '2026-10-01', 'Kuching ready', 'SRW WAREHOUSE', 400000, 'READY', 'CONFIRMED', '2026-10-01 00:00:00+00', '93050', 'Kuching', 'Sarawak', NULL),
+        ('HC-SO-EM-02', 'SO-EM-02', 1, '2026-10-02', 'KK not ready', 'SBH WAREHOUSE', 500000, NULL, 'CONFIRMED', '2026-10-02 00:00:00+00', '88000', 'Kota Kinabalu', 'Sabah', NULL),
+        ('HC-SO-EM-03', 'SO-EM-03', 1, '2026-10-03', 'KL west', 'KL WAREHOUSE', 100000, 'READY', 'CONFIRMED', '2026-10-03 00:00:00+00', '50000', 'Kuala Lumpur', 'Wilayah Persekutuan', NULL),
+        ('HC-SO-EM-04', 'SO-EM-04', 1, '2026-10-04', 'Draft east', 'SRW WAREHOUSE', 100000, 'READY', 'DRAFT', '2026-10-04 00:00:00+00', NULL, NULL, 'Sarawak', NULL),
+        ('HC-SO-EM-05', 'SO-EM-05', 1, '2026-10-05', 'SRW-coded SG', 'SRW WAREHOUSE', 200000, 'READY (PARTIAL)', 'CONFIRMED', '2026-10-05 00:00:00+00', NULL, NULL, NULL, 'SINGAPORE 123456');
+      INSERT INTO scm.mfg_sales_order_items (id, doc_no, item_group, item_code, stock_status) VALUES
+        ('${'0e510001-0000-4000-8000-000000000000'}', 'HC-SO-EM-01', 'MATTRESS', 'M1', 'READY');
+    `);
+    try {
+      const rows = (await sql.unsafe(toPgPlaceholders(FEED_EM_TRANSPORTER_SQL), [1] as never[])) as unknown as FeedHeadRow[];
+      // SQL is East by sales_location: SRW/SBH live orders only. The SRW-coded SG
+      // order IS returned here (East sales_location); the route drops it on Region.
+      expect(rows.map((r) => r.doc_no)).toEqual(['HC-SO-EM-01', 'HC-SO-EM-02', 'HC-SO-EM-05']);
+      // The other company sees none of these.
+      expect(await sql.unsafe(toPgPlaceholders(FEED_EM_TRANSPORTER_SQL), [2] as never[])).toHaveLength(0);
+
+      const byDocE = (doc: string) => rows.find((r) => r.doc_no === doc)!;
+      const kuching = toSheetRecord(byDocE('HC-SO-EM-01'), [{ doc_no: 'HC-SO-EM-01', item_group: 'MATTRESS', item_code: 'M1', stock_status: 'READY', cancelled: false }]);
+      expect(kuching).toMatchObject({ DocNo: 'SO-EM-01', Region: 'EAST', SalesLocation: 'SRW', Ready: true });
+      const kk = toSheetRecord(byDocE('HC-SO-EM-02'), []);
+      expect(kk).toMatchObject({ Region: 'EAST', SalesLocation: 'SBH', Ready: false });
+      // The SRW order addressed in Singapore maps to Region SG — the route's
+      // Region re-check is what keeps it off the EM transporter feed.
+      expect(toSheetRecord(byDocE('HC-SO-EM-05'), []).Region).toBe('SG');
+    } finally {
+      await sql.unsafe(`
+        DELETE FROM scm.mfg_sales_order_items WHERE doc_no LIKE 'HC-SO-EM-%';
+        DELETE FROM scm.mfg_sales_orders WHERE doc_no LIKE 'HC-SO-EM-%';
+      `);
+    }
   });
 });
