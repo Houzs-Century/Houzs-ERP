@@ -52,6 +52,7 @@ import { pgrestIn } from '../lib/pgrest-in-list';
 import { isStockBucket } from '../lib/stock-bucket';
 import { mytDayWindow } from '../lib/my-time';
 import { NETTING_EMBED, deliveredReturnedBySoItem, nettingFromEmbedded, type EmbeddedDemandLine } from '../lib/inventory-netting';
+import { masterPostcodeError } from '../shared/master-postcode-rule';
 
 /* FINANCE GATE — owner decision 2026-08-13, asked directly: "加财务门,仓管看
    不到成本".
@@ -190,6 +191,9 @@ inventory.post('/warehouses', async (c) => {
     ? body.postcode.trim() : null;
   const city = typeof body.city === 'string' && body.city.trim()
     ? body.city.trim() : null;
+  /* A warehouse in Malaysia / Singapore needs a postcode (owner 2026-11-19). */
+  const pcErr = masterPostcodeError(country, postcode);
+  if (pcErr) return c.json({ error: 'postcode_required', message: pcErr }, 400);
 
   const { data, error } = await sb.from('warehouses').insert({
     company_id: co.companyId, // multi-company: stamp the active company (mig 0086)
@@ -269,6 +273,9 @@ export const patchWarehouseHandler = async (c: any) => {
   }
   if (body.postcode !== undefined) {
     const p = typeof body.postcode === 'string' ? body.postcode.trim() : '';
+    /* Clearing the postcode is refused; a save that leaves it alone is not. */
+    const pcErr = masterPostcodeError(typeof body.country === 'string' ? body.country : null, p);
+    if (pcErr) return c.json({ error: 'postcode_required', message: pcErr }, 400);
     updates.postcode = p || null;
   }
   if (body.city !== undefined) {
