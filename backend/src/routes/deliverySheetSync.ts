@@ -32,6 +32,9 @@ import { timingSafeEqualStr } from "../services/auth";
 import { checkRateLimit, clientIp } from "../middleware/rateLimit";
 import { intakeCompany } from "../lib/intake-company";
 import {
+  EM_WRITEBACK_COLS,
+  EM_WRITEBACK_MAX,
+  emTransporterUpdateSql,
   FEED_BALANCE_COLLECTION_SQL,
   FEED_EM_TRANSPORTER_SQL,
   FEED_EPOCH,
@@ -421,6 +424,68 @@ app.get("/em-transporter", async (c) => {
   const records = [...soRecords, ...legRecords];
   c.set("usageRows", records.length);
   return c.json({ count: records.length, so: soRecords.length, legs: legRecords.length, records });
+});
+
+/* East-MY transporter WRITE-BACK (owner 2026-11-20): the ESB / BS sheets' own
+   edits flow back into the ERP's Delivery Planning. These HC fields live on the
+   DELIVERY ORDER, so each sheet row (keyed on the AutoCount DocNo) resolves to
+   its order's latest live DO and that DO is updated — the board's "EM Order"
+   layout then shows them. Company-scoped by the secret; a blank never clears
+   (emTransporterUpdateSql). ESB writes the shipping fields, BS the delivery
+   ones; both post here. */
+app.post("/em-transporter-updates", async (c) => {
+  const denied = await badSheetKey(c);
+  if (denied) return denied;
+  const co = await sheetCompanyId(c);
+  if ("refusal" in co) return co.refusal;
+
+  let body: any;
+  try { body = await c.req.json(); } catch { body = null; }
+  const raw = Array.isArray(body?.updates) ? (body.updates as unknown[]) : null;
+  if (!raw) return c.json({ error: "bad_body", message: "expected { updates: [{ DocNo, ... }] }" }, 400);
+
+  // One row per DocNo (last wins); drop blank DocNos.
+  const byDoc = new Map<string, Record<string, unknown>>();
+  for (const u of raw) {
+    const rec = (u ?? {}) as Record<string, unknown>;
+    const doc = String(rec.DocNo ?? "").trim();
+    if (doc) byDoc.set(doc, rec);
+  }
+  const rows = [...byDoc.entries()];
+  if (!rows.length) return c.json({ error: "no_updates" }, 400);
+  if (rows.length > EM_WRITEBACK_MAX) return c.json({ error: "too_many", max: EM_WRITEBACK_MAX }, 413);
+
+  // Bind order MUST match emTransporterUpdateSql: per row (DocNo, then each
+  // EM_WRITEBACK_COLS value), then company_id last. Blank -> null (keeps
+  // existing); a date is normalised, and an unparseable one becomes null.
+  const binds: unknown[] = [];
+  for (const [doc, rec] of rows) {
+    binds.push(doc);
+    for (const { key, cast } of EM_WRITEBACK_COLS) {
+      const v = rec[key];
+      if (v === undefined || v === null || String(v).trim() === "") { binds.push(null); continue; }
+      binds.push(cast === "date" ? normSheetDate(v) : String(v));
+    }
+  }
+  binds.push(co.id);
+
+  let updated: Array<{ sheet_doc_no: string }>;
+  try {
+    const res = (await c.env.DB.prepare(emTransporterUpdateSql(rows.length)).bind(...binds).all()) as { results?: Array<{ sheet_doc_no: string }> };
+    updated = res.results ?? [];
+  } catch (e) {
+    return c.json({ error: "write_failed", message: e instanceof Error ? e.message : String(e) }, 502);
+  }
+  const updatedDocs = new Set(updated.map((r) => r.sheet_doc_no));
+  const results = rows.map(([doc]) => ({ DocNo: doc, updated: updatedDocs.has(doc) }));
+  c.set("usageRows", updated.length);
+  return c.json({
+    count: results.length,
+    updated: updated.length,
+    // A DocNo with no live order, or no live DO to carry freight, lands here.
+    not_updated: results.filter((r) => !r.updated).map((r) => r.DocNo),
+    results,
+  });
 });
 
 /* Service-Case (ASSR) legs (owner 2026-09-17): each open case's inspection /

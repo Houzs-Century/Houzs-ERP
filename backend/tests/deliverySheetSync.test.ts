@@ -95,8 +95,12 @@ const HEAD: FeedHeadRow = {
   customer_country: "Malaysia",
   venue: "Balakong Showroom",
   status: "CONFIRMED",
+  delivery_message_status: "Pending Delivery (EM)",
+  dp_remark: "ori 25 Jan",
   do_numbers: "HC-DO-2609-001",
   shipout_date: "2026-09-10",
+  ctn: "5 ctn",
+  em_delivery_status: "TO BRIGHTSUN",
   po_numbers: "PO-2609-001, PO-2609-002",
   last_modified_text: "2026-09-15 09:09:28.123456+00",
 };
@@ -317,7 +321,9 @@ describe("GET /overdue and /balance-collection — the two daily lists (phase 2)
     expect(feed.sql).toContain("t.status NOT IN ('CLOSED', 'DELIVERED', 'INVOICED')");
     expect(feed.sql).toContain("t.customer_delivery_date::date < (now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date");
     expect(feed.sql).toContain("ORDER BY t.customer_delivery_date, t.doc_no");
-    expect(feed.sql).not.toContain("LIMIT");
+    // Full state, no cursor: no PAGINATION limit (the base feed's `LIMIT 1`
+    // lateral for the latest-DO lookup is not a bound `LIMIT ?`).
+    expect(feed.sql).not.toMatch(/LIMIT\s+\?/);
   });
 
   test("balance-collection: delivered orders still owing, company-scoped", async () => {
@@ -1061,6 +1067,48 @@ describe("GET /em-transporter", () => {
       return [];
     });
     expect((await app.request("/em-transporter", { headers: { "X-Intake-Key": KEY } }, env(db))).status).toBe(502);
+  });
+});
+
+describe("POST /em-transporter-updates — the sheets' edits write back to the ERP", () => {
+  const bodyOf = (updates: unknown[]) => ({ method: "POST", headers: { "X-Intake-Key": KEY, "content-type": "application/json" }, body: JSON.stringify({ updates }) });
+
+  test("a wrong key is 401 before anything is read", async () => {
+    const { db, seen } = fakeDb(() => []);
+    const res = await app.request("/em-transporter-updates", { method: "POST", headers: { "X-Intake-Key": "wrong", "content-type": "application/json" }, body: "{}" }, env(db));
+    expect(res.status).toBe(401);
+    expect(seen).toHaveLength(0);
+  });
+
+  test("present fields are bound in column order (dates normalised), company is last, and misses are reported", async () => {
+    const { db, seen } = fakeDb((sql) => {
+      if (/FROM companies/i.test(sql)) return { id: HOUZS };
+      if (/UPDATE scm\.delivery_orders/.test(sql)) return [{ sheet_doc_no: "SO-WB-1", so_doc_no: "HC-SO-WB-1" }];
+      return [];
+    });
+    const res = await app.request("/em-transporter-updates", bodyOf([
+      { DocNo: "SO-WB-1", emDeliveryStatus: "TO BRIGHTSUN", consignmentNo: "C1", bsDeliveryDate: "2026/11/01" },
+      { DocNo: "SO-WB-2" }, // no live DO on the ERP side -> not in the RETURNING
+    ]), env(db));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.updated).toBe(1);
+    expect(body.not_updated).toEqual(["SO-WB-2"]);
+
+    const wb = seen.find((s) => /UPDATE scm\.delivery_orders/.test(s.sql))!;
+    // Row 1: DocNo, then the 9 EM_WRITEBACK_COLS values in order (blank -> null,
+    // bsDeliveryDate normalised yyyy/mm/dd -> yyyy-mm-dd).
+    expect(wb.binds.slice(0, 10)).toEqual(["SO-WB-1", "TO BRIGHTSUN", "C1", null, null, null, null, null, "2026-11-01", null]);
+    // Row 2: all nine blank.
+    expect(wb.binds.slice(10, 20)).toEqual(["SO-WB-2", null, null, null, null, null, null, null, null, null]);
+    expect(wb.binds[wb.binds.length - 1]).toBe(HOUZS); // company_id last
+  });
+
+  test("an empty / malformed body is 400, never a write", async () => {
+    const { db, seen } = fakeDb((sql) => (/FROM companies/i.test(sql) ? { id: HOUZS } : []));
+    expect((await app.request("/em-transporter-updates", bodyOf([]), env(db))).status).toBe(400);
+    expect((await app.request("/em-transporter-updates", { method: "POST", headers: { "X-Intake-Key": KEY, "content-type": "application/json" }, body: JSON.stringify({ foo: 1 }) }, env(db))).status).toBe(400);
+    expect(seen.filter((s) => /UPDATE scm\.delivery_orders/.test(s.sql))).toHaveLength(0);
   });
 });
 
