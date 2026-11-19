@@ -7,6 +7,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { formatDate } from "../lib/utils";
 import { minToHhmm } from "../vendor/shared/hr-pay-rules";
+import { todayMyt } from "../vendor/scm/lib/dates";
+import { DateField } from "../vendor/scm/components/DateField";
 import "./mobile.css";
 
 type OtStatus = "PENDING" | "CONFIRMED" | "REJECTED";
@@ -25,15 +27,10 @@ const hoursLabel = (c: { startMin: number; endMin: number }) => {
 const STATUS_TONE: Record<OtStatus, string> = { PENDING: "var(--warn, #9a6b00)", CONFIRMED: "var(--green)", REJECTED: "var(--red)" };
 const STATUS_TEXT: Record<OtStatus, string> = { PENDING: "Waiting for your supervisor", CONFIRMED: "Confirmed", REJECTED: "Rejected" };
 
-function localToday(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
 export function OvertimeBody() {
   const qc = useQueryClient();
   const q = useQuery<OtData>({ queryKey: ["attendance", "ot"], queryFn: () => api.get<OtData>("/api/attendance/ot"), refetchInterval: 60_000 });
-  const [workDate, setWorkDate] = useState(localToday());
+  const [workDate, setWorkDate] = useState(todayMyt());
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [note, setNote] = useState("");
@@ -92,7 +89,9 @@ export function OvertimeBody() {
         <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
           <label style={{ fontSize: 11.5, color: "var(--mut)" }}>
             Day
-            <input type="date" value={workDate} max={localToday()} onChange={(e) => setWorkDate(e.target.value)} style={{ ...input, marginTop: 3 }} />
+            <div style={{ marginTop: 3 }}>
+              <DateField value={workDate} max={todayMyt()} onChange={(iso) => setWorkDate(iso)} fullWidth aria-label="Overtime day" />
+            </div>
           </label>
           <div style={{ display: "flex", gap: 8 }}>
             <label style={{ flex: 1, fontSize: 11.5, color: "var(--mut)" }}>
