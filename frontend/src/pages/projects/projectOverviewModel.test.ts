@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { figuresOf, totalsOf, trendOf, groupBy, drillOf, heldVsComing, type OvProject } from "./projectOverviewModel";
+import { figuresOf, totalsOf, trendOf, groupBy, drillOf, heldVsComing, isHeld, forecastShareOf, type OvProject } from "./projectOverviewModel";
 
 const NO_SPLIT = { mattSofa: 0, bedframe: 0, accessories: 0 };
 
@@ -110,5 +110,22 @@ describe("Project Overview - this month cut at today (owner 2026-11-19)", () => 
   it("needs no split when every event is on one side of today", () => {
     expect(heldVsComing([p({ startDate: "2026-10-02" })], "2026-11-19")).toBeNull();
     expect(heldVsComing([p({ startDate: "2026-12-02" })], "2026-11-19")).toBeNull();
+  });
+});
+
+describe("Project Overview - held means real sales (owner 2026-11-19)", () => {
+  const layered = (forecast: number, last: number): OvProject["pnl"] => ({
+    fromOrders: false, sales: forecast + last, serviceRevenue: 0, cogs: { mattSofa: 0, bedframe: 0, accessories: 0, other: 0 },
+    rental: 0, setup: 0, transportSetup: 0, others: 0, transportFee: 0, commission: 0, merchandise: 0,
+    layers: { estimated: true, split: { sales: { actual: 0, forecast, last_event: last }, cost: { actual: 0, forecast: 0, last_event: 0 }, net: { actual: 0, forecast, last_event: last } }, lastEvent: null },
+  });
+  it("an event that opened today with its sales still on the last event is still to come", () => {
+    expect(isHeld(p({ startDate: "2026-11-19", pnl: layered(0, 36964) }), "2026-11-19")).toBe(false);
+    expect(isHeld(p({ startDate: "2026-11-17" }), "2026-11-19")).toBe(true);
+    expect(isHeld(p({ startDate: "2026-11-27" }), "2026-11-19")).toBe(false);
+  });
+  it("forecast share of a bucket", () => {
+    expect(forecastShareOf({ sales: 200, split: { sales: { actual: 100, forecast: 50, last_event: 50 }, cost: { actual: 0, forecast: 0, last_event: 0 }, net: { actual: 0, forecast: 0, last_event: 0 } } })).toBe(0.5);
+    expect(forecastShareOf({ sales: 0, split: { sales: { actual: 0, forecast: 0, last_event: 0 }, cost: { actual: 0, forecast: 0, last_event: 0 }, net: { actual: 0, forecast: 0, last_event: 0 } } })).toBe(0);
   });
 });
