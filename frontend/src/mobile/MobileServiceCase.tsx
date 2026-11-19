@@ -493,7 +493,7 @@ function CaseList({
         <div className="hdr-row" style={{ marginTop: 11 }}>
           <div className="searchbar">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={GREY} strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4-4" /></svg>
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search case · SO · Ref · customer · phone" />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search case · SO · Ref · DO · customer · phone" />
           </div>
           <SearchProgress active={searchTransition.isSearching} label="Searching…" />
           <select value={sort} onChange={(e) => setSort(e.target.value as SortKey)} style={{ flex: "none", fontFamily: "inherit", fontSize: 12, color: "var(--mut)", background: "var(--bg)", border: "1px solid var(--line)", borderRadius: 10, padding: "0 8px", height: 38, appearance: "none", WebkitAppearance: "none" }}>

@@ -103,6 +103,10 @@ follows the new SLA at once.
   `components/assr/CaseDocChips.tsx`, mobile `MobileCaseDocChips.tsx` +
   `MobileMyCaseDetail.tsx`, one reader `assr/order-delivery.ts`). It is NOT
   the case's `do_date`, which is the SERVICE delivery leg's date.
+- The list / export search finds a case by DO number from the same sources as
+  the DO No column (`findOrdersByDoNumber`): the case's own `delivery_order`,
+  the SO's AutoCount `transfer_to`, a mirror DO on the case's Ref (placeholder
+  refs never match), and SCM DOs scoped to the caller's companies.
 - The pre-auth form-intake endpoints scope strictly by the caller's **secret**
   → company mapping; an unmapped secret 503s, it must never fall back to "no
   predicate" (that would leak both companies' PII).

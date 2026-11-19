@@ -19,7 +19,7 @@ import { getActiveStaffToken } from "./caseTracking";
 import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
 import { assrVisibilityPredicateSql } from "./assrVisibility";
 import { attachOrderPosAndFill, attachExchangePosEnv, caseCompanySql, pickedSupplierName, showErpSupplierNames } from "./assrCreditorFill";
-import { attachOrderDeliveryDates } from "./assrOrderDos";
+import { attachOrderDeliveryDates, findOrdersByDoNumber } from "./assrOrderDos";
 import { caseAddressFromSo, fetchScmSoContext, soAddressForDoc } from "./assrSoContext";
 import { saveCaseAddress } from "./assrCaseAddress";
 import { CASE_ADDRESS_KEYS } from "../scm/shared/assr-case-address";
@@ -1717,6 +1717,45 @@ export interface ListAssrFilters {
   allowed_company_ids?: number[];
 }
 
+// Case-insensitive (PG LIKE is case-sensitive, unlike SQLite) and
+// covers the Ref No column too (Nick 2026-07-07). LOWER() instead
+// of ILIKE so the D1 test mirror stays happy.
+//
+// Restore mobile client-search coverage lost when the Service Case list
+// moved to server pagination: the old client search also matched the
+// complaint issue text and the item code / description. complaint_issue
+// and item_code are denormalized columns on assr_cases; item_description
+// lives only in the child assr_items table, matched via a correlated
+// EXISTS so it also works inside the COUNT(*) query (no assr_items join).
+// Additive — keeps case no / SO doc / Ref / customer. Salesperson
+// (sales_agent) matches too, alongside its list column (2026-07-27).
+// Also match customer PHONE. assr_cases.phone is stored separator-free
+// (write path runs cleanPhone(so.phone) — strips +/-/space), so a term the
+// user types with dashes/spaces is cleanPhone'd the SAME way before the
+// LIKE; the raw predicate still catches an exact-format substring.
+async function pushCaseSearch(
+  env: Env,
+  where: string[],
+  binds: unknown[],
+  search: string,
+  allowedCompanyIds: number[] | undefined,
+): Promise<void> {
+  const like = `%${search.toLowerCase()}%`;
+  const digits = cleanPhone(search);
+  const phoneLike = digits ? `%${digits.toLowerCase()}%` : like;
+  const doMatches = await findOrdersByDoNumber(env, search, allowedCompanyIds);
+  const placeholders = (values: string[]) => values.map(() => "?").join(",");
+  const doArms = [
+    "LOWER(c.delivery_order) LIKE ?",
+    ...(doMatches.soDocNos.length > 0 ? [`c.doc_no IN (${placeholders(doMatches.soDocNos)})`] : []),
+    ...(doMatches.refKeys.length > 0 ? [`LOWER(TRIM(c.ref_no)) IN (${placeholders(doMatches.refKeys)})`] : []),
+  ];
+  where.push(
+    `(LOWER(c.assr_no) LIKE ? OR LOWER(c.doc_no) LIKE ? OR LOWER(c.ref_no) LIKE ? OR LOWER(c.customer_name) LIKE ? OR LOWER(c.sales_agent) LIKE ? OR LOWER(c.complaint_issue) LIKE ? OR LOWER(c.item_code) LIKE ? OR LOWER(c.phone) LIKE ? OR LOWER(c.phone) LIKE ? OR EXISTS (SELECT 1 FROM assr_items i WHERE i.assr_id = c.id AND (LOWER(i.item_code) LIKE ? OR LOWER(i.item_description) LIKE ?)) OR EXISTS (SELECT 1 FROM assr_supplier_returns sr WHERE sr.assr_id = c.id AND LOWER(sr.ref_no) LIKE ?) OR ${doArms.join(" OR ")})`,
+  );
+  binds.push(like, like, like, like, like, like, like, like, phoneLike, like, like, like, like, ...doMatches.soDocNos, ...doMatches.refKeys);
+}
+
 /** Shared company-scope WHERE fragment for the raw-SQL ASSR readers. Receives
  *  the caller's granted company ids from the route (see the field above — the
  *  HOUZS pin this used to describe was removed on 2026-07-20). The ids come from
@@ -1839,31 +1878,7 @@ export async function listAssrCases(env: Env, f: ListAssrFilters) {
     where.push("c.creditor_code = ?");
     binds.push(f.creditor_code);
   }
-  if (f.search) {
-    // Case-insensitive (PG LIKE is case-sensitive, unlike SQLite) and
-    // covers the Ref No column too (Nick 2026-07-07). LOWER() instead
-    // of ILIKE so the D1 test mirror stays happy.
-    //
-    // Restore mobile client-search coverage lost when the Service Case list
-    // moved to server pagination: the old client search also matched the
-    // complaint issue text and the item code / description. complaint_issue
-    // and item_code are denormalized columns on assr_cases; item_description
-    // lives only in the child assr_items table, matched via a correlated
-    // EXISTS so it also works inside the COUNT(*) query (no assr_items join).
-    // Additive — keeps case no / SO doc / Ref / customer. Salesperson
-    // (sales_agent) matches too, alongside its list column (2026-07-27).
-    // Also match customer PHONE. assr_cases.phone is stored separator-free
-    // (write path runs cleanPhone(so.phone) — strips +/-/space), so a term the
-    // user types with dashes/spaces is cleanPhone'd the SAME way before the
-    // LIKE; the raw predicate still catches an exact-format substring.
-    where.push(
-      "(LOWER(c.assr_no) LIKE ? OR LOWER(c.doc_no) LIKE ? OR LOWER(c.ref_no) LIKE ? OR LOWER(c.customer_name) LIKE ? OR LOWER(c.sales_agent) LIKE ? OR LOWER(c.complaint_issue) LIKE ? OR LOWER(c.item_code) LIKE ? OR LOWER(c.phone) LIKE ? OR LOWER(c.phone) LIKE ? OR EXISTS (SELECT 1 FROM assr_items i WHERE i.assr_id = c.id AND (LOWER(i.item_code) LIKE ? OR LOWER(i.item_description) LIKE ?)) OR EXISTS (SELECT 1 FROM assr_supplier_returns sr WHERE sr.assr_id = c.id AND LOWER(sr.ref_no) LIKE ?))"
-    );
-    const like = `%${f.search.toLowerCase()}%`;
-    const digits = cleanPhone(f.search);
-    const phoneLike = digits ? `%${digits.toLowerCase()}%` : like;
-    binds.push(like, like, like, like, like, like, like, like, phoneLike, like, like, like);
-  }
+  if (f.search) await pushCaseSearch(env, where, binds, f.search, f.allowed_company_ids);
   // Calendar date-window bound (perf/servicecase-board-calendar-bound):
   // the Cases Calendar passes the viewed month grid as from/to so it pulls
   // only that window instead of the whole active backlog. We compare on the
@@ -2149,31 +2164,7 @@ export async function exportAssrCases(
     where.push("(c.assigned_to = ? OR c.assigned_to_2 = ?)");
     binds.push(f.assigned_to, f.assigned_to);
   }
-  if (f.search) {
-    // Case-insensitive (PG LIKE is case-sensitive, unlike SQLite) and
-    // covers the Ref No column too (Nick 2026-07-07). LOWER() instead
-    // of ILIKE so the D1 test mirror stays happy.
-    //
-    // Restore mobile client-search coverage lost when the Service Case list
-    // moved to server pagination: the old client search also matched the
-    // complaint issue text and the item code / description. complaint_issue
-    // and item_code are denormalized columns on assr_cases; item_description
-    // lives only in the child assr_items table, matched via a correlated
-    // EXISTS so it also works inside the COUNT(*) query (no assr_items join).
-    // Additive — keeps case no / SO doc / Ref / customer. Salesperson
-    // (sales_agent) matches too, alongside its list column (2026-07-27).
-    // Also match customer PHONE. assr_cases.phone is stored separator-free
-    // (write path runs cleanPhone(so.phone) — strips +/-/space), so a term the
-    // user types with dashes/spaces is cleanPhone'd the SAME way before the
-    // LIKE; the raw predicate still catches an exact-format substring.
-    where.push(
-      "(LOWER(c.assr_no) LIKE ? OR LOWER(c.doc_no) LIKE ? OR LOWER(c.ref_no) LIKE ? OR LOWER(c.customer_name) LIKE ? OR LOWER(c.sales_agent) LIKE ? OR LOWER(c.complaint_issue) LIKE ? OR LOWER(c.item_code) LIKE ? OR LOWER(c.phone) LIKE ? OR LOWER(c.phone) LIKE ? OR EXISTS (SELECT 1 FROM assr_items i WHERE i.assr_id = c.id AND (LOWER(i.item_code) LIKE ? OR LOWER(i.item_description) LIKE ?)) OR EXISTS (SELECT 1 FROM assr_supplier_returns sr WHERE sr.assr_id = c.id AND LOWER(sr.ref_no) LIKE ?))"
-    );
-    const like = `%${f.search.toLowerCase()}%`;
-    const digits = cleanPhone(f.search);
-    const phoneLike = digits ? `%${digits.toLowerCase()}%` : like;
-    binds.push(like, like, like, like, like, like, like, like, phoneLike, like, like, like);
-  }
+  if (f.search) await pushCaseSearch(env, where, binds, f.search, f.allowed_company_ids);
   pushVisibilityScope(where, f.visible_to_user_ids);
   pushAllowedCompanies(where, f.allowed_company_ids);
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
