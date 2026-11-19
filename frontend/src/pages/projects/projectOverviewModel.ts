@@ -37,8 +37,11 @@ export interface OvPnl {
 }
 
 export interface LayerSplit { actual: number; forecast: number; last_event: number }
+export type OvLineSource = "actual" | "forecast" | "last_event";
 export interface OvLayers {
   estimated: boolean;
+  /** Each snapshot line's layer (backend routes/projectOverview.ts). */
+  sources?: Partial<Record<string, OvLineSource>>;
   split: { sales: LayerSplit; cost: LayerSplit; net: LayerSplit };
   lastEvent: { id: number; code: string } | null;
 }
@@ -222,4 +225,20 @@ export function heldVsComing(ps: OvProject[], today: string): { held: Totals; co
   const coming = ps.filter((p) => !!p.startDate && !isHeld(p, today));
   if (held.length === 0 || coming.length === 0) return null;
   return { held: totalsOf(held), coming: totalsOf(coming) };
+}
+
+/** The table column a snapshot line feeds: the three COGS lines are one column,
+ *  the two transport lines another, every other line its own (the line names
+ *  live in forecastLayers.ts). */
+const columnOfLine = (line: string): string => (line.startsWith("cogs_") ? "cogs" : line.startsWith("transport") ? "transport" : line);
+/** The money columns of the project table, in its order. */
+const MONEY_COLUMNS = ["sales", "cogs", "rental", "setup", "transport", "commission", "merchandise", "others"];
+
+/** The table columns of a project that hold a forecast (typed or the last event's),
+ *  in the table's order (owner 2026-11-19: 怎么全部estimate？不是setup而已？). */
+export function estimatedColumnsOf(p: OvProject): string[] {
+  const src = p.pnl?.layers?.sources ?? {};
+  const cols = new Set<string>();
+  for (const [line, s] of Object.entries(src)) if (s && s !== "actual") cols.add(columnOfLine(line));
+  return MONEY_COLUMNS.filter((c) => cols.has(c));
 }
