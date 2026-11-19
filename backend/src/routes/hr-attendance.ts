@@ -26,6 +26,7 @@ import { audit } from "../services/audit";
 import { ATTENDANCE_STATUSES, instantOnWorkDate, type AttendanceStatus } from "../scm/shared/hr-attendance";
 import { asDate, attendanceView, correctionTimes, type AttendanceRow } from "./lib/hr-attendance-view";
 import { loadSites, rulesResolver } from "./lib/hr-attendance-store";
+import { shiftRulesResolver } from "./lib/hr-shift-store";
 import { applyDayDock, closeForgottenAndSync, syncDayFromPunch } from "./lib/hr-labor-store";
 
 type Ctx = Context<{ Bindings: Env }>;
@@ -51,7 +52,7 @@ hrAttendance.get("/attendance", async (c) => {
   const db = getDb(c.env);
   const now = new Date();
   await closeForgottenAndSync(db, co.companyId, null, now);
-  const [rows, employees, rulesFor, sites] = await Promise.all([
+  const [rows, employees, rulesFor, sites, shiftRes] = await Promise.all([
     db.select().from(hr_attendance).where(and(eq(hr_attendance.company_id, co.companyId), eq(hr_attendance.work_date, date))),
     db
       .select({
@@ -69,8 +70,11 @@ hrAttendance.get("/attendance", async (c) => {
       .orderBy(asc(hr_employees.emp_no)),
     rulesResolver(db, co.companyId),
     loadSites(db, co.companyId),
+    shiftRulesResolver(db, co.companyId, date, date),
   ]);
   const byEmployee = new Map(rows.map((r) => [r.employee_id, r]));
+  // Header shows the global shift as a reference; each row is judged by that
+  // employee's own group shift (and delivery-day override).
   const rules = rulesFor(date);
   const list = employees
     .filter((e) => e.status === "ACTIVE" || byEmployee.has(e.id))
@@ -78,7 +82,7 @@ hrAttendance.get("/attendance", async (c) => {
       const r = byEmployee.get(e.id);
       return {
         employee: { id: e.id, empNo: e.emp_no, name: e.name, position: e.position ?? "", department: e.department ?? null, linked: e.user_id != null, status: e.status },
-        day: r ? attendanceView(r as AttendanceRow, rules, sites.names, now) : null,
+        day: r ? attendanceView(r as AttendanceRow, shiftRes.rulesFor(date, e.id), sites.names, now) : null,
       };
     });
   return c.json({
