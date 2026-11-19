@@ -213,6 +213,7 @@ GET,/api/delivery-sheet/assr-contacts,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONT
 GET,/api/delivery-sheet/assr-legs,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/deliverySheetSync.ts
 GET,/api/delivery-sheet/balance-collection,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/deliverySheetSync.ts
 GET,/api/delivery-sheet/em-transporter,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/deliverySheetSync.ts
+POST,/api/delivery-sheet/em-transporter-updates,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/deliverySheetSync.ts
 POST,/api/delivery-sheet/feed-by-docnos,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/deliverySheetSync.ts
 GET,/api/delivery-sheet/outstanding-po,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/deliverySheetSync.ts
 GET,/api/delivery-sheet/overdue,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/deliverySheetSync.ts

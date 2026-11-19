@@ -16,7 +16,7 @@ const BOARD_COLUMNS = [
   "address", "postcode", "dp_remark", "do_date", "delivered_at", "wa_message", "pod", "venue",
   "warehouse", "time_range", "time_confirmed", "departure_at", "arrival_at",
   "trip_no", "lorry", "driver", "driver_ic", "driver_contact", "driver_2",
-  "helper_1", "helper_2", "shipout_date", "eta_arriving_port",
+  "helper_1", "helper_2", "eta_arriving_port",
   "arrives_em_warehouse_date", "em_delivery_status", "consignment_no",
   "vessel_voyage", "etd_port_klang", "bs_delivery_date", "esb_remarks",
   "bs_remarks", "ctn",
@@ -32,8 +32,8 @@ const DROPPED = ["delivery_state", "arrangement_stage", "em_delivered_date", "da
 const EXPECTED = [
   { id: "delivery-date", label: "Delivery Date", visible: 30 },
   { id: "delivery-details", label: "Delivery Details", visible: 43 },
-  { id: "sg-order", label: "SG Order", visible: 31 },
-  { id: "em-order", label: "EM Order", visible: 35 },
+  { id: "sg-order", label: "SG Order", visible: 30 },
+  { id: "em-order", label: "EM Order", visible: 34 },
 ];
 
 describe("Delivery Planning layout presets", () => {

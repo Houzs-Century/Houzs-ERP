@@ -1113,7 +1113,7 @@ export function DeliveryPlanningBoard({
       'po_nos', 'address', 'postcode', 'region',
       // Logistics — warehouse, execution times, and the EM cross-border legs
       'warehouse', 'time_range', 'departure_at', 'arrival_at',
-      'shipout_date', 'eta_arriving_port', 'arrives_em_warehouse_date',
+      'eta_arriving_port', 'arrives_em_warehouse_date',
       // EM transport status (owner 2026-09-23) — the two 3PL legs, same
       // cross-border block (default-show only on the EM / SG tabs).
       'em_delivery_status', 'consignment_no', 'vessel_voyage', 'etd_port_klang',
@@ -1529,13 +1529,9 @@ export function DeliveryPlanningBoard({
       searchValue: (o) => o.departure_at ?? '',
       sortFn: (a, b) => String(a.departure_at ?? '').localeCompare(String(b.departure_at ?? '')),
     },
-    {
-      key: 'shipout_date', label: 'Ship-out Date', width: 120, sortable: true, defaultHidden: !isEmSg,
-      accessor: (o) => detail(fmtDateOrDash(o.shipout_date)),
-      searchValue: (o) => o.shipout_date ?? '',
-      sortFn: (a, b) => String(a.shipout_date ?? '').localeCompare(String(b.shipout_date ?? '')),
-      filterType: 'date', dateValue: (o) => o.shipout_date,
-    },
+    /* "Ship-out Date" column removed (owner 2026-11-20): the DO / delivery date
+       already carries the ship-out day, so a separate column was redundant. The
+       shipout_date field still exists on the DO and in the fields drawer. */
     {
       key: 'eta_arriving_port', label: 'ETA Port', width: 150, defaultHidden: !isEmSg,
       accessor: (o) => o.eta_arriving_port ?? '—',
@@ -1595,8 +1591,10 @@ export function DeliveryPlanningBoard({
       searchValue: (o) => o.bs_remarks ?? '',
     },
     {
+      /* CTN is filled on the board (owner 2026-11-20) and pushed to ESB/BS, so it
+         is inline-editable here (writes the SO's latest live DO, like the drawer). */
       key: 'ctn', label: 'CTN', width: 90, defaultHidden: !isEmSg,
-      accessor: (o) => o.ctn ?? '—',
+      accessor: (o) => <TextEditCell order={o} value={o.ctn} placeholder="CTN…" onCommit={(v) => updateFieldsMutate({ type: 'so', id: o.so_doc_no, ctn: v }, { onError: fieldNotSaved })} />,
       searchValue: (o) => o.ctn ?? '',
     },
     /* em_delivered_date ("Done Delivery") dropped as a board column (owner
