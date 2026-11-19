@@ -1099,6 +1099,17 @@ export const hr_punch_sites = pgTable("hr_punch_sites", {
   updated_by: integer("updated_by"),
 });
 
+// HC-0125: per-company punch gates. When on, a phone punch is REFUSED unless it
+// has a selfie / is within a punch site (otherwise selfie + GPS are only
+// evidence). One row per company; absent = both off.
+export const hr_attendance_settings = pgTable("hr_attendance_settings", {
+  company_id: bigint("company_id", { mode: "number" }).primaryKey(),
+  require_selfie: boolean("require_selfie").notNull().default(false),
+  require_on_site: boolean("require_on_site").notNull().default(false),
+  updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+  updated_by: integer("updated_by"),
+});
+
 export const hr_attendance = pgTable(
   "hr_attendance",
   {

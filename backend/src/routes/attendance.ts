@@ -23,8 +23,8 @@ import { hr_attendance, hr_employees, hr_payslips } from "../db/schema";
 import { requireActiveCompanyId } from "../scm/lib/companyScope";
 import { todayMyt } from "../scm/lib/my-time";
 import { checkPunchLocation } from "../scm/shared/hr-attendance";
-import { attendanceView, planPunch, type AttendanceRow } from "./lib/hr-attendance-view";
-import { loadSites } from "./lib/hr-attendance-store";
+import { attendanceView, planPunch, punchGateRefusal, type AttendanceRow } from "./lib/hr-attendance-view";
+import { loadSites, loadAttendanceSettings } from "./lib/hr-attendance-store";
 import { shiftRulesResolver } from "./lib/hr-shift-store";
 import { closeForgottenAndSync, syncDayFromPunch } from "./lib/hr-labor-store";
 import { computePeriod } from "./lib/hr-payroll-store";
@@ -146,8 +146,12 @@ attendance.post("/punch", async (c) => {
     return c.json({ error: "not_clocked_in", message: "You have not clocked in today, so there is nothing to clock out." }, 409);
   }
 
-  const sites = await loadSites(db, co.companyId);
+  const [sites, settings] = await Promise.all([loadSites(db, co.companyId), loadAttendanceSettings(db, co.companyId)]);
   const loc = checkPunchLocation(hasGps ? lat : null, hasGps ? lng : null, sites.active);
+  /* HC-0125 punch gates: when HR turns a gate on, a recording punch is REFUSED
+     (hard block) unless it carries a selfie / is within a site. */
+  const refusal = punchGateRefusal(settings, plan.kind, !!photo, loc);
+  if (refusal) return c.json(refusal, 422);
   let photoKey: string | null = null;
   if (photo && plan.kind !== "already-in") {
     photoKey = `hr-punch/${co.companyId}/${emp.id}/${today}-${action === "CLOCK_IN" ? "in" : "out"}-${crypto.randomUUID().slice(0, 8)}.${PHOTO_TYPES[photo.type]}`;

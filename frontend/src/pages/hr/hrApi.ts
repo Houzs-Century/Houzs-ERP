@@ -122,12 +122,17 @@ export type AttendanceResponse = {
   canManage: boolean;
 };
 export type PunchSiteOut = { id: number; name: string; lat: number; lng: number; radiusM: number; active: boolean };
+export type PunchSettings = { requireSelfie: boolean; requireOnSite: boolean };
+export type PunchSitesResponse = { sites: PunchSiteOut[]; settings: PunchSettings; canManage: boolean };
 
 export const useAttendance = (date: string): QueryState<AttendanceResponse> =>
   useQuery(`${HR}/attendance`, () => api.get<AttendanceResponse>(`${HR}/attendance?date=${encodeURIComponent(date)}`), [date]);
 
-export const usePunchSites = (): QueryState<{ sites: PunchSiteOut[]; canManage: boolean }> =>
-  useQuery(`${HR}/punch-sites`, () => api.get<{ sites: PunchSiteOut[]; canManage: boolean }>(`${HR}/punch-sites`));
+export const usePunchSites = (): QueryState<PunchSitesResponse> =>
+  useQuery(`${HR}/punch-sites`, () => api.get<PunchSitesResponse>(`${HR}/punch-sites`));
+
+export const savePunchSettings = (s: PunchSettings): Promise<{ ok: boolean; settings: PunchSettings }> =>
+  api.put(`${HR}/punch-settings`, s);
 
 export type WorkDay = {
   attendanceId: number;
