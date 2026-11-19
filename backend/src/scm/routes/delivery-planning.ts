@@ -90,7 +90,7 @@ import { activeCompanyId, scopeToCompany, scopeToAllowedCompanies, companyCodeMa
 /* Service-Case rows on this board are company-scoped (owner ruling 2026-08-21).
    Both statements live in ONE module, with the reasoning, so the predicate is
    assertable and cannot be re-derived by hand here. */
-import { assrBoardLocation, assrLegGuardSql, assrLegOpen, ASSR_BOARD_LEGS, ASSR_CONFIRMED_COL, assrBoardLegs, assrCaseClosed, ASSR_LEG_TIME_COL, ASSR_LEG_MSG_COL, ASSR_LEG_REMARK_COL, ASSR_LEG_AMEND_REASON_COL } from '../lib/assr-board-scope'; import { overlayAssrChatState } from '../lib/assr-arrangement-message';
+import { assrBoardLocation, assrLegGuardSql, assrLegOpen, ASSR_BOARD_LEGS, ASSR_CONFIRMED_COL, assrConfirmDateSql, assrBoardLegs, assrCaseClosed, ASSR_LEG_TIME_COL, ASSR_LEG_MSG_COL, ASSR_LEG_REMARK_COL, ASSR_LEG_AMEND_REASON_COL } from '../lib/assr-board-scope'; import { overlayAssrChatState } from '../lib/assr-arrangement-message';
 import { logActivity, attachDeliveryOrders } from '../../services/assr';
 import { orderDoNumbers } from '../../services/assrOrderDos';
 import { recordSoAudit, type FieldChange } from '../lib/so-audit';
@@ -1631,10 +1631,7 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
     // Write the driving date when the date cell was the edit (unchanged behaviour).
     if (p.scheduleDate !== undefined) {
       try {
-        const res = await c.env.DB.prepare(
-          `UPDATE assr_cases SET ${col} = ?, updated_at = datetime('now')
-            WHERE id = ? AND archived_at IS NULL`,
-        ).bind(p.scheduleDate, caseId).run();
+        const res = await c.env.DB.prepare(assrConfirmDateSql(jobKind)).bind(p.scheduleDate, caseId).run();
         if (!res.meta.changes) return c.json({ error: 'not_found' }, 404);
         await logActivity(c.env, caseId, 'leg_date_confirmed', null, p.scheduleDate,
           `${jobKind} delivery date confirmed on the Delivery Planning board by ${by}`, null, 'service');

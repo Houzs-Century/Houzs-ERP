@@ -85,6 +85,14 @@ export const ASSR_CANCELLED_COL = {
   customer_pickup: 'pickup_cancelled_at', inspection: 'inspection_cancelled_at', delivery: 'delivery_cancelled_at',
 } as const;
 
+/** Logistics confirms a leg's date. It also clears that leg's cancel stamp: a new
+ *  date on a cancelled leg books it again, and while the stamp stayed the leg never
+ *  came back on the board however many times it was scheduled (HC-0246). */
+export function assrConfirmDateSql(jobKind: keyof typeof ASSR_CONFIRMED_COL): string {
+  return `UPDATE assr_cases SET ${ASSR_CONFIRMED_COL[jobKind]} = ?, ${ASSR_CANCELLED_COL[jobKind]} = NULL, updated_at = datetime('now')
+            WHERE id = ? AND archived_at IS NULL`;
+}
+
 /** The Time Slot a Service Case keeps per leg (HC-0194), typed on the board. */
 export const ASSR_LEG_TIME_COL = {
   customer_pickup: 'pickup_time_range', inspection: 'inspection_time_range', delivery: 'delivery_time_range',
