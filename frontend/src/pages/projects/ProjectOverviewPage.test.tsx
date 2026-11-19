@@ -209,3 +209,12 @@ describe("Project Overview - the hero follows the part picked (owner 2026-11-19)
     expect(screen.getByRole("button", { name: /^Projected total/ }).getAttribute("aria-pressed")).toBe("true");
   });
 });
+
+describe("Project Overview - fits a phone (owner 2026-11-19)", () => {
+  it("the panel grid lets wide tables scroll inside their panel, and the layer split has no fixed width", () => {
+    const { container } = show("?view=finances&af_from=2027-01-01&af_to=2027-03-31");
+    const grid = [...container.querySelectorAll("div")].find((d) => d.className.includes("xl:grid-cols-"));
+    expect(grid?.className).toContain("grid-cols-[minmax(0,1fr)]");
+    expect(screen.getByTestId("layer-split").querySelector("table")?.className).not.toMatch(/min-w-/);
+  });
+});
