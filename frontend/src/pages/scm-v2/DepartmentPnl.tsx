@@ -59,8 +59,10 @@ export const DepartmentPnlTab = () => {
     { value: 'all', label: 'All departments', kind: 'all' as const },
     ...(plan.data?.departments ?? []).filter((d) => d.view != null).map((d) => ({ value: d.key as string, label: d.label, kind: d.view! })),
   ], [plan.data]);
-  const current = views.find((v) => v.value === params.get('dv')) ?? views[0]!;
-  const kind = current.kind;
+  /* A department the address names waits for the plan; anything else is All. */
+  const wanted = params.get('dv');
+  const current = views.find((v) => v.value === wanted) ?? (plan.data || !wanted ? views[0]! : null);
+  const kind = current?.kind ?? null;
   const mode: Mode = params.get('dm') === 'months' ? 'months' : 'single';
   const split = params.get('dsplit') === '1';
   const showPct = params.get('dpct') !== '0';
@@ -75,22 +77,22 @@ export const DepartmentPnlTab = () => {
   const to = r.usable ? monthEnd(r.to) : monthEnd(r.today);
   const period = from.slice(0, 7) === to.slice(0, 7) ? monthName(from) : `${monthName(from)} – ${monthName(to)}`;
   const partMonths = r.usable && (r.from !== from || r.to !== to);
-  useReportSubtitle(`${period}${partMonths ? ' · whole months' : ''} · ${current.label} · RM`);
+  useReportSubtitle(`${period}${partMonths ? ' · whole months' : ''}${current ? ` · ${current.label}` : ''} · RM`);
 
   const all = useDepartmentsAll(from, to, kind === 'all');
   const ga = useDepartmentsGa(from, to, kind === 'ga');
   const op = useDepartmentsOperation(from, to, kind === 'operation');
-  const dept = useDepartmentView(current.value, from, to, kind === 'dept');
-  const q = kind === 'all' ? all : kind === 'ga' ? ga : kind === 'operation' ? op : dept;
+  const dept = useDepartmentView(current?.value ?? '', from, to, kind === 'dept');
+  const q = kind === 'all' ? all : kind === 'ga' ? ga : kind === 'operation' ? op : kind === 'dept' ? dept : plan;
   const pctLabel = kind === 'ga' ? '% of Performance sales' : kind === 'operation' ? '% of DO' : '% of sales';
 
   return (
     <>
       <ReportToolbar>
         <FinanceDateRange label="Months" />
-        <ReportTool label="Department"><Segmented options={views} value={current.value} onChange={(v) => setParam('dv', v === 'all' ? null : v)} label="Department" /></ReportTool>
-        {kind !== 'all' && <ReportTool label="Show"><Segmented options={MODES} value={mode} onChange={(v) => setParam('dm', v === 'single' ? null : v)} label="Whole range or by month" /></ReportTool>}
-        {kind !== 'all' && <ReportSwitch on={showPct} onChange={(v) => setParam('dpct', v ? null : '0')}>{pctLabel}</ReportSwitch>}
+        <ReportTool label="Department"><Segmented options={views} value={current?.value ?? 'all'} onChange={(v) => setParam('dv', v === 'all' ? null : v)} label="Department" /></ReportTool>
+        {kind != null && kind !== 'all' && <ReportTool label="Show"><Segmented options={MODES} value={mode} onChange={(v) => setParam('dm', v === 'single' ? null : v)} label="Whole range or by month" /></ReportTool>}
+        {kind != null && kind !== 'all' && <ReportSwitch on={showPct} onChange={(v) => setParam('dpct', v ? null : '0')}>{pctLabel}</ReportSwitch>}
         {kind === 'operation' && mode === 'months' && <ReportSwitch on={split} onChange={(v) => setParam('dsplit', v ? '1' : null)}>Split each month by region</ReportSwitch>}
       </ReportToolbar>
       {!r.usable && <ReportMessage>Pick dates.</ReportMessage>}
