@@ -836,7 +836,10 @@ export const chartUpdateHandler = async (c: any): Promise<Response> => {
   const nextLogistics = patch.logistics_row !== undefined ? patch.logistics_row as string | null : was?.logistics_row ?? null;
   const nextDepartment = patch.department_row !== undefined ? patch.department_row as string | null : was?.department_row ?? null;
   if (nextDepartment && isLogisticsRow(nextLogistics) && logisticsRowType(nextLogistics) !== 'LIABILITY') {
-    return c.json({ error: 'department_taken', message: `${code} feeds the Logistics P&L (${logisticsRowLabel(nextLogistics)}) — clear its Logistics row before giving it a department.` }, 400);
+    const message = patch.department_row !== undefined
+      ? `${code} feeds the Logistics P&L (${logisticsRowLabel(nextLogistics)}) — clear its Logistics row before giving it a department.`
+      : `${code} belongs to a department (${departmentRowLabel(nextDepartment)}) — clear its Department before giving it a Logistics row.`;
+    return c.json({ error: 'department_taken', message }, 400);
   }
   if (isDepartmentRow(patch.department_row)) {
     const type = String((patch.account_type as string | undefined) ?? was?.account_type ?? '').toUpperCase();
