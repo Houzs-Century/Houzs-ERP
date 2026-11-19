@@ -21,8 +21,9 @@ import { AdvancesTab } from "./hr/AdvancesTab";
 import { PenaltiesTab } from "./hr/PenaltiesTab";
 import { TripPayTab } from "./hr/TripPayTab";
 import { AllowancesTab } from "./hr/AllowancesTab";
+import { KpiTab } from "./hr/KpiTab";
 
-type Tab = "employees" | "attendance" | "hours" | "labor" | "payroll" | "trip-pay" | "allowances" | "advances" | "penalties" | "sites" | "holidays" | "pay-rules";
+type Tab = "employees" | "attendance" | "hours" | "labor" | "payroll" | "trip-pay" | "allowances" | "kpi" | "advances" | "penalties" | "sites" | "holidays" | "pay-rules";
 const TABS: TabOption<Tab>[] = [
   { value: "employees", label: "Employee Master" },
   { value: "attendance", label: "Attendance" },
@@ -31,6 +32,7 @@ const TABS: TabOption<Tab>[] = [
   { value: "payroll", label: "Payroll" },
   { value: "trip-pay", label: "Trip Pay" },
   { value: "allowances", label: "Allowances" },
+  { value: "kpi", label: "KPI" },
   { value: "advances", label: "Advances" },
   { value: "penalties", label: "Penalty" },
   { value: "sites", label: "Punch Sites" },
@@ -67,6 +69,10 @@ const HEADER: Record<Tab, { title: string; description: string }> = {
     title: "Allowances",
     description: "Leadership, transport and KPI allowances for one month or every month, and Backpay (company advance), which is deducted. Overnight is paid on Trip Pay from the punches; add one here only for a night the punches missed.",
   },
+  kpi: {
+    title: "KPI",
+    description: "The monthly KPI appraisal: rate each weighted KPI 1-5 per week; the final score lands in a payout tier and that RM (by role) is booked as the month's KPI allowance when you confirm. Edit the KPIs and amounts under Settings.",
+  },
   advances: { title: "Advances", description: "Cash given ahead of payday, taken back in full from the payslip of the month it was given." },
   penalties: { title: "Penalty", description: "A penalty for an incident, approved by someone other than who raised it, then deducted in the payroll month it lands in." },
   sites: {
@@ -101,6 +107,7 @@ export function HrEmployees() {
       {active === "payroll" && <PayrollTab />}
       {active === "trip-pay" && <TripPayTab />}
       {active === "allowances" && <AllowancesTab />}
+      {active === "kpi" && <KpiTab />}
       {active === "advances" && <AdvancesTab />}
       {active === "penalties" && <PenaltiesTab />}
       {active === "sites" && <PunchSitesTab />}
