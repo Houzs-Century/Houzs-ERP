@@ -174,4 +174,18 @@ describe("POST /delivery-dates", () => {
     ).first<{ n: number }>();
     expect(acts2!.n).toBe(3);
   });
+
+  test("a new PICKUP date books a cancelled pickup leg again, leaving other legs' stamps (HC-0246)", async () => {
+    await env.DB.prepare(
+      `UPDATE assr_cases SET pickup_cancelled_at = '2026-08-01', delivery_cancelled_at = '2026-08-01' WHERE id = 9101`
+    ).run();
+    const res = await post(KEY, { updates: [{ assr_no: "ASSR/TEST-9101", job: "PICKUP", date: "2026-08-20" }] });
+    expect(res.status).toBe(200);
+    const row = await env.DB.prepare(
+      `SELECT sched_pickup_date, pickup_cancelled_at, delivery_cancelled_at FROM assr_cases WHERE id = 9101`
+    ).first<any>();
+    expect(row.sched_pickup_date).toBe("2026-08-20");
+    expect(row.pickup_cancelled_at).toBeNull();
+    expect(row.delivery_cancelled_at).toBe("2026-08-01");
+  });
 });
