@@ -37,8 +37,11 @@ export interface OvPnl {
 }
 
 export interface LayerSplit { actual: number; forecast: number; last_event: number }
+export type OvLineSource = "actual" | "forecast" | "last_event";
 export interface OvLayers {
   estimated: boolean;
+  /** Each snapshot line's layer (backend routes/projectOverview.ts). */
+  sources?: Partial<Record<string, OvLineSource>>;
   split: { sales: LayerSplit; cost: LayerSplit; net: LayerSplit };
   lastEvent: { id: number; code: string } | null;
 }
@@ -222,4 +225,34 @@ export function heldVsComing(ps: OvProject[], today: string): { held: Totals; co
   const coming = ps.filter((p) => !!p.startDate && !isHeld(p, today));
   if (held.length === 0 || coming.length === 0) return null;
   return { held: totalsOf(held), coming: totalsOf(coming) };
+}
+
+/** The table column each snapshot line feeds. */
+const COLUMN_OF_LINE: Record<string, string> = {
+  sales: "sales", cogs_matt_sofa: "cogs", cogs_bedframe: "cogs", cogs_accessories: "cogs",
+  rental: "rental", setup: "setup", transport_fee: "transport", transport_setup_dismantle: "transport",
+  commission: "commission", merchandise: "merchandise", others: "others",
+};
+const COLUMN_LABEL: Record<string, string> = {
+  sales: "Sales", cogs: "COGS", rental: "Rental", setup: "Setup", transport: "Transport",
+  commission: "Commission", merchandise: "Merchandise", others: "Others",
+};
+
+/** The table columns of a project that hold a forecast (typed or the last event's),
+ *  in the table's order (owner 2026-11-19: 怎么全部estimate？不是setup而已？). */
+export function estimatedColumnsOf(p: OvProject): string[] {
+  const src = p.pnl?.layers?.sources ?? {};
+  const cols = new Set<string>();
+  for (const [line, s] of Object.entries(src)) if (s && s !== "actual" && COLUMN_OF_LINE[line]) cols.add(COLUMN_OF_LINE[line]!);
+  return Object.keys(COLUMN_LABEL).filter((c) => cols.has(c));
+}
+
+/** The row's tag: null when every figure is real, "Forecast" when its sales are a
+ *  forecast (the whole event is), else "Est: Setup" naming the forecast columns. */
+export function estimateTagOf(p: OvProject): { label: string; title: string } | null {
+  const cols = estimatedColumnsOf(p);
+  if (cols.length === 0) return null;
+  if (cols.includes("sales")) return { label: "Forecast", title: "Sales and the costs not in yet are a forecast (typed, or the last same event's result)" };
+  const names = cols.map((c) => COLUMN_LABEL[c]!);
+  return { label: `Est: ${names.join(", ")}`, title: `${names.join(", ")}: a forecast (typed, or the last same event's result) until the real figure is in; everything else is real` };
 }

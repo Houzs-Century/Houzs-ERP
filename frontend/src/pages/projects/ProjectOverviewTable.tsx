@@ -14,7 +14,7 @@
 import { DataTable, type Column } from "../../components/DataTable";
 import { fmtDateOrDash, fmtDayMonthRange } from "../../vendor/shared/format";
 import { fmtSenPlain } from "../../vendor/shared/format";
-import { figuresOf, pctOf, type OvProject } from "./projectOverviewModel";
+import { estimatedColumnsOf, estimateTagOf, figuresOf, pctOf, type OvProject } from "./projectOverviewModel";
 import { projectLines } from "./projectOverviewView";
 
 export type OverviewRow = { p: OvProject; f: ReturnType<typeof figuresOf> };
@@ -28,7 +28,12 @@ const amountCol = (key: string, label: string, pick: (r: OverviewRow) => number,
   key, label, align: "right", group,
   render: (r) => {
     const v = pick(r);
-    return <span className={opts.strong ? (v < 0 ? "font-semibold text-err" : "font-semibold") : v < 0 ? "text-err" : Math.abs(v) < 0.005 ? "text-ink-muted" : ""}>{money(v)}</span>;
+    const tone = opts.strong ? (v < 0 ? "font-semibold text-err" : "font-semibold") : v < 0 ? "text-err" : Math.abs(v) < 0.005 ? "text-ink-muted" : "";
+    /* A forecast figure reads apart from a real one: italic, dotted underline (owner 2026-11-19). */
+    const est = r.f.estimated && estimatedColumnsOf(r.p).includes(key);
+    return est
+      ? <span className={`${tone} italic underline decoration-dotted underline-offset-2`} title="Forecast (typed, or the last same event's result) until the real figure is in">{money(v)}</span>
+      : <span className={tone}>{money(v)}</span>;
   },
   /* To the sen, so two rows that read the same share one line in the funnel. */
   getValue: (r) => Math.round(pick(r) * 100) / 100, filterLabel: (v) => money(Number(v)),
@@ -60,8 +65,8 @@ export const PROJECT_COLUMNS: Column<OverviewRow>[] = [
     render: (r) => (
       <span className="whitespace-nowrap font-semibold text-primary" title={r.p.name}>
         {projectLines(r.p).title}
-        {/* Owner 2026-11-18: the row's figures hold a Forecast or a Last event estimate. */}
-        {r.f.estimated && <span className="ml-1.5 rounded bg-warning-bg px-1 py-px text-[10px] font-semibold text-warning-text" title="Some figures are a typed Forecast or the last same-venue event's actual">Estimate</span>}
+        {/* Names what is a forecast - "Est: Setup" - not a blanket "Estimate" (owner 2026-11-19). */}
+        {(() => { const tag = r.f.estimated ? estimateTagOf(r.p) : null; return tag ? <span className="ml-1.5 rounded bg-warning-bg px-1 py-px text-[10px] font-semibold text-warning-text" title={tag.title}>{tag.label}</span> : null; })()}
       </span>
     ),
     getValue: (r) => projectLines(r.p).title, sortValue: (r) => projectLines(r.p).title, searchValue: (r) => r.p.name,
