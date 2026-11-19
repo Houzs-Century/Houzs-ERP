@@ -179,10 +179,11 @@ describe("Project Overview — future date ranges (owner 2026-11-18)", () => {
     const row = within(projectsTable()).getByText("[AKEMI] MYHOME").closest("tr") as HTMLTableRowElement;
     /* No tag; its forecast figures are shaded (owner 2026-11-19). */
     expect(within(row).queryByText("Estimate")).toBeNull();
-    expect(within(row).getByText("90,000.00").getAttribute("data-forecast")).toBe("1");
-    expect(within(row).getByText("12,000.00").getAttribute("data-forecast")).toBe("1");
+    /* Sales was typed (teal); Rental is the last event's (yellow). */
+    expect(within(row).getByText("90,000.00").getAttribute("data-forecast")).toBe("typed");
+    expect(within(row).getByText("12,000.00").getAttribute("data-forecast")).toBe("last");
     /* The Total row says it holds a forecast too. */
-    expect(within(projectsTable()).getAllByText("90,000.00").some((el) => el.getAttribute("title")?.startsWith("Includes 90,000.00 forecast"))).toBe(true);
+    expect(within(projectsTable()).getAllByText("90,000.00").some((el) => el.getAttribute("title")?.startsWith("Typed forecast 90,000.00 · last event -"))).toBe(true);
     const split = screen.getByTestId("layer-split");
     expect(split.textContent).toContain("1 of 1 projects include a forecast");
     /* A last event's result is a forecast (owner 2026-11-19): two columns, not three. */

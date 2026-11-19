@@ -14,7 +14,7 @@
 import { DataTable, type Column } from "../../components/DataTable";
 import { fmtDateOrDash, fmtDayMonthRange } from "../../vendor/shared/format";
 import { fmtSenPlain } from "../../vendor/shared/format";
-import { estimatedColumnsOf, figuresOf, pctOf, type OvProject } from "./projectOverviewModel";
+import { figuresOf, forecastKindOf, pctOf, type OvProject } from "./projectOverviewModel";
 import { projectLines } from "./projectOverviewView";
 
 export type OverviewRow = { p: OvProject; f: ReturnType<typeof figuresOf> };
@@ -23,16 +23,21 @@ const money = (rm: number): string => (!Number.isFinite(rm) || Math.abs(rm) < 0.
 const pct = (x: number | null): string => (x == null ? "-" : x < 0 ? `(${Math.abs(x).toFixed(1)}%)` : `${x.toFixed(1)}%`);
 const sum = (rows: OverviewRow[], pick: (r: OverviewRow) => number) => rows.reduce((s, r) => s + pick(r), 0);
 
+/* A forecast figure's shading: yellow = the last event's result, teal = a Forecast someone
+   typed (owner 2026-11-19). No padding, so the figure keeps the column's width. */
+const SHADE = { last: "bg-warning-bg text-warning-text", typed: "bg-primary-soft text-primary-ink" } as const;
+const kindOf = (r: OverviewRow, key: string) => (r.f.estimated ? forecastKindOf(r.p, key) : null);
+
 /** One money column: right-aligned, totalled, exported as a number. */
 const amountCol = (key: string, label: string, pick: (r: OverviewRow) => number, group: string, opts: { strong?: boolean } = {}): Column<OverviewRow> => ({
   key, label, align: "right", group,
   render: (r) => {
     const v = pick(r);
     const tone = opts.strong ? (v < 0 ? "font-semibold text-err" : "font-semibold") : v < 0 ? "text-err" : Math.abs(v) < 0.005 ? "text-ink-muted" : "";
-    /* A forecast figure is shaded yellow; a real one is plain (owner 2026-11-19: 把那个数据放黄色就行了). */
-    const est = r.f.estimated && estimatedColumnsOf(r.p).includes(key);
-    return est
-      ? <span className={`${tone} rounded bg-warning-bg px-1 text-warning-text`} title="Forecast (typed, or the last same event's result) until the real figure is in" data-forecast="1">{money(v)}</span>
+    const kind = kindOf(r, key);
+    return kind
+      ? <span className={`${tone} ${SHADE[kind]}`} data-forecast={kind}
+          title={kind === "typed" ? "A Forecast typed on the project, until the real figure is in" : "The last same event's result, until the real figure is in"}>{money(v)}</span>
       : <span className={tone}>{money(v)}</span>;
   },
   /* To the sen, so two rows that read the same share one line in the funnel. */
@@ -42,11 +47,15 @@ const amountCol = (key: string, label: string, pick: (r: OverviewRow) => number,
      (owner 2026-11-19: projected total 又怎么show). */
   total: (rows) => {
     const all = sum(rows, pick);
-    const fc = sum(rows.filter((r) => r.f.estimated && estimatedColumnsOf(r.p).includes(key)), pick);
+    const typed = sum(rows.filter((r) => kindOf(r, key) === "typed"), pick);
+    const last = sum(rows.filter((r) => kindOf(r, key) === "last"), pick);
     const tone = opts.strong && all < 0 ? "text-err" : "";
-    return Math.abs(fc) >= 0.005
-      ? <span className={`${tone} rounded bg-warning-bg px-1 text-warning-text`} title={`Includes ${money(fc)} forecast; ${money(all - fc)} is real`} data-forecast="1">{money(all)}</span>
-      : <span className={tone}>{money(all)}</span>;
+    if (Math.abs(typed) < 0.005 && Math.abs(last) < 0.005) return <span className={tone}>{money(all)}</span>;
+    const kind = Math.abs(last) >= 0.005 ? "last" : "typed";
+    return (
+      <span className={`${tone} ${SHADE[kind]}`} data-forecast={kind}
+        title={`Typed forecast ${money(typed)} · last event ${money(last)} · real ${money(all - typed - last)}`}>{money(all)}</span>
+    );
   },
 });
 

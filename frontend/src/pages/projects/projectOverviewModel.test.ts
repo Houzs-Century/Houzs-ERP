@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { figuresOf, totalsOf, trendOf, groupBy, drillOf, heldVsComing, isHeld, forecastShareOf, estimatedColumnsOf, type OvProject } from "./projectOverviewModel";
+import { figuresOf, totalsOf, trendOf, groupBy, drillOf, heldVsComing, isHeld, forecastShareOf, estimatedColumnsOf, forecastKindOf, type OvProject } from "./projectOverviewModel";
 
 const NO_SPLIT = { mattSofa: 0, bedframe: 0, accessories: 0 };
 
@@ -140,6 +140,12 @@ describe("Project Overview - which cells are a forecast (owner 2026-11-19)", () 
   });
   it("only Setup borrowed: only the Setup column is shaded", () => {
     expect(estimatedColumnsOf(withSources({ sales: "actual", setup: "last_event", rental: "actual" }))).toEqual(["setup"]);
+  });
+  it("typed beats the last event in a column; a real column has none", () => {
+    const x = withSources({ setup: "last_event", cogs_matt_sofa: "forecast", cogs_bedframe: "last_event", rental: "actual" });
+    expect(forecastKindOf(x, "setup")).toBe("last");
+    expect(forecastKindOf(x, "cogs")).toBe("typed");
+    expect(forecastKindOf(x, "rental")).toBeNull();
   });
   it("COGS and transport lines fold into their column, in table order", () => {
     expect(estimatedColumnsOf(withSources({ transport_fee: "last_event", setup: "forecast", cogs_bedframe: "last_event", transport_setup_dismantle: "last_event" }))).toEqual(["cogs", "setup", "transport"]);
