@@ -37,6 +37,7 @@ import {
 } from "../pages/MailCenter/mail-attachments";
 import { parseRecipients, firstInvalid, addRecipients } from "../pages/MailCenter/mail-recipients";
 import { RecipientPicker } from "../pages/MailCenter/RecipientPicker";
+import { RecipientSuggestInput } from "../pages/MailCenter/RecipientSuggestInput";
 import { EMAIL_FRAME_SANDBOX_MEASURABLE, emailSrcDoc } from "../pages/MailCenter/mail-email-frame";
 import { MobileMessageAcks, MobileNeedsAck, MobilePendingAcks, MobileReadBy } from "./MobileMailAcks";
 import type { AckState, ThreadReaders } from "../pages/MailCenter/mail-acks";
@@ -1503,7 +1504,7 @@ function MailCompose({
       <FromPicker addresses={addresses} value={from} onChange={setFromOverride} />
       <label className="fld">
         <span className="fld-l">To</span>
-        <input className="fld-i" value={to} onChange={(e) => setTo(e.target.value)} placeholder="name@example.com" />
+        <RecipientSuggestInput inputClassName="fld-i" value={to} onChange={setTo} placeholder="name@example.com" disabled={sending} invalid={false} />
       </label>
       <div style={{ display: "flex", gap: 8 }}>
         <button type="button" onClick={() => setPickerOpen(true)} className="tinybtn" style={{ borderStyle: "dashed" }}>
@@ -1520,11 +1521,11 @@ function MailCompose({
         <>
           <label className="fld">
             <span className="fld-l">Cc</span>
-            <input className="fld-i" value={cc} onChange={(e) => setCc(e.target.value)} placeholder="cc@example.com" />
+            <RecipientSuggestInput inputClassName="fld-i" value={cc} onChange={setCc} placeholder="cc@example.com" disabled={sending} invalid={false} />
           </label>
           <label className="fld">
             <span className="fld-l">Bcc</span>
-            <input className="fld-i" value={bcc} onChange={(e) => setBcc(e.target.value)} placeholder="bcc@example.com" />
+            <RecipientSuggestInput inputClassName="fld-i" value={bcc} onChange={setBcc} placeholder="bcc@example.com" disabled={sending} invalid={false} />
           </label>
         </>
       )}

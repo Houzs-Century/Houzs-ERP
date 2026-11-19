@@ -22,6 +22,8 @@ Personal mailboxes: invite (`POST /api/users/invite`, optional `email_alias`; bl
 
 Recipient picker (P4, A5): the "Org chart" button on compose (desktop and phone) opens `RecipientPicker.tsx`, fed by `GET /directory` (needs `mail_center.read`). Tabs: Department (same primary department, plus that department's shared mailboxes), My team (`subtreeUserIds` plus everyone with the same manager), My managers (`uplineChainSteps`, nearest first), Everyone. People come from the announcements roster (`loadRoster`: active users, the active company's `user_companies` grants); each is reached on their own mailbox in the active company, else their login email. The caller and disabled accounts are never listed. Reply has no To / Cc field yet, so the picker is on compose and forward only.
 
+Address suggestions (HC-0247): typing in To / Cc / Bcc on compose (desktop and phone, `RecipientSuggestInput.tsx`) lists matches from `GET /recipients/history` (addresses the caller's own scope mailboxes and alias wrote to or heard from, newest 2,000 messages of the active company, most used first) and then the directory. A colleague's mailbox outside the caller's scope never feeds it.
+
 Reply-all precedence: an explicit `to` from the caller always wins; otherwise To becomes the newest INBOUND message's `from_address` (falling back to the thread's `counterparty_email` only when there is no inbound message at all); when `replyAll: true` and the caller sent no `cc`, Cc is rebuilt from that inbound message's To+Cc, minus the caller's own mailbox-scope addresses and minus anyone already on To. Bcc is never reconstructed (it was blind, it stays blind) and never stored on the message row — only the provider and the ops-only outbox row ever see it.
 
 ## Permissions
