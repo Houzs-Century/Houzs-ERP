@@ -28,6 +28,7 @@ import { hasHouzsPerm } from '../lib/houzs-perms';
 import { ACCOUNT_SECTIONS, defaultSectionFor, isAccountSection, sectionType } from '../lib/account-sections';
 import { PMS_ROWS, PMS_ROW_LABELS, isPmsRow } from '../lib/event-accounts';
 import { LOGISTICS_ROWS, isLogisticsRow, logisticsRowLabel, logisticsRowType } from '../lib/logistics-rows';
+import { DEPARTMENT_ROWS, departmentRowLabel, isDepartmentRow } from '../lib/department-rows';
 import {
   assertAuditWritable, auditUnavailableBody, compactChanges, fieldChange, recordEntityAudit,
   type AuditAction, type FieldChange,
@@ -83,12 +84,14 @@ type AccountRow = {
   pms_row?: string | null;
   /** The Logistics P&L's row (owner 2026-10-29: 在 coa 那边选) — scm/lib/logistics-rows.ts. */
   logistics_row?: string | null;
+  /** The Department P&L's department and row (owner 2026-11-19) — scm/lib/department-rows.ts. */
+  department_row?: string | null;
 };
 
 /* Every field a definition COPY carries (tick-ON, create chains, re-parent
    instantiation) — one list, so a new column cannot be copied in one walk and
    forgotten in another. */
-const DEFINITION_FIELDS = 'account_code, account_name, account_type, parent_code, acc_money, special_type, section, needs_event, pms_row, logistics_row';
+const DEFINITION_FIELDS = 'account_code, account_name, account_type, parent_code, acc_money, special_type, section, needs_event, pms_row, logistics_row, department_row';
 
 /** The caller's company allow-list, fail-CLOSED like every scoping helper:
     no resolved list means no cross-company picture. */
@@ -122,7 +125,7 @@ const recordChartAudit = async (c: any, entries: ChartAuditEntry[]): Promise<voi
   }
 };
 
-const AUDITED_FIELDS = ['account_name', 'account_type', 'parent_code', 'acc_money', 'special_type', 'section', 'needs_event', 'pms_row', 'logistics_row', 'is_active'] as const;
+const AUDITED_FIELDS = ['account_name', 'account_type', 'parent_code', 'acc_money', 'special_type', 'section', 'needs_event', 'pms_row', 'logistics_row', 'department_row', 'is_active'] as const;
 
 const definitionChanges = (before: Record<string, unknown> | null, after: Record<string, unknown>): Array<FieldChange | null> =>
   AUDITED_FIELDS.filter((f) => after[f] !== undefined).map((f) => fieldChange(f, before?.[f] ?? null, after[f]));
@@ -144,7 +147,7 @@ export const chartUnionHandler = async (c: any): Promise<Response> => {
   /* One row per code. Definition fields prefer the LOWEST company id that
      carries the code (company 1 = the master book where the accountant's
      import lands), so a rename there leads the union. */
-  const byCode = new Map<string, { code: string; name: string; type: string; parentCode: string | null; accMoney: boolean; special: string | null; section: string | null; needsEvent: boolean; pmsRow: string | null; logisticsRow: string | null; definedBy: number; perCompany: Record<number, { active: boolean }> }>();
+  const byCode = new Map<string, { code: string; name: string; type: string; parentCode: string | null; accMoney: boolean; special: string | null; section: string | null; needsEvent: boolean; pmsRow: string | null; logisticsRow: string | null; departmentRow: string | null; definedBy: number; perCompany: Record<number, { active: boolean }> }>();
   for (const raw of (data ?? []) as AccountRow[]) {
     const cur = byCode.get(raw.account_code);
     if (!cur || raw.company_id < cur.definedBy) {
@@ -159,6 +162,7 @@ export const chartUnionHandler = async (c: any): Promise<Response> => {
         needsEvent: raw.needs_event === true,
         pmsRow: raw.pms_row ?? null,
         logisticsRow: raw.logistics_row ?? null,
+        departmentRow: raw.department_row ?? null,
         definedBy: raw.company_id,
         perCompany: { ...(cur?.perCompany ?? {}), [raw.company_id]: { active: raw.is_active } },
       });
@@ -179,6 +183,8 @@ export const chartUnionHandler = async (c: any): Promise<Response> => {
     pmsRows: PMS_ROWS.map((row) => ({ row, label: PMS_ROW_LABELS[row] })),
     /* The Logistics P&L's rows an account can feed, each with the account type it takes — one list. */
     logisticsRows: LOGISTICS_ROWS.map((row) => ({ row, label: logisticsRowLabel(row), type: logisticsRowType(row) })),
+    /* The Department P&L's values an expense account can take (G&A, or an Operation row in a region) — one list. */
+    departmentRows: DEPARTMENT_ROWS.map((row) => ({ row, label: departmentRowLabel(row) })),
     accounts: [...byCode.values()].map(({ definedBy: _d, ...row }) => row),
   });
 };
@@ -247,6 +253,7 @@ export const chartTickHandler = async (c: any): Promise<Response> => {
         needs_event: d.needs_event === true,
         pms_row: d.pms_row ?? null,
         logistics_row: d.logistics_row ?? null,
+        department_row: d.department_row ?? null,
         is_active: true,
       }, { onConflict: 'company_id,account_code' });
       if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
@@ -580,6 +587,7 @@ export const chartCreateHandler = async (c: any): Promise<Response> => {
         needs_event: d.needs_event === true,
         pms_row: d.pms_row ?? null,
         logistics_row: d.logistics_row ?? null,
+        department_row: d.department_row ?? null,
         is_active: true,
       }, { onConflict: 'company_id,account_code' });
       if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
@@ -693,6 +701,14 @@ export const chartUpdateHandler = async (c: any): Promise<Response> => {
       return c.json({ error: 'bad_logistics_row', message: `logisticsRow must be one of ${LOGISTICS_ROWS.join(' / ')}, or empty.` }, 400);
     }
     patch.logistics_row = isLogisticsRow(body.logisticsRow) ? body.logisticsRow : null;
+  }
+  /* The Department P&L's department (owner 2026-11-19): one per account, on an
+     expense account no Logistics row claims — checked below, once the account is read. */
+  if (body.departmentRow !== undefined) {
+    if (body.departmentRow !== null && body.departmentRow !== '' && !isDepartmentRow(body.departmentRow)) {
+      return c.json({ error: 'bad_department_row', message: 'departmentRow must be ga, exhibition, showroom, logistics, operation, sales, hire, an Operation row (op_<row>_<pg|kl|em>), or empty.' }, 400);
+    }
+    patch.department_row = isDepartmentRow(body.departmentRow) ? body.departmentRow : null;
   }
 
   const sb = c.get('supabase');
@@ -813,6 +829,24 @@ export const chartUpdateHandler = async (c: any): Promise<Response> => {
   const priorRes = await sb.from('accounts').select(`company_id, is_active, ${DEFINITION_FIELDS}`).eq('account_code', code);
   if (priorRes.error) return c.json({ error: 'load_failed', reason: priorRes.error.message }, 500);
   const prior = ((priorRes.data ?? []) as Array<Record<string, unknown>>).map((r) => ({ ...r }));
+
+  /* One amount, one department: the Logistics column and the Department column never
+     both claim an expense account. */
+  const was = prior[0] as { logistics_row?: string | null; department_row?: string | null; account_type?: string | null } | undefined;
+  const nextLogistics = patch.logistics_row !== undefined ? patch.logistics_row as string | null : was?.logistics_row ?? null;
+  const nextDepartment = patch.department_row !== undefined ? patch.department_row as string | null : was?.department_row ?? null;
+  if (nextDepartment && isLogisticsRow(nextLogistics) && logisticsRowType(nextLogistics) !== 'LIABILITY') {
+    const message = patch.department_row !== undefined
+      ? `${code} feeds the Logistics P&L (${logisticsRowLabel(nextLogistics)}) — clear its Logistics row before giving it a department.`
+      : `${code} belongs to a department (${departmentRowLabel(nextDepartment)}) — clear its Department before giving it a Logistics row.`;
+    return c.json({ error: 'department_taken', message }, 400);
+  }
+  if (isDepartmentRow(patch.department_row)) {
+    const type = String((patch.account_type as string | undefined) ?? was?.account_type ?? '').toUpperCase();
+    if (type !== 'EXPENSE') {
+      return c.json({ error: 'bad_department_row', message: `${code} is ${type || 'not an expense account'} — a department reads expense accounts.` }, 400);
+    }
+  }
 
   if (isLogisticsRow(patch.logistics_row)) {
     let type = patch.account_type as string | undefined;

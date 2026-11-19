@@ -14,7 +14,7 @@
 import { DataTable, type Column } from "../../components/DataTable";
 import { fmtDateOrDash, fmtDayMonthRange } from "../../vendor/shared/format";
 import { fmtSenPlain } from "../../vendor/shared/format";
-import { figuresOf, pctOf, type OvProject } from "./projectOverviewModel";
+import { estimatedColumnsOf, figuresOf, pctOf, type OvProject } from "./projectOverviewModel";
 import { projectLines } from "./projectOverviewView";
 
 export type OverviewRow = { p: OvProject; f: ReturnType<typeof figuresOf> };
@@ -28,12 +28,26 @@ const amountCol = (key: string, label: string, pick: (r: OverviewRow) => number,
   key, label, align: "right", group,
   render: (r) => {
     const v = pick(r);
-    return <span className={opts.strong ? (v < 0 ? "font-semibold text-err" : "font-semibold") : v < 0 ? "text-err" : Math.abs(v) < 0.005 ? "text-ink-muted" : ""}>{money(v)}</span>;
+    const tone = opts.strong ? (v < 0 ? "font-semibold text-err" : "font-semibold") : v < 0 ? "text-err" : Math.abs(v) < 0.005 ? "text-ink-muted" : "";
+    /* A forecast figure is shaded yellow; a real one is plain (owner 2026-11-19: 把那个数据放黄色就行了). */
+    const est = r.f.estimated && estimatedColumnsOf(r.p).includes(key);
+    return est
+      ? <span className={`${tone} rounded bg-warning-bg px-1 text-warning-text`} title="Forecast (typed, or the last same event's result) until the real figure is in" data-forecast="1">{money(v)}</span>
+      : <span className={tone}>{money(v)}</span>;
   },
   /* To the sen, so two rows that read the same share one line in the funnel. */
   getValue: (r) => Math.round(pick(r) * 100) / 100, filterLabel: (v) => money(Number(v)),
   filterType: "number", sortValue: pick, numberValue: pick, exportValue: (r) => pick(r),
-  total: (rows) => <span className={opts.strong && sum(rows, pick) < 0 ? "text-err" : ""}>{money(sum(rows, pick))}</span>,
+  /* The total says how much of it is a forecast - shaded, with the forecast part on hover
+     (owner 2026-11-19: projected total 又怎么show). */
+  total: (rows) => {
+    const all = sum(rows, pick);
+    const fc = sum(rows.filter((r) => r.f.estimated && estimatedColumnsOf(r.p).includes(key)), pick);
+    const tone = opts.strong && all < 0 ? "text-err" : "";
+    return Math.abs(fc) >= 0.005
+      ? <span className={`${tone} rounded bg-warning-bg px-1 text-warning-text`} title={`Includes ${money(fc)} forecast; ${money(all - fc)} is real`} data-forecast="1">{money(all)}</span>
+      : <span className={tone}>{money(all)}</span>;
+  },
 });
 
 /** A % column worked out row by row, and on the Total row from the added-up figures. */
@@ -60,8 +74,6 @@ export const PROJECT_COLUMNS: Column<OverviewRow>[] = [
     render: (r) => (
       <span className="whitespace-nowrap font-semibold text-primary" title={r.p.name}>
         {projectLines(r.p).title}
-        {/* Owner 2026-11-18: the row's figures hold a Forecast or a Last event estimate. */}
-        {r.f.estimated && <span className="ml-1.5 rounded bg-warning-bg px-1 py-px text-[10px] font-semibold text-warning-text" title="Some figures are a typed Forecast or the last same-venue event's actual">Estimate</span>}
       </span>
     ),
     getValue: (r) => projectLines(r.p).title, sortValue: (r) => projectLines(r.p).title, searchValue: (r) => r.p.name,

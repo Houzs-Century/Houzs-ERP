@@ -13,12 +13,13 @@
 import type { LucideIcon } from 'lucide-react';
 import {
   Banknote, BarChart3, BookOpen, CalendarDays, CreditCard, FileText, Flag, Gauge, HandCoins, History,
-  LayoutDashboard, ListChecks, Package, Scale, TrendingUp, Truck, Users, Wallet,
+  LayoutDashboard, ListChecks, Network, Package, Scale, TrendingUp, Truck, Users, Wallet,
 } from 'lucide-react';
 import type { ReportId } from '../reports-catalog';
 
 export const REPORT_LOOK: Readonly<Record<ReportId, { icon: LucideIcon; desc: string }>> = {
   pnl: { icon: BarChart3, desc: 'Income and expenses for a period on the report layout, with each line’s % of sales' },
+  departments: { icon: Network, desc: 'G&A and Operation against their shares, and every account split across the departments' },
   bs: { icon: Scale, desc: 'What the company owns and owes as at a day, with each line’s % of total assets' },
   rp: { icon: Banknote, desc: 'Money in and out of every bank and cash account, by layout row' },
   tb: { icon: ListChecks, desc: 'Debits and credits of every account; the difference must be 0.00' },

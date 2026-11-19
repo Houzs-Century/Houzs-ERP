@@ -5,7 +5,7 @@
  * cancelled events, and a forecast is read through its project's company. */
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, test } from "vitest";
-import { findLastEvent, readForecasts, readExpoMapFiles, hasExpoMapFiles } from "../src/services/eventForecastLoad";
+import { findLastEvent, readForecasts, readExpoMapFiles, hasFilledFloorplanFile } from "../src/services/eventForecastLoad";
 
 /* The D1 mirror predates multi-company (mig-pg 0093): projects has no
    company_id there. Production's column is added for this file only. */
@@ -79,8 +79,10 @@ describe("the Expo Map reference", () => {
     const files = await readExpoMapFiles(env.DB, last);
     expect(files.map((f) => [f.item_title, f.file_name])).toEqual([["Blank Floorplan", "blank.pdf"]]);
 
-    expect(hasExpoMapFiles([{ id: 5, title: "Filled Floorplan", section_id: null }], [], [{ item_id: 5 }])).toBe(true);
-    expect(hasExpoMapFiles([{ id: 5, title: "Filled Floorplan", section_id: null }], [], [])).toBe(false);
-    expect(hasExpoMapFiles([{ id: 6, title: "Contract", section_id: null }], [], [{ item_id: 6 }])).toBe(false);
+    expect(hasFilledFloorplanFile([{ id: 5, title: "Filled Floorplan", section_id: null }], [{ item_id: 5 }])).toBe(true);
+    expect(hasFilledFloorplanFile([{ id: 5, title: "Filled Floorplan", section_id: null }], [])).toBe(false);
+    /* Owner 2026-11-19 (A): this event's own Blank Floorplan alone keeps the last event's map on show. */
+    expect(hasFilledFloorplanFile([{ id: 4, title: "Blank Floorplan", section_id: null }, { id: 5, title: "Filled Floorplan", section_id: null }], [{ item_id: 4 }])).toBe(false);
+    expect(hasFilledFloorplanFile([{ id: 6, title: "Contract", section_id: null }], [{ item_id: 6 }])).toBe(false);
   });
 });

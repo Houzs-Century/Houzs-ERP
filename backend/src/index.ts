@@ -217,6 +217,7 @@ import { runSOSnapshot, runPOSnapshot } from "./services/acSnapshot";
 import { isAutoCountSyncDisabled } from "./services/autocount";
 import { jobTracker, purgeOldJobRuns } from "./services/jobRuns";
 import { pruneFailedLogins } from "./services/failedLogins";
+import { bustProjectOverviewOnWrite } from "./routes/lib/project-overview-bust";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -570,6 +571,9 @@ const requirePageAccessOrDirector: MiddlewareHandler<{ Bindings: Env }> = async 
   if (isFinanceViewer(c.get("user") as unknown as AuthUser)) return next();
   return requirePageAccess("projects.finances")(c, next);
 };
+// A successful project write drops Project Overview's cached copy (routes/lib/project-overview-bust.ts).
+app.use("/api/projects/*", bustProjectOverviewOnWrite);
+app.use("/api/project-forecast/*", bustProjectOverviewOnWrite);
 app.use("/api/projects/overview/*", requirePageAccessOrDirector);
 app.route("/api/projects/overview", projectOverview);
 app.route("/api/projects", projects);
