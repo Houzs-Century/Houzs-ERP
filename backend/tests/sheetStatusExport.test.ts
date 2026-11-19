@@ -1,5 +1,5 @@
 import { env } from "cloudflare:test";
-import { describe, expect, test, beforeEach } from "vitest";
+import { describe, expect, test, beforeAll, beforeEach } from "vitest";
 import intake from "../src/routes/assrFormIntake";
 
 // Sheet status export (Nick 2026-07-14) — the HC Delivery sheet's Apps
@@ -9,6 +9,14 @@ import intake from "../src/routes/assrFormIntake";
 
 const KEY = "test-sheet-sync-key";
 const authedEnv = { ...env, FORM_INTAKE_KEY: KEY } as typeof env;
+
+// The leg cancel stamps live in Postgres only: the shared D1 mirror of assr_cases
+// is at D1's 100-column result limit, so this file adds them to its own D1.
+beforeAll(async () => {
+  for (const c of ["pickup_cancelled_at", "inspection_cancelled_at", "delivery_cancelled_at"]) {
+    try { await env.DB.exec(`ALTER TABLE assr_cases ADD COLUMN ${c} TEXT`); } catch { /* already there */ }
+  }
+});
 
 beforeEach(async () => {
   await env.DB.prepare(`DELETE FROM assr_cases WHERE id IN (9101, 9102)`).run();
