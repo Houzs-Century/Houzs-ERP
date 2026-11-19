@@ -783,7 +783,10 @@ describe("Finance's own lines (owner 2026-11-13)", () => {
     renderTab(<EventCommissionTab />);
     fireEvent.click(screen.getByRole('button', { name: 'Excel' }));
     const excel = within(screen.getByRole('dialog', { name: 'Export to Excel' }));
-    expect(excel.getAllByRole('radio').map((r) => (r as HTMLInputElement).value)).toEqual(['all', 'one', 'each']);
+    expect(within(excel.getByRole('group', { name: 'What the file holds' })).getAllByRole('radio').map((r) => (r as HTMLInputElement).value)).toEqual(['full', 'summary']);
+    expect(within(excel.getByRole('group', { name: 'Who the file is for' })).getAllByRole('radio').map((r) => (r as HTMLInputElement).value)).toEqual(['all', 'one', 'each']);
+    /* Lines at 0.00 are left out unless asked for (owner 2026-11-19: 「导出的别放先」). */
+    expect((excel.getByRole('checkbox', { name: /^Leave out lines at 0\.00/ }) as HTMLInputElement).checked).toBe(true);
     fireEvent.click(excel.getByRole('radio', { name: /^One salesperson/ }));
     expect(excel.getAllByRole('option').map((o) => o.textContent)).toEqual(['Ethan', 'Jason', 'Mayson']);
     fireEvent.change(excel.getByRole('combobox', { name: 'Salesperson' }), { target: { value: 'Ethan' } });
@@ -809,7 +812,8 @@ describe("Finance's own lines (owner 2026-11-13)", () => {
     fireEvent.click(pdf.getByRole('button', { name: 'Export' }));
     await waitFor(() => expect(writers.pdf).toHaveBeenCalledTimes(1));
     const [sections, opts] = writers.pdf.mock.calls[0] as [Array<{ heading: string | null; newPage: boolean }>, { action: string; meta: Array<{ label: string; value: string }>; fileName: string }];
-    expect(sections.map((x) => [x.heading, x.newPage])).toEqual([[null, false], ['Ethan', true], ['Jason', true], ['Mayson', true]]);
+    /* Mayson's one order is under 30%: at 0.00, it is left out, and he has no pages. */
+    expect(sections.map((x) => [x.heading, x.newPage])).toEqual([[null, false], ['Ethan', true], ['Jason', true]]);
     expect(opts.action).toBe('preview');
     expect(opts.fileName).toMatch(/-by-salesperson\.pdf$/);
     expect(opts.meta).toContainEqual({ label: 'For', value: 'Each salesperson' });
@@ -818,5 +822,28 @@ describe("Finance's own lines (owner 2026-11-13)", () => {
     fireEvent.click(within(screen.getByRole('dialog', { name: 'Print' })).getByRole('button', { name: 'Print' }));
     await waitFor(() => expect(writers.pdf).toHaveBeenCalledTimes(2));
     expect((writers.pdf.mock.calls[1] as [unknown, { action: string; meta: unknown[] }])[1]).toMatchObject({ action: 'print', meta: expect.arrayContaining([{ label: 'For', value: 'Everyone' }]) });
+  });
+
+  test('the summary alone, or every line when the box is unticked (owner 2026-11-19)', async () => {
+    renderTab(<EventCommissionTab />);
+    fireEvent.click(screen.getByRole('button', { name: 'Excel' }));
+    let excel = within(screen.getByRole('dialog', { name: 'Export to Excel' }));
+    fireEvent.click(excel.getByRole('radio', { name: /^Summary only/ }));
+    /* The summary counts the lines that earn either way: no box to tick. */
+    expect(excel.queryByRole('checkbox')).toBeNull();
+    fireEvent.click(excel.getByRole('button', { name: 'Export' }));
+    await waitFor(() => expect(writers.xlsx).toHaveBeenCalledTimes(1));
+    const [summary, summaryName] = writers.xlsx.mock.calls[0] as [Array<{ name: string; blocks: Array<{ title: string }> }>, string];
+    expect(summary.map((x) => x.name)).toEqual(['Summary']);
+    expect(summary[0]!.blocks.map((b) => b.title)).toEqual(['Summary', 'By salesperson']);
+    expect(summaryName).toMatch(/^event-commission-by-fair-.*-summary\.xlsx$/);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Excel' }));
+    excel = within(screen.getByRole('dialog', { name: 'Export to Excel' }));
+    fireEvent.click(excel.getByRole('checkbox', { name: /^Leave out lines at 0\.00/ }));
+    fireEvent.click(excel.getByRole('button', { name: 'Export' }));
+    await waitFor(() => expect(writers.xlsx).toHaveBeenCalledTimes(2));
+    const [every] = writers.xlsx.mock.calls[1] as [Array<{ name: string }>, string];
+    expect(every.map((x) => x.name)).toContain('Below 30%');
   });
 });
