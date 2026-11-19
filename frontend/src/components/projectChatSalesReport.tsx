@@ -1,6 +1,7 @@
 /* The sales report a project's chat carries, as the chat shows and drives it
- * (owner 2026-10-14). For the three people who report — the Owner, Ummu and
- * Wei Siang (auth/salesAccess.ts canSaveSalesReport):
+ * (owner 2026-10-14; owner 2026-11-09 widened the gate). For every poster
+ * canSaveSalesReport admits — the Owner, Ummu, Wei Siang, any Sales Director,
+ * any Sales Person, and anyone attending this event (auth/salesAccess.ts):
  *
  *   · a message that reads as a bill list counts at once — the server derives
  *     the event's bills from the chat (routes/project-sales-bills.ts), so the
@@ -136,7 +137,7 @@ export function useChatSalesReport({
             title={
               isCounted
                 ? "These bills count in this event's sales report"
-                : "Not counted: posted by someone other than the Owner, Ummu or Wei Siang, or every bill was pasted again later"
+                : "Not counted: posted by someone who is not Owner / Ummu / Wei Siang / a Sales Director / a Sales Person / attending this event, or every bill was pasted again later"
             }
           >
             {isCounted ? "In sales report" : "Not counted"} · {parsed.bills.length} bill{parsed.bills.length === 1 ? "" : "s"} ·{" "}
