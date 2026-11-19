@@ -61,7 +61,11 @@ export function MobileProjectChat({
   });
 
   const [draft, setDraft] = useState("");
+  // `failed` is an error (red). `notice` is neutral status (amber) — the
+  // "Saved, refreshing..." line after a send whose refetch hasn't caught up
+  // yet, so the sender does not re-send over a successful post.
   const [failed, setFailed] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
 
   // Textarea grows with pasted content so the whole sales report is readable
@@ -88,10 +92,35 @@ export function MobileProjectChat({
       setPending((prev) => [...prev, { id: localId, note }]);
       setDraft("");
       setFailed(null);
+      setNotice(null);
     },
-    onSuccess: async (_data, { localId }) => {
-      await qc.invalidateQueries({ queryKey });
+    onSuccess: async (_data, { localId, note }) => {
+      // Owner 2026-11-19 ("why everytime sales person update sales report in
+      // chat in become disappear?"). Zack (user 31) sent the same paste FIVE
+      // times to project 364 in 2 minutes on 2026-11-17 — the server stored
+      // every copy, so the client was clearing the "Sending..." bubble before
+      // its own refetch had seen the note, leaving a blank chat and making the
+      // sender re-send. Keep the bubble until the new note is actually in the
+      // list; poll up to ~2.5s if the first refetch misses it (a cold Worker
+      // or a replica lag can drop one check and recover on the next).
+      const trimmed = note.trim();
+      let landed = false;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        await qc.invalidateQueries({ queryKey });
+        const fresh = qc.getQueryData<ActivityResponse>(queryKey);
+        landed = (fresh?.data ?? []).some(
+          (a) => a.action === "note" && (a.note ?? "").trim() === trimmed,
+        );
+        if (landed) break;
+        if (attempt < 4) await new Promise((r) => setTimeout(r, 500));
+      }
       setPending((prev) => prev.filter((p) => p.id !== localId));
+      if (!landed) {
+        // Server accepted it but we couldn't see it after the retries: let the
+        // sender know the paste is saved, so they don't send it again while
+        // the next poll catches up.
+        setNotice("Saved — the chat will refresh in a moment. Don't send again.");
+      }
       onPosted();
     },
     onError: (e, { localId, note }) => {
@@ -113,6 +142,25 @@ export function MobileProjectChat({
     if (!el) return;
     el.scrollTop = el.scrollHeight;
   }, [notes.length, pending.length]);
+  // Clear the "Saved — refreshing" notice when the next poll comes in with a
+  // bigger note count than we had when the notice was shown. A ref captures
+  // the snapshot at set-time so a later refetch that includes the just-sent
+  // note trips the clear exactly once.
+  const noticeAtCountRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (notice && noticeAtCountRef.current == null) {
+      noticeAtCountRef.current = notes.length;
+      return;
+    }
+    if (!notice) {
+      noticeAtCountRef.current = null;
+      return;
+    }
+    if (noticeAtCountRef.current != null && notes.length > noticeAtCountRef.current) {
+      setNotice(null);
+      noticeAtCountRef.current = null;
+    }
+  }, [notice, notes.length]);
 
   const send = () => {
     const trimmed = draft.trim();
@@ -250,7 +298,7 @@ export function MobileProjectChat({
               className="fld-i"
               value={draft}
               disabled={post.isPending}
-              onChange={(e) => { setDraft(e.target.value); setFailed(null); }}
+              onChange={(e) => { setDraft(e.target.value); setFailed(null); setNotice(null); }}
               onKeyDown={(e) => {
                 /* Enter-to-send on the phone soft keyboard is unreliable (Go/Done
                    often inserts a newline instead), so the Send button is the
@@ -289,6 +337,9 @@ export function MobileProjectChat({
 
         {failed && (
           <div style={{ fontSize: 11, color: "var(--hz-c-err)", marginTop: 6 }}>{failed}</div>
+        )}
+        {notice && !failed && (
+          <div style={{ fontSize: 11, color: "#8a4e0e", marginTop: 6 }}>{notice}</div>
         )}
       </div>
     </details>
