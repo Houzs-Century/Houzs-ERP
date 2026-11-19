@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { assrBoardUnionSql, assrLegGuardSql, assrBoardLegs, assrLegOpen } from "../src/scm/lib/assr-board-scope";
+import { assrBoardUnionSql, assrLegGuardSql, assrBoardLegs, assrLegOpen, assrConfirmDateSql } from "../src/scm/lib/assr-board-scope";
 import { assrCompanySql } from "../src/routes/assr";
 
 /* THE DELIVERY PLANNING BOARD MUST NOT SHOW ANOTHER COMPANY'S SERVICE CASE.
@@ -211,5 +211,28 @@ describe("Delivery Planning board — an upcoming inspection past the inspection
     expect(assrLegOpen({ ...base, sched_inspection_date: "2026-11-11", actual_inspection_at: "2026-11-09" }, "inspection", TODAY)).toBe(false);
     // No board date (legacy caller) → stage-only lock.
     expect(assrLegOpen({ ...base, sched_inspection_date: "2026-11-11", actual_inspection_at: null }, "inspection")).toBe(false);
+  });
+});
+
+/* HC-0246: Logistics cancelled a pickup leg, then scheduled the pickup again three
+   times from New DP Order. Each time the date saved and "Job scheduled" showed, but
+   the cancel stamp stayed, so the leg stayed off the board. Confirming a date now
+   clears that leg's cancel stamp (and only that leg's). */
+describe("Delivery Planning board — a new date on a cancelled leg books it again (HC-0246)", () => {
+  test("the confirm-date write clears the same leg's cancel stamp and no other leg's", () => {
+    const sql = assrConfirmDateSql("customer_pickup");
+    expect(sql).toContain("sched_pickup_date = ?");
+    expect(sql).toContain("pickup_cancelled_at = NULL");
+    expect(sql).not.toMatch(/inspection_cancelled_at|delivery_cancelled_at/);
+    expect(assrConfirmDateSql("delivery")).toContain("delivery_cancelled_at = NULL");
+    expect(assrConfirmDateSql("inspection")).toContain("inspection_cancelled_at = NULL");
+  });
+
+  test("the HC-0246 case: hidden while cancelled, a Pending Delivery pickup once the stamp is cleared", () => {
+    const shape = { stage: "pending_supplier_pickup", pickup_by: "customer", pickup_pic: "Logistic", customer_pickup_at: "2026-11-19", sched_pickup_date: "2026-11-19" };
+    const before = assrBoardLegs(legCase({ ...shape, pickup_cancelled_at: "2026-11-19" }), false);
+    expect(before.find((l) => l.jobKind === "customer_pickup")).toBeUndefined();
+    const after = assrBoardLegs(legCase(shape), false);
+    expect(after.find((l) => l.jobKind === "customer_pickup")?.state).toBe("PENDING_DELIVERY");
   });
 });
