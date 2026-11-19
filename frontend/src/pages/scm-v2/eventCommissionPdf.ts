@@ -33,7 +33,7 @@ export function ecPrintedBlock(b: EcBlock): { head: string[]; body: EcPrintedCel
       if (row.kind === 'group') return [{ content: row.cells.find((v) => v != null && v !== '')?.toString() ?? '', colSpan: Math.max(1, b.columns.length) }];
       return b.columns.map((c, i) => {
         const t = ecPrintedText(c, row.cells[i] ?? null);
-        return t === '' && (row.kind === 'row' || row.kind === 'memo') ? '–' : t;
+        return t === '' && (row.kind === 'row' || row.kind === 'memo' || row.kind === 'inner') ? '–' : t;
       });
     }),
     kinds: b.rows.map((row) => row.kind),
@@ -89,10 +89,9 @@ export async function generateEcPdf(sections: readonly EcSection[], opts: {
           if (!kind) return;
           if (kind === 'group') { d.cell.styles.halign = 'left'; d.cell.styles.cellPadding = { ...LISTING_CELL, top: 3 }; }
           if (kind === 'group' || kind === 'subtotal' || kind === 'total') d.cell.styles.fontStyle = 'bold';
-          if (kind === 'memo') {
-            d.cell.styles.textColor = 110;
-            if (d.column.index === 0) d.cell.styles.cellPadding = { ...LISTING_CELL, left: 4.5 };
-          }
+          if (kind === 'memo') d.cell.styles.textColor = 110;
+          /* An "of which" line and a brand under its tab's total are set in. */
+          if ((kind === 'memo' || kind === 'inner') && d.column.index === 0) d.cell.styles.cellPadding = { ...LISTING_CELL, left: 4.5 };
           const fill = FILL[kind];
           if (fill) d.cell.styles.fillColor = fill;
           if (kind === 'total') d.cell.styles.lineWidth = { top: 0.3, right: 0, bottom: 0, left: 0 };

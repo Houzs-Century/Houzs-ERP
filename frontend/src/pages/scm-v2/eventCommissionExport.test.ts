@@ -7,8 +7,8 @@
 import { describe, expect, test, vi } from 'vitest';
 import type { Column } from '../../components/DataTable';
 import type { EventCommission } from '../../vendor/scm/lib/event-queries';
-import { bySalespersonOf, cardsOf, forSalesperson, salespeopleOf, sum } from './eventCommissionModel';
-import { ecFileBase, ecSections, ecSheets, type EcInput, type EcRows, type EcTableKey, type ShownTables } from './eventCommissionExport';
+import { bySalespersonOf, cardsOf, earningOnly, forSalesperson, salespeopleOf, sum } from './eventCommissionModel';
+import { LEFT_OUT_NOTE, SUMMARY_NOTE, ecFileBase, ecSections, ecSheets, type EcInput, type EcRows, type EcSheet, type EcTableKey, type ShownTables } from './eventCommissionExport';
 import { downloadEcXlsx, ecCell, ecColumnWidths, ecSheetData, ecSheetNames } from './eventCommissionXlsx';
 import { ecPrintedBlock, generateEcPdf } from './eventCommissionPdf';
 
@@ -81,7 +81,9 @@ const shownAll = (over: Partial<ShownTables> = {}): ShownTables => {
     ...over,
   };
 };
-const input = (who: EcInput['who'], over: Partial<ShownTables> = {}): EcInput => ({ report: R, period: 'October 2026', brand: '', shown: shownAll(over), who });
+/* Every line, as the file was before lines at 0.00 could be left out; the tests below on what it leaves out set it. */
+const input = (who: EcInput['who'], over: Partial<ShownTables> = {}, more: Partial<EcInput> = {}): EcInput =>
+  ({ report: R, period: 'October 2026', brand: '', shown: shownAll(over), who, part: 'full', leaveOutZero: false, ...more });
 
 describe('the report split by salesperson', () => {
   test('everyone with a line, A to Z; one salesperson\'s report is the report over their lines, a fair worked on their orders alone', () => {
@@ -115,24 +117,35 @@ describe('the Excel', () => {
     const sheets = ecSheets(input({ kind: 'all' }));
     expect(sheets.map((s) => s.name)).toEqual(['Summary', 'Fairs', 'Fair orders', 'Earlier fairs', 'Closed months', 'Added by Finance', 'Upsales-drops earlier', 'Upsales-drops in range', 'Below 30%', 'Marked']);
     const [summary, people] = sheets[0]!.blocks;
-    expect(summary!.rows.map((r) => r.cells)).toEqual([
-      ['Fairs starting in the range', '3 fairs · 4 orders', 977.44],
-      ['of which upsales / drop sales', '1 order', 21],
-      ['of which late bills', '0 orders', 0],
-      ['Earlier fairs', '2 orders', 13],
-      ['Closed months — adjustments', '1 order · 2026/09', 557.44],
-      ['Added by Finance', '1 line', 13],
-      ['Upsales / Drop sales — earlier fairs', '1 order', 13],
-      ['Total commission', null, 1573.88],
+    /* Each tab's total over its lines that earn, a line per brand with the rate under it,
+       the first one's "of which" lines, the total of goods and of commission. */
+    expect(summary!.columns.map((c) => c.label)).toEqual(['', 'Orders', 'Goods', 'Rate', 'Commission']);
+    expect(summary!.rows.map((r) => [r.kind, ...r.cells])).toEqual([
+      ['subtotal', 'Fairs starting in the range', 3, 7288, null, 977.44],
+      ['inner', 'ZANOTTI', 1, 4288, '13%', 557.44],
+      ['inner', 'AKEMI', 2, 3000, '14%', 420],
+      ['memo', 'of which upsales / drop sales', 1, 150, null, 21],
+      ['memo', 'of which late bills', 0, null, null, 0],
+      ['subtotal', 'Earlier fairs', 2, 100, null, 13],
+      ['inner', 'ZANOTTI', 2, 100, '13%', 13],
+      ['subtotal', 'Closed months — adjustments', 1, 4288, null, 557.44],
+      ['inner', 'ZANOTTI', 1, 4288, '13%', 557.44],
+      ['subtotal', 'Added by Finance', 1, 100, null, 13],
+      ['inner', 'ZANOTTI', 1, 100, '13%', 13],
+      ['subtotal', 'Upsales / Drop sales — earlier fairs', 1, 100, null, 13],
+      ['inner', 'ZANOTTI', 1, 100, '13%', 13],
+      ['total', 'Total', null, 11876, null, 1573.88],
     ]);
+    expect(summary!.note).toBe(SUMMARY_NOTE);
     expect(people!.columns.map((c) => c.label)).toEqual([
       'Salesperson', 'Orders', 'Fairs starting in the range', 'Earlier fairs', 'Closed months — adjustments', 'Added by Finance', 'Upsales / Drop sales — earlier fairs', 'Total',
     ]);
+    /* The orders that earn: Mayson's order under 30% is not one of his. */
     expect(people!.rows.map((r) => r.cells)).toEqual([
       ['Ethan', 3, 420, null, 557.44, null, null, 977.44],
       ['Jason', 2, null, 13, null, null, null, 13],
-      ['Mayson', 4, 557.44, null, null, 13, 13, 583.44],
-      ['Total · 3 salespeople', 9, 977.44, 13, 557.44, 13, 13, 1573.88],
+      ['Mayson', 3, 557.44, null, null, 13, 13, 583.44],
+      ['Total · 3 salespeople', 8, 977.44, 13, 557.44, 13, 13, 1573.88],
     ]);
     /* A table's own title and what it is are the sheet's two lines; its header is the third row. */
     const fairs = sheets[1]!;
@@ -170,7 +183,7 @@ describe('the Excel', () => {
     expect(sheets[0]!.title).toBe('Event commission — Ethan');
     expect(sheets[0]!.subtitle).toBe('October 2026 · By fair · All brands · Salesperson: Ethan');
     expect(sheets[0]!.blocks).toHaveLength(1);
-    expect(sheets[0]!.blocks[0]!.rows.at(-1)!.cells).toEqual(['Total commission', null, 977.44]);
+    expect(sheets[0]!.blocks[0]!.rows.at(-1)!.cells).toEqual(['Total', null, 7288, null, 977.44]);
     expect(sheets.map((s) => s.name)).toEqual(['Summary', 'Fairs', 'Fair orders', 'Closed months', 'Upsales-drops in range']);
     expect(sheets[1]!.blocks[0]!.rows.map((r) => r.cells)).toEqual([
       ['Kuala Lumpur [AKEMI] BIGHOME @ MID VALLEY', '14%', 3000, 2, 420],
@@ -248,10 +261,133 @@ describe('the PDF', () => {
   });
 });
 
+/* Owner 2026-11-19: 「这个commission export 出来的可以exclude 那些不算的吗？」 →
+   「导出的别放先」, and 「哪怕是这样我应该也要有个地方可以看到吧」 (the page lists them). The
+   report above with every kind of line at 0.00 added: an order under 30% of a salesperson
+   with nothing else, an earlier order Finance did not count, a price change it left out. */
+const LEFT = { id: 'c1', kind: 'exclude_change' as const, month: '2026-10', reason: 'typing fix', markedBy: 'Siti', markedAt: '2026-10-22T03:00:00Z' };
+const R0: EventCommission = {
+  ...R,
+  fairs: [{ ...R.fairs[0]!, sos: [...R.fairs[0]!.sos, so('HC-SO-2610-004', 'Nadia', 800_00, 0, null)] }, ...R.fairs.slice(1)],
+  earlierOrders: [...R.earlierOrders!, {
+    ...ZAN, docNo: 'HC-SO-2609-095', salesperson: 'Jason', mark: MARK, events: [{ date: '2026-10-11', kind: 'reached', beforeReach: false }],
+    lastDate: '2026-10-11', originalSen: 2_000_00, latestSen: 2_000_00, amendedSen: 0, commissionSen: 0, fromHistory: false,
+  }],
+  changedOrders: [...R.changedOrders!, {
+    ...ZAN, docNo: 'HC-SO-2609-090', salesperson: 'Jason', changeMark: LEFT, part: 'earlier', lastChange: '2026-10-16',
+    originalSen: 1_000_00, latestSen: 1_500_00, amendedSen: 500_00, uncountedGoodsSen: 500_00, reachedOn: '2026-09-20', effectSen: 0, fromHistory: false,
+  }],
+  marked: [...R.marked!, { ...ZAN, docNo: 'HC-SO-2609-095', salesperson: 'Jason', mark: MARK, commissionSen: 260_00 }, { ...ZAN, docNo: 'HC-SO-2609-090', salesperson: 'Jason', mark: LEFT, commissionSen: 65_00 }],
+};
+/** A table's money at its foot, by its column's header. */
+const footOf = (sheet: EcSheet, label: string): unknown => {
+  const b = sheet.blocks[0]!;
+  return b.rows.at(-1)!.cells[b.columns.findIndex((c) => c.label === label)];
+};
+const sheetOf = (sheets: EcSheet[], name: string): EcSheet => sheets.find((x) => x.name === name)!;
+
+describe('lines at 0.00 left out of the file', () => {
+  test('every table holds its lines that earn, says how many it left out, and its money is the same; the lists not in the total are not in it', () => {
+    const every = ecSheets(input({ kind: 'all' }, {}, { report: R0 }));
+    const sheets = ecSheets(input({ kind: 'all' }, {}, { report: R0, leaveOutZero: true }));
+    expect(every.map((x) => x.name)).toContain('Marked');
+    expect(sheets.map((x) => x.name)).toEqual(['Summary', 'Fairs', 'Fair orders', 'Earlier fairs', 'Closed months', 'Added by Finance', 'Upsales-drops earlier', 'Upsales-drops in range']);
+    const orders = sheetOf(sheets, 'Fair orders');
+    expect(orders.blocks[0]!.rows.map((r) => r.cells[0])).toEqual(['HC-SO-2610-001', 'HC-SO-2610-003', 'HC-SO-2610-010', 'Total · 3 orders']);
+    expect(orders.subtitle).toBe('October 2026 · By fair · All brands · Everyone · 2 of 5 rows at 0.00 left out');
+    expect(sheetOf(sheets, 'Earlier fairs').blocks[0]!.rows.map((r) => r.cells[0])).toEqual(['HC-SO-2609-050', 'HC-SO-2609-051', 'Total · 2 orders']);
+    expect(sheetOf(sheets, 'Earlier fairs').subtitle).toContain('1 of 3 rows at 0.00 left out');
+    /* The price change Finance left out: its row is not in the file. */
+    expect(sheetOf(sheets, 'Upsales-drops earlier').blocks[0]!.rows.map((r) => r.cells[0])).toEqual(['HC-SO-2609-060', 'Total · 1 order']);
+    expect(sheetOf(sheets, 'Upsales-drops earlier').subtitle).toContain('1 of 2 rows at 0.00 left out');
+    expect(sheetOf(sheets, 'Closed months').subtitle).not.toContain('left out');
+    /* A fair is worked on its orders that earn. */
+    expect(sheetOf(sheets, 'Fairs').blocks[0]!.rows[0]!.cells).toEqual(['Kuala Lumpur [AKEMI] BIGHOME @ MID VALLEY', '14%', 3000, 2, 420]);
+    for (const [name, label] of [['Fairs', 'Commission'], ['Fair orders', 'Commission'], ['Earlier fairs', 'Commission'], ['Closed months', 'Adjustment'], ['Added by Finance', 'Commission'], ['Upsales-drops earlier', 'Commission effect'], ['Upsales-drops in range', 'Commission effect']] as const) {
+      expect(footOf(sheetOf(sheets, name), label)).toBe(footOf(sheetOf(every, name), label));
+    }
+    /* The summary is the same either way: it counts the lines that earn; it says what the file left out. */
+    expect(sheets[0]!.blocks[0]!.rows).toEqual(every[0]!.blocks[0]!.rows);
+    expect(sheets[0]!.blocks[0]!.rows).toEqual(ecSheets(input({ kind: 'all' }))[0]!.blocks[0]!.rows);
+    expect(sheets[0]!.blocks[0]!.note).toBe(`${SUMMARY_NOTE} ${LEFT_OUT_NOTE}`);
+    expect(every[0]!.blocks[0]!.note).toBe(SUMMARY_NOTE);
+  });
+
+  test('the report over its lines that earn: the same money, nothing at 0.00 left in it', () => {
+    const e = earningOnly(R0);
+    expect(e.totals.totalSen).toBe(R0.totals.totalSen);
+    expect(e.fairs.flatMap((f) => f.sos).every((x) => x.commissionSen !== 0)).toBe(true);
+    expect(e.fairs.map((f) => f.id)).toEqual([363, 345]);
+    expect(e.changedOrders!.map((o) => o.docNo)).toEqual(['HC-SO-2610-001', 'HC-SO-2609-060']);
+    expect(e.earlierOrders!.map((o) => o.docNo)).toEqual(['HC-SO-2609-050', 'HC-SO-2609-051']);
+    expect(e.marked).toEqual([]);
+    /* Nadia has nothing that earns: no line, no pages. */
+    expect(salespeopleOf(R0)).toContain('Nadia');
+    expect(salespeopleOf(e)).toEqual(['Ethan', 'Jason', 'Mayson']);
+    expect(ecSections(input({ kind: 'each' }, {}, { report: R0, leaveOutZero: true })).map((x) => x.heading)).toEqual([null, 'Ethan', 'Jason', 'Mayson']);
+    expect(ecSections(input({ kind: 'each' }, {}, { report: R0 })).map((x) => x.heading)).toEqual([null, 'Ethan', 'Jason', 'Mayson', 'Nadia']);
+    const pdf = ecSections(input({ kind: 'all' }, {}, { report: R0, leaveOutZero: true }))[0]!.blocks.map((b) => b.title);
+    expect(pdf).not.toContain('Below 30% paid');
+    expect(pdf).not.toContain('Marked — not paid here');
+  });
+});
+
+/* Owner 2026-11-19: 「同时我要有一个是可以export summary，包括goods 和rate和commission」,
+   「summary我主要看的就是 每个tab的total」, 「要有total good」. */
+describe('the summary', () => {
+  test('each tab is its brands added up, each brand Goods × Rate = Commission, the total the report\'s and the tables\' that add to it', () => {
+    const sheets = ecSheets(input({ kind: 'all' }));
+    const rows = sheets[0]!.blocks[0]!.rows;
+    const tabs = rows.flatMap((r, i) => (r.kind === 'subtotal' ? [{ tab: r, brands: rows.slice(i + 1).filter((_, j, after) => after.slice(0, j + 1).every((x) => x.kind === 'inner')) }] : []));
+    expect(tabs).toHaveLength(cardsOf(R).length);
+    for (const { tab, brands } of tabs) {
+      for (const at of [1, 2, 4]) expect(Math.round(sum(brands, (b) => Number(b.cells[at] ?? 0)) * 100)).toBe(Math.round(Number(tab.cells[at] ?? 0) * 100));
+      for (const b of brands) expect(Math.round(Number(b.cells[2]) * Number(String(b.cells[3]).replace('%', '')))).toBe(Math.round(Number(b.cells[4]) * 100));
+    }
+    const total = rows.at(-1)!;
+    expect(Math.round(Number(total.cells[2]) * 100)).toBe(Math.round(sum(tabs, (t) => Number(t.tab.cells[2] ?? 0)) * 100));
+    expect(Math.round(Number(total.cells[4]) * 100)).toBe(R.totals.totalSen);
+    expect(Math.round(Number(total.cells[4]) * 100)).toBe(sum(cardsOf(R), (c) => c.sen));
+    /* The detailed file's own total: the tables that add to the total, at their feet. */
+    const detail = [['Fair orders', 'Commission'], ['Earlier fairs', 'Commission'], ['Closed months', 'Adjustment'], ['Added by Finance', 'Commission'], ['Upsales-drops earlier', 'Commission effect']] as const;
+    expect(Math.round(sum(detail, ([name, label]) => Number(footOf(sheetOf(sheets, name), label))) * 100)).toBe(Math.round(Number(total.cells[4]) * 100));
+  });
+
+  test('the summary alone: its sheet or its pages, for everyone, one salesperson, or each in turn under it', () => {
+    const all = ecSheets(input({ kind: 'all' }, {}, { part: 'summary' }));
+    expect(all.map((x) => x.name)).toEqual(['Summary']);
+    expect(all[0]!.blocks.map((b) => b.title)).toEqual(['Summary', 'By salesperson']);
+    const each = ecSheets(input({ kind: 'each' }, {}, { part: 'summary' }));
+    expect(each).toHaveLength(1);
+    expect(each[0]!.blocks.map((b) => b.title)).toEqual(['Summary', 'By salesperson', 'Ethan', 'Jason', 'Mayson']);
+    /* Each salesperson's own summary ends on their line of the By salesperson table. */
+    const people = bySalespersonOf(earningOnly(R));
+    for (const p of people) expect(each[0]!.blocks.find((b) => b.title === p.name)!.rows.at(-1)!.cells[4]).toBe(p.totalSen / 100);
+    expect(ecSheets(input({ kind: 'one', name: 'Jason' }, {}, { part: 'summary' })).map((x) => [x.name, x.title, x.blocks.length])).toEqual([['Summary', 'Event commission — Jason', 1]]);
+    const pdf = ecSections(input({ kind: 'each' }, {}, { part: 'summary' }));
+    expect(pdf.map((x) => [x.heading, x.newPage, x.blocks.map((b) => b.title)])).toEqual([
+      [null, false, ['Summary', 'By salesperson']], ['Ethan', true, ['Summary']], ['Jason', true, ['Summary']], ['Mayson', true, ['Summary']],
+    ]);
+    expect(ecSections(input({ kind: 'all' }, {}, { part: 'summary' }))[0]!.blocks.map((b) => b.title)).toEqual(['Summary', 'By salesperson']);
+  });
+
+  test('on paper and in the workbook: a brand set in under its tab, a line with no goods a dash', () => {
+    const summary = ecSheets(input({ kind: 'all' }))[0]!;
+    const data = ecSheetData(summary);
+    const zan = data.find((row) => (row[0] as { value?: string } | null)?.value === 'ZANOTTI')!;
+    expect(zan[0]).toMatchObject({ value: 'ZANOTTI', indent: 1 });
+    expect(zan[4]).toMatchObject({ type: Number, value: 557.44 });
+    const block = { title: '', note: null, columns: summary.blocks[0]!.columns, rows: [{ kind: 'inner' as const, cells: ['AKEMI', 1, null, '14%', 98] }] };
+    expect(ecPrintedBlock(block).body).toEqual([['AKEMI', '1', '–', '14%', '98.00']]);
+  });
+});
+
 test('the file is named for whom it is', () => {
-  expect(ecFileBase('event-commission-by-fair-2026-10-01-2026-10-31', { kind: 'all' })).toBe('event-commission-by-fair-2026-10-01-2026-10-31');
-  expect(ecFileBase('ec', { kind: 'one', name: 'Chea Huan' })).toBe('ec-chea-huan');
-  expect(ecFileBase('ec', { kind: 'each' })).toBe('ec-by-salesperson');
+  expect(ecFileBase('event-commission-by-fair-2026-10-01-2026-10-31', { kind: 'all' }, 'full')).toBe('event-commission-by-fair-2026-10-01-2026-10-31');
+  expect(ecFileBase('ec', { kind: 'one', name: 'Chea Huan' }, 'full')).toBe('ec-chea-huan');
+  expect(ecFileBase('ec', { kind: 'each' }, 'full')).toBe('ec-by-salesperson');
+  expect(ecFileBase('ec', { kind: 'all' }, 'summary')).toBe('ec-summary');
+  expect(ecFileBase('ec', { kind: 'each' }, 'summary')).toBe('ec-summary-by-salesperson');
 });
 
 describe('the writers', () => {

@@ -362,6 +362,108 @@ export const bySalespersonOf = (r: EventCommission): SalespersonCards[] => sales
   return { name, orders, cards: Object.fromEntries(cards.map((c) => [c.key, c.sen])), totalSen: sum(cards, (c) => c.sen) };
 });
 
+/* ── Only what earns (owner 2026-11-19: 「导出的别放先」; 「哪怕是这样我应该也要有个地方
+   可以看到吧」 — the page) ─────────────────────────────────────────────────────
+   The Excel and PDF hold the lines that earn. A line at 0.00 — an order Finance
+   marked (Don't count, Next month, Don't count change), one not yet 30% paid, one
+   with no rate card — is left out, and with it the two lists not in the total.
+   Nothing that earns moves: every line left out is 0.00. The page lists them all. */
+
+/** The report with only the lines that earn. A fair is worked on its orders that earn,
+    as one salesperson's is (forSalesperson): the event page's typed figures, the whole
+    fair's, are left out once any of its orders is. */
+export const earningOnly = (r: EventCommission): EventCommission => {
+  const fairs = r.fairs.flatMap((f) => {
+    const sos = f.sos.filter((s) => s.commissionSen !== 0);
+    if (sos.length === 0) return [];
+    if (sos.length === f.sos.length) return [f];
+    const goodsSen = sum(sos, (s) => s.goodsSen);
+    return [{
+      ...f, sos, totalSalesRm: null, estimateRm: null,
+      goodsSen, estimateSen: f.ratePct == null ? 0 : Math.round((goodsSen * f.ratePct) / 100), payableSen: sum(sos, (s) => s.commissionSen),
+    }];
+  });
+  const changedOrders = changedOf(r).filter((o) => o.effectSen !== 0);
+  /* An earlier order earns what the Earlier table shows of it: its upsales / drops are the changes table's. */
+  const shown = new Map(earlierShownOf(r).map((o) => [o.docNo, o.commissionSen]));
+  const earlierOrders = earlierOf(r).filter((o) => (shown.get(o.docNo) ?? 0) !== 0);
+  const kept = new Set([...earlierOrders, ...changedOrders].map((o) => o.docNo));
+  return withTotals({
+    ...r, fairs, earlierOrders, changedOrders,
+    adjustments: r.adjustments.filter((a) => a.commissionSen !== 0 && kept.has(a.docNo)),
+    monthAdjustments: monthAdjOf(r).filter((a) => a.adjustmentSen !== 0),
+    deferredIn: deferredInOf(r).filter((d) => d.commissionSen !== 0),
+    marked: [],
+    ...(r.manualLines ? { manualLines: manualOf(r).filter((m) => m.commissionSen !== 0) } : {}),
+  });
+};
+
+/* ── The summary: each tab's total (owner 2026-11-19: 「summary我主要看的就是 每个tab
+   的total」, 「包括goods 和rate和commission」, 「要有total good」) ─────────────────
+   A line per tab that adds to the total, in the cards' order: its lines that earn,
+   the goods they earn on, its commission. Under it a line per brand with the rate,
+   Goods × Rate = Commission; under the first, what it holds inside ("of which"). */
+
+/** A line of the summary: a tab's total, one brand's part of it, or what the first holds
+    inside. Goods null: the line has none to show (what last month moved here). */
+export type SummaryLine = { label: string; count: number; goodsSen: number | null; ratePct: number | null; commissionSen: number };
+export type SummaryTab = { key: CardKey; total: SummaryLine; brands: SummaryLine[]; inside: SummaryLine[] };
+/** A line that earns: its brand, its rate, the goods it earns on, what it earns. */
+type Earned = { brand: string | null; ratePct: number | null; goodsSen: number | null; commissionSen: number };
+
+export const NO_BRAND = '(no brand)';
+const goodsOfLines = (rows: ReadonlyArray<{ goodsSen: number | null }>): number | null =>
+  (rows.some((x) => x.goodsSen != null) ? sum(rows, (x) => x.goodsSen ?? 0) : null);
+const lineOf = (label: string, rows: readonly Earned[], ratePct: number | null): SummaryLine =>
+  ({ label, count: rows.length, goodsSen: goodsOfLines(rows), ratePct, commissionSen: sum(rows, (x) => x.commissionSen) });
+/** A line per brand and rate, the one that earns most first. */
+const brandLines = (rows: readonly Earned[]): SummaryLine[] => {
+  const groups = new Map<string, Earned[]>();
+  for (const x of rows) {
+    const key = `${x.brand ?? ''}|${x.ratePct ?? ''}`;
+    const g = groups.get(key);
+    if (g) g.push(x); else groups.set(key, [x]);
+  }
+  return [...groups.values()]
+    .map((g) => lineOf(g[0]!.brand ?? NO_BRAND, g, g[0]!.ratePct))
+    .sort((a, b) => b.commissionSen - a.commissionSen || a.label.localeCompare(b.label));
+};
+/** +1 an earlier order reaching 30% here, -1 one cancelled here (it takes back), 0 both. */
+const signOf = (o: CommissionEarlierOrder): number =>
+  (o.events.some((e) => e.kind === 'reached') ? 1 : 0) - (o.events.some((e) => e.kind === 'cancelled') ? 1 : 0);
+
+/** Each tab's total, its brands and (the first) what it holds inside; together the cards. */
+export function summaryTabsOf(r: EventCommission): SummaryTab[] {
+  const leftOut = new Map(changesInRangeOf(r).map((o) => [o.docNo, o.uncountedGoodsSen ?? 0]));
+  const earning = soListOf(r).filter((s) => s.commissionSen !== 0);
+  const ofSo = (s: SoListRow): Earned => ({ brand: brandOfFair(s.fair), ratePct: s.fair.ratePct, goodsSen: s.goodsSen - (leftOut.get(s.docNo) ?? 0), commissionSen: s.commissionSen });
+  const ofChange = (o: CommissionChangedOrder): Earned => ({ brand: brandOfOrder(o), ratePct: o.ratePct, goodsSen: o.amendedSen - (o.uncountedGoodsSen ?? 0), commissionSen: o.effectSen });
+  const rows: Record<CardKey, Earned[]> = {
+    inRange: earning.map(ofSo),
+    earlier: earlierShownOf(r).filter((o) => o.commissionSen !== 0)
+      .map((o) => ({ brand: brandOfOrder(o), ratePct: o.ratePct, goodsSen: signOf(o) * o.originalSen, commissionSen: o.commissionSen })),
+    monthAdj: monthAdjOf(r).filter((a) => a.adjustmentSen !== 0)
+      .map((a) => ({ brand: brandOfOrder(a), ratePct: a.ratePct ?? null, goodsSen: a.goodsSen ?? null, commissionSen: a.adjustmentSen })),
+    deferredIn: deferredInOf(r).filter((d) => d.commissionSen !== 0)
+      .map((d) => ({ brand: brandOfOrder(d), ratePct: d.ratePct, goodsSen: null, commissionSen: d.commissionSen })),
+    manual: manualOf(r).filter((m) => m.commissionSen !== 0)
+      .map((m) => ({ brand: brandOfOrder(m), ratePct: m.ratePct, goodsSen: m.goodsSen, commissionSen: m.commissionSen })),
+    earlierChanges: changesEarlierOf(r).filter((o) => o.effectSen !== 0).map(ofChange),
+  };
+  /* What the first tab holds inside, as the cards' "of which" lines: not added again. */
+  const late = lateOf(r);
+  const inside = (): SummaryLine[] => [
+    ...(r.fairs.some(isNoFair) ? [lineOf('of which No fair', earning.filter((s) => isNoFair(s.fair)).map(ofSo), null)] : []),
+    lineOf('of which upsales / drop sales', changesInRangeOf(r).filter((o) => o.effectSen !== 0).map(ofChange), null),
+    lineOf('of which late bills', earning.filter((s) => late.has(s.docNo)).map(ofSo), null),
+  ];
+  return cardsOf(r).map((c) => ({ key: c.key, total: lineOf(c.label, rows[c.key], null), brands: brandLines(rows[c.key]), inside: c.key === 'inRange' ? inside() : [] }));
+}
+
+/** The summary's total: the tabs' goods (none counted twice) and their commission — the report's. */
+export const summaryTotalOf = (tabs: readonly SummaryTab[]): { goodsSen: number | null; commissionSen: number } =>
+  ({ goodsSen: goodsOfLines(tabs.map((t) => t.total)), commissionSen: sum(tabs, (t) => t.total.commissionSen) });
+
 /* ── The Excel / PDF sheet and the CSV ─────────────────────────────────────────
    Owner 2026-11-13: 「export 出来的顺便排一排做好看一点」. The summary (the cards, the
    first card's "of which" lines under it), then each table the page shows, in the
