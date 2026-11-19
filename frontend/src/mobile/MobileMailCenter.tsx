@@ -9,7 +9,9 @@ import { formatDate } from "../lib/utils";
 import { SearchScopeHint } from "../components/SearchScopeHint";
 import { useAuth } from "../auth/AuthContext";
 import { pickDefaultFromAddress } from "../pages/MailCenter/mail-from-default";
-import { deliveryLabel, sentToast, type DeliveryStatus } from "../pages/MailCenter/mail-delivery";
+import { deliveryLabel, deliveryTone, sentToast, type DeliveryStatus, type DeliveryTone } from "../pages/MailCenter/mail-delivery";
+
+const DELIVERY_TONE_COLORS: Record<DeliveryTone, string> = { bad: "#b42318", waiting: "#b54708", good: "#067647" };
 import {
   fetchOutbox,
   fetchOutboxDetail,
@@ -1088,7 +1090,7 @@ function MessageBubble({ m, onAcked }: { m: Message; onAcked: () => void }) {
             <span style={{ fontSize: 10, color: "var(--hz-c-ink-soft)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.fromAddress}</span>
           )}
           {deliveryLabel(m.deliveryStatus) && (
-            <span style={{ fontSize: 10, fontWeight: 700, flex: "none", color: m.deliveryStatus === "failed" ? "#b42318" : "#b54708" }}>{deliveryLabel(m.deliveryStatus)}</span>
+            <span style={{ fontSize: 10, fontWeight: 700, flex: "none", color: DELIVERY_TONE_COLORS[deliveryTone(m.deliveryStatus)] }}>{deliveryLabel(m.deliveryStatus)}</span>
           )}
           <span style={{ fontSize: 10, color: "var(--hz-c-ink-soft)", marginLeft: "auto", flex: "none" }}>{fmtMsgTime(m)}</span>
         </div>
