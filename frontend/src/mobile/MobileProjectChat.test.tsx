@@ -89,4 +89,28 @@ describe("MobileProjectChat", () => {
     await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("Couldn't load the chat (Network error)"));
     expect(screen.queryByText("No messages yet.")).toBeNull();
   });
+
+  test("tells the sender their report is saved when the reload keeps returning the old list, so they don't resend", async () => {
+    // Owner 2026-11-19: this is the Zack-posts-5-times regression — the server
+    // stored the paste, but every refetch returned the empty list, so the
+    // optimistic bubble disappeared into "No messages yet." and the rep hit
+    // Send again, and again.
+    get.mockResolvedValueOnce({ data: [] });
+    mount();
+    await waitFor(() => expect(screen.getByText("No messages yet.")).toBeTruthy());
+
+    post.mockResolvedValueOnce({ ok: true });
+    // Every subsequent refetch (we poll up to 5 times) returns the empty list.
+    get.mockResolvedValue({ data: [] });
+    fireEvent.change(screen.getByPlaceholderText(/paste the evening report/), { target: { value: "13/11 - RM35,315" } });
+    fireEvent.click(screen.getByLabelText("Send"));
+
+    await waitFor(
+      () => expect(screen.getByText(/Saved — the chat will refresh in a moment/)).toBeTruthy(),
+      { timeout: 5000 },
+    );
+    // The pending bubble clears once the loop gives up, so the sender isn't
+    // stuck looking at a permanent "Sending…" either.
+    expect(screen.queryByText("Sending…")).toBeNull();
+  });
 });
