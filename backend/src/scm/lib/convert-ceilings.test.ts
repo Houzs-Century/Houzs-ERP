@@ -214,7 +214,7 @@ describe('SO -> PO ceiling (qty - po_qty_picked)', () => {
     });
 
     test('the batch create path still calls its own cap', () => {
-      expect(poRouterSrc).toContain('findOverConvertOffender(items, soRows)');
+      expect(poRouterSrc).toContain('findOverConvertOffender(items.filter((it) => !confirmedDup.has(it.soItemId as string)), soRows)');
     });
 
     /* A company-1 BOUND line (sofa / bedframe / (SP) mattress / custom pillow) is

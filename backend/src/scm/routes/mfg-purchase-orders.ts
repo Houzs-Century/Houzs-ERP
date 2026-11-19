@@ -93,6 +93,7 @@ import { signSoItemPhotoUrl, soItemPhotoBindings } from '../lib/r2';
 import { baseKeyOf, thumbKeyFor } from '../../services/photoThumbs';
 import { proxyFallbackPayload, type PhotoUrlPayload } from '../lib/photoProxyFallback';
 import { markIdempotencyNoWrite } from '../../middleware/idempotency';
+import { soLinesOnLivePo, soHasPoRefusal } from '../lib/so-line-po-duplicate';
 import { supabaseAuth } from '../middleware/auth';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChange } from '../lib/entity-audit';
 import { PO_LINE_AUDIT_FIELDS, PO_LINE_AUDIT_SELECT } from '../lib/entity-audit-fields';
@@ -1048,6 +1049,7 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
      in which case the client replays with this flag set. Mirrors the
      confirmShortStock soft-warn -> confirm -> proceed shape. */
   const confirmOverConvert = body.confirmOverConvert === true;
+  const confirmDuplicatePo = body.confirmDuplicatePo === true; // 2990-0065, lib/so-line-po-duplicate.ts
 
   const currency = ((body.currency as string) ?? 'MYR').toUpperCase();
   if (!VALID_CURRENCIES.has(currency)) return c.json({ error: 'invalid_currency' }, 400);
@@ -1098,8 +1100,17 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
          with fromMrp) so there is no MRP case to exclude. Pre-write guard: mark
          the idempotency claim no-write so the confirmed replay re-runs instead of
          replaying this 409 (mirrors the short_stock gate). */
+      /* 2990-0065 — a line already on a live PO asks first. Once the operator
+         has said Continue for those lines, the quantity cap below does not ask
+         the same question again in other words. */
+      const onPo = await soLinesOnLivePo(supabase, soRows);
+      if (!confirmDuplicatePo) {
+        const dup = soHasPoRefusal(onPo);
+        if (dup) { markIdempotencyNoWrite(c); return c.json(dup, 409); }
+      }
+      const confirmedDup = new Set(confirmDuplicatePo ? onPo.map((h) => h.soItemId) : []);
       if (!confirmOverConvert) {
-        const offender = findOverConvertOffender(items, soRows);
+        const offender = findOverConvertOffender(items.filter((it) => !confirmedDup.has(it.soItemId as string)), soRows);
         if (offender) {
           markIdempotencyNoWrite(c);
           return c.json({ error: 'qty_exceeds_remaining', ...offender }, 409);
@@ -1446,6 +1457,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
        right fuse rather than a new parallel mechanism. */
     asDraft?: boolean;
     allowSofaSupplierSplit?: boolean; // operator confirmed two sofa models on two suppliers
+    confirmDuplicatePo?: boolean; // 2990-0065: operator said Continue to "this SO already has PO(s)"
   };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const poMode: 'combined' | 'per-so' = body.mode === 'per-so' ? 'per-so' : 'combined';
@@ -1684,6 +1696,14 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
   {
     const offender = await firstUnorderableSo(supabase, pickedItems.map((p) => p.row.doc_no));
     if (offender) return c.json(soNotOrderableResponse(offender), 409);
+  }
+
+  /* 2990-0065 — after the hard caps above, so a pick they refuse is never asked
+     about first. Covers the From-SO picker, MRP, the mobile wizard and the PO
+     page's Transfer from Sales Order (targetPoId). */
+  if (body.confirmDuplicatePo !== true) {
+    const dup = soHasPoRefusal(await soLinesOnLivePo(supabase, pickedItems.map((p) => p.row)));
+    if (dup) return c.json(dup, 409);
   }
 
   // Re-project into the legacy soItems shape for the rest of the handler.
@@ -2393,6 +2413,7 @@ mfgPurchaseOrders.post('/from-sos', async (c) => {
     json: (b, status) => ({ status: status ?? 200, body: b as Record<string, unknown> }),
   });
   settleFromSosForMrp(c, activeCompanyId(c) ?? null, out);
+  if (out.body.error === 'so_has_po') markIdempotencyNoWrite(c); // the Continue replay must re-run, not replay this 409
   return c.json(out.body, out.status as 201);
 });
 
@@ -2457,7 +2478,9 @@ export async function createDraftPosFromPicks(
     return undefined;
   };
   return convertSosToPosCore({
-    req: { json: async () => ({ picks: opts.picks, asDraft: true, fromMrp: true }) },
+    /* shortcut: no person to ask, so the agent is not prompted (2990-0065); it only
+       writes DRAFTs a human confirms. Upgrade if its drafts start doubling lines. */
+    req: { json: async () => ({ picks: opts.picks, asDraft: true, fromMrp: true, confirmDuplicatePo: true }) },
     get: syntheticGet as unknown as PoConvertContext['get'],
     env,
     json: (b, status) => ({ status: status ?? 200, body: b as Record<string, unknown> }),
@@ -2975,6 +2998,10 @@ mfgPurchaseOrders.post('/:id/items', async (c) => {
   { const inactive = await poInactivePickRefusal(sb, co.companyId ?? null, [{ materialKind: it.materialKind, itemCode: it.itemCode, soItemId }]); if (inactive) return c.json(inactive, 409); }
   /* Remaining-qty cap — a NEW line contributes nothing to po_qty_picked yet, so
      its own headroom is the raw remainder (ownCurrentQty = 0). */
+  if (soItemId && it.confirmDuplicatePo !== true) { // 2990-0065
+    const dup = soHasPoRefusal(await soLinesOnLivePo(sb, [{ id: soItemId, doc_no: null, item_code: String(it.itemCode ?? '') }]));
+    if (dup) { markIdempotencyNoWrite(c); return c.json(dup, 409); }
+  }
   if (it.confirmOverConvert !== true) {
     const over = await soLineOverConvertRefusal(sb, soItemId, qty, 0);
     if (over) return c.json({ error: 'qty_exceeds_remaining', ...over }, 409);

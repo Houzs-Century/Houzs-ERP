@@ -97,13 +97,13 @@ const seed = (): Record<string, Row[]> => ({
   purchase_order_items: [],
 });
 
-const proceed = (tables: Record<string, Row[]>, planAsOf: string | undefined) => {
+const proceed = (tables: Record<string, Row[]>, planAsOf: string | undefined, confirmDuplicatePo = false) => {
   const sb = { from: (t: string) => new FakeQuery(tables, t), rpc: async () => ({ data: true, error: null }) };
   const get = (key: string): unknown => ({
     supabase: sb, user: { id: 'u1' }, companyId: CO, companyCode: 'HOUZS',
   } as Record<string, unknown>)[key];
   return convertSosToPosCore({
-    req: { json: async () => ({ picks: [{ soItemId: 'soi-1', qty: 2 }], mode: 'combined', fromMrp: true, planAsOf }) },
+    req: { json: async () => ({ picks: [{ soItemId: 'soi-1', qty: 2 }], mode: 'combined', fromMrp: true, planAsOf, confirmDuplicatePo }) },
     get: get as never,
     env: { DB: undefined } as never,
     json: (b, status) => ({ status: status ?? 200, body: b as Record<string, unknown> }),
@@ -111,14 +111,18 @@ const proceed = (tables: Record<string, Row[]>, planAsOf: string | undefined) =>
 };
 
 describe('MRP Proceed PO on a stale plan (B6)', () => {
-  test('without a plan timestamp, a second press on the same lines raises a second PO', async () => {
-    /* The pre-fix behaviour, still reachable by a caller that sends no planAsOf:
-       nothing on the server stops the duplicate. This is what the page did. */
+  test('without a plan timestamp, a second press on the same lines asks first, then raises a second PO on Continue', async () => {
+    /* No planAsOf: the freshness check cannot help. Since 2990-0065 the server
+       names the PO already raised (so_has_po) and the operator decides. */
     const t = seed();
     const first = await proceed(t, undefined);
     expect(first.status).toBe(201);
     tick(60_000);
-    const second = await proceed(t, undefined);
+    const asked = await proceed(t, undefined);
+    expect(asked.status).toBe(409);
+    expect(asked.body.error).toBe('so_has_po');
+    expect(t.purchase_orders).toHaveLength(1);
+    const second = await proceed(t, undefined, true);
     expect(second.status).toBe(201);
     expect(t.purchase_orders).toHaveLength(2);
     expect(t.purchase_order_items.filter((l) => l.so_item_id === 'soi-1')).toHaveLength(2);
@@ -147,7 +151,8 @@ describe('MRP Proceed PO on a stale plan (B6)', () => {
     expect(first.status).toBe(201);
     const regenerated = tick(60_000);
     tick(1_000);
-    const second = await proceed(t, regenerated);
+    expect((await proceed(t, regenerated)).body.error).toBe('so_has_po'); // 2990-0065
+    const second = await proceed(t, regenerated, true);
     expect(second.status).toBe(201);
     expect(t.purchase_orders).toHaveLength(2);
   });
