@@ -14,7 +14,7 @@
 import { DataTable, type Column } from "../../components/DataTable";
 import { fmtDateOrDash, fmtDayMonthRange } from "../../vendor/shared/format";
 import { fmtSenPlain } from "../../vendor/shared/format";
-import { estimatedColumnsOf, estimateTagOf, figuresOf, pctOf, type OvProject } from "./projectOverviewModel";
+import { estimatedColumnsOf, figuresOf, pctOf, type OvProject } from "./projectOverviewModel";
 import { projectLines } from "./projectOverviewView";
 
 export type OverviewRow = { p: OvProject; f: ReturnType<typeof figuresOf> };
@@ -29,10 +29,10 @@ const amountCol = (key: string, label: string, pick: (r: OverviewRow) => number,
   render: (r) => {
     const v = pick(r);
     const tone = opts.strong ? (v < 0 ? "font-semibold text-err" : "font-semibold") : v < 0 ? "text-err" : Math.abs(v) < 0.005 ? "text-ink-muted" : "";
-    /* A forecast figure reads apart from a real one: italic, dotted underline (owner 2026-11-19). */
+    /* A forecast figure is shaded yellow; a real one is plain (owner 2026-11-19: 把那个数据放黄色就行了). */
     const est = r.f.estimated && estimatedColumnsOf(r.p).includes(key);
     return est
-      ? <span className={`${tone} italic underline decoration-dotted underline-offset-2`} title="Forecast (typed, or the last same event's result) until the real figure is in">{money(v)}</span>
+      ? <span className={`${tone} rounded bg-warning-bg px-1 text-warning-text`} title="Forecast (typed, or the last same event's result) until the real figure is in" data-forecast="1">{money(v)}</span>
       : <span className={tone}>{money(v)}</span>;
   },
   /* To the sen, so two rows that read the same share one line in the funnel. */
@@ -65,8 +65,6 @@ export const PROJECT_COLUMNS: Column<OverviewRow>[] = [
     render: (r) => (
       <span className="whitespace-nowrap font-semibold text-primary" title={r.p.name}>
         {projectLines(r.p).title}
-        {/* Names what is a forecast - "Est: Setup" - not a blanket "Estimate" (owner 2026-11-19). */}
-        {(() => { const tag = r.f.estimated ? estimateTagOf(r.p) : null; return tag ? <span className="ml-1.5 rounded bg-warning-bg px-1 py-px text-[10px] font-semibold text-warning-text" title={tag.title}>{tag.label}</span> : null; })()}
       </span>
     ),
     getValue: (r) => projectLines(r.p).title, sortValue: (r) => projectLines(r.p).title, searchValue: (r) => r.p.name,

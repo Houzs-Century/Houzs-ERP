@@ -177,8 +177,10 @@ describe("Project Overview — future date ranges (owner 2026-11-18)", () => {
     show("?view=finances&af_from=2027-01-01&af_to=2027-03-31");
     expect(titles()).toHaveLength(1);
     const row = within(projectsTable()).getByText("[AKEMI] MYHOME").closest("tr") as HTMLTableRowElement;
-    /* Its sales are a forecast, so the whole event is (owner 2026-11-19). */
-    expect(within(row).getByText("Forecast")).toBeTruthy();
+    /* No tag; its forecast figures are shaded (owner 2026-11-19). */
+    expect(within(row).queryByText("Estimate")).toBeNull();
+    expect(within(row).getByText("90,000.00").getAttribute("data-forecast")).toBe("1");
+    expect(within(row).getByText("12,000.00").getAttribute("data-forecast")).toBe("1");
     const split = screen.getByTestId("layer-split");
     expect(split.textContent).toContain("1 of 1 projects include a forecast");
     /* A last event's result is a forecast (owner 2026-11-19): two columns, not three. */
