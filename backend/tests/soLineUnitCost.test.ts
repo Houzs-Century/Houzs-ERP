@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { costHeight, recostSetOrder, setSpreadByOwnCost, unitCostSen, usualHeights, wholeSetCosts } from '../scripts/lib/so-line-unit-cost.mjs';
+import { costHeight, orderDateSetCosts, recostSetOrder, unitCostSen, usualHeights, wholeSetCosts } from '../scripts/lib/so-line-unit-cost.mjs';
 import { costCombos } from '../scripts/lib/sofa-combo-set-cost.mjs';
 
 const grid = (...rows: Array<[string, number]>) => rows.flatMap(([height, priceSen]) => [
@@ -56,59 +56,68 @@ describe('usualHeights', () => {
   });
 });
 
-/* A sofa set the nightly fill stamps costs its set price, as a save prices it.
-   2026-11-18: the fill read effective_from with String(Date), "Mon Oct 19", so no
-   combo was ever in effect and a set with every piece at RM 0 got the sum of its
-   pieces (6 Houzs orders); a piece left at RM 0 beside a sibling carrying the whole
-   set price was costed again on top (HC-SO-2609-359, 2990-SO-2611-107). Amounts are
-   illustrative. */
+/* A sofa set the nightly fill stamps costs the set price of its ORDER DATE; with
+   none then, each piece its own cost (owner 2026-11-19). History: the fill read
+   effective_from with String(Date), "Mon Oct 19", so no combo was ever in effect;
+   then it used today's set price, which put 7 orders on a set price created after
+   they were sold. A piece left at RM 0 beside a sibling carrying a set price got
+   costed again on top (HC-SO-2609-359, 2990-SO-2611-107). Amounts are illustrative. */
 describe('wholeSetCosts', () => {
-  // As the database driver hands the rows over: dates arrive as Date objects.
+  // As the database driver hands the rows over: dates arrive as Date objects. The set price starts 2026-10-19.
   const combos = costCombos([{
     id: 'k', base_model: 'KABBIN', modules: [['2A(LHF)', '2A(RHF)'], ['L(LHF)', 'L(RHF)']], tier: 'PRICE_2', customer_id: null,
     prices_by_height: { 24: 188000, 28: 200000 }, label: null, effective_from: new Date('2026-10-19T00:00:00Z'), created_at: new Date('2026-10-19T07:20:07Z'),
   }]);
   const tier = () => 'PRICE_2';
+  const SOLD_AFTER = '2026-11-01';
+  const SOLD_BEFORE = '2026-09-30';
   const v = (seatHeight: string | null, buildKey: string | null = null) => ({ fabricCode: 'EM-02', ...(seatHeight ? { seatHeight } : {}), ...(buildKey ? { buildKey } : {}) });
   const piece = (id: string, item_code: string, held: number, own: number, variants: object, cancelled = false) => ({ id, item_code, item_group: 'sofa', variants, qty: 1, held, own, cancelled });
 
   test('a combo row read from the database is in effect: its date is a day, not "Mon Oct 19"', () => {
     expect(combos[0]?.effectiveFrom).toBe('2026-10-19');
   });
-  test('a set with every piece at RM 0 costs its combo, spread by each piece\'s own cost', () => {
-    const out = wholeSetCosts([piece('a', 'KABBIN-2A(LHF)', 0, 120000, v('28')), piece('b', 'KABBIN-L(RHF)', 0, 120000, v('28'))], combos, tier);
+  test('sold after the set price started: a set with every piece at RM 0 costs it, shared by own cost', () => {
+    const out = wholeSetCosts([piece('a', 'KABBIN-2A(LHF)', 0, 120000, v('28')), piece('b', 'KABBIN-L(RHF)', 0, 120000, v('28'))], combos, tier, SOLD_AFTER);
     expect(Object.fromEntries(out)).toEqual({ a: 100000, b: 100000 });
   });
-  test('a piece at RM 0 beside one carrying the whole set price: the set is costed once, on any order', () => {
+  test('sold before the set price started: no set price, each piece is stamped at its own cost', () => {
+    expect(wholeSetCosts([piece('a', 'KABBIN-2A(LHF)', 0, 120000, v('28')), piece('b', 'KABBIN-L(RHF)', 0, 120000, v('28'))], combos, tier, SOLD_BEFORE).size).toBe(0);
+  });
+  test('a piece at RM 0 beside one carrying the whole set price is never costed on top, on any order', () => {
     for (const buildKey of [null, 'build-1']) {
-      const out = wholeSetCosts([piece('a', 'KABBIN-2A(LHF)', 200000, 95000, v('28', buildKey)), piece('b', 'KABBIN-L(RHF)', 0, 105000, v('28', buildKey))], combos, tier);
-      expect(Object.fromEntries(out)).toEqual({ a: 95000, b: 105000 });
+      const lines = [piece('a', 'KABBIN-2A(LHF)', 200000, 95000, v('28', buildKey)), piece('b', 'KABBIN-L(RHF)', 0, 105000, v('28', buildKey))];
+      // Sold after the set price started: the set costs it once.
+      expect(Object.fromEntries(wholeSetCosts(lines, combos, tier, SOLD_AFTER))).toEqual({ a: 95000, b: 105000 });
+      // Sold before: a later save put that set price on the 2A; both pieces go back to their own cost.
+      expect(Object.fromEntries(wholeSetCosts(lines, combos, tier, SOLD_BEFORE))).toEqual({ a: 95000, b: 105000 });
     }
   });
   test('at a height one piece has no cost of its own, the set price is shared by the costs the pieces do have', () => {
-    const out = wholeSetCosts([piece('a', 'KABBIN-2A(LHF)', 188000, 95000, v('24')), piece('b', 'KABBIN-L(RHF)', 0, 95000, v('24'))], combos, tier);
+    const out = wholeSetCosts([piece('a', 'KABBIN-2A(LHF)', 188000, 95000, v('24')), piece('b', 'KABBIN-L(RHF)', 0, 95000, v('24'))], combos, tier, SOLD_AFTER);
     expect(Object.fromEntries(out)).toEqual({ a: 94000, b: 94000 });
   });
   test('nothing to stamp, no combo covering the set, or no seat height (as on a save): left as before', () => {
-    expect(wholeSetCosts([piece('a', 'KABBIN-2A(LHF)', 95000, 95000, v('28')), piece('b', 'KABBIN-L(RHF)', 105000, 105000, v('28'))], combos, tier).size).toBe(0);
-    expect(wholeSetCosts([piece('a', 'KABBIN-2A(LHF)', 0, 95000, v('28')), piece('b', 'KABBIN-1NA', 0, 65000, v('28'))], combos, tier).size).toBe(0);
-    expect(wholeSetCosts([piece('a', 'KABBIN-2A(LHF)', 0, 95000, v(null)), piece('b', 'KABBIN-L(RHF)', 0, 105000, v(null))], combos, tier).size).toBe(0);
+    expect(wholeSetCosts([piece('a', 'KABBIN-2A(LHF)', 95000, 95000, v('28')), piece('b', 'KABBIN-L(RHF)', 105000, 105000, v('28'))], combos, tier, SOLD_AFTER).size).toBe(0);
+    expect(wholeSetCosts([piece('a', 'KABBIN-2A(LHF)', 0, 95000, v('28')), piece('b', 'KABBIN-1NA', 0, 65000, v('28'))], combos, tier, SOLD_AFTER).size).toBe(0);
+    expect(wholeSetCosts([piece('a', 'KABBIN-2A(LHF)', 0, 95000, v(null)), piece('b', 'KABBIN-L(RHF)', 0, 105000, v(null))], combos, tier, SOLD_AFTER).size).toBe(0);
   });
   test('a cancelled piece is no part of the set', () => {
     const out = wholeSetCosts([
       piece('a', 'KABBIN-2A(LHF)', 0, 95000, v('28')), piece('b', 'KABBIN-L(RHF)', 0, 105000, v('28')), piece('c', 'KABBIN-L(LHF)', 0, 105000, v('28'), true),
-    ], combos, tier);
+    ], combos, tier, SOLD_AFTER);
     expect(Object.fromEntries(out)).toEqual({ a: 95000, b: 105000 });
   });
-  test('setSpreadByOwnCost prices a set that has nothing left to stamp (what the repair puts right)', () => {
+  test('orderDateSetCosts prices a set with nothing left to stamp (what the repair puts right)', () => {
     const lines = [piece('a', 'KABBIN-2A(LHF)', 120000, 120000, v('28')), piece('b', 'KABBIN-L(RHF)', 120000, 120000, v('28'))];
-    expect(wholeSetCosts(lines, combos, tier).size).toBe(0);
-    expect(Object.fromEntries(setSpreadByOwnCost(lines, combos, tier))).toEqual({ a: 100000, b: 100000 });
+    expect(wholeSetCosts(lines, combos, tier, SOLD_AFTER).size).toBe(0);
+    expect(Object.fromEntries(orderDateSetCosts(lines, combos, tier, SOLD_AFTER))).toEqual({ a: 100000, b: 100000 });
+    // Sold before the set price: the pieces carry their own costs, not a set price, so nothing is priced.
+    expect(orderDateSetCosts(lines, combos, tier, SOLD_BEFORE).size).toBe(0);
   });
 });
 
-/* repair-fill-sofa-set-cost.mjs: an order the fill costed piece by piece, re-costed
-   to its set price. Amounts are illustrative. */
+/* repair-fill-sofa-set-cost.mjs: named orders put on their order-date cost. Amounts are illustrative. */
 describe('recostSetOrder', () => {
   const combos = costCombos([{
     id: 'k', base_model: 'KABBIN', modules: [['2A(LHF)', '2A(RHF)'], ['L(LHF)', 'L(RHF)']], tier: null, customer_id: null,
@@ -119,30 +128,40 @@ describe('recostSetOrder', () => {
     id, item_code, item_group: 'sofa', variants: { seatHeight: '28' }, qty: 1, total_sen: 150000, line_cost_sen, own, cancelled: false, ...over,
   });
   const delivery = { id: 'd', item_code: 'SVC-DELIVERY', item_group: 'service', variants: {}, qty: 1, total_sen: 0, line_cost_sen: 0, cancelled: false };
-  const order = (over = {}) => ({ doc_no: 'X', status: 'CONFIRMED', total_revenue_sen: 300000, total_cost_sen: 240000, total_margin_sen: 60000, mattress_sofa_cost_sen: 240000, ...over });
+  const order = (over = {}) => ({ doc_no: 'X', so_date: new Date('2026-11-01T00:00:00Z'), status: 'CONFIRMED', total_revenue_sen: 300000, total_cost_sen: 240000, total_margin_sen: 60000, mattress_sofa_cost_sen: 240000, ...over });
 
-  test('a set costed piece by piece takes its set price; cost, margin and margin basis follow', () => {
+  test('sold after the set price started: a set costed piece by piece takes it; cost, margin and basis follow', () => {
     const r = recostSetOrder(order(), [line('a', 'KABBIN-2A(LHF)', 120000, 120000), line('b', 'KABBIN-L(RHF)', 120000, 120000), delivery], ctx);
     expect(r.status).toBe('repair');
     if (r.status !== 'repair') return;
     expect(r.changes.map((c) => [c.id, c.from, c.to])).toEqual([['a', 120000, 100000], ['b', 120000, 100000]]);
     expect(r.header).toEqual({ total_cost_sen: 200000, mattress_sofa_cost_sen: 200000, total_margin_sen: 100000, margin_pct_basis: 3333 });
   });
-  test('a piece costed on top of a sibling carrying the set price: the set is costed once, by own costs', () => {
-    const r = recostSetOrder(order({ total_cost_sen: 320000 }), [line('a', 'KABBIN-2A(LHF)', 200000, 60000), line('b', 'KABBIN-L(RHF)', 120000, 140000)], ctx);
-    expect(r.status === 'repair' && r.changes.map((c) => [c.id, c.to])).toEqual([['a', 60000], ['b', 140000]]);
+  test('sold before the set price started, carrying it now: each piece goes back to its own cost', () => {
+    const r = recostSetOrder(order({ so_date: new Date('2026-06-30T00:00:00Z'), total_cost_sen: 200000 }),
+      [line('a', 'KABBIN-2A(LHF)', 100000, 120000), line('b', 'KABBIN-L(RHF)', 100000, 120000)], ctx);
+    expect(r.status === 'repair' && r.changes.map((c) => [c.id, c.from, c.to])).toEqual([['a', 100000, 120000], ['b', 100000, 120000]]);
+  });
+  test('a piece costed on top of a sibling carrying the set price: costed once, by the order date', () => {
+    // The 2A carries the whole set price, the L its own cost on top (how the fill double-counted).
+    const lines = [line('a', 'KABBIN-2A(LHF)', 200000, 70000), line('b', 'KABBIN-L(RHF)', 150000, 150000)];
+    const after = recostSetOrder(order({ total_cost_sen: 350000 }), lines, ctx);
+    expect(after.status === 'repair' && after.changes.map((c) => [c.id, c.to])).toEqual([['a', 63636], ['b', 136364]]);
+    const before = recostSetOrder(order({ so_date: new Date('2026-06-30T00:00:00Z'), total_cost_sen: 350000 }), lines, ctx);
+    expect(before.status === 'repair' && before.changes.map((c) => [c.id, c.to])).toEqual([['a', 70000]]);
   });
   test('an order imported with no revenue on its header: the margin moves with the cost, its basis stays 0', () => {
     const r = recostSetOrder(order({ total_revenue_sen: 0, total_margin_sen: -240000 }), [line('a', 'KABBIN-2A(LHF)', 120000, 120000), line('b', 'KABBIN-L(RHF)', 120000, 120000)], ctx);
     expect(r.status === 'repair' && r.header).toEqual({ total_cost_sen: 200000, mattress_sofa_cost_sen: 200000, total_margin_sen: -200000, margin_pct_basis: 0 });
   });
   test('a second run has nothing to change, so it writes nothing', () => {
-    const r = recostSetOrder(order({ total_cost_sen: 200000 }), [line('a', 'KABBIN-2A(LHF)', 100000, 120000), line('b', 'KABBIN-L(RHF)', 100000, 120000)], ctx);
-    expect(r).toEqual({ status: 'refused', why: 'nothing to change: its sofa sets already carry their set price' });
+    const after = recostSetOrder(order({ total_cost_sen: 200000 }), [line('a', 'KABBIN-2A(LHF)', 100000, 120000), line('b', 'KABBIN-L(RHF)', 100000, 120000)], ctx);
+    expect(after).toEqual({ status: 'refused', why: 'nothing to change: its sofa sets already carry their order-date cost' });
+    const before = recostSetOrder(order({ so_date: new Date('2026-06-30T00:00:00Z') }), [line('a', 'KABBIN-2A(LHF)', 120000, 120000), line('b', 'KABBIN-L(RHF)', 120000, 120000)], ctx);
+    expect(before.status).toBe('refused');
   });
-  test('refused: a header that is not the sum of its lines, a set no combo covers, a cancelled order', () => {
+  test('refused: a header that is not the sum of its lines, a cancelled order', () => {
     expect(recostSetOrder(order({ total_cost_sen: 1 }), [line('a', 'KABBIN-2A(LHF)', 120000, 120000)], ctx).status).toBe('refused');
-    expect(recostSetOrder(order({ total_cost_sen: 120000 }), [line('a', 'KABBIN-2A(LHF)', 120000, 120000)], ctx).status).toBe('refused');
     expect(recostSetOrder(order({ status: 'CANCELLED' }), [line('a', 'KABBIN-2A(LHF)', 120000, 120000), line('b', 'KABBIN-L(RHF)', 120000, 120000)], ctx).status).toBe('refused');
   });
 });

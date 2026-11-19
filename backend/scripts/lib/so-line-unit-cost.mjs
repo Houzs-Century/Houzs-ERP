@@ -1,4 +1,5 @@
 import { planComboCostSpread } from '../../src/scm/lib/sofa-combo-cost-spread.ts';
+import { isoDay } from './sofa-combo-set-cost.mjs';
 
 const heightOf = (variants) => variants?.depth ?? variants?.seatHeight ?? variants?.seat_height ?? null;
 const clean = (h) => String(h).replace(/"/g, '').trim();
@@ -64,58 +65,89 @@ export function unitCostSen(p, variants, usual) {
 }
 
 /**
- * Every sofa piece a combo covers, priced as the order's save prices the set
- * (planComboCostSpread: the combo covering the most pieces, at the line's own
- * height and fabric tier), but shared by each piece's own product cost rather
+ * Every sofa piece a set price covers on `asOf`, priced as the order's save prices
+ * the set (planComboCostSpread: the combo covering the most pieces, at the line's
+ * own height and fabric tier), but shared by each piece's own product cost rather
  * than by what the line carries now: a line may carry a whole set price, or RM 0.
  * A cancelled line is no part of the set, as on a save.
  *
  * `lines`: { id, item_code, item_group, variants, qty, own, cancelled } where `own`
  * is the product's unit cost (unitCostSen). `combos`: cost-priced master combos
  * with dates as YYYY-MM-DD (costCombos; the driver hands a date over as a Date).
+ * `asOf`: the day whose set prices count, YYYY-MM-DD; null is today.
  * Returns line id -> new line cost for every covered piece.
  */
-export function setSpreadByOwnCost(lines, combos, tierOfFabric) {
+export function setSpreadByOwnCost(lines, combos, tierOfFabric, asOf) {
   const qtyOf = (l) => Math.max(1, Number(l.qty) || 1);
   const sofa = lines.filter((l) => !l.cancelled && String(l.item_group ?? '').toLowerCase() === 'sofa');
   return planComboCostSpread(sofa.map((l) => ({
     id: l.id, item_code: l.item_code, item_group: 'sofa', variants: l.variants, qty: qtyOf(l),
     line_cost_sen: (Number(l.own) || 0) * qtyOf(l),
-  })), combos, tierOfFabric, null);
+  })), combos, tierOfFabric, asOf);
 }
 
 /**
- * A sofa set whose piece is about to be stamped costs its set price
- * (setSpreadByOwnCost), the pieces already costed included, on every order.
- *
- * Why: stamping each piece with its own cost missed the set price twice. A set
- * with every piece at RM 0 got the sum of its pieces (the fill read a combo's
- * start date as "Mon Oct 19", so no combo was ever in effect: 6 Houzs orders of
- * 2026-11-04). A set whose save had put the whole set price on one piece, because
- * the other piece had no cost yet, got that piece costed again on top
- * (HC-SO-2609-359; 2990-SO-2611-107 on the POS).
+ * What an order's sofa sets cost by the owner's rule (2026-11-19): the set price
+ * that existed on the order date; with none then, each piece its own cost.
+ *   - A set a set price covered on the order date costs it, shared by own cost.
+ *   - A set none covered then, whose pieces not at their own price carry, between
+ *     them, exactly the set price that came later (a save after it existed spread
+ *     it over them), goes back to each piece's own cost: HC-SO-2609-359, opened
+ *     2026-09-30, its 26" set price from 2026-10-10, had it on its 1A and the 2A's
+ *     own cost on top.
+ * Every other set is left to its pieces' own costs as they stand.
  *
  * `lines`: as setSpreadByOwnCost, plus `held`, the unit cost the line carries.
- * Returns line id -> new line cost for every covered piece of a model with a piece
- * to stamp; a set with nothing to stamp is never moved.
+ * `orderDate`: the order's date, YYYY-MM-DD.
+ * Returns line id -> line cost for every piece of a set this prices.
  */
-export function wholeSetCosts(lines, combos, tierOfFabric) {
-  const out = new Map();
-  const wanting = lines.filter((l) => !l.cancelled && String(l.item_group ?? '').toLowerCase() === 'sofa'
-    && Number(l.held) === 0 && Number(l.own) > 0);
-  if (wanting.length === 0) return out;
-  const spread = setSpreadByOwnCost(lines, combos, tierOfFabric);
-  const models = new Set(wanting.filter((l) => spread.has(l.id)).map((l) => modelOf(l.item_code).toUpperCase()));
-  for (const l of lines) {
-    if (spread.has(l.id) && models.has(modelOf(l.item_code).toUpperCase())) out.set(l.id, spread.get(l.id));
+export function orderDateSetCosts(lines, combos, tierOfFabric, orderDate) {
+  const qtyOf = (l) => Math.max(1, Number(l.qty) || 1);
+  const modelKey = (l) => modelOf(l.item_code).toUpperCase();
+  const out = setSpreadByOwnCost(lines, combos, tierOfFabric, orderDate);
+  const priced = new Set(lines.filter((l) => out.has(l.id)).map(modelKey));
+  const later = setSpreadByOwnCost(lines, combos, tierOfFabric, null);
+  for (const [model, pieces] of Map.groupBy(lines.filter((l) => later.has(l.id)), modelKey)) {
+    if (priced.has(model)) continue;
+    const setPrice = pieces.reduce((s, l) => s + later.get(l.id), 0);
+    const offOwn = pieces.filter((l) => (Number(l.held) || 0) !== (Number(l.own) || 0));
+    const carried = offOwn.reduce((s, l) => s + (Number(l.held) || 0) * qtyOf(l), 0);
+    if (setPrice > 0 && offOwn.length > 0 && carried === setPrice) for (const l of pieces) out.set(l.id, (Number(l.own) || 0) * qtyOf(l));
   }
   return out;
 }
 
 /**
- * One order the fill costed before it priced sets, re-costed to its set prices
- * (setSpreadByOwnCost): the pure half of repair-fill-sofa-set-cost.mjs.
- * @param order { doc_no, status, total_revenue_sen, total_cost_sen, total_margin_sen, mattress_sofa_cost_sen }
+ * The sofa sets of an order whose piece is about to be stamped, costed by
+ * orderDateSetCosts, the pieces already costed included, on every order.
+ *
+ * Why: stamping each piece with its own cost missed the set price a set had when
+ * it was sold (the fill once read a combo's start date as "Mon Oct 19", so no
+ * combo was ever in effect), and a piece left at RM 0 beside a sibling carrying a
+ * whole set price got costed again on top (HC-SO-2609-359; 2990-SO-2611-107 on
+ * the POS). A set price that came after the order date is not the order's cost.
+ *
+ * `lines`: as orderDateSetCosts. Returns line id -> new line cost for every
+ * piece of a set with a piece to stamp; a set with nothing to stamp is never moved.
+ */
+export function wholeSetCosts(lines, combos, tierOfFabric, orderDate) {
+  const out = new Map();
+  const modelKey = (l) => modelOf(l.item_code).toUpperCase();
+  const wanting = lines.filter((l) => !l.cancelled && String(l.item_group ?? '').toLowerCase() === 'sofa'
+    && Number(l.held) === 0 && Number(l.own) > 0);
+  if (wanting.length === 0) return out;
+  const costs = orderDateSetCosts(lines, combos, tierOfFabric, orderDate);
+  const models = new Set(wanting.filter((l) => costs.has(l.id)).map(modelKey));
+  for (const l of lines) {
+    if (costs.has(l.id) && models.has(modelKey(l))) out.set(l.id, costs.get(l.id));
+  }
+  return out;
+}
+
+/**
+ * One named order's sofa sets re-costed by orderDateSetCosts: the pure half of
+ * repair-fill-sofa-set-cost.mjs.
+ * @param order { doc_no, so_date, status, total_revenue_sen, total_cost_sen, total_margin_sen, mattress_sofa_cost_sen }
  *   The margin moves with the cost (it is revenue - cost on every header) and its
  *   basis is margin / revenue, as a save writes it: 0 on an order imported with no
  *   revenue on its header, never a new figure there.
@@ -125,15 +157,16 @@ export function wholeSetCosts(lines, combos, tierOfFabric) {
  */
 export function recostSetOrder(order, lines, ctx) {
   if (['DRAFT', 'CANCELLED'].includes(String(order.status))) return { status: 'refused', why: `the order is ${order.status}` };
+  const qtyOf = (l) => Math.max(1, Number(l.qty) || 1);
   const live = lines.filter((l) => !l.cancelled);
   const lineSum = live.reduce((s, l) => s + (Number(l.line_cost_sen) || 0), 0);
   if (lineSum !== Number(order.total_cost_sen)) return { status: 'refused', why: 'its header cost is not the sum of its lines; save the order in the app first' };
-  const spread = setSpreadByOwnCost(live.map((l) => ({ ...l, own: ctx.ownCost(l) })), ctx.combos, ctx.tierOfFabric);
-  if (spread.size === 0) return { status: 'refused', why: 'no combo covers a sofa set of this order' };
+  const costs = orderDateSetCosts(live.map((l) => ({ ...l, own: ctx.ownCost(l), held: (Number(l.line_cost_sen) || 0) / qtyOf(l) })),
+    ctx.combos, ctx.tierOfFabric, isoDay(order.so_date));
   const changes = live
-    .filter((l) => spread.has(l.id) && spread.get(l.id) !== (Number(l.line_cost_sen) || 0))
-    .map((l) => ({ id: l.id, item_code: l.item_code, qty: Math.max(1, Number(l.qty) || 1), total_sen: Number(l.total_sen) || 0, from: Number(l.line_cost_sen) || 0, to: spread.get(l.id) }));
-  if (changes.length === 0) return { status: 'refused', why: 'nothing to change: its sofa sets already carry their set price' };
+    .filter((l) => costs.has(l.id) && costs.get(l.id) !== (Number(l.line_cost_sen) || 0))
+    .map((l) => ({ id: l.id, item_code: l.item_code, qty: qtyOf(l), total_sen: Number(l.total_sen) || 0, from: Number(l.line_cost_sen) || 0, to: costs.get(l.id) }));
+  if (changes.length === 0) return { status: 'refused', why: 'nothing to change: its sofa sets already carry their order-date cost' };
   const delta = changes.reduce((s, c) => s + (c.to - c.from), 0);
   const grand = Number(order.total_revenue_sen) || 0;
   const margin = (Number(order.total_margin_sen) || 0) - delta;

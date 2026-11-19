@@ -25,14 +25,15 @@
    line_cost = unit x qty; then the header's category aggregates + total_cost +
    margin (revenue - cost) are recomputed.
 
-   A SOFA SET (lib/so-line-unit-cost.mjs wholeSetCosts), on every order. When a
-   piece being stamped belongs to a set a combo covers, the set costs the combo
-   as a save prices it (planComboCostSpread), shared by each piece's own product
-   cost, the pieces already costed moving too. Stamping piece by piece missed the
-   set price: a set with every piece at RM 0 got the sum of its pieces (the combos
-   were read with their start date as "Mon Oct 19", so none was ever in effect),
-   and a piece left at RM 0 beside a sibling carrying the whole set price was
-   costed again on top (HC-SO-2609-359; 2990-SO-2611-107 on the POS). Such an
+   A SOFA SET (lib/so-line-unit-cost.mjs wholeSetCosts), on every order. Owner's
+   rule 2026-11-19: a set costs the set price that existed on its ORDER DATE; with
+   none then, each piece its own cost. When a piece being stamped belongs to a set
+   a set price covered on the order date, the set costs it as a save prices it
+   (planComboCostSpread), shared by each piece's own product cost, the pieces
+   already costed moving too. A set price added after the order date never counts,
+   and one a later save spread over the set's other pieces is taken back off, so a
+   piece at RM 0 is never costed on top of a set price (HC-SO-2609-359;
+   2990-SO-2611-107 on the POS). Such an
    order is written in its own transaction, every UPDATE guarded on the value the
    plan read, with an audit row naming each line's cost before and after; each
    company's count of such orders is printed. This mirrors restamp-imported-so-costs
@@ -60,7 +61,7 @@
 import "./lib/public-log-guard.mjs";
 import postgres from 'postgres';
 import { unitCostSen, usualHeights, wholeSetCosts } from './lib/so-line-unit-cost.mjs';
-import { costCombos } from './lib/sofa-combo-set-cost.mjs';
+import { costCombos, isoDay } from './lib/sofa-combo-set-cost.mjs';
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error('need DATABASE_URL'); process.exit(2); }
@@ -115,7 +116,7 @@ async function main() {
 
     // Every order that has at least one zero-cost line — a fully-zero order OR a
     // partly-costed one with a few kosong lines. Both show a gap in the report.
-    const sos = await sql`SELECT h.doc_no, h.status, h.total_revenue_sen, h.total_cost_sen
+    const sos = await sql`SELECT h.doc_no, h.so_date, h.status, h.total_revenue_sen, h.total_cost_sen
                           FROM scm.mfg_sales_orders h
                           WHERE h.company_id = ${co}
                             AND EXISTS (SELECT 1 FROM scm.mfg_sales_order_items i
@@ -162,7 +163,7 @@ async function main() {
       const setCost = wholeSetCosts(costed.map((c) => ({
         id: c.l.id, item_code: c.l.item_code, item_group: c.l.item_group, variants: c.l.variants, qty: c.qty, cancelled: c.l.cancelled,
         held: Number(c.l.unit_cost_sen) || 0, own: unitCostSen(c.p, c.l.variants, usual),
-      })), setCombos, tierOfFabric);
+      })), setCombos, tierOfFabric, isoDay(so.so_date));
       const moves = [];
       for (const c of costed) {
         if (setCost.has(c.l.id)) { c.lc = setCost.get(c.l.id); c.uc = Math.round(c.lc / c.qty); }
@@ -231,7 +232,7 @@ async function main() {
                    VALUES (${o.so.doc_no}, ${co}, 'UPDATE_LINE', 'System (nightly cost fill)',
                            ${tx.json([...o.plan.lineWrites, ...o.moves].map((w) => ({ field: `line_${w.code}_line_cost_sen`, from: w.from, to: w.lc })))},
                            ${o.so.status}, 'script:restamp-so-cost-from-product',
-                           ${'Cost filled: the sofa set costs its set price, spread over its pieces by their own cost; a piece at RM 0 is not costed again on top'})`;
+                           ${'Cost filled: the sofa set costs the set price of its order date (none then: each piece its own cost); a piece at RM 0 is not costed on top of a set price'})`;
         });
       } catch (e) {
         bad(`  SKIP ${o.so.doc_no}: ${e instanceof Error ? e.message : String(e)}`);

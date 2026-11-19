@@ -1,24 +1,26 @@
 #!/usr/bin/env node
-/* Re-cost the sofa sets the nightly cost fill costed off their set price.
+/* Re-cost named orders' sofa sets to their ORDER-DATE cost.
 
-   THE DAMAGE (found 2026-11-18). The nightly cost fill
-   (restamp-so-cost-from-product.mjs) read a combo's start date with
-   String(Date), "Mon Oct 19", so no combo was ever in effect for it. A set with
-   every piece at RM 0 got the sum of its pieces' own costs instead of its set
-   price (6 Houzs orders, filled 2026-11-04). A set whose save had put the whole
-   set price on one piece, its other piece having no cost yet, got that piece
-   costed again on top (HC-SO-2609-359). The fill now costs such a set at its set
-   price (lib/so-line-unit-cost.mjs wholeSetCosts); this script re-costs the
-   orders it already filled. The owner chose the orders (2026-11-18): fills from
-   before the fill priced sets stay as they are, so the orders are named, not
-   searched for.
+   THE RULE (owner, 2026-11-19): a set costs the set price that existed on the
+   order date; with none then, each piece keeps its own price
+   (「应该是根据当时有的价钱来算，如果当时没有combo price就是remain单个产品的价钱」).
 
-   WHAT IT DOES. COMPANY and DOCS are required. For each named order, every sofa
-   piece a combo covers is re-costed to the set price, shared by each piece's own
-   price-list cost, as a save prices the set (recostSetOrder). Header cost, margin
-   and margin basis follow; an audit row names each line's cost before and after.
-   An order that is DRAFT or CANCELLED, whose header is not the sum of its lines,
-   or that has nothing to change is REFUSED and printed.
+   THE DAMAGE. The nightly cost fill (restamp-so-cost-from-product.mjs) first
+   priced sets with no regard to dates, then (PR #5795) at today's set price, and
+   on 2026-11-19 this script put 7 Houzs orders on today's set price although
+   none of them had one on its order date. HC-SO-2609-359 also had a set price a
+   later save had put on its 1A, with the 2A's own cost on top. The fill now uses
+   the order date (lib/so-line-unit-cost.mjs wholeSetCosts); this script puts the
+   named orders right. The owner names the orders, so they are not searched for.
+
+   WHAT IT DOES. COMPANY and DOCS are required. For each named order
+   (recostSetOrder -> orderDateSetCosts): a sofa set a set price covered on the
+   order date costs it, shared by each piece's own price-list cost, as a save
+   prices a set; a set none covered then, whose pieces carry a set price that came
+   later, goes back to each piece's own cost. Header cost, margin and margin basis
+   follow; an audit row names each line's cost before and after. An order that is
+   DRAFT or CANCELLED, whose header is not the sum of its lines, or that has
+   nothing to change is REFUSED and printed.
 
    MODE=plan (default) prints every order and line and writes nothing.
    MODE=apply needs CONFIRM="I HAVE REVIEWED THE DRY-RUN". Each order is one
@@ -34,8 +36,8 @@
    then move the header's total_cost_sen, mattress_sofa_cost_sen and
    total_margin_sen back by the same difference.
 
-   RE-RUN: idempotent. A re-costed order already carries its set price, so a
-   second run refuses it as having nothing to change and writes nothing.
+   RE-RUN: idempotent. A re-costed order already carries its order-date cost, so
+   a second run refuses it as having nothing to change and writes nothing.
 
    Money in the output is redacted when it runs in GitHub Actions (this
    repository is public): the run shows which orders and lines; the figures are
@@ -112,7 +114,7 @@ async function main() {
   const repair = plans.filter((p) => p.result.status === 'repair');
   const refused = plans.filter((p) => p.result.status === 'refused');
   // A count right after a money word ("PRICE: 7") reads as money to the log guard.
-  note(`\n=== SOFA SETS TO RE-COST TO THEIR SET PRICE ===`);
+  note(`\n=== SOFA SETS TO RE-COST TO THEIR ORDER-DATE COST ===`);
   note(`  orders: ${repair.length}, refused: ${refused.length}, not found: ${missing.length}`);
   let before = 0, after = 0;
   for (const p of repair) {
@@ -154,7 +156,7 @@ async function main() {
                  VALUES (${o.doc_no}, ${CO}, 'UPDATE_LINE', 'System (sofa set-price repair)',
                          ${tx.json(r.changes.map((c) => ({ field: `line_${c.item_code}_line_cost_sen`, from: c.from, to: c.to })))},
                          ${o.status}, ${SOURCE},
-                         ${'Cost repaired: the sofa set costs its set price, spread over its pieces by their own cost, as the nightly cost fill now does'})`;
+                         ${'Cost repaired: the sofa set costs the set price of its order date (none then: each piece its own cost), as the nightly cost fill now does'})`;
       });
       applied.push(p);
       note(`  OK   ${o.doc_no}`);
