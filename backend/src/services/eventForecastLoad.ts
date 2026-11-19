@@ -71,15 +71,15 @@ export type ExpoMapFile = { id: number; file_name: string; r2_key: string; item_
 const isExpoItem = (title: string | null, section: string | null): boolean =>
   /^(blank|filled) floorplan/i.test((title ?? '').trim()) || /^expo map/i.test((section ?? '').trim());
 
-/** True when the event's own Expo Map items carry a file. */
-export function hasExpoMapFiles(
+/** True when the event's own Filled Floorplan (the competitor map) carries a
+ *  file. Until then the last event's Expo Map stays on the page as reference -
+ *  this event's own Blank Floorplan alone does not hide it (owner 2026-11-19, A). */
+export function hasFilledFloorplanFile(
   checklist: ReadonlyArray<{ id: number; title?: string | null; section_id?: number | null }>,
-  sections: ReadonlyArray<{ id: number; name: string }>,
   attachments: ReadonlyArray<{ item_id: number }>,
 ): boolean {
-  const sectionName = new Map(sections.map((s) => [Number(s.id), s.name]));
-  const expoIds = new Set(checklist.filter((c) => isExpoItem(c.title ?? null, sectionName.get(Number(c.section_id)) ?? null)).map((c) => Number(c.id)));
-  return attachments.some((a) => expoIds.has(Number(a.item_id)));
+  const filledIds = new Set(checklist.filter((c) => /^filled floorplan/i.test((c.title ?? '').trim())).map((c) => Number(c.id)));
+  return attachments.some((a) => filledIds.has(Number(a.item_id)));
 }
 
 /** The files on an event's Expo Map items. Throws on a failed read. */
@@ -104,7 +104,7 @@ export type DetailForecast = ForecastLayers & {
   /** Why the last event's figures could not be read; null when they were. */
   last_event_error: string | null;
 };
-/** The last event's Expo Map files, shown while this event has none of its own.
+/** The last event's Expo Map files, shown until this event's Filled Floorplan has a file.
  *  Apart from the money, so it is not stripped with it. */
 export type LastEventExpoMap = { last_event: { id: number; code: string | null; name: string | null }; files: ExpoMapFile[] };
 
@@ -134,9 +134,8 @@ export async function loadDetailLayers(
   if (last) {
     const [read, files] = await Promise.all([
       pnl ? pnlAndLinesForProjects(env, [{ id: last.id, brand: last.brand, total_sales: last.total_sales }], last.company_id, costCategories) : null,
-      hasExpoMapFiles(
+      hasFilledFloorplanFile(
         own.checklist as ReadonlyArray<{ id: number; title?: string | null; section_id?: number | null }>,
-        own.sections as ReadonlyArray<{ id: number; name: string }>,
         own.attachments as ReadonlyArray<{ item_id: number }>,
       ) ? Promise.resolve([]) : readExpoMapFiles(env.DB, last.id),
     ]);
