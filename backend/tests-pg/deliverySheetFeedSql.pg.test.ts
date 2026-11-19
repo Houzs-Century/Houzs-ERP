@@ -533,7 +533,7 @@ describePg('HC Delivery sheet feed SQL — real Postgres', () => {
     }
   });
 
-  test('em-transporter write-back: the sheet edits land on the SO\\'s latest live DO; blank keeps; no live DO is skipped', async () => {
+  test('em-transporter write-back: sheet edits land on the latest live DO; blank keeps; no live DO is skipped', async () => {
     await sql.unsafe(`
       INSERT INTO scm.mfg_sales_orders (doc_no, linked_ac_docno, company_id, debtor_name, sales_location, status, updated_at) VALUES
         ('HC-SO-WB-1', 'SO-WB-1', 1, 'Has DO', 'SBH WAREHOUSE', 'CONFIRMED', now()),
