@@ -258,6 +258,13 @@ describe('the PDF', () => {
     ]);
     expect(p.right).toEqual([false, true]);
     expect(ecPrintedBlock({ title: '', note: null, columns: [{ label: 'Ref', format: 'text', align: 'left', sums: false }], rows: [{ kind: 'row', cells: [null] }] }).body).toEqual([['–']]);
+    /* A table whose first column is a date (Upsales / Drop sales: Last change) carries its foot label there: it prints, not a dash. */
+    const changes = ecPrintedBlock({
+      title: '', note: null,
+      columns: [{ label: 'Last change', format: 'date', align: 'left', sums: false }, { label: 'Commission effect', format: 'money', align: 'right', sums: true }],
+      rows: [{ kind: 'row', cells: ['2026-10-02', 84] }, { kind: 'total', cells: ['Total · 1 order', 84] }],
+    });
+    expect(changes.body).toEqual([['2026/10/02', '84.00'], ['Total · 1 order', '84.00']]);
   });
 });
 

@@ -15,11 +15,12 @@ import { LISTING_CELL, LISTING_MARGIN, closeListing, listingDress, openListing, 
 import type { EcBlock, EcColumn, EcRowKind, EcSection } from './eventCommissionExport';
 import { fmtRm } from './eventCommissionModel';
 
-/** A cell as printed: money in Finance's bracketed format, a day year first. */
+/** A cell as printed: money in Finance's bracketed format, a day year first. Words in a
+    date column — a table's foot label when its first column is a date — print as they are. */
 export const ecPrintedText = (c: EcColumn, v: ExportCell): string => {
   if (v == null || v === '') return '';
   if (typeof v === 'number' && c.format === 'money') return fmtRm(Math.round(v * 100));
-  if (c.format === 'date') return fmtDocDate(String(v));
+  if (c.format === 'date' && /^\d{4}[-/]\d{2}[-/]\d{2}/.test(String(v))) return fmtDocDate(String(v));
   return String(v);
 };
 
