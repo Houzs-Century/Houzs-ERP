@@ -326,6 +326,18 @@ export const saveKpiReview = (body: { employeeId: number; period: string; role: 
 export const confirmKpiReview = (id: number): Promise<{ amountSen: number; tierLabel: string | null }> => api.post(`${HR}/kpi/review/confirm`, { id });
 export const unconfirmKpiReview = (id: number): Promise<unknown> => api.post(`${HR}/kpi/review/unconfirm`, { id });
 
+/* ── Shift groups (HC-0125) ────────────────────────────────────────────── */
+export type ShiftGroup = { id: number; name: string; startMin: number; endMin: number; deliveryStartMin: number | null; deliveryEndMin: number | null; sortOrder: number; active: boolean };
+export type ShiftGroupAssignee = { id: number; empNo: string; name: string; shiftGroupId: number | null };
+export type ShiftGroupsResponse = { groups: ShiftGroup[]; employees: ShiftGroupAssignee[]; canManage: boolean };
+export type ShiftGroupInput = { name: string; startMin: number; endMin: number; deliveryStartMin: number | null; deliveryEndMin: number | null; sortOrder: number; active: boolean };
+
+export const useShiftGroups = (): QueryState<ShiftGroupsResponse> => useQuery(`${HR}/shift-groups`, () => api.get<ShiftGroupsResponse>(`${HR}/shift-groups`));
+export const seedShiftDefault = (): Promise<{ ok: boolean }> => api.post(`${HR}/shift-groups/seed-default`, {});
+export const saveShiftGroup = (id: number | null, body: ShiftGroupInput): Promise<unknown> => (id ? api.patch(`${HR}/shift-groups/${id}`, body) : api.post(`${HR}/shift-groups`, body));
+export const deleteShiftGroup = (id: number): Promise<unknown> => api.del(`${HR}/shift-groups/${id}`);
+export const setEmployeeShiftGroup = (employeeId: number, shiftGroupId: number | null): Promise<unknown> => api.put(`${HR}/employees/${employeeId}/shift-group`, { shiftGroupId });
+
 export type TripPerson = { name: string; employeeId: number | null };
 export type TripRowOut = {
   id: number;

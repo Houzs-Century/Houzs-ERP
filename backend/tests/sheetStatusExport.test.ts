@@ -1,5 +1,5 @@
 import { env } from "cloudflare:test";
-import { describe, expect, test, beforeEach } from "vitest";
+import { describe, expect, test, beforeAll, beforeEach } from "vitest";
 import intake from "../src/routes/assrFormIntake";
 
 // Sheet status export (Nick 2026-07-14) — the HC Delivery sheet's Apps
@@ -9,6 +9,14 @@ import intake from "../src/routes/assrFormIntake";
 
 const KEY = "test-sheet-sync-key";
 const authedEnv = { ...env, FORM_INTAKE_KEY: KEY } as typeof env;
+
+// The leg cancel stamps live in Postgres only: the shared D1 mirror of assr_cases
+// is at D1's 100-column result limit, so this file adds them to its own D1.
+beforeAll(async () => {
+  for (const c of ["pickup_cancelled_at", "inspection_cancelled_at", "delivery_cancelled_at"]) {
+    try { await env.DB.exec(`ALTER TABLE assr_cases ADD COLUMN ${c} TEXT`); } catch { /* already there */ }
+  }
+});
 
 beforeEach(async () => {
   await env.DB.prepare(`DELETE FROM assr_cases WHERE id IN (9101, 9102)`).run();
@@ -173,5 +181,19 @@ describe("POST /delivery-dates", () => {
       `SELECT COUNT(*) AS n FROM assr_activity WHERE assr_id = 9101 AND source_channel = 'sheet_sync'`
     ).first<{ n: number }>();
     expect(acts2!.n).toBe(3);
+  });
+
+  test("a new PICKUP date books a cancelled pickup leg again, leaving other legs' stamps (HC-0246)", async () => {
+    await env.DB.prepare(
+      `UPDATE assr_cases SET pickup_cancelled_at = '2026-08-01', delivery_cancelled_at = '2026-08-01' WHERE id = 9101`
+    ).run();
+    const res = await post(KEY, { updates: [{ assr_no: "ASSR/TEST-9101", job: "PICKUP", date: "2026-08-20" }] });
+    expect(res.status).toBe(200);
+    const row = await env.DB.prepare(
+      `SELECT sched_pickup_date, pickup_cancelled_at, delivery_cancelled_at FROM assr_cases WHERE id = 9101`
+    ).first<any>();
+    expect(row.sched_pickup_date).toBe("2026-08-20");
+    expect(row.pickup_cancelled_at).toBeNull();
+    expect(row.delivery_cancelled_at).toBe("2026-08-01");
   });
 });

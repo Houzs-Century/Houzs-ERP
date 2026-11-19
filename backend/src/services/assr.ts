@@ -14,6 +14,7 @@ import { AutoCountClient, cleanPhone } from "./autocount";
 import { normalizePhone } from "../scm/shared/phone";
 import { assrSubStatusLabelOf, assrSubStatusSeed } from "../scm/shared/assr-sub-statuses";
 import { pushCustomerPickupDefault } from "../scm/lib/assr-pickup-default";
+import { reopenedLegSets } from "../scm/shared/assr-leg-reopen";
 import { resolveCreditorForCase } from "./stockItems";
 import { getActiveStaffToken } from "./caseTracking";
 import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
@@ -1163,12 +1164,10 @@ export async function patchAssrCase(
   }
 
   for (const k of PATCH_FIELDS) {
-    if (k in body) {
-      sets.push(`${k} = ?`);
-      binds.push(body[k] ?? null);
-    }
+    if (k in body) { sets.push(`${k} = ?`); binds.push(body[k] ?? null); }
   }
   if (!sets.length) return false;
+  sets.push(...reopenedLegSets(beforeSnapshot, body)); // a new leg date un-cancels that leg (HC-0246)
   if (docCompanyId != null) {
     sets.push("company_id = ?");
     binds.push(docCompanyId);

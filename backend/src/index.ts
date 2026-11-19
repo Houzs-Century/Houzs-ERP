@@ -58,6 +58,7 @@ import { hrLabor } from "./routes/hr-labor";
 import { hrPayroll } from "./routes/hr-payroll";
 import { hrTripPay } from "./routes/hr-trip-pay";
 import { hrKpi } from "./routes/hr-kpi";
+import { hrShifts } from "./routes/hr-shifts";
 import { runNightlyTripSync } from "./routes/lib/hr-trip-sync";
 import { attendance } from "./routes/attendance";
 import { runAutoClockOut } from "./routes/lib/hr-labor-store";
@@ -216,6 +217,7 @@ import { runSOSnapshot, runPOSnapshot } from "./services/acSnapshot";
 import { isAutoCountSyncDisabled } from "./services/autocount";
 import { jobTracker, purgeOldJobRuns } from "./services/jobRuns";
 import { pruneFailedLogins } from "./services/failedLogins";
+import { bustProjectOverviewOnWrite } from "./routes/lib/project-overview-bust";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -569,6 +571,9 @@ const requirePageAccessOrDirector: MiddlewareHandler<{ Bindings: Env }> = async 
   if (isFinanceViewer(c.get("user") as unknown as AuthUser)) return next();
   return requirePageAccess("projects.finances")(c, next);
 };
+// A successful project write drops Project Overview's cached copy (routes/lib/project-overview-bust.ts).
+app.use("/api/projects/*", bustProjectOverviewOnWrite);
+app.use("/api/project-forecast/*", bustProjectOverviewOnWrite);
 app.use("/api/projects/overview/*", requirePageAccessOrDirector);
 app.route("/api/projects/overview", projectOverview);
 app.route("/api/projects", projects);
@@ -606,6 +611,7 @@ app.route("/api/hr", hrLabor);
 app.route("/api/hr", hrPayroll);
 app.route("/api/hr", hrTripPay);
 app.route("/api/hr", hrKpi);
+app.route("/api/hr", hrShifts);
 // The phone punch clock (HC-0125): any signed-in account, answered only for
 // the employee linked to it, so NOT behind the hr.employees.* gate above.
 app.route("/api/attendance", attendance);
