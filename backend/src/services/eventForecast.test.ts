@@ -78,10 +78,12 @@ describe('pickLastEvent — the most recent EARLIER event, same company, organis
 });
 
 describe('usesLastEvent — the last event lends figures only until the event ends', () => {
-  it('upcoming or running: yes; ended or undated: no', () => {
+  it('upcoming or running: yes; ended before 2026-11 or undated: no; from 2026-11 on: yes even after it ends', () => {
     expect(usesLastEvent({ start_date: '2026-12-01', end_date: '2026-12-05' }, '2026-11-18')).toBe(true);
     expect(usesLastEvent({ start_date: '2026-11-15', end_date: '2026-11-18' }, '2026-11-18')).toBe(true);
-    expect(usesLastEvent({ start_date: '2026-11-01', end_date: '2026-11-05' }, '2026-11-18')).toBe(false);
+    /* Owner 2026-11-19 (A, from this month): costs come in next month. */
+    expect(usesLastEvent({ start_date: '2026-11-01', end_date: '2026-11-05' }, '2026-11-18')).toBe(true);
+    expect(usesLastEvent({ start_date: '2026-10-20', end_date: '2026-10-25' }, '2026-11-18')).toBe(false);
     expect(usesLastEvent({ start_date: '2026-12-01', end_date: null }, '2026-11-18')).toBe(true);
     expect(usesLastEvent({ start_date: null, end_date: null }, '2026-11-18')).toBe(false);
   });
@@ -106,6 +108,21 @@ describe('layerPnl — precedence per line: Actual, then Forecast, then Last eve
     expect(l.lines.sales).toMatchObject({ amount: 80000, source: 'forecast', forecast: 80000, last_event: 100000 });
     expect(l.lines.rental).toMatchObject({ amount: 15000, source: 'actual', forecast: 11000 });
     expect(l.lines.setup).toMatchObject({ amount: 3000, source: 'last_event' });
+  });
+
+  it('Transport Fee, Commission and Merchandise follow the shown Sales at the last event ratio; COGS stays the last event amount', () => {
+    /* Last event: 100,000 sales, 30,000 matt/sofa COGS, commission 10%, merchandise 2%, transport 5%. */
+    const typed = layerPnl({ col: EMPTY, booksRows: new Set(), forecast: { sales: 200000 }, lastEvent: lastValues, useLastEvent: true });
+    expect(typed.lines.commission).toMatchObject({ amount: 20000, source: 'forecast' });
+    expect(typed.lines.merchandise).toMatchObject({ amount: 4000, source: 'forecast' });
+    expect(typed.lines.transport_fee).toMatchObject({ amount: 10000, source: 'forecast' });
+    /* COGS and the fixed costs keep the last event's amount (owner 2026-11-19). */
+    expect(typed.lines.cogs_matt_sofa).toMatchObject({ amount: 30000, source: 'last_event' });
+    expect(typed.lines.rental).toMatchObject({ amount: 12000, source: 'last_event' });
+    expect(typed.lines.setup).toMatchObject({ amount: 3000, source: 'last_event' });
+    /* A typed line still beats the ratio. */
+    const own = layerPnl({ col: EMPTY, booksRows: new Set(), forecast: { sales: 200000, commission: 1234 }, lastEvent: lastValues, useLastEvent: true });
+    expect(own.lines.commission).toMatchObject({ amount: 1234, source: 'forecast' });
   });
 
   it('a row the books fill is actual even at zero', () => {
@@ -141,11 +158,12 @@ describe('layerPnl — totals are added up from the shown lines and say when the
     /* matt/sofa 30,000 (last) + bedframe 4,000 (actual) */
     expect(l.totals.cogs_total).toEqual({ amount: 34000, estimated: true });
     expect(l.totals.gross_profit).toEqual({ amount: 56000, estimated: true });
-    /* 34,000 + rental 10,000 (forecast) + setup 3,000 + transport 5,000 + commission 10,000 + merchandise 2,000 (last) */
-    expect(l.totals.total_cost).toEqual({ amount: 64000, estimated: true });
-    expect(l.totals.net_profit).toEqual({ amount: 26000, estimated: true });
+    /* 34,000 + rental 10,000 (forecast) + setup 3,000 (last) + transport 4,500 + commission 9,000
+       + merchandise 1,800 (the 90,000 forecast at the last event's 5% / 10% / 2%) */
+    expect(l.totals.total_cost).toEqual({ amount: 62300, estimated: true });
+    expect(l.totals.net_profit).toEqual({ amount: 27700, estimated: true });
     expect(l.split.sales).toEqual({ actual: 0, forecast: 90000, last_event: 0 });
-    expect(l.split.cost).toEqual({ actual: 4000, forecast: 10000, last_event: 50000 });
+    expect(l.split.cost).toEqual({ actual: 4000, forecast: 25300, last_event: 33000 });
     expect(l.split.net.actual + l.split.net.forecast + l.split.net.last_event).toBeCloseTo(l.totals.net_profit.amount, 2);
   });
 
