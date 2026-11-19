@@ -116,10 +116,10 @@ export const readRequestBillHandler = async (c: any): Promise<Response> => {
   let orderEvent: EventRow | null = null;
   if (hasEvents && ex.invoiceNumber) {
     try {
-      const { data: so } = await scopeToCompany(
+      const { data: so, error: soErr } = await scopeToCompany(
         sb.from('mfg_sales_orders').select('doc_no, project_id').eq('doc_no', ex.invoiceNumber), c,
       ).maybeSingle();
-      const pid = so?.project_id == null ? null : Number(so.project_id);
+      const pid = soErr || so?.project_id == null ? null : Number(so.project_id);
       if (pid != null && Number.isFinite(pid)) {
         orderEvent = (await loadEventsByIds(c.env.DB, companySql, [pid])).get(pid) ?? null;
       }
