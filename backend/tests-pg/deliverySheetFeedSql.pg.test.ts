@@ -20,6 +20,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { toPgPlaceholders } from '../src/db/d1-compat';
 import {
   EAST_SALES_LOCATIONS,
+  emTransporterUpdateSql,
   FEED_BALANCE_COLLECTION_SQL,
   FEED_EM_TRANSPORTER_SQL,
   FEED_EPOCH,
@@ -78,7 +79,7 @@ async function resetFixture(s: Sql): Promise<void> {
       remark2 text, remark3 text, remark4 text, note text,
       processing_date date, customer_delivery_date date, sales_exemption_expiry date,
       address1 text, address2 text, address3 text, address4 text, postcode text, city text, customer_state text, customer_country text,
-      venue text,
+      venue text, delivery_message_status text, dp_remark text,
       status text NOT NULL, updated_at timestamptz NOT NULL DEFAULT now()
     );
     CREATE TABLE scm.mfg_sales_order_payments (
@@ -87,7 +88,10 @@ async function resetFixture(s: Sql): Promise<void> {
     );
     CREATE TABLE scm.delivery_orders (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(), do_number text NOT NULL, so_doc_no text, status text NOT NULL,
-      do_date date, updated_at timestamptz NOT NULL DEFAULT now()
+      do_date date, updated_at timestamptz NOT NULL DEFAULT now(),
+      ctn text, em_delivery_status text, consignment_no text, vessel_voyage text,
+      etd_port_klang date, eta_arriving_port text, arrives_em_warehouse_date date,
+      bs_delivery_date date, esb_remarks text, bs_remarks text
     );
     CREATE TABLE scm.mfg_sales_order_items (
       id uuid PRIMARY KEY, doc_no text NOT NULL, item_group text, item_code text, stock_status text NOT NULL DEFAULT 'PENDING',
@@ -484,6 +488,11 @@ describePg('HC Delivery sheet feed SQL — real Postgres', () => {
         ('HC-SO-EM-05', 'SO-EM-05', 1, '2026-10-05', 'SRW-coded SG', 'SRW WAREHOUSE', 200000, 'READY (PARTIAL)', 'CONFIRMED', '2026-10-05 00:00:00+00', NULL, NULL, NULL, 'SINGAPORE 123456');
       INSERT INTO scm.mfg_sales_order_items (id, doc_no, item_group, item_code, stock_status) VALUES
         ('${'0e510001-0000-4000-8000-000000000000'}', 'HC-SO-EM-01', 'MATTRESS', 'M1', 'READY');
+      -- Board-owned fields pushed ERP -> ESB (A col / Houzs Remark 2), and a DO
+      -- carrying the board CTN + the ESB-written em_delivery_status (TO BRIGHTSUN).
+      UPDATE scm.mfg_sales_orders SET delivery_message_status = 'Pending Delivery (EM)', dp_remark = 'ori 25 Jan' WHERE doc_no = 'HC-SO-EM-01';
+      INSERT INTO scm.delivery_orders (do_number, so_doc_no, status, do_date, ctn, em_delivery_status) VALUES
+        ('HC-DO-EM-01', 'HC-SO-EM-01', 'LOADED', '2026-10-05', '5 ctn', 'TO BRIGHTSUN');
     `);
     try {
       const rows = (await sql.unsafe(toPgPlaceholders(FEED_EM_TRANSPORTER_SQL), [1] as never[])) as unknown as FeedHeadRow[];
@@ -502,6 +511,14 @@ describePg('HC Delivery sheet feed SQL — real Postgres', () => {
       const byDocE = (doc: string) => rows.find((r) => r.doc_no === doc)!;
       const kuching = toSheetRecord(byDocE('HC-SO-EM-01'), [{ doc_no: 'HC-SO-EM-01', item_group: 'MATTRESS', item_code: 'M1', stock_status: 'READY', cancelled: false }]);
       expect(kuching).toMatchObject({ DocNo: 'SO-EM-01', Region: 'EAST', SalesLocation: 'SRW', Ready: true });
+      // The board-owned pushes + the DO-carried gate field all land on the record.
+      expect(kuching).toMatchObject({
+        DeliveryMessageStatus: 'Pending Delivery (EM)',  // -> ESB/BS col A
+        DpRemark: 'ori 25 Jan',                          // -> ESB Houzs Remark 2
+        Ctn: '5 ctn',                                    // -> ESB CTN (latest live DO)
+        EmDeliveryStatus: 'TO BRIGHTSUN',                // BS gate only
+        ShipoutDate: '2026-10-05',                       // latest live DO date
+      });
       const kk = toSheetRecord(byDocE('HC-SO-EM-02'), []);
       expect(kk).toMatchObject({ Region: 'EAST', SalesLocation: 'SBH', Ready: false });
       // The SRW order addressed in Singapore maps to Region SG — the route's
@@ -509,8 +526,57 @@ describePg('HC Delivery sheet feed SQL — real Postgres', () => {
       expect(toSheetRecord(byDocE('HC-SO-EM-05'), []).Region).toBe('SG');
     } finally {
       await sql.unsafe(`
+        DELETE FROM scm.delivery_orders WHERE so_doc_no LIKE 'HC-SO-EM-%';
         DELETE FROM scm.mfg_sales_order_items WHERE doc_no LIKE 'HC-SO-EM-%';
         DELETE FROM scm.mfg_sales_orders WHERE doc_no LIKE 'HC-SO-EM-%';
+      `);
+    }
+  });
+
+  test('em-transporter write-back: the sheet edits land on the SO\\'s latest live DO; blank keeps; no live DO is skipped', async () => {
+    await sql.unsafe(`
+      INSERT INTO scm.mfg_sales_orders (doc_no, linked_ac_docno, company_id, debtor_name, sales_location, status, updated_at) VALUES
+        ('HC-SO-WB-1', 'SO-WB-1', 1, 'Has DO', 'SBH WAREHOUSE', 'CONFIRMED', now()),
+        ('HC-SO-WB-2', 'SO-WB-2', 1, 'No live DO', 'SRW WAREHOUSE', 'CONFIRMED', now()),
+        ('2990-SO-WB-3', NULL, 2, 'Other co', 'SBH WAREHOUSE', 'CONFIRMED', now());
+      INSERT INTO scm.delivery_orders (do_number, so_doc_no, status, do_date, consignment_no, bs_remarks) VALUES
+        ('HC-DO-WB-1a', 'HC-SO-WB-1', 'LOADED', '2026-10-01', 'OLD-CONSIGN', 'keep me'),
+        ('HC-DO-WB-1b', 'HC-SO-WB-1', 'CANCELLED', '2026-10-09', NULL, NULL),
+        ('HC-DO-WB-2x', 'HC-SO-WB-2', 'CANCELLED', '2026-10-02', NULL, NULL),
+        ('2990-DO-WB-3', '2990-SO-WB-3', 'LOADED', '2026-10-03', NULL, NULL);
+    `);
+    try {
+      const sqlText = toPgPlaceholders(emTransporterUpdateSql(3));
+      // One row each: WB-1 (has a live DO), WB-2 (only a cancelled DO -> skipped),
+      // 2990-WB-3 (other company -> not matched under company 1). Order of the 9
+      // EM_WRITEBACK_COLS values per row: emDeliveryStatus, consignmentNo,
+      // vesselVoyage, etdPortKlang, etaArrivingPort, arrivesEmWarehouseDate,
+      // esbRemarks, bsDeliveryDate, bsRemarks. Blank bs_remarks on WB-1 must KEEP.
+      const binds = [
+        'SO-WB-1', 'TO BRIGHTSUN', 'NEW-CONSIGN', 'DANUM 9', '2026-10-20', 'KK PORT', '2026-10-25', 'esb note', '2026-11-01', null,
+        'SO-WB-2', 'x', 'y', null, null, null, null, null, null, null,
+        '2990-SO-WB-3', 'z', 'zz', null, null, null, null, null, null, null,
+        1,
+      ];
+      const hit = (await sql.unsafe(sqlText, binds as never[])) as unknown as Array<{ sheet_doc_no: string; so_doc_no: string }>;
+      // Only WB-1 is written: WB-2 has no live DO, 2990 is another company.
+      expect(hit.map((r) => r.sheet_doc_no)).toEqual(['SO-WB-1']);
+      const [do1] = await sql`SELECT consignment_no, vessel_voyage, etd_port_klang::text AS etd, eta_arriving_port, arrives_em_warehouse_date::text AS arr, em_delivery_status, esb_remarks, bs_delivery_date::text AS bsd, bs_remarks FROM scm.delivery_orders WHERE do_number = 'HC-DO-WB-1a'`;
+      expect(do1).toEqual({
+        consignment_no: 'NEW-CONSIGN', vessel_voyage: 'DANUM 9', etd: '2026-10-20', eta_arriving_port: 'KK PORT',
+        arr: '2026-10-25', em_delivery_status: 'TO BRIGHTSUN', esb_remarks: 'esb note', bsd: '2026-11-01',
+        bs_remarks: 'keep me', // blank in the payload -> COALESCE kept the old value
+      });
+      // The cancelled DO on WB-1 is never touched.
+      const [doCancelled] = await sql`SELECT consignment_no FROM scm.delivery_orders WHERE do_number = 'HC-DO-WB-1b'`;
+      expect(doCancelled).toEqual({ consignment_no: null });
+      // Company 2's order is invisible to the company-1 key even though its sheet doc matched shape.
+      const [do3] = await sql`SELECT vessel_voyage FROM scm.delivery_orders WHERE do_number = '2990-DO-WB-3'`;
+      expect(do3).toEqual({ vessel_voyage: null });
+    } finally {
+      await sql.unsafe(`
+        DELETE FROM scm.delivery_orders WHERE so_doc_no IN ('HC-SO-WB-1', 'HC-SO-WB-2', '2990-SO-WB-3');
+        DELETE FROM scm.mfg_sales_orders WHERE doc_no IN ('HC-SO-WB-1', 'HC-SO-WB-2', '2990-SO-WB-3');
       `);
     }
   });

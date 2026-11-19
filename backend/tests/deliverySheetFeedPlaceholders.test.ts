@@ -7,6 +7,7 @@ import {
   FEED_OVERDUE_SQL,
   FEED_READY_OPEN_SQL,
   FEED_SINCE_SQL,
+  emTransporterUpdateSql,
   feedByDocNosSql,
   feedFullByDocNosSql,
   feedLinesSql,
@@ -32,6 +33,7 @@ const FEEDS: Record<string, string> = {
   feedByDocNosSql: feedByDocNosSql(2),
   feedFullByDocNosSql: feedFullByDocNosSql(2),
   updateFromSheetSql: updateFromSheetSql(2),
+  emTransporterUpdateSql: emTransporterUpdateSql(2),
   poHeadsForSheetSql: poHeadsForSheetSql(2),
 };
 

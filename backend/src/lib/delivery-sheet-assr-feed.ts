@@ -236,6 +236,10 @@ function legBase(row: AssrFeedRow): Omit<AssrLegRecord, "Kind" | "DocNo" | "Tran
     Attention: null,
     SOUDF_VENUE: null,
     ShipoutDate: null,
+    DeliveryMessageStatus: null,
+    DpRemark: null,
+    Ctn: null,
+    EmDeliveryStatus: null,
     Status: "PENDING",
     // Readiness is an SO concept; an ASSR leg's entry condition is the own-team
     // gate, already applied by the SQL — so it is never withheld for readiness.
