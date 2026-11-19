@@ -63,3 +63,42 @@ export function findOverConvertOffender(
   }
   return null;
 }
+
+/* ── SO-link remaining-qty cap (LINE level) ─────────────────────────────────
+   soLinkTargetRefusal above proves a bind is POINTED at a legitimate SO line;
+   it says nothing about HOW MUCH that line may order. The batch paths all cap
+   it — /from-sos via `!fromMrp && p.qty > remaining`, the generic create via
+   findOverConvertOffender, /:id/convert-from-so by deriving qty server-side as
+   the unpicked remainder — but add-line and line-edit did not, so an operator
+   could append (or edit up to) any qty against an SO line that was already
+   fully converted. That is the same double-ordering the F1 audit closed on
+   /:id/convert-from-so in 2026-06-10, reachable through the two paths that
+   accept an operator-supplied qty.
+
+   Repeat conversion stays legal — the business splits one SO across several POs
+   on purpose. The ceiling is what is capped, never the second conversion.
+
+   Overridable with confirmOverConvert, the SAME escape hatch the generic create
+   documents, so a deliberate over-order is still one explicit flag away. */
+export async function soLineOverConvertRefusal(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the scm PostgREST client is untyped
+  sb: any,
+  soItemId: string | null,
+  requestedQty: number,
+  ownCurrentQty: number,
+): Promise<OverConvertOffender | null> {
+  if (!soItemId) return null;
+  const { data, error } = await sb
+    .from('mfg_sales_order_items')
+    .select('id, qty, po_qty_picked')
+    .eq('id', soItemId)
+    .maybeSingle();
+  if (error) throw new Error(`so_line_read_failed: ${error.message}`); // a failed read must not lift the cap
+  const row = data as { qty: number; po_qty_picked: number } | null;
+  /* Unknown / cross-company line: soLinkTargetRefusal already refused it with a
+     404 before we get here, so there is nothing left to cap. */
+  if (!row) return null;
+  const remaining = soLineHeadroom(row, ownCurrentQty);
+  const requested = Math.max(0, Number(requestedQty ?? 0));
+  return requested > remaining ? { soItemId, requested, remaining } : null;
+}

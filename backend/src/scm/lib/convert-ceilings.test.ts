@@ -25,7 +25,7 @@ import { describe, expect, test } from 'vitest';
 import { findOverConvertOffender, soLineHeadroom } from './po-over-convert';
 import { doLineRemaining, doRemainingByItemId, returnableRemainingFrom } from './do-line-remaining';
 import { soDeliverableRemaining } from '../routes/delivery-orders-mfg';
-import { soLineOverConvertRefusal } from '../routes/mfg-purchase-orders';
+import { soLineOverConvertRefusal } from './po-over-convert';
 // Source text of the PO router, so the WIRING of the guard is asserted too — a
 // guard nothing calls is the exact failure mode this lane exists to catch.
 import poRouterSrc from '../routes/mfg-purchase-orders.ts?raw';
@@ -189,6 +189,11 @@ describe('SO -> PO ceiling (qty - po_qty_picked)', () => {
     test('a line with no SO link is never capped', async () => {
       expect(await soLineOverConvertRefusal(sbWith(1, 1), null, 9999, 0)).toBeNull();
     });
+
+    test('a failed read throws instead of letting the qty through', async () => {
+      const failing = { from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: { message: 'timeout' } }) }) }) }) };
+      await expect(soLineOverConvertRefusal(failing, 'si-1', 5, 0)).rejects.toThrow(/so_line_read_failed/);
+    });
   });
 
   /* WIRING — the guard must actually be invoked by both handlers. Asserted on
@@ -214,7 +219,7 @@ describe('SO -> PO ceiling (qty - po_qty_picked)', () => {
     });
 
     test('the batch create path still calls its own cap', () => {
-      expect(poRouterSrc).toContain('findOverConvertOffender(items, soRows)');
+      expect(poRouterSrc).toContain('findOverConvertOffender(items.filter((it) => !dupGate.confirmed.has(it.soItemId as string)), soRows)');
     });
 
     /* A company-1 BOUND line (sofa / bedframe / (SP) mattress / custom pillow) is

@@ -239,6 +239,35 @@ async function confirmNotReady(raw: string): Promise<boolean> {
   }
 }
 
+/* 2990-0065 — the picked Sales Order lines are already on a live purchase order.
+   A question, not a block (Sim 2026-11-19): Continue replays with
+   confirmDuplicatePo:true. Returns true on Continue. */
+function soHasPoMessage(raw: string): string {
+  const body = JSON.parse(raw.slice(raw.indexOf('{'))) as {
+    poNumbers?: string[];
+    lines?: Array<{ itemCode: string | null; soDocNo: string | null; poNumber: string }>;
+  };
+  const byLine = new Map<string, string[]>();
+  for (const l of body.lines ?? []) {
+    const k = [l.itemCode, l.soDocNo && `(${l.soDocNo})`].filter(Boolean).join(' ') || 'A line';
+    byLine.set(k, [...(byLine.get(k) ?? []), l.poNumber]);
+  }
+  const lines = [...byLine.entries()].map(([k, pos]) => `• ${k}\n   already on ${pos.join(', ')}`).join('\n\n');
+  return `This Sales Order already has PO(s): ${(body.poNumbers ?? []).join(', ')}.\n\n${lines}\n\nContinue to generate another PO for these lines?`;
+}
+async function confirmSoHasPo(raw: string): Promise<boolean> {
+  try {
+    return await serviceConfirm({
+      title: 'PO already generated for this Sales Order',
+      body: soHasPoMessage(raw),
+      confirmLabel: 'Continue',
+      danger: true,
+    });
+  } catch {
+    return false;
+  }
+}
+
 /* Edge #J — render the shortage detail out of a 409 short_stock body and ask
    the operator whether to ship anyway (stock goes negative). Returns true on
    confirm; replays the request with confirmShortStock:true. */
@@ -420,6 +449,14 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
           );
         }
         mergedBody = { ...mergedBody, confirmNotReady: true };
+      } else if (text.includes('"so_has_po"') && mergedBody.confirmDuplicatePo !== true) {
+        if (!(await confirmSoHasPo(text))) {
+          throw correlateError(
+            new Error('No purchase order was generated. Nothing has changed.'),
+            requestIdFromResponse(res),
+          );
+        }
+        mergedBody = { ...mergedBody, confirmDuplicatePo: true };
       } else if (text.includes('"short_stock"') && mergedBody.confirmShortStock !== true) {
         /* ASK ONCE (2026-07-31). "Ship as drop-ship?" and "Ship anyway?" are the
            same question — the goods are not here — and the operator has already
