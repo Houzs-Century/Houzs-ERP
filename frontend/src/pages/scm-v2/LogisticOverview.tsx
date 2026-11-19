@@ -390,7 +390,7 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
           <Toggle value={weekBy} options={[["amount", "By amount"], ["orders", "By orders"]]} onChange={setWeekBy} />
         </span>}>
         <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr]">
-          <Columns axes={false} valueLabels={weekBy === "orders"} height={200} labels={weeks.map((w) => w.label)} highlight={weeks.findIndex((w) => w.current)} stacked={false}
+          <Columns forecast={null} axes={false} valueLabels={weekBy === "orders"} height={200} labels={weeks.map((w) => w.label)} highlight={weeks.findIndex((w) => w.current)} stacked={false}
             format={weekBy === "amount" ? rm : (x) => `${x} DO`}
             series={weekBy === "amount" ? [{ name: "Amount due", color: PALETTE[0]! }] : [{ name: "Orders due", color: PALETTE[0]! }, { name: "Delivered", color: TONE.good }]}
             values={weekBy === "amount" ? [weeks.map((w) => w.doAmountSen)] : [weeks.map((w) => w.doCount), weeks.map((w) => w.delivered)]}
@@ -412,7 +412,7 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
       <div className="grid gap-4 lg:grid-cols-2">
         <Panel title="Monthly delivery volume" hint="delivery orders out each month · Confirmed = closed as delivered, in the month it was delivered"
           right={<Toggle value={monthBy} options={[["amount", "By amount"], ["orders", "By orders"]]} onChange={setMonthBy} />}>
-          <Columns axes={false} valueLabels={monthBy === "orders"} height={190} labels={months.map((x) => x.month.slice(2).replace("-", "/"))} highlight={months.length - 1} stacked={false} format={monthBy === "amount" ? rm : (x) => `${x} DO`}
+          <Columns forecast={null} axes={false} valueLabels={monthBy === "orders"} height={190} labels={months.map((x) => x.month.slice(2).replace("-", "/"))} highlight={months.length - 1} stacked={false} format={monthBy === "amount" ? rm : (x) => `${x} DO`}
             series={[{ name: monthBy === "amount" ? "DO amount" : "DO out", color: PALETTE[0]! }]} values={[months.map((x) => (monthBy === "amount" ? x.doAmountSen : x.doCount))]}
             line={null} />
           <table className="mt-2 w-full border-collapse">

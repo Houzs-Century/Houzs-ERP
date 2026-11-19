@@ -199,13 +199,27 @@ export function drillOf(ps: OvProject[], drill: Drill, today: string) {
   return buckets.map((b) => ({ ...b, ...totalsOf(ps.filter((p) => !!p.startDate && p.startDate >= b.from && p.startDate <= b.to)) }));
 }
 
+/** Held = started by today AND its sales are real, not a forecast (owner
+ *  2026-11-19: an event that opened today with no sales in yet is still to come). */
+export function isHeld(p: OvProject, today: string): boolean {
+  if (!p.startDate || p.startDate > today) return false;
+  const s = p.pnl?.layers?.split.sales;
+  return !s || s.forecast + s.last_event === 0;
+}
+
+/** Each bucket's share of sales that is a forecast (typed or the last event's), 0..1. */
+export function forecastShareOf(t: Pick<Totals, "sales" | "split">): number {
+  const f = t.split.sales.forecast + t.split.sales.last_event;
+  return t.sales > 0 ? Math.min(1, Math.max(0, f / t.sales)) : 0;
+}
+
 /** A period that reaches past today, cut at today (owner 2026-11-19: 当月 —
  *  what has been held, what is still to come on its forecast, and the two
  *  together as the projected total). Null when nothing in it is still to come
  *  or nothing has started yet - one side alone needs no split. */
 export function heldVsComing(ps: OvProject[], today: string): { held: Totals; coming: Totals } | null {
-  const held = ps.filter((p) => !!p.startDate && p.startDate <= today);
-  const coming = ps.filter((p) => !!p.startDate && p.startDate > today);
+  const held = ps.filter((p) => isHeld(p, today));
+  const coming = ps.filter((p) => !!p.startDate && !isHeld(p, today));
   if (held.length === 0 || coming.length === 0) return null;
   return { held: totalsOf(held), coming: totalsOf(coming) };
 }

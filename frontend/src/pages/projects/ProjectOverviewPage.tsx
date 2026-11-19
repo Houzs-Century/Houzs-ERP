@@ -21,7 +21,7 @@ import { DateRangeButton } from "../../components/DateRangeButton";
 import { PROJECT_REPORT_RANGE_PRESETS, monthEnd, presetLabel, presetOf } from "../../lib/dateRangePresets";
 import { ProjectOverviewTable } from "./ProjectOverviewTable";
 import { ProjectDataGapsPanel, ProjectStuckPanel } from "./ProjectOverviewParts";
-import { figuresOf, totalsOf, groupBy, drillOf, heldVsComing, pctOf, type OvProject, type Drill } from "./projectOverviewModel";
+import { figuresOf, totalsOf, groupBy, drillOf, heldVsComing, isHeld, forecastShareOf, pctOf, type OvProject, type Drill } from "./projectOverviewModel";
 import { VIEW_PARAMS, readView, rememberOpenedFrom, takeScroll, writeView, type Dim, type OverviewView } from "./projectOverviewView";
 
 type Part = "all" | "held" | "coming";
@@ -92,7 +92,7 @@ export function ProjectOverviewPage() {
   const partParam = params.get(PART_PARAM);
   const part: Part = split && (partParam === "held" || partParam === "coming") ? partParam : "all";
   const setPart = (next: Part) => setParams((prev) => { const n = new URLSearchParams(prev); if (next === "all") n.delete(PART_PARAM); else n.set(PART_PARAM, next); return n; }, { replace: true });
-  const shown = useMemo(() => (part === "all" ? inPeriod : inPeriod.filter((p) => (part === "held" ? (p.startDate ?? "") <= today : (p.startDate ?? "") > today))), [inPeriod, part, today]);
+  const shown = useMemo(() => (part === "all" ? inPeriod : inPeriod.filter((p) => (part === "held" ? isHeld(p, today) : !isHeld(p, today)))), [inPeriod, part, today]);
   const ts = part === "all" ? t : totalsOf(shown);
   const partLabel = part === "held" ? " · held so far" : part === "coming" ? " · still to come" : "";
   const groups = groupBy(shown, (p) => p[dim]);
@@ -105,7 +105,7 @@ export function ProjectOverviewPage() {
   const trendEnd = win.to > today ? win.to : today;
   const trend = drillOf(all, drill, today).filter((b) => b.from <= trendEnd);
   /* The part of each bucket's sales still to come (events after today), on forecast. */
-  const toCome = trend.map((b) => totalsOf(all.filter((p) => !!p.startDate && p.startDate > today && p.startDate >= b.from && p.startDate <= b.to)).sales);
+  const toCome = trend.map((b) => totalsOf(all.filter((p) => !!p.startDate && !isHeld(p, today) && p.startDate >= b.from && p.startDate <= b.to)).sales);
   const anyToCome = toCome.some((v) => v !== 0);
   /* Breadcrumb back up the drill: All years > 2026 > Q4 > Oct. */
   const crumbs: Array<[string, Drill]> = [["All years", { level: "years" }]];
@@ -184,6 +184,7 @@ export function ProjectOverviewPage() {
               onChange={(v) => setDrill(v === "q" ? { level: "quarters", year: yearView } : { level: "yearMonths", year: yearView })} />}
           </span>}>
           <Columns axes valueLabels={false} height={250} stacked={false} format={money} highlight={trend.findIndex((b) => today >= b.from && today <= b.to)}
+            forecast={{ share: trend.map(forecastShareOf) }}
             labels={trend.map((b) => b.label)}
             series={[{ name: "Sales", color: PALETTE[0]! }, { name: "Gross profit", color: "#8fb3ae" }]}
             values={[trend.map((b) => b.sales), trend.map((b) => Math.max(0, b.gp))]}
@@ -197,7 +198,7 @@ export function ProjectOverviewPage() {
                   <Td className={b.np < 0 ? "text-err" : ""}>{money(b.np)}</Td><Td>{pctTxt(pctOf(b.np, b.sales))}</Td>
                 </tr>))}</tbody>
             </table>
-            <p className="mt-1 text-[11px] text-ink-muted">{drill.level === "weeks" ? "Click a week to show its projects across the page." : "Year, then its quarters, then its months, then the weeks of a month."}{anyToCome ? " To come = events not started yet, on their forecast." : ""}</p>
+            <p className="mt-1 text-[11px] text-ink-muted">{drill.level === "weeks" ? "Click a week to show its projects across the page." : "Year, then its quarters, then its months, then the weeks of a month."}{anyToCome ? " To come = events not started or with no sales in yet, on their forecast. Hatched bar and dashed line = forecast." : ""}</p>
           </div>
         </Panel>
         <Panel title="Where each ringgit of sales goes" hint={`${winLabel}${partLabel}`}>
@@ -260,8 +261,8 @@ export function ProjectOverviewPage() {
  *  what has been held, what is still to come, and the projected total. */
 function HeldComingRow({ held, coming, total, today, part, onPart }: { held: ReturnType<typeof totalsOf>; coming: ReturnType<typeof totalsOf>; total: ReturnType<typeof totalsOf>; today: string; part: Part; onPart: (p: Part) => void }) {
   const cells: Array<[Part, string, string, ReturnType<typeof totalsOf>]> = [
-    ["held", "Held so far", `${held.projects} project${held.projects === 1 ? "" : "s"} started by ${today.slice(8)}/${today.slice(5, 7)}`, held],
-    ["coming", "Still to come", `${coming.projects} project${coming.projects === 1 ? "" : "s"} · on forecast`, coming],
+    ["held", "Held so far", `${held.projects} project${held.projects === 1 ? "" : "s"} with real sales, by ${today.slice(8)}/${today.slice(5, 7)}`, held],
+    ["coming", "Still to come", `${coming.projects} project${coming.projects === 1 ? "" : "s"} · not started or no sales in yet · on forecast`, coming],
     ["all", "Projected total", "held + still to come", total],
   ];
   return (
