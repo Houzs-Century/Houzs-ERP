@@ -152,7 +152,7 @@ export function ProjectSalesBillsBlock({
       {actionError && <div className="rounded-md border border-err/40 bg-err/5 p-2 text-[11px] text-err">{actionError}</div>}
       {data && totals && totals.count === 0 && (
         <div className="rounded-md border border-dashed border-border px-3 py-2 text-[11px] text-ink-muted">
-          No bills found in this event&apos;s chat. The evening report (one bill per line, e.g. 1. HC8993 RM6500 Jason) counts once the Owner, Ummu or Wei Siang posts it in the chat.
+          No bills found in this event&apos;s chat. The evening report (one bill per line, e.g. 1. HC8993 RM6500 Jason) counts once the Owner, Ummu, Wei Siang, a Sales Director, a Sales Person, or anyone attending this event posts it in the chat.
         </div>
       )}
 

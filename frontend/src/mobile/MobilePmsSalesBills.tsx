@@ -61,7 +61,7 @@ export function MobilePmsSalesBills({ query }: { query: MobileProjectSalesBillsQ
       ) : query.error ? (
         <div style={{ fontSize: 12, color: TONE_COLOR.red }}>{query.error instanceof Error ? query.error.message : "Could not load the sales report."}</div>
       ) : data && totals && totals.count === 0 ? (
-        <div style={MUTED}>No bills found in this event's chat. The report counts once the Owner, Ummu or Wei Siang posts it in the chat on the desktop.</div>
+        <div style={MUTED}>No bills found in this event's chat. The report counts once the Owner, Ummu, Wei Siang, a Sales Director, a Sales Person, or anyone attending this event posts it in the chat.</div>
       ) : totals && bills.length === 0 ? (
         <div style={{ fontSize: 12, color: TONE_COLOR.green }}>All {totals.count} bill{totals.count === 1 ? "" : "s"} are opened as Sales Orders under this event — listed below.</div>
       ) : bills.length > 0 ? (
