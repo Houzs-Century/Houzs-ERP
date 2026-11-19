@@ -4,10 +4,11 @@ Page `/ocr`, endpoint `GET /api/admin/ocr?month=YYYY-MM`. IT pages gate (`it.vie
 
 Built from `scm.scan_jobs` joined to `scm.so_scan_samples`. No new tracking. Outcome per scan (`services/ocrStats.ts` `classifyScan`):
 
-- Failed: job `error`; sample `FAILED`; SO `done` with "The scan could not read..." (blank shell draft); GR/PI `done` with no document made.
-- Discarded: SO only, the draft SO was deleted.
+- Failed: the read itself broke. Job `error`; sample `FAILED`; SO `done` with "The scan could not read..." (blank shell draft).
+- Needs review: GR/PI only. `done`, no document made, not in the check queue (no PO / goods receipt matched, wrong company, empty read). Reason = job `error`.
+- Discarded: SO draft deleted; GR/PI check-queue scan discarded (`review_state = 'discarded'`).
 - Clean / Corrected: SO only, sample `ACCEPTED` / `CONFIRMED` (set when the draft is confirmed).
-- Awaiting review: SO sample still `EXTRACTED`. Also covers a confirmed SO edited only in fields the AI does not read.
+- Awaiting review: SO sample still `EXTRACTED` (also a confirmed SO edited only in fields the AI does not read); GR/PI waiting in the check queue (`review_state = 'pending'`).
 - Imported: GR/PI with a document. Accuracy is not recorded for them: GR marks every posted scan `ACCEPTED`, an edited PI writes nothing.
 
 Gotchas:

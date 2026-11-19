@@ -18,7 +18,7 @@ beforeEach(() => {
 });
 
 const stats = (documentType: string, label: string, over: Partial<OcrReport["docTypes"][number]>) => ({
-  documentType, label, scans: 10, pending: 0, failed: 0, discarded: 0, awaiting: 0, clean: 0, corrected: 0, imported: 0,
+  documentType, label, scans: 10, pending: 0, failed: 0, needsReview: 0, discarded: 0, awaiting: 0, clean: 0, corrected: 0, imported: 0,
   accuracy: null, avgSec: 12.34, p90Sec: 20, ...over,
 });
 
@@ -27,7 +27,7 @@ const REPORT: OcrReport = {
   model: "claude-sonnet-4-6",
   docTypes: [
     stats("SO", "Sales slip (SO)", { clean: 9, corrected: 1, failed: 2, accuracy: { clean: 9, reviewed: 10 } }),
-    stats("PI", "Supplier invoice (PI)", { imported: 10 }),
+    stats("PI", "Supplier invoice (PI)", { imported: 6, needsReview: 3, awaiting: 1 }),
   ],
   fieldMisses: { reviewed: 10, fields: [{ field: "Product code", count: 1 }] },
   problems: [
@@ -35,7 +35,7 @@ const REPORT: OcrReport = {
       id: "a", at: "2026-09-10T01:00:00.000Z", documentType: "SO", docNo: "SO-2609-001", outcome: "corrected", detail: "Product code",
       changes: [{ field: "Line 1 Product code", before: "A1", after: "B2" }], slipImageKey: "scan-slips/s1",
     },
-    { id: "b", at: "2026-09-09T01:00:00.000Z", documentType: "PI", docNo: null, outcome: "failed", detail: "Supplier not matched", changes: null, slipImageKey: null },
+    { id: "b", at: "2026-09-09T01:00:00.000Z", documentType: "PI", docNo: null, outcome: "needsReview", detail: "Supplier not matched", changes: null, slipImageKey: null },
   ],
 };
 
@@ -61,6 +61,8 @@ describe("OCR page", () => {
     expect(screen.getByText("Line 1 Product code")).toBeTruthy();
     expect(screen.getByText("A1")).toBeTruthy();
     expect(screen.getByText("none created")).toBeTruthy();
+    expect(screen.getByText("Needs review")).toBeTruthy();
+    expect(screen.getByText("30.0%")).toBeTruthy();
     expect(pct(9, 10)).toBe("90.0%");
   });
 

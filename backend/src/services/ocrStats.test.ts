@@ -6,6 +6,7 @@ const row = (over: Partial<ScanRow>): ScanRow => ({
   document_type: "SO",
   status: "done",
   error: null,
+  review_state: null,
   doc_no: "SO-1",
   created_at: "2026-10-10T01:00:00.000Z",
   updated_at: "2026-10-10T01:00:10.000Z",
@@ -35,10 +36,21 @@ describe("classifyScan", () => {
     expect(classifyScan(row({ error: "Payment receipt saved, please check" })).outcome).toBe("clean");
     expect(classifyScan(row({ so_missing: true })).outcome).toBe("discarded");
     expect(classifyScan(row({ sample_status: "EXTRACTED" })).outcome).toBe("awaiting");
-    // GR / PI: no document = failed; a document = imported, never "clean" (GR ACCEPTED means posted).
-    expect(classifyScan(row({ document_type: "GR", doc_no: null, error: "Supplier not matched" }))).toEqual({ outcome: "failed", detail: "Supplier not matched" });
+    // GR / PI: a document = imported, never "clean" (GR ACCEPTED means posted).
     expect(classifyScan(row({ document_type: "GR", doc_no: "GRN-1" })).outcome).toBe("imported");
     expect(classifyScan(row({ document_type: "PI", doc_no: "PI-1", sample_status: "EXTRACTED" })).outcome).toBe("imported");
+  });
+
+  it("splits a supplier scan with no document into failed, needs review, awaiting and discarded", () => {
+    const supplier = (over: Partial<ScanRow>) => row({ document_type: "PI", doc_no: null, sample_status: "EXTRACTED", ...over });
+    expect(classifyScan(supplier({ status: "error", error: "timed out", review_state: "discarded" }))).toEqual({ outcome: "failed", detail: "timed out" });
+    expect(classifyScan(supplier({ error: "The scan could not tell which Goods Receipt this invoice is for" }))).toEqual({
+      outcome: "needsReview", detail: "The scan could not tell which Goods Receipt this invoice is for",
+    });
+    expect(classifyScan(supplier({}))).toEqual({ outcome: "needsReview", detail: "No document was created" });
+    expect(classifyScan(supplier({ review_state: "pending", error: "No matching goods receipt" })).outcome).toBe("awaiting");
+    expect(classifyScan(supplier({ review_state: "discarded" })).outcome).toBe("discarded");
+    expect(classifyScan(supplier({ review_state: "created", doc_no: "PI-1" })).outcome).toBe("imported");
   });
 
   it("names the fields the operator corrected", () => {
@@ -79,6 +91,8 @@ describe("buildOcrReport", () => {
       row({ id: "c", status: "error", error: "boom" }),
       row({ id: "d", status: "queued" }),
       row({ id: "e", document_type: "PI", doc_no: "PI-9" }),
+      row({ id: "f", document_type: "PI", doc_no: null, error: "No matching goods receipt" }),
+      row({ id: "g", document_type: "PI", doc_no: null, review_state: "pending" }),
     ];
     const r = buildOcrReport("2026-10", "claude-sonnet-5-5", rows);
     expect(r.model).toBe("claude-sonnet-5-5");
@@ -87,9 +101,9 @@ describe("buildOcrReport", () => {
     expect(so).toMatchObject({ scans: 4, clean: 1, corrected: 1, failed: 1, pending: 1, accuracy: { clean: 1, reviewed: 2 } });
     expect(so.avgSec).toBeCloseTo((10 + 30 + 10) / 3);
     expect(so.p90Sec).toBe(30);
-    expect(r.docTypes[1]).toMatchObject({ imported: 1, accuracy: null });
+    expect(r.docTypes[1]).toMatchObject({ scans: 3, imported: 1, needsReview: 1, awaiting: 1, failed: 0, accuracy: null });
     expect(r.fieldMisses).toEqual({ reviewed: 2, fields: [{ field: "Product code", count: 1 }] });
-    expect(r.problems.map((p) => [p.id, p.outcome])).toEqual([["b", "corrected"], ["c", "failed"]]);
+    expect(r.problems.map((p) => [p.id, p.outcome])).toEqual([["b", "corrected"], ["c", "failed"], ["f", "needsReview"]]);
   });
 
   it("carries the slip photo key so the page can show the slip beside the changes", () => {
