@@ -58,7 +58,7 @@ export function KpiTab() {
   for (const m of metrics) {
     for (const w of WEEKS) {
       const v = ratings[keyOf(w, m.id)];
-      const n = v === undefined || v === "" ? NaN : parseFloat(v);
+      const n = v ? parseFloat(v) : NaN;
       if (Number.isFinite(n)) ratingList.push({ week: w, metricId: m.id, ratingX100: Math.round(n * 100) });
     }
   }
@@ -206,7 +206,7 @@ export function KpiTab() {
                 <tr key={m.id} className="border-t border-border">
                   <td className="p-2 align-top">
                     <span className="font-medium">{m.name}</span>
-                    <span className="ml-1 text-[11px] text-ink-muted">({(m.weightBp / 100).toFixed(0)}%)</span>
+                    <span className="ml-1 text-[11px] text-ink-muted">({Math.round(m.weightBp / 100)}%)</span>
                   </td>
                   <td className="p-2 align-top text-[11px] text-ink-muted">{m.target}</td>
                   {WEEKS.map((w) => (
