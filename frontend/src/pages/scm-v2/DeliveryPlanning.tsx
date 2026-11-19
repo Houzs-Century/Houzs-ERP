@@ -565,7 +565,7 @@ export const DeliveryPlanning = () => {
                             <MessageSquare size={14} strokeWidth={1.75} /> One Time Send Now
                             <ChevronDown size={13} strokeWidth={1.75} style={{ marginLeft: 'auto', transform: oneTimeOpen ? 'rotate(180deg)' : 'none' }} />
                           </span>
-                          <span style={{ display: 'block', marginLeft: 22, fontSize: 'var(--fs-12, 11px)', color: 'var(--c-muted, var(--hz-c-ink-muted))' }}>Pick one: postpone, driver info, balance, reminders, postage, thanks</span>
+                          <span style={{ display: 'block', marginLeft: 22, fontSize: 'var(--fs-12, 11px)', color: 'var(--c-muted, var(--hz-c-ink-muted))' }}>Pick one: postpone, driver info, balance, reminders, postage, thanks, East Malaysia</span>
                         </button>
                         {oneTimeOpen && ([
                           ['postpone', 'Postpone', 'Move the date - reads the order reason and new date'],
@@ -577,6 +577,9 @@ export const DeliveryPlanning = () => {
                           ['reminder_3', 'Reminder 3', 'No reply yet - final nudge'],
                           ['postage', 'Postage Confirm', 'Confirm the postage address'],
                           ['delivery_completed', 'Delivery Completed', 'Thank-you after delivery'],
+                          ['eastmy_prep', 'EM Prep Notice', 'East Malaysia - prep notice + confirm delivery details'],
+                          ['eastmy_shipped', 'EM Shipped', 'East Malaysia - shipped; reads Consignment + ETA from the row'],
+                          ['eastmy_arrived', 'EM Arrived', 'East Malaysia - arrived at EM port; reads warehouse arrival from the row'],
                         ] as const).map((it) => renderKind(it, true))}
                       </>
                     );
