@@ -24,7 +24,8 @@ import { requireActiveCompanyId } from "../scm/lib/companyScope";
 import { todayMyt } from "../scm/lib/my-time";
 import { checkPunchLocation } from "../scm/shared/hr-attendance";
 import { attendanceView, planPunch, type AttendanceRow } from "./lib/hr-attendance-view";
-import { loadSites, rulesResolver } from "./lib/hr-attendance-store";
+import { loadSites } from "./lib/hr-attendance-store";
+import { shiftRulesResolver } from "./lib/hr-shift-store";
 import { closeForgottenAndSync, syncDayFromPunch } from "./lib/hr-labor-store";
 import { computePeriod } from "./lib/hr-payroll-store";
 import { slipOut, type SlipRow } from "./hr-payroll";
@@ -75,18 +76,18 @@ attendance.get("/me", async (c) => {
   const now = new Date();
   await closeForgottenAndSync(db, co.companyId, emp.id, now);
   const since = todayMyt(-13);
-  const [rows, rulesFor, sites] = await Promise.all([
+  const [rows, shiftRes, sites] = await Promise.all([
     db
       .select()
       .from(hr_attendance)
       .where(and(eq(hr_attendance.company_id, co.companyId), eq(hr_attendance.employee_id, emp.id), gte(hr_attendance.work_date, since)))
       .orderBy(desc(hr_attendance.work_date)),
-    rulesResolver(db, co.companyId),
+    shiftRulesResolver(db, co.companyId, since, todayMyt()),
     loadSites(db, co.companyId),
   ]);
-  const views = rows.map((r) => attendanceView(r as AttendanceRow, rulesFor(r.work_date), sites.names, now));
+  const views = rows.map((r) => attendanceView(r as AttendanceRow, shiftRes.rulesFor(r.work_date, emp.id), sites.names, now));
   const today = todayMyt();
-  const shift = rulesFor(today);
+  const shift = shiftRes.rulesFor(today, emp.id);
   return c.json({
     linked: true,
     employee: { empNo: emp.emp_no, name: emp.name },

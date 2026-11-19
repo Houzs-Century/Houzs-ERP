@@ -58,6 +58,7 @@ import { hrLabor } from "./routes/hr-labor";
 import { hrPayroll } from "./routes/hr-payroll";
 import { hrTripPay } from "./routes/hr-trip-pay";
 import { hrKpi } from "./routes/hr-kpi";
+import { hrShifts } from "./routes/hr-shifts";
 import { runNightlyTripSync } from "./routes/lib/hr-trip-sync";
 import { attendance } from "./routes/attendance";
 import { runAutoClockOut } from "./routes/lib/hr-labor-store";
@@ -606,6 +607,7 @@ app.route("/api/hr", hrLabor);
 app.route("/api/hr", hrPayroll);
 app.route("/api/hr", hrTripPay);
 app.route("/api/hr", hrKpi);
+app.route("/api/hr", hrShifts);
 // The phone punch clock (HC-0125): any signed-in account, answered only for
 // the employee linked to it, so NOT behind the hr.employees.* gate above.
 app.route("/api/attendance", attendance);
