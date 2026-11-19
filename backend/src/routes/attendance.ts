@@ -97,6 +97,9 @@ attendance.get("/me", async (c) => {
     todayDay: views.find((v) => v.workDate === today) ?? null,
     recent: views,
     sitesConfigured: sites.active.length,
+    // Active sites' coordinates so the phone can show the live distance to the
+    // nearest one before a punch (HC-0125; needed once require_on_site is on).
+    sites: sites.active,
   });
 });
 
