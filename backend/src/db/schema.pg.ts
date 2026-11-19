@@ -1351,6 +1351,69 @@ export const hr_allowances = pgTable(
   (t) => [index("idx_hr_allowances_employee").on(t.company_id, t.employee_id)],
 );
 
+// ── hr_kpi_* (HC-0125 KPI appraisal) ───────────────────────
+// The editable KPI lines a monthly appraisal rates (name, target, weight).
+export const hr_kpi_metrics = pgTable(
+  "hr_kpi_metrics",
+  {
+    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    company_id: bigint("company_id", { mode: "number" }).notNull(),
+    name: text("name").notNull(),
+    target: text("target").notNull().default(""),
+    weight_bp: integer("weight_bp").notNull().default(0),
+    sort_order: integer("sort_order").notNull().default(0),
+    active: boolean("active").notNull().default(true),
+    created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+    created_by: integer("created_by"),
+    updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+  },
+  (t) => [index("idx_hr_kpi_metrics_company").on(t.company_id, t.sort_order)],
+);
+
+// The payout bands: an inclusive final-score range pays a fixed RM by role.
+export const hr_kpi_tiers = pgTable(
+  "hr_kpi_tiers",
+  {
+    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    company_id: bigint("company_id", { mode: "number" }).notNull(),
+    min_score_x100: integer("min_score_x100").notNull(),
+    max_score_x100: integer("max_score_x100").notNull(),
+    label: text("label").notNull(),
+    supervisor_amount_sen: bigint("supervisor_amount_sen", { mode: "number" }).notNull().default(0),
+    staff_amount_sen: bigint("staff_amount_sen", { mode: "number" }).notNull().default(0),
+    sort_order: integer("sort_order").notNull().default(0),
+    created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+    updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+  },
+  (t) => [index("idx_hr_kpi_tiers_company").on(t.company_id, t.sort_order)],
+);
+
+// One monthly appraisal per employee: the weekly ratings grid (jsonb) plus the
+// computed final score, tier and the RM it pays. CONFIRMED books a KPI
+// allowance (allowance_id) for the month.
+export const hr_kpi_reviews = pgTable(
+  "hr_kpi_reviews",
+  {
+    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    company_id: bigint("company_id", { mode: "number" }).notNull(),
+    employee_id: bigint("employee_id", { mode: "number" }).notNull(),
+    period: text("period").notNull(),
+    role: text("role").notNull().default("SUPERVISOR"),
+    status: text("status").notNull().default("DRAFT"),
+    scores: jsonb("scores").$type<{ week: number; metricId: number; ratingX100: number }[]>().notNull().default(sql`'[]'::jsonb`),
+    final_score_x100: integer("final_score_x100"),
+    tier_label: text("tier_label"),
+    amount_sen: bigint("amount_sen", { mode: "number" }),
+    allowance_id: bigint("allowance_id", { mode: "number" }),
+    reviewer_user_id: integer("reviewer_user_id"),
+    created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+    created_by: integer("created_by"),
+    updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+    updated_by: integer("updated_by"),
+  },
+  (t) => [uniqueIndex("uq_hr_kpi_reviews_emp_period").on(t.company_id, t.employee_id, t.period)],
+);
+
 // ── sales_entries (mig 041 / 051) ──────────────────────────
 export const sales_entries = pgTable("sales_entries", {
   company_id: bigint("company_id", { mode: "number" }),

@@ -50,8 +50,12 @@ export const AddressTripleFields = ({
   onChange,
   disabled,
   classes,
+  postcodeRequired,
 }: {
   value: AddressTriple;
+  /** Marks Postcode "Postcode *" - a master address in Malaysia / Singapore
+   *  must carry one (owner 2026-11-19); the host's save enforces it. */
+  postcodeRequired: boolean;
   /** The host's Country, when it has one (Warehouse). Empty = derive it. */
   country: string;
   /** The whole triple, plus the Country of the resulting State (null if unknown). */
@@ -102,6 +106,7 @@ export const AddressTripleFields = ({
           if (r.state && r.city) emit({ state: r.state, city: r.city, postcode: value.postcode });
         }}
         postcodeChoices={postcodes}
+        label={postcodeRequired ? 'Postcode *' : 'Postcode'}
         placeholder={loading ? 'Loading…' : postcodePlaceholder(value.state, value.city)}
         disabled={disabled || loading}
         classes={c}

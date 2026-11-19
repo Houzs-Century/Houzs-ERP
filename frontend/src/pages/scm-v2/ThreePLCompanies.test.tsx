@@ -23,7 +23,7 @@ const SUP_C = { id: 'sup-c', code: '400-X003', name: 'CARRIER C SDN BHD' };
 
 const carrier = (over: Record<string, unknown>) => ({
   id: 'car-a', code: '3PL-001', name: 'CARRIER A', registrationNo: null, contactName: null, contactPhone: null,
-  officePhone: null, email: null, address: null, isActive: true, notes: null, supplier: null,
+  officePhone: null, email: null, address: null, postcode: '47500', city: 'Subang Jaya', state: 'Selangor', isActive: true, notes: null, supplier: null,
   lorryCount: 0, driverCount: 0, helperCount: 0, ...over,
 });
 
@@ -31,6 +31,7 @@ function serve(companies: unknown[]) {
   authedFetch.mockImplementation((path: string, init?: { method?: string }) => {
     if (init?.method === 'POST' || init?.method === 'PATCH') return Promise.resolve({ company: companies[0] });
     if (path === '/threepl-companies') return Promise.resolve({ companies });
+    if (path === '/localities') return Promise.resolve({ localities: [{ postcode: '47500', city: 'Subang Jaya', state: 'Selangor', stateCode: 'SGR', country: 'Malaysia' }] });
     if (path.startsWith('/suppliers')) return Promise.resolve({ suppliers: [SUP_A, SUP_B, SUP_C].map((s) => ({ ...s, status: 'ACTIVE' })) });
     return Promise.resolve({});
   });
@@ -83,8 +84,17 @@ describe('3PL companies: the supplier link', () => {
     fireEvent.mouseDown(option);
 
     expect((screen.getByPlaceholderText('e.g. ABC Logistics Sdn Bhd') as HTMLInputElement).value).toBe('CARRIER C SDN BHD');
+    /* No postcode yet: refused before anything is sent (owner 2026-11-19). */
     fireEvent.click(screen.getByRole('button', { name: /Add company/ }));
-    await waitFor(() => expect(bodyOf('POST')?.body).toMatchObject({ name: 'CARRIER C SDN BHD', supplierId: 'sup-c' }));
+    expect(await screen.findByText('Postcode is required for an address in Malaysia or Singapore.')).toBeTruthy();
+    expect(bodyOf('POST')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /OK|Close|Dismiss/ }));
+    const postcode = screen.getAllByPlaceholderText(/Pick postcode/)[0]!;
+    fireEvent.focus(postcode);
+    fireEvent.change(postcode, { target: { value: '47500' } });
+    fireEvent.mouseDown(await screen.findByRole('option', { name: '47500' }));
+    fireEvent.click(screen.getByRole('button', { name: /Add company/ }));
+    await waitFor(() => expect(bodyOf('POST')?.body).toMatchObject({ name: 'CARRIER C SDN BHD', supplierId: 'sup-c', postcode: '47500', state: 'Selangor' }));
   });
 
   test('registering: a name typed first is kept when a supplier is picked', async () => {

@@ -39,6 +39,7 @@ import {
   requireActiveCompanyId,
   NOT_THIS_COMPANY,
 } from '../lib/companyScope';
+import { masterPostcodeError } from '../shared/master-postcode-rule';
 
 export const threeplCompanies = new Hono<{ Bindings: Env; Variables: Variables }>();
 threeplCompanies.use('*', supabaseAuth);
@@ -282,6 +283,9 @@ threeplCompanies.post('/', async (c) => {
   if (!parsed.success) return c.json({ error: 'invalid_body', issues: parsed.error.issues }, 400);
   const p = parsed.data;
   const user = c.get('user') as { id?: string } | null;
+  /* A 3PL company is in Malaysia: its postcode is required (owner 2026-11-19). */
+  const pcErr = masterPostcodeError(null, p.postcode);
+  if (pcErr) return c.json({ error: 'postcode_required', message: pcErr }, 400);
 
   const sb = c.get('supabase');
   let supplier: SupplierRef | null = null;
@@ -372,7 +376,12 @@ threeplCompanies.patch('/:id', async (c) => {
   if (p.officePhone !== undefined)  updates.office_phone = asPhone(p.officePhone);
   if (p.email !== undefined)        updates.email = p.email;
   if (p.address !== undefined)      updates.address = p.address;
-  if (p.postcode !== undefined)     updates.postcode = p.postcode || null;
+  if (p.postcode !== undefined) {
+    /* Clearing the postcode is refused; a save that leaves it alone is not. */
+    const pcErr = masterPostcodeError(null, p.postcode);
+    if (pcErr) return c.json({ error: 'postcode_required', message: pcErr }, 400);
+    updates.postcode = p.postcode || null;
+  }
   if (p.city !== undefined)         updates.city = p.city || null;
   if (p.state !== undefined)        updates.state = p.state || null;
   if (p.notes !== undefined)        updates.notes = p.notes;

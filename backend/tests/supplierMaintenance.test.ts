@@ -111,7 +111,7 @@ function harness(who: Row, extra: Record<string, Row[]> = {}) {
 }
 
 const send = (app: Hono, method: 'POST' | 'PATCH', url: string, body: Row) =>
-  app.request(url, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  app.request(url, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(method === 'POST' && !('postcode' in body) ? { ...body, postcode: '47000' } : body) });
 
 describe('a supplier Finance keeps to itself', () => {
   test('is not in a purchaser\'s list, legacy or paged; Finance lists it', async () => {

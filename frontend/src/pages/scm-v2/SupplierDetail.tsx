@@ -103,6 +103,7 @@ import { EffectiveDatedHistory } from '../../vendor/scm/components/EffectiveDate
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { statusLabel } from '../../vendor/scm/lib/status-pill';
 import { DateField } from '../../vendor/scm/components/DateField';
+import { masterNeedsPostcode, masterPostcodeError } from '../../vendor/shared/master-postcode-rule';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
@@ -2348,6 +2349,8 @@ const SupplierInfoCard = ({
   const setF = (k: keyof typeof form, v: string) => setForm((s) => ({ ...s, [k]: v }));
 
   const save = () => {
+    const pcErr = masterPostcodeError(form.country, form.postcode);
+    if (pcErr) { void notify({ title: pcErr, tone: 'error' }); return; }
     update.mutate({ id: supplier.id, ...supplierSaveBody(form, supplier.code, isFinance) } as Partial<SupplierRow> & { id: string }, {
       onSuccess: onClose,
       // Never fail silently (Commander 2026-06-16 — "Save 没有反应"): surface the
@@ -2540,7 +2543,7 @@ const SupplierInfoCard = ({
             </label>
             <EditField label="Area" value={form.area} onChange={(v) => setF('area', v)} />
             <CitySelect state={form.state} value={form.city} onChange={(v) => setF('city', v)} />
-            {form.country === 'Singapore' ? <SgPostcodeField value={form.postcode} onChange={(v) => setF('postcode', v)} onResolve={(r) => { setF('address', r.address); if (r.state && r.city) { setF('state', r.state); setF('city', r.city); } }} fieldClassName={styles.field} labelClassName={styles.fieldLabel} inputClassName={styles.fieldInput} /> : <PostcodeCascadeField value={form.postcode} state={form.state} city={form.city} label="Postcode" onPick={(t) => { setF('postcode', t.postcode); setF('state', t.state); setF('city', t.city); }} classes={{ field: styles.field, label: styles.fieldLabel, select: styles.fieldSelect, selectWrap: styles.selectWrap, chevron: styles.selectChevron, input: styles.fieldInput }} />}
+            {form.country === 'Singapore' ? <SgPostcodeField value={form.postcode} onChange={(v) => setF('postcode', v)} onResolve={(r) => { setF('address', r.address); if (r.state && r.city) { setF('state', r.state); setF('city', r.city); } }} fieldClassName={styles.field} labelClassName={styles.fieldLabel} inputClassName={styles.fieldInput} /> : <PostcodeCascadeField value={form.postcode} state={form.state} city={form.city} label={masterNeedsPostcode(form.country) ? 'Postcode *' : 'Postcode'} onPick={(t) => { setF('postcode', t.postcode); setF('state', t.state); setF('city', t.city); }} classes={{ field: styles.field, label: styles.fieldLabel, select: styles.fieldSelect, selectWrap: styles.selectWrap, chevron: styles.selectChevron, input: styles.fieldInput }} />}
             <EditField label="Billing Address" value={form.address} onChange={(v) => setF('address', v)} multiline />
             <EditField label="Notes" value={form.notes} onChange={(v) => setF('notes', v)} multiline />
           </div>

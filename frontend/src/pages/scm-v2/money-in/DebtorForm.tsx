@@ -149,6 +149,7 @@ export function DebtorFormPage({ debtor, backLabel, onClose, onAdded }: {
             {box('address2')}
             {/* The Sales Order's State / City / Postcode controls and cascade (owner 2026-11-18). */}
             <AddressTripleFields
+              postcodeRequired={false}
               country={v.country}
               value={{ state: v.state, city: v.city, postcode: v.postcode }}
               onChange={(t, derived) => setV((p) => ({ ...p, ...t, ...(derived ? { country: derived } : {}) }))}

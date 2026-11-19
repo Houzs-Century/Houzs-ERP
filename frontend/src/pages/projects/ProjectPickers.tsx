@@ -110,10 +110,20 @@ export function VenuePicker({
       confirmLabel: "Add",
     });
     if (!name) return;
+    /* A new venue carries its postcode (owner 2026-11-19); Project Maintenance
+       fills City and State from it. */
+    const postcode = await dialog.prompt({
+      title: "Venue postcode",
+      message: `Postcode of ${name}. It places the venue on Last Mile and fills City and State.`,
+      placeholder: "e.g. 47500",
+      required: true,
+      confirmLabel: "Add",
+    });
+    if (!postcode) return;
     try {
       const r = await api.post<{ id: number; name: string; state: string | null }>(
         "/api/projects/venues",
-        { name }
+        { name, postcode: postcode.trim() }
       );
       await q.reload();
       onChange(r.name);
