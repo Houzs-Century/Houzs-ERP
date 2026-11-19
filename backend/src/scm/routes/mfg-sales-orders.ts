@@ -136,7 +136,7 @@ import {
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
 } from '../lib/companyScope';
 import { loadComboModulesById, loadMasterSofaComboCosts, loadSellingSofaCombos } from '../lib/pos-sofa-combos';
-import { planComboCostSpread } from '../lib/sofa-combo-cost-spread';
+import { comboCostAsOf, planComboCostSpread } from '../lib/sofa-combo-cost-spread';
 import { supabaseAuth } from '../middleware/auth';
 import { escapeForOr } from '../lib/postgrest-search';
 import { effectiveStatusFilter, isRangeNotSatisfiable } from '../lib/so-list-filters';
@@ -7064,7 +7064,21 @@ export async function recomputeTotals(sb: any, docNo: string, c: any) {
           tierByFabric.set(f.fabric_code, (f.sofa_price_tier ?? f.price_tier ?? 'PRICE_2'));
         }
       }
-      const spread = planComboCostSpread(sofaRows, combos, (code) => tierByFabric.get(code) ?? 'PRICE_2', null);
+      /* The set price of the ORDER's date, not today's: an edit or an approved
+         amendment (even a delivery-date-only one) must not put a set price
+         created after the order on it. A failed read is not "no date": today's
+         price would re-cost the order, so abort like the reads above. */
+      const { data: hdrDate, error: dateErr } = await scopeToCompany(
+        sb.from('mfg_sales_orders').select('so_date').eq('doc_no', docNo),
+        c,
+      ).maybeSingle();
+      if (dateErr) {
+        /* eslint-disable-next-line no-console */
+        console.error('[so-recompute] order date read failed — header left unchanged:', docNo, dateErr.message);
+        return;
+      }
+      const asOf = comboCostAsOf((hdrDate as { so_date?: string | null } | null)?.so_date ?? null);
+      const spread = planComboCostSpread(sofaRows, combos, (code) => tierByFabric.get(code) ?? 'PRICE_2', asOf);
       for (const m of sofaRows) {
         const newLineCost = spread.get(m.id);
         if (newLineCost === undefined) continue;

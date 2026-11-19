@@ -32,6 +32,14 @@ export interface ComboCostLine {
   line_cost_sen: number;
 }
 
+/** The day whose set prices cost an order: its order date, YYYY-MM-DD. Owner
+ *  2026-11-19: a set price created after the order never re-costs it, on any
+ *  edit or approved amendment. Null (today's prices) only for an order with no
+ *  readable date. */
+export function comboCostAsOf(soDate: string | null): string | null {
+  return soDate != null && /^\d{4}-\d{2}-\d{2}/.test(soDate) ? soDate.slice(0, 10) : null;
+}
+
 /** The new line cost (sen) of every line the spread re-prices, by line id.
  *  A line absent from the map keeps its cost. */
 export function planComboCostSpread(
