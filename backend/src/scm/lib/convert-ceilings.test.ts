@@ -189,6 +189,11 @@ describe('SO -> PO ceiling (qty - po_qty_picked)', () => {
     test('a line with no SO link is never capped', async () => {
       expect(await soLineOverConvertRefusal(sbWith(1, 1), null, 9999, 0)).toBeNull();
     });
+
+    test('a failed read throws instead of letting the qty through', async () => {
+      const failing = { from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: { message: 'timeout' } }) }) }) }) };
+      await expect(soLineOverConvertRefusal(failing, 'si-1', 5, 0)).rejects.toThrow(/so_line_read_failed/);
+    });
   });
 
   /* WIRING — the guard must actually be invoked by both handlers. Asserted on

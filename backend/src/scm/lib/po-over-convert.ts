@@ -88,11 +88,12 @@ export async function soLineOverConvertRefusal(
   ownCurrentQty: number,
 ): Promise<OverConvertOffender | null> {
   if (!soItemId) return null;
-  const { data } = await sb
+  const { data, error } = await sb
     .from('mfg_sales_order_items')
     .select('id, qty, po_qty_picked')
     .eq('id', soItemId)
     .maybeSingle();
+  if (error) throw new Error(`so_line_read_failed: ${error.message}`); // a failed read must not lift the cap
   const row = data as { qty: number; po_qty_picked: number } | null;
   /* Unknown / cross-company line: soLinkTargetRefusal already refused it with a
      404 before we get here, so there is nothing left to cap. */
