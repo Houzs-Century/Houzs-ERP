@@ -53,6 +53,8 @@ export type FeedHeadRow = {
   venue: string | null;
   status: string;
   do_numbers: string | null;
+  /** The latest non-cancelled delivery order's DO date — the sheet's SHIPOUT DATE. */
+  shipout_date: string | null;
   po_numbers: string | null;
   last_modified_text: string;
 };
@@ -92,6 +94,8 @@ export type DeliverySheetRecord = {
   InvAddr4: string | null;
   Attention: string | null;
   SOUDF_VENUE: string | null;
+  /** The sheet's "SHIPOUT DATE = DO date" — the latest non-cancelled DO's date. */
+  ShipoutDate: string | null;
   Status: string;
   /** Remarks 2 says READY / READY (PARTIAL) — the owner's gate for a NEW row
    *  on the sheet (2026-09-17). Decided here so the Apps Script has no copy. */
@@ -153,13 +157,14 @@ const FEED_BASE_SQL = `
          so.address1, so.address2, so.address3, so.address4,
          so.postcode, so.city, so.customer_state, so.customer_country, so.venue,
          so.status::text AS status,
-         dos.do_numbers, pos.po_numbers,
+         dos.do_numbers, dos.shipout_date::text AS shipout_date, pos.po_numbers,
          GREATEST(so.updated_at, pay.last_paid_at, dos.last_do_at) AS last_modified
     FROM scm.mfg_sales_orders so
     LEFT JOIN (SELECT so_doc_no, SUM(amount_sen) AS paid_sen, MAX(created_at) AS last_paid_at
                  FROM scm.mfg_sales_order_payments GROUP BY so_doc_no) pay ON pay.so_doc_no = so.doc_no
     LEFT JOIN (SELECT so_doc_no,
                       string_agg(do_number, ', ' ORDER BY do_number) FILTER (WHERE status::text <> 'CANCELLED') AS do_numbers,
+                      MAX(do_date) FILTER (WHERE status::text <> 'CANCELLED') AS shipout_date,
                       MAX(updated_at) AS last_do_at
                  FROM scm.delivery_orders GROUP BY so_doc_no) dos ON dos.so_doc_no = so.doc_no
     LEFT JOIN (SELECT i.doc_no, string_agg(DISTINCT po.po_number, ', ') AS po_numbers
@@ -542,6 +547,7 @@ export function toSheetRecord(row: FeedHeadRow, lines: ReadonlyArray<FeedLineRow
     InvAddr4: addr4,
     Attention: null,
     SOUDF_VENUE: blankToNull(row.venue),
+    ShipoutDate: row.shipout_date,
     Status: row.status,
     Ready: isSheetReady(remark2),
     Region: sheetRegion(salesLocation, addr3, row.customer_country),

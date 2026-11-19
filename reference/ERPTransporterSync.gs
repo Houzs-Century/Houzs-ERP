@@ -26,9 +26,10 @@
  * the target column's dropdown rejects is skipped. The transporter-owned
  * columns (Consignment, Vessel, ETD / ETA, Done Delivery, BS KK Delivery Date,
  * ESB / BS Remarks) and the sheet's own columns (EM Order Shipment Status, CTN,
- * Houzs Remark 2, SHIPOUT DATE, Attention, Sync Status) are NEVER written —
- * they were team / transporter owned on the master too. On a NEW appended row
- * the shipment-status cell is seeded from Remark 4, as the master did for col A.
+ * Houzs Remark 2, Attention, Sync Status) are NEVER written — they were team /
+ * transporter owned on the master too. SHIPOUT DATE = DO date IS written now
+ * (owner 2026-11-19): the ERP's latest non-cancelled DO date. On a NEW appended
+ * row the shipment-status cell is seeded from Remark 4, as the master did for col A.
  *
  * Nothing is read back into the ERP: the ERP has never stored the transporters'
  * freight columns, so this is a one-way push, exactly as the master leg was.
@@ -66,6 +67,7 @@ function TS_RECORD_COLUMNS(rec) {
     "balance": rec.SOUDF_BALANCE == null ? "" : rec.SOUDF_BALANCE,
     "remark 4": rec.Remark4 || "",
     "sales exemption expiry date": tsDate_(rec.SalesExemptionExpiryDate),
+    "shipout date = do date": tsDate_(rec.ShipoutDate),
     "address 1": rec.InvAddr1 || "",
     "address 2": rec.InvAddr2 || "",
     "address 3": rec.InvAddr3 || "",

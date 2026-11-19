@@ -96,6 +96,7 @@ const HEAD: FeedHeadRow = {
   venue: "Balakong Showroom",
   status: "CONFIRMED",
   do_numbers: "HC-DO-2609-001",
+  shipout_date: "2026-09-10",
   po_numbers: "PO-2609-001, PO-2609-002",
   last_modified_text: "2026-09-15 09:09:28.123456+00",
 };
@@ -131,6 +132,7 @@ describe("toSheetRecord — the AutoCount-named record the sheet writes", () => 
     expect(r.SOUDF_VENUE).toBe("Balakong Showroom");
     expect(r.LastModified).toBe(HEAD.last_modified_text);
     expect(r.Ref).toBe("HC12481");
+    expect(r.ShipoutDate).toBe("2026-09-10");
   });
 
   test("Ref = ref, else customer_so_no: a native order (ref NULL) carries its reference in customer_so_no", () => {

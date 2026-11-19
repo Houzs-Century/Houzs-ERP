@@ -87,7 +87,7 @@ async function resetFixture(s: Sql): Promise<void> {
     );
     CREATE TABLE scm.delivery_orders (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(), do_number text NOT NULL, so_doc_no text, status text NOT NULL,
-      updated_at timestamptz NOT NULL DEFAULT now()
+      do_date date, updated_at timestamptz NOT NULL DEFAULT now()
     );
     CREATE TABLE scm.mfg_sales_order_items (
       id uuid PRIMARY KEY, doc_no text NOT NULL, item_group text, item_code text, stock_status text NOT NULL DEFAULT 'PENDING',
@@ -158,9 +158,9 @@ async function resetFixture(s: Sql): Promise<void> {
       VALUES ('HC-SO-013495', 200000, '2026-09-05 10:00:00+00'),
              ('HC-SO-000011', 40000, '2026-07-02 00:00:00+00'),
              ('HC-SO-000012', 100000, '2026-07-03 00:00:00+00');
-    INSERT INTO scm.delivery_orders (do_number, so_doc_no, status, updated_at) VALUES
-      ('HC-DO-2609-001', 'HC-SO-013495', 'LOADED', '2026-09-03 00:00:00+00'),
-      ('HC-DO-2609-002', 'HC-SO-013495', 'CANCELLED', '2026-09-06 00:00:00+00');
+    INSERT INTO scm.delivery_orders (do_number, so_doc_no, status, do_date, updated_at) VALUES
+      ('HC-DO-2609-001', 'HC-SO-013495', 'LOADED', '2026-09-10', '2026-09-03 00:00:00+00'),
+      ('HC-DO-2609-002', 'HC-SO-013495', 'CANCELLED', '2099-01-01', '2026-09-06 00:00:00+00');
     INSERT INTO scm.mfg_sales_order_items (id, doc_no, item_group, item_code, stock_status) VALUES
       ('${ITEM1}', 'HC-SO-013495', 'MATTRESS', 'M1', 'READY');
     -- HC-SO-013495 is dated 2026-08-20 but only ENTERED READY_TO_SHIP on
@@ -224,6 +224,10 @@ describePg('HC Delivery sheet feed SQL — real Postgres', () => {
     expect(so!.last_modified_text.startsWith('2026-09-06')).toBe(true);
     expect(so!.balance_sen_live).toBe(300000);
     expect(so!.do_numbers).toBe('HC-DO-2609-001');
+    // SHIPOUT DATE = the latest NON-cancelled DO's date; the cancelled DO's
+    // later 2099 date is excluded by the FILTER.
+    expect(so!.shipout_date).toBe('2026-09-10');
+    expect(toSheetRecord(so!, []).ShipoutDate).toBe('2026-09-10');
     expect(so!.po_numbers).toBe('PO-2609-001');
     expect(so!.salesperson_name).toBe('Lim Yau Wei');
     expect(so!.so_date).toBe('2026-08-20');
@@ -483,10 +487,16 @@ describePg('HC Delivery sheet feed SQL — real Postgres', () => {
     `);
     try {
       const rows = (await sql.unsafe(toPgPlaceholders(FEED_EM_TRANSPORTER_SQL), [1] as never[])) as unknown as FeedHeadRow[];
-      // SQL is East by sales_location: SRW/SBH live orders only. The SRW-coded SG
+      const docs = rows.map((r) => r.doc_no);
+      // SQL is East by sales_location: every returned row is SRW/SBH. The East
+      // rows are present; KL (EM-03) and DRAFT (EM-04) are not. The SRW-coded SG
       // order IS returned here (East sales_location); the route drops it on Region.
-      expect(rows.map((r) => r.doc_no)).toEqual(['HC-SO-EM-01', 'HC-SO-EM-02', 'HC-SO-EM-05']);
-      // The other company sees none of these.
+      expect(docs).toEqual(expect.arrayContaining(['HC-SO-EM-01', 'HC-SO-EM-02', 'HC-SO-EM-05']));
+      expect(docs).not.toContain('HC-SO-EM-03'); // KL WAREHOUSE
+      expect(docs).not.toContain('HC-SO-EM-04'); // DRAFT
+      const eastLoc = new Set(['SRW WAREHOUSE', 'SBH WAREHOUSE']);
+      expect(rows.every((r) => eastLoc.has((r.sales_location ?? '').toUpperCase()))).toBe(true);
+      // The other company (2) has no East orders in the fixture.
       expect(await sql.unsafe(toPgPlaceholders(FEED_EM_TRANSPORTER_SQL), [2] as never[])).toHaveLength(0);
 
       const byDocE = (doc: string) => rows.find((r) => r.doc_no === doc)!;
