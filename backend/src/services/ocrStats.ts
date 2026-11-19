@@ -16,7 +16,7 @@ import { SCAN_DOCUMENT_TYPES, SCAN_DOCUMENT_TYPE_LABEL, isScanDocumentType } fro
 export { changedFields, LINES_CHANGED };
 export type { FieldChange };
 
-export type ScanOutcome = "pending" | "failed" | "discarded" | "clean" | "corrected" | "awaiting" | "imported";
+export type ScanOutcome = "pending" | "failed" | "needsReview" | "discarded" | "clean" | "corrected" | "awaiting" | "imported";
 
 /** One scan_jobs row joined to its sample, as the query returns it. */
 export interface ScanRow {
@@ -24,6 +24,8 @@ export interface ScanRow {
   document_type: string;
   status: string;
   error: string | null;
+  /** GR/PI check-first scans: reading / pending / created / discarded; null on scan-straight-to-draft jobs. */
+  review_state: string | null;
   doc_no: string | null;
   created_at: string | Date;
   updated_at: string | Date;
@@ -48,8 +50,11 @@ export function classifyScan(r: ScanRow): { outcome: ScanOutcome; detail: string
   if (r.sample_status === "FAILED") return { outcome: "failed", detail: r.sample_error ?? r.error };
   const so = r.document_type === "SO";
   if (so && r.error?.startsWith(UNREADABLE_PREFIX)) return { outcome: "failed", detail: r.error };
-  // GR / PI "needs review": done, but no document was made.
-  if (!so && !r.doc_no) return { outcome: "failed", detail: r.error ?? "No document was created" };
+  if (!so && !r.doc_no) {
+    if (r.review_state === "pending") return { outcome: "awaiting", detail: null };
+    if (r.review_state === "discarded") return { outcome: "discarded", detail: null };
+    return { outcome: "needsReview", detail: r.error ?? "No document was created" };
+  }
   if (so && r.so_missing) return { outcome: "discarded", detail: null };
   // Only the SO review records whether the operator edited the read: GR marks
   // every posted scan ACCEPTED, and an edited PI leaves no trace.
@@ -70,6 +75,7 @@ export interface DocTypeStats {
   scans: number;
   pending: number;
   failed: number;
+  needsReview: number;
   discarded: number;
   awaiting: number;
   clean: number;
@@ -86,7 +92,7 @@ export interface ProblemScan {
   at: string;
   documentType: string;
   docNo: string | null;
-  outcome: "failed" | "corrected";
+  outcome: "failed" | "needsReview" | "corrected";
   detail: string | null;
   /** Before/after per changed field; null when the scan has no draft snapshot. */
   changes: FieldChange[] | null;
@@ -102,7 +108,7 @@ export interface OcrReport {
   problems: ProblemScan[];
 }
 
-const PROBLEM_LIMIT = 30;
+const PROBLEM_LIMIT_PER_TYPE = 30;
 const iso = (v: string | Date) => new Date(v).toISOString();
 
 function percentile(sorted: number[], p: number): number {
@@ -116,13 +122,14 @@ export function buildOcrReport(month: string, model: string, rows: ScanRow[]): O
   const misses = new Map<string, number>();
   let reviewed = 0;
   const problems: ProblemScan[] = [];
+  const problemCounts = new Map<string, number>();
 
   for (const r of rows) {
     const t = r.document_type;
     let s = byType.get(t);
     if (!s) {
       s = {
-        documentType: t, label: isScanDocumentType(t) ? SCAN_DOCUMENT_TYPE_LABEL[t] : t, scans: 0, pending: 0, failed: 0, discarded: 0, awaiting: 0, clean: 0, corrected: 0, imported: 0,
+        documentType: t, label: isScanDocumentType(t) ? SCAN_DOCUMENT_TYPE_LABEL[t] : t, scans: 0, pending: 0, failed: 0, needsReview: 0, discarded: 0, awaiting: 0, clean: 0, corrected: 0, imported: 0,
         accuracy: null, avgSec: null, p90Sec: null,
       };
       byType.set(t, s);
@@ -140,7 +147,9 @@ export function buildOcrReport(month: string, model: string, rows: ScanRow[]): O
     if (outcome === "corrected" && detail) {
       for (const f of detail.split(", ")) misses.set(f, (misses.get(f) ?? 0) + 1);
     }
-    if ((outcome === "failed" || outcome === "corrected") && problems.length < PROBLEM_LIMIT) {
+    const problemsOfType = problemCounts.get(t) ?? 0;
+    if ((outcome === "failed" || outcome === "needsReview" || outcome === "corrected") && problemsOfType < PROBLEM_LIMIT_PER_TYPE) {
+      problemCounts.set(t, problemsOfType + 1);
       problems.push({ id: r.id, at: iso(r.created_at), documentType: t, docNo: r.doc_no, outcome, detail, changes, slipImageKey: r.slip_image_key });
     }
   }
@@ -172,7 +181,7 @@ export function buildOcrReport(month: string, model: string, rows: ScanRow[]): O
 export async function loadOcrReport(env: Env, companyId: number, month: string): Promise<OcrReport> {
   const { startIso, endIso } = mytMonthRangeUtc(month);
   const rows = await getDb(env).execute<ScanRow & Record<string, unknown>>(sql`
-    SELECT j.id, j.document_type, j.status, j.error,
+    SELECT j.id, j.document_type, j.status, j.error, j.review_state,
            coalesce(j.linked_doc_no, j.so_doc_no) AS doc_no,
            j.created_at, j.updated_at,
            s.status AS sample_status,

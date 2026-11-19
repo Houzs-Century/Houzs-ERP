@@ -49,6 +49,7 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useCapability } from '../../auth/capabilities';
 import { withoutSupplierFinanceKeys } from '../../vendor/shared/supplier-finance-fields';
 import styles from './Suppliers.module.css';
+import { masterNeedsPostcode, masterPostcodeError } from '../../vendor/shared/master-postcode-rule';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -625,6 +626,8 @@ const CreateForm = ({ onClose }: { onClose: () => void }) => {
       notify({ title: 'Code and Name are required.', tone: 'error' });
       return;
     }
+    const pcErr = masterPostcodeError(String(form.country || ''), String(form.postcode || ''));
+    if (pcErr) { void notify({ title: pcErr, tone: 'error' }); return; }
     create.mutate({
       ...(isFinance ? form : withoutSupplierFinanceKeys(form)),
       rating: Number(form.rating) || 0,
@@ -727,6 +730,7 @@ const SupplierFields = ({
         gridFull
       />
       <AddressTripleFields
+        postcodeRequired={masterNeedsPostcode(String(form.country || ''))}
         country=""
         value={{ state: String(form.state || ''), city: String(form.city || ''), postcode: String(form.postcode || '') }}
         onChange={(t) => { onChange('state', t.state); onChange('city', t.city); onChange('postcode', t.postcode); }}

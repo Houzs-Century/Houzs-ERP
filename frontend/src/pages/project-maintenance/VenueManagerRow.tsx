@@ -122,6 +122,7 @@ export function VenueManagerRow({
           postcode that fills City and State back lands as one change; Country
           follows the State. Values must live in my_localities. */}
         <AddressTripleFields
+          postcodeRequired
           country=""
           value={{ state: v.state ?? "", city: v.city ?? "", postcode: v.postcode ?? "" }}
           onChange={(next, derivedCountry) =>

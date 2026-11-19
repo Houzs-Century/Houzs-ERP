@@ -6,6 +6,7 @@ import type { EmployeeInput } from "../../vendor/shared/hr-employee";
 import type { PayRuleVersion, PayRulesConfig } from "../../vendor/shared/hr-pay-rules";
 import type { AttendanceStatus } from "../../vendor/shared/hr-attendance";
 import type { TripCommission, TripEventType, TripJobType, TripKind, TripPay, TripPayLine, TripRates, TripRowPay } from "../../vendor/shared/hr-trip-pay";
+import type { KpiRating, KpiRole } from "../../vendor/shared/hr-kpi";
 
 export const HR = "/api/hr";
 
@@ -287,6 +288,43 @@ export type Allowance = {
 export type AllowancesResponse = { period: string; allowances: Allowance[]; paidSen: number; deductedSen: number; locked: boolean; canManage: boolean };
 export const useAllowances = (period: string): QueryState<AllowancesResponse> =>
   useQuery(`${HR}/allowances`, () => api.get<AllowancesResponse>(`${HR}/allowances?period=${period}`), [period]);
+
+/* ── KPI appraisal (HC-0125) ──────────────────────────────────────────── */
+export type { KpiRating, KpiRole } from "../../vendor/shared/hr-kpi";
+export type KpiMetric = { id: number; name: string; target: string; weightBp: number; sortOrder: number; active: boolean };
+export type KpiTier = { id: number; minScoreX100: number; maxScoreX100: number; label: string; supervisorAmountSen: number; staffAmountSen: number; sortOrder: number };
+export type KpiConfigResponse = { metrics: KpiMetric[]; tiers: KpiTier[]; canManage: boolean };
+export type KpiReview = {
+  id: number;
+  employeeId: number;
+  period: string;
+  role: KpiRole;
+  status: "DRAFT" | "CONFIRMED";
+  scores: KpiRating[];
+  finalScoreX100: number | null;
+  tierLabel: string | null;
+  amountSen: number | null;
+};
+export type KpiReviewRow = KpiReview & { empNo: string; name: string };
+export type KpiReviewResponse = { review: KpiReview | null; locked: boolean; canManage: boolean };
+export type KpiReviewsResponse = { period: string; reviews: KpiReviewRow[]; locked: boolean; canManage: boolean };
+
+export const useKpiConfig = (): QueryState<KpiConfigResponse> => useQuery(`${HR}/kpi/config`, () => api.get<KpiConfigResponse>(`${HR}/kpi/config`));
+export const useKpiReviews = (period: string): QueryState<KpiReviewsResponse> =>
+  useQuery(`${HR}/kpi/reviews`, () => api.get<KpiReviewsResponse>(`${HR}/kpi/reviews?period=${period}`), [period]);
+export const useKpiReview = (employeeId: number | null, period: string): QueryState<KpiReviewResponse> =>
+  useQuery(`${HR}/kpi/review`, () => api.get<KpiReviewResponse>(`${HR}/kpi/review?employeeId=${employeeId}&period=${period}`), [employeeId, period], { enabled: employeeId != null });
+
+export type KpiMetricInput = { name: string; target: string; weightBp: number; sortOrder: number; active: boolean };
+export type KpiTierInput = { minScoreX100: number; maxScoreX100: number; label: string; supervisorAmountSen: number; staffAmountSen: number; sortOrder: number };
+export const seedKpiDefault = (): Promise<{ ok: boolean }> => api.post(`${HR}/kpi/config/seed-default`, {});
+export const saveKpiMetric = (id: number | null, body: KpiMetricInput): Promise<unknown> => (id ? api.patch(`${HR}/kpi/metrics/${id}`, body) : api.post(`${HR}/kpi/metrics`, body));
+export const deleteKpiMetric = (id: number): Promise<unknown> => api.del(`${HR}/kpi/metrics/${id}`);
+export const saveKpiTier = (id: number | null, body: KpiTierInput): Promise<unknown> => (id ? api.patch(`${HR}/kpi/tiers/${id}`, body) : api.post(`${HR}/kpi/tiers`, body));
+export const deleteKpiTier = (id: number): Promise<unknown> => api.del(`${HR}/kpi/tiers/${id}`);
+export const saveKpiReview = (body: { employeeId: number; period: string; role: KpiRole; scores: KpiRating[] }): Promise<{ id: number }> => api.put(`${HR}/kpi/review`, body);
+export const confirmKpiReview = (id: number): Promise<{ amountSen: number; tierLabel: string | null }> => api.post(`${HR}/kpi/review/confirm`, { id });
+export const unconfirmKpiReview = (id: number): Promise<unknown> => api.post(`${HR}/kpi/review/unconfirm`, { id });
 
 export type TripPerson = { name: string; employeeId: number | null };
 export type TripRowOut = {

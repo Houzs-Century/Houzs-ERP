@@ -75,6 +75,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { activeCompanyId, activeCompanySql, requireActiveCompanyId } from "../scm/lib/companyScope";
 import { refuseForeignAttachmentKey, refuseForeignChild, refuseForeignProject } from "./lib/project-company-gate";
 import { calendarCrewScope } from "./lib/calendar-visibility";
+import { masterPostcodeError } from "../scm/shared/master-postcode-rule";
 
 /* The context the extracted handlers below receive. They are exported so the
    route tests can drive them directly; the shape is exactly what app.get/post
@@ -1642,11 +1643,15 @@ app.post("/venues", requirePermission("projects.write"), async (c) => {
   // a save in company 2 must create/update within company 2, never hijack a
   // company-1 row.
   const existing = await c.env.DB.prepare(
-    `SELECT id, name, state FROM project_venues
+    `SELECT id, name, state, country, postcode FROM project_venues
       WHERE LOWER(name) = LOWER(?) AND company_id = ?`
   )
     .bind(name, co.companyId)
-    .first<{ id: number; name: string; state: string | null }>();
+    .first<{ id: number; name: string; state: string | null; country: string | null; postcode: string | null }>();
+  /* A venue in Malaysia / Singapore needs a postcode (owner 2026-11-19); one
+     re-added by name keeps the postcode it already has. */
+  const pcErr = masterPostcodeError(country ?? existing?.country ?? null, postcode ?? existing?.postcode ?? null);
+  if (pcErr) return c.json({ error: "postcode_required", message: pcErr }, 400);
   if (existing) {
     // Reactivate + update state/notes if user supplied them.
     await c.env.DB.prepare(
@@ -1694,6 +1699,11 @@ app.patch("/venues/:id", requirePermission("projects.manage"), async (c) => {
   if ("state" in body) {
     sets.push("state = ?");
     binds.push(body.state ?? null);
+  }
+  /* Clearing a venue's postcode is refused; a save that leaves it alone is not. */
+  if ("postcode" in body) {
+    const pcErr = masterPostcodeError("country" in body ? blankToNull(body.country) : null, blankToNull(body.postcode));
+    if (pcErr) return c.json({ error: "postcode_required", message: pcErr }, 400);
   }
   for (const col of ["country", "city", "postcode"] as const) {
     if (col in body) {

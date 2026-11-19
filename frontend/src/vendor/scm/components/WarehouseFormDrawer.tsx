@@ -22,6 +22,7 @@ import { useLocalities, distinctCountries } from '../lib/localities-queries';
 import { AddressTripleFields, type AddressTripleClasses } from './AddressTripleFields';
 import { useNotify } from './NotifyDialog';
 import styles from '../../../pages/scm-v2/Suppliers.module.css';
+import { masterNeedsPostcode, masterPostcodeError } from '../../shared/master-postcode-rule';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -92,6 +93,8 @@ export const WarehouseFormDrawer = ({
       notify({ title: 'Code and Name are required.', tone: 'error' });
       return;
     }
+    const pcErr = masterPostcodeError(form.country, form.postcode);
+    if (pcErr) { void notify({ title: pcErr, tone: 'error' }); return; }
     /* Block the half-configured showroom at the point of creation. A warehouse
        classified as Showroom with no Venue name is not an error the database
        can see — it simply resolves to NO venue, so every order from every
@@ -192,6 +195,7 @@ export const WarehouseFormDrawer = ({
               a TRANSFER takes them from here). Postcode is always shown; picking
               or typing one fills City and State back. */}
           <AddressTripleFields
+            postcodeRequired={masterNeedsPostcode(form.country)}
             country={form.country}
             value={{ state: form.state, city: form.city, postcode: form.postcode }}
             onChange={(next, derivedCountry) => setForm((s) => ({

@@ -3,7 +3,7 @@
    and the table keeps every cost, readably. */
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OvProject } from "./projectOverviewModel";
 
 const keyed = (o: Partial<OvProject["keyed"]>): OvProject["keyed"] => ({
@@ -190,5 +190,31 @@ describe("Project Overview — future date ranges (owner 2026-11-18)", () => {
   it("a past period has no layer split when nothing in it is an estimate", () => {
     show(PERIOD);
     expect(screen.queryByTestId("layer-split")).toBeNull();
+  });
+});
+
+describe("Project Overview - the hero follows the part picked (owner 2026-11-19)", () => {
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-11-19T04:00:00Z")); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("Still to come narrows the big figures to the events after today", () => {
+    show("?view=finances&af_from=2026-10-01&af_to=2027-01-31&af_part=coming");
+    expect(screen.getByText(/still to come · 1 projects/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^Still to come/ }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("Projected total shows every event in the period", () => {
+    show("?view=finances&af_from=2026-10-01&af_to=2027-01-31");
+    expect(screen.queryByText(/still to come · /)).toBeNull();
+    expect(screen.getByRole("button", { name: /^Projected total/ }).getAttribute("aria-pressed")).toBe("true");
+  });
+});
+
+describe("Project Overview - fits a phone (owner 2026-11-19)", () => {
+  it("the panel grid lets wide tables scroll inside their panel, and the layer split has no fixed width", () => {
+    const { container } = show("?view=finances&af_from=2027-01-01&af_to=2027-03-31");
+    const grid = [...container.querySelectorAll("div")].find((d) => d.className.includes("xl:grid-cols-"));
+    expect(grid?.className).toContain("grid-cols-[minmax(0,1fr)]");
+    expect(screen.getByTestId("layer-split").querySelector("table")?.className).not.toMatch(/min-w-/);
   });
 });

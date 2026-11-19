@@ -40,6 +40,7 @@ import { pgrestIn, pgrestInList } from '../lib/pgrest-in-list';
 import { isSupplierFinanceCaller, supplierCodeChangeRefusal } from '../lib/supplier-finance';
 import { withoutSupplierFinance, withoutSupplierFinanceKeys } from '../shared/supplier-finance-fields';
 import { checkSupplierEmail } from '../shared/supplier-emails';
+import { masterPostcodeError } from '../shared/master-postcode-rule';
 
 type SupplierCtx = Context<{ Bindings: Env; Variables: Variables }>;
 
@@ -558,6 +559,9 @@ export const createSupplierHandler = async (c: SupplierCtx) => {
   const name = (body.name as string | undefined)?.trim();
   if (!code) return c.json({ error: 'code_required' }, 400);
   if (!name) return c.json({ error: 'name_required' }, 400);
+  /* Malaysia / Singapore suppliers need a postcode; a foreign one does not (owner 2026-11-19). */
+  const pcErr = masterPostcodeError((body.country as string) ?? 'Malaysia', body.postcode as string | null);
+  if (pcErr) return c.json({ error: 'postcode_required', message: pcErr }, 400);
   const emails = supplierEmailWrites(body, null);
   if (!emails.ok) return c.json({ error: 'invalid_email', message: emails.message }, 400);
 
@@ -679,6 +683,19 @@ export const patchSupplierHandler = async (c: any) => {
       if (refusal) return c.json(refusal.body, refusal.status);
       body.code = next;
     }
+  }
+
+  /* Clearing the postcode of a Malaysia / Singapore supplier is refused; a save
+     that leaves it alone is not (owner 2026-11-19). */
+  if (body.postcode !== undefined || body.country !== undefined) {
+    const { data: cur, error: curErr } = await scopeToCompanyId(supabase.from('suppliers').select('country, postcode').eq('id', id), co.companyId).maybeSingle();
+    if (curErr) return c.json({ error: 'load_failed', reason: curErr.message }, 500);
+    if (!cur) return c.json(NOT_THIS_COMPANY, 404);
+    const onFile = cur as { country: string | null; postcode: string | null };
+    const country = body.country !== undefined ? (body.country as string | null) : onFile.country;
+    const postcode = body.postcode !== undefined ? (body.postcode as string | null) : onFile.postcode;
+    const pcErr = masterPostcodeError(country, postcode);
+    if (pcErr) return c.json({ error: 'postcode_required', message: pcErr }, 400);
   }
 
   /* Email, Email 2, Email 3 — checked against what is on file (supplierEmailWrites). */

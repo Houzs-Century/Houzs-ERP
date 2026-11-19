@@ -17,6 +17,7 @@ import { VenueManagerRow } from "./project-maintenance/VenueManagerRow";
 import { OrganizerManagerRow } from "./project-maintenance/OrganizerManagerRow";
 import { AddressTripleFields } from "../vendor/scm/components/AddressTripleFields";
 import { VENUE_TRIPLE_CLASSES } from "./project-maintenance/VenueManagerRow";
+import { masterNeedsPostcode, masterPostcodeError } from "../vendor/shared/master-postcode-rule";
 
 // ── Projects tab ─────────────────────────────────────────────
 // Lookup management for the project module: organizers, venues, and
@@ -456,6 +457,8 @@ function VenueManager() {
   async function add() {
     const trimmed = name.trim();
     if (!trimmed) return;
+    const pcErr = masterPostcodeError(countryField, postcodeField);
+    if (pcErr) { toast.error(pcErr); return; }
     setAdding(true);
     try {
       await api.post("/api/projects/venues", {
@@ -559,6 +562,7 @@ function VenueManager() {
             follows the State. Delivery Planning reads them for SETUP / DISMANTLE. */}
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
           <AddressTripleFields
+            postcodeRequired={masterNeedsPostcode(countryField)}
             country=""
             value={{ state: stateField, city: cityField, postcode: postcodeField }}
             onChange={(next, derivedCountry) => {

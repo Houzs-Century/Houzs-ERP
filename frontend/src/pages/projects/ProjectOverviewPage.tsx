@@ -21,7 +21,7 @@ import { DateRangeButton } from "../../components/DateRangeButton";
 import { PROJECT_REPORT_RANGE_PRESETS, monthEnd, presetLabel, presetOf } from "../../lib/dateRangePresets";
 import { ProjectOverviewTable } from "./ProjectOverviewTable";
 import { ProjectDataGapsPanel, ProjectStuckPanel } from "./ProjectOverviewParts";
-import { figuresOf, totalsOf, groupBy, drillOf, heldVsComing, pctOf, type OvProject, type Drill } from "./projectOverviewModel";
+import { figuresOf, totalsOf, groupBy, drillOf, heldVsComing, isHeld, forecastShareOf, pctOf, type OvProject, type Drill } from "./projectOverviewModel";
 import { VIEW_PARAMS, readView, rememberOpenedFrom, takeScroll, writeView, type Dim, type OverviewView } from "./projectOverviewView";
 
 type Part = "all" | "held" | "coming";
@@ -92,7 +92,7 @@ export function ProjectOverviewPage() {
   const partParam = params.get(PART_PARAM);
   const part: Part = split && (partParam === "held" || partParam === "coming") ? partParam : "all";
   const setPart = (next: Part) => setParams((prev) => { const n = new URLSearchParams(prev); if (next === "all") n.delete(PART_PARAM); else n.set(PART_PARAM, next); return n; }, { replace: true });
-  const shown = useMemo(() => (part === "all" ? inPeriod : inPeriod.filter((p) => (part === "held" ? (p.startDate ?? "") <= today : (p.startDate ?? "") > today))), [inPeriod, part, today]);
+  const shown = useMemo(() => (part === "all" ? inPeriod : inPeriod.filter((p) => (part === "held" ? isHeld(p, today) : !isHeld(p, today)))), [inPeriod, part, today]);
   const ts = part === "all" ? t : totalsOf(shown);
   const partLabel = part === "held" ? " · held so far" : part === "coming" ? " · still to come" : "";
   const groups = groupBy(shown, (p) => p[dim]);
@@ -105,7 +105,7 @@ export function ProjectOverviewPage() {
   const trendEnd = win.to > today ? win.to : today;
   const trend = drillOf(all, drill, today).filter((b) => b.from <= trendEnd);
   /* The part of each bucket's sales still to come (events after today), on forecast. */
-  const toCome = trend.map((b) => totalsOf(all.filter((p) => !!p.startDate && p.startDate > today && p.startDate >= b.from && p.startDate <= b.to)).sales);
+  const toCome = trend.map((b) => totalsOf(all.filter((p) => !!p.startDate && !isHeld(p, today) && p.startDate >= b.from && p.startDate <= b.to)).sales);
   const anyToCome = toCome.some((v) => v !== 0);
   /* Breadcrumb back up the drill: All years > 2026 > Q4 > Oct. */
   const crumbs: Array<[string, Drill]> = [["All years", { level: "years" }]];
@@ -133,8 +133,8 @@ export function ProjectOverviewPage() {
   const npMax = Math.max(1, ...groups.map((g) => Math.abs(g.np)));
   const listed = shown.filter((p) => !pick || (p[dim] || "—") === pick).map((p) => ({ p, f: figuresOf(p) }));
   /* Collected: what the period's orders have been paid, of what they ordered. */
-  const paidSen = inPeriod.reduce((a, p) => a + p.collection.paidSen, 0);
-  const orderedSen = inPeriod.reduce((a, p) => a + p.collection.totalSen, 0);
+  const paidSen = shown.reduce((a, p) => a + p.collection.paidSen, 0);
+  const orderedSen = shown.reduce((a, p) => a + p.collection.totalSen, 0);
   const options = (key: "brand" | "eventType" | "organizer" | "venue" | "state" | "stage") => [...new Set((q.data?.projects ?? []).map((p) => p[key]).filter((x): x is string => !!x))].sort();
 
   return (
@@ -146,7 +146,7 @@ export function ProjectOverviewPage() {
         <select className={SELECT_CLS} value={type} onChange={(e) => setView({ type: e.target.value })} aria-label="Event type"><option value="">All event types</option>{options("eventType").map((b) => <option key={b}>{b}</option>)}</select>
         <select className={SELECT_CLS} value={organizer} onChange={(e) => setView({ organizer: e.target.value })} aria-label="Organizer"><option value="">All organizers</option>{options("organizer").map((b) => <option key={b}>{b}</option>)}</select>
         {/* Venue, state and stage too (owner 2026-11-01: every filter the page can take). */}
-        <select className={SELECT_CLS} value={venue} onChange={(e) => setView({ venue: e.target.value })} aria-label="Venue"><option value="">All venues</option>{options("venue").map((b) => <option key={b}>{b}</option>)}</select>
+        <select className={cn(SELECT_CLS, "max-w-full")} value={venue} onChange={(e) => setView({ venue: e.target.value })} aria-label="Venue"><option value="">All venues</option>{options("venue").map((b) => <option key={b}>{b}</option>)}</select>
         <select className={SELECT_CLS} value={state} onChange={(e) => setView({ state: e.target.value })} aria-label="State"><option value="">All states</option>{options("state").map((b) => <option key={b}>{b}</option>)}</select>
         <select className={SELECT_CLS} value={stage} onChange={(e) => setView({ stage: e.target.value })} aria-label="Stage"><option value="">All stages</option>{options("stage").map((b) => <option key={b} value={b}>{b.charAt(0).toUpperCase() + b.slice(1)}</option>)}</select>
         {q.loading && <span className="text-[11.5px] text-ink-muted">Loading…</span>}
@@ -158,20 +158,23 @@ export function ProjectOverviewPage() {
       <section className="relative overflow-hidden rounded-2xl bg-sidebar px-5 py-5 text-sidebar-ink shadow-slab sm:px-7">
         <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full opacity-50 blur-2xl" style={{ background: "radial-gradient(circle, rgba(22,105,95,0.6), transparent 70%)" }} />
         <div className="relative">
-          <div className="font-mono text-[10px] font-bold uppercase tracking-brand text-accent-bright">{winLabel} · {t.projects} projects</div>
+          <div className="font-mono text-[10px] font-bold uppercase tracking-brand text-accent-bright">{winLabel}{partLabel} · {ts.projects} projects</div>
           <div className="mt-3 grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-4">
-            <Hero label="Sales" value={money(t.sales)} sub={t.split.sales.forecast + t.split.sales.last_event !== 0 ? "includes estimates, split below" : t.fromSalesOrders ? `${t.fromSalesOrders} projects from Sales Orders` : "all from keyed books"} />
-            <Hero label="Gross profit %" value={pctTxt(pctOf(t.gp, t.sales))} sub={`GP ${money(t.gp)}`} tone={t.gp >= 0 ? "good" : "bad"} />
-            <Hero label="Net profit" value={money(t.np)} sub={`NP ${pctTxt(pctOf(t.np, t.sales))}`} tone={t.np >= 0 ? "good" : "bad"} />
+            {/* The big figures follow the part picked below (owner 2026-11-19: 我点了 上面不会跳). */}
+            <Hero label="Sales" value={money(ts.sales)} sub={ts.split.sales.forecast + ts.split.sales.last_event !== 0 ? "includes forecast, split below" : ts.fromSalesOrders ? `${ts.fromSalesOrders} projects from Sales Orders` : "all from keyed books"} />
+            <Hero label="Gross profit %" value={pctTxt(pctOf(ts.gp, ts.sales))} sub={`GP ${money(ts.gp)}`} tone={ts.gp >= 0 ? "good" : "bad"} />
+            <Hero label="Net profit" value={money(ts.np)} sub={`NP ${pctTxt(pctOf(ts.np, ts.sales))}`} tone={ts.np >= 0 ? "good" : "bad"} />
             <Hero label="Collected" value={pctTxt(pctOf(paidSen, orderedSen))} sub={`${money(paidSen / 100)} of ${money(orderedSen / 100)} ordered`} />
           </div>
           {split && <HeldComingRow held={split.held} coming={split.coming} total={t} today={today} part={part} onPart={setPart} />}
-          {t.estimated > 0 && <LayerSplitRow t={t} />}
-          {t.noSales > 0 && <p className="mt-3 text-[11.5px] text-sidebar-ink/70">{t.noSales} projects in this period have neither keyed sales nor Sales Orders yet.</p>}
+          {ts.estimated > 0 && <LayerSplitRow t={ts} />}
+          {ts.noSales > 0 && <p className="mt-3 text-[11.5px] text-sidebar-ink/70">{ts.noSales} projects in this period have neither keyed sales nor Sales Orders yet.</p>}
         </div>
       </section>
 
-      <div className="grid gap-4 xl:grid-cols-[1.6fr_1fr]">
+      {/* minmax(0, ...): a wide table scrolls inside its panel instead of
+          stretching the column past a phone screen (owner 2026-11-19). */}
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
         <Panel title="Trend" hint="sales, gross and net profit by event start · click a row to go one level down"
           right={<span className="flex flex-wrap items-center gap-1 text-[12px]">{crumbs.map(([label, d], i) => (
             <span key={label} className="flex items-center gap-1">
@@ -183,6 +186,7 @@ export function ProjectOverviewPage() {
               onChange={(v) => setDrill(v === "q" ? { level: "quarters", year: yearView } : { level: "yearMonths", year: yearView })} />}
           </span>}>
           <Columns axes valueLabels={false} height={250} stacked={false} format={money} highlight={trend.findIndex((b) => today >= b.from && today <= b.to)}
+            forecast={{ share: trend.map(forecastShareOf) }}
             labels={trend.map((b) => b.label)}
             series={[{ name: "Sales", color: PALETTE[0]! }, { name: "Gross profit", color: "#8fb3ae" }]}
             values={[trend.map((b) => b.sales), trend.map((b) => Math.max(0, b.gp))]}
@@ -196,7 +200,7 @@ export function ProjectOverviewPage() {
                   <Td className={b.np < 0 ? "text-err" : ""}>{money(b.np)}</Td><Td>{pctTxt(pctOf(b.np, b.sales))}</Td>
                 </tr>))}</tbody>
             </table>
-            <p className="mt-1 text-[11px] text-ink-muted">{drill.level === "weeks" ? "Click a week to show its projects across the page." : "Year, then its quarters, then its months, then the weeks of a month."}{anyToCome ? " To come = events not started yet, on their forecast." : ""}</p>
+            <p className="mt-1 text-[11px] text-ink-muted">{drill.level === "weeks" ? "Click a week to show its projects across the page." : "Year, then its quarters, then its months, then the weeks of a month."}{anyToCome ? " To come = events not started or with no sales in yet, on their forecast. Hatched bar and dashed line = forecast." : ""}</p>
           </div>
         </Panel>
         <Panel title="Where each ringgit of sales goes" hint={`${winLabel}${partLabel}`}>
@@ -259,8 +263,8 @@ export function ProjectOverviewPage() {
  *  what has been held, what is still to come, and the projected total. */
 function HeldComingRow({ held, coming, total, today, part, onPart }: { held: ReturnType<typeof totalsOf>; coming: ReturnType<typeof totalsOf>; total: ReturnType<typeof totalsOf>; today: string; part: Part; onPart: (p: Part) => void }) {
   const cells: Array<[Part, string, string, ReturnType<typeof totalsOf>]> = [
-    ["held", "Held so far", `${held.projects} project${held.projects === 1 ? "" : "s"} started by ${today.slice(8)}/${today.slice(5, 7)}`, held],
-    ["coming", "Still to come", `${coming.projects} project${coming.projects === 1 ? "" : "s"} · on forecast`, coming],
+    ["held", "Held so far", `${held.projects} project${held.projects === 1 ? "" : "s"} with real sales, by ${today.slice(8)}/${today.slice(5, 7)}`, held],
+    ["coming", "Still to come", `${coming.projects} project${coming.projects === 1 ? "" : "s"} · not started or no sales in yet · on forecast`, coming],
     ["all", "Projected total", "held + still to come", total],
   ];
   return (
@@ -291,7 +295,7 @@ function LayerSplitRow({ t }: { t: ReturnType<typeof totalsOf> }) {
   return (
     <div className="mt-4 overflow-x-auto rounded-lg bg-white/5 px-3 py-2" data-testid="layer-split">
       <div className="mb-1 text-[11px] text-sidebar-ink/70">{t.estimated} of {t.projects} projects include a forecast (typed, or the last same event&apos;s result)</div>
-      <table className="w-full min-w-[420px] border-collapse text-[12px] tabular-nums">
+      <table className="w-full border-collapse text-[12px] tabular-nums">
         <thead><tr className="text-left text-[10.5px] uppercase tracking-wider text-sidebar-ink/70">
           <th className="py-0.5 font-semibold"> </th><th className="py-0.5 text-right font-semibold">Actual</th><th className="py-0.5 text-right font-semibold">Forecast</th>
         </tr></thead>

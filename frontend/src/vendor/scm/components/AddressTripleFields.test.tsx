@@ -22,6 +22,7 @@ const Host = ({ onChange }: { onChange: (v: unknown) => void }) => {
   const [v, setV] = useState({ state: '', city: '', postcode: '' });
   return (
     <AddressTripleFields
+      postcodeRequired
       country=""
       value={v}
       onChange={(next, country) => { setV(next); onChange({ ...next, country }); }}

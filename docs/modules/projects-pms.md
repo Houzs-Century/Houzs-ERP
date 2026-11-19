@@ -194,8 +194,10 @@ list. Holding `projects.write` escapes crew scoping entirely on both.
 - The Financial Snapshot's By Total Sales column is three layers per line (owner 2026-11-18;
   `services/eventForecast.ts`, reads `eventForecastLoad.ts`): the event's actual, else its typed
   Forecast (`project_forecast`, `PUT|DELETE /api/project-forecast/:id/:line`, `projects.write` +
-  finance viewer), else - only until the event ends - the ACTUAL of the latest earlier event with the
-  same company, organiser, venue and brand (trimmed, case-insensitive, as `project-venue-join.ts`). No such
+  finance viewer), else - until the event ends, or always for events starting 2026-11-01 on - the
+  ACTUAL of the latest earlier event with the same company, organiser, venue and brand (trimmed,
+  case-insensitive, as `project-venue-join.ts`). Transport Fee, Commission and Merchandise take that
+  event's RATIO to the shown Sales, not its amount; COGS and fixed costs take its amount. No such
   event = no layer, never another venue. Totals add the shown lines and flag estimates. Project
   Overview layers its column the same way and splits totals Actual / Forecast / Last event; that
   event's Expo Map files show read-only in this event's EXPO MAP section while it has none.
