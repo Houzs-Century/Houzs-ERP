@@ -68,7 +68,7 @@ import {
 } from '../lib/lead-time';
 import { groupKeyFor } from '../lib/po-grouping';
 import { diningLineNote, diningPoHeaderNotes } from '../lib/po-dining-remark';
-import { findOverConvertOffender, soLineHeadroom, type OverConvertOffender, loadBoundOrderedQty, boundAwarePicked, isBoundForCompany } from '../lib/po-over-convert';
+import { findOverConvertOffender, soLineHeadroom, soLineOverConvertRefusal, type OverConvertOffender, loadBoundOrderedQty, boundAwarePicked, isBoundForCompany } from '../lib/po-over-convert';
 import {
   planAllocationCreate,
   planAllocationQtyUpdate,
@@ -93,7 +93,7 @@ import { signSoItemPhotoUrl, soItemPhotoBindings } from '../lib/r2';
 import { baseKeyOf, thumbKeyFor } from '../../services/photoThumbs';
 import { proxyFallbackPayload, type PhotoUrlPayload } from '../lib/photoProxyFallback';
 import { markIdempotencyNoWrite } from '../../middleware/idempotency';
-import { soLinesOnLivePo, soHasPoRefusal } from '../lib/so-line-po-duplicate';
+import { soHasPoGate } from '../lib/so-line-po-duplicate';
 import { supabaseAuth } from '../middleware/auth';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChange } from '../lib/entity-audit';
 import { PO_LINE_AUDIT_FIELDS, PO_LINE_AUDIT_SELECT } from '../lib/entity-audit-fields';
@@ -1049,7 +1049,6 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
      in which case the client replays with this flag set. Mirrors the
      confirmShortStock soft-warn -> confirm -> proceed shape. */
   const confirmOverConvert = body.confirmOverConvert === true;
-  const confirmDuplicatePo = body.confirmDuplicatePo === true; // 2990-0065, lib/so-line-po-duplicate.ts
 
   const currency = ((body.currency as string) ?? 'MYR').toUpperCase();
   if (!VALID_CURRENCIES.has(currency)) return c.json({ error: 'invalid_currency' }, 400);
@@ -1100,17 +1099,10 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
          with fromMrp) so there is no MRP case to exclude. Pre-write guard: mark
          the idempotency claim no-write so the confirmed replay re-runs instead of
          replaying this 409 (mirrors the short_stock gate). */
-      /* 2990-0065 — a line already on a live PO asks first. Once the operator
-         has said Continue for those lines, the quantity cap below does not ask
-         the same question again in other words. */
-      const onPo = await soLinesOnLivePo(supabase, soRows);
-      if (!confirmDuplicatePo) {
-        const dup = soHasPoRefusal(onPo);
-        if (dup) { markIdempotencyNoWrite(c); return c.json(dup, 409); }
-      }
-      const confirmedDup = new Set(confirmDuplicatePo ? onPo.map((h) => h.soItemId) : []);
+      const dupGate = await soHasPoGate(supabase, soRows, body.confirmDuplicatePo); // 2990-0065; lines confirmed there skip the qty prompt
+      if (dupGate.refusal) { markIdempotencyNoWrite(c); return c.json(dupGate.refusal, 409); }
       if (!confirmOverConvert) {
-        const offender = findOverConvertOffender(items.filter((it) => !confirmedDup.has(it.soItemId as string)), soRows);
+        const offender = findOverConvertOffender(items.filter((it) => !dupGate.confirmed.has(it.soItemId as string)), soRows);
         if (offender) {
           markIdempotencyNoWrite(c);
           return c.json({ error: 'qty_exceeds_remaining', ...offender }, 409);
@@ -1698,13 +1690,8 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
     if (offender) return c.json(soNotOrderableResponse(offender), 409);
   }
 
-  /* 2990-0065 — after the hard caps above, so a pick they refuse is never asked
-     about first. Covers the From-SO picker, MRP, the mobile wizard and the PO
-     page's Transfer from Sales Order (targetPoId). */
-  if (body.confirmDuplicatePo !== true) {
-    const dup = soHasPoRefusal(await soLinesOnLivePo(supabase, pickedItems.map((p) => p.row)));
-    if (dup) return c.json(dup, 409);
-  }
+  const dupGate = await soHasPoGate(supabase, pickedItems.map((p) => p.row), body.confirmDuplicatePo); // 2990-0065, after the hard caps
+  if (dupGate.refusal) return c.json(dupGate.refusal, 409);
 
   // Re-project into the legacy soItems shape for the rest of the handler.
   // Commander 2026-05-28 — carry the per-line derived warehouse + delivery
@@ -2478,9 +2465,7 @@ export async function createDraftPosFromPicks(
     return undefined;
   };
   return convertSosToPosCore({
-    /* shortcut: no person to ask, so the agent is not prompted (2990-0065); it only
-       writes DRAFTs a human confirms. Upgrade if its drafts start doubling lines. */
-    req: { json: async () => ({ picks: opts.picks, asDraft: true, fromMrp: true, confirmDuplicatePo: true }) },
+    req: { json: async () => ({ picks: opts.picks, asDraft: true, fromMrp: true, confirmDuplicatePo: true }) }, // shortcut: agent not prompted (no person; DRAFT only), 2990-0065
     get: syntheticGet as unknown as PoConvertContext['get'],
     env,
     json: (b, status) => ({ status: status ?? 200, body: b as Record<string, unknown> }),
@@ -2915,43 +2900,6 @@ async function soLinkTargetRefusal(
   return null;
 }
 
-/* ── SO-link remaining-qty cap (LINE level) ─────────────────────────────────
-   soLinkTargetRefusal above proves a bind is POINTED at a legitimate SO line;
-   it says nothing about HOW MUCH that line may order. The batch paths all cap
-   it — /from-sos via `!fromMrp && p.qty > remaining`, the generic create via
-   findOverConvertOffender, /:id/convert-from-so by deriving qty server-side as
-   the unpicked remainder — but add-line and line-edit did not, so an operator
-   could append (or edit up to) any qty against an SO line that was already
-   fully converted. That is the same double-ordering the F1 audit closed on
-   /:id/convert-from-so in 2026-06-10, reachable through the two paths that
-   accept an operator-supplied qty.
-
-   Repeat conversion stays legal — the business splits one SO across several POs
-   on purpose. The ceiling is what is capped, never the second conversion.
-
-   Overridable with confirmOverConvert, the SAME escape hatch the generic create
-   documents, so a deliberate over-order is still one explicit flag away. */
-export async function soLineOverConvertRefusal(
-  sb: any,
-  soItemId: string | null,
-  requestedQty: number,
-  ownCurrentQty: number,
-): Promise<OverConvertOffender | null> {
-  if (!soItemId) return null;
-  const { data } = await sb
-    .from('mfg_sales_order_items')
-    .select('id, qty, po_qty_picked')
-    .eq('id', soItemId)
-    .maybeSingle();
-  const row = data as { qty: number; po_qty_picked: number } | null;
-  /* Unknown / cross-company line: soLinkTargetRefusal already refused it with a
-     404 before we get here, so there is nothing left to cap. */
-  if (!row) return null;
-  const remaining = soLineHeadroom(row, ownCurrentQty);
-  const requested = Math.max(0, Number(requestedQty ?? 0));
-  return requested > remaining ? { soItemId, requested, remaining } : null;
-}
-
 mfgPurchaseOrders.post('/:id/items', async (c) => {
   const poId = c.req.param('id');
   let it: Record<string, unknown>;
@@ -2998,10 +2946,8 @@ mfgPurchaseOrders.post('/:id/items', async (c) => {
   { const inactive = await poInactivePickRefusal(sb, co.companyId ?? null, [{ materialKind: it.materialKind, itemCode: it.itemCode, soItemId }]); if (inactive) return c.json(inactive, 409); }
   /* Remaining-qty cap — a NEW line contributes nothing to po_qty_picked yet, so
      its own headroom is the raw remainder (ownCurrentQty = 0). */
-  if (soItemId && it.confirmDuplicatePo !== true) { // 2990-0065
-    const dup = soHasPoRefusal(await soLinesOnLivePo(sb, [{ id: soItemId, doc_no: null, item_code: String(it.itemCode ?? '') }]));
-    if (dup) { markIdempotencyNoWrite(c); return c.json(dup, 409); }
-  }
+  const dupGate = await soHasPoGate(sb, soItemId ? [{ id: soItemId, doc_no: null, item_code: String(it.itemCode ?? '') }] : [], it.confirmDuplicatePo); // 2990-0065
+  if (dupGate.refusal) { markIdempotencyNoWrite(c); return c.json(dupGate.refusal, 409); }
   if (it.confirmOverConvert !== true) {
     const over = await soLineOverConvertRefusal(sb, soItemId, qty, 0);
     if (over) return c.json({ error: 'qty_exceeds_remaining', ...over }, 409);

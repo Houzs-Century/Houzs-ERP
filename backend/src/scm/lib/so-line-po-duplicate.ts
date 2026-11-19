@@ -69,3 +69,17 @@ export function soHasPoRefusal(hits: readonly SoLinePoHit[]) {
     lines: hits,
   };
 }
+
+/** One call per route. Not yet confirmed: the 409 body when a line is already on
+ *  a live PO. Confirmed (`confirmDuplicatePo: true`): the SO line ids the operator
+ *  said Continue for, so the New PO form's quantity prompt does not ask again. */
+export async function soHasPoGate(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the scm PostgREST client is untyped
+  sb: any,
+  rows: readonly SoLineRef[],
+  confirmDuplicatePo: unknown,
+): Promise<{ refusal: ReturnType<typeof soHasPoRefusal>; confirmed: Set<string> }> {
+  const hits = await soLinesOnLivePo(sb, rows);
+  if (confirmDuplicatePo === true) return { refusal: null, confirmed: new Set(hits.map((h) => h.soItemId)) };
+  return { refusal: soHasPoRefusal(hits), confirmed: new Set() };
+}
