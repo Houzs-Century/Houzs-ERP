@@ -6,6 +6,7 @@ import {
   AUTO_CLOSE_AFTER_HOURS,
   autoCloseMinute,
   computeAttendanceDay,
+  distanceLabel,
   minutesFromWorkDate,
   workClock,
   type AttendanceRules,
@@ -163,6 +164,33 @@ export function planPunch(
     return { kind: "already-out", rowId: today.id, clock: workClock(minutesFromWorkDate(today.work_date, asDate(today.clock_out_at))) };
   }
   return { kind: "no-open-punch" };
+}
+
+export type PunchGates = { requireSelfie: boolean; requireOnSite: boolean };
+
+/* HC-0125 punch gates. A recording punch (insert / stamp-in / stamp-out) is
+ * refused when a gate is on and unmet; an already-in re-tap, and the refusals
+ * planPunch already returned, are never gated. Returns the refusal to send
+ * (error code + a sentence for the phone), or null to let the punch through. */
+export function punchGateRefusal(
+  gates: PunchGates,
+  planKind: PunchPlan["kind"],
+  hasPhoto: boolean,
+  loc: { geo: GeoResult | null; siteName: string | null; distanceM: number | null },
+): { error: string; message: string } | null {
+  const recording = planKind === "insert" || planKind === "stamp-in" || planKind === "stamp-out";
+  if (!recording) return null;
+  if (gates.requireSelfie && !hasPhoto) {
+    return { error: "photo_required", message: "A photo is required to clock in or out. Tap again and take the selfie." };
+  }
+  if (gates.requireOnSite && loc.geo !== "IN") {
+    const message =
+      loc.geo === "OUT" && loc.distanceM != null
+        ? `You are ${distanceLabel(loc.distanceM)} from ${loc.siteName ?? "the site"} — too far to clock in or out. Move closer and try again.`
+        : "Turn on your location so we can check you are on site, then try again.";
+    return { error: "off_site", message };
+  }
+  return null;
 }
 
 /* An HR correction gives times as "HH:MM" on the work date. A clock-out

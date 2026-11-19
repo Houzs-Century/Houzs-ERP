@@ -3,7 +3,7 @@
  * the hr-auto-clockout cron. Drizzle throughout. */
 import { and, asc, eq, isNotNull, isNull, lt } from "drizzle-orm";
 import { getDb } from "../../db/client";
-import { hr_attendance, hr_pay_rule_versions, hr_punch_sites } from "../../db/schema";
+import { hr_attendance, hr_attendance_settings, hr_pay_rule_versions, hr_punch_sites } from "../../db/schema";
 import { resolvePayRulesAsOf, normalizePayRules, type PayRulesConfig } from "../../scm/shared/hr-pay-rules";
 import { AUTO_CLOSE_AFTER_HOURS, toAttendanceRules, type AttendanceRules, type PunchSite } from "../../scm/shared/hr-attendance";
 import { asDate, autoCloseAt } from "./hr-attendance-view";
@@ -43,6 +43,21 @@ export async function loadSites(db: Db, companyId: number): Promise<{ active: Pu
     active: rows.filter((r) => r.active).map((r) => ({ id: r.id, name: r.name, lat: r.lat, lng: r.lng, radiusM: r.radius_m })),
     names: new Map(rows.map((r) => [r.id, r.name])),
   };
+}
+
+/* The punch gates for a company (HC-0125): when a gate is on, a phone punch
+ * that lacks a selfie / is not within a site is REFUSED. Absent row = both off,
+ * the old evidence-only behaviour. */
+export type AttendanceSettings = { requireSelfie: boolean; requireOnSite: boolean };
+
+export async function loadAttendanceSettings(db: Db, companyId: number): Promise<AttendanceSettings> {
+  const row = await db
+    .select()
+    .from(hr_attendance_settings)
+    .where(eq(hr_attendance_settings.company_id, companyId))
+    .limit(1)
+    .then((r) => r.at(0));
+  return { requireSelfie: !!row?.require_selfie, requireOnSite: !!row?.require_on_site };
 }
 
 /* Close every open punch whose clock-in is AUTO_CLOSE_AFTER_HOURS old, at

@@ -4,7 +4,7 @@
 import { describe, expect, test } from "vitest";
 import { DEFAULT_PAY_RULES } from "../../scm/shared/hr-pay-rules";
 import { toAttendanceRules } from "../../scm/shared/hr-attendance";
-import { asDate, attendanceView, autoCloseAt, correctionTimes, isForgottenOpenPunch, planPunch, type AttendanceRow } from "./hr-attendance-view";
+import { asDate, attendanceView, autoCloseAt, correctionTimes, isForgottenOpenPunch, planPunch, punchGateRefusal, type AttendanceRow } from "./hr-attendance-view";
 
 const rules = toAttendanceRules(DEFAULT_PAY_RULES);
 const at = (myt: string) => new Date(`${myt}+08:00`).toISOString();
@@ -80,6 +80,42 @@ describe("forgotten clock-out", () => {
   test("closed at the shift end; a clock-in after the shift end gets a standard day", () => {
     expect(autoCloseAt("2026-10-22", new Date(at("2026-10-22T08:10:00")), rules).toISOString()).toBe(new Date(at("2026-10-22T18:00:00")).toISOString());
     expect(autoCloseAt("2026-10-22", new Date(at("2026-10-22T19:00:00")), rules).toISOString()).toBe(new Date(at("2026-10-23T05:00:00")).toISOString());
+  });
+});
+
+describe("punchGateRefusal", () => {
+  const inSite = { geo: "IN" as const, siteName: "KL WAREHOUSE", distanceM: 40 };
+  const offSite = { geo: "OUT" as const, siteName: "KL WAREHOUSE", distanceM: 850 };
+  const noGps = { geo: "NONE" as const, siteName: null, distanceM: null };
+  const bothOff = { requireSelfie: false, requireOnSite: false };
+
+  test("no gate on: a punch always passes, with or without a photo / location", () => {
+    expect(punchGateRefusal(bothOff, "insert", false, noGps)).toBeNull();
+    expect(punchGateRefusal(bothOff, "stamp-out", true, inSite)).toBeNull();
+  });
+
+  test("require a photo: a recording punch without one is refused, with one passes", () => {
+    const g = { requireSelfie: true, requireOnSite: false };
+    expect(punchGateRefusal(g, "insert", false, inSite)?.error).toBe("photo_required");
+    expect(punchGateRefusal(g, "stamp-in", false, inSite)?.error).toBe("photo_required");
+    expect(punchGateRefusal(g, "stamp-out", false, inSite)?.error).toBe("photo_required");
+    expect(punchGateRefusal(g, "insert", true, inSite)).toBeNull();
+  });
+
+  test("require on site: off-site is refused with the distance, on site passes, no GPS asks for location", () => {
+    const g = { requireSelfie: false, requireOnSite: true };
+    expect(punchGateRefusal(g, "insert", true, inSite)).toBeNull();
+    const far = punchGateRefusal(g, "insert", true, offSite);
+    expect(far?.error).toBe("off_site");
+    expect(far?.message).toContain("KL WAREHOUSE");
+    expect(punchGateRefusal(g, "stamp-out", true, noGps)?.message).toContain("location");
+  });
+
+  test("a re-tap (already-in) and planPunch's own refusals are never gated", () => {
+    const g = { requireSelfie: true, requireOnSite: true };
+    expect(punchGateRefusal(g, "already-in", false, noGps)).toBeNull();
+    expect(punchGateRefusal(g, "already-out", false, noGps)).toBeNull();
+    expect(punchGateRefusal(g, "no-open-punch", false, noGps)).toBeNull();
   });
 });
 

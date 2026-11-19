@@ -320,6 +320,7 @@ POST,/api/hr/penalties,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireA
 DELETE,/api/hr/penalties/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr-payroll.ts
 PATCH,/api/hr/penalties/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr-payroll.ts
 POST,/api/hr/penalties/:id/:action{submit|approve|reject|revoke},AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr-payroll.ts
+PUT,/api/hr/punch-settings,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr-attendance.ts
 GET,/api/hr/punch-sites,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,NO,DECLARED_GATE,backend/src/routes/hr-attendance.ts
 POST,/api/hr/punch-sites,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr-attendance.ts
 PATCH,/api/hr/punch-sites/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr-attendance.ts
