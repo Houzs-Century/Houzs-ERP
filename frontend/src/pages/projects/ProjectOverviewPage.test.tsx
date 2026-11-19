@@ -218,3 +218,10 @@ describe("Project Overview - fits a phone (owner 2026-11-19)", () => {
     expect(screen.getByTestId("layer-split").querySelector("table")?.className).not.toMatch(/min-w-/);
   });
 });
+
+describe("Project Overview - the ringgit table scrolls on a phone (owner 2026-11-19)", () => {
+  it("sits in its own sideways-scrolling box", () => {
+    show("?view=finances&af_from=2027-01-01&af_to=2027-03-31");
+    expect(screen.getByTestId("ringgit-table").className).toContain("overflow-x-auto");
+  });
+});
