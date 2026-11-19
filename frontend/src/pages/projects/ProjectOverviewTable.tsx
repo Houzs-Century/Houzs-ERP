@@ -38,7 +38,16 @@ const amountCol = (key: string, label: string, pick: (r: OverviewRow) => number,
   /* To the sen, so two rows that read the same share one line in the funnel. */
   getValue: (r) => Math.round(pick(r) * 100) / 100, filterLabel: (v) => money(Number(v)),
   filterType: "number", sortValue: pick, numberValue: pick, exportValue: (r) => pick(r),
-  total: (rows) => <span className={opts.strong && sum(rows, pick) < 0 ? "text-err" : ""}>{money(sum(rows, pick))}</span>,
+  /* The total says how much of it is a forecast - shaded, with the forecast part on hover
+     (owner 2026-11-19: projected total 又怎么show). */
+  total: (rows) => {
+    const all = sum(rows, pick);
+    const fc = sum(rows.filter((r) => r.f.estimated && estimatedColumnsOf(r.p).includes(key)), pick);
+    const tone = opts.strong && all < 0 ? "text-err" : "";
+    return Math.abs(fc) >= 0.005
+      ? <span className={`${tone} rounded bg-warning-bg px-1 text-warning-text`} title={`Includes ${money(fc)} forecast; ${money(all - fc)} is real`} data-forecast="1">{money(all)}</span>
+      : <span className={tone}>{money(all)}</span>;
+  },
 });
 
 /** A % column worked out row by row, and on the Total row from the added-up figures. */
