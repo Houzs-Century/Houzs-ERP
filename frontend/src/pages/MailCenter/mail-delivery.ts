@@ -6,7 +6,7 @@
 // back { ok: true, queued: true } and is already on the thread. Telling the
 // operator "failed" there would make them send it a second time.
 
-export type DeliveryStatus = "queued" | "failed" | "delivered" | "opened" | "bounced" | null;
+export type DeliveryStatus = "queued" | "failed" | "delivered" | "bounced" | null;
 export type DeliveryTone = "waiting" | "bad" | "good";
 
 export function deliveryLabel(status: DeliveryStatus | undefined): string | null {
@@ -14,13 +14,12 @@ export function deliveryLabel(status: DeliveryStatus | undefined): string | null
   if (status === "failed") return "Not delivered";
   if (status === "bounced") return "Bounced: check the address";
   if (status === "delivered") return "Delivered";
-  if (status === "opened") return "Opened";
   return null;
 }
 
 export function deliveryTone(status: DeliveryStatus | undefined): DeliveryTone {
   if (status === "failed" || status === "bounced") return "bad";
-  if (status === "delivered" || status === "opened") return "good";
+  if (status === "delivered") return "good";
   return "waiting";
 }
 

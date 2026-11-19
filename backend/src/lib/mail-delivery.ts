@@ -2,22 +2,20 @@ import type { Env } from "../types";
 import { postPersonalNotice } from "../services/personalNotice";
 import { fetchResendEmail } from "./mail-threading";
 
-export type DeliveryStatus = "queued" | "failed" | "delivered" | "opened" | "bounced" | null;
+export type DeliveryStatus = "queued" | "failed" | "delivered" | "bounced" | null;
 
 const DELIVERY_WINDOW_MILLISECONDS = 3 * 86_400_000;
 export const DELIVERY_REFRESH_LIMIT = 20;
-const OPENED_EVENTS = ["opened", "clicked"];
-const DELIVERED_EVENTS = ["delivered", "complained"];
+const ARRIVED_EVENTS = ["delivered", "opened", "clicked", "complained"];
 const NOT_SENT_EVENTS = ["failed", "canceled"];
-export const FINAL_DELIVERY_EVENTS = [...OPENED_EVENTS, ...NOT_SENT_EVENTS, "complained", "bounced"];
+export const FINAL_DELIVERY_EVENTS = [...ARRIVED_EVENTS, ...NOT_SENT_EVENTS, "bounced"];
 
 export function deliveryStatus(outboxStatus: string | null, providerEvent: string | null): DeliveryStatus {
   if (outboxStatus === "pending") return "queued";
   if (outboxStatus === "failed") return "failed";
   if (providerEvent === "bounced") return "bounced";
   if (providerEvent && NOT_SENT_EVENTS.includes(providerEvent)) return "failed";
-  if (providerEvent && OPENED_EVENTS.includes(providerEvent)) return "opened";
-  if (providerEvent && DELIVERED_EVENTS.includes(providerEvent)) return "delivered";
+  if (providerEvent && ARRIVED_EVENTS.includes(providerEvent)) return "delivered";
   return null;
 }
 
@@ -75,15 +73,18 @@ export async function refreshOutboundDelivery(
         WHERE m.direction = 'outbound' AND m.created_at >= ?
           AND COALESCE(m.provider_message_id, o.provider_id) IS NOT NULL
           AND (m.delivery_status IS NULL OR m.delivery_status NOT IN (${finalPlaceholders}))
-        ORDER BY m.delivery_status_at ASC NULLS FIRST, m.created_at DESC LIMIT ?`,
+        ORDER BY m.created_at DESC LIMIT ?`,
     )
     .bind(new Date(now - DELIVERY_WINDOW_MILLISECONDS).toISOString(), ...FINAL_DELIVERY_EVENTS, limit)
     .all<PendingDeliveryRow>();
-  const askedAt = new Date(now).toISOString();
   for (const row of rows.results) {
     run.checked++;
     const state = await fetchResendEmail(env, row.provider_id);
-    const lastEvent = state?.lastEvent ?? row.delivery_status;
+    if (!state?.lastEvent) {
+      run.unreachable++;
+      continue;
+    }
+    if (state.lastEvent === row.delivery_status) continue;
     await db
       .prepare(
         `UPDATE email_messages
@@ -91,13 +92,8 @@ export async function refreshOutboundDelivery(
                 message_id = COALESCE(message_id, ?), provider_message_id = COALESCE(provider_message_id, ?)
           WHERE id = ?`,
       )
-      .bind(lastEvent, askedAt, state?.messageId ?? null, row.provider_id, row.id)
+      .bind(state.lastEvent, new Date(now).toISOString(), state.messageId, row.provider_id, row.id)
       .run();
-    if (!state?.lastEvent) {
-      run.unreachable++;
-      continue;
-    }
-    if (state.lastEvent === row.delivery_status) continue;
     run.changed++;
     if (state.lastEvent === "bounced") {
       run.bounced++;

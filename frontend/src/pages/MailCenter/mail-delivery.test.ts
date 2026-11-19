@@ -14,8 +14,6 @@ describe("mail delivery copy", () => {
     expect(deliveryTone("bounced")).toBe("bad");
     expect(deliveryLabel("delivered")).toBe("Delivered");
     expect(deliveryTone("delivered")).toBe("good");
-    expect(deliveryLabel("opened")).toBe("Opened");
-    expect(deliveryTone("opened")).toBe("good");
     expect(deliveryTone("queued")).toBe("waiting");
   });
 
