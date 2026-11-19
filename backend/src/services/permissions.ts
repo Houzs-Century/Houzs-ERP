@@ -292,6 +292,10 @@ export const PERMISSIONS: PermissionDef[] = [
   // keys hours and advances does not also sign off what they keyed.
   { key: "hr.payroll.approve", resource: "HR", verb: "approve", label: "Approve payroll", description: "Approve or reopen a payroll month, mark it paid, and approve, reject or revoke penalties" },
   { key: "hr.employees.manage", resource: "HR", verb: "manage", label: "Manage employees", description: "Add and edit employees and their salary, link the ERP account they punch with, keep the public holidays and schedule pay-rule changes — changes what people are paid" },
+  // A supervisor confirms or rejects the overtime workers report on the phone.
+  // Its own key so a floor / warehouse supervisor can sign off OT without the
+  // full hr.employees.manage pay-editing rights. Confirmed OT is what payroll pays.
+  { key: "hr.ot.confirm", resource: "HR", verb: "approve", label: "Confirm overtime", description: "See and confirm or reject the overtime that workers report on the phone; confirmed overtime is what payroll pays" },
 
   // AutoCount write-back queue (scm.autocount_outbox, mig 0277) — the READ of
   // what the ERP has told the licensed account book and what came back. It is a

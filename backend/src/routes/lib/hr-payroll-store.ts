@@ -12,6 +12,7 @@ import {
   hr_employees,
   hr_attendance,
   hr_hour_deductions,
+  hr_ot_claims,
   hr_payslips,
   hr_penalties,
   hr_penalty_lines,
@@ -43,7 +44,7 @@ export async function lockedPeriods(db: Db, companyId: number): Promise<Set<stri
 export async function computePeriod(db: Db, companyId: number, period: string, today: string, onlyEmployeeId: number | null = null): Promise<PayslipFigures[]> {
   const { first, last, year, month } = periodBounds(period);
   const empWhere = onlyEmployeeId != null ? and(eq(hr_employees.company_id, companyId), eq(hr_employees.id, onlyEmployeeId)) : eq(hr_employees.company_id, companyId);
-  const [employees, holidays, hours, docks, advances, penalties, ytd, rulesOn, allowances, paidLeave, trip, attendance] = await Promise.all([
+  const [employees, holidays, hours, docks, advances, penalties, ytd, rulesOn, allowances, paidLeave, trip, attendance, otClaims] = await Promise.all([
     db
       .select({ e: hr_employees, department: departments.name })
       .from(hr_employees)
@@ -123,6 +124,12 @@ export async function computePeriod(db: Db, companyId: number, period: string, t
       })
       .from(hr_attendance)
       .where(and(eq(hr_attendance.company_id, companyId), gte(hr_attendance.work_date, first), lte(hr_attendance.work_date, last))),
+    /* Confirmed overtime claims for the month (HC-0125): weekday OT pay is the
+       sum of these, not the punch surplus. Pending / rejected claims pay nothing. */
+    db
+      .select({ employee_id: hr_ot_claims.employee_id, date: hr_ot_claims.work_date, start_min: hr_ot_claims.start_min, end_min: hr_ot_claims.end_min })
+      .from(hr_ot_claims)
+      .where(and(eq(hr_ot_claims.company_id, companyId), eq(hr_ot_claims.status, "CONFIRMED"), gte(hr_ot_claims.work_date, first), lte(hr_ot_claims.work_date, last))),
   ]);
   const ids = employees.map((r) => r.e.id);
   const history = ids.length
@@ -144,6 +151,14 @@ export async function computePeriod(db: Db, companyId: number, period: string, t
   const leaveBy = by(paidLeave);
   const histBy = by(history);
   const attBy = by(attendance);
+  const otClaimsBy = by(otClaims);
+  /* Confirmed OT hours per date for one employee (HC-0125) — the weekday OT that
+     payroll pays. Empty when nobody reported OT, so a late punch pays no OT. */
+  const confirmedOtHoursFor = (empId: number): Map<string, number> => {
+    const m = new Map<string, number>();
+    for (const r of otClaimsBy.get(empId) ?? []) m.set(r.date, (m.get(r.date) ?? 0) + (r.end_min - r.start_min) / 60);
+    return m;
+  };
   // Per-employee shift (group + delivery-day) for the month, so lateness is
   // judged against each person's own shift, not the one global shift.
   const shiftFor = await shiftRulesResolver(db, companyId, first, last);
@@ -214,6 +229,7 @@ export async function computePeriod(db: Db, companyId: number, period: string, t
           return { kind: a.kind as AllowanceKind, amountSen: Number(a.amount), note: a.note };
         }),
         ytd: ytdBy.get(e.id) ?? { remunerationSen: 0, epfSen: 0, pcbSen: 0 },
+        confirmedOtHoursByDate: confirmedOtHoursFor(e.id),
       }),
     );
 }
