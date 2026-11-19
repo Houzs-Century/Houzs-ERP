@@ -180,7 +180,7 @@ export const ChartOfAccounts = () => {
   const fileRef = useRef<HTMLInputElement>(null);
 
   /* Needs event / PMS row (item 4) / Logistics row: one field at a time, a refusal said out loud. */
-  const setEventFields = async (code: string, patch: { needsEvent?: boolean; pmsRow?: string | null; logisticsRow?: string | null }) => {
+  const setEventFields = async (code: string, patch: { needsEvent?: boolean; pmsRow?: string | null; logisticsRow?: string | null; departmentRow?: string | null }) => {
     try { await doUpdate.mutateAsync({ code, ...patch }); } catch (e) {
       void notify({ title: `${code} not saved`, body: errText(e, 'Try again.'), tone: 'error' });
     }
@@ -197,6 +197,9 @@ export const ChartOfAccounts = () => {
   /* The Logistics P&L's rows (owner 2026-10-29: the own-lorry tick list moved here —
      「就不能在coa 那边tick？」): each offered on accounts of the type it reads. */
   const logisticsRows = useMemo(() => unionQ.data?.logisticsRows ?? [], [unionQ.data]);
+  /* The Department P&L's departments (owner 2026-11-19): G&A, or an Operation row in a
+     region — offered on expense accounts; the payroll accounts stay blank (their team lines decide). */
+  const departmentRows = useMemo(() => unionQ.data?.departmentRows ?? [], [unionQ.data]);
   const kidsOf = useMemo(() => {
     const m = new Map<string, ChartRow[]>();
     for (const a of accounts) {
@@ -604,7 +607,7 @@ export const ChartOfAccounts = () => {
     plural(accounts.length, 'account', 'accounts'),
     ...companies.map((co) => `${co.code} uses ${usesCount(co.id)}`),
   ].join(' · ');
-  const colCount = 7 + companies.length + (canManage ? 1 : 0);
+  const colCount = 8 + companies.length + (canManage ? 1 : 0);
   let shownRows = 0;
 
   /* The header row sticks INSIDE the card's own scroll (owner 2026-09-04:
@@ -748,6 +751,7 @@ export const ChartOfAccounts = () => {
                     <th style={stickyTh} className={`${css.th} ${css.mid}`} title="A voucher or AP invoice line on this account needs its event before it is approved">Needs event</th>
                     <th style={stickyTh} className={css.th} title="Which row of the PMS event page this account's money fills">PMS row</th>
                     <th style={stickyTh} className={css.th} title="Which row of the Logistics P&L this account's money fills">Logistics</th>
+                    <th style={stickyTh} className={css.th} title="Which department of the Department P&L this account's money belongs to">Department</th>
                     {companies.map((co) => (
                       <th key={co.id} style={stickyTh} className={`${css.th} ${css.mid}`}>{co.code}</th>
                     ))}
@@ -863,6 +867,18 @@ export const ChartOfAccounts = () => {
                                     onChange={(e) => { void setEventFields(a.code, { logisticsRow: e.target.value || null }); }}>
                                     <option value="">—</option>
                                     {logisticsRows.filter((r) => r.type === a.type).map((r) => <option key={r.row} value={r.row}>{r.label}</option>)}
+                                  </select>
+                                )}
+                              </td>
+                              {/* The Department: an expense account a line can carry — not a header — that no Logistics row claims. */}
+                              <td>
+                                {!isParent && a.type === 'EXPENSE' && departmentRows.length > 0 && (
+                                  <select value={a.departmentRow ?? ''} disabled={!canManage || doUpdate.isPending || (!!a.logisticsRow && !a.departmentRow)} aria-label={`${a.code} Department`}
+                                    title={a.logisticsRow ? 'Logistics, by its Logistics row' : undefined}
+                                    className={`${sp.select} ${sp.compact} ${css.pick}`}
+                                    onChange={(e) => { void setEventFields(a.code, { departmentRow: e.target.value || null }); }}>
+                                    <option value="">{a.logisticsRow ? 'Logistics' : '—'}</option>
+                                    {departmentRows.map((r) => <option key={r.row} value={r.row}>{r.label}</option>)}
                                   </select>
                                 )}
                               </td>

@@ -70,7 +70,7 @@ describe('the report catalog', () => {
       'Statements', 'Who owes whom', 'Sales & collection', 'Events & logistics', 'Card money', 'Plan', 'Books', 'Audit',
     ]);
     expect(REPORT_CATALOG.map((r) => r.id)).toEqual([
-      'pnl', 'bs', 'rp', 'tb', 'ar', 'ap', 'collection', 'fair', 'performance', 'products',
+      'pnl', 'departments', 'bs', 'rp', 'tb', 'ar', 'ap', 'collection', 'fair', 'performance', 'products',
       'events', 'commission', 'logistics', 'charges', 'forecast', 'dashboard', 'je', 'gl', 'corrections',
     ]);
     for (const r of REPORT_CATALOG) {
@@ -113,7 +113,7 @@ describe('the report list', () => {
     const nav = screen.getByRole('navigation', { name: 'Reports' });
     const statements = within(nav).getByRole('group', { name: 'Statements' });
     expect(within(statements).getAllByRole('link').map((a) => a.textContent)).toEqual([
-      ACCOUNTING_TAB_TITLES.pnl, ACCOUNTING_TAB_TITLES.bs, ACCOUNTING_TAB_TITLES.rp,
+      ACCOUNTING_TAB_TITLES.pnl, ACCOUNTING_TAB_TITLES.departments, ACCOUNTING_TAB_TITLES.bs, ACCOUNTING_TAB_TITLES.rp,
     ]);
     /* Books and Forecasting are closed to this reader, and the Sales report keeps its cohort gate. */
     expect(within(nav).queryByRole('group', { name: 'Books' })).toBeNull();
