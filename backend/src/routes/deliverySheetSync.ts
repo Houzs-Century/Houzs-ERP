@@ -33,6 +33,9 @@ import { checkRateLimit, clientIp } from "../middleware/rateLimit";
 import { intakeCompany } from "../lib/intake-company";
 import {
   FEED_BALANCE_COLLECTION_SQL,
+  FEED_EM_TRANSPORTER_SQL,
+  FEED_EPOCH,
+  FEED_MAX_LIMIT,
   FEED_OVERDUE_SQL,
   FEED_READY_OPEN_SQL,
   FEED_SINCE_SQL,
@@ -69,6 +72,8 @@ import {
   toAssrContactRecord,
   toAssrLegRecords,
   type AssrFeedRow,
+  type AssrLegKind,
+  type AssrLegRecord,
 } from "../lib/delivery-sheet-assr-feed";
 import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
 import { SUPPLIER_DATE_SLOT_COL, cascadePoSupplierDate } from "../scm/lib/po-supplier-date-cascade";
@@ -367,6 +372,55 @@ app.post("/feed-by-docnos", async (c) => {
   if ("refusal" in loaded) return loaded.refusal;
   c.set("usageRows", loaded.records.length);
   return c.json({ count: loaded.records.length, requested: docNos.length, records: loaded.records });
+});
+
+/* East-Malaysia transporter feed (owner 2026-11-19): the ESB ("EM Delivery")
+   and BS ("SABAH EM Delivery") transporter sheets are fed DIRECTLY from the ERP
+   now, not from the HC Delivery master sheet's EM Order tab (the master -> ESB /
+   BS push is retired). Full state, no cursor — the transporter Apps Script
+   updates the rows it already has and APPENDS the eligible ones each run. One
+   list, two kinds:
+     - SO rows: East (SBH / SRW) live orders, each carrying `Ready` — the owner's
+       append gate ("只收 ready 的", 2026-11-19). Region is re-checked here so a
+       Singapore-addressed SRW order (Region SG) is dropped.
+     - ASSR legs: the East own-team service / pickup / delivery-back legs that
+       already show on these sheets (keyed SO-xxxx-SERVICE etc.), via the same
+       own-team-gated feed /assr-legs uses, read full-state here.
+   `Appendable` is what the Apps Script appends on: `Ready` for an SO row, always
+   for a leg (its own-team gate is already applied in SQL). Updates to rows the
+   sheet already holds are never gated. The transporter-owned freight columns
+   (consignment, vessel, ETD/ETA, BS delivery date) are the sheets' own and are
+   neither sent nor read back — the ERP has never stored them. */
+app.get("/em-transporter", async (c) => {
+  const denied = await badSheetKey(c);
+  if (denied) return denied;
+  const co = await sheetCompanyId(c);
+  if ("refusal" in co) return co.refusal;
+
+  // SO rows: East live orders (company-scoped ?1), each marked Ready. The
+  // Region re-check drops a Singapore-addressed SRW order the SQL let through.
+  const loaded = await loadRecords(c, FEED_EM_TRANSPORTER_SQL, [co.id]);
+  if ("refusal" in loaded) return loaded.refusal;
+  const soRecords = loaded.records
+    .filter((r) => r.Region === "EAST")
+    .map((r) => ({ ...r, Kind: null as AssrLegKind | null, Appendable: r.Ready }));
+
+  // ASSR legs: own-team legs (all companies, by owner ruling — not
+  // company-scoped), full state from the epoch; keep only the East ones.
+  let legRecords: Array<AssrLegRecord & { Appendable: boolean }> = [];
+  try {
+    const res = (await c.env.DB.prepare(FEED_ASSR_LEGS_SQL).bind(FEED_EPOCH, FEED_MAX_LIMIT).all()) as { results?: AssrFeedRow[] };
+    legRecords = (res.results ?? [])
+      .flatMap(toAssrLegRecords)
+      .filter((r) => r.Region === "EAST")
+      .map((r) => ({ ...r, Appendable: true }));
+  } catch (e) {
+    return c.json({ error: "assr_read_failed", message: e instanceof Error ? e.message : String(e) }, 502);
+  }
+
+  const records = [...soRecords, ...legRecords];
+  c.set("usageRows", records.length);
+  return c.json({ count: records.length, so: soRecords.length, legs: legRecords.length, records });
 });
 
 /* Service-Case (ASSR) legs (owner 2026-09-17): each open case's inspection /
