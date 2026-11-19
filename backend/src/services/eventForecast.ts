@@ -3,14 +3,20 @@
 // a future event shows, for every line, the best figure there is so far.
 //
 //   1. Last event  the ACTUAL figure of the most recent EARLIER event with the
-//                  same organiser AND the same venue (same company). Used only
-//                  while the event has not ended — after that a blank line is a
-//                  real blank, not a guess.
+//                  same organiser AND the same venue (same company). Used while
+//                  the event has not ended, and after it for events from
+//                  2026-11 on (their costs come in the next month).
 //   2. Forecast    the figure someone typed on the event for that line
 //                  (project_forecast). It beats the last event.
 //   3. Actual      the event's own figure (books, typed cost lines, orders,
 //                  the rate card on real sales). It beats both, as soon as it
 //                  exists for that line.
+//
+// Lines that move with sales (Transport Fee, Commission, Merchandise) are not
+// borrowed as amounts: with no real or typed figure they are the shown
+// Sales times the last event's own ratio, so a typed Sales forecast carries
+// them along (owner 2026-11-19: 跟着我的sales变动就行了). COGS keeps the last
+// event's amount (owner 2026-11-19: COGS 就真的要用上一场).
 //
 // No earlier same-organiser-venue-and-brand event = no Last event layer: nothing is
 // borrowed from another venue. The totals (COGS Total, GP, Total Cost, Net
@@ -114,6 +120,9 @@ const COST_LINES: readonly ForecastLine[] = [
  * typed forecast, else the last event's actual (only when `useLastEvent`), else
  * the column's own figure (zero) shown as actual.
  */
+/** The lines priced as a share of sales. */
+export const SALES_DRIVEN_LINES: readonly ForecastLine[] = ['transport_fee', 'commission', 'merchandise'];
+
 export function layerPnl(input: {
   col: PnlColumn;
   booksRows: ReadonlySet<string>;
@@ -124,15 +133,20 @@ export function layerPnl(input: {
   const actuals = lineActuals(input.col, input.booksRows);
   const last = input.useLastEvent ? input.lastEvent : null;
   const lines = {} as Record<ForecastLine, LayeredLine>;
+  const lastSales = last?.sales ?? 0;
   for (const k of FORECAST_LINES) {
     const a = actuals[k];
     const f = input.forecast[k];
     const l = last?.[k];
     const forecast = f == null ? null : round2(f);
     const lastEvent = l == null ? null : round2(l);
+    const sales = k === 'sales' ? null : lines.sales;
     if (a.actual) lines[k] = { amount: round2(a.amount), source: 'actual', forecast, last_event: lastEvent };
     else if (forecast != null) lines[k] = { amount: forecast, source: 'forecast', forecast, last_event: lastEvent };
-    else if (lastEvent != null) lines[k] = { amount: lastEvent, source: 'last_event', forecast, last_event: lastEvent };
+    else if (lastEvent != null && sales && lastSales > 0 && SALES_DRIVEN_LINES.includes(k)) {
+      /* The shown Sales at the last event's ratio; a typed Sales makes it a forecast. */
+      lines[k] = { amount: round2((sales.amount * lastEvent) / lastSales), source: sales.source === 'forecast' ? 'forecast' : 'last_event', forecast, last_event: lastEvent };
+    } else if (lastEvent != null) lines[k] = { amount: lastEvent, source: 'last_event', forecast, last_event: lastEvent };
     else lines[k] = { amount: round2(a.amount), source: 'actual', forecast, last_event: lastEvent };
   }
 
@@ -219,10 +233,19 @@ export function pickLastEvent<T extends BaselineCandidate>(current: BaselineCand
   return best;
 }
 
-/** The Last event layer is used while the event has not ended: its end date
- *  (else its start date) is today or later. No date = not used. */
+/** Events starting on or after this day keep the Last event layer after they
+ *  end too: their costs are keyed at the start of the next month, so a blank
+ *  line is a cost not in yet (owner 2026-11-19: A, 从这个月开始). Earlier
+ *  events keep the old rule, so past months' reports do not move. */
+export const LAST_EVENT_AFTER_END_FROM = '2026-11-01';
+
+/** The Last event layer is used while the event has not ended (its end date,
+ *  else its start date, is today or later), and always for an event starting
+ *  on or after LAST_EVENT_AFTER_END_FROM. No date = not used. */
 export function usesLastEvent(p: { start_date: string | null; end_date: string | null }, today: string): boolean {
-  const end = day(p.end_date) || day(p.start_date);
+  const start = day(p.start_date);
+  if (isDay(start) && start >= LAST_EVENT_AFTER_END_FROM) return true;
+  const end = day(p.end_date) || start;
   return isDay(end) && end >= today;
 }
 
