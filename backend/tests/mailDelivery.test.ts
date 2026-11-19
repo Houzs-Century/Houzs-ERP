@@ -29,10 +29,10 @@ beforeEach(async () => {
     ).bind(id, SENDER_ID, providerId, createdAt, status).run();
   await message('m-bounce', 're-bounce', '2026-11-19T09:00:00Z', null);
   await message('m-delivered', 're-ok', '2026-11-19T09:01:00Z', 'sent');
-  await message('m-final', 're-final', '2026-11-19T09:02:00Z', 'delivered');
+  await message('m-final', 're-final', '2026-11-19T09:02:00Z', 'opened');
   await message('m-old', 're-old', '2026-11-10T09:00:00Z', null);
   await message('m-unsent', null, '2026-11-19T09:03:00Z', null);
-  lastEventByProviderId = { 're-bounce': 'bounced', 're-ok': 'delivered', 're-final': 'delivered', 're-old': 'delivered' };
+  lastEventByProviderId = { 're-bounce': 'bounced', 're-ok': 'delivered', 're-final': 'opened', 're-old': 'delivered' };
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
     const url = new Request(input).url;
     const providerId = decodeURIComponent(url.split('/emails/')[1] ?? '');
@@ -62,7 +62,7 @@ describe('refreshOutboundDelivery', () => {
     expect(await bounceNotices()).toEqual([{ title: 'Email bounced: Order HC 8568', target_user_ids: `[${SENDER_ID}]` }]);
 
     const again = await refreshOutboundDelivery(env.DB, liveEnv, 20, NOW);
-    expect(again.checked).toBe(0);
+    expect(again.checked).toBe(1);
     expect(await bounceNotices()).toHaveLength(1);
   });
 
@@ -70,6 +70,25 @@ describe('refreshOutboundDelivery', () => {
     await refreshOutboundDelivery(env.DB, liveEnv, 20, NOW);
     expect(await statusOf('m-old')).toBeNull();
     expect(await statusOf('m-unsent')).toBeNull();
+  });
+
+  test('keeps asking about a delivered mail until it is opened', async () => {
+    await refreshOutboundDelivery(env.DB, liveEnv, 20, NOW);
+    expect(await statusOf('m-delivered')).toBe('delivered');
+    lastEventByProviderId['re-ok'] = 'opened';
+    await refreshOutboundDelivery(env.DB, liveEnv, 20, NOW + 300_000);
+    expect(await statusOf('m-delivered')).toBe('opened');
+    const after = await refreshOutboundDelivery(env.DB, liveEnv, 20, NOW + 600_000);
+    expect(after.checked).toBe(0);
+  });
+
+  test('asks the never-asked mail first, then the one asked longest ago', async () => {
+    await env.DB.prepare(`UPDATE email_messages SET delivery_status_at = '2026-11-19T09:30:00Z' WHERE id = 'm-delivered'`).run();
+    await refreshOutboundDelivery(env.DB, liveEnv, 1, NOW);
+    expect(await statusOf('m-bounce')).toBe('bounced');
+    expect(await statusOf('m-delivered')).toBe('sent');
+    await refreshOutboundDelivery(env.DB, liveEnv, 1, NOW + 300_000);
+    expect(await statusOf('m-delivered')).toBe('delivered');
   });
 
   test('leaves a message to the next run when Resend cannot answer', async () => {
@@ -90,7 +109,9 @@ describe('deliveryStatus', () => {
   test('maps Resend events to what the thread shows', () => {
     expect(deliveryStatus('sent', 'bounced')).toBe('bounced');
     expect(deliveryStatus(null, 'delivered')).toBe('delivered');
-    expect(deliveryStatus(null, 'opened')).toBe('delivered');
+    expect(deliveryStatus(null, 'opened')).toBe('opened');
+    expect(deliveryStatus(null, 'clicked')).toBe('opened');
+    expect(deliveryStatus(null, 'complained')).toBe('delivered');
     expect(deliveryStatus(null, 'canceled')).toBe('failed');
     expect(deliveryStatus(null, 'delivery_delayed')).toBeNull();
     expect(deliveryStatus(null, null)).toBeNull();
