@@ -63,10 +63,10 @@ export function useColumnOrder<Key extends string>(storageKey: string, defaultKe
   const moveByKeyboard = (key: Key, visibleKeys: readonly Key[], event: KeyboardEvent<HTMLElement>): void => {
     const step = KEYBOARD_STEP[event.key];
     if (!event.altKey || step == null) return;
-    const neighbourKey = visibleKeys[visibleKeys.indexOf(key) + step];
-    if (neighbourKey == null) return;
+    const neighbourIndex = visibleKeys.indexOf(key) + step;
+    if (neighbourIndex < 0 || neighbourIndex >= visibleKeys.length) return;
     event.preventDefault();
-    setOrder((current) => moveColumn(current, key, neighbourKey));
+    setOrder((current) => moveColumn(current, key, visibleKeys[neighbourIndex]));
   };
 
   const headerProps = (key: Key, visibleKeys: readonly Key[]): ColumnHeaderProps => ({
