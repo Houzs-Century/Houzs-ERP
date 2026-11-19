@@ -22,8 +22,9 @@ import { PenaltiesTab } from "./hr/PenaltiesTab";
 import { TripPayTab } from "./hr/TripPayTab";
 import { AllowancesTab } from "./hr/AllowancesTab";
 import { KpiTab } from "./hr/KpiTab";
+import { ShiftsTab } from "./hr/ShiftsTab";
 
-type Tab = "employees" | "attendance" | "hours" | "labor" | "payroll" | "trip-pay" | "allowances" | "kpi" | "advances" | "penalties" | "sites" | "holidays" | "pay-rules";
+type Tab = "employees" | "attendance" | "hours" | "labor" | "payroll" | "trip-pay" | "allowances" | "kpi" | "advances" | "penalties" | "sites" | "holidays" | "pay-rules" | "shifts";
 const TABS: TabOption<Tab>[] = [
   { value: "employees", label: "Employee Master" },
   { value: "attendance", label: "Attendance" },
@@ -38,6 +39,7 @@ const TABS: TabOption<Tab>[] = [
   { value: "sites", label: "Punch Sites" },
   { value: "holidays", label: "Public Holidays" },
   { value: "pay-rules", label: "Pay Rules" },
+  { value: "shifts", label: "Shifts" },
 ];
 
 const HEADER: Record<Tab, { title: string; description: string }> = {
@@ -81,6 +83,10 @@ const HEADER: Record<Tab, { title: string; description: string }> = {
   },
   holidays: { title: "Public Holidays", description: "Dates nobody is docked for not working. Hours worked on them count as public-holiday overtime." },
   "pay-rules": { title: "Pay Rules", description: "Shift, lateness, overtime and statutory rates. A change is scheduled from a date, so earlier months keep the rules they were paid under." },
+  shifts: {
+    title: "Shifts",
+    description: "Shift groups give each employee their own shift for lateness and overtime, with a delivery-day shift used when DP sent a warehouse member on a delivery. Assign each employee a group; no group uses the global Pay Rules shift.",
+  },
 };
 
 export function HrEmployees() {
@@ -113,6 +119,7 @@ export function HrEmployees() {
       {active === "sites" && <PunchSitesTab />}
       {active === "holidays" && <PublicHolidaysTab />}
       {active === "pay-rules" && <PayRulesTab />}
+      {active === "shifts" && <ShiftsTab />}
     </div>
   );
 }
