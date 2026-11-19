@@ -133,8 +133,8 @@ export function ProjectOverviewPage() {
   const npMax = Math.max(1, ...groups.map((g) => Math.abs(g.np)));
   const listed = shown.filter((p) => !pick || (p[dim] || "—") === pick).map((p) => ({ p, f: figuresOf(p) }));
   /* Collected: what the period's orders have been paid, of what they ordered. */
-  const paidSen = inPeriod.reduce((a, p) => a + p.collection.paidSen, 0);
-  const orderedSen = inPeriod.reduce((a, p) => a + p.collection.totalSen, 0);
+  const paidSen = shown.reduce((a, p) => a + p.collection.paidSen, 0);
+  const orderedSen = shown.reduce((a, p) => a + p.collection.totalSen, 0);
   const options = (key: "brand" | "eventType" | "organizer" | "venue" | "state" | "stage") => [...new Set((q.data?.projects ?? []).map((p) => p[key]).filter((x): x is string => !!x))].sort();
 
   return (
@@ -158,16 +158,17 @@ export function ProjectOverviewPage() {
       <section className="relative overflow-hidden rounded-2xl bg-sidebar px-5 py-5 text-sidebar-ink shadow-slab sm:px-7">
         <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full opacity-50 blur-2xl" style={{ background: "radial-gradient(circle, rgba(22,105,95,0.6), transparent 70%)" }} />
         <div className="relative">
-          <div className="font-mono text-[10px] font-bold uppercase tracking-brand text-accent-bright">{winLabel} · {t.projects} projects</div>
+          <div className="font-mono text-[10px] font-bold uppercase tracking-brand text-accent-bright">{winLabel}{partLabel} · {ts.projects} projects</div>
           <div className="mt-3 grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-4">
-            <Hero label="Sales" value={money(t.sales)} sub={t.split.sales.forecast + t.split.sales.last_event !== 0 ? "includes estimates, split below" : t.fromSalesOrders ? `${t.fromSalesOrders} projects from Sales Orders` : "all from keyed books"} />
-            <Hero label="Gross profit %" value={pctTxt(pctOf(t.gp, t.sales))} sub={`GP ${money(t.gp)}`} tone={t.gp >= 0 ? "good" : "bad"} />
-            <Hero label="Net profit" value={money(t.np)} sub={`NP ${pctTxt(pctOf(t.np, t.sales))}`} tone={t.np >= 0 ? "good" : "bad"} />
+            {/* The big figures follow the part picked below (owner 2026-11-19: 我点了 上面不会跳). */}
+            <Hero label="Sales" value={money(ts.sales)} sub={ts.split.sales.forecast + ts.split.sales.last_event !== 0 ? "includes forecast, split below" : ts.fromSalesOrders ? `${ts.fromSalesOrders} projects from Sales Orders` : "all from keyed books"} />
+            <Hero label="Gross profit %" value={pctTxt(pctOf(ts.gp, ts.sales))} sub={`GP ${money(ts.gp)}`} tone={ts.gp >= 0 ? "good" : "bad"} />
+            <Hero label="Net profit" value={money(ts.np)} sub={`NP ${pctTxt(pctOf(ts.np, ts.sales))}`} tone={ts.np >= 0 ? "good" : "bad"} />
             <Hero label="Collected" value={pctTxt(pctOf(paidSen, orderedSen))} sub={`${money(paidSen / 100)} of ${money(orderedSen / 100)} ordered`} />
           </div>
           {split && <HeldComingRow held={split.held} coming={split.coming} total={t} today={today} part={part} onPart={setPart} />}
-          {t.estimated > 0 && <LayerSplitRow t={t} />}
-          {t.noSales > 0 && <p className="mt-3 text-[11.5px] text-sidebar-ink/70">{t.noSales} projects in this period have neither keyed sales nor Sales Orders yet.</p>}
+          {ts.estimated > 0 && <LayerSplitRow t={ts} />}
+          {ts.noSales > 0 && <p className="mt-3 text-[11.5px] text-sidebar-ink/70">{ts.noSales} projects in this period have neither keyed sales nor Sales Orders yet.</p>}
         </div>
       </section>
 
