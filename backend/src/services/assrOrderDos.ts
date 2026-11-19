@@ -30,6 +30,63 @@ export interface AssrOrderDo {
   delivery_date: string | null;
 }
 
+export interface DoNumberSearchMatches {
+  soDocNos: string[];
+  refKeys: string[];
+}
+
+const DO_SEARCH_ROW_CAP = 200;
+
+const hasLetterOrDigit = (refKey: string): boolean => /[a-z0-9]/.test(refKey);
+
+export async function findOrdersByDoNumber(
+  env: Env,
+  searchTerm: string,
+  allowedCompanyIds: number[] | undefined,
+): Promise<DoNumberSearchMatches> {
+  const likePattern = `%${searchTerm.toLowerCase()}%`;
+  const [transferred, mirrored, scmSoDocNos] = await Promise.all([
+    env.DB.prepare(
+      `SELECT doc_no FROM sales_orders
+        WHERE LOWER(transfer_to) LIKE ? AND LOWER(transfer_to) NOT LIKE 'xs%' LIMIT ${DO_SEARCH_ROW_CAP}`,
+    )
+      .bind(likePattern)
+      .all<{ doc_no: string }>(),
+    env.DB.prepare(
+      `SELECT ref FROM autocount_delivery_orders
+        WHERE cancelled = 0 AND LOWER(doc_no) LIKE ? LIMIT ${DO_SEARCH_ROW_CAP}`,
+    )
+      .bind(likePattern)
+      .all<{ ref: string | null }>(),
+    findScmSoDocNosByDoNumber(env, searchTerm, allowedCompanyIds),
+  ]);
+  const refKeys = (mirrored.results ?? [])
+    .map((row) => String(row.ref ?? "").trim().toLowerCase())
+    .filter(hasLetterOrDigit);
+  return {
+    soDocNos: [...new Set([...(transferred.results ?? []).map((row) => row.doc_no), ...scmSoDocNos])],
+    refKeys: [...new Set(refKeys)],
+  };
+}
+
+async function findScmSoDocNosByDoNumber(
+  env: Env,
+  searchTerm: string,
+  allowedCompanyIds: number[] | undefined,
+): Promise<string[]> {
+  if (!isSupabaseConfigured(env) || allowedCompanyIds?.length === 0) return [];
+  let query = getSupabaseService(env)
+    .from("delivery_orders")
+    .select("so_doc_no")
+    .ilike("do_number", `%${searchTerm}%`)
+    .not("so_doc_no", "is", null)
+    .limit(DO_SEARCH_ROW_CAP);
+  if (allowedCompanyIds) query = query.in("company_id", allowedCompanyIds);
+  const { data, error } = await query;
+  if (error) throw new Error(`Service case DO search: SCM delivery order lookup failed: ${error.message}`);
+  return (data ?? []).map((row) => String(row.so_doc_no));
+}
+
 export function orderDoNumbers(r: Record<string, unknown>): string[] {
   const raw = String(r.delivery_order || r.do_numbers || "");
   return [...new Set(raw.split(/\s*[·,;]\s*/).map((s) => s.trim()).filter(Boolean))];

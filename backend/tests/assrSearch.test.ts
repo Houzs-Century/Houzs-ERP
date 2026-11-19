@@ -72,3 +72,51 @@ describe('listAssrCases — search matches name / phone / reference', () => {
     expect(await ids('svc-rtn-2609-0007')).toEqual([2]);
   });
 });
+
+describe('listAssrCases — search matches the DO numbers the DO No column shows', () => {
+  beforeEach(async () => {
+    await env.DB.exec(`DELETE FROM sales_orders`);
+    await env.DB.exec(`DELETE FROM autocount_delivery_orders`);
+  });
+
+  test('a DO typed on the case itself', async () => {
+    await env.DB.prepare(`UPDATE assr_cases SET delivery_order = 'DO-000041' WHERE id = 2`).run();
+    expect(await ids('do-000041')).toEqual([2]);
+  });
+
+  test('the DO AutoCount transferred the SO to', async () => {
+    await env.DB.prepare(
+      `INSERT INTO sales_orders (doc_no, region, transfer_to) VALUES ('SO-SRCH-1', 'WEST', 'DO-000555')`,
+    ).run();
+    expect(await ids('DO-000555')).toEqual([1]);
+  });
+
+  test('a cancelled-transfer XS document is not a DO', async () => {
+    await env.DB.prepare(
+      `INSERT INTO sales_orders (doc_no, region, transfer_to) VALUES ('SO-SRCH-1', 'WEST', 'XS-000555')`,
+    ).run();
+    expect(await ids('XS-000555')).toEqual([]);
+  });
+
+  test('a mirrored AutoCount DO sharing the case reference', async () => {
+    await env.DB.prepare(
+      `INSERT INTO autocount_delivery_orders (doc_no, ref, cancelled) VALUES ('DO-000777', 'hc99999 ', 0)`,
+    ).run();
+    expect(await ids('DO-000777')).toEqual([2]);
+  });
+
+  test('a cancelled mirrored DO finds nothing', async () => {
+    await env.DB.prepare(
+      `INSERT INTO autocount_delivery_orders (doc_no, ref, cancelled) VALUES ('DO-000778', 'HC99999', 1)`,
+    ).run();
+    expect(await ids('DO-000778')).toEqual([]);
+  });
+
+  test('a placeholder reference does not glue a DO onto every case that shares it', async () => {
+    await seed(3, 'Gamma Trading', '60111111111', '-');
+    await env.DB.prepare(
+      `INSERT INTO autocount_delivery_orders (doc_no, ref, cancelled) VALUES ('DO-000779', '-', 0)`,
+    ).run();
+    expect(await ids('DO-000779')).toEqual([]);
+  });
+});
