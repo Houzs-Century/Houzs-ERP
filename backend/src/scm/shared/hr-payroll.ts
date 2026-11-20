@@ -126,6 +126,10 @@ export function computeMonthlyPay(input: {
   rulesOn: (ymd: string) => PayRulesConfig;
   /** Days HR marked as paid leave (phase 5). */
   paidLeave?: ReadonlySet<string>;
+  /** Confirmed overtime hours per date (HC-0125): when supplied, weekday OT is
+   *  these worker-reported, supervisor-confirmed hours instead of the punch
+   *  surplus over the standard day; null keeps the old punch-derived weekday OT. */
+  confirmedOtHoursByDate: ReadonlyMap<string, number> | null;
 }): MonthlyPay {
   const { employee: e, year, month, holidays } = input;
   const prefix = `${year}-${String(month).padStart(2, "0")}-`;
@@ -154,23 +158,31 @@ export function computeMonthlyPay(input: {
   let sun = 0;
   let hol = 0;
   const otDays: MonthlyPay["otDays"] = [];
-  for (const [date, h] of [...hoursByDate.entries()].sort(([a], [b]) => a.localeCompare(b))) {
-    if (h <= 0) continue;
+  // A confirmed-OT map (HC-0125) makes weekday OT the worker-reported, supervisor-
+  // confirmed hours, so a punch that merely ran past the shift end no longer pays
+  // OT. Its dates join the logged days so an OT claim still pays on a day with no
+  // logged hours. A null map keeps the old punch surplus (h - standard day).
+  const otDates = new Set<string>(hoursByDate.keys());
+  if (input.confirmedOtHoursByDate) for (const d of input.confirmedOtHoursByDate.keys()) if (d.startsWith(prefix)) otDates.add(d);
+  for (const date of [...otDates].sort((a, b) => a.localeCompare(b))) {
+    const h = hoursByDate.get(date) ?? 0;
     const sunday = new Date(`${date}T00:00:00Z`).getUTCDay() === 0;
     const holiday = !sunday && holidays.has(date);
-    if (!sunday && !holiday) daysWorked++;
+    if (!sunday && !holiday && h > 0) daysWorked++;
     const cfg = input.rulesOn(date);
     const base = hourRateOn(cfg);
     if (sunday) {
+      if (h <= 0) continue;
       otSundayHours += h;
       sun += h * base * cfg.sundayOtMultiplier;
       otDays.push({ date, hours: round2(h), kind: "SUNDAY" });
     } else if (holiday) {
+      if (h <= 0) continue;
       otHolidayHours += h;
       hol += h * base * cfg.holidayOtMultiplier;
       otDays.push({ date, hours: round2(h), kind: "HOLIDAY" });
     } else if (std > 0) {
-      const ot = countableOt(h - std);
+      const ot = input.confirmedOtHoursByDate ? round2(input.confirmedOtHoursByDate.get(date) ?? 0) : countableOt(h - std);
       if (ot > 0) {
         otWeekdayHours += ot;
         wk += ot * base * mult;

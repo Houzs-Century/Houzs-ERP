@@ -42,6 +42,7 @@ describe("computeMonthlyPay", () => {
       absenceThroughDay: 31,
       shortHours: 1.5,
       rulesOn: () => DEFAULT_PAY_RULES,
+      confirmedOtHoursByDate: null,
     });
     // day rate 2600/26 = RM100; hour rate 100 / (9 + 1 lunch) = RM10.
     expect(p.dayRateSen).toBe(10000);
@@ -56,7 +57,7 @@ describe("computeMonthlyPay", () => {
   });
 
   test("absences wait for the cutoff; days after resigning dock at once", () => {
-    const base = { employee: monthly, year: 2026, month: 10, holidays: deepavali, shortHours: 0, rulesOn: () => DEFAULT_PAY_RULES };
+    const base = { employee: monthly, year: 2026, month: 10, holidays: deepavali, shortHours: 0, rulesOn: () => DEFAULT_PAY_RULES, confirmedOtHoursByDate: null };
     const early = computeMonthlyPay({ ...base, days: october(["2026-10-21"], {}), absenceThroughDay: 19 });
     expect(early.absentDays).toBe(0);
     const resigned = computeMonthlyPay({
@@ -78,6 +79,7 @@ describe("computeMonthlyPay", () => {
       absenceThroughDay: 0,
       shortHours: 0,
       rulesOn: () => DEFAULT_PAY_RULES,
+      confirmedOtHoursByDate: null,
     });
     expect(p.otWeekdayHours).toBe(0);
     expect(p.otHolidayPaySen).toBe(5 * 1000 * 3);
@@ -94,8 +96,44 @@ describe("computeMonthlyPay", () => {
       absenceThroughDay: 31,
       shortHours: 0,
       rulesOn: () => DEFAULT_PAY_RULES,
+      confirmedOtHoursByDate: null,
     });
     expect(p).toMatchObject({ absentDays: 0, basicEarnedSen: 24000, fullSalarySen: 0 });
+  });
+
+  test("with a confirmed-OT map, weekday OT is the reported hours, not the punch surplus", () => {
+    // 10-22 punched ~0.9 h past the 9 h day but nobody reported OT, so it pays
+    // nothing; 10-23 has 2 h of confirmed OT. Only the confirmed OT pays.
+    const p = computeMonthlyPay({
+      employee: monthly,
+      year: 2026,
+      month: 10,
+      days: [{ date: "2026-10-22", hours: 9.9 }, { date: "2026-10-23", hours: 9 }],
+      holidays: deepavali,
+      absenceThroughDay: 0,
+      shortHours: 0,
+      rulesOn: () => DEFAULT_PAY_RULES,
+      confirmedOtHoursByDate: new Map([["2026-10-23", 2]]),
+    });
+    expect(p.otWeekdayHours).toBe(2);
+    expect(p.otWeekdayPaySen).toBe(2 * 1000 * 1.5); // 2 h x RM10 x 1.5
+    expect(p.daysWorked).toBe(2);
+  });
+
+  test("a confirmed OT claim pays even on a day with no logged hours", () => {
+    const p = computeMonthlyPay({
+      employee: monthly,
+      year: 2026,
+      month: 10,
+      days: [],
+      holidays: deepavali,
+      absenceThroughDay: 0,
+      shortHours: 0,
+      rulesOn: () => DEFAULT_PAY_RULES,
+      confirmedOtHoursByDate: new Map([["2026-10-22", 1]]),
+    });
+    expect(p.otWeekdayHours).toBe(1);
+    expect(p.otWeekdayPaySen).toBe(1 * 1000 * 1.5);
   });
 });
 

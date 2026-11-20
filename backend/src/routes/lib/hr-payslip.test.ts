@@ -33,6 +33,7 @@ describe("buildPayslip", () => {
       advances: [{ date: "2026-09-10", amountSen: 20000 }],
       penaltySen: 5000,
       ytd: { remunerationSen: 0, epfSen: 0, pcbSen: 0 },
+      confirmedOtHoursByDate: null,
     });
     expect(s.grossSen).toBe(260000 + s.pay.otPaySen);
     expect(s.pay.otHolidayHours).toBe(9);
@@ -57,6 +58,7 @@ describe("buildPayslip", () => {
       advances: [],
       penaltySen: 0,
       ytd: { remunerationSen: 0, epfSen: 0, pcbSen: 0 },
+      confirmedOtHoursByDate: null,
     });
     expect(s).toMatchObject({ bankName: null, bankAccount: null, pcbStatus: "UNKNOWN", pcbSen: 0 });
   });
@@ -75,6 +77,7 @@ describe("buildPayslip", () => {
       advances: [],
       penaltySen: 0,
       ytd: { remunerationSen: 0, epfSen: 0, pcbSen: 0 },
+      confirmedOtHoursByDate: null,
     };
     const trip = {
       employeeId: 1,
@@ -118,6 +121,7 @@ describe("buildPayslip", () => {
       advances: [],
       penaltySen: 0,
       ytd: { remunerationSen: 0, epfSen: 0, pcbSen: 0 },
+      confirmedOtHoursByDate: null,
       trip: {
         employeeId: 1,
         drove: true,

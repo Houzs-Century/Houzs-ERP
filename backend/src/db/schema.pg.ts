@@ -1110,6 +1110,34 @@ export const hr_attendance_settings = pgTable("hr_attendance_settings", {
   updated_by: integer("updated_by"),
 });
 
+// HC-0125: worker-reported overtime, confirmed by a supervisor. Each row is ONE
+// OT segment on a work date — minutes from midnight; end_min may exceed 1440 when
+// the segment crosses midnight (e.g. 23:30-00:30 = 1410..1470). OT that counts for
+// pay is the sum of CONFIRMED rows; a phone punch no longer auto-grants OT.
+export const hr_ot_claims = pgTable(
+  "hr_ot_claims",
+  {
+    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    company_id: bigint("company_id", { mode: "number" }).notNull(),
+    employee_id: bigint("employee_id", { mode: "number" }).notNull(),
+    work_date: date("work_date", { mode: "string" }).notNull(),
+    start_min: integer("start_min").notNull(),
+    end_min: integer("end_min").notNull(),
+    note: text("note").notNull().default(""),
+    status: text("status").notNull().default("PENDING"),
+    reject_reason: text("reject_reason"),
+    reviewed_by: integer("reviewed_by"),
+    reviewed_at: timestamp("reviewed_at", { withTimezone: true, mode: "string" }),
+    created_by: integer("created_by"),
+    created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+    updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("idx_hr_ot_claims_emp").on(t.company_id, t.employee_id, t.work_date),
+    index("idx_hr_ot_claims_status").on(t.company_id, t.status, t.work_date),
+  ],
+);
+
 export const hr_attendance = pgTable(
   "hr_attendance",
   {

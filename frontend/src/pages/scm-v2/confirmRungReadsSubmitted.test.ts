@@ -117,6 +117,7 @@ const NOT_IN_SCOPE = new Set([
   'vendor/scm/lib/pms-project-status.ts',              // PMS project — a different module
   'mobile/MobilePMS.tsx',                              // PMS project
   'pages/announcements/InboxView.tsx',                 // an acknowledgement, not a document status
+  'mobile/MobileOvertime.tsx',                         // overtime-claim status (HC-0125) — not a document rung
   'vendor/scm/lib/status-pill.ts',                     // holds every map, in scope and out
   'mobile/MobileModuleList.tsx',                       // holds every module's filters, in scope and out
 ]);

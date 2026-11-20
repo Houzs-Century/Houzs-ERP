@@ -136,7 +136,8 @@ import {
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
 } from '../lib/companyScope';
 import { loadComboModulesById, loadMasterSofaComboCosts, loadSellingSofaCombos } from '../lib/pos-sofa-combos';
-import { planComboCostSpread } from '../lib/sofa-combo-cost-spread';
+import { comboCostAsOf, combosStandingOn, planComboCostSpread } from '../lib/sofa-combo-cost-spread';
+import { lineEditKeepsCost } from '../lib/so-line-cost-edit';
 import { supabaseAuth } from '../middleware/auth';
 import { escapeForOr } from '../lib/postgrest-search';
 import { effectiveStatusFilter, isRangeNotSatisfiable } from '../lib/so-list-filters';
@@ -7064,7 +7065,22 @@ export async function recomputeTotals(sb: any, docNo: string, c: any) {
           tierByFabric.set(f.fabric_code, (f.sofa_price_tier ?? f.price_tier ?? 'PRICE_2'));
         }
       }
-      const spread = planComboCostSpread(sofaRows, combos, (code) => tierByFabric.get(code) ?? 'PRICE_2', null);
+      /* The set price of the ORDER's date, not today's: an edit or an approved
+         amendment (even a delivery-date-only one) must not put a set price
+         created after the order on it, and one that stood that day still counts
+         after it is deleted (combosStandingOn). A failed read is not "no date":
+         today's price would re-cost the order, so abort like the reads above. */
+      const { data: hdrDate, error: dateErr } = await scopeToCompany(
+        sb.from('mfg_sales_orders').select('so_date').eq('doc_no', docNo),
+        c,
+      ).maybeSingle();
+      if (dateErr) {
+        /* eslint-disable-next-line no-console */
+        console.error('[so-recompute] order date read failed — header left unchanged:', docNo, dateErr.message);
+        return;
+      }
+      const day = comboCostAsOf((hdrDate as { so_date?: string | null } | null)?.so_date ?? null) ?? todayMyt();
+      const spread = planComboCostSpread(sofaRows, combosStandingOn(combos, day), (code) => tierByFabric.get(code) ?? 'PRICE_2', day);
       for (const m of sofaRows) {
         const newLineCost = spread.get(m.id);
         if (newLineCost === undefined) continue;
@@ -8199,12 +8215,21 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
           surcharges via computeMfgLineCost). This is the source of truth.
        3. Client changed itemCode but recompute had no cost → re-snapshot
           mfg_products under the new code.
-       4. Otherwise keep the prior unit_cost_sen unchanged. */
+       4. Otherwise keep the prior unit_cost_sen unchanged.
+     Owner 2026-11-20 (lib/so-line-cost-edit.ts): a new colour, fabric, side,
+     price, discount or quantity keeps the line's cost (step 4) before step 2:
+     the order costs the prices of its order date, not today's. */
   let unitCost: number;
   const explicitCost = it.unitCostSen !== undefined ? Number(it.unitCostSen) : 0;
   const itemCodeChanged = it.itemCode !== undefined && it.itemCode !== prev.item_code;
+  const keepsCost = lineEditKeepsCost(
+    { itemCode: String(prev.item_code ?? ''), variants: canonicalizeVariants(prev.item_group, prev.variants as Record<string, unknown> | null), unitCostSen: senOrZero(prev.unit_cost_sen) },
+    { itemCode: itemCodeAfter, variants: canonicalizeVariants(itemGroupAfter, variantsAfter as Record<string, unknown> | null) },
+  );
   if (explicitCost > 0) {
     unitCost = explicitCost;
+  } else if (keepsCost) {
+    unitCost = senOrZero(prev.unit_cost_sen);
   } else if (recomputedPatch && recomputedPatch.unit_cost_sen > 0) {
     unitCost = recomputedPatch.unit_cost_sen;
   } else if (itemCodeChanged) {
