@@ -6,7 +6,7 @@ import { api, buildQuery } from "../../api/client";
 import { useQuery } from "../../hooks/useQuery";
 import { useAuth } from "../../auth/AuthContext";
 import { useToast } from "../../hooks/useToast";
-import { cn, formatDateTime } from "../../lib/utils";
+import { cn, formatDate, formatDateTime } from "../../lib/utils";
 import { PageHeader } from "../../components/Layout";
 import { EmptyState } from "../../components/EmptyState";
 import { MediaLightbox } from "../../components/MediaLightbox";
@@ -313,6 +313,14 @@ export function DefectListView() {
                 >
                   {g.name}
                 </Link>
+                {g.start_date && (
+                  <span className="text-xs font-medium text-ink-secondary">
+                    · {formatDate(g.start_date)}
+                    {g.end_date && g.end_date.slice(0, 10) !== g.start_date.slice(0, 10)
+                      ? `–${formatDate(g.end_date)}`
+                      : ""}
+                  </span>
+                )}
                 {g.state && <span className="text-xs text-ink-muted">· {g.state}</span>}
                 {g.booth_no && <span className="text-xs text-ink-muted">· Booth {g.booth_no}</span>}
                 <span className="ml-auto rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
