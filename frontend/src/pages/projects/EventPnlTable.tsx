@@ -129,7 +129,7 @@ function ForecastEditor({ line, current, onForecast }: {
   );
 }
 
-function Cell({ value, note, editable, busy, tone, bold, source, draftFrom }: {
+function Cell({ value, note, editable, busy, tone, bold, source, draftFrom, editTitle }: {
   value: number | null;
   note?: string;
   editable?: Editable;
@@ -140,6 +140,8 @@ function Cell({ value, note, editable, busy, tone, bold, source, draftFrom }: {
   source?: LineSource;
   /** What the typed-row editor starts from (the actual, not an estimate). */
   draftFrom?: number;
+  /** The hover note when the click does something other than edit the actual. */
+  editTitle?: string;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -161,7 +163,7 @@ function Cell({ value, note, editable, busy, tone, bold, source, draftFrom }: {
     <td
       className={cn("px-3 py-1.5 text-right align-top", editable && !editing && !busy && "cursor-pointer hover:bg-accent-soft/30")}
       onClick={editable && !editing ? () => { const v = draftFrom ?? value; setDraft(v > 0 ? String(v) : ""); setEditing(true); } : undefined}
-      title={editable ? "Click to edit" : undefined}
+      title={editable ? (editTitle ?? "Click to edit") : undefined}
     >
       {editing ? (
         <input
@@ -184,8 +186,12 @@ function Cell({ value, note, editable, busy, tone, bold, source, draftFrom }: {
 
 type TotalKey = keyof DetailForecast["totals"];
 
-export function EventPnlTable({ pnl, editable, busyCategory, books, rentalNote, layers, onForecast }: {
+export function EventPnlTable({ pnl, editable, busyCategory, books, rentalNote, layers, onForecast, forecastByClick }: {
   pnl: EventPnl;
+  /** Owner 2026-11-20 (A): until the event ends, clicking a figure in the Total
+   *  Sales column - Sales included - sets that line's FORECAST; after it ends a
+   *  click edits the actual, as before. */
+  forecastByClick: boolean;
   /** The three layers over the Total Sales column; null = actuals only. */
   layers: DetailForecast | null;
   /** Set / clear a line's Forecast; null when the caller may not. */
@@ -258,6 +264,10 @@ export function EventPnlTable({ pnl, editable, busyCategory, books, rentalNote, 
     const va = held != null ? held : layered ? layered.amount : total ? total.amount : actualA;
     const noteA = total?.estimated ? [opts.noteA, ESTIMATE_NOTE].filter(Boolean).join(" · ") : layered && layered.source !== "actual" ? undefined : opts.noteA;
     const vb = b ? pick(b) : null;
+    /* A real figure (books, typed cost, real sales) is never replaced by a click. */
+    const byClick = forecastByClick && saveForecast !== null && !!layered && layered.source !== "actual";
+    const line = opts.line;
+    const clickForecast = byClick && line ? { onSave: (n: number) => saveForecast(line, n) } : null;
     return (
       <tr key={label} className={cn("border-b border-border-subtle", opts.sub && "bg-bg/50")}>
         <th scope="row" className={cn("py-1.5 text-left font-normal", opts.indent ? "pl-8 pr-3" : "px-4", opts.sub ? "font-bold text-ink" : "text-ink-secondary")}>
@@ -281,9 +291,10 @@ export function EventPnlTable({ pnl, editable, busyCategory, books, rentalNote, 
           )}
         </th>
         <Cell value={va} note={noteA} bold={opts.sub} tone={opts.tone?.(va)}
-          editable={opts.category ? editable(opts.category, opts.bookRow ?? opts.category) : undefined}
-          busy={!!opts.category && busyCategory === opts.category}
-          source={layered?.source} draftFrom={actualA} />
+          editable={clickForecast ?? (opts.category ? editable(opts.category, opts.bookRow ?? opts.category) : undefined)}
+          busy={!byClick && !!opts.category && busyCategory === opts.category}
+          source={layered?.source} draftFrom={byClick ? va : actualA}
+          editTitle={byClick ? "Click to set the Forecast" : undefined} />
         <Cell value={vb} note={opts.noteB} bold={opts.sub} tone={vb == null ? undefined : opts.tone?.(vb)} />
       </tr>
     );
