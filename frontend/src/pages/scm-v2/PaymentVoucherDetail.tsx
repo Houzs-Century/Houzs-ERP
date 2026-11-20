@@ -68,6 +68,7 @@ import { BooksLine, PvTrail, StageTag, VoucherTaskDrawer, pvStage } from './PvDo
 import { NO_PAY_TO, isBlankPayTo, payToBody, payToOfVoucher, type PayTo } from './pv-pay-to';
 import { PvPayToFields } from './PvPayToFields';
 import { returnToWorkspaceOpener, useWorkspaceOpener } from '../../lib/useWorkspaceOpener';
+import { FinanceDocLink, financeDocHref } from './finance/FinanceDocLink';
 import { PAYMENT_VOUCHER_AUDIT_LABELS } from './entity-audit-labels';
 import { resolveFxRate, deriveRateFromMyrPaid } from './fx-rate';
 import { useUnsavedWork } from '../../lib/unsavedWork';
@@ -1063,12 +1064,17 @@ export const PaymentVoucherDetail = () => {
                 </thead>
                 <tbody>
                   {allocations.map((a) => {
-                    const piId = String(a.piId ?? a.pi_id ?? '');
+                    /* Each invoice opens in its own tab, and its Back returns to this
+                       voucher (owner 2026-11-20: 点开打开那invoice，退回来就是退回这一页) —
+                       an AP bill as well as a purchase invoice. */
+                    const docId = allocKeyOf(a);
+                    const isAp = Boolean(a.apInvoiceId ?? a.ap_invoice_id);
+                    const number = String(a.invoiceNumber ?? a.invoice_number ?? docId);
                     return (
-                      <tr key={a.id ?? piId} style={{ borderTop: '1px solid var(--line)' }}>
-                        <td style={{ padding: '6px 8px', fontFamily: 'var(--font-mono)' }}>
-                          {piId
-                            ? <Link to={`/scm/purchase-invoices/${piId}`} style={{ color: 'var(--c-orange)' }}>{a.invoiceNumber ?? a.invoice_number ?? piId}</Link>
+                      <tr key={a.id ?? docId} style={{ borderTop: '1px solid var(--line)' }}>
+                        <td style={{ padding: '6px 8px' }}>
+                          {docId
+                            ? <FinanceDocLink to={financeDocHref(isAp ? 'API' : 'PI', docId)}>{number}</FinanceDocLink>
                             : (a.invoiceNumber ?? a.invoice_number ?? '—')}
                           {String(a.kind ?? '') === 'API' && (
                             <span style={{ marginLeft: 6, fontSize: 'var(--fs-11)', fontFamily: 'inherit', color: 'var(--fg-muted)' }} title="AP invoice — a non-stock supplier bill">AP</span>

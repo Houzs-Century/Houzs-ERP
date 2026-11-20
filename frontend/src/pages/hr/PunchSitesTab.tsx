@@ -1,14 +1,16 @@
 /* Employees & Attendance > Punch Sites (HC-0125 phase 2): where a phone punch
  * counts as on site. Hookka had one hard-coded factory point; Century has
- * several warehouses and showrooms, so each is a point and a radius. The
- * check is soft: an off-site punch still records, HR sees the distance. */
-import { useState } from "react";
+ * several warehouses and showrooms, so each is a point and a radius. By default
+ * the check is soft (an off-site punch still records, HR sees the distance);
+ * the two Punch rules switches below turn the selfie / on-site checks into a
+ * hard block, so a punch missing either is refused on the phone. */
+import { useEffect, useState } from "react";
 import { MapPin, Plus } from "lucide-react";
 import { api } from "../../api/client";
 import { DataTable, type Column } from "../../components/DataTable";
 import { useToast } from "../../hooks/useToast";
 import { Field, Pill, Toggle, errText, ghostBtn, inputCls, primaryBtn } from "../pos-admin/posAdminUi";
-import { HR, usePunchSites, type PunchSiteOut } from "./hrApi";
+import { HR, savePunchSettings, usePunchSites, type PunchSettings, type PunchSiteOut } from "./hrApi";
 
 type Draft = { id: number | null; name: string; coords: string; radiusM: string; active: boolean };
 const blank: Draft = { id: null, name: "", coords: "", radiusM: "200", active: true };
@@ -29,6 +31,28 @@ export function PunchSitesTab() {
   const [saving, setSaving] = useState(false);
   const canManage = q.data?.canManage ?? false;
   const coords = draft ? parseCoords(draft.coords) : null;
+
+  const [gates, setGates] = useState<PunchSettings>({ requireSelfie: false, requireOnSite: false });
+  const [savingGates, setSavingGates] = useState(false);
+  useEffect(() => {
+    if (q.data) setGates(q.data.settings);
+  }, [q.data]);
+  const hasSite = (q.data?.sites ?? []).some((s) => s.active);
+
+  async function setGate(patch: Partial<PunchSettings>) {
+    const next = { ...gates, ...patch };
+    setGates(next);
+    setSavingGates(true);
+    try {
+      await savePunchSettings(next);
+      q.reload();
+    } catch (e) {
+      toast.error(errText(e, "Could not save the punch rules."));
+      if (q.data) setGates(q.data.settings);
+    } finally {
+      setSavingGates(false);
+    }
+  }
 
   async function save() {
     if (!draft) return;
@@ -75,6 +99,33 @@ export function PunchSitesTab() {
 
   return (
     <div className="space-y-3">
+      <div className="rounded-md border border-border bg-surface p-3">
+        <div className="text-[12px] font-semibold text-ink">Punch rules</div>
+        <div className="mt-0.5 text-[10.5px] text-ink-muted">
+          Off: the selfie and location are kept as evidence only. On: a punch missing it is refused on the phone.
+        </div>
+        <div className="mt-2 space-y-1">
+          <Toggle
+            checked={gates.requireSelfie}
+            onChange={(v) => void setGate({ requireSelfie: v })}
+            disabled={!canManage || savingGates}
+            label="Require a photo"
+            hint="A clock in / clock out without a selfie is refused."
+          />
+          <Toggle
+            checked={gates.requireOnSite}
+            onChange={(v) => void setGate({ requireOnSite: v })}
+            disabled={!canManage || savingGates}
+            label="Require being on site"
+            hint="A clock in / clock out outside every active site's radius (or with location off) is refused."
+          />
+        </div>
+        {gates.requireOnSite && !hasSite && (
+          <div className="mt-2 text-[10.5px] text-rose-600 dark:text-rose-400">
+            No active punch site yet, so this would refuse every punch. Add a site below first.
+          </div>
+        )}
+      </div>
       {canManage && !draft && (
         <div className="flex justify-end">
           <button type="button" className={primaryBtn} onClick={() => setDraft(blank)}>

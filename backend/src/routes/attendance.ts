@@ -23,8 +23,9 @@ import { hr_attendance, hr_employees, hr_payslips } from "../db/schema";
 import { requireActiveCompanyId } from "../scm/lib/companyScope";
 import { todayMyt } from "../scm/lib/my-time";
 import { checkPunchLocation } from "../scm/shared/hr-attendance";
-import { attendanceView, planPunch, type AttendanceRow } from "./lib/hr-attendance-view";
-import { loadSites, rulesResolver } from "./lib/hr-attendance-store";
+import { attendanceView, planPunch, punchGateRefusal, type AttendanceRow } from "./lib/hr-attendance-view";
+import { loadSites, loadAttendanceSettings } from "./lib/hr-attendance-store";
+import { shiftRulesResolver } from "./lib/hr-shift-store";
 import { closeForgottenAndSync, syncDayFromPunch } from "./lib/hr-labor-store";
 import { computePeriod } from "./lib/hr-payroll-store";
 import { slipOut, type SlipRow } from "./hr-payroll";
@@ -75,18 +76,18 @@ attendance.get("/me", async (c) => {
   const now = new Date();
   await closeForgottenAndSync(db, co.companyId, emp.id, now);
   const since = todayMyt(-13);
-  const [rows, rulesFor, sites] = await Promise.all([
+  const [rows, shiftRes, sites] = await Promise.all([
     db
       .select()
       .from(hr_attendance)
       .where(and(eq(hr_attendance.company_id, co.companyId), eq(hr_attendance.employee_id, emp.id), gte(hr_attendance.work_date, since)))
       .orderBy(desc(hr_attendance.work_date)),
-    rulesResolver(db, co.companyId),
+    shiftRulesResolver(db, co.companyId, since, todayMyt()),
     loadSites(db, co.companyId),
   ]);
-  const views = rows.map((r) => attendanceView(r as AttendanceRow, rulesFor(r.work_date), sites.names, now));
+  const views = rows.map((r) => attendanceView(r as AttendanceRow, shiftRes.rulesFor(r.work_date, emp.id), sites.names, now));
   const today = todayMyt();
-  const shift = rulesFor(today);
+  const shift = shiftRes.rulesFor(today, emp.id);
   return c.json({
     linked: true,
     employee: { empNo: emp.emp_no, name: emp.name },
@@ -96,6 +97,9 @@ attendance.get("/me", async (c) => {
     todayDay: views.find((v) => v.workDate === today) ?? null,
     recent: views,
     sitesConfigured: sites.active.length,
+    // Active sites' coordinates so the phone can show the live distance to the
+    // nearest one before a punch (HC-0125; needed once require_on_site is on).
+    sites: sites.active,
   });
 });
 
@@ -145,8 +149,12 @@ attendance.post("/punch", async (c) => {
     return c.json({ error: "not_clocked_in", message: "You have not clocked in today, so there is nothing to clock out." }, 409);
   }
 
-  const sites = await loadSites(db, co.companyId);
+  const [sites, settings] = await Promise.all([loadSites(db, co.companyId), loadAttendanceSettings(db, co.companyId)]);
   const loc = checkPunchLocation(hasGps ? lat : null, hasGps ? lng : null, sites.active);
+  /* HC-0125 punch gates: when HR turns a gate on, a recording punch is REFUSED
+     (hard block) unless it carries a selfie / is within a site. */
+  const refusal = punchGateRefusal(settings, plan.kind, !!photo, loc);
+  if (refusal) return c.json(refusal, 422);
   let photoKey: string | null = null;
   if (photo && plan.kind !== "already-in") {
     photoKey = `hr-punch/${co.companyId}/${emp.id}/${today}-${action === "CLOCK_IN" ? "in" : "out"}-${crypto.randomUUID().slice(0, 8)}.${PHOTO_TYPES[photo.type]}`;

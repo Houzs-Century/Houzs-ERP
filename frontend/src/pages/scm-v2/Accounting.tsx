@@ -38,6 +38,7 @@ import { EventCostsTab } from './EventCosts';
 import { EventCommissionTab } from './EventCommission';
 import { ProductProfitTab } from './ProductProfit';
 import { LogisticsCostTab } from './LogisticsCost';
+import { DepartmentPnlTab } from './DepartmentPnl';
 import { byText } from '../../vendor/scm/lib/sort-options';
 import styles from './Suppliers.module.css';
 import { GeneralLedger } from './GeneralLedger';
@@ -97,6 +98,7 @@ export const Accounting = () => {
       {tab === 'commission' && <EventCommissionTab />}
       {tab === 'products' && <ProductProfitTab />}
       {tab === 'logistics' && <LogisticsCostTab />}
+      {tab === 'departments' && <DepartmentPnlTab />}
     </AccountingFrame>
   );
 };

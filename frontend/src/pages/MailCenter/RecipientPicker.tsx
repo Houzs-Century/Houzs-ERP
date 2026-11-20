@@ -35,7 +35,7 @@ const TABS: Array<{ id: Tab; label: string; none: string }> = [
   { id: "everyone", label: "Everyone", none: "No one to pick yet." },
 ];
 
-const DIRECTORY_KEY = "/api/mail-center/directory";
+export const DIRECTORY_KEY = "/api/mail-center/directory";
 
 export function filterDirectory(list: DirectoryEntry[], q: string): DirectoryEntry[] {
   const needle = q.trim().toLowerCase();

@@ -14,7 +14,7 @@
 import { DataTable, type Column } from "../../components/DataTable";
 import { fmtDateOrDash, fmtDayMonthRange } from "../../vendor/shared/format";
 import { fmtSenPlain } from "../../vendor/shared/format";
-import { figuresOf, pctOf, type OvProject } from "./projectOverviewModel";
+import { figuresOf, forecastKindOf, pctOf, type OvProject } from "./projectOverviewModel";
 import { projectLines } from "./projectOverviewView";
 
 export type OverviewRow = { p: OvProject; f: ReturnType<typeof figuresOf> };
@@ -23,17 +23,40 @@ const money = (rm: number): string => (!Number.isFinite(rm) || Math.abs(rm) < 0.
 const pct = (x: number | null): string => (x == null ? "-" : x < 0 ? `(${Math.abs(x).toFixed(1)}%)` : `${x.toFixed(1)}%`);
 const sum = (rows: OverviewRow[], pick: (r: OverviewRow) => number) => rows.reduce((s, r) => s + pick(r), 0);
 
+/* A forecast figure's shading: yellow = the last event's result, teal = a Forecast someone
+   typed (owner 2026-11-19). No padding, so the figure keeps the column's width. */
+const SHADE = { last: "bg-warning-bg text-warning-text", typed: "bg-primary-soft text-primary-ink" } as const;
+const kindOf = (r: OverviewRow, key: string) => (r.f.estimated ? forecastKindOf(r.p, key) : null);
+
 /** One money column: right-aligned, totalled, exported as a number. */
 const amountCol = (key: string, label: string, pick: (r: OverviewRow) => number, group: string, opts: { strong?: boolean } = {}): Column<OverviewRow> => ({
   key, label, align: "right", group,
   render: (r) => {
     const v = pick(r);
-    return <span className={opts.strong ? (v < 0 ? "font-semibold text-err" : "font-semibold") : v < 0 ? "text-err" : Math.abs(v) < 0.005 ? "text-ink-muted" : ""}>{money(v)}</span>;
+    const tone = opts.strong ? (v < 0 ? "font-semibold text-err" : "font-semibold") : v < 0 ? "text-err" : Math.abs(v) < 0.005 ? "text-ink-muted" : "";
+    const kind = kindOf(r, key);
+    return kind
+      ? <span className={`${tone} ${SHADE[kind]}`} data-forecast={kind}
+          title={kind === "typed" ? "A Forecast typed on the project, until the real figure is in" : "The last same event's result, until the real figure is in"}>{money(v)}</span>
+      : <span className={tone}>{money(v)}</span>;
   },
   /* To the sen, so two rows that read the same share one line in the funnel. */
   getValue: (r) => Math.round(pick(r) * 100) / 100, filterLabel: (v) => money(Number(v)),
   filterType: "number", sortValue: pick, numberValue: pick, exportValue: (r) => pick(r),
-  total: (rows) => <span className={opts.strong && sum(rows, pick) < 0 ? "text-err" : ""}>{money(sum(rows, pick))}</span>,
+  /* The total says how much of it is a forecast - shaded, with the forecast part on hover
+     (owner 2026-11-19: projected total 又怎么show). */
+  total: (rows) => {
+    const all = sum(rows, pick);
+    const typed = sum(rows.filter((r) => kindOf(r, key) === "typed"), pick);
+    const last = sum(rows.filter((r) => kindOf(r, key) === "last"), pick);
+    const tone = opts.strong && all < 0 ? "text-err" : "";
+    if (Math.abs(typed) < 0.005 && Math.abs(last) < 0.005) return <span className={tone}>{money(all)}</span>;
+    const kind = Math.abs(last) >= 0.005 ? "last" : "typed";
+    return (
+      <span className={`${tone} ${SHADE[kind]}`} data-forecast={kind}
+        title={`Typed forecast ${money(typed)} · last event ${money(last)} · real ${money(all - typed - last)}`}>{money(all)}</span>
+    );
+  },
 });
 
 /** A % column worked out row by row, and on the Total row from the added-up figures. */
@@ -60,8 +83,6 @@ export const PROJECT_COLUMNS: Column<OverviewRow>[] = [
     render: (r) => (
       <span className="whitespace-nowrap font-semibold text-primary" title={r.p.name}>
         {projectLines(r.p).title}
-        {/* Owner 2026-11-18: the row's figures hold a Forecast or a Last event estimate. */}
-        {r.f.estimated && <span className="ml-1.5 rounded bg-warning-bg px-1 py-px text-[10px] font-semibold text-warning-text" title="Some figures are a typed Forecast or the last same-venue event's actual">Estimate</span>}
       </span>
     ),
     getValue: (r) => projectLines(r.p).title, sortValue: (r) => projectLines(r.p).title, searchValue: (r) => r.p.name,

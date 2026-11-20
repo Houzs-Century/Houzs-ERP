@@ -9,7 +9,9 @@ import { formatDate } from "../lib/utils";
 import { SearchScopeHint } from "../components/SearchScopeHint";
 import { useAuth } from "../auth/AuthContext";
 import { pickDefaultFromAddress } from "../pages/MailCenter/mail-from-default";
-import { deliveryLabel, sentToast, type DeliveryStatus } from "../pages/MailCenter/mail-delivery";
+import { deliveryLabel, deliveryTone, sentToast, type DeliveryStatus, type DeliveryTone } from "../pages/MailCenter/mail-delivery";
+
+const DELIVERY_TONE_COLORS: Record<DeliveryTone, string> = { bad: "#b42318", waiting: "#b54708", good: "#067647" };
 import {
   fetchOutbox,
   fetchOutboxDetail,
@@ -37,6 +39,7 @@ import {
 } from "../pages/MailCenter/mail-attachments";
 import { parseRecipients, firstInvalid, addRecipients } from "../pages/MailCenter/mail-recipients";
 import { RecipientPicker } from "../pages/MailCenter/RecipientPicker";
+import { RecipientSuggestInput } from "../pages/MailCenter/RecipientSuggestInput";
 import { EMAIL_FRAME_SANDBOX_MEASURABLE, emailSrcDoc } from "../pages/MailCenter/mail-email-frame";
 import { MobileMessageAcks, MobileNeedsAck, MobilePendingAcks, MobileReadBy } from "./MobileMailAcks";
 import type { AckState, ThreadReaders } from "../pages/MailCenter/mail-acks";
@@ -1087,7 +1090,7 @@ function MessageBubble({ m, onAcked }: { m: Message; onAcked: () => void }) {
             <span style={{ fontSize: 10, color: "var(--hz-c-ink-soft)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.fromAddress}</span>
           )}
           {deliveryLabel(m.deliveryStatus) && (
-            <span style={{ fontSize: 10, fontWeight: 700, flex: "none", color: m.deliveryStatus === "failed" ? "#b42318" : "#b54708" }}>{deliveryLabel(m.deliveryStatus)}</span>
+            <span style={{ fontSize: 10, fontWeight: 700, flex: "none", color: DELIVERY_TONE_COLORS[deliveryTone(m.deliveryStatus)] }}>{deliveryLabel(m.deliveryStatus)}</span>
           )}
           <span style={{ fontSize: 10, color: "var(--hz-c-ink-soft)", marginLeft: "auto", flex: "none" }}>{fmtMsgTime(m)}</span>
         </div>
@@ -1503,7 +1506,7 @@ function MailCompose({
       <FromPicker addresses={addresses} value={from} onChange={setFromOverride} />
       <label className="fld">
         <span className="fld-l">To</span>
-        <input className="fld-i" value={to} onChange={(e) => setTo(e.target.value)} placeholder="name@example.com" />
+        <RecipientSuggestInput inputClassName="fld-i" value={to} onChange={setTo} placeholder="name@example.com" disabled={sending} invalid={false} />
       </label>
       <div style={{ display: "flex", gap: 8 }}>
         <button type="button" onClick={() => setPickerOpen(true)} className="tinybtn" style={{ borderStyle: "dashed" }}>
@@ -1520,11 +1523,11 @@ function MailCompose({
         <>
           <label className="fld">
             <span className="fld-l">Cc</span>
-            <input className="fld-i" value={cc} onChange={(e) => setCc(e.target.value)} placeholder="cc@example.com" />
+            <RecipientSuggestInput inputClassName="fld-i" value={cc} onChange={setCc} placeholder="cc@example.com" disabled={sending} invalid={false} />
           </label>
           <label className="fld">
             <span className="fld-l">Bcc</span>
-            <input className="fld-i" value={bcc} onChange={(e) => setBcc(e.target.value)} placeholder="bcc@example.com" />
+            <RecipientSuggestInput inputClassName="fld-i" value={bcc} onChange={setBcc} placeholder="bcc@example.com" disabled={sending} invalid={false} />
           </label>
         </>
       )}

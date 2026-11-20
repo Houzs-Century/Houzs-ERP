@@ -20,6 +20,12 @@ import type { EventRow } from './event-tags';
 
 export type EventSuggestion = { id: number; score: number; reasons: string[]; event: EventRow };
 
+/* A cancelled fair is never auto-offered. Goodwill or a forfeited deposit on a
+   cancelled event happens, but the requester tags it by hand — the system must
+   not pick it for them (owner 2026-11-19: a text guess auto-filled a cancelled
+   fair onto a payment request). */
+const isCancelledEvent = (e: EventRow): boolean => String(e.status ?? '').trim().toLowerCase() === 'cancelled';
+
 /* Letters and digits only, upper case — "Setia SPICE Conv. Centre" and
    "SETIA SPICE CONVENTION CENTRE" compare on what they spell. */
 const fold = (s: string | null | undefined): string => String(s ?? '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
@@ -103,9 +109,19 @@ export function suggestEvents(
 ): EventSuggestion[] {
   const out: EventSuggestion[] = [];
   for (const e of events) {
-    if (e.archived) continue;
+    if (e.archived || isCancelledEvent(e)) continue;
     const s = scoreEvent(input, e);
     if (s && s.score >= 30) out.push({ id: e.id, score: s.score, reasons: s.reasons, event: e });
   }
   return out.sort((a, b) => b.score - a.score || String(a.event.startDate ?? '').localeCompare(String(b.event.startDate ?? ''))).slice(0, limit);
+}
+
+/** The sales order a bill belongs to KNOWS its event, so that beats any text
+    guess. When the attached bill is one of our own orders, its event leads the
+    list — the form fills it in — and the guesses follow, minus a repeat of it.
+    No order event: the guesses stand as they were (owner 2026-11-19). */
+export function leadWithOrderEvent(orderEvent: EventRow | null, guesses: EventSuggestion[]): EventSuggestion[] {
+  if (!orderEvent) return guesses;
+  const lead: EventSuggestion = { id: orderEvent.id, score: 1000, reasons: ['on the sales order'], event: orderEvent };
+  return [lead, ...guesses.filter((g) => g.id !== orderEvent.id)];
 }

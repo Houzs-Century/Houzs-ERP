@@ -200,7 +200,7 @@ list. Holding `projects.write` escapes crew scoping entirely on both.
   event's RATIO to the shown Sales, not its amount; COGS and fixed costs take its amount. No such
   event = no layer, never another venue. Totals add the shown lines and flag estimates. Project
   Overview layers its column the same way and splits totals Actual / Forecast / Last event; that
-  event's Expo Map files show read-only in this event's EXPO MAP section while it has none.
+  event's Expo Map files show read-only in this event's EXPO MAP section until its own Filled Floorplan has a file.
 - The evening sales report (one bill per line: booklet no, amount, salesperson;
   a "+ N(T)" transport or "(D)" disposal tail is kept apart) is DERIVED from the
   project chat on every read — notes by the Owner position, Ummu or weisiang

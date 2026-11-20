@@ -454,6 +454,44 @@ describe('PUT /chart/update — one definition, every company', () => {
     expect(tables.accounts.find((r) => r.company_id === 2 && r.account_code === '900-P015')!.logistics_row).toBeNull();
   });
 
+  /* The Department P&L's department (owner 2026-11-19): G&A, or an Operation row in a
+     region — on an expense account, never beside a Logistics expense row. */
+  test('the Department rides the union, changes in every company, only on an expense account no Logistics row claims', async () => {
+    const tables = { accounts: [
+      acct(1, '900-R004', { account_name: 'WAREHOUSE - (PENANG)', account_type: 'EXPENSE', department_row: 'op_rental_pg' }),
+      acct(2, '900-R004', { account_name: 'WAREHOUSE - (PENANG)', account_type: 'EXPENSE', department_row: 'op_rental_pg' }),
+      acct(1, '900-P001', { account_name: 'PRINTING & STATIONERY', account_type: 'EXPENSE' }),
+      acct(1, '900-P015', { account_name: 'PETROL, TOL AND PARKING - LORI VRH 9058', account_type: 'EXPENSE', logistics_row: 'petrol' }),
+      acct(1, '599-0000', { account_name: 'ADDITIONAL INCOME', account_type: 'INCOME' }),
+    ] };
+    const app = harness(tables);
+    const union = await (await app.request('/chart')).json() as { departmentRows: Array<{ row: string; label: string }>; accounts: Row[] };
+    expect(union.departmentRows[0]).toEqual({ row: 'ga', label: 'G&A' });
+    expect(union.departmentRows.find((r) => r.row === 'op_utilities_em')).toEqual({ row: 'op_utilities_em', label: 'Operation – SBH & SWK – Water & Electricity' });
+    expect(union.accounts.find((a) => a.code === '900-R004')).toMatchObject({ departmentRow: 'op_rental_pg' });
+    expect(union.accounts.find((a) => a.code === '900-P001')).toMatchObject({ departmentRow: null });
+    const put = (body: Row) => app.request('/chart/update', { method: 'PUT', body: JSON.stringify(body), headers: { 'content-type': 'application/json' } });
+    expect((await put({ code: '900-R004', departmentRow: 'op_rental_kl' })).status).toBe(200);
+    for (const co of [1, 2]) {
+      expect(tables.accounts.find((r) => r.company_id === co && r.account_code === '900-R004')!.department_row).toBe('op_rental_kl');
+    }
+    expect((await put({ code: '900-P001', departmentRow: 'ga' })).status).toBe(200);
+    const bad = await put({ code: '900-P001', departmentRow: 'marketing' });
+    expect(bad.status).toBe(400);
+    expect(((await bad.json()) as Row).error).toBe('bad_department_row');
+    const income = await put({ code: '599-0000', departmentRow: 'ga' });
+    expect(income.status).toBe(400);
+    expect(((await income.json()) as Row).message).toBe('599-0000 is INCOME — a department reads expense accounts.');
+    const lorry = await put({ code: '900-P015', departmentRow: 'ga' });
+    expect(lorry.status).toBe(400);
+    expect(((await lorry.json()) as Row).message).toBe('900-P015 feeds the Logistics P&L (Petrol) — clear its Logistics row before giving it a department.');
+    const backwards = await put({ code: '900-P001', logisticsRow: 'petrol' });
+    expect(backwards.status).toBe(400);
+    expect(((await backwards.json()) as Row).message).toBe('900-P001 belongs to a department (G&A) — clear its Department before giving it a Logistics row.');
+    expect((await put({ code: '900-R004', departmentRow: '' })).status).toBe(200);
+    expect(tables.accounts.find((r) => r.company_id === 2 && r.account_code === '900-R004')!.department_row).toBeNull();
+  });
+
   test('ticking a code on copies its per-account flags with the definition', async () => {
     const tables = { accounts: [
       acct(1, '900-U006', { account_name: 'UPKEEP OF LORI', account_type: 'EXPENSE' }),

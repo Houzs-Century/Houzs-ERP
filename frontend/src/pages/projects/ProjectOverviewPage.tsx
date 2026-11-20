@@ -205,7 +205,9 @@ export function ProjectOverviewPage() {
         </Panel>
         <Panel title="Where each ringgit of sales goes" hint={`${winLabel}${partLabel}`}>
           <RinggitBar sales={ts.sales} parts={[["COGS", ts.cogs, PALETTE[1]!], ...costLines.map(([l, v, c]) => [l, v, c] as [string, number, string]), ["Net profit", Math.max(0, ts.np), "#2f8a5b"]]} />
-          <table className="mt-3 w-full border-collapse text-[12.5px] tabular-nums"><tbody>
+          {/* Scrolls sideways on a phone rather than cutting off the % column. */}
+          <div className="mt-3 overflow-x-auto" data-testid="ringgit-table">
+          <table className="w-full border-collapse text-[12.5px] tabular-nums"><tbody>
             <tr className="font-semibold"><Td left>Sales</Td><Td>{money(ts.sales)}</Td><Td className="w-[64px] text-ink-muted">100.0%</Td></tr>
             {cogsLines.map(([l, v]) => <tr key={l} className={v ? "" : "text-ink-muted"}><Td left className="pl-6">{l}</Td><Td>{money(v)}</Td><Td className="text-ink-muted">{pctTxt(pctOf(v, ts.sales))}</Td></tr>)}
             <tr className="bg-surface-2/70 font-semibold"><Td left className="border-t border-border">Total COGS</Td><Td className="border-t border-border">{money(ts.cogs)}</Td><Td className="border-t border-border">{pctTxt(pctOf(ts.cogs, ts.sales))}</Td></tr>
@@ -215,6 +217,7 @@ export function ProjectOverviewPage() {
             <tr className="bg-surface-2/70 font-semibold"><Td left className="border-t border-border">Total cost</Td><Td className="border-t border-border">{money(running)}</Td><Td className="border-t border-border">{pctTxt(pctOf(running, ts.sales))}</Td></tr>
             <tr className="bg-primary-soft/60 font-bold"><Td left className="border-t-2 border-primary/50">Net profit</Td><Td className={cn("border-t-2 border-primary/50", ts.np < 0 ? "text-err" : "text-synced")}>{money(ts.np)}</Td><Td className="border-t-2 border-primary/50">{pctTxt(pctOf(ts.np, ts.sales))}</Td></tr>
           </tbody></table>
+          </div>
           <p className="mt-2 pb-14 text-[11.5px] text-ink-muted">The lines of each event&apos;s Financial Snapshot, added up; % = share of sales. A grey line has nothing in this period.</p>
         </Panel>
       </div>
@@ -244,7 +247,7 @@ export function ProjectOverviewPage() {
 
       {/* The project list first, the venue rent after it (owner 2026-10-25:
           把venue rent 和 project 倒反位置). */}
-      <Panel title={`Projects${pick ? ` · ${pick}` : ""}${partLabel}`} hint={`${listed.length} projects · amounts in RM · click one to open it`}
+      <Panel title={`Projects${pick ? ` · ${pick}` : ""}${partLabel}`} hint={`${listed.length} projects · amounts in RM · click one to open it · yellow = last event's figure, teal = typed forecast`}
         right={pick ? <button type="button" className="text-[12px] text-primary hover:underline" onClick={() => setView({ pick: null })}>Show all</button> : undefined}>
         <div ref={tableRef}>
           <ProjectOverviewTable rows={listed} loading={q.loading} onOpen={openProject} />

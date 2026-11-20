@@ -3,6 +3,7 @@ import {
   ASSR_LEG_SEND_KINDS,
   KIND_AUTOMATION,
   MESSAGE_KINDS,
+  NO_STATUS_MOVE_KINDS,
   OPENER_KINDS,
   joinDeliveryAddress,
   kindAttributes,
@@ -24,13 +25,28 @@ describe('message kinds → Connect automation names', () => {
     expect(KIND_AUTOMATION.postage).toBe('Postage Confirm');
     // Must equal the Connect automation name byte-for-byte (houzs-connect #157).
     expect(KIND_AUTOMATION.overdue_order).toBe('Overdue Order');
+    // East Malaysia touchpoints — byte-for-byte the seeded Connect automation names.
+    expect(KIND_AUTOMATION.eastmy_prep).toBe('East Malaysia Prep Notice');
+    expect(KIND_AUTOMATION.eastmy_shipped).toBe('East Malaysia Shipped');
+    expect(KIND_AUTOMATION.eastmy_arrived).toBe('East Malaysia Arrived');
     expect(new Set(Object.values(KIND_AUTOMATION)).size).toBe(MESSAGE_KINDS.length);
   });
 
   it('only the conversation openers reset the contact (Delivery Lock must survive a reminder)', () => {
-    expect([...OPENER_KINDS].sort()).toEqual(['amend', 'assr_arrangement', 'delivery', 'postpone']);
+    // eastmy_prep opens the details conversation (its callback is eastmy_ack), so
+    // it resets; Shipped / Arrived are one-way and must not.
+    expect([...OPENER_KINDS].sort()).toEqual(['amend', 'assr_arrangement', 'delivery', 'eastmy_prep', 'postpone']);
     expect(OPENER_KINDS.has('driver_info')).toBe(false);
     expect(OPENER_KINDS.has('balance_reminder')).toBe(false);
+    expect(OPENER_KINDS.has('eastmy_shipped')).toBe(false);
+    expect(OPENER_KINDS.has('eastmy_arrived')).toBe(false);
+  });
+
+  it('a one-way heads-up and the East Malaysia touchpoints move no Delivery Message Status', () => {
+    expect([...NO_STATUS_MOVE_KINDS].sort()).toEqual(['eastmy_arrived', 'eastmy_prep', 'eastmy_shipped', 'overdue_order']);
+    // The delivery-date conversation's statuses still move for the normal sends.
+    expect(NO_STATUS_MOVE_KINDS.has('delivery')).toBe(false);
+    expect(NO_STATUS_MOVE_KINDS.has('balance_reminder')).toBe(false);
   });
 
   it('a Service Case leg can be sent Postpone, the Reminders and Driver Info; SO-only sends are excluded', () => {
@@ -58,9 +74,34 @@ describe('joinDeliveryAddress', () => {
 
 describe('kindAttributes', () => {
   it('openers and simple reminders add nothing beyond the shared bundle', () => {
-    for (const k of ['delivery', 'amend', 'reminder_1', 'reminder_2', 'reminder_3', 'delivery_completed'] as const) {
+    // eastmy_prep is a plain opener too: the shared bundle carries ref_1 /
+    // callback_url / refs_all (+ amount / bank_block when owed).
+    for (const k of ['delivery', 'amend', 'reminder_1', 'reminder_2', 'reminder_3', 'delivery_completed', 'eastmy_prep'] as const) {
       expect(kindAttributes(k, row, '2026-10-08', 0, undefined)).toEqual({ attributes: {} });
     }
+  });
+
+  it('East Malaysia shipped reads consignment + ETA off the row; skips when either is missing', () => {
+    // No Consignment No. / ETA on the row -> skipped, never sent with a blank.
+    expect(kindAttributes('eastmy_shipped', row, null, 0, undefined).skip).toBe('eastmy_shipment_fields_required');
+    expect(kindAttributes('eastmy_shipped', { ...row, consignment_no: 'MSCU1234567' }, null, 0, undefined).skip)
+      .toBe('eastmy_shipment_fields_required');
+    const r = kindAttributes(
+      'eastmy_shipped',
+      { ...row, consignment_no: 'MSCU1234567', eta_arriving_port: '2026-12-15' },
+      null,
+      0,
+      undefined,
+    );
+    expect(r.skip).toBeUndefined();
+    expect(r.attributes).toEqual({ consignment_no: 'MSCU1234567', eta_em_port: '2026/12/15' });
+  });
+
+  it('East Malaysia arrived gates on the EM-warehouse arrival date; adds nothing when set', () => {
+    expect(kindAttributes('eastmy_arrived', row, null, 0, undefined).skip).toBe('eastmy_not_arrived');
+    const r = kindAttributes('eastmy_arrived', { ...row, arrives_em_warehouse_date: '2026-12-20' }, null, 0, undefined);
+    expect(r.skip).toBeUndefined();
+    expect(r.attributes).toEqual({});
   });
 
   it('balance reminder skips a group that owes nothing', () => {

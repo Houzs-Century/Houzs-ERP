@@ -34,8 +34,12 @@ import {
   MESSAGE_KINDS,
   OPENER_KINDS,
   kindAttributes,
+  movesDeliveryStatus,
   type SendExtras,
 } from '../lib/delivery-message-kinds';
+// East Malaysia detection (Sabah / Sarawak), the SAME rule the transporter feed
+// uses: sales_location SBH / SRW, with a Singapore re-check off the country / addr3.
+import { sheetRegion } from '../../lib/delivery-sheet-feed';
 import { markSentStatus } from '../lib/delivery-message-status';
 import { parseAssrRowKey, sendAssrArrangement } from '../lib/assr-arrangement-message';
 import {
@@ -127,12 +131,44 @@ export async function sendDeliveryMessageForDocs(
       // delivery_message_status) ride along so EVERY send also fills the contact
       // panel's single-value fields (buildSyncHeadline), not only the fields the
       // message's own template uses (owner 2026-11-02).
-      .select('doc_no, ref, debtor_name, phone, branding, company_id, customer_delivery_date, amended_delivery_date, amend_reason, venue, agent, house_type, disposal_request, delivery_message_status, delivery_address1, delivery_address2, delivery_address3, delivery_address4, address1, address2, address3, address4, postcode, city, customer_state')
+      // sales_location + customer_country let the East Malaysia kinds gate on
+      // region (sheetRegion) so an EM template never goes to a West / SG order.
+      .select('doc_no, ref, debtor_name, phone, branding, company_id, customer_delivery_date, amended_delivery_date, amend_reason, venue, agent, house_type, disposal_request, delivery_message_status, delivery_address1, delivery_address2, delivery_address3, delivery_address4, address1, address2, address3, address4, postcode, city, customer_state, sales_location, customer_country')
       .in('doc_no', docNos),
     c,
   );
   if (readErr) return { sent: [], failed: [], skipped: [], notLogged: [], readError: { code: 'load_failed', reason: readErr.message } };
   const rows = (rowsRaw ?? []) as Array<Record<string, unknown>>;
+
+  // East Malaysia kinds only fire for East (Sabah / Sarawak) orders.
+  const isEmKind = kind === 'eastmy_prep' || kind === 'eastmy_shipped' || kind === 'eastmy_arrived';
+
+  // eastmy_shipped / eastmy_arrived read the shipment facts the staff enter on the
+  // board's EM columns — the latest live DO's consignment_no / eta_arriving_port /
+  // arrives_em_warehouse_date (delivery-planning-fields.ts). Merge them onto each
+  // SO row so kindAttributes can read them off the group's first order. The read
+  // is keyed on the already company-scoped doc_nos; "last live DO wins" is the
+  // board's own rule (delivery-board-maps.foldDos), excluding DRAFT / CANCELLED.
+  if (kind === 'eastmy_shipped' || kind === 'eastmy_arrived') {
+    const emDocs = rows.map((r) => String(r.doc_no));
+    const { data: doRaw, error: doErr } = await sb.from('delivery_orders')
+      .select('so_doc_no, status, consignment_no, eta_arriving_port, arrives_em_warehouse_date')
+      .in('so_doc_no', emDocs).order('created_at').order('id');
+    // Fail-closed like the profile / balance reads: a shipment fact we could not
+    // read must not send a Shipped/Arrived message with a blank or stale field.
+    if (doErr) return { sent: [], failed: [], skipped: [], notLogged: [], readError: { code: 'em_fields_load_failed', reason: doErr.message } };
+    const emByDoc = new Map<string, { consignment_no: unknown; eta_arriving_port: unknown; arrives_em_warehouse_date: unknown }>();
+    for (const d of (doRaw as Array<Record<string, unknown>> | null) ?? []) {
+      const st = String(d.status ?? '').toUpperCase();
+      if (st === 'DRAFT' || st === 'CANCELLED') continue;  // same live filter as the board
+      emByDoc.set(String(d.so_doc_no), {
+        consignment_no: d.consignment_no ?? null,
+        eta_arriving_port: d.eta_arriving_port ?? null,
+        arrives_em_warehouse_date: d.arrives_em_warehouse_date ?? null,
+      });
+    }
+    for (const r of rows) { const em = emByDoc.get(String(r.doc_no)); if (em) Object.assign(r, em); }
+  }
 
   const byDoc = new Map(rows.map((r) => [String(r.doc_no), r]));
   const skipped: Array<{ docNo: string; reason: string }> = [];
@@ -148,6 +184,13 @@ export async function sendDeliveryMessageForDocs(
     if (!r) { skipped.push({ docNo, reason: 'not_found' }); continue; }
     const phone = blastPhone(r.phone);
     if (!phone) { skipped.push({ docNo, reason: 'no_phone' }); continue; }
+    // An East Malaysia kind only fires for an East (Sabah / Sarawak) order —
+    // belt-and-suspenders with the board, which shows these entries on the EM
+    // tab: a West / SG order ticked by mistake is skipped, not sent an EM template.
+    if (isEmKind && sheetRegion(r.sales_location as string | null, r.address3 as string | null, r.customer_country as string | null) !== 'EAST') {
+      skipped.push({ docNo, reason: 'not_east' });
+      continue;
+    }
     const companyId = r.company_id == null ? null : Number(r.company_id);
     const key = `${phone}\u0000${companyId ?? ''}`;
     const g = byPhoneCompany.get(key) ?? { phone, companyId, rows: [] };
@@ -502,13 +545,14 @@ deliveryMessages.post('/send', async (c) => {
   const result = await sendDeliveryMessageForDocs(c, soDocNos, kind, extras);
   if (result.readError) return c.json({ error: result.readError.code, reason: result.readError.reason }, 500);
   // The messages have left; a status that cannot move is reported, never a 500.
-  // Overdue Order is a one-way production-delay heads-up and lands on NO Delivery
-  // Message Status (KIND_AFTER_STATUS excludes it), so it moves no row's "Done X".
-  const statusNotMoved = kind === 'overdue_order'
-    ? []
-    : await markSentStatus(
+  // Overdue Order and the East Malaysia touchpoints land on NO Delivery Message
+  // Status (NO_STATUS_MOVE_KINDS; KIND_AFTER_STATUS excludes them), so they move
+  // no row's "Done X". movesDeliveryStatus also narrows kind to a KIND_AFTER_STATUS key.
+  const statusNotMoved = movesDeliveryStatus(kind)
+    ? await markSentStatus(
         c, result.sent.flatMap((s) => s.docNos), KIND_AFTER_STATUS[kind], KIND_AUTOMATION[kind], result.statusAtSend,
-      );
+      )
+    : [];
   return c.json({
     sent: [...assrResult.sent, ...result.sent],
     failed: [...assrResult.failed, ...result.failed],

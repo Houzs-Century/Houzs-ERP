@@ -76,8 +76,8 @@ import {
   deferredInOf, isNoFair, earlierShownOf, eventCommissionCsv, fairPlace, fairSortKey, fmtRm, forBrand, manualOf, markWords, markedOf, monthAdjOf,
   markMonthOf, monthLabel, monthOf, myt, nextMonthOf, salespeopleOf, soListOf, sum, whatOf, wholeMonthOf, type BelowDepositRow, type SoListRow,
 } from './eventCommissionModel';
-import { ecFileBase, ecMeta, ecSections, ecSheets, ecSubtitle, type EcInput, type EcWho, type ShownTables } from './eventCommissionExport';
-import { EventCommissionExportDialog, useEcTables, type EcFormat } from './EventCommissionExportDialog';
+import { ecFileBase, ecMeta, ecSections, ecSheets, ecSubtitle, type EcInput, type ShownTables } from './eventCommissionExport';
+import { EventCommissionExportDialog, useEcTables, type EcChoice, type EcFormat } from './EventCommissionExportDialog';
 import ec from './EventCommission.module.css';
 
 const downloadText = (name: string, text: string) => {
@@ -845,7 +845,7 @@ export const EventCommissionTab = () => {
   const tables = useEcTables();
   const [exporting, setExporting] = useState<EcFormat | null>(null);
   const people = useMemo(() => (r ? salespeopleOf(r) : []), [r]);
-  const runExport = async (format: EcFormat, who: EcWho): Promise<void> => {
+  const runExport = async (format: EcFormat, { who, part, leaveOutZero }: EcChoice): Promise<void> => {
     if (!r) return;
     /* A fair's orders as one list: the order and its fair first, then the columns an open fair shows. */
     const soByKey = new Map(soListCols.map((c) => [c.key, c]));
@@ -866,8 +866,8 @@ export const EventCommissionTab = () => {
       below: tables.shown('below', BELOW_COLUMNS),
       marked: tables.shown('marked', markedCols),
     };
-    const input: EcInput = { report: r, period, brand: brandNow, shown, who };
-    const name = ecFileBase(fileBase, who);
+    const input: EcInput = { report: r, period, brand: brandNow, shown, who, part, leaveOutZero };
+    const name = ecFileBase(fileBase, who, part);
     if (format === 'excel') {
       const { downloadEcXlsx } = await import('./eventCommissionXlsx');
       await downloadEcXlsx(ecSheets(input), `${name}.xlsx`);
@@ -1049,7 +1049,7 @@ export const EventCommissionTab = () => {
         </div>
       )}
       {exporting && r && (
-        <EventCommissionExportDialog format={exporting} people={people} onClose={() => setExporting(null)} onExport={(who) => runExport(exporting, who)} />
+        <EventCommissionExportDialog format={exporting} people={people} onClose={() => setExporting(null)} onExport={(choice) => runExport(exporting, choice)} />
       )}
     </>
   );

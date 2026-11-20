@@ -1014,6 +1014,7 @@ export const hr_employees = pgTable("hr_employees", {
   tax_category: text("tax_category"),
   tax_child_relief_sen: bigint("tax_child_relief_sen", { mode: "number" }),
   trip_names: text("trip_names"),
+  shift_group_id: bigint("shift_group_id", { mode: "number" }),
   created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
   created_by: integer("created_by"),
   updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
@@ -1061,6 +1062,28 @@ export const hr_pay_rule_versions = pgTable(
   (t) => [uniqueIndex("uq_hr_pay_rule_versions_date").on(t.company_id, t.effective_from)],
 );
 
+// ── HR: shift groups (HC-0125) — per-employee shift for lateness/OT ─────────
+// A group's base shift (start/end minutes from midnight) and the delivery-day
+// shift used when DP sent the member on a delivery that day (null = none).
+export const hr_shift_groups = pgTable(
+  "hr_shift_groups",
+  {
+    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    company_id: bigint("company_id", { mode: "number" }).notNull(),
+    name: text("name").notNull(),
+    start_min: integer("start_min").notNull(),
+    end_min: integer("end_min").notNull(),
+    delivery_start_min: integer("delivery_start_min"),
+    delivery_end_min: integer("delivery_end_min"),
+    sort_order: integer("sort_order").notNull().default(0),
+    active: boolean("active").notNull().default(true),
+    created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+    created_by: integer("created_by"),
+    updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+  },
+  (t) => [index("idx_hr_shift_groups_company").on(t.company_id, t.sort_order)],
+);
+
 // ── HR: punch sites + attendance, phase 2 (mig-pg 20261022T0300, HC-0125) ──
 export const hr_punch_sites = pgTable("hr_punch_sites", {
   id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
@@ -1072,6 +1095,17 @@ export const hr_punch_sites = pgTable("hr_punch_sites", {
   active: boolean("active").notNull().default(true),
   created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
   created_by: integer("created_by"),
+  updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+  updated_by: integer("updated_by"),
+});
+
+// HC-0125: per-company punch gates. When on, a phone punch is REFUSED unless it
+// has a selfie / is within a punch site (otherwise selfie + GPS are only
+// evidence). One row per company; absent = both off.
+export const hr_attendance_settings = pgTable("hr_attendance_settings", {
+  company_id: bigint("company_id", { mode: "number" }).primaryKey(),
+  require_selfie: boolean("require_selfie").notNull().default(false),
+  require_on_site: boolean("require_on_site").notNull().default(false),
   updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
   updated_by: integer("updated_by"),
 });

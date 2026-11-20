@@ -20,8 +20,8 @@
 
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { activeCompanySql, requireActiveCompanyId, scopeToCompany } from '../lib/companyScope';
-import { companyHasEvents, loadEventsBetween } from '../lib/event-tags';
-import { suggestEvents, type EventSuggestion } from '../lib/event-match';
+import { companyHasEvents, loadEventsBetween, loadEventsByIds, type EventRow } from '../lib/event-tags';
+import { leadWithOrderEvent, suggestEvents, type EventSuggestion } from '../lib/event-match';
 import { findBillMatches, type BillProbe } from '../lib/bill-matches';
 import { PAYMENT_REQUEST_KEY, callerUserId, isRequestFinance } from '../lib/payment-request';
 import { todayMyt } from '../lib/my-time';
@@ -109,23 +109,41 @@ export const readRequestBillHandler = async (c: any): Promise<Response> => {
   const companySql = activeCompanySql(c, 'p.company_id');
   let hasEvents = false;
   try { hasEvents = await companyHasEvents(c.env.DB, companySql); } catch { hasEvents = false; }
-  const eventBill = hasEvents && ex.event != null;
-  let eventSuggestions: EventSuggestion[] = [];
-  if (eventBill) {
+  /* When the attached bill is one of OUR sales orders, that order already knows
+     its event — use it, do not guess. A text guess once read the order's hand-
+     typed venue and auto-filled a different, cancelled fair (owner 2026-11-19).
+     The order's own event leads; the text guesses follow it. */
+  let orderEvent: EventRow | null = null;
+  if (hasEvents && ex.invoiceNumber) {
+    try {
+      const { data: so, error: soErr } = await scopeToCompany(
+        sb.from('mfg_sales_orders').select('doc_no, project_id').eq('doc_no', ex.invoiceNumber), c,
+      ).maybeSingle();
+      const pid = soErr || so?.project_id == null ? null : Number(so.project_id);
+      if (pid != null && Number.isFinite(pid)) {
+        orderEvent = (await loadEventsByIds(c.env.DB, companySql, [pid])).get(pid) ?? null;
+      }
+    } catch { orderEvent = null; }
+  }
+
+  const eventBill = hasEvents && (ex.event != null || orderEvent != null);
+  let guesses: EventSuggestion[] = [];
+  if (hasEvents && ex.event != null) {
     const from = ex.event?.dateFrom ?? ex.invoiceDate ?? todayMyt();
     const to = ex.event?.dateTo ?? ex.event?.dateFrom ?? ex.invoiceDate ?? todayMyt();
     try {
       const events = await loadEventsBetween(c.env.DB, companySql, shiftDay(from, -60), shiftDay(to, 180));
-      eventSuggestions = suggestEvents({
+      guesses = suggestEvents({
         hint: ex.event,
         vendorName: ex.vendorName,
         lineText: ex.lines.map((l) => l.description ?? '').join(' '),
         billDate: ex.invoiceDate,
       }, events);
     } catch {
-      eventSuggestions = [];
+      guesses = [];
     }
   }
+  const eventSuggestions = leadWithOrderEvent(orderEvent, guesses);
 
   const found = await findBillMatches(sb, co.companyId, [{ key: 'bill', billNo: ex.invoiceNumber, billDate: ex.invoiceDate, exclude }]);
   if (!found.ok) return c.json({ error: 'load_failed', reason: found.reason }, 500);

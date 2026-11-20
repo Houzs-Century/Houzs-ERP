@@ -9,10 +9,11 @@ import { and, eq, gte, lte, or, sql } from "drizzle-orm";
 import type { Env } from "../../types";
 import { getDb } from "../../db/client";
 import { hr_attendance, hr_employees, hr_hour_deductions, hr_public_holidays, hr_working_hours } from "../../db/schema";
-import { minutesFromWorkDate, toAttendanceRules } from "../../scm/shared/hr-attendance";
+import { minutesFromWorkDate } from "../../scm/shared/hr-attendance";
 import { MIN_DOCK_HOURS, isWorkingDay, punchDayHours, punchShortfallHours, rulesForEmployeeHours } from "../../scm/shared/hr-labor";
 import { asDate } from "./hr-attendance-view";
-import { closeForgottenPunches, payRulesResolver, rulesResolver } from "./hr-attendance-store";
+import { closeForgottenPunches, payRulesResolver } from "./hr-attendance-store";
+import { shiftRulesResolver } from "./hr-shift-store";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -74,7 +75,11 @@ export async function syncDayFromPunch(db: Db, companyId: number, attendanceId: 
   ).at(0);
   if (!emp) return;
   const cfg = (await payRulesResolver(db, companyId))(day.work_date);
-  const rules = rulesForEmployeeHours(toAttendanceRules(cfg), Number(emp.hours));
+  const shift = await shiftRulesResolver(db, companyId, day.work_date, day.work_date);
+  const base = shift.rulesFor(day.work_date, day.employee_id);
+  // A grouped employee's shift (and its hours) is authoritative; an ungrouped
+  // one keeps the global shift with their own working_hours_per_day.
+  const rules = shift.hasGroup(day.employee_id) ? base : rulesForEmployeeHours(base, Number(emp.hours));
   const inMin = minutesFromWorkDate(day.work_date, asDate(day.clock_in_at));
   const outMin = minutesFromWorkDate(day.work_date, asDate(day.clock_out_at));
   const forgotten = day.out_source === "AUTO";
@@ -143,7 +148,7 @@ export async function settlePeriod(db: Db, companyId: number, period: string, to
   const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
   const last = `${period}-${String(lastDay).padStart(2, "0")}`;
   const until = last < today ? last : today;
-  const [employees, holidays, hours, days, rulesFor] = await Promise.all([
+  const [employees, holidays, hours, days, shift] = await Promise.all([
     db
       .select({ id: hr_employees.id, status: hr_employees.status, resigned_on: hr_employees.resigned_on, join_date: hr_employees.join_date, hours: hr_employees.working_hours_per_day })
       .from(hr_employees)
@@ -158,7 +163,7 @@ export async function settlePeriod(db: Db, companyId: number, period: string, to
       .select({ employee_id: hr_attendance.employee_id, work_date: hr_attendance.work_date, clock_in_at: hr_attendance.clock_in_at, clock_out_at: hr_attendance.clock_out_at, out_source: hr_attendance.out_source })
       .from(hr_attendance)
       .where(and(eq(hr_attendance.company_id, companyId), gte(hr_attendance.work_date, first), lte(hr_attendance.work_date, until))),
-    rulesResolver(db, companyId),
+    shiftRulesResolver(db, companyId, first, until),
   ]);
   const holidaySet = new Set(holidays.map((h) => h.d));
   const logged = new Map(hours.map((h) => [`${h.employee_id}|${h.work_date}`, Number(h.hours)]));
@@ -173,7 +178,8 @@ export async function settlePeriod(db: Db, companyId: number, period: string, to
       const loggedHours = logged.get(`${e.id}|${ymd}`) ?? 0;
       if (loggedHours <= 0) continue;
       result.days++;
-      const rules = rulesForEmployeeHours(rulesFor(ymd), Number(e.hours));
+      const base = shift.rulesFor(ymd, e.id);
+      const rules = shift.hasGroup(e.id) ? base : rulesForEmployeeHours(base, Number(e.hours));
       const p = punches.get(`${e.id}|${ymd}`);
       const punchShort =
         p?.clock_in_at && p.clock_out_at && p.out_source !== "AUTO"

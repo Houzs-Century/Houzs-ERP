@@ -27,7 +27,7 @@ import { ACCOUNTING_TAB_TITLES, type AccountingTab } from './accounting-tabs';
 export type ReportGroupId = 'statements' | 'owes' | 'sales' | 'events' | 'cards' | 'plan' | 'books' | 'audit';
 
 export type ReportId =
-  | 'pnl' | 'bs' | 'rp' | 'tb'
+  | 'pnl' | 'departments' | 'bs' | 'rp' | 'tb'
   | 'ar' | 'ap'
   | 'collection' | 'fair' | 'performance' | 'products'
   | 'events' | 'commission' | 'logistics'
@@ -98,6 +98,8 @@ const tabItem = (tab: AccountingTab & ReportId, group: ReportGroupId, books = fa
 /** Every report, in the design's order (the list draws them group by group). */
 export const REPORT_CATALOG: readonly ReportItem[] = [
   tabItem('pnl', 'statements'),
+  // G&A, Operation (his "Operation PNL - Auto" sheet) and every account split across the departments (owner 2026-11-19).
+  tabItem('departments', 'statements'),
   tabItem('bs', 'statements'),
   tabItem('rp', 'statements'),
   tabItem('tb', 'statements', true),

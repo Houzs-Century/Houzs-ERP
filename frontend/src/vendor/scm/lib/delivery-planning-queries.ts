@@ -1000,6 +1000,7 @@ export type SendMessageKind =
   | 'delivery' | 'amend'
   | 'reminder_1' | 'reminder_2' | 'reminder_3'
   | 'driver_info' | 'delivery_completed' | 'balance_reminder' | 'postpone' | 'overdue_order' | 'postage'
+  | 'eastmy_prep' | 'eastmy_shipped' | 'eastmy_arrived'
   | 'assr_arrangement';
 export type SendDeliveryMessagesBody = {
   docNos: string[];

@@ -52,7 +52,17 @@ export type FeedHeadRow = {
   customer_country: string | null;
   venue: string | null;
   status: string;
+  /** Board-owned, pushed to the sheets' col A / Houzs Remark 2 (ERP -> sheet). */
+  delivery_message_status: string | null;
+  dp_remark: string | null;
   do_numbers: string | null;
+  /** The latest non-cancelled delivery order's DO date — the sheet's SHIPOUT DATE. */
+  shipout_date: string | null;
+  /** The latest non-cancelled DO's CTN (board-owned, pushed to the sheets). */
+  ctn: string | null;
+  /** The latest non-cancelled DO's EM delivery status (ESB-owned; carried only to
+   *  gate the BS feed on "TO BRIGHTSUN" — never written back to the sheet). */
+  em_delivery_status: string | null;
   po_numbers: string | null;
   last_modified_text: string;
 };
@@ -92,6 +102,16 @@ export type DeliverySheetRecord = {
   InvAddr4: string | null;
   Attention: string | null;
   SOUDF_VENUE: string | null;
+  /** The sheet's "SHIPOUT DATE = DO date" — the latest non-cancelled DO's date. */
+  ShipoutDate: string | null;
+  /** Board-owned, pushed ERP -> sheet: col A "EM Order Shipment Status",
+   *  "Houzs Remark 2", and "CTN" respectively. */
+  DeliveryMessageStatus: string | null;
+  DpRemark: string | null;
+  Ctn: string | null;
+  /** ESB-owned EM delivery status (latest DO) — carried only so the BS feed can
+   *  gate on "TO BRIGHTSUN"; never written back to a sheet. */
+  EmDeliveryStatus: string | null;
   Status: string;
   /** Remarks 2 says READY / READY (PARTIAL) — the owner's gate for a NEW row
    *  on the sheet (2026-09-17). Decided here so the Apps Script has no copy. */
@@ -153,15 +173,21 @@ const FEED_BASE_SQL = `
          so.address1, so.address2, so.address3, so.address4,
          so.postcode, so.city, so.customer_state, so.customer_country, so.venue,
          so.status::text AS status,
-         dos.do_numbers, pos.po_numbers,
+         so.delivery_message_status, so.dp_remark,
+         dos.do_numbers, dos.shipout_date::text AS shipout_date, ldo.ctn, ldo.em_delivery_status, pos.po_numbers,
          GREATEST(so.updated_at, pay.last_paid_at, dos.last_do_at) AS last_modified
     FROM scm.mfg_sales_orders so
     LEFT JOIN (SELECT so_doc_no, SUM(amount_sen) AS paid_sen, MAX(created_at) AS last_paid_at
                  FROM scm.mfg_sales_order_payments GROUP BY so_doc_no) pay ON pay.so_doc_no = so.doc_no
     LEFT JOIN (SELECT so_doc_no,
                       string_agg(do_number, ', ' ORDER BY do_number) FILTER (WHERE status::text <> 'CANCELLED') AS do_numbers,
+                      MAX(do_date) FILTER (WHERE status::text <> 'CANCELLED') AS shipout_date,
                       MAX(updated_at) AS last_do_at
                  FROM scm.delivery_orders GROUP BY so_doc_no) dos ON dos.so_doc_no = so.doc_no
+    LEFT JOIN LATERAL (SELECT d2.ctn, d2.em_delivery_status FROM scm.delivery_orders d2
+                        WHERE d2.so_doc_no = so.doc_no
+                          AND upper(COALESCE(d2.status::text, '')) NOT IN ('DRAFT', 'CANCELLED')
+                        ORDER BY d2.do_date DESC NULLS LAST, d2.id DESC LIMIT 1) ldo ON TRUE
     LEFT JOIN (SELECT i.doc_no, string_agg(DISTINCT po.po_number, ', ') AS po_numbers
                  FROM scm.mfg_sales_order_items i
                  JOIN scm.purchase_order_items pi ON pi.so_item_id = i.id
@@ -257,6 +283,117 @@ WHERE t.status NOT IN (${inList(SO_DELIVERED_OR_BEYOND)})
         )
       )
 ORDER BY t.so_date, t.doc_no`;
+
+/**
+ * The raw `sales_location` values that mean East Malaysia (Sabah / Sarawak).
+ * Derived from LOCATION_MAP so a new book spelling added there is covered, plus
+ * the two short codes themselves. Each is normalised exactly as
+ * services/autocount-writeback `norm` normalises (UPPER, single-spaced, trimmed)
+ * so FEED_EM_TRANSPORTER_SQL can compare a normalised column against them.
+ */
+export const EAST_SALES_LOCATIONS: string[] = [
+  ...new Set(
+    [
+      ...Object.entries(LOCATION_MAP)
+        .filter(([, v]) => v === "SBH" || v === "SRW")
+        .map(([k]) => k),
+      "SBH",
+      "SRW",
+    ].map((s) => s.toUpperCase().replace(/\s+/g, " ").trim()),
+  ),
+];
+
+/**
+ * The East-Malaysia transporter feed (owner 2026-11-19). The ESB / BS
+ * transporter sheets are fed DIRECTLY from the ERP instead of from the HC
+ * Delivery master sheet's EM Order tab. Full state, no cursor — the Apps Script
+ * updates the rows it already has and APPENDS the READY ones each run, the same
+ * gate the master had. East only: `sales_location` whose book spelling is SBH /
+ * SRW (EAST_SALES_LOCATIONS, normalised the same way). The route re-checks
+ * `Region === "EAST"` on the mapped record, so a Singapore-addressed SRW order
+ * (addr3 SINGAPORE, Region SG) is dropped. Bind: ?1 company_id.
+ */
+export const FEED_EM_TRANSPORTER_SQL = `
+SELECT t.*, t.last_modified::text AS last_modified_text
+FROM (${FEED_BASE_SQL}
+) t
+WHERE btrim(regexp_replace(upper(coalesce(t.sales_location, '')), '\\s+', ' ', 'g')) IN (${inList(EAST_SALES_LOCATIONS)})
+ORDER BY t.so_date, t.doc_no`;
+
+/**
+ * The DO-level fields the ESB / BS transporter sheets WRITE BACK to the ERP
+ * (owner 2026-11-20), in bind order. These live on scm.delivery_orders and are
+ * exactly the board's "EM Order" HC fields (delivery-planning-fields.ts
+ * DO_FIELD_COLS). The sheet is authoritative, but a BLANK never clears — a
+ * transient empty cell during a sync must not wipe real transporter data, the
+ * same rule the SO write-back's dates follow.
+ *   ESB fills: em_delivery_status, consignment_no, vessel_voyage, etd_port_klang,
+ *              eta_arriving_port, arrives_em_warehouse_date, esb_remarks
+ *   BS fills:  bs_delivery_date, bs_remarks
+ */
+export const EM_WRITEBACK_COLS: ReadonlyArray<{ key: string; col: string; cast: "text" | "date" }> = [
+  { key: "emDeliveryStatus", col: "em_delivery_status", cast: "text" },
+  { key: "consignmentNo", col: "consignment_no", cast: "text" },
+  { key: "vesselVoyage", col: "vessel_voyage", cast: "text" },
+  { key: "etdPortKlang", col: "etd_port_klang", cast: "date" },
+  { key: "etaArrivingPort", col: "eta_arriving_port", cast: "text" },
+  { key: "arrivesEmWarehouseDate", col: "arrives_em_warehouse_date", cast: "date" },
+  { key: "esbRemarks", col: "esb_remarks", cast: "text" },
+  { key: "bsDeliveryDate", col: "bs_delivery_date", cast: "date" },
+  { key: "bsRemarks", col: "bs_remarks", cast: "text" },
+];
+
+export const EM_WRITEBACK_MAX = 300;
+
+/**
+ * Batched write-back of the transporter sheets' edits into the ERP. The sheet
+ * keys each row on the AutoCount DocNo (linked_ac_docno OR doc_no); these HC
+ * fields live on the DELIVERY ORDER, so each order resolves to its latest live
+ * (non-DRAFT/CANCELLED) DO and that DO is updated — the same target the board's
+ * PATCH /:type/:id/fields writes for an SO row. An order with no live DO is
+ * silently skipped (nothing to write freight onto); RETURNING names the rows
+ * actually written so the caller can report the misses. One statement, not one
+ * per row (the Apps Script calls from Google's US servers; every round trip
+ * crosses to Singapore). COALESCE(new, existing): a blank never clears.
+ *
+ * Bare `?` binds, in order: for each row (sheet_doc_no, then EM_WRITEBACK_COLS
+ * values in order), then company_id LAST.
+ */
+export function emTransporterUpdateSql(rowCount: number): string {
+  const tuple = "(?::text, " + EM_WRITEBACK_COLS.map((c) => `?::${c.cast}`).join(", ") + ")";
+  const values = Array.from({ length: rowCount }, () => tuple).join(", ");
+  const cols = EM_WRITEBACK_COLS.map((c) => c.col).join(", ");
+  const sets = EM_WRITEBACK_COLS.map((c) => `${c.col} = COALESCE(v2.${c.col}, d.${c.col})`).join(",\n      ");
+  return `
+WITH v(sheet_doc_no, ${cols}) AS (VALUES ${values}),
+so AS (
+  SELECT v.*, mso.doc_no AS so_doc_no
+    FROM v
+    JOIN scm.mfg_sales_orders mso
+      ON (mso.linked_ac_docno = v.sheet_doc_no OR mso.doc_no = v.sheet_doc_no)
+   WHERE mso.company_id = ?
+     AND mso.status::text NOT IN ('DRAFT', 'CANCELLED')
+),
+v2 AS (
+  SELECT so.*, d2.id AS do_id
+    FROM so
+    JOIN LATERAL (
+      SELECT dd.id FROM scm.delivery_orders dd
+       WHERE dd.so_doc_no = so.so_doc_no
+         AND upper(COALESCE(dd.status::text, '')) NOT IN ('DRAFT', 'CANCELLED')
+       ORDER BY dd.do_date DESC NULLS LAST, dd.id DESC LIMIT 1
+    ) d2 ON TRUE
+),
+upd AS (
+  UPDATE scm.delivery_orders d SET
+      ${sets},
+      updated_at = now()
+    FROM v2
+   WHERE d.id = v2.do_id
+  RETURNING d.id AS do_id, v2.sheet_doc_no, v2.so_doc_no
+)
+SELECT do_id, sheet_doc_no, so_doc_no FROM upd`;
+}
 
 /** `from=yyyy-mm-dd`, exactly; anything else is refused before `::date`. */
 export function parseFromDate(raw: string | undefined | null): string | null {
@@ -506,6 +643,11 @@ export function toSheetRecord(row: FeedHeadRow, lines: ReadonlyArray<FeedLineRow
     InvAddr4: addr4,
     Attention: null,
     SOUDF_VENUE: blankToNull(row.venue),
+    ShipoutDate: row.shipout_date,
+    DeliveryMessageStatus: blankToNull(row.delivery_message_status),
+    DpRemark: blankToNull(row.dp_remark),
+    Ctn: blankToNull(row.ctn),
+    EmDeliveryStatus: blankToNull(row.em_delivery_status),
     Status: row.status,
     Ready: isSheetReady(remark2),
     Region: sheetRegion(salesLocation, addr3, row.customer_country),

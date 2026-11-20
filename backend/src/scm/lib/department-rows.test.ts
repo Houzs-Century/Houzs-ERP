@@ -1,0 +1,187 @@
+/* Which department a booked amount belongs to (owner 2026-11-19: the Operation
+   report is his "Operation PNL - Auto" sheet; G&A is admin, IT, legal and HQ).
+   The salary journal's own wording decides the payroll lines; the Chart of
+   Accounts' Logistics and Department columns decide the rest. Figures are made up. */
+
+import { describe, expect, test } from 'vitest';
+import {
+  DEFAULT_PLAN, DEPARTMENT_ROWS, accountHome, departmentRowLabel, hireLineOf, isDepartmentRow, isTransportRecharge, lineHome, opIncomeOf, opRowOf,
+  parsePlan, payLineOf, payrollAccounts, regionNamed, resolveDept, type DeptAccount,
+} from './department-rows';
+import { salaryAccounts } from './logistics-pnl';
+
+const acc = (account_code: string, account_name: string, extra: Partial<DeptAccount> = {}): DeptAccount =>
+  ({ account_code, account_name, account_type: 'EXPENSE', is_active: true, logistics_row: null, department_row: null, ...extra });
+
+describe('the salary journal: one line per team', () => {
+  test('drivers and helpers are Logistics, as the Logistics P&L counts them', () => {
+    expect(payLineOf("OPERATION DELIVERY SALARY - SEPT'26")).toEqual({ dept: 'logistics' });
+    expect(payLineOf("OPERATION HELPER EPF - OCT'26")).toEqual({ dept: 'logistics' });
+  });
+
+  test("the warehouse teams are Operation's manpower rows", () => {
+    expect(payLineOf("LOGISTIC (ADMIN) SALARY - SEPT'26")).toEqual({ dept: 'operation', row: 'manpower_logistic', region: null });
+    expect(payLineOf("WAREHOUSE OPERATIONS EPF - OCT'26")).toEqual({ dept: 'operation', row: 'manpower_operation', region: null });
+    expect(payLineOf("WAREHOUSE OPERATION SOCSO - OCT'26")).toEqual({ dept: 'operation', row: 'manpower_operation', region: null });
+    expect(payLineOf("OPERATION STOREKEEPER SALARY - SEPT'26")).toEqual({ dept: 'operation', row: 'manpower_storekeeper', region: null });
+    expect(payLineOf('PROCUREMENT SALARY - DEC 2026')).toEqual({ dept: 'operation', row: 'manpower_procurement', region: null });
+  });
+
+  test('a line naming its region is that region\'s; none or two names none (shared by the DOs\' value)', () => {
+    expect(payLineOf("OPERATION STOREKEEPER PG SALARY - NOV'26")).toEqual({ dept: 'operation', row: 'manpower_storekeeper', region: 'PG' });
+    expect(payLineOf("OPERATION STOREKEEPER - BALAKONG - NOV'26")).toMatchObject({ region: 'KL' });
+    expect(payLineOf("OPERATION STOREKEEPER KCH SALARY - NOV'26")).toMatchObject({ region: 'EM' });
+    expect(regionNamed('PENANG AND KL')).toBeNull();
+    expect(regionNamed("SALARY - SEPT'26")).toBeNull();
+  });
+
+  test('the HQ teams are G&A, each by its team', () => {
+    expect(payLineOf("DIRECTOR OFFICE - SALARY - SEP'26")).toEqual({ dept: 'ga', team: 'DIRECTOR OFFICE' });
+    expect(payLineOf('FINANCE - EPF - OCT2026')).toEqual({ dept: 'ga', team: 'FINANCE' });
+    expect(payLineOf("HR SALARY ADJUSTMENT - AUG'26")).toEqual({ dept: 'ga', team: 'HR' });
+    expect(payLineOf("HR - SALARY - SEP'26")).toEqual({ dept: 'ga', team: 'HR' });
+    expect(payLineOf("IT SALARY - OCT'26")).toEqual({ dept: 'ga', team: 'IT' });
+    expect(payLineOf("MANAGEMENT SOCSO - SEPT'26")).toEqual({ dept: 'ga', team: 'MANAGEMENT' });
+    expect(payLineOf("OTHERS EPF - SEPT'26")).toEqual({ dept: 'ga', team: 'OTHER' });
+    expect(payLineOf("OTHER SALARY - OCT'26")).toEqual({ dept: 'ga', team: 'OTHER' });
+  });
+
+  test('SHOWROOM and SALES lines are the showroom\'s and the selling department\'s', () => {
+    expect(payLineOf("SHOWROOM - SALARY - NOV'26")).toEqual({ dept: 'showroom' });
+    expect(payLineOf("SALES TEAM SALARY - NOV'26")).toEqual({ dept: 'sales' });
+  });
+
+  test("a line naming no team is no team's: 2990's showroom staff, a director's own line", () => {
+    expect(payLineOf("GROSS SALARY - SEP'26")).toBeNull();
+    expect(payLineOf("EMPLOYER EPF - SEP'26")).toBeNull();
+    expect(payLineOf("SALARY - SEP'26")).toBeNull();
+    expect(payLineOf('ITEMISED CLAIM')).toBeNull();
+    expect(payLineOf(null)).toBeNull();
+  });
+});
+
+describe('recharges billed on Other Debtor bills', () => {
+  test('OPERATION CHARGES and WAREHOUSE CHARGES are Operation income; transport recharges are Logistics', () => {
+    expect(opIncomeOf("OPERATION CHARGES - SEP'26")).toBe('charges');
+    expect(opIncomeOf("WAREHOUSE CHARGES - NOV'26")).toBe('warehouse');
+    expect(opIncomeOf("LOGISTICS CHARGES - SEP'26")).toBeNull();
+    expect(opIncomeOf('RENTAL FOR KELANA JAYA')).toBeNull();
+    expect(isTransportRecharge("LOGISTICS CHARGES - SEP'26")).toBe(true);
+    expect(isTransportRecharge("OPERATION CHARGES - SEP'26")).toBe(false);
+  });
+});
+
+describe("the Chart of Accounts' Department column", () => {
+  test('a nature, Recruitment, or one Operation row in one region — the values and how the picker names them', () => {
+    expect(DEPARTMENT_ROWS).toHaveLength(31);
+    expect(DEPARTMENT_ROWS[0]).toBe('ga');
+    expect(DEPARTMENT_ROWS.slice(-6)).toEqual(['exhibition', 'showroom', 'logistics', 'operation', 'sales', 'hire']);
+    expect(isDepartmentRow('op_rental_pg')).toBe(true);
+    expect(isDepartmentRow('op_rental_sg')).toBe(false);
+    expect(isDepartmentRow('marketing')).toBe(false);
+    expect(departmentRowLabel('hire')).toBe('Recruitment — by the position its line names');
+    expect(departmentRowLabel('sales')).toBe("Sales — the company's selling department");
+    expect(opRowOf('op_utilities_em')).toEqual({ row: 'utilities', region: 'EM' });
+    expect(opRowOf('ga')).toBeNull();
+    expect(departmentRowLabel('ga')).toBe('G&A');
+    expect(departmentRowLabel('op_rental_kl')).toBe('Operation – KL – Rental Warehouse');
+    expect(departmentRowLabel('op_insurance_em')).toBe('Operation – SBH & SWK – Insurance Warehouse');
+  });
+});
+
+describe('where an amount goes', () => {
+  const rent = acc('900-R004', 'WAREHOUSE - (PENANG)', { department_row: 'op_rental_pg' });
+  const office = acc('900-P001', 'PRINTING & STATIONERY', { department_row: 'ga' });
+  const lorryPetrol = acc('900-P006', 'PETROL, TOL AND PARKING - LORI', { logistics_row: 'petrol', department_row: 'ga' });
+  const hp = acc('450-H002', 'HP CREDITOR', { account_type: 'LIABILITY', logistics_row: 'instalment' });
+  const staff = acc('900-S100', 'STAFF SALARIES & OVERTIME');
+  const directorEpf = acc('900-D200', 'DIRECTOR EPF', { department_row: 'ga' });
+
+  test("an account's own home: the Logistics column first, then the Department column", () => {
+    expect(accountHome(rent)).toEqual({ dept: 'operation', row: 'rental', region: 'PG' });
+    expect(accountHome(office)).toEqual({ dept: 'ga' });
+    expect(accountHome(lorryPetrol)).toEqual({ dept: 'logistics' });
+    expect(accountHome(hp)).toEqual({ dept: 'none' });
+    expect(accountHome(staff)).toEqual({ dept: 'none' });
+    expect(accountHome(undefined)).toEqual({ dept: 'none' });
+    expect(accountHome(acc('900-R032', 'RENTAL - EXHIBITION', { department_row: 'exhibition' }))).toEqual({ dept: 'exhibition' });
+    expect(accountHome(acc('900-O001', 'OPERATIING EXPENSE', { department_row: 'operation' }))).toEqual({ dept: 'operation', row: 'expenses', region: 'KL' });
+  });
+
+  test("a payroll line goes by its team, else where its account goes", () => {
+    const pay = { payroll: true, recharge: false };
+    expect(lineHome(staff, "FINANCE - SALARY - OCT2026", pay)).toEqual({ dept: 'ga', team: 'FINANCE' });
+    expect(lineHome(staff, "OPERATION HELPER SALARY - OCT'26", pay)).toEqual({ dept: 'logistics' });
+    expect(lineHome(staff, "OPERATION STOREKEEPER PG SALARY - NOV'26", pay)).toEqual({ dept: 'operation', row: 'manpower_storekeeper', region: 'PG', income: null });
+    /* No team named: the account's own department, else the selling department (2990's showroom staff). */
+    expect(lineHome(staff, "GROSS SALARY - SEP'26", pay)).toEqual({ dept: 'sales' });
+    expect(lineHome(acc('900-S011', 'S)- PART TIME WORKER / WAGES', { department_row: 'exhibition' }), 'PART TIME WORKERS (2 JOB)', pay)).toEqual({ dept: 'exhibition' });
+    expect(lineHome(directorEpf, "EPF - SEP'26", pay)).toEqual({ dept: 'ga', team: null });
+    /* Not a payroll account: its words decide nothing. */
+    expect(lineHome(office, 'FINANCE - PRINTER INK', { payroll: false, recharge: false })).toEqual({ dept: 'ga', team: null });
+  });
+
+  test('an income line goes by its recharge words', () => {
+    const inc = acc('599-0000', 'ADDITIONAL INCOME', { account_type: 'INCOME' });
+    const rc = { payroll: false, recharge: true };
+    expect(lineHome(inc, "OPERATION CHARGES - SEP'26", rc)).toEqual({ dept: 'operation', row: null, region: null, income: 'charges' });
+    expect(lineHome(inc, "LOGISTICS CHARGES - SEP'26", rc)).toEqual({ dept: 'logistics' });
+    expect(lineHome(inc, 'SUNDRY INCOME', rc)).toEqual({ dept: 'none' });
+    expect(lineHome(acc('590-0001', 'TRANSPORT INCOME (PNG)', { account_type: 'INCOME', logistics_row: 'income_pg' }), 'ANYTHING', rc)).toEqual({ dept: 'logistics' });
+  });
+
+  test("the payroll accounts are the Logistics P&L's own list", () => {
+    const chart = [
+      staff, directorEpf, acc('900-S200', "E'YER EPF"), acc('900-S011', 'S)- PART TIME WORKER / WAGES'), office, lorryPetrol,
+      acc('900-D100', 'DIRECTOR REMUNERATION', { department_row: 'ga' }),
+      acc('900-S500', 'STAFF ALLOWANCE', { logistics_row: 'other_lorry' }),
+    ];
+    const placed = new Set(chart.filter((a) => a.logistics_row).map((a) => a.account_code));
+    expect([...payrollAccounts(chart)].sort()).toEqual(salaryAccounts(chart).filter((c) => !placed.has(c)));
+    expect(payrollAccounts(chart).has('900-D100')).toBe(false);
+  });
+});
+
+describe('job ads: by the position they name (owner 2026-11-19: Logistic admin and Warehouse assistant are Operation\'s)', () => {
+  test('warehouse posts are Operation, drivers Logistics, sales the selling department, the rest G&A', () => {
+    expect(hireLineOf('ADVERTISEMENT - LOGISTIC ADMIN - 1-10OCT26')).toBe('operation');
+    expect(hireLineOf('WAREHOUSE ASSISTANT - AUG26')).toBe('operation');
+    expect(hireLineOf('ADVERTISEMENT - DRIVER - NOV26')).toBe('logistics');
+    expect(hireLineOf('ADVERTISEMENT - HR - SALES - 1-10OCT26')).toBe('sales');
+    expect(hireLineOf('ADVERTISEMENT - SALES PERSON - 11-20OCT26')).toBe('sales');
+    expect(hireLineOf("JOB STREET ADVERTISEMENT - ACCOUNT EXECUTIVE - AUG'26")).toBe('ga');
+    expect(hireLineOf('MR LOO - META ADS (HIRING) INTEREST SEPTEMBER 2026')).toBe('ga');
+  });
+
+  test('a recruitment account\'s lines go by that rule; a warehouse post fills the sheet\'s job-ads row', () => {
+    const ads = acc('900-A004', 'ADVERTISEMENT - MANAGEMENT FEES', { department_row: 'hire' });
+    const plain = { payroll: false, recharge: false };
+    expect(lineHome(ads, 'WAREHOUSE ASSISTANT - AUG26', plain)).toEqual({ dept: 'operation', row: 'recruitment', region: null, income: null });
+    expect(lineHome(ads, 'ACCOUNT EXECUTIVE - AUG26', plain)).toEqual({ dept: 'ga', team: null });
+    expect(lineHome(ads, 'ADVERTISEMENT - SALES PERSON', plain)).toEqual({ dept: 'sales' });
+  });
+});
+
+describe("the company's plan", () => {
+  const houzs = parsePlan({ departments: ['exhibition', 'operation', 'logistics', 'ga'], selling: 'exhibition', folds: { showroom: 'ga' } });
+  const shop = parsePlan({ departments: ['showroom', 'ga'], selling: 'showroom', folds: { exhibition: 'showroom', operation: 'showroom', logistics: 'showroom' } });
+
+  test("a nature counts in the company's own department, its fold, else G&A; Sales is whoever sells", () => {
+    expect(resolveDept('showroom', houzs)).toBe('ga');
+    expect(resolveDept('sales', houzs)).toBe('exhibition');
+    expect(resolveDept('operation', houzs)).toBe('operation');
+    expect(resolveDept('operation', shop)).toBe('showroom');
+    expect(resolveDept('logistics', shop)).toBe('showroom');
+    expect(resolveDept('sales', shop)).toBe('showroom');
+    expect(resolveDept('ga', shop)).toBe('ga');
+    expect(resolveDept('none', shop)).toBe('none');
+    expect(resolveDept('exhibition', parsePlan({ departments: ['ga', 'operation'] }))).toBe('ga');
+  });
+
+  test('a stored plan is checked: unknown departments dropped, a fold into a missing department ignored, nothing = the default', () => {
+    expect(parsePlan({ departments: ['ga', 'marketing', 'ga'], selling: 'marketing', folds: { showroom: 'exhibition', operation: 'ga' } }))
+      .toEqual({ departments: ['ga'], selling: 'ga', folds: { operation: 'ga' } });
+    expect(parsePlan(null)).toEqual(DEFAULT_PLAN);
+    expect(parsePlan({ departments: [] })).toEqual(DEFAULT_PLAN);
+  });
+});
