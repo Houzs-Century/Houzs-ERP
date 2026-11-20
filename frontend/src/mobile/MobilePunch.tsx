@@ -11,6 +11,7 @@ import { formatDate } from "../lib/utils";
 import { checkPunchLocation, distanceLabel, type PunchSite } from "../vendor/shared/hr-attendance";
 import { minToHhmm } from "../vendor/shared/hr-pay-rules";
 import { MyPayBody } from "./MobileMyPay";
+import { OvertimeBody } from "./MobileOvertime";
 import "./mobile.css";
 
 type Side = { clock: string; geo: "IN" | "OUT" | "NONE" | null; siteName: string | null; distanceM: number | null; source: string | null } | null;
@@ -58,7 +59,7 @@ export function MobilePunch({ onBack }: { onBack: () => void }) {
   const actionRef = useRef<"CLOCK_IN" | "CLOCK_OUT">("CLOCK_IN");
   const [busy, setBusy] = useState<string | null>(null);
   const [result, setResult] = useState<{ tone: "ok" | "warn" | "err"; text: string } | null>(null);
-  const [view, setView] = useState<"punch" | "pay">("punch");
+  const [view, setView] = useState<"punch" | "pay" | "ot">("punch");
   const [pos, setPos] = useState<{ lat: number; lng: number } | null>(null);
   const [geoDenied, setGeoDenied] = useState(false);
 
@@ -133,9 +134,9 @@ export function MobilePunch({ onBack }: { onBack: () => void }) {
             <span className="chev">‹</span> Back
           </button>
         </div>
-        <div className="scr-title">{view === "pay" ? "My pay" : "Punch In / Out"}</div>
+        <div className="scr-title">{view === "pay" ? "My pay" : view === "ot" ? "Overtime" : "Punch In / Out"}</div>
         <div style={{ display: "flex", gap: 6, padding: "0 16px 10px" }}>
-          {(["punch", "pay"] as const).map((v) => (
+          {(["punch", "pay", "ot"] as const).map((v) => (
             <button
               key={v}
               type="button"
@@ -143,13 +144,13 @@ export function MobilePunch({ onBack }: { onBack: () => void }) {
               style={{ flex: 1, minHeight: 34, fontSize: 13 }}
               onClick={() => setView(v)}
             >
-              {v === "punch" ? "Punch" : "My pay"}
+              {v === "punch" ? "Punch" : v === "pay" ? "My pay" : "Overtime"}
             </button>
           ))}
         </div>
       </header>
       <div className="scroll hz-scroll" style={{ padding: "14px 16px" }}>
-        {view === "pay" ? <MyPayBody /> : <>
+        {view === "pay" ? <MyPayBody /> : view === "ot" ? <OvertimeBody /> : <>
         {meQ.isLoading && <div style={{ color: "var(--mut)", fontSize: 13 }}>Loading...</div>}
         {meQ.isError && <div className="card" style={{ padding: 14, color: "var(--red)", fontSize: 13 }}>Could not load your attendance. Pull down or reopen to retry.</div>}
         {me && !me.linked && (

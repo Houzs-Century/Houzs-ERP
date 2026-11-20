@@ -16,15 +16,17 @@
 // ----------------------------------------------------------------------------
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { and, desc, eq, gte, inArray, isNotNull, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull } from "drizzle-orm";
 import type { Env } from "../types";
 import { getDb } from "../db/client";
-import { hr_attendance, hr_employees, hr_payslips } from "../db/schema";
+import { hr_attendance, hr_employees, hr_ot_claims, hr_payslips } from "../db/schema";
 import { requireActiveCompanyId } from "../scm/lib/companyScope";
 import { todayMyt } from "../scm/lib/my-time";
+import { hasPermission } from "../services/permissions";
 import { checkPunchLocation } from "../scm/shared/hr-attendance";
 import { attendanceView, planPunch, punchGateRefusal, type AttendanceRow } from "./lib/hr-attendance-view";
 import { loadSites, loadAttendanceSettings } from "./lib/hr-attendance-store";
+import { parseOtSegment } from "./lib/hr-ot";
 import { shiftRulesResolver } from "./lib/hr-shift-store";
 import { closeForgottenAndSync, syncDayFromPunch } from "./lib/hr-labor-store";
 import { computePeriod } from "./lib/hr-payroll-store";
@@ -292,4 +294,109 @@ attendance.get("/me/payslip/:period", async (c) => {
   ).at(0);
   if (!row) return c.json({ error: "not_found", message: "That payslip is not approved yet." }, 404);
   return c.json({ slip: slipOut(row as SlipRow) });
+});
+
+// ── Overtime claims (HC-0125) ────────────────────────────────────────────────
+// A worker reports OT as one or more windows on a work date; a supervisor with
+// hr.ot.confirm confirms or rejects. Confirmed OT is what payroll pays (a punch
+// past the shift end no longer auto-grants OT). Account-based like /punch; only
+// review is gated, in-handler, so a floor supervisor needs just hr.ot.confirm.
+type OtRow = { id: number; work_date: string; start_min: number; end_min: number; note: string; status: string; reject_reason: string | null };
+const otOut = (r: OtRow) => ({ id: r.id, workDate: r.work_date, startMin: r.start_min, endMin: r.end_min, note: r.note, status: r.status, rejectReason: r.reject_reason });
+const canConfirmOt = (c: Ctx): boolean => {
+  const u = c.get("user");
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- tests build AuthUser without permissions_set
+  return hasPermission(u.permissions_set ?? u.permissions, "hr.ot.confirm");
+};
+
+attendance.get("/ot", async (c: Ctx) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const db = getDb(c.env);
+  const canConfirm = canConfirmOt(c);
+  const emp = await myEmployee(db, co.companyId, c.get("user").id);
+  const since = todayMyt(-45);
+  const mine = emp
+    ? (
+        await db
+          .select()
+          .from(hr_ot_claims)
+          .where(and(eq(hr_ot_claims.company_id, co.companyId), eq(hr_ot_claims.employee_id, emp.id), gte(hr_ot_claims.work_date, since)))
+          .orderBy(desc(hr_ot_claims.work_date), desc(hr_ot_claims.id))
+      ).map(otOut)
+    : [];
+  let pending: Array<ReturnType<typeof otOut> & { employeeName: string; empNo: string }> = [];
+  if (canConfirm) {
+    const rows = await db
+      .select({ c: hr_ot_claims, name: hr_employees.name, emp_no: hr_employees.emp_no })
+      .from(hr_ot_claims)
+      .innerJoin(hr_employees, eq(hr_employees.id, hr_ot_claims.employee_id))
+      .where(and(eq(hr_ot_claims.company_id, co.companyId), eq(hr_ot_claims.status, "PENDING")))
+      .orderBy(asc(hr_ot_claims.work_date), asc(hr_ot_claims.id));
+    pending = rows.map((r) => ({ ...otOut(r.c), employeeName: r.name, empNo: r.emp_no }));
+  }
+  return c.json({ canConfirm, mine, pending });
+});
+
+attendance.post("/ot", async (c: Ctx) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const db = getDb(c.env);
+  const userId = c.get("user").id;
+  const emp = await myEmployee(db, co.companyId, userId);
+  if (!emp) return c.json(NOT_LINKED, 403);
+  if (emp.status !== "ACTIVE") return c.json({ error: "not_active", message: "Your employee record is not active. Ask HR." }, 403);
+  const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+  const workDate = typeof body.workDate === "string" ? body.workDate : "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(workDate)) return c.json({ error: "bad_date", message: "Pick the day the overtime was on." }, 400);
+  const seg = parseOtSegment(String(body.startHHMM ?? ""), String(body.endHHMM ?? ""));
+  if (!seg.ok) return c.json({ error: "bad_segment", message: seg.message }, 400);
+  const note = typeof body.note === "string" ? body.note.trim().slice(0, 500) : "";
+  const [row] = await db
+    .insert(hr_ot_claims)
+    .values({ company_id: co.companyId, employee_id: emp.id, work_date: workDate, start_min: seg.startMin, end_min: seg.endMin, note, status: "PENDING", created_by: userId })
+    .returning({ id: hr_ot_claims.id });
+  return c.json({ id: row.id }, 201);
+});
+
+attendance.delete("/ot/:id", async (c: Ctx) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id) || id <= 0) return c.json({ error: "bad_id" }, 400);
+  const db = getDb(c.env);
+  const emp = await myEmployee(db, co.companyId, c.get("user").id);
+  if (!emp) return c.json(NOT_LINKED, 403);
+  const done = await db
+    .delete(hr_ot_claims)
+    .where(and(eq(hr_ot_claims.id, id), eq(hr_ot_claims.company_id, co.companyId), eq(hr_ot_claims.employee_id, emp.id), eq(hr_ot_claims.status, "PENDING")))
+    .returning({ id: hr_ot_claims.id });
+  if (!done.length) return c.json({ error: "not_found", message: "That overtime is gone or already reviewed." }, 404);
+  return c.json({ ok: true });
+});
+
+attendance.post("/ot/:id/review", async (c: Ctx) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  if (!canConfirmOt(c)) return c.json({ error: "forbidden", message: "You cannot confirm overtime." }, 403);
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id) || id <= 0) return c.json({ error: "bad_id" }, 400);
+  const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+  const decision = body.decision === "confirm" || body.decision === "reject" ? body.decision : null;
+  if (!decision) return c.json({ error: "bad_decision", message: "Confirm or reject the overtime?" }, 400);
+  const reason = typeof body.reason === "string" ? body.reason.trim().slice(0, 300) : "";
+  const at = new Date().toISOString();
+  const done = await getDb(c.env)
+    .update(hr_ot_claims)
+    .set({
+      status: decision === "confirm" ? "CONFIRMED" : "REJECTED",
+      reject_reason: decision === "reject" ? reason || null : null,
+      reviewed_by: c.get("user").id,
+      reviewed_at: at,
+      updated_at: at,
+    })
+    .where(and(eq(hr_ot_claims.id, id), eq(hr_ot_claims.company_id, co.companyId), eq(hr_ot_claims.status, "PENDING")))
+    .returning({ id: hr_ot_claims.id });
+  if (!done.length) return c.json({ error: "not_found", message: "That overtime is gone or already reviewed." }, 404);
+  return c.json({ ok: true });
 });
