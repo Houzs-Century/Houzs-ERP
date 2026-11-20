@@ -97,7 +97,7 @@ import { useChecklistPaymentRequests, type PaymentRequest } from "../vendor/scm/
 import { PAYMENT_REQUEST_PERMS, RequestPaymentButton, RowRequests, isPayableSectionName, requestsByRow } from "./projects/PmsRequestPayment";
 import OutstandingReminders from "./projects/OutstandingReminders";
 import { DefectListView } from "./projects/DefectListView";
-import { canPurchaseDefect, canReviewDefect, defectActionLabel } from "./projects/defectReviewer";
+import { canPurchaseDefect, canReviewDefect, defectActionLabel, defectStage, REVIEWER_DEFECT_ACTIONS, PURCHASER_DEFECT_ACTIONS, type DefectActionTone } from "./projects/defectReviewer";
 import { formatPhone } from "../vendor/shared/phone";
 import { MediaLightbox } from "../components/MediaLightbox";
 import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
@@ -3106,6 +3106,37 @@ const DefectActionsCtx = createContext<{
   reload: () => void;
 } | null>(null);
 
+// Defect action button + badge colours per tone (shared by the fresh-reviewer
+// and escalated-purchaser rows and the timeline badges). Keyed to defectReviewer
+// tones so the three defect surfaces stay in step.
+const DEFECT_BTN_TONE: Record<DefectActionTone, { active: string; idle: string }> = {
+  done: {
+    active: "border-green-600 bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300",
+    idle: "border-green-300 dark:border-green-800 bg-surface text-green-600 dark:text-green-300 hover:bg-green-50 dark:hover:bg-green-950/40",
+  },
+  escalate: {
+    active: "border-rose-600 bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300",
+    idle: "border-rose-300 dark:border-rose-800 bg-surface text-rose-600 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-950/40",
+  },
+  progress: {
+    active: "border-amber-600 bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300",
+    idle: "border-amber-300 dark:border-amber-800 bg-surface text-amber-600 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/40",
+  },
+};
+const DEFECT_BADGE_TONE: Record<DefectActionTone | "fresh", { dot: string; pill: string }> = {
+  done: { dot: "bg-green-600", pill: "bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300" },
+  escalate: { dot: "bg-rose-600", pill: "bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300" },
+  progress: { dot: "bg-amber-600", pill: "bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300" },
+  fresh: { dot: "bg-amber-500", pill: "bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300" },
+};
+/** The badge tone a stored status renders in. */
+function defectBadgeTone(status: string): DefectActionTone | "fresh" {
+  const stage = defectStage(status);
+  if (stage === "resolved") return "done";
+  if (stage === "fresh") return "fresh";
+  return status.toLowerCase() === "in_progress" ? "progress" : "escalate";
+}
+
 function TaskAttachmentRow({
   attachment,
   canManage,
@@ -3143,16 +3174,15 @@ function TaskAttachmentRow({
   const fileActions = isDefectFile && defectCtx
     ? defectCtx.actions.filter((x) => x.attachment_id === attachment.id)
     : [];
-  // Latest timeline entry drives the two-stage state machine: no action (or a
-  // legacy 'ongoing') = fresh, awaiting the Storekeeper Supervisor's triage;
-  // 'replace' = escalated to the purchaser; 'done' = resolved (no buttons).
+  // Latest timeline entry drives the five-state machine (defectStage): a fresh
+  // upload awaits the reviewer (Done Clean / Exchange / Service); an escalated or
+  // in-progress one awaits the purchaser (In Progress / Done); done/done_clean is
+  // resolved (no buttons).
   const latestAction = fileActions.length
     ? fileActions.reduce((m, a) => (a.id > m.id ? a : m))
     : null;
-  const isFreshDefect =
-    !latestAction || (latestAction.status !== "done" && latestAction.status !== "replace");
-  const isEscalatedDefect = latestAction?.status === "replace";
-  const [actionDraft, setActionDraft] = useState<null | "done" | "replace">(null);
+  const defectStageNow = defectStage(latestAction?.status);
+  const [actionDraft, setActionDraft] = useState<string | null>(null);
   const [actionRemark, setActionRemark] = useState("");
   const [savingAction, setSavingAction] = useState(false);
   async function saveAction() {
@@ -3349,54 +3379,29 @@ function TaskAttachmentRow({
             </div>
           )
         )}
-        {/* Defect action timeline (two-stage, owner 2026-08-07): a FRESH defect
-            shows Done + Replace to the Storekeeper Supervisor (Shukor); once he
-            escalates with Replace it shows Done to the purchaser (Sim / Farra).
-            A resolved (Done) file shows only the stacked history, for everyone. */}
+        {/* Defect action timeline (five-state, owner 2026-11-20): a FRESH defect
+            shows Done Clean + Exchange + Service to the reviewer (Shukor / Nancy);
+            once escalated it shows In Progress + Done to the purchaser (Farra).
+            Every button opens a remark box before it saves. A resolved file shows
+            only the stacked history, for everyone. */}
         {isDefectFile && defectCtx && (
           <div className="mt-1.5" onClick={(e) => e.stopPropagation()}>
-            {isFreshDefect && defectCtx.canReview && (
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => { setActionDraft("done"); }}
-                  className={cn(
-                    "rounded-full border px-2.5 py-0.5 text-[10px] font-bold",
-                    actionDraft === "done"
-                      ? "border-green-600 bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300"
-                      : "border-green-300 dark:border-green-800 bg-surface text-green-600 dark:text-green-300 hover:bg-green-50 dark:hover:bg-green-950/40",
-                  )}
-                >
-                  Done
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { setActionDraft("replace"); }}
-                  className={cn(
-                    "rounded-full border px-2.5 py-0.5 text-[10px] font-bold",
-                    actionDraft === "replace"
-                      ? "border-rose-600 bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300"
-                      : "border-rose-300 dark:border-rose-800 bg-surface text-rose-600 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-950/40",
-                  )}
-                >
-                  Exchange
-                </button>
-              </div>
-            )}
-            {isEscalatedDefect && defectCtx.canPurchase && (
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => { setActionDraft("done"); }}
-                  className={cn(
-                    "rounded-full border px-2.5 py-0.5 text-[10px] font-bold",
-                    actionDraft === "done"
-                      ? "border-green-600 bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300"
-                      : "border-green-300 dark:border-green-800 bg-surface text-green-600 dark:text-green-300 hover:bg-green-50 dark:hover:bg-green-950/40",
-                  )}
-                >
-                  Done
-                </button>
+            {((defectStageNow === "fresh" && defectCtx.canReview) ||
+              (defectStageNow === "purchaser" && defectCtx.canPurchase)) && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {(defectStageNow === "fresh" ? REVIEWER_DEFECT_ACTIONS : PURCHASER_DEFECT_ACTIONS).map((a) => (
+                  <button
+                    key={a.status}
+                    type="button"
+                    onClick={() => { setActionDraft(a.status); setActionRemark(""); }}
+                    className={cn(
+                      "rounded-full border px-2.5 py-0.5 text-[10px] font-bold",
+                      actionDraft === a.status ? DEFECT_BTN_TONE[a.tone].active : DEFECT_BTN_TONE[a.tone].idle,
+                    )}
+                  >
+                    {a.label}
+                  </button>
+                ))}
               </div>
             )}
             {actionDraft && (
@@ -3434,26 +3439,8 @@ function TaskAttachmentRow({
                 {[...fileActions].reverse().map((a) => (
                   <div key={a.id}>
                     <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
-                      <span
-                        className={cn(
-                          "h-1.5 w-1.5 shrink-0 rounded-full",
-                          a.status === "done"
-                            ? "bg-green-600"
-                            : a.status === "replace"
-                              ? "bg-rose-600"
-                              : "bg-amber-500",
-                        )}
-                      />
-                      <span
-                        className={cn(
-                          "rounded px-1.5 py-0.5 font-bold",
-                          a.status === "done"
-                            ? "bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300"
-                            : a.status === "replace"
-                              ? "bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300"
-                              : "bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300",
-                        )}
-                      >
+                      <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", DEFECT_BADGE_TONE[defectBadgeTone(a.status)].dot)} />
+                      <span className={cn("rounded px-1.5 py-0.5 font-bold", DEFECT_BADGE_TONE[defectBadgeTone(a.status)].pill)}>
                         {defectActionLabel(a.status)}
                       </span>
                       <span className="text-ink-muted">

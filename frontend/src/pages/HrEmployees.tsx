@@ -7,9 +7,11 @@
  * driver commission and trip allowances (Trip Pay) and the monthly
  * Allowances. The URL carries the tab. */
 import { useSearchParams } from "react-router-dom";
+import { useAuth } from "../auth/AuthContext";
 import { PageHeader } from "../components/Layout";
 import { TabStrip, type TabOption } from "../components/TabStrip";
 import { EmployeeMasterTab } from "./hr/EmployeeMasterTab";
+import { OvertimeTab } from "./hr/OvertimeTab";
 import { PublicHolidaysTab } from "./hr/PublicHolidaysTab";
 import { PayRulesTab } from "./hr/PayRulesTab";
 import { AttendanceTab } from "./hr/AttendanceTab";
@@ -24,10 +26,11 @@ import { AllowancesTab } from "./hr/AllowancesTab";
 import { KpiTab } from "./hr/KpiTab";
 import { ShiftsTab } from "./hr/ShiftsTab";
 
-type Tab = "employees" | "attendance" | "hours" | "labor" | "payroll" | "trip-pay" | "allowances" | "kpi" | "advances" | "penalties" | "sites" | "holidays" | "pay-rules" | "shifts";
+type Tab = "employees" | "attendance" | "overtime" | "hours" | "labor" | "payroll" | "trip-pay" | "allowances" | "kpi" | "advances" | "penalties" | "sites" | "holidays" | "pay-rules" | "shifts";
 const TABS: TabOption<Tab>[] = [
   { value: "employees", label: "Employee Master" },
   { value: "attendance", label: "Attendance" },
+  { value: "overtime", label: "Overtime" },
   { value: "hours", label: "Working Hours" },
   { value: "labor", label: "Labor Cost" },
   { value: "payroll", label: "Payroll" },
@@ -50,6 +53,10 @@ const HEADER: Record<Tab, { title: string; description: string }> = {
   attendance: {
     title: "Attendance",
     description: "Phone punches for one day: when, where (site and distance), the selfie. Everyone active is listed, so a missing punch shows. Click a row to key or correct the day.",
+  },
+  overtime: {
+    title: "Overtime",
+    description: "A month of the overtime windows workers reported on the phone, any status. Confirm or reject the waiting ones here; only confirmed overtime is paid. A punch past the shift end no longer counts as overtime on its own.",
   },
   hours: {
     title: "Working Hours",
@@ -90,9 +97,14 @@ const HEADER: Record<Tab, { title: string; description: string }> = {
 };
 
 export function HrEmployees() {
+  const { can } = useAuth();
   const [params, setParams] = useSearchParams();
+  // Overtime review is gated on hr.ot.confirm: without it the tab is neither
+  // shown nor reachable (the server re-checks every review regardless).
+  const canOt = can("hr.ot.confirm");
+  const tabs = canOt ? TABS : TABS.filter((t) => t.value !== "overtime");
   const raw = params.get("tab") as Tab | null;
-  const active: Tab = raw && TABS.some((t) => t.value === raw) ? raw : "employees";
+  const active: Tab = raw && tabs.some((t) => t.value === raw) ? raw : "employees";
   const setTab = (next: Tab) =>
     setParams(
       (p) => {
@@ -104,10 +116,11 @@ export function HrEmployees() {
     );
   return (
     <div className="max-w-7xl">
-      <TabStrip<Tab> value={active} onChange={setTab} options={TABS} />
+      <TabStrip<Tab> value={active} onChange={setTab} options={tabs} />
       <PageHeader eyebrow="HR · Employees & Attendance" title={HEADER[active].title} description={HEADER[active].description} />
       {active === "employees" && <EmployeeMasterTab />}
       {active === "attendance" && <AttendanceTab />}
+      {active === "overtime" && canOt && <OvertimeTab />}
       {active === "hours" && <WorkingHoursTab />}
       {active === "labor" && <LaborCostTab />}
       {active === "payroll" && <PayrollTab />}
