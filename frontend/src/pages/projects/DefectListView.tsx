@@ -256,7 +256,7 @@ export function DefectListView() {
               !showAll ? "bg-ink text-white" : "bg-surface text-ink-secondary hover:bg-surface-2",
             )}
           >
-            Belum settle
+            Open
           </button>
           <button
             type="button"
@@ -266,7 +266,7 @@ export function DefectListView() {
               showAll ? "bg-ink text-white" : "bg-surface text-ink-secondary hover:bg-surface-2",
             )}
           >
-            Semua
+            All
           </button>
         </div>
         <button
@@ -299,7 +299,7 @@ export function DefectListView() {
           description={
             showAll
               ? "No defect photos uploaded yet."
-              : "Switch to Semua to include defects that are already closed."
+              : "Switch to All to include defects that are already closed."
           }
         />
       ) : (
@@ -353,7 +353,7 @@ export function DefectListView() {
                         )}
                         <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10.5px] text-ink-muted">
                           <span className={cn("rounded px-1.5 py-0.5 font-bold", defectListBadge(latest))}>
-                            {stage === "fresh" ? "Baru" : defectActionLabel(latest)}
+                            {stage === "fresh" ? "New" : defectActionLabel(latest)}
                           </span>
                           {r.latest_at && (
                             <span>
