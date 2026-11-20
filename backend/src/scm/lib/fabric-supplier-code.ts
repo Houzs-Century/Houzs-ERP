@@ -23,10 +23,6 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { scopeToCompany, type CompanyScopeCtx } from './companyScope';
 import { fabricCodeOf, withFabricSupplierCode } from '../shared/variant-summary';
 
-/* fabricCodeOf (the internal-fabric-code alias chain) lives in shared so
-   buildVariantSummary reads the same chain; re-exported for existing callers. */
-export { fabricCodeOf };
-
 /* A returned order line, loose enough to accept every detail endpoint's mapped
    row shape. Record (index signature) — NOT `{ variants?: unknown }`, which is a
    weak type TS rejects for the concrete mapped rows that carry no static

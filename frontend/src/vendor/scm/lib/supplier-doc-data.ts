@@ -289,6 +289,7 @@ export function docVariantLine(
   const v = item.variants;
   if (!v || typeof v !== 'object') return '';
   let mapped: Record<string, unknown> = v;
+  let stamped = false;
   for (const key of FABRIC_VARIANT_KEYS) {
     const raw = v[key];
     if (typeof raw === 'string' && raw.trim()) {
@@ -311,7 +312,7 @@ export function docVariantLine(
           : desc;
         mapped[key] = `${code}${cleanDesc ? ` ${cleanDesc}` : ''}`;
         // The fresh lookup wins over a stamp saved on the line (2990-0067).
-        if (ext) mapped = withFabricSupplierCode(mapped, ext);
+        if (ext && !stamped) { mapped = withFabricSupplierCode(mapped, ext); stamped = true; }
       }
     }
   }

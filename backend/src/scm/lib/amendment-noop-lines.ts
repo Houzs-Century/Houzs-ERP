@@ -30,6 +30,7 @@
 // ADD and REMOVE are whole-line changes and always kept.
 //
 // `null` means the read FAILED; the caller refuses rather than guessing.
+import { withoutFabricSupplierCode } from '../shared/variant-summary';
 
 export type NoopCheckLine = {
   salesOrderItemId?: string | null;
@@ -75,12 +76,9 @@ const DEFAULT_LEG_RE = /^\s*default\s*$/i;
  *  as no leg picked. */
 export function variantsForCompare(v: unknown): string {
   if (v == null || typeof v !== 'object' || Array.isArray(v)) return canonicalJson(v ?? null);
-  const rest: Record<string, unknown> = { ...(v as Record<string, unknown>) };
+  const rest = withoutFabricSupplierCode(v as Record<string, unknown>);
   delete rest.remark;
   delete rest.totalHeight;
-  // Display-only stamp from the read path, not part of the spec.
-  delete rest.fabricSupplierCode;
-  delete rest.fabricSupplierCodeOf;
   if (typeof rest.legHeight === 'string' && DEFAULT_LEG_RE.test(rest.legHeight)) delete rest.legHeight;
   return Object.keys(rest).length === 0 ? 'null' : canonicalJson(rest);
 }

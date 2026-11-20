@@ -6,6 +6,7 @@
 import { describe, expect, test } from 'vitest';
 import { buildReview, inPrintedOrder, racksOf, suggestByName, type ReviewLine } from './grn-scan-check';
 import { byPrintedColour, lineColours, printedColours } from './grn-scan-colour';
+import { withFabricSupplierCode } from '../shared/variant-summary';
 import { matchGrnScanToPoLines, type GrnMatchResult, type OpenPoLine, type ScannedGrnLine } from './grn-scan-match';
 
 const PO = 'HC-PO-2609-235';
@@ -20,7 +21,9 @@ const PAPER = ['COVE-09', 'COVE-09', 'COVE-09', 'COVE-13', 'COVE-13'];
 
 describe('the colour of a PO line', () => {
   test('comes from its variants, the supplier code too', () => {
-    expect(lineColours({ fabricCode: 'COVE-13', fabricSupplierCode: 'KN390-1' })).toEqual(['COVE-13', 'KN390-1']);
+    expect(lineColours(withFabricSupplierCode({ fabricCode: 'COVE-13' }, 'KN390-1'))).toEqual(['COVE-13', 'KN390-1']);
+    // 2990-0067: a stamp left from the previous fabric is not this line's colour.
+    expect(lineColours({ fabricCode: 'EZ-011', fabricSupplierCode: 'M2402-4' })).toEqual(['EZ-011']);
     expect(lineColours('{"fabricColor":"BF-02"}')).toEqual(['BF-02']);
     expect(lineColours(null)).toEqual([]);
   });

@@ -224,6 +224,12 @@ export function withFabricSupplierCode(v: Record<string, unknown>, supplierCode:
   return { ...v, fabricSupplierCode: supplierCode, fabricSupplierCodeOf: fabricCodeOf(v) };
 }
 
+/* The stamp is display only: spec compares and audit diffs drop it. */
+export function withoutFabricSupplierCode(v: Record<string, unknown>): Record<string, unknown> {
+  const { fabricSupplierCode: _code, fabricSupplierCodeOf: _of, ...rest } = v;
+  return rest;
+}
+
 /* Words that label a colour rather than name one: "Col : cove 13", "Fabric : Cove-03". */
 const COLOUR_LABEL_WORD = /^(?:COL|COLOU?R|CLR|FABRIC|FAB|CODE)$/;
 
