@@ -220,6 +220,9 @@ export type AdjustmentRow = {
   uncounted?: true;
   /** What 「这次改价不算」 left out of this line's commission; absent when nothing. */
   uncountedSen?: number;
+  /** Reaching 30% or a cancellation: the goods of the changes Finance left out up to that day —
+      in the line's goods, not in what it earns or takes back. Absent when none. */
+  uncountedGoodsSen?: number;
 };
 
 /** Where an order sits on the page: its fair, and that fair's place. */
@@ -362,8 +365,8 @@ export type MonthAdjustmentRow = {
   /** What Now is worked on (owner 2026-11-13, 「我看不到goods amount和rate」): the
       goods the recalculated month pays the order on — its own goods once it has
       30%, the goods of its counted earlier lines (reaching 30%: its goods; an
-      upsale or drop sale: the change; a cancellation: less its goods), Finance's
-      own lines — and its rate. Absent when the month pays it on nothing; the
+      upsale or drop sale: the change; a cancellation: less its goods; the
+      changes Finance left out not in them), Finance's own lines — and its rate. Absent when the month pays it on nothing; the
       rate stays where its place has one. */
   goodsSen?: number;
   ratePct?: number | null;
@@ -398,7 +401,9 @@ const totalsOf = (t: Omit<EventCommissionReport['totals'], 'totalSen'>): EventCo
 
 /** The goods a month's report pays each order on, and the order's rate (see
  *  MonthAdjustmentRow.goodsSen). An order a mark takes out of the month, a line
- *  before 30% and a change left out pay on nothing. */
+ *  before 30% and a change left out pay on nothing. A cancellation takes its goods
+ *  back: they count less (owner 2026-11-20, 开始修 — they were added, so a closed
+ *  month's Goods × Rate missed its Now). */
 export function goodsAndRateOf(r: EventCommissionReport): Map<string, { goodsSen: number; ratePct: number | null }> {
   const out = new Map<string, { goodsSen: number; ratePct: number | null }>();
   const takenOut = new Set(r.marked.filter((m) => m.mark.kind !== 'exclude_change').map((m) => m.docNo));
@@ -410,7 +415,11 @@ export function goodsAndRateOf(r: EventCommissionReport): Map<string, { goodsSen
   const leftOut = new Map(r.changedOrders.filter((o) => o.part === 'range').map((o) => [o.docNo, o.uncountedGoodsSen ?? 0]));
   for (const f of r.fairs) for (const so of f.sos) if (so.reachedOn != null && !so.mark) put(so.docNo, so.goodsSen - (leftOut.get(so.docNo) ?? 0), f.ratePct);
   const rateOf = new Map([...r.earlierOrders, ...r.changedOrders].map((o) => [o.docNo, o.ratePct]));
-  for (const a of r.adjustments) if (!a.beforeReach && !a.uncounted) put(a.docNo, a.goodsSen, rateOf.get(a.docNo) ?? null);
+  for (const a of r.adjustments) {
+    if (a.beforeReach || a.uncounted) continue;
+    const goods = a.goodsSen - (a.uncountedGoodsSen ?? 0);
+    put(a.docNo, a.kind === 'cancelled' ? -goods : goods, rateOf.get(a.docNo) ?? null);
+  }
   for (const m of r.manualLines ?? []) put(m.docNo, m.goodsSen, m.ratePct);
   return out;
 }
@@ -1003,7 +1012,8 @@ export function buildEventCommission(input: {
     const base = { docNo: so.docNo, fairId: f.id, fairName: f.name, salesperson: so.salesperson };
     if (!only && earned && reached! >= from && reached! <= to) {
       const goods = goodsOn(so, chs, reached!);
-      adjustments.push({ ...base, date: reached!, kind: 'reached', goodsSen: goods, ...earnedOn(goods, uncountedGoods(so, chs, reached!), rate), beforeReach: false });
+      const off = uncountedGoods(so, chs, reached!);
+      adjustments.push({ ...base, date: reached!, kind: 'reached', goodsSen: goods, ...earnedOn(goods, off, rate), beforeReach: false, ...(off !== 0 ? { uncountedGoodsSen: off } : {}) });
     }
     for (const ch of chs) {
       const v = changeView(ch, so);
@@ -1022,10 +1032,12 @@ export function buildEventCommission(input: {
     if (givesBack && cancelled != null && cancelled >= from && cancelled <= to) {
       /* Taken back: what it earned — its goods less the changes left out. */
       const goods = goodsOn(so, chs, cancelled);
-      const had = earnedOn(goods, uncountedGoods(so, chs, cancelled), rate);
+      const off = uncountedGoods(so, chs, cancelled);
+      const had = earnedOn(goods, off, rate);
       adjustments.push({
         ...base, date: cancelled, kind: 'cancelled', goodsSen: goods, commissionSen: -had.commissionSen, beforeReach: false,
         ...(had.uncountedSen ? { uncountedSen: -had.uncountedSen } : {}),
+        ...(off !== 0 ? { uncountedGoodsSen: off } : {}),
       });
     }
     /* The same order once, its final result in the range. */
