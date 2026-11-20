@@ -138,6 +138,15 @@ describe('layerPnl — precedence per line: Actual, then Forecast, then Last eve
     expect(none.lines.commission).toMatchObject({ amount: 0, source: 'actual' });
   });
 
+  it('the Project Maintenance % wins over the last event ratio; with no % the ratio is used', () => {
+    /* A last event that paid 20% commission; the brand's rate card says 10%. */
+    const last20 = { ...lastEventValues(LAST, new Set()), commission: 20000 };
+    const l = layerPnl({ col: EMPTY, booksRows: new Set(), forecast: { sales: 50000 }, lastEvent: last20, useLastEvent: true });
+    expect(l.lines.commission).toMatchObject({ amount: 5000, source: 'forecast' });
+    const noRate = layerPnl({ col: col([], null, null), booksRows: new Set(), forecast: { sales: 50000 }, lastEvent: last20, useLastEvent: true });
+    expect(noRate.lines.commission).toMatchObject({ amount: 10000, source: 'forecast' });
+  });
+
   it('a row the books fill is actual even at zero', () => {
     const l = layerPnl({ col: EMPTY, booksRows: new Set(['rental']), forecast: { rental: 9000 }, lastEvent: lastValues, useLastEvent: true });
     expect(l.lines.rental).toMatchObject({ amount: 0, source: 'actual' });

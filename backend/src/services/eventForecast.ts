@@ -12,8 +12,9 @@
 //                  the rate card on real sales). It beats both, as soon as it
 //                  exists for that line.
 //
-// Lines that move with sales (Transport Fee, Commission, Merchandise) are not
-// borrowed as amounts: with no real or typed figure they are the shown
+// Lines that move with sales (Transport Fee, Commission, Merchandise) are the
+// brand's % in Project Maintenance on the shown Sales; with no % set they are
+// not borrowed as amounts: with no real or typed figure they are the shown
 // Sales times the last event's own ratio, so a typed Sales forecast carries
 // them along (owner 2026-11-19: 跟着我的sales变动就行了). COGS keeps the last
 // event's amount (owner 2026-11-19: COGS 就真的要用上一场).
@@ -148,15 +149,15 @@ export function layerPnl(input: {
     const rate = rateOf(input.col, k);
     if (a.actual) lines[k] = { amount: round2(a.amount), source: 'actual', forecast, last_event: lastEvent };
     else if (forecast != null) lines[k] = { amount: forecast, source: 'forecast', forecast, last_event: lastEvent };
-    else if (lastEvent != null && sales && lastSales > 0 && SALES_DRIVEN_LINES.includes(k)) {
-      /* The shown Sales at the last event's ratio; a typed Sales makes it a forecast. */
+    else if (sales && sales.source !== 'actual' && sales.amount > 0 && rate != null) {
+      /* The brand's % in Project Maintenance on the shown (forecast) Sales - it
+         wins over the last event's ratio (owner 2026-11-20: 应该是跟着project
+         maintenance). */
+      lines[k] = { amount: round2((sales.amount * rate) / 100), source: sales.source === 'forecast' ? 'forecast' : 'last_event', forecast, last_event: lastEvent };
+    } else if (lastEvent != null && sales && lastSales > 0 && SALES_DRIVEN_LINES.includes(k)) {
+      /* No % set for the brand: the shown Sales at the last event's ratio. */
       lines[k] = { amount: round2((sales.amount * lastEvent) / lastSales), source: sales.source === 'forecast' ? 'forecast' : 'last_event', forecast, last_event: lastEvent };
     } else if (lastEvent != null) lines[k] = { amount: lastEvent, source: 'last_event', forecast, last_event: lastEvent };
-    else if (sales && sales.source !== 'actual' && sales.amount > 0 && rate != null) {
-      /* No last event to take a ratio from: the brand's rate card on the shown
-         (forecast) Sales (owner 2026-11-20: comm 那些下面的没有根据变). */
-      lines[k] = { amount: round2((sales.amount * rate) / 100), source: sales.source, forecast, last_event: null };
-    }
     else lines[k] = { amount: round2(a.amount), source: 'actual', forecast, last_event: lastEvent };
   }
 
