@@ -1,14 +1,13 @@
-/* HR > Employees & Attendance (HC-0125), ported from Hookka's /employees.
- * Phase 1 carries the master data (Employee Master, Public Holidays, Pay
- * Rules), phase 2 the punch clock (Attendance, Punch Sites; the phone half is
- * mobile/MobilePunch.tsx), phase 3 the hours pay reads (Working Hours, Labor
- * Cost with the short-hour docks), phase 4 the pay (Payroll, Advances,
- * Penalty; the phone half is My pay in mobile/MobilePunch.tsx), phase 5 the
- * driver commission and trip allowances (Trip Pay) and the monthly
- * Allowances. The URL carries the tab. */
+/* HR > Employees & Attendance (HC-0125). Redesign (handoff
+ * design_handoff_hr_employees_attendance): the 14-tab strip is replaced by a
+ * resizable/collapsible grouped secondary sidebar (HrSubnav), the content
+ * fills the full viewport (no max-width), and two new pages — Overview
+ * (default) and OT Requests — join the existing tab bodies. Sidebar first;
+ * Overview / OT Requests / per-page restyle land in later stages. The URL
+ * carries the page in ?tab. */
 import { useSearchParams } from "react-router-dom";
 import { PageHeader } from "../components/Layout";
-import { TabStrip, type TabOption } from "../components/TabStrip";
+import { HrSubnav, HR_NAV } from "./hr/HrSubnav";
 import { EmployeeMasterTab } from "./hr/EmployeeMasterTab";
 import { PublicHolidaysTab } from "./hr/PublicHolidaysTab";
 import { PayRulesTab } from "./hr/PayRulesTab";
@@ -24,25 +23,16 @@ import { AllowancesTab } from "./hr/AllowancesTab";
 import { KpiTab } from "./hr/KpiTab";
 import { ShiftsTab } from "./hr/ShiftsTab";
 
-type Tab = "employees" | "attendance" | "hours" | "labor" | "payroll" | "trip-pay" | "allowances" | "kpi" | "advances" | "penalties" | "sites" | "holidays" | "pay-rules" | "shifts";
-const TABS: TabOption<Tab>[] = [
-  { value: "employees", label: "Employee Master" },
-  { value: "attendance", label: "Attendance" },
-  { value: "hours", label: "Working Hours" },
-  { value: "labor", label: "Labor Cost" },
-  { value: "payroll", label: "Payroll" },
-  { value: "trip-pay", label: "Trip Pay" },
-  { value: "allowances", label: "Allowances" },
-  { value: "kpi", label: "KPI" },
-  { value: "advances", label: "Advances" },
-  { value: "penalties", label: "Penalty" },
-  { value: "sites", label: "Punch Sites" },
-  { value: "holidays", label: "Public Holidays" },
-  { value: "pay-rules", label: "Pay Rules" },
-  { value: "shifts", label: "Shifts" },
-];
+type Tab =
+  | "overview" | "employees" | "shifts" | "sites"
+  | "attendance" | "ot-requests" | "hours" | "holidays"
+  | "payroll" | "pay-rules" | "trip-pay" | "allowances" | "advances" | "penalties" | "labor"
+  | "kpi";
+
+const NAV_KEYS = new Set(HR_NAV.map((n) => n.key));
 
 const HEADER: Record<Tab, { title: string; description: string }> = {
+  overview: { title: "Overview", description: "Today at a glance across Employees & Attendance." },
   employees: {
     title: "Employee Master",
     description: "Drivers, helpers and warehouse crew: the ERP account they punch in with, pay basis, how they are paid, statutory. Click a row to edit.",
@@ -51,6 +41,7 @@ const HEADER: Record<Tab, { title: string; description: string }> = {
     title: "Attendance",
     description: "Phone punches for one day: when, where (site and distance), the selfie. Everyone active is listed, so a missing punch shows. Click a row to key or correct the day.",
   },
+  "ot-requests": { title: "OT Requests", description: "Overtime workers reported on the phone: approve or reject before payroll closes. Confirmed overtime is what payroll pays." },
   hours: {
     title: "Working Hours",
     description: "The hours pay reads, one line per person per day. A clock-out logs them in the person's department; HR edits, splits or adds hours, and a punch never writes over HR's.",
@@ -89,11 +80,23 @@ const HEADER: Record<Tab, { title: string; description: string }> = {
   },
 };
 
+/** Stage placeholder for pages built in a later stage of the redesign. */
+function ComingSoon({ title }: { title: string }) {
+  return (
+    <div className="flex flex-1 items-center justify-center p-10 text-center text-[13px] text-ink-muted">
+      <div>
+        <div className="text-[15px] font-semibold text-ink">{title}</div>
+        <div className="mt-1">This screen is part of the HR redesign and lands in a later stage.</div>
+      </div>
+    </div>
+  );
+}
+
 export function HrEmployees() {
   const [params, setParams] = useSearchParams();
-  const raw = params.get("tab") as Tab | null;
-  const active: Tab = raw && TABS.some((t) => t.value === raw) ? raw : "employees";
-  const setTab = (next: Tab) =>
+  const raw = params.get("tab");
+  const active: Tab = (raw && NAV_KEYS.has(raw) ? raw : "overview") as Tab;
+  const setTab = (next: string) =>
     setParams(
       (p) => {
         const n = new URLSearchParams(p);
@@ -102,24 +105,46 @@ export function HrEmployees() {
       },
       { replace: true },
     );
+
+  const body = (() => {
+    switch (active) {
+      case "overview": return <ComingSoon title="Overview" />;
+      case "ot-requests": return <ComingSoon title="OT Requests" />;
+      case "employees": return <EmployeeMasterTab />;
+      case "attendance": return <AttendanceTab />;
+      case "hours": return <WorkingHoursTab />;
+      case "labor": return <LaborCostTab />;
+      case "payroll": return <PayrollTab />;
+      case "trip-pay": return <TripPayTab />;
+      case "allowances": return <AllowancesTab />;
+      case "kpi": return <KpiTab />;
+      case "advances": return <AdvancesTab />;
+      case "penalties": return <PenaltiesTab />;
+      case "sites": return <PunchSitesTab />;
+      case "holidays": return <PublicHolidaysTab />;
+      case "pay-rules": return <PayRulesTab />;
+      case "shifts": return <ShiftsTab />;
+      default: return null;
+    }
+  })();
+  const isPlaceholder = active === "overview" || active === "ot-requests";
+  const head = HEADER[active];
+
   return (
-    <div className="max-w-7xl">
-      <TabStrip<Tab> value={active} onChange={setTab} options={TABS} />
-      <PageHeader eyebrow="HR · Employees & Attendance" title={HEADER[active].title} description={HEADER[active].description} />
-      {active === "employees" && <EmployeeMasterTab />}
-      {active === "attendance" && <AttendanceTab />}
-      {active === "hours" && <WorkingHoursTab />}
-      {active === "labor" && <LaborCostTab />}
-      {active === "payroll" && <PayrollTab />}
-      {active === "trip-pay" && <TripPayTab />}
-      {active === "allowances" && <AllowancesTab />}
-      {active === "kpi" && <KpiTab />}
-      {active === "advances" && <AdvancesTab />}
-      {active === "penalties" && <PenaltiesTab />}
-      {active === "sites" && <PunchSitesTab />}
-      {active === "holidays" && <PublicHolidaysTab />}
-      {active === "pay-rules" && <PayRulesTab />}
-      {active === "shifts" && <ShiftsTab />}
+    // Full-bleed: break out of Layout's content padding so the sidebar sits
+    // flush against the app sidebar and the area fills the viewport height.
+    <div className="-mx-3 -mt-6 -mb-[calc(10rem+env(safe-area-inset-bottom))] flex h-[calc(100dvh-52px)] overflow-hidden bg-bg sm:-mx-4 lg:-mx-4 lg:-mt-2 lg:-mb-10 lg:h-[calc(100dvh-52px)]">
+      <HrSubnav active={active} onSelect={setTab} />
+      <div className="flex min-w-0 flex-1 flex-col overflow-y-auto thin-scroll">
+        {isPlaceholder ? (
+          body
+        ) : (
+          <div className="px-6 py-4">
+            <PageHeader eyebrow="HR · Employees & Attendance" title={head.title} description={head.description} />
+            {body}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
