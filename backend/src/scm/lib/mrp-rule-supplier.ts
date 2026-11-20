@@ -11,7 +11,7 @@
 // convertSosToPosCore), and the purchaser can still change the dropdown.
 // ----------------------------------------------------------------------------
 
-import { fabricCodeOf } from './fabric-supplier-code';
+import { fabricCodeOf } from '../shared/variant-summary';
 
 export const NB_SUPPLIER_CODE = '400-N002';
 export const NB_FABRIC_SERIES = 'NB';
