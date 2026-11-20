@@ -341,6 +341,44 @@ describe('posted detail surfaces its booked adjustments (owner 2026-11-20)', () 
     const body = await (await harness(t).app.request('/stock-takes/st-1')).json() as Row;
     expect(body.adjustments).toEqual([]);
   });
+
+  test('the detail links to the take\'s mirror Stock Adjustment document', async () => {
+    const t = takeFixture({ status: 'POSTED' });
+    t.stock_adjustments = [{ id: 'sa-1', adjustment_no: 'HC-SA-2611-009', company_id: CO, warehouse_id: 'w1', source_stock_take_id: 'st-1' }];
+    const body = await (await harness(t).app.request('/stock-takes/st-1')).json() as Row;
+    expect((body.adjustment as Row).id).toBe('sa-1');
+    expect((body.adjustment as Row).adjustment_no).toBe('HC-SA-2611-009');
+  });
+});
+
+describe('posting mints a mirror Stock Adjustment document (owner 2026-11-20)', () => {
+  test('a within-limit post creates a read-only SA document whose lines mirror the variance; stock moves once', async () => {
+    const t = takeFixture(); // variance +2, under the limit
+    const res = await jsonReq(harness(t).app, '/stock-takes/st-1/post', 'PATCH');
+    expect(res.status).toBe(200);
+    expect(t.stock_takes[0].status).toBe('POSTED');
+    // ONE movement (stock moved once, through the take) ...
+    expect(t.inventory_movements).toHaveLength(1);
+    expect(t.inventory_movements[0].source_doc_type).toBe('STOCK_TAKE');
+    // ... and a formal Stock Adjustment document mirroring it, linked back to the take.
+    expect(t.stock_adjustments).toHaveLength(1);
+    expect(t.stock_adjustments[0].source_stock_take_id).toBe('st-1');
+    expect(t.stock_adjustment_lines).toHaveLength(1);
+    expect(t.stock_adjustment_lines[0].item_code).toBe('CODY');
+    expect(t.stock_adjustment_lines[0].qty).toBe(2);
+    expect(t.stock_adjustment_lines[0].reason_code).toBe('COUNT');
+    // The SA document writes NO movements of its own (source stays STOCK_TAKE).
+    expect(t.inventory_movements.filter((m) => m.source_doc_type === 'ADJUSTMENT')).toHaveLength(0);
+  });
+
+  test('a zero-variance post writes no movement and mints no adjustment document', async () => {
+    const t = takeFixture();
+    t.stock_take_lines[0].counted_qty = 10; // equals live on-hand -> no variance
+    const res = await jsonReq(harness(t).app, '/stock-takes/st-1/post', 'PATCH');
+    expect(res.status).toBe(200);
+    expect(t.inventory_movements).toHaveLength(0);
+    expect(t.stock_adjustments ?? []).toHaveLength(0);
+  });
 });
 
 describe('blind counts — server-side stripping', () => {

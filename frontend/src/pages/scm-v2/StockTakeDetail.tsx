@@ -655,6 +655,7 @@ export const StockTakeDetail = () => {
 
   const t = detail.data.take;
   const adjustments = detail.data.adjustments ?? [];
+  const adjustment = detail.data.adjustment ?? null;
 
   return (
     <div className="space-y-4">
@@ -904,19 +905,27 @@ export const StockTakeDetail = () => {
       </section>
 
       {/* ── Adjustments booked (owner 2026-11-20) ───────────────────────
-          A POSTED take's variance is booked as ADJUSTMENT movements. List them
-          here and link each SKU to its stock card — where the same movement
-          links back, so "where did this come from / go to" is one click either
-          way. Shown only when there is at least one real movement. */}
+          A POSTED take's variance is booked as a formal Stock Adjustment
+          document (SA number). List the SKUs here and link the whole thing to
+          that adjustment — never to a stock card (owner 2026-11-20). Shown only
+          when there is at least one real movement. */}
       {isPosted && adjustments.length > 0 && (
         <section className={styles.card}>
           <div className={styles.cardHeader}>
             <h2 className={styles.cardTitle}>
               Adjustments booked
               <span style={{ marginLeft: 8, fontSize: 'var(--fs-12)', color: 'var(--fg-muted)', fontWeight: 400 }}>
-                {adjustments.length} SKU{adjustments.length === 1 ? '' : 's'} · each links to its stock card
+                {adjustments.length} SKU{adjustments.length === 1 ? '' : 's'}
               </span>
             </h2>
+            {adjustment && (
+              <Link
+                to={`/scm/stock-adjustments/${encodeURIComponent(adjustment.id)}`}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: 'var(--c-burnt, #a6471e)', textDecoration: 'none', fontSize: 'var(--fs-13)', fontWeight: 600, whiteSpace: 'nowrap' }}
+              >
+                View adjustment {adjustment.adjustment_no} <ExternalLink size={13} strokeWidth={1.9} />
+              </Link>
+            )}
           </div>
           <div className={styles.cardBody}>
             <div style={{ display: 'flex', flexDirection: 'column' }}>
@@ -941,12 +950,6 @@ export const StockTakeDetail = () => {
                         @ {fmtSen(a.unit_cost_sen)}
                       </span>
                     )}
-                    <Link
-                      to={`/scm/inventory/stock-card/${encodeURIComponent(a.item_code)}?warehouseId=${encodeURIComponent(t.warehouse_id)}`}
-                      style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--c-burnt, #a6471e)', textDecoration: 'none', fontSize: 'var(--fs-12)', whiteSpace: 'nowrap' }}
-                    >
-                      Stock card <ExternalLink size={12} strokeWidth={1.9} />
-                    </Link>
                   </div>
                 );
               })}

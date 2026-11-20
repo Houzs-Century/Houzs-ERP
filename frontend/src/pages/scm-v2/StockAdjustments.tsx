@@ -154,8 +154,17 @@ export function StockAdjustments() {
       alwaysVisible: true,
       getValue: (d) => d.adjustment_no,
       render: (d) => (
-        <span className="font-mono text-[12px] font-semibold text-primary-ink whitespace-nowrap">
-          {d.adjustment_no}
+        <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+          <span className="font-mono text-[12px] font-semibold text-primary-ink">{d.adjustment_no}</span>
+          {/* From-stock-take marker (owner 2026-11-20): a count's mirror adjustment. */}
+          {d.source_stock_take_id && (
+            <span
+              title="Auto-created from a stock take"
+              style={{ borderRadius: 4, padding: '1px 6px', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em', background: 'rgba(214, 158, 46, 0.18)', color: '#8a5a00' }}
+            >
+              Stock take
+            </span>
+          )}
         </span>
       ),
     },
