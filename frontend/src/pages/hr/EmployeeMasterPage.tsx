@@ -1,17 +1,40 @@
-/* HR · Employees & Attendance — Employee Master (redesign stage 3).
- * 6 stat cards (four are click-to-filter), a toolbar (search, group/flat,
+/* HR · Employees & Attendance — Employee Master (redesign look, real data).
+ * Six stat cards (four are click-to-filter), a toolbar (search, group/flat,
  * show-salary), and three layouts: A table (grouped by position), B by-position
- * columns, D today board. Sample data; salary masked by default. The B and D
- * layouts follow the written handoff (their reference shots matched A). */
+ * columns, D today board. The roster is the real employee master; today's punch
+ * is joined from the attendance read. Add / edit / import reuse the existing
+ * working EmployeeDrawer and bulk modals (HrEmployees owns them). Salary masked
+ * by default. */
 import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { fmtSen } from "../../vendor/shared/format";
+import { fmtSen, todayMY } from "../../vendor/shared/format";
 import { HrPageHeader, hrPrimaryBtn, hrSecondaryBtn } from "./HrPageHeader";
-import { EMPLOYEES, POSITION, avatarColor, initials, type Emp, type Position, type Punch } from "./hrSampleData";
+import { avatarColor, initials } from "./hrAvatar";
+import { dayByEmployee, punchOf, type PunchState } from "./attendanceToday";
+import { useAttendance, useEmployees, type Employee } from "./hrApi";
 
 const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(" ");
 type Layout = "A" | "B" | "D";
-type Filter = null | "punched" | "late" | "probation" | "foreign";
+type Filter = null | "punched" | "late" | "notlinked" | "foreign";
+
+// A view row joins an employee to today's punch and the figure the page shows.
+type Row = { e: Employee; punch: PunchState; time: string | null; lateMin: number; salarySen: number; linked: boolean; position: string };
+
+// Position accent: the real position is free text, so colour it deterministically
+// from a semantic-token palette rather than three fixed buckets.
+const POS_PALETTE = [
+  { dot: "bg-learning", soft: "bg-learning-soft", text: "text-learning", bar: "bg-learning" },
+  { dot: "bg-accent", soft: "bg-accent-soft", text: "text-accent", bar: "bg-accent" },
+  { dot: "bg-primary", soft: "bg-primary-soft", text: "text-primary", bar: "bg-primary" },
+  { dot: "bg-time", soft: "bg-warning-bg", text: "text-time", bar: "bg-time" },
+  { dot: "bg-synced", soft: "bg-synced-bg", text: "text-synced", bar: "bg-synced" },
+];
+function posStyle(pos: string) {
+  let h = 0;
+  for (let i = 0; i < pos.length; i++) h = (h * 31 + pos.charCodeAt(i)) >>> 0;
+  return POS_PALETTE[h % POS_PALETTE.length];
+}
+const posLabel = (p: string) => p || "No position";
 
 function Avatar({ name, size = 34 }: { name: string; size?: number }) {
   return (
@@ -20,31 +43,32 @@ function Avatar({ name, size = 34 }: { name: string; size?: number }) {
     </span>
   );
 }
-const PUNCH_DOT: Record<Punch, string> = { on: "bg-synced", late: "bg-time", out: "bg-err", leave: "bg-ink-muted" };
-function PositionPill({ pos }: { pos: Position }) {
-  const p = POSITION[pos];
-  return <span className={cx("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold", p.soft, p.text)}><span className={cx("h-1.5 w-1.5 rounded-full", p.dot)} />{p.label}</span>;
+const PUNCH_DOT: Record<PunchState, string> = { on: "bg-synced", late: "bg-time", out: "bg-err", leave: "bg-ink-muted" };
+function PositionPill({ pos }: { pos: string }) {
+  const p = posStyle(pos);
+  return <span className={cx("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold", p.soft, p.text)}><span className={cx("h-1.5 w-1.5 rounded-full", p.dot)} />{posLabel(pos)}</span>;
 }
-function Today({ e }: { e: Emp }) {
-  if (e.punch === "leave") return <span className="flex items-center gap-1.5 text-[12px] text-ink-muted"><span className="h-2 w-2 rounded-full bg-ink-muted" />On leave</span>;
-  if (e.punch === "out") return <span className="flex items-center gap-1.5 text-[12px]"><span className="h-2 w-2 rounded-full bg-err" /><span className="font-semibold text-err">Not in</span><span className="text-ink-muted">· shift {e.shift}</span></span>;
+function Today({ r, ready }: { r: Row; ready: boolean }) {
+  if (!ready) return <span className="text-[12px] text-ink-muted">—</span>;
+  if (r.punch === "leave") return <span className="flex items-center gap-1.5 text-[12px] text-ink-muted"><span className="h-2 w-2 rounded-full bg-ink-muted" />On leave</span>;
+  if (r.punch === "out") return <span className="flex items-center gap-1.5 text-[12px]"><span className="h-2 w-2 rounded-full bg-err" /><span className="font-semibold text-err">Not in</span></span>;
   return (
     <span className="flex items-center gap-1.5 text-[12px]">
-      <span className={cx("h-2 w-2 rounded-full", PUNCH_DOT[e.punch])} />
-      <span className="font-mono font-semibold text-ink">{e.time}</span>
-      <span className="text-ink-muted">In · shift {e.shift}</span>
-      {e.lateMin > 0 && <span className="font-semibold text-time">{e.lateMin} min late</span>}
+      <span className={cx("h-2 w-2 rounded-full", PUNCH_DOT[r.punch])} />
+      <span className="font-mono font-semibold text-ink">{r.time ?? "In"}</span>
+      <span className="text-ink-muted">In</span>
+      {r.lateMin > 0 && <span className="font-semibold text-time">{r.lateMin} min late</span>}
     </span>
   );
 }
-function StatusBadge({ s }: { s: Emp["status"] }) {
-  return s === "ACTIVE"
-    ? <span className="rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-synced">Active</span>
-    : <span className="rounded bg-warning-bg px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-warning-text">Probation</span>;
+function StatusBadge({ s }: { s: Employee["status"] }) {
+  if (s === "ACTIVE") return <span className="rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-synced">Active</span>;
+  const label = s === "RESIGNED" ? "Resigned" : "Inactive";
+  return <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-ink-muted">{label}</span>;
 }
-function Erp({ e }: { e: Emp }) {
-  return e.erp
-    ? <span className="flex items-center gap-1.5 text-[12px] text-ink-muted"><span className="text-synced">✓</span><span className="truncate font-mono">{e.erp}</span></span>
+function Erp({ r }: { r: Row }) {
+  return r.linked
+    ? <span className="flex items-center gap-1.5 text-[12px] text-ink-muted"><span className="text-synced">✓</span><span className="truncate">{r.e.userName ?? r.e.userEmail}</span></span>
     : <span className="inline-flex items-center gap-1 rounded bg-warning-bg px-1.5 py-0.5 text-[11px] font-semibold text-warning-text">⚠ Not linked</span>;
 }
 
@@ -62,39 +86,76 @@ function StatCard({ label, value, sub, bar, active, onClick }: { label: string; 
   );
 }
 
-const ORDER: Position[] = ["driver", "crew", "supervisor"];
-
-export function EmployeeMasterPage({ onPickEmployee }: { onPickEmployee?: (e: Emp) => void }) {
+export function EmployeeMasterPage({
+  onPickEmployee,
+  onNew,
+  onBulk,
+  canManage,
+}: {
+  onPickEmployee: (e: Employee) => void;
+  onNew: () => void;
+  onBulk: (b: "accounts" | "import") => void;
+  canManage: boolean;
+}) {
+  const emp = useEmployees();
+  const att = useAttendance(todayMY().slice(0, 10));
   const [layout, setLayout] = useState<Layout>("A");
   const [grouped, setGrouped] = useState(true);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>(null);
   const [showSalary, setShowSalary] = useState(false);
 
-  const total = EMPLOYEES.length;
-  const probation = EMPLOYEES.filter((e) => e.status === "PROBATION").length;
-  const foreign = EMPLOYEES.filter((e) => e.foreign).length;
-  const punchedIn = EMPLOYEES.filter((e) => e.punch === "on" || e.punch === "late").length;
-  const notIn = EMPLOYEES.filter((e) => e.punch === "out").length;
-  const onLeave = EMPLOYEES.filter((e) => e.punch === "leave").length;
-  const lateToday = EMPLOYEES.filter((e) => e.punch === "late").length;
-  const totalSalary = EMPLOYEES.reduce((s, e) => s + e.salarySen, 0);
-  const money = (sen: number) => (showSalary ? fmtSen(sen) : "RM ••••••");
+  const attReady = att.data != null;
+  const dayByEmp = useMemo(() => dayByEmployee(att.data), [att.data]);
 
-  const matchesFilter = (e: Emp) =>
+  const allRows = useMemo<Row[]>(() => {
+    const list = emp.data?.employees ?? [];
+    return list
+      .filter((e) => e.status === "ACTIVE")
+      .map((e) => {
+        const p = punchOf(dayByEmp.get(e.id) ?? null);
+        return {
+          e,
+          punch: p.state,
+          time: p.time,
+          lateMin: p.lateMin,
+          salarySen: e.payMode === "DAILY" ? e.dailyRateSen : e.basicSalarySen,
+          linked: e.userId != null,
+          position: e.position || "",
+        };
+      });
+  }, [emp.data, dayByEmp]);
+
+  const total = allRows.length;
+  const notLinked = allRows.filter((r) => !r.linked).length;
+  const foreign = allRows.filter((r) => r.e.isOutsource).length;
+  const punchedIn = allRows.filter((r) => r.punch === "on" || r.punch === "late").length;
+  const notIn = allRows.filter((r) => r.punch === "out").length;
+  const onLeave = allRows.filter((r) => r.punch === "leave").length;
+  const lateToday = allRows.filter((r) => r.punch === "late").length;
+  const totalSalary = allRows.reduce((s, r) => s + r.salarySen, 0);
+  const money = (sen: number) => (showSalary ? fmtSen(sen) : "RM ••••••");
+  const dash = (n: number): ReactNode => (attReady ? n : "—");
+
+  const matchesFilter = (r: Row) =>
     filter === null ||
-    (filter === "punched" && (e.punch === "on" || e.punch === "late")) ||
-    (filter === "late" && e.punch === "late") ||
-    (filter === "probation" && e.status === "PROBATION") ||
-    (filter === "foreign" && e.foreign);
+    (filter === "punched" && (r.punch === "on" || r.punch === "late")) ||
+    (filter === "late" && r.punch === "late") ||
+    (filter === "notlinked" && !r.linked) ||
+    (filter === "foreign" && r.e.isOutsource);
   const rows = useMemo(
-    () => EMPLOYEES.filter((e) => matchesFilter(e) && (query === "" || e.name.toLowerCase().includes(query.toLowerCase()) || e.empNo.toLowerCase().includes(query.toLowerCase()))),
-    [query, filter],
+    () => allRows.filter((r) => matchesFilter(r) && (query === "" || r.e.name.toLowerCase().includes(query.toLowerCase()) || r.e.empNo.toLowerCase().includes(query.toLowerCase()))),
+    [allRows, query, filter],
   );
-  const byPos = (p: Position) => rows.filter((e) => e.position === p);
-  const onDutyOf = (list: Emp[]) => list.filter((e) => e.punch === "on" || e.punch === "late").length;
+  const positions = useMemo(() => {
+    const seen: string[] = [];
+    for (const r of rows) if (!seen.includes(r.position)) seen.push(r.position);
+    return seen.sort((a, b) => posLabel(a).localeCompare(posLabel(b)));
+  }, [rows]);
+  const byPos = (p: string) => rows.filter((r) => r.position === p);
+  const onDutyOf = (list: Row[]) => list.filter((r) => r.punch === "on" || r.punch === "late").length;
   const toggleFilter = (f: Exclude<Filter, null>) => setFilter((cur) => (cur === f ? null : f));
-  const filterLabel: Record<Exclude<Filter, null>, string> = { punched: "Punched in today", late: "Late today", probation: "On probation", foreign: "Foreign workers" };
+  const filterLabel: Record<Exclude<Filter, null>, string> = { punched: "Punched in today", late: "Late today", notlinked: "No ERP account", foreign: "Outsourced" };
 
   const layoutBtn = (l: Layout, label: string) => (
     <button type="button" onClick={() => setLayout(l)} className={cx("h-7 rounded px-2.5 text-[12px] font-semibold", layout === l ? "bg-surface text-primary shadow-sm" : "text-ink-muted hover:text-ink")}>{label}</button>
@@ -104,35 +165,31 @@ export function EmployeeMasterPage({ onPickEmployee }: { onPickEmployee?: (e: Em
     <>
       <HrPageHeader
         title="Employee Master"
-        subtitle="Drivers, helpers and warehouse crew · Friday, 20 Nov 2026"
+        subtitle={emp.data ? `${total} active` : "Drivers, helpers and warehouse crew"}
         actions={
           <>
             <div className="mr-1 flex items-center gap-0.5 rounded-lg bg-surface-2 p-0.5">
               <span className="px-1.5 text-[10px] font-semibold uppercase tracking-wide text-ink-muted">Layout</span>
               {layoutBtn("A", "Table")}{layoutBtn("B", "By position")}{layoutBtn("D", "Today board")}
             </div>
-            <button type="button" className={hrSecondaryBtn}>From ERP accounts</button>
-            <button type="button" className={hrSecondaryBtn}>Import</button>
-            <button type="button" className={hrSecondaryBtn}>Export</button>
-            <button type="button" className={hrPrimaryBtn}>+ Add employee</button>
+            {canManage && <button type="button" className={hrSecondaryBtn} onClick={() => onBulk("accounts")}>From ERP accounts</button>}
+            {canManage && <button type="button" className={hrSecondaryBtn} onClick={() => onBulk("import")}>Import</button>}
+            {canManage && <button type="button" className={hrPrimaryBtn} onClick={onNew}>+ Add employee</button>}
           </>
         }
       />
 
       <div className="flex flex-col gap-3 px-6 py-4">
-        {/* stat cards */}
         <div className="flex gap-3 overflow-x-auto pb-1">
-          <StatCard label="Active employees" value={total} sub={`${total - probation} confirmed · ${probation} on probation`} bar="bg-primary" />
-          <StatCard label="Punched in today" value={`${punchedIn} / ${total}`} sub={`${notIn} not in yet · ${onLeave} on leave`} bar="bg-synced" active={filter === "punched"} onClick={() => toggleFilter("punched")} />
-          <StatCard label="Late this month" value={<span>27 <span className="text-[13px] font-semibold text-ink-muted">times</span></span>} sub={`${lateToday} late today`} bar="bg-time" active={filter === "late"} onClick={() => toggleFilter("late")} />
+          <StatCard label="Active employees" value={emp.data ? total : "—"} sub={emp.data ? "in the company" : "loading"} bar="bg-primary" />
+          <StatCard label="Punched in today" value={<span>{dash(punchedIn)} / {total}</span>} sub={attReady ? `${notIn} not in · ${onLeave} on leave` : "loading today"} bar="bg-synced" active={filter === "punched"} onClick={() => toggleFilter("punched")} />
+          <StatCard label="No ERP account" value={emp.data ? notLinked : "—"} sub="cannot punch in" bar="bg-time" active={filter === "notlinked"} onClick={() => toggleFilter("notlinked")} />
           <StatCard label="Monthly basic" value={<span className="font-money">{money(totalSalary)}</span>} sub={`${total} employees`} bar="bg-accent" />
-          <StatCard label="On probation" value={probation} sub="Next confirms in 86 days" bar="bg-learning" active={filter === "probation"} onClick={() => toggleFilter("probation")} />
-          <StatCard label="Foreign workers" value={<span>{foreign} <span className="text-[13px] font-semibold text-ink-muted">HCFW</span></span>} sub="2 permits expire within 90 days" bar="bg-err" active={filter === "foreign"} onClick={() => toggleFilter("foreign")} />
+          <StatCard label="Late today" value={dash(lateToday)} sub="past shift start" bar="bg-err" active={filter === "late"} onClick={() => toggleFilter("late")} />
+          <StatCard label="Outsourced" value={emp.data ? foreign : "—"} sub="foreign workers" bar="bg-learning" active={filter === "foreign"} onClick={() => toggleFilter("foreign")} />
         </div>
 
-        {/* table / board card */}
         <div className="flex min-h-[380px] flex-1 flex-col overflow-hidden rounded-xl border border-border bg-surface">
-          {/* toolbar */}
           <div className="flex flex-wrap items-center gap-2 border-b border-border-subtle px-3 py-2.5">
             <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search name or Emp No" className="h-8 w-56 rounded-md border border-border bg-surface-2 px-3 text-[12px] text-ink placeholder:text-ink-muted focus:border-primary focus:outline-none" />
             {layout === "A" && (
@@ -141,7 +198,7 @@ export function EmployeeMasterPage({ onPickEmployee }: { onPickEmployee?: (e: Em
                 <button type="button" onClick={() => setGrouped(false)} className={cx("h-7 rounded px-2.5 text-[12px] font-semibold", !grouped ? "bg-surface text-primary shadow-sm" : "text-ink-muted")}>Flat list</button>
               </div>
             )}
-            <span className="text-[12px] text-ink-muted">Operation Department · {rows.length} employees</span>
+            <span className="text-[12px] text-ink-muted">{rows.length} employees</span>
             {filter && (
               <button type="button" onClick={() => setFilter(null)} className="inline-flex items-center gap-1 rounded-full bg-primary-soft px-2.5 py-1 text-[11px] font-semibold text-primary-ink">
                 {filterLabel[filter]} <span className="text-[13px] leading-none">×</span>
@@ -152,11 +209,17 @@ export function EmployeeMasterPage({ onPickEmployee }: { onPickEmployee?: (e: Em
             </button>
           </div>
 
-          {/* body */}
           <div className="thin-scroll flex-1 overflow-auto">
-            {layout === "A" && <TableLayout rows={rows} grouped={grouped} money={money} onPick={onPickEmployee} onDutyOf={onDutyOf} byPos={byPos} />}
-            {layout === "B" && <ByPositionLayout byPos={byPos} onDutyOf={onDutyOf} onPick={onPickEmployee} />}
-            {layout === "D" && <TodayBoardLayout rows={rows} onPick={onPickEmployee} />}
+            {emp.loading && <div className="px-4 py-10 text-center text-[12px] text-ink-muted">Loading…</div>}
+            {emp.error && !emp.loading && <div className="px-4 py-10 text-center text-[12px] text-err">{emp.error}</div>}
+            {emp.data && (
+              <>
+                {layout === "A" && <TableLayout rows={rows} grouped={grouped} money={money} attReady={attReady} onPick={onPickEmployee} onDutyOf={onDutyOf} positions={positions} byPos={byPos} />}
+                {layout === "B" && <ByPositionLayout positions={positions} byPos={byPos} onDutyOf={onDutyOf} attReady={attReady} onPick={onPickEmployee} />}
+                {layout === "D" && <TodayBoardLayout rows={rows} attReady={attReady} onPick={onPickEmployee} />}
+                {rows.length === 0 && <div className="px-4 py-10 text-center text-[12px] text-ink-muted">No employees match.</div>}
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -165,47 +228,47 @@ export function EmployeeMasterPage({ onPickEmployee }: { onPickEmployee?: (e: Em
 }
 
 // ── A · Table ────────────────────────────────────────────────────────────────
-function Row({ e, money, onPick }: { e: Emp; money: (n: number) => string; onPick?: (e: Emp) => void }) {
+function RowLine({ r, money, attReady, onPick }: { r: Row; money: (n: number) => string; attReady: boolean; onPick: (e: Employee) => void }) {
   return (
-    <button type="button" onClick={() => onPick?.(e)} className="grid w-full grid-cols-[2.2fr_1.1fr_1.5fr_1.6fr_1fr_0.8fr_auto] items-center gap-3 border-b border-border-subtle px-4 py-2 text-left hover:bg-primary-soft/40">
+    <button type="button" onClick={() => onPick(r.e)} className="grid w-full grid-cols-[2.2fr_1.3fr_1.5fr_1.6fr_1fr_0.8fr_auto] items-center gap-3 border-b border-border-subtle px-4 py-2 text-left hover:bg-primary-soft/40">
       <span className="flex min-w-0 items-center gap-2.5">
-        <Avatar name={e.name} />
+        <Avatar name={r.e.name} />
         <span className="min-w-0">
-          <span className="block truncate text-[13.5px] font-semibold text-ink">{e.name}</span>
-          <span className="block font-mono text-[11px] font-semibold text-accent">{e.empNo}</span>
+          <span className="block truncate text-[13.5px] font-semibold text-ink">{r.e.name}</span>
+          <span className="block font-mono text-[11px] font-semibold text-accent">{r.e.empNo}</span>
         </span>
       </span>
-      <span><PositionPill pos={e.position} /></span>
-      <Today e={e} />
-      <span className="min-w-0"><Erp e={e} /></span>
-      <span className="text-right font-money text-[12.5px] text-ink">{money(e.salarySen)}</span>
-      <span><StatusBadge s={e.status} /></span>
+      <span><PositionPill pos={r.position} /></span>
+      <Today r={r} ready={attReady} />
+      <span className="min-w-0"><Erp r={r} /></span>
+      <span className="text-right font-money text-[12.5px] text-ink">{money(r.salarySen)}</span>
+      <span><StatusBadge s={r.e.status} /></span>
       <span className="text-ink-muted">›</span>
     </button>
   );
 }
-function GroupHeader({ pos, list, onDuty, money, salarySen }: { pos: Position; list: Emp[]; onDuty: number; money: (n: number) => string; salarySen: number }) {
-  const p = POSITION[pos];
+function GroupHeader({ pos, list, onDuty, money, salarySen }: { pos: string; list: Row[]; onDuty: number; money: (n: number) => string; salarySen: number }) {
+  const p = posStyle(pos);
   return (
     <div className={cx("flex items-center gap-2 px-4 py-1.5", p.soft)}>
       <span className={cx("h-2 w-2 rounded-full", p.dot)} />
-      <span className={cx("text-[12px] font-bold", p.text)}>{p.label}</span>
+      <span className={cx("text-[12px] font-bold", p.text)}>{posLabel(pos)}</span>
       <span className="text-[11px] text-ink-muted">{list.length} people · {onDuty} on duty</span>
       <span className="ml-auto font-money text-[11px] text-ink-muted">{money(salarySen)}</span>
     </div>
   );
 }
-function TableLayout({ rows, grouped, money, onPick, onDutyOf, byPos }: { rows: Emp[]; grouped: boolean; money: (n: number) => string; onPick?: (e: Emp) => void; onDutyOf: (l: Emp[]) => number; byPos: (p: Position) => Emp[] }) {
-  if (!grouped) return <div>{rows.map((e) => <Row key={e.id} e={e} money={money} onPick={onPick} />)}</div>;
+function TableLayout({ rows, grouped, money, attReady, onPick, onDutyOf, positions, byPos }: { rows: Row[]; grouped: boolean; money: (n: number) => string; attReady: boolean; onPick: (e: Employee) => void; onDutyOf: (l: Row[]) => number; positions: string[]; byPos: (p: string) => Row[] }) {
+  if (!grouped) return <div>{rows.map((r) => <RowLine key={r.e.id} r={r} money={money} attReady={attReady} onPick={onPick} />)}</div>;
   return (
     <div>
-      {ORDER.map((pos) => {
+      {positions.map((pos) => {
         const list = byPos(pos);
         if (list.length === 0) return null;
         return (
           <div key={pos}>
-            <GroupHeader pos={pos} list={list} onDuty={onDutyOf(list)} money={money} salarySen={list.reduce((s, e) => s + e.salarySen, 0)} />
-            {list.map((e) => <Row key={e.id} e={e} money={money} onPick={onPick} />)}
+            <GroupHeader pos={pos} list={list} onDuty={onDutyOf(list)} money={money} salarySen={list.reduce((s, r) => s + r.salarySen, 0)} />
+            {list.map((r) => <RowLine key={r.e.id} r={r} money={money} attReady={attReady} onPick={onPick} />)}
           </div>
         );
       })}
@@ -214,37 +277,37 @@ function TableLayout({ rows, grouped, money, onPick, onDutyOf, byPos }: { rows: 
 }
 
 // ── B · By position (columns of cards) ───────────────────────────────────────
-function PersonCard({ e, onPick }: { e: Emp; onPick?: (e: Emp) => void }) {
+function PersonCard({ r, attReady, onPick }: { r: Row; attReady: boolean; onPick: (e: Employee) => void }) {
   return (
-    <button type="button" onClick={() => onPick?.(e)} className="flex w-full items-center gap-2.5 rounded-lg border border-border bg-surface px-2.5 py-2 text-left hover:border-primary/50">
-      <Avatar name={e.name} size={30} />
+    <button type="button" onClick={() => onPick(r.e)} className="flex w-full items-center gap-2.5 rounded-lg border border-border bg-surface px-2.5 py-2 text-left hover:border-primary/50">
+      <Avatar name={r.e.name} size={30} />
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-[12.5px] font-semibold text-ink">{e.name}</span>
-        <span className="block font-mono text-[10.5px] text-accent">{e.empNo}</span>
+        <span className="block truncate text-[12.5px] font-semibold text-ink">{r.e.name}</span>
+        <span className="block font-mono text-[10.5px] text-accent">{r.e.empNo}</span>
       </span>
       <span className="flex items-center gap-1 text-[11px]">
-        <span className={cx("h-2 w-2 rounded-full", PUNCH_DOT[e.punch])} />
-        <span className="font-mono text-ink-muted">{e.punch === "out" ? "—" : e.punch === "leave" ? "Leave" : e.time}</span>
+        <span className={cx("h-2 w-2 rounded-full", PUNCH_DOT[r.punch])} />
+        <span className="font-mono text-ink-muted">{!attReady ? "—" : r.punch === "out" ? "—" : r.punch === "leave" ? "Leave" : r.time ?? "In"}</span>
       </span>
     </button>
   );
 }
-function ByPositionLayout({ byPos, onDutyOf, onPick }: { byPos: (p: Position) => Emp[]; onDutyOf: (l: Emp[]) => number; onPick?: (e: Emp) => void }) {
+function ByPositionLayout({ positions, byPos, onDutyOf, attReady, onPick }: { positions: string[]; byPos: (p: string) => Row[]; onDutyOf: (l: Row[]) => number; attReady: boolean; onPick: (e: Employee) => void }) {
   return (
-    <div className="grid h-full gap-3 p-3" style={{ gridTemplateColumns: "1fr 2fr 1fr" }}>
-      {ORDER.map((pos) => {
+    <div className="grid h-full gap-3 p-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))" }}>
+      {positions.map((pos) => {
         const list = byPos(pos);
-        const p = POSITION[pos];
+        const p = posStyle(pos);
         return (
           <div key={pos} className="flex min-w-0 flex-col rounded-xl border border-border bg-surface-2/60">
             <div className={cx("flex items-center gap-2 rounded-t-xl px-3 py-2", p.soft)}>
               <span className={cx("h-2 w-2 rounded-full", p.dot)} />
-              <span className={cx("text-[12.5px] font-bold", p.text)}>{p.label}</span>
-              <span className="ml-auto text-[11px] text-ink-muted">{onDutyOf(list)}/{list.length} on duty</span>
+              <span className={cx("truncate text-[12.5px] font-bold", p.text)}>{posLabel(pos)}</span>
+              <span className="ml-auto shrink-0 text-[11px] text-ink-muted">{onDutyOf(list)}/{list.length}</span>
             </div>
             <div className="h-1 bg-surface-2"><div className={cx("h-full", p.bar)} style={{ width: `${list.length ? (onDutyOf(list) / list.length) * 100 : 0}%` }} /></div>
-            <div className={cx("grid flex-1 content-start gap-2 p-2", pos === "crew" ? "grid-cols-2" : "grid-cols-1")}>
-              {list.map((e) => <PersonCard key={e.id} e={e} onPick={onPick} />)}
+            <div className="grid flex-1 content-start gap-2 p-2">
+              {list.map((r) => <PersonCard key={r.e.id} r={r} attReady={attReady} onPick={onPick} />)}
             </div>
           </div>
         );
@@ -254,17 +317,18 @@ function ByPositionLayout({ byPos, onDutyOf, onPick }: { byPos: (p: Position) =>
 }
 
 // ── D · Today board (columns by punch status) ────────────────────────────────
-const BOARD: { key: Punch; label: string; dot: string }[] = [
+const BOARD: { key: PunchState; label: string; dot: string }[] = [
   { key: "on", label: "On duty", dot: "bg-synced" },
   { key: "late", label: "Late", dot: "bg-time" },
   { key: "out", label: "Not in yet", dot: "bg-err" },
   { key: "leave", label: "On leave", dot: "bg-ink-muted" },
 ];
-function TodayBoardLayout({ rows, onPick }: { rows: Emp[]; onPick?: (e: Emp) => void }) {
+function TodayBoardLayout({ rows, attReady, onPick }: { rows: Row[]; attReady: boolean; onPick: (e: Employee) => void }) {
+  if (!attReady) return <div className="px-4 py-10 text-center text-[12px] text-ink-muted">Loading today's punches…</div>;
   return (
     <div className="grid h-full grid-cols-4 gap-3 p-3">
       {BOARD.map((col) => {
-        const list = rows.filter((e) => e.punch === col.key);
+        const list = rows.filter((r) => r.punch === col.key);
         return (
           <div key={col.key} className="flex min-w-0 flex-col rounded-xl border border-border bg-surface-2/60">
             <div className="flex items-center gap-2 px-3 py-2">
@@ -273,14 +337,14 @@ function TodayBoardLayout({ rows, onPick }: { rows: Emp[]; onPick?: (e: Emp) => 
               <span className="ml-auto text-[11px] font-semibold text-ink-muted">{list.length}</span>
             </div>
             <div className="flex flex-1 flex-col gap-2 p-2">
-              {list.map((e) => (
-                <button key={e.id} type="button" onClick={() => onPick?.(e)} className="flex items-center gap-2.5 rounded-lg border border-border bg-surface px-2.5 py-2 text-left hover:border-primary/50">
-                  <Avatar name={e.name} size={30} />
+              {list.map((r) => (
+                <button key={r.e.id} type="button" onClick={() => onPick(r.e)} className="flex items-center gap-2.5 rounded-lg border border-border bg-surface px-2.5 py-2 text-left hover:border-primary/50">
+                  <Avatar name={r.e.name} size={30} />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[12.5px] font-semibold text-ink">{e.name}</span>
-                    <span className="block text-[10.5px] text-ink-muted">{POSITION[e.position].label}</span>
+                    <span className="block truncate text-[12.5px] font-semibold text-ink">{r.e.name}</span>
+                    <span className="block truncate text-[10.5px] text-ink-muted">{posLabel(r.position)}</span>
                   </span>
-                  <span className="font-mono text-[11px] text-ink-muted">{e.punch === "out" ? "—" : e.punch === "leave" ? "" : e.time}{e.lateMin > 0 ? ` · +${e.lateMin}m` : ""}</span>
+                  <span className="font-mono text-[11px] text-ink-muted">{r.punch === "out" || r.punch === "leave" ? "" : r.time ?? ""}{r.lateMin > 0 ? ` · +${r.lateMin}m` : ""}</span>
                 </button>
               ))}
               {list.length === 0 && <div className="px-2 py-4 text-center text-[11px] text-ink-muted">None</div>}

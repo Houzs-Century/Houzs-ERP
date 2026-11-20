@@ -119,6 +119,7 @@ const NOT_IN_SCOPE = new Set([
   'pages/announcements/InboxView.tsx',                 // an acknowledgement, not a document status
   'mobile/MobileOvertime.tsx',                         // overtime-claim status (HC-0125) — not a document rung
   'pages/hr/OvertimeTab.tsx',                          // overtime-claim status (HC-0125, desktop) — not a document rung
+  'pages/hr/OtRequestsPage.tsx',                       // overtime-claim status (HC-0125, redesign) — not a document rung
   'vendor/scm/lib/status-pill.ts',                     // holds every map, in scope and out
   'mobile/MobileModuleList.tsx',                       // holds every module's filters, in scope and out
 ]);
