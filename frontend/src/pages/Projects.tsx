@@ -2307,6 +2307,7 @@ function ProjectDetailContent({
                   pnl={detail.data?.finance_pnl ?? null}
                   forecast={detail.data?.finance_forecast ?? null}
                   canForecast={can("projects.write")}
+                  forecastByClick={!!(p.end_date ?? p.start_date) && String(p.end_date ?? p.start_date).slice(0, 10) >= todayMY()}
                   lumpSales={detail.data?.finance?.total_sales ?? null}
                   onChange={() => detail.reload()}
                   toast={toast}
@@ -7286,10 +7287,13 @@ function FinanceLedgerSection({
   pnl,
   forecast,
   canForecast,
+  forecastByClick,
   lumpSales,
   onChange,
   toast,
 }: {
+  /** The event has not ended: clicking a figure sets its Forecast (owner 2026-11-20, A). */
+  forecastByClick: boolean;
   projectId: number;
   sizeSqm: number | null;
   durationDays: number | null;
@@ -7532,6 +7536,7 @@ function FinanceLedgerSection({
               rentalNote={`${formatCurrency(rentPerSqmPerDay)}/sqm/day`}
               layers={forecast}
               onForecast={canForecast ? async (line, amount) => { await saveForecast(projectId, line, amount); onChange(); } : null}
+              forecastByClick={forecastByClick}
             />
           </div>
         )}
