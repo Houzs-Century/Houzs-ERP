@@ -12,6 +12,7 @@ import { HrSubnav, HR_NAV } from "./hr/HrSubnav";
 import { HrPageHeader, hrPrimaryBtn, hrSecondaryBtn } from "./hr/HrPageHeader";
 import { OverviewPage } from "./hr/OverviewPage";
 import { EmployeeMasterPage } from "./hr/EmployeeMasterPage";
+import { AttendancePage } from "./hr/AttendancePage";
 import { EmployeeEditModal } from "./hr/EmployeeEditModal";
 import type { Emp } from "./hr/hrSampleData";
 import { EmployeeMasterTab } from "./hr/EmployeeMasterTab";
@@ -156,6 +157,8 @@ export function HrEmployees() {
           </>
         ) : active === "employees" ? (
           <EmployeeMasterPage onPickEmployee={setModalEmp} />
+        ) : active === "attendance" ? (
+          <AttendancePage onPickEmployee={setModalEmp} />
         ) : active === "ot-requests" ? (
           <ComingSoon title="OT Requests" />
         ) : (
