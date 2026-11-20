@@ -694,6 +694,11 @@ export const DP_ENTRY_MENU: readonly DpEntry[] = [
   { key: 'ASSR_PICKUP',     label: 'ASSR - Pickup',    mode: 'schedule', scheduleType: 'assr', jobKind: 'customer_pickup' },
   { key: 'ASSR_SERVICE',    label: 'ASSR - Service',   mode: 'schedule', scheduleType: 'assr', jobKind: 'delivery' },
   { key: 'DELIVERY_ORDER',  label: 'Delivery order',   mode: 'schedule', scheduleType: 'so' },
+  /* A delivery with no sales order (owner 2026-11-20, option A): a sample, a
+     replacement part, a favour - typed customer, address and postcode, on Last
+     Mile and Trip Pay like any job, no stock and no DO. Create-mode with NO
+     so_doc_no, so the board lists it as a DP job (the union guard below). */
+  { key: 'DELIVERY_MANUAL', label: 'Delivery (no SO)', mode: 'create', jobType: 'DELIVERY' },
 ] as const;
 
 /* The create-mode job types, derived rather than listed twice — the menu above
@@ -702,9 +707,10 @@ export const DP_ENTRY_MENU: readonly DpEntry[] = [
    create-mode entry's source must set project_id / supplier_id / workshop_id /
    lorry_id / stock_transfer_id / warehouse_id and NEVER so_doc_no, which is what
    the board's union guard filters on (delivery-planning.ts:
-   `.is('so_doc_no', null)...`). That is exactly why DELIVERY and the ASSR legs
-   are schedule-mode instead — a created one would vanish, the data sink #1416
-   closed. */
+   `.is('so_doc_no', null)...`). That is exactly why an SO-backed DELIVERY and
+   the ASSR legs are schedule-mode instead — a created one would vanish, the
+   data sink #1416 closed. "Delivery (no SO)" is create-mode because it never
+   carries a so_doc_no. */
 export const DP_CREATABLE_JOB_TYPES = DP_ENTRY_MENU
   .filter((e): e is Extract<DpEntry, { mode: 'create' }> => e.mode === 'create')
   .map((e) => e.jobType);
