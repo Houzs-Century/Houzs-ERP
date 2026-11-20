@@ -240,6 +240,14 @@ describe('both kinds on one list', () => {
     await waitFor(() => expect(foot('total')).toBe('RM 3,000.00'));
     expect(foot('number')).toBe('Total · 1 row');
   });
+
+  test('a cancelled bill adds nothing to the total row', () => {
+    apRowsNow = [ROWS[0]!, { ...ROWS[1]!, status: 'CANCELLED', outstandingSen: 0 }];
+    try {
+      draw();
+      expect(document.querySelector('tfoot [data-total-key="total"]')?.textContent).toBe('RM 4,200.00');
+    } finally { apRowsNow = ROWS; }
+  });
 });
 
 describe('raising an AP invoice', () => {

@@ -210,8 +210,8 @@ export function SupplierBillsList({ apRows, apLoading, apError, can, onAct, onPr
     {
       key: 'total', label: 'Total', align: 'right', render: (r) => <span className={mo.money}>{fmtSen(r.totalSen)}</span>,
       getValue: (r) => r.totalSen, exportValue: (r) => r.totalSen / 100, exportFormat: 'money',
-      /* A credit note takes off what we owe, as on the tick bar and Print listing. */
-      total: (rows) => totalByCurrency(rows, signedSen),
+      /* A credit note takes off what we owe; a cancelled paper is never owed, so it adds nothing. */
+      total: (rows) => totalByCurrency(rows, (r) => (lifeOf(r.status) === 'cancelled' ? null : signedSen(r))),
     },
     {
       key: 'outstanding', label: 'Outstanding', align: 'right',
