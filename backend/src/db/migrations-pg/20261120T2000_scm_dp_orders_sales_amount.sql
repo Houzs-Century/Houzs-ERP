@@ -1,4 +1,4 @@
--- 20261120T1700_scm_dp_orders_sales_amount.sql
+-- 20261120T2000_scm_dp_orders_sales_amount.sql
 -- A delivery raised in Delivery Planning with no sales order ("Delivery (no SO)",
 -- owner 2026-11-20) carries its own sales amount, so the driver's Delivery
 -- commission in Trip Pay is worked out on it (owner: 也要可以填 sales amount

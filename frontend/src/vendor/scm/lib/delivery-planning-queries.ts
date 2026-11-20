@@ -932,7 +932,7 @@ export function useDpCrew() {
    existing create / cancel / schedule mutation invalidates that prefix, so the
    list refreshes with zero changes to the mutations. */
 export type DpOrderRow = {
-  /** "Delivery (no SO)": the typed sales amount, sen (mig 20261120T1700); null otherwise. */
+  /** "Delivery (no SO)": the typed sales amount, sen (mig 20261120T2000); null otherwise. */
   sales_amount_sen?: number | string | null;
   id: string;
   dp_no: string | null;

@@ -196,7 +196,7 @@ const createSchema = z.object({
   remark: z.string().optional(),
   /* "Delivery (no SO)": its sales amount in sen, which Trip Pay's Delivery
      commission is worked out on - it has no DO to read one from (owner
-     2026-11-20). Column: mig 20261120T1700. */
+     2026-11-20). Column: mig 20261120T2000. */
   salesAmountSen: z.number().int().min(0).max(100_000_000_00).nullable().optional(),
   // Manual overrides — applied ON TOP of the auto-filled snapshot so the operator
   // can correct any field the master got wrong.
