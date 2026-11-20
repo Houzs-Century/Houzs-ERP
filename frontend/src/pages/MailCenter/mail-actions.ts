@@ -233,7 +233,10 @@ export type MailAddress = {
   createdAt?: string;
 };
 
-export type MailScopeLevel = "personal" | "department" | "company";
+/* department = the department mailboxes of every Org Chart department the person
+   is in; department_all adds those departments' colleagues' own mailboxes
+   (a manager, owner 2026-11-21). */
+export type MailScopeLevel = "personal" | "department" | "department_all" | "company";
 
 // No mail_user_scope row = this level (backend DEFAULT_MAIL_SCOPE_LEVEL).
 export const DEFAULT_MAIL_SCOPE_LEVEL: MailScopeLevel = "department";

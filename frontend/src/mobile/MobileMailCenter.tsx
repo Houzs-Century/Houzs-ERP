@@ -44,7 +44,7 @@ import { EMAIL_FRAME_SANDBOX_MEASURABLE, emailSrcDoc } from "../pages/MailCenter
 import { MobileMessageAcks, MobileNeedsAck, MobilePendingAcks, MobileReadBy } from "./MobileMailAcks";
 import type { AckState, ThreadReaders } from "../pages/MailCenter/mail-acks";
 import { MobileVisibility } from "./MobileMailPersonal";
-import { useMailVisibility } from "../pages/MailCenter/mail-sidebar";
+import { reachTagOf, useMailVisibility } from "../pages/MailCenter/mail-sidebar";
 import "./mobile.css";
 import { fmtDate, fmtDateTime, fmtTime as fmtClock } from "../vendor/shared/format";
 import { mytDayOf, todayMyt } from "../vendor/scm/lib/dates";
@@ -238,7 +238,8 @@ export function MobileMailCenter({ onBack }: { onBack?: () => void }) {
   const { user } = useAuth();
   const [folder, setFolder] = useState<Folder>("inbox");
   const [mailbox, setMailbox] = useState<string>("all"); // "all" or an address
-  const myAddress = useMailVisibility()?.myAddress ?? null;
+  const vis = useMailVisibility();
+  const myAddress = vis?.myAddress ?? null;
   const [q, setQ] = useState("");
   /* The label the list is narrowed to, or null for all. Applying a label was
      already possible from the phone and LISTING by one was not, so "Urgent"
@@ -497,6 +498,7 @@ export function MobileMailCenter({ onBack }: { onBack?: () => void }) {
           {activeAddresses.filter((a) => a.address.toLowerCase() !== myAddress).map((a) => (
             <option key={a.id} value={a.address}>
               {a.address}
+              {reachTagOf(vis, a.address, a.assignedUserId != null) ? ` · ${reachTagOf(vis, a.address, a.assignedUserId != null)}` : ""}
             </option>
           ))}
         </select>

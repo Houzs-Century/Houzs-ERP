@@ -55,6 +55,16 @@ import {
   type MailScopeLevel,
   DEFAULT_MAIL_SCOPE_LEVEL,
 } from "./MailCenter/mail-actions";
+import {
+  AccessChangeLog,
+  AccessLegend,
+  AutoTick,
+  OrgChartCell,
+  PersonalShares,
+  autoReason,
+  effectiveLevel,
+  isManagement,
+} from "./mail-access-parts";
 
 const inputCls =
   "h-10 w-full rounded-md border border-border bg-surface px-3 text-[13px] text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-60";
@@ -62,9 +72,10 @@ const labelCls =
   "mb-1.5 block text-[10px] font-semibold uppercase tracking-brand text-ink-muted";
 
 const SCOPE_LEVELS: { value: MailScopeLevel; label: string }[] = [
-  { value: "personal", label: "L1 · Personal" },
-  { value: "department", label: "L2 · Department" },
-  { value: "company", label: "L3 · Company" },
+  { value: "personal", label: "L1 · Own" },
+  { value: "department", label: "L2 · Department mailbox" },
+  { value: "department_all", label: "L3 · Whole department" },
+  { value: "company", label: "L4 · Company" },
 ];
 
 // A grant key for the draft Map — `${addressId}::${userId}`.
@@ -192,10 +203,12 @@ export function MailboxesTab() {
       <AccessMatrix
         addresses={addresses}
         users={users}
+        departments={deptsQ.data?.departments ?? []}
         loading={
           addressesQ.loading || membersQ.loading
         }
       />
+      <AccessChangeLog />
 
       {creating && (
         <NewMailboxModal
@@ -685,10 +698,12 @@ const MATRIX_ROW_ESTIMATE = 41; // px; corrected at runtime from a real row
 function AccessMatrix({
   addresses,
   users,
+  departments,
   loading,
 }: {
   addresses: MailAddress[];
   users: TeamMember[];
+  departments: Department[];
   loading: boolean;
 }) {
   const toast = useToast();
@@ -706,6 +721,12 @@ function AccessMatrix({
   const sharedMailboxes = useMemo(
     () =>
       addresses.filter((a) => a.active && a.assignedUserId == null),
+    [addresses],
+  );
+
+  // Colleagues' own mailboxes, shareable for cover / handover (owner 2026-11-21).
+  const personalMailboxes = useMemo(
+    () => addresses.filter((a) => a.active && a.assignedUserId != null),
     [addresses],
   );
 
@@ -774,7 +795,7 @@ function AccessMatrix({
     // Diff draft ↔ server for grants.
     const toGrant: { addressId: string; userId: number }[] = [];
     const toRevoke: { addressId: string; userId: number }[] = [];
-    for (const mb of sharedMailboxes) {
+    for (const mb of [...sharedMailboxes, ...personalMailboxes]) {
       for (const u of users) {
         const k = grantKey(mb.id, u.id);
         const want = draftGrants.has(k);
@@ -859,7 +880,7 @@ function AccessMatrix({
   // renders with identical checked state + onChange — no DOM state is lost.
   const matrixReady = !loading && !accessQ.loading && !levelsQ.loading;
   const canVirtualize = matrixReady && users.length > MATRIX_ROW_THRESHOLD;
-  const totalCols = 2 + sharedMailboxes.length; // Member + View level + mailboxes
+  const totalCols = 4 + sharedMailboxes.length; // Member + Org Chart + View level + mailboxes + personal
   const tbodyRef = useRef<HTMLTableSectionElement>(null);
   const rowHeightRef = useRef(MATRIX_ROW_ESTIMATE);
   const [winRange, setWinRange] = useState<{ start: number; end: number }>({
@@ -957,7 +978,9 @@ function AccessMatrix({
                 <th className="sticky left-0 z-10 bg-surface-dim px-4 py-2.5">
                   Member
                 </th>
+                <th className="px-4 py-2.5">Org Chart</th>
                 <th className="px-4 py-2.5">View level</th>
+                <th className="px-4 py-2.5">Colleagues&apos; mailboxes shared</th>
                 {sharedMailboxes.map((mb) => (
                   <th
                     key={mb.id}
@@ -993,7 +1016,12 @@ function AccessMatrix({
                     {u.name || u.email}
                   </td>
                   <td className="px-4 py-2.5">
-                    {editMode ? (
+                    <OrgChartCell u={u} departments={departments} />
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-2.5">
+                    {isManagement(u, departments) ? (
+                      <Badge tone="accent" size="xs">L4 · Company (Management)</Badge>
+                    ) : editMode ? (
                       <select
                         value={userLevel(u.id)}
                         onChange={(e) =>
@@ -1015,18 +1043,28 @@ function AccessMatrix({
                       </Badge>
                     )}
                   </td>
+                  <td className="px-4 py-2.5">
+                    <PersonalShares
+                      shared={personalMailboxes.filter((a) => granted(a.id, u.id))}
+                      options={personalMailboxes.filter((a) => a.assignedUserId !== u.id && !granted(a.id, u.id))}
+                      editing={editMode && !busy}
+                      onAdd={(id) => toggleGrant(id, u.id)}
+                      onRemove={(id) => toggleGrant(id, u.id)}
+                    />
+                  </td>
                   {sharedMailboxes.map((mb) => {
                     const on = granted(mb.id, u.id);
+                    const auto = autoReason(mb, u, effectiveLevel(u, departments, userLevel(u.id)));
                     return (
                       <td key={mb.id} className="px-3 py-2.5 text-center">
-                        <input
+                        {auto ? <AutoTick reason={auto} /> : <input
                           type="checkbox"
                           checked={on}
                           disabled={!editMode || busy}
                           onChange={() => toggleGrant(mb.id, u.id)}
                           aria-label={`${u.name || u.email} access to ${mb.address}`}
                           className="h-4 w-4 cursor-pointer accent-[#a16a2e] disabled:cursor-default disabled:opacity-60"
-                        />
+                        />}
                       </td>
                     );
                   })}
@@ -1046,6 +1084,7 @@ function AccessMatrix({
               )}
             </tbody>
           </table>
+          <AccessLegend />
           {sharedMailboxes.length === 0 && (
             <div className="px-4 py-6 text-center text-[12px] text-ink-muted">
               No shared (department) mailboxes yet. Create one above with "Assign
