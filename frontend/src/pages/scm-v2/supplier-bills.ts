@@ -9,6 +9,7 @@
 import type { ApListRow } from '../../vendor/scm/lib/ap-invoice-queries';
 import type { CreditNote } from '../../vendor/scm/lib/credit-note-queries';
 import type { ApListingRow } from '../../vendor/scm/lib/ap-invoice-listing-pdf';
+import { fmtSen } from '../../vendor/shared/format';
 
 export type BillKindTab = 'ALL' | 'API' | 'PI' | 'SCN';
 export type BillChip = 'all' | 'unpaid' | 'overdue' | 'draft' | 'paid' | 'cancelled';
@@ -192,6 +193,19 @@ export const controlWord = (r: BillRow): string => (r.controlRole === 'AP_OTHER'
 
 /** What a ticked row adds to the batch bar: a credit note takes off what we owe. */
 export const signedSen = (r: BillRow): number => (r.kind === 'SCN' ? -r.totalSen : r.totalSen);
+
+/** The footer total of one money column (Mika, Houzs accounts): over every row the
+    filters leave, one figure per currency so RM and USD never add up; a row
+    without a figure (a draft's outstanding) is skipped. */
+export function totalByCurrency(rows: BillRow[], senOf: (r: BillRow) => number | null): string {
+  const by = new Map<string, number>();
+  for (const r of rows) {
+    const sen = senOf(r);
+    if (sen != null) by.set(r.currency, (by.get(r.currency) ?? 0) + sen);
+  }
+  if (by.size === 0) return '';
+  return [...by].map(([cur, sen]) => (cur === 'MYR' ? fmtSen(sen) : `${cur} ${fmtSen(sen).replace(/^RM /, '')}`)).join(' · ');
+}
 
 /** List order: what is still owed by when we will pay it — the plan, else the
     due date — soonest first; everything else newest first. */
