@@ -39,9 +39,10 @@ function mount(canReview = true) {
   );
 }
 
-/** Stamp "Done" and press Save — the exact sequence from the symptom. */
+/** Stamp "Done Clean" (the reviewer's resolve) and press Save — the exact
+ *  sequence from the symptom. */
 async function stampDone(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(screen.getByRole("button", { name: "Done" }));
+  await user.click(screen.getByRole("button", { name: "Done Clean" }));
   await user.click(screen.getByRole("button", { name: "Save" }));
 }
 
@@ -64,7 +65,7 @@ describe("a defect action the server refuses", () => {
     post.mockRejectedValue(new Error("nope"));
     mount();
 
-    await user.click(screen.getByRole("button", { name: "Done" }));
+    await user.click(screen.getByRole("button", { name: "Done Clean" }));
     await user.type(screen.getByPlaceholderText(/Add a remark/i), "cushion torn");
     await user.click(screen.getByRole("button", { name: "Save" }));
 
@@ -85,7 +86,7 @@ describe("a defect action the server refuses", () => {
     expect(notify).not.toHaveBeenCalled();
     expect(post).toHaveBeenCalledWith(
       "/api/projects/checklist/attachments/77/actions",
-      { status: "done", remark: "" },
+      { status: "done_clean", remark: "" },
     );
   });
 });
@@ -108,8 +109,8 @@ describe("the photo's Model + Reason are shown to every viewer", () => {
     expect(screen.getByText(/AKEMI Elevation/)).toBeDefined();
     expect(screen.getByText("Reason:")).toBeDefined();
     expect(screen.getByText(/Dented corner/)).toBeDefined();
-    // A plain viewer gets no Done/Replace buttons — only the remark.
-    expect(screen.queryByRole("button", { name: "Done" })).toBeNull();
+    // A plain viewer gets no action buttons — only the remark.
+    expect(screen.queryByRole("button", { name: "Done Clean" })).toBeNull();
   });
 
   test("a legacy free-text caption still reads out (as the reason)", () => {

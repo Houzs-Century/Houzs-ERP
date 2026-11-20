@@ -1,13 +1,16 @@
-/* Defect review loop — the ONE source for who may act on a defect photo and
- * what each timeline status is called on screen. The desktop (Projects.tsx),
- * mobile (MobilePMS / MobilePmsDefectActions) and the cross-project Defect List
- * all import from here, so the region split, the reviewer/purchaser gates and
- * the button/badge labels never drift between surfaces (CLAUDE.md: a shared PMS
- * vocabulary has one home).
+/* Defect review loop — the ONE source for who may act on a defect photo, which
+ * buttons each actor sees, and what each timeline status is called on screen.
+ * The desktop (Projects.tsx), mobile (MobilePMS / MobilePmsDefectActions) and
+ * the cross-project Defect List all import from here, so the region split, the
+ * reviewer/purchaser gates, the stage machine and the labels never drift between
+ * surfaces (CLAUDE.md: a shared PMS vocabulary has one home).
  *
- * The STORED timeline status values stay `done` / `replace`; only the on-screen
- * LABEL of `replace` changed to "Exchange" (owner 2026-11-20) — no data
- * migration, the backend state machine is untouched.
+ * FIVE-STATE timeline (owner 2026-11-20): the reviewer (Shukor/Nancy) triages a
+ * fresh defect with done_clean (cleaned — resolved), exchange or service (both
+ * escalate to the purchaser). The purchaser (Farra) then works the escalation:
+ * in_progress, then done (resolved). The stored status strings are these values;
+ * legacy rows ('replace' = escalated, 'done' = resolved, 'ongoing' = fresh) read
+ * correctly through defectStage. No data migration — the column is free text.
  */
 
 /** Region states reviewed by the Ops Exec (Nancy); everything else by the
@@ -35,7 +38,7 @@ export function isDefectRegionState(state: string | null | undefined): boolean {
 
 /** The fresh-defect triager for THIS project's state: Ops Exec (Nancy) for the
  *  region states, Storekeeper Supervisor (Shukor) for the rest; a wildcard /
- *  projects.manage admin always. Done = cleaned, Exchange = escalate. */
+ *  projects.manage admin always. Triages with Done Clean / Exchange / Service. */
 export function canReviewDefect(
   user: DefectReviewUser | null | undefined,
   state: string | null | undefined,
@@ -51,8 +54,8 @@ export function canReviewDefect(
   return (isShukor && !inRegion) || (isNancy && inRegion);
 }
 
-/** Closes an escalated (Exchange) defect with Done: purchaser / BD, or an
- *  admin. */
+/** Works an escalated (Exchange / Service) defect: the purchaser (Farra) / BD,
+ *  or an admin. Marks In Progress, then Done. */
 export function canPurchaseDefect(user: DefectReviewUser | null | undefined): boolean {
   return (
     !!user &&
@@ -62,10 +65,69 @@ export function canPurchaseDefect(user: DefectReviewUser | null | undefined): bo
   );
 }
 
-/** On-screen label for a timeline status. Stored `replace` reads as "Exchange"
- *  (owner 2026-11-20); a fresh / legacy entry reads "Ongoing". */
+// ── The stage machine ────────────────────────────────────────────────────────
+
+export type DefectStage = "fresh" | "purchaser" | "resolved";
+
+/** Resolved: the defect is closed and drops out of every open list. */
+const RESOLVED_STATUSES = new Set(["done", "done_clean"]);
+/** Escalated or in progress: the purchaser (Farra) owns it. `replace` is legacy. */
+const PURCHASER_STATUSES = new Set(["exchange", "service", "in_progress", "replace"]);
+
+/** Which lane a defect photo is in, from its LATEST timeline status. Anything
+ *  not resolved and not escalated (no action yet, or legacy 'ongoing') is a fresh
+ *  upload awaiting the reviewer. */
+export function defectStage(latest: string | null | undefined): DefectStage {
+  const s = (latest ?? "").toLowerCase();
+  if (RESOLVED_STATUSES.has(s)) return "resolved";
+  if (PURCHASER_STATUSES.has(s)) return "purchaser";
+  return "fresh";
+}
+
+export function defectIsResolved(latest: string | null | undefined): boolean {
+  return defectStage(latest) === "resolved";
+}
+
+// ── The buttons each actor sees ──────────────────────────────────────────────
+
+export type DefectActionTone = "done" | "escalate" | "progress";
+export interface DefectAction {
+  status: string;
+  label: string;
+  tone: DefectActionTone;
+}
+
+/** A FRESH defect's buttons (reviewer: Shukor / Nancy). Every click opens a
+ *  remark box before it saves (owner 2026-11-20). */
+export const REVIEWER_DEFECT_ACTIONS: readonly DefectAction[] = [
+  { status: "done_clean", label: "Done Clean", tone: "done" },
+  { status: "exchange", label: "Exchange", tone: "escalate" },
+  { status: "service", label: "Service", tone: "escalate" },
+];
+
+/** An escalated defect's buttons (purchaser: Farra). Each opens a remark box. */
+export const PURCHASER_DEFECT_ACTIONS: readonly DefectAction[] = [
+  { status: "in_progress", label: "In Progress", tone: "progress" },
+  { status: "done", label: "Done", tone: "done" },
+];
+
+/** On-screen label for a timeline status. Legacy 'replace' reads as "Exchange";
+ *  anything unknown (fresh / legacy 'ongoing') reads "Ongoing". */
 export function defectActionLabel(status: string | null | undefined): string {
-  if (status === "done") return "Done";
-  if (status === "replace") return "Exchange";
-  return "Ongoing";
+  switch ((status ?? "").toLowerCase()) {
+    case "done":
+      return "Done";
+    case "done_clean":
+      return "Done Clean";
+    case "exchange":
+      return "Exchange";
+    case "service":
+      return "Service";
+    case "in_progress":
+      return "In Progress";
+    case "replace":
+      return "Exchange";
+    default:
+      return "Ongoing";
+  }
 }
