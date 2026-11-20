@@ -583,6 +583,7 @@ const doRunCandidates = (companyId: number) => sql`
 export async function planningRows(db: Db, companyId: number, month: string, people: ReadonlyArray<Person>): Promise<SourceRow[]> {
   const { first, last } = tripMonthBounds(month);
   const [stops, projects, dos] = await Promise.all([
+    // company-scope: trips and trip_stops are both joined on company_id = ${companyId} (the JOIN below).
     db.execute<PlanningStop>(sql`
     SELECT s.id::text AS stop_id, s.do_id::text AS do_id, s.stop_type::text AS stop_type, t.id::text AS trip_id, t.trip_date::text AS trip_date, t.trip_no,
            l.plate, s.revenue_sen, s.customer_name, s.dp_no AS stop_dp_no,

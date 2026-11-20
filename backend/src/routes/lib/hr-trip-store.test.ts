@@ -54,7 +54,7 @@ describe("planningRowOf", () => {
     expect(r).toMatchObject({ job_type: "DELIVERY_ORDER", doc_no: "DP-261102-VPC01", local_total_sen: 388000, state: "" });
   });
 
-  it("a delivery with no SO pays commission on the amount typed on its DP job (owner 2026-11-20)", () => {
+  test("a delivery with no SO pays commission on the amount typed on its DP job (owner 2026-11-20)", () => {
     const r = planningRowOf({ ...base, revenue_sen: 0, dp_sales_sen: "350000" }, who);
     expect(r.local_total_sen).toBe(350000);
     /* A DO still wins when the stop has one. */
