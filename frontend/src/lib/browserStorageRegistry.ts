@@ -106,6 +106,9 @@ export const BROWSER_STORAGE_KEY_REGISTRY: readonly StorageKeyRegistration[] = [
   // The Finance report list pinned open (owner's redesign, batch 6 §4.1; the
   // design's own key) — '1'/'0', a per-device layout preference.
   { id: "finance-report-list-pin", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "fin-reports-rail-pinned", matches: exact("fin-reports-rail-pinned") },
+  // HR · Employees & Attendance redesign: the secondary sidebar's width and
+  // collapsed/open state — a per-device layout preference, no identity data.
+  { id: "hr-subnav", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "hr-subnav-w (width 200-420) + hr-subnav-open ('1'/'0')", matches: (key) => key === "hr-subnav-w" || key === "hr-subnav-open" },
   // The last date range picked on a Finance report in this tab (batch 6 §4.3):
   // a report opened with no dates in its address follows it. {from,to} ISO days.
   { id: "finance-report-range", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "fin-report-range", matches: exact("fin-report-range") },
@@ -177,6 +180,7 @@ export const PRODUCTION_STORAGE_CALLERS = [
   "components/AssistantPanel.tsx",
   "components/assistantLauncherPosition.ts",
   "components/DataTable.tsx",
+  "pages/hr/HrSubnav.tsx",
   // `dt:funnels:<idKey>` — funnels a persistFilters="always" table keeps (the
   // delivery boards, owner 2026-10-05); the dt: device-pref family above.
   "components/dataTableColFilterMemory.ts",

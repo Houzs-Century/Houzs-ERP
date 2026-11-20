@@ -5,6 +5,7 @@
  * Sample data. */
 import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
+import { fmtSen } from "../../vendor/shared/format";
 import { avatarColor, initials } from "./hrSampleData";
 
 const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(" ");
@@ -58,7 +59,7 @@ export function OtRequestsPage({ fromERPHref }: { fromERPHref?: string }) {
   const [filter, setFilter] = useState<"PENDING" | "APPROVED" | "REJECTED" | "ALL">("PENDING");
   const [query, setQuery] = useState("");
   const [showAmt, setShowAmt] = useState(false);
-  const money = (sen: number) => (showAmt ? `RM ${(sen / 100).toFixed(2)}` : "RM ••••••");
+  const money = (sen: number) => (showAmt ? fmtSen(sen) : "RM ••••••");
 
   const counts = useMemo(() => ({
     PENDING: rows.filter((r) => r.status === "PENDING").length,
