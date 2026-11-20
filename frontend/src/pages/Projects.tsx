@@ -948,6 +948,18 @@ function ProjectsListView() {
     }
     return c;
   }, [taskTitles.data]);
+  // Individual task titles grouped under their section, in checklist order (the
+  // backend already returns them section-ordered), for the task-item dropdown.
+  const taskTitleGroups = useMemo(() => {
+    const bySection = new Map<string, { value: string; label: string }[]>();
+    for (const t of taskTitles.data?.data ?? []) {
+      const sec = t.section ?? "Other";
+      const arr = bySection.get(sec);
+      if (arr) arr.push({ value: t.title, label: t.title });
+      else bySection.set(sec, [{ value: t.title, label: t.title }]);
+    }
+    return [...bySection.entries()].map(([name, options]) => ({ name, options }));
+  }, [taskTitles.data]);
 
   const columns: Column<ProjectRow>[] = [
     {
@@ -1398,13 +1410,23 @@ function ProjectsListView() {
             },
           ]}
         />
-        {/* Outstanding-TASK filter — hidden 2026-07-20 (owner: "REMOVE DROPDOWN
-            STATUS BUTTON"). The label 'Status' was misleading — the dropdown
-            actually filtered by tasks-not-yet-completed, so the owner saw two
-            'status' controls on the toolbar (this + the real "All statuses"
-            one right below) and asked to drop this. Kept the setTaskPending
-            state wiring untouched so a link with ?task_pending=... still works
-            and a future re-introduction under a clearer label is one line away. */}
+        {/* Task-item filter (owner 2026-08-05: "booth layout for display, 3D, 2D
+            … make it drop down. and i can filter which task is not complete
+            yet"). Lists the canonical checklist tasks GROUPED BY SECTION; ticking
+            one keeps events where that task is still not done (task_pending →
+            EXISTS status NOT IN done/na). Separate from the "Task" section
+            dropdown above, which filters by active SECTION. Re-surfaced
+            2026-11-20 — the state/deep-link (?task=) wiring was never removed;
+            only the control had been hidden. */}
+        <MultiSelectFilter
+          placeholder="Task detail"
+          title="Filter by a specific task still not completed"
+          summary={(n) => `${n} tasks`}
+          panelWidth="w-[280px]"
+          selected={taskPendingList}
+          onChange={(next) => setTaskPending(next.join(","))}
+          groups={taskTitleGroups}
+        />
         <MultiSelectFilter
           placeholder="All brands"
           summary={(n) => `${n} brands`}
