@@ -11,6 +11,8 @@ Built from `scm.scan_jobs` joined to `scm.so_scan_samples`. No new tracking. Out
 - Awaiting review: SO sample still `EXTRACTED` (also a confirmed SO edited only in fields the AI does not read); GR/PI waiting in the check queue (`review_state = 'pending'`).
 - Imported: GR/PI with a document. Accuracy is not recorded for them: GR marks every posted scan `ACCEPTED`, an edited PI writes nothing.
 
+- Fields read right (SO): per reviewed slip, filled fields the person did not change (`scm/lib/scan-field-accuracy.ts`). Blank on both sides is not counted; a missed or extra line counts each of its fields. Accuracy, Fields read right and field misses count only slips with a draft baseline; without one the pipeline's own changes (phone format) read as edits, so no slip is ever clean.
+
 Gotchas:
 - Time = job `created_at` to `updated_at`. A retried job includes the 3 minute stall.
 - "Clear failed" hard-deletes error jobs, so cleared failures are not counted.
@@ -19,4 +21,3 @@ Gotchas:
 - Recent problem scans: one tab per document type (`?problems=SO|GR|PI`), the latest 30 per type. The tab count is the month's full total (failed + needs review + corrected), so it can exceed 30.
 - Tapping a problem scan's SO number opens a drawer (`?slip=<scanId>`) with the slip photo the scan read (sample `image_key`) beside its changes; it does not leave for the sales order. GR/PI numbers have no preview.
 - Payment, workshop, bill and credit note scans keep no read record and are not on this page.
-- Scans confirmed before the draft baseline existed (`draft_baseline` empty) over-count corrections, mostly Phone, City and Postcode.

@@ -19,23 +19,23 @@ beforeEach(() => {
 
 const stats = (documentType: string, label: string, over: Partial<OcrReport["docTypes"][number]>) => ({
   documentType, label, scans: 10, pending: 0, failed: 0, needsReview: 0, discarded: 0, awaiting: 0, clean: 0, corrected: 0, imported: 0,
-  accuracy: null, avgSec: 12.34, p90Sec: 20, ...over,
+  accuracy: null, fieldAccuracy: null, avgSec: 12.34, p90Sec: 20, ...over,
 });
 
 const REPORT: OcrReport = {
   month: "2026-09",
   model: "claude-sonnet-4-6",
   docTypes: [
-    stats("SO", "Sales slip (SO)", { clean: 9, corrected: 1, failed: 2, accuracy: { clean: 9, reviewed: 10 } }),
+    stats("SO", "Sales slip (SO)", { clean: 9, corrected: 1, failed: 2, accuracy: { clean: 9, reviewed: 10 }, fieldAccuracy: { correct: 190, total: 200, scans: 10 } }),
     stats("PI", "Supplier invoice (PI)", { imported: 6, needsReview: 3, awaiting: 1 }),
   ],
   fieldMisses: { reviewed: 10, fields: [{ field: "Product code", count: 1 }] },
   problems: [
     {
       id: "a", at: "2026-09-10T01:00:00.000Z", documentType: "SO", docNo: "SO-2609-001", outcome: "corrected", detail: "Product code",
-      changes: [{ field: "Line 1 Product code", before: "A1", after: "B2" }], slipImageKey: "scan-slips/s1",
+      changes: [{ field: "Line 1 Product code", before: "A1", after: "B2" }], fieldAccuracy: { correct: 19, total: 20 }, slipImageKey: "scan-slips/s1",
     },
-    { id: "b", at: "2026-09-09T01:00:00.000Z", documentType: "PI", docNo: null, outcome: "needsReview", detail: "Supplier not matched", changes: null, slipImageKey: null },
+    { id: "b", at: "2026-09-09T01:00:00.000Z", documentType: "PI", docNo: null, outcome: "needsReview", detail: "Supplier not matched", changes: null, fieldAccuracy: null, slipImageKey: null },
   ],
 };
 
@@ -55,8 +55,9 @@ describe("OCR page", () => {
     renderPage("/ocr?month=2026-09");
     expect((await screen.findAllByText("Sales slip (SO)")).length).toBeGreaterThan(0);
     expect(apiGet).toHaveBeenCalledWith("/api/admin/ocr?month=2026-09");
-    expect(screen.getByText("not recorded")).toBeTruthy();
-    expect(screen.getByText("1 change")).toBeTruthy();
+    expect(screen.getAllByText("not recorded")).toHaveLength(2);
+    expect(screen.getByText("1 change · 95.0% of fields right (19/20)")).toBeTruthy();
+    expect(screen.getByText("190/200")).toBeTruthy();
     expect(screen.getByText("Line 1 Product code")).toBeTruthy();
     expect(screen.getByText("A1")).toBeTruthy();
     expect(screen.getByText("30.0%")).toBeTruthy();
@@ -66,14 +67,14 @@ describe("OCR page", () => {
   it("lists problem scans one document type at a time", async () => {
     apiGet.mockResolvedValue(REPORT);
     renderPage("/ocr?month=2026-09");
-    expect(await screen.findByText("1 change")).toBeTruthy();
+    expect(await screen.findByText("1 change · 95.0% of fields right (19/20)")).toBeTruthy();
     expect(screen.queryByText("Supplier not matched")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: /Supplier invoice \(PI\)/ }));
 
     expect(screen.getAllByText("Supplier not matched").length).toBeGreaterThan(0);
     expect(screen.getByText("none created")).toBeTruthy();
-    expect(screen.queryByText("1 change")).toBeNull();
+    expect(screen.queryByText("1 change · 95.0% of fields right (19/20)")).toBeNull();
   });
 
   it("opens the slip beside its changes on the same page instead of leaving for the sales order", async () => {
