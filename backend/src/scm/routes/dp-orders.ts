@@ -194,6 +194,10 @@ const createSchema = z.object({
   fromOverrides: z.record(z.string(), z.string().nullable()).optional(),
   requestedDate: z.string().optional(), // YYYY-MM-DD
   remark: z.string().optional(),
+  /* "Delivery (no SO)": its sales amount in sen, which Trip Pay's Delivery
+     commission is worked out on - it has no DO to read one from (owner
+     2026-11-20). Column: mig 20261120T1700. */
+  salesAmountSen: z.number().int().min(0).max(100_000_000_00).nullable().optional(),
   // Manual overrides — applied ON TOP of the auto-filled snapshot so the operator
   // can correct any field the master got wrong.
   overrides: z.record(z.string(), z.string().nullable()).optional(),
@@ -455,6 +459,7 @@ dpOrders.post('/', async (c) => {
     party_type: partyTypeFor(jobType),
     so_doc_no: p.soDocNo ?? null,
     do_id: p.doId ?? null,
+    sales_amount_sen: p.salesAmountSen ?? null,
     assr_case_id: p.assrCaseId ?? null,
     supplier_id: p.supplierId ?? null,
     project_id: p.projectId ?? null,
@@ -594,6 +599,7 @@ const patchSchema = z.object({
   fromState: z.string().nullable().optional(),
   requestedDate: z.string().nullable().optional(),
   remark: z.string().nullable().optional(),
+  salesAmountSen: z.number().int().min(0).max(100_000_000_00).nullable().optional(),
 });
 
 /* E.164 at the write boundary. A null/blank clears cleanly; an unparseable
@@ -611,7 +617,7 @@ const PATCH_COLS: Record<keyof z.infer<typeof patchSchema>, string> = {
   city: 'city', postcode: 'postcode', state: 'state',
   fromName: 'from_name', fromAddress1: 'from_address1', fromAddress2: 'from_address2',
   fromCity: 'from_city', fromPostcode: 'from_postcode', fromState: 'from_state',
-  requestedDate: 'requested_date', remark: 'remark',
+  requestedDate: 'requested_date', remark: 'remark', salesAmountSen: 'sales_amount_sen',
 };
 
 /* Columns a job keeps editable after it is scheduled. Everything else in
@@ -620,7 +626,7 @@ export const EDITABLE_ANY_STATUS = new Set([
   'party_name', 'contact_name', 'contact_phone',
   'address1', 'address2', 'address3', 'address4', 'city', 'postcode', 'state',
   'from_name', 'from_address1', 'from_address2', 'from_city', 'from_postcode', 'from_state',
-  'remark',
+  'remark', 'sales_amount_sen',
 ]);
 
 /** Why this edit is refused at this status, or null when it may go ahead. PURE. */
@@ -630,7 +636,7 @@ export function dpEditRefusal(status: string | null, changedCols: readonly strin
   const locked = changedCols.filter((col) => !EDITABLE_ANY_STATUS.has(col));
   return locked.length === 0
     ? null
-    : 'A scheduled job keeps its date. Only its contact, address, postcode, state and remark can be changed.';
+    : 'A scheduled job keeps its date. Only its contact, address, postcode, state, remark and sales amount can be changed.';
 }
 
 const ADDRESSISH = ['party_name', ...ADDRESS_LINES, 'city', 'postcode', 'state'];

@@ -20,6 +20,7 @@ import type { CSSProperties } from 'react';
 import { X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import {
+  salesAmountSenOf,
   useUpdateDpOrder,
   dpJobTypeLabel,
   type DpOrderRow,
@@ -61,7 +62,10 @@ export const EditDpOrderDrawer = ({ row, onClose }: { row: DpOrderRow; onClose: 
     fromState: row.from_state ?? '',
     requestedDate: row.requested_date ?? '',
     remark: row.remark ?? '',
+    salesAmount: row.sales_amount_sen != null ? (Number(row.sales_amount_sen) / 100).toFixed(2) : '',
   });
+  /* "Delivery (no SO)" keeps its sales amount editable - Trip Pay's commission reads it. */
+  const isManualDelivery = row.job_type === 'DELIVERY' && !row.so_doc_no;
   const set = <K extends keyof typeof form>(k: K, v: (typeof form)[K]) =>
     setForm((s) => ({ ...s, [k]: v }));
   /* Address line 2 shows what lines 3 / 4 still hold (two lines on every
@@ -121,6 +125,7 @@ export const EditDpOrderDrawer = ({ row, onClose }: { row: DpOrderRow; onClose: 
         // The date only while pending: the server refuses a scheduled job's date.
         ...(isPending ? { requestedDate: form.requestedDate ? form.requestedDate : null } : {}),
         remark: toNull(form.remark),
+        ...(isManualDelivery ? { salesAmountSen: salesAmountSenOf(form.salesAmount) ?? null } : {}),
       },
       {
         onSuccess: (res) => {
@@ -253,6 +258,13 @@ export const EditDpOrderDrawer = ({ row, onClose }: { row: DpOrderRow; onClose: 
             ) : remarkField}
           </div>
           {isPending && remarkField}
+          {isManualDelivery && (
+            <label style={fieldRow}>
+              <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>Sales amount (RM)</div>
+              <input className={styles.searchInput} style={inputStyle} inputMode="decimal" aria-label="Sales amount (RM)"
+                value={form.salesAmount} onChange={(e) => set('salesAmount', e.target.value)} />
+            </label>
+          )}
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-3)', padding: 'var(--space-4)' }}>

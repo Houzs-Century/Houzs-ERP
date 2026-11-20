@@ -30,6 +30,7 @@ import {
   useCreateDpOrder,
   useScheduleDelivery,
   DP_ENTRY_MENU,
+  salesAmountSenOf,
   type DpOrderCreate,
 } from '../lib/delivery-planning-queries';
 import { useMfgSalesOrdersPaged } from '../lib/sales-order-queries';
@@ -175,7 +176,7 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
     fromName: '',
     fromAddress1: '', fromAddress2: '',
     fromCity: '', fromPostcode: '', fromState: '',
-    requestedDate: '', remark: '',
+    requestedDate: '', remark: '', salesAmount: '',
   });
   const set = <K extends keyof typeof form>(k: K, v: (typeof form)[K]) =>
     setForm((s) => ({ ...s, [k]: v }));
@@ -631,6 +632,14 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
     if (form.jobType === 'LORRY_SERVICE' && form.lorryId) body.lorryId = form.lorryId;
     if (form.requestedDate) body.requestedDate = form.requestedDate;
     if (form.remark.trim()) body.remark = form.remark.trim();
+    if (src.kind === 'none') {
+      const sen = salesAmountSenOf(form.salesAmount);
+      if (sen === undefined) {
+        void notify({ title: 'Sales amount', body: 'Enter the sales amount in RM, e.g. 3500 or 3,500.00.', tone: 'error' });
+        return;
+      }
+      body.salesAmountSen = sen;
+    }
 
     // Manual fields → overrides (win over the server's auto-fill). Only non-empty
     // keys, so a blank field never clobbers an auto-filled value.
@@ -794,7 +803,12 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
 
           {src.kind === 'none' ? (
             <div style={{ ...fieldRow, fontSize: 'var(--fs-12)', color: 'var(--c-muted, var(--hz-c-ink-muted))' }}>
-              A delivery with no sales order: type the customer, address and postcode below, and what is going in Remark. It goes on the board, Last Mile and Trip Pay; no stock moves and no DO is made.
+              A delivery with no sales order: type the customer, address and postcode below, the sales amount, and what is going in Remark. It goes on the board, Last Mile and Trip Pay (commission on the sales amount); no stock moves and no DO is made.
+              <label style={{ display: 'block', marginTop: 'var(--space-2)' }}>
+                <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>Sales amount (RM)</div>
+                <input className={styles.searchInput} style={inputStyle} inputMode="decimal" placeholder="e.g. 3500.00"
+                  aria-label="Sales amount (RM)" value={form.salesAmount} onChange={(e) => set('salesAmount', e.target.value)} />
+              </label>
             </div>
           ) : (
           <label style={fieldRow}>
