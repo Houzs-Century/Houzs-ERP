@@ -144,7 +144,7 @@ function tsTargetColumns_(headers) {
     var k = tsNormHeader_(h);
     if (!k) return;
     if (tCol[k] === undefined) tCol[k] = i;
-    var base = k.replace(/\s*\([^)]*\)\s*$/, "").trim(); // drop a trailing (…) note
+    var base = k.replace(/\s*[(（][^)）]*[)）]\s*$/, "").trim(); // drop a trailing (…) note, half- or full-width (（）) parens
     if (base && tCol[base] === undefined) tCol[base] = i;
   });
   return tCol;
