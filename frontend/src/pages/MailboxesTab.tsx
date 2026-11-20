@@ -59,7 +59,6 @@ import {
   AccessChangeLog,
   AccessLegend,
   AutoTick,
-  MailboxConnection,
   OrgChartCell,
   PersonalShares,
   autoReason,
@@ -201,7 +200,6 @@ export function MailboxesTab() {
       </section>
 
       {/* Region B + C — access matrix + view levels */}
-      <MailboxConnection />
       <AccessMatrix
         addresses={addresses}
         users={users}

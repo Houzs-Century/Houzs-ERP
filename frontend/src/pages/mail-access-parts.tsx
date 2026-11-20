@@ -7,6 +7,7 @@ import { Badge } from "../components/Badge";
 import { useQuery } from "../hooks/useQuery";
 import { api } from "../api/client";
 import { cn } from "../lib/utils";
+import { fmtDateTime } from "../vendor/shared/format";
 import type { Department, TeamMember } from "../types";
 import type { MailAddress, MailScopeLevel } from "./MailCenter/mail-actions";
 
@@ -151,7 +152,7 @@ export function AccessChangeLog() {
           <ul className="divide-y divide-border-subtle">
             {rows.map((r, i) => (
               <li key={i} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-4 py-2 text-[12.5px]">
-                <span className="inline-flex items-center gap-1 text-[11px] tabular-nums text-ink-muted"><Clock size={11} />{r.at}</span>
+                <span className="inline-flex items-center gap-1 text-[11px] tabular-nums text-ink-muted"><Clock size={11} />{fmtDateTime(r.at)}</span>
                 <span className="font-semibold text-ink">{r.by}</span>
                 <span className="text-ink-secondary">{r.change}</span>
                 <span className="text-ink-muted">for {r.who}</span>
