@@ -5,16 +5,12 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { fmtSen } from "../../vendor/shared/format";
+import { formatDate } from "../../lib/utils";
 import { POSITION, avatarColor, initials, type Emp } from "./hrSampleData";
 
 const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(" ");
 
-const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-function fmtDate(iso: string | null): string {
-  if (!iso) return "—";
-  const [y, m, d] = iso.split("-").map(Number);
-  return `${d} ${MON[(m ?? 1) - 1]} ${y}`;
-}
+const fmtDate = (iso: string | null): string => (iso ? formatDate(iso) : "—");
 function daysUntil(iso: string | null): number | null {
   if (!iso) return null;
   return Math.round((new Date(iso).getTime() - new Date("2026-11-20").getTime()) / 86400000);
