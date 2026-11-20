@@ -15,6 +15,11 @@
 //   • every other department its own P&L month by month — the Exhibition P&L (the
 //     fairs' sales less their cost and what Exhibition booked), the Showroom P&L.
 // Logistics is its own report (Logistics cost) and has no view here.
+// A figure opens the lines behind it under its line (owner 2026-11-20:「我希望这里
+// 点开也能看」; DepartmentPnlLines.tsx), adding up to it: an account's ledger lines
+// as split, a category's or a block's every line; on the Operation sheet a row's
+// salary, ledger and bill lines, the fairs, the Logistics cost report's figures.
+// What only adds up the rows above (Gross profit, the results) opens nothing.
 // Server: backend/src/scm/routes/acc-departments.ts. The view lives in the URL.
 // ----------------------------------------------------------------------------
 
@@ -24,8 +29,9 @@ import { monthEnd, monthStart } from '../../lib/dateRangePresets';
 import { fmtDateOrDash } from '../../vendor/shared/format';
 import {
   useDepartmentPlan, useDepartmentView, useDepartmentsAll, useDepartmentsGa, useDepartmentsOperation, useSaveDepartmentRate, useSaveOperationSpread,
-  type DepartmentView, type DepartmentsAll, type DepartmentsGa, type DepartmentsOperation, type DeptBlock, type DeptNode, type OpRegion,
+  type DepartmentView, type DepartmentsAll, type DepartmentsGa, type DepartmentsOperation, type DeptBlock, type DeptKey, type DeptNode, type OpLine, type OpRegion,
 } from '../../vendor/scm/lib/department-queries';
+import { DeptLinesPanel, DrillPanel, type DrillLedger, type DrillRow } from './DepartmentPnlLines';
 import { FinanceGrid, fmtMoney, gridMuted, type GridColumn, type GridRow } from './reports/FinanceGrid';
 import { FinanceDateRange } from './reports/FinanceDateRange';
 import {
@@ -108,11 +114,17 @@ export const DepartmentPnlTab = () => {
 };
 
 /* ── A node of the P&L's tree as a grid row ───────────────────────────────── */
-function nodeRows(nodes: readonly DeptNode[], cellsOf: (n: DeptNode) => Record<string, number>): GridRow[] {
+type DetailOf = (keys: string[], title: string) => GridRow['detail'];
+function nodeRows(nodes: readonly DeptNode[], cellsOf: (n: DeptNode) => Record<string, number>, detailOf: DetailOf | null): GridRow[] {
   return nodes.map((n) => (n.children.length > 0
-    ? { id: n.id, label: n.label, kids: nodeRows(n.children, cellsOf), totalLabel: `Total ${n.label}`, cells: cellsOf(n) }
-    : { id: n.id, label: n.label, cells: cellsOf(n) }));
+    ? { id: n.id, label: n.label, kids: nodeRows(n.children, cellsOf, detailOf), totalLabel: `Total ${n.label}`, cells: cellsOf(n), detail: detailOf?.(leafKeys(n), n.label) }
+    : { id: n.id, label: n.label, cells: cellsOf(n), detail: detailOf?.(leafKeys(n), n.label) }));
 }
+/** The accounts under a node — an account's code; on G&A a team's team:<TEAM>. */
+const leafKeys = (n: DeptNode): string[] => (n.kind === 'account' ? [n.key ?? n.code ?? n.id] : n.children.flatMap(leafKeys));
+/** A column's months as words, and as the dates its lines are read between. */
+const spanText = (months: readonly string[]) => (months.length === 1 ? short(months[0]!) : `${short(months[0]!)} – ${short(months[months.length - 1]!)}`);
+const datesOf = (months: readonly string[]) => ({ from: `${months[0]}-01`, to: monthEnd(`${months[months.length - 1]}-01`) });
 
 /* ── All departments ──────────────────────────────────────────────────────── */
 function AllView({ p, period }: { p: DepartmentsAll; period: string }) {
@@ -128,8 +140,14 @@ function AllView({ p, period }: { p: DepartmentsAll; period: string }) {
       Object.fromEntries(Object.keys(a).map((k) => [k, (a[k] ?? 0) - (b[k] ?? 0)]));
     const plus = (a: Record<string, number>, b: Record<string, number>): Record<string, number> =>
       Object.fromEntries(Object.keys(a).map((k) => [k, (a[k] ?? 0) + (b[k] ?? 0)]));
+    /* A figure opens its lines: the column's department, or every part in Total. */
+    const colName = (key: string) => (key === 'T' ? 'Total' : p.columns.find((c) => c.key === key)?.label ?? key);
+    const detailIn = (b: DeptBlock): DetailOf => (keys, title) => (colKey, close) => (
+      <DeptLinesPanel title={title} sub={`${colName(colKey)} · ${period}`} onClose={close}
+        ask={{ view: 'all', block: b, dept: colKey === 'T' ? null : colKey as DeptKey, from: p.from, to: p.to, keys }} />
+    );
     const group = (b: DeptBlock, label: string, totalLabel: string): GridRow =>
-      ({ id: b, label, totalLabel, kind: 'block', kids: nodeRows(p.tree[b], cellsOf), cells: block(b) });
+      ({ id: b, label, totalLabel, kind: 'block', kids: nodeRows(p.tree[b], cellsOf, detailIn(b)), cells: block(b), detail: detailIn(b)(p.tree[b].flatMap(leafKeys), totalLabel) });
     const gross = minus(block('tradingIncome'), block('costOfSales'));
     const beforeTax = minus(plus(gross, block('otherIncome')), block('expenses'));
     const net = minus(beforeTax, block('taxation'));
@@ -137,9 +155,14 @@ function AllView({ p, period }: { p: DepartmentsAll; period: string }) {
     /* An expense account no department claims yet: named, its figure in Total only. */
     const noneSen = p.unassigned.lines.reduce((x, l) => x + l.amountSen, 0);
     if (noneSen !== 0) {
+      const keys = p.unassigned.lines.map((l) => l.code);
       expenses.kids = [...(expenses.kids ?? []), {
         id: 'unassigned', label: `${p.unassigned.label} — set its Department on the Chart of Accounts`, kind: 'warn',
         cells: { ...Object.fromEntries(depts.map((k) => [k, null])), T: noneSen },
+        detail: (colKey, close) => (colKey !== 'T' ? null : (
+          <DeptLinesPanel title={p.unassigned.label} sub={`Total · ${period}`} onClose={close}
+            ask={{ view: 'all', block: 'expenses', dept: 'none', from: p.from, to: p.to, keys }} />
+        )),
       }];
     }
     const out: GridRow[] = [
@@ -153,7 +176,7 @@ function AllView({ p, period }: { p: DepartmentsAll; period: string }) {
       { id: 'net', label: 'NET PROFIT / (LOSS)', kind: 'final', cells: net },
     ];
     return out.filter((x) => !x.kids || x.kids.length > 0);
-  }, [p]);
+  }, [p, period]);
   const t = p.totals;
   const tiles: ReportTile[] = [
     ...p.columns.map((c) => {
@@ -180,6 +203,7 @@ function AllView({ p, period }: { p: DepartmentsAll; period: string }) {
           WAREHOUSE CHARGES to Operation, LOGISTICS CHARGES to Logistics); sales and cost of sales are the selling department&rsquo;s; every other
           account by the Chart of Accounts&rsquo; Department and Logistics columns, a department this company does not have counting where its
           plan puts it. The G&amp;A and Operation views add their shares of sales and spread insurance and upkeep over months.
+          Click a figure for the lines behind it.
           {p.stock.closingProvisional ? ' The closing stock is provisional until the month is closed.' : ''}
         </span>} />
     </>
@@ -200,6 +224,10 @@ function GaView({ p, mode, showPct, period }: { p: DepartmentsGa; mode: Mode; sh
     const by = (f: (m: DepartmentsGa['perMonth'][number]) => number): Record<string, number> =>
       Object.fromEntries(keys.map((k) => [k, p.perMonth.filter((m) => scope(k).includes(m.month)).reduce((x, m) => x + f(m), 0)]));
     const cellsOf = (n: DeptNode): Record<string, number> => Object.fromEntries(keys.map((k) => [k, scope(k).reduce((x, m) => x + (n.cells?.[m] ?? 0), 0)]));
+    const detailOf: DetailOf = (accounts, title) => (colKey, close) => (
+      <DeptLinesPanel title={title} sub={colKey === 'T' ? `Total · ${spanText(p.months)}` : short(colKey)} onClose={close}
+        ask={{ view: 'ga', ...datesOf(scope(colKey)), keys: accounts }} />
+    );
     const sales = by((m) => m.salesSen);
     const share = by((m) => m.shareSen);
     const expense = by((m) => m.expenseSen);
@@ -207,7 +235,10 @@ function GaView({ p, mode, showPct, period }: { p: DepartmentsGa; mode: Mode; sh
     return [
       { id: 'sales', label: 'Performance sales', kind: 'strong', cells: sales, pct: pctOf(sales, sales) },
       { id: 'share', label: `G&A share (${rateText(p.shareBp)}% of Performance sales)`, cells: share, pct: pctOf(share, sales) },
-      { id: 'expenses', label: 'G&A EXPENSES', totalLabel: 'Total G&A expenses', kind: 'block', kids: withPct(nodeRows(p.tree, cellsOf), sales), cells: expense, pct: pctOf(expense, sales) },
+      {
+        id: 'expenses', label: 'G&A EXPENSES', totalLabel: 'Total G&A expenses', kind: 'block', kids: withPct(nodeRows(p.tree, cellsOf, detailOf), sales),
+        cells: expense, pct: pctOf(expense, sales), detail: detailOf(p.tree.flatMap(leafKeys), 'Total G&A expenses'),
+      },
       { id: 'surplus', label: 'SURPLUS / (DEFICIT)', kind: 'final', cells: surplus, pct: pctOf(surplus, sales) },
     ];
   }, [p, columns]);
@@ -230,7 +261,7 @@ function GaView({ p, mode, showPct, period }: { p: DepartmentsGa; mode: Mode; sh
         foot={<span>
           G&amp;A = admin, IT, legal and HQ: the payroll lines of the Director office, Finance, HR, IT, Management and Other teams (the salary
           journal&rsquo;s own words), and every account the Chart of Accounts&rsquo; Department column gives G&amp;A — by journal date. Every % is of the
-          column&rsquo;s Performance sales (the Performance P&amp;L&rsquo;s own: orders by SO date, delivered or not).
+          column&rsquo;s Performance sales (the Performance P&amp;L&rsquo;s own: orders by SO date, delivered or not). Click an expense for the lines behind it.
         </span>} />
       <TeamsList p={p} />
     </>
@@ -277,8 +308,14 @@ function DeptView({ p, mode, showPct, period }: { p: DepartmentView; mode: Mode;
       Object.fromEntries(keys.map((k) => [k, p.perMonth.filter((m) => scope(k).includes(m.month)).reduce((x, m) => x + f(m), 0)]));
     const cellsOf = (n: DeptNode): Record<string, number> => Object.fromEntries(keys.map((k) => [k, scope(k).reduce((x, m) => x + (n.cells?.[m] ?? 0), 0)]));
     const sales = by((m) => m.salesSen);
-    const group = (b: DeptBlock, label: string, totalLabel: string, cells: Record<string, number>): GridRow =>
-      ({ id: b, label, totalLabel, kind: 'block', kids: withPct(nodeRows(p.tree[b], cellsOf), sales), cells, pct: pctOf(cells, sales) });
+    const detailIn = (b: DeptBlock): DetailOf => (accounts, title) => (colKey, close) => (
+      <DeptLinesPanel title={title} sub={colKey === 'T' ? `Total · ${spanText(p.months)}` : short(colKey)} onClose={close}
+        ask={{ view: 'dept', d: p.dept, block: b, ...datesOf(scope(colKey)), keys: accounts }} />
+    );
+    const group = (b: DeptBlock, label: string, totalLabel: string, cells: Record<string, number>): GridRow => ({
+      id: b, label, totalLabel, kind: 'block', kids: withPct(nodeRows(p.tree[b], cellsOf, detailIn(b)), sales), cells, pct: pctOf(cells, sales),
+      detail: detailIn(b)(p.tree[b].flatMap(leafKeys), totalLabel),
+    });
     const gross = by((m) => m.grossSen);
     const net = by((m) => m.netSen);
     const out: GridRow[] = [
@@ -310,7 +347,7 @@ function DeptView({ p, mode, showPct, period }: { p: DepartmentView; mode: Mode;
         title={title} subtitle={`${period} · RM`} ariaLabel={`Department P&L, ${p.label}`} drillKey={`${p.dept}|${p.from}|${p.to}|${mode}`}
         foot={<span>
           The {p.label} column of All departments, month by month: the books by journal date — sales and cost of sales as the P&amp;L has them,
-          less what the {p.label} department booked. Every % is of the column&rsquo;s sales.
+          less what the {p.label} department booked. Every % is of the column&rsquo;s sales. Click a figure for the lines behind it.
         </span>} />
     </>
   );
@@ -347,8 +384,26 @@ function OperationView({ p, mode, split, showPct, period }: { p: DepartmentsOper
   const { columns, scopes } = useMemo(() => opColumns(p.regions, p.months, mode, split, showPct ? 172 : 120), [p.regions, p.months, mode, split, showPct]);
   const codes = useMemo(() => p.regions.map((r) => r.code), [p.regions]);
   const byMonth = useMemo(() => new Map(p.perMonth.map((m) => [m.month, m] as const)), [p]);
+  const linesOf = useMemo(() => {
+    const out = new Map<string, OpLine[]>();
+    for (const l of p.lines) out.set(l.row, [...(out.get(l.row) ?? []), l]);
+    return out;
+  }, [p.lines]);
   const rows = useMemo<GridRow[]>(() => {
     const label = (k: string) => p.rows.find((x) => x.key === k)?.label ?? k;
+    /* A figure opens the lines its row adds up in its column's months and regions; the
+       results (Gross, Net) add up rows and have none. */
+    const detailOf = (rowKeys: readonly string[], title: string): GridRow['detail'] => (colKey, close) => {
+      const sc = scopes.get(colKey);
+      if (!sc) return null;
+      const picked = rowKeys.flatMap((k) => linesOf.get(k) ?? []).filter((l) => sc.months.includes(l.month))
+        .map((l) => ({ l, sen: sc.regions.reduce((x, r) => x + l.cells[r], 0) })).filter((x) => x.sen !== 0);
+      if (picked.length === 0) return null;
+      return (
+        <DrillPanel title={title} sub={scopeText(p, sc)} onClose={close} ledger={opLedger(picked.map((x) => x.l), sc.months)}
+          rows={picked.map(({ l, sen }) => opDrillRow(p, l, sen, sc.regions, rowKeys.length > 1 ? label(l.row) : null))} />
+      );
+    };
     const money = (k: string): Record<string, number> => {
       const out: Record<string, number> = {};
       for (const [key, sc] of scopes) {
@@ -359,7 +414,10 @@ function OperationView({ p, mode, split, showPct, period }: { p: DepartmentsOper
       return out;
     };
     const doValue = money('do_value');
-    const line = (k: string, kind?: GridRow['kind']): GridRow => { const cells = money(k); return { id: k, label: label(k), kind, cells, pct: pctOf(cells, doValue) }; };
+    const line = (k: string, kind?: GridRow['kind']): GridRow => {
+      const cells = money(k);
+      return { id: k, label: label(k), kind, cells, pct: pctOf(cells, doValue), detail: detailOf([k], label(k)) };
+    };
     const has = (k: string) => p.perMonth.some((m) => codes.some((r) => (m.rows[k]?.[r] ?? 0) !== 0));
     const shown = p.rows.filter((x) => !x.optional || has(x.key));
     const out: GridRow[] = [];
@@ -369,16 +427,17 @@ function OperationView({ p, mode, split, showPct, period }: { p: DepartmentsOper
       if (x.group === 'expense') {
         if (out.some((r) => r.id === 'warehouse')) continue;
         const cells = money(total?.key ?? 'total_expense');
+        const expense = shown.filter((k) => k.group === 'expense');
         out.push({
           id: 'warehouse', label: 'Expense:- Warehouse', totalLabel: total?.label ?? 'Total', kind: 'block',
-          kids: shown.filter((k) => k.group === 'expense').map((k) => line(k.key)), cells, pct: pctOf(cells, doValue),
+          kids: expense.map((k) => line(k.key)), cells, pct: pctOf(cells, doValue), detail: detailOf(expense.map((k) => k.key), total?.label ?? 'Total'),
         });
         continue;
       }
       out.push(line(x.key, x.kind === 'line' ? undefined : x.kind));
     }
     return out;
-  }, [p, scopes, byMonth, codes]);
+  }, [p, scopes, byMonth, codes, linesOf]);
   const total = (k: string) => p.perMonth.reduce((x, m) => x + codes.reduce((y, r) => y + (m.rows[k]?.[r] ?? 0), 0), 0);
   const doValue = total('do_value');
   const tiles: ReportTile[] = [
@@ -405,6 +464,7 @@ function OperationView({ p, mode, split, showPct, period }: { p: DepartmentsOper
           STOREKEEPER lines — a line naming its region (PG / KL / SBH) is that region&rsquo;s, else shared by the month&rsquo;s DO value. Income: the
           WAREHOUSE CHARGES and OPERATION CHARGES lines on Other Debtor bills, in the month they name. From Logistics = the Logistics cost
           report&rsquo;s net less its fair income; From Setup/Dismantle = each fair&rsquo;s transport income less its setup and dismantle transport.
+          Click a figure for the lines behind it; Gross Profit and the Net rows add up the rows above.
         </span>} />
       <ManpowerList p={p} />
       <OpIncomeList p={p} />
@@ -414,6 +474,37 @@ function OperationView({ p, mode, split, showPct, period }: { p: DepartmentsOper
 }
 
 const regionNameOf = (p: DepartmentsOperation, r: OpRegion) => p.regions.find((x) => x.code === r)?.name ?? r;
+
+/** A column of the sheet in words: its months, and its regions when not all of them. */
+const scopeText = (p: DepartmentsOperation, sc: Scope): string =>
+  `${spanText(sc.months)}${sc.regions.length < p.regions.length ? ` · ${sc.regions.map((r) => regionNameOf(p, r)).join(', ')}` : ''}`;
+
+/** The General ledger of the ledger lines opened: their accounts, from the earliest (a spread bill's own date). */
+const opLedger = (lines: readonly OpLine[], months: readonly string[]): DrillLedger => {
+  const gl = lines.filter((l) => l.src === 'ledger' && l.accountCode);
+  if (gl.length === 0) return null;
+  const d = datesOf(months);
+  return { codes: [...new Set(gl.map((l) => l.accountCode!))], from: gl.reduce((x, l) => (l.day && l.day < x ? l.day : x), d.from), to: d.to };
+};
+
+/** One Operation line as the panel prints it: what it is, where, how its amount was worked out. */
+function opDrillRow(p: DepartmentsOperation, l: OpLine, sen: number, regions: readonly OpRegion[], row: string | null): DrillRow {
+  const touched = regions.filter((r) => l.cells[r] !== 0);
+  const where = touched.length > 1 && touched.length === p.regions.length ? 'All regions' : touched.map((r) => regionNameOf(p, r)).join(', ');
+  let account = l.accountCode ? `${l.accountCode}${l.accountName ? ` · ${l.accountName}` : ''}` : null;
+  /* Who was billed, then the bill line's words; a fair's name, then its venue. */
+  let text = l.party && l.text ? (l.src === 'fair' ? `${l.text} · ${l.party}` : `${l.party} · ${l.text}`) : (l.text ?? l.party);
+  let how: string | null = null;
+  const h = l.how;
+  if (h?.kind === 'shared') how = `DO-value share of the line ${fmtMoney(h.wholeSen)}`;
+  else if (h?.kind === 'spread') how = `${short(l.month)}: month ${h.part}/${h.months} of the bill ${fmtMoney(h.wholeSen)}`;
+  else if (h?.kind === 'fair') how = `Income ${fmtMoney(h.incomeSen)} less setup & dismantle ${fmtMoney(h.costSen)}`;
+  else if (h?.kind === 'dos') { account = 'Logistics cost report'; text = `${h.count.toLocaleString('en-US')} delivery order${h.count === 1 ? '' : 's'}`; }
+  else if (h?.kind === 'rate') text = `${rateText(h.bp)}% of the DO value ${fmtMoney(h.baseSen)}`;
+  else if (h?.kind === 'transport') { account = 'Logistics cost report'; text = `Transport Income: ${rateText(p.logisticsIncomeBp)}% of the DO value ${fmtMoney(h.baseSen)}`; }
+  else if (h?.kind === 'logistics') { account = 'Logistics cost report'; text = `Net ${fmtMoney(h.netSen)} less fair income ${fmtMoney(h.fairIncomeSen)}`; }
+  return { id: l.id, day: l.day, month: l.month, row, region: where || null, ref: l.ref, account, text, how, sen };
+}
 const text = (x: string | null | undefined) => ({ node: x ?? '—', text: x ?? '', title: x ?? undefined });
 
 const MANPOWER_COLUMNS: GridColumn[] = [

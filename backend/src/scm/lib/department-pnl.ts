@@ -61,39 +61,67 @@ export const PNL_BLOCKS: ReadonlyArray<{ block: PnlBlock; sign: 1 | -1; recharge
   { block: 'taxation', sign: 1, recharge: false, fallback: 'ga' },
 ];
 
+/** One part of a P&L line: the department it counts in and the leg it is — null for
+    what the legs do not explain (a stock line, a line read whole). */
+export type SplitPart<L extends SplitLeg = SplitLeg> = { dept: DeptKey; sen: number; leg: L | null };
+
 /**
- * What each department took of one P&L line. `sign` +1 reads a line debit-positive
- * (cost of sales, expenses, taxation), -1 credit-positive (income). A line whose
- * account mixes departments (a payroll or recruitment account, an income account
- * Other Debtor recharges land on) is split leg by leg; any other goes whole to its
- * account's department. A nature the company has no department for counts where
- * its plan folds it. Whatever the legs do not explain goes to the account's own
- * department, so the cells always add up to the line.
+ * What each department took of one P&L line, part by part. `sign` +1 reads a line
+ * debit-positive (cost of sales, expenses, taxation), -1 credit-positive (income). A
+ * line whose account mixes departments (a payroll or recruitment account, an income
+ * account Other Debtor recharges land on) is split leg by leg; any other goes whole
+ * to its account's department. A nature the company has no department for counts
+ * where its plan folds it. Whatever the legs do not explain goes to the account's own
+ * department, so the parts always add up to the line. `itemize`: hand back each leg of
+ * a line that goes whole too (the lines a figure opens) — the departments' sums are
+ * the same either way.
  */
-export function splitLine(input: {
+export function splitLineParts<L extends SplitLeg>(input: {
   amountSen: number; sign: 1 | -1; account: DeptAccount | undefined;
-  legs: readonly SplitLeg[] | undefined; payroll: boolean; recharge: boolean; mixed: boolean;
-  fallback: Nature | 'none'; plan: DepartmentPlan;
-}): DeptCells {
-  const cells = zeroDeptCells(input.plan);
+  legs: readonly L[] | undefined; payroll: boolean; recharge: boolean; mixed: boolean;
+  fallback: Nature | 'none'; plan: DepartmentPlan; itemize: boolean;
+}): SplitPart<L>[] {
   const home = accountHome(input.account).dept;
-  const ownNature: Nature | 'none' = home === 'none' || home === 'hire' ? input.fallback : home;
-  const add = (nature: Nature | 'none', sen: number) => {
-    const k = resolveDept(nature, input.plan);
-    cells[k] = (cells[k] ?? 0) + sen;
-  };
+  const own = resolveDept(home === 'none' || home === 'hire' ? input.fallback : home, input.plan);
+  const byLeg = input.mixed || input.recharge;
+  const parts: SplitPart<L>[] = [];
   let placed = 0;
-  if (input.legs && (input.mixed || input.recharge)) {
+  if (input.legs && (byLeg || input.itemize)) {
     for (const l of input.legs) {
       const sen = input.sign * (l.debitSen - l.creditSen);
       if (sen === 0) continue;
-      const lh = lineHome(input.account, l.notes, { payroll: input.payroll, recharge: input.recharge }).dept;
-      add(lh === 'none' ? input.fallback : lh, sen);
+      let dept = own;
+      if (byLeg) {
+        const lh = lineHome(input.account, l.notes, { payroll: input.payroll, recharge: input.recharge }).dept;
+        dept = resolveDept(lh === 'none' ? input.fallback : lh, input.plan);
+      }
+      parts.push({ dept, sen, leg: l });
       placed += sen;
     }
   }
-  add(ownNature, input.amountSen - placed);
+  if (input.amountSen !== placed) parts.push({ dept: own, sen: input.amountSen - placed, leg: null });
+  return parts;
+}
+
+/** What each department took of one P&L line: its parts added up by department. */
+export function splitLine(input: Omit<Parameters<typeof splitLineParts>[0], 'itemize'>): DeptCells {
+  const cells = zeroDeptCells(input.plan);
+  for (const p of splitLineParts({ ...input, itemize: false })) cells[p.dept] = (cells[p.dept] ?? 0) + p.sen;
   return cells;
+}
+
+/** One P&L line of a block as the Department P&L splits it, part by part. */
+export function splitPnlLineParts<L extends SplitLeg>(input: {
+  block: PnlBlock; code: string; amountSen: number;
+  chart: ReadonlyMap<string, DeptAccount>; payroll: ReadonlySet<string>; mixed: ReadonlySet<string>;
+  legs: readonly L[] | undefined; plan: DepartmentPlan; itemize: boolean;
+}): SplitPart<L>[] {
+  const b = PNL_BLOCKS.find((x) => x.block === input.block)!;
+  return splitLineParts({
+    amountSen: input.amountSen, sign: b.sign, account: input.chart.get(input.code), legs: input.legs,
+    payroll: input.block === 'expenses' && input.payroll.has(input.code), recharge: b.recharge,
+    mixed: input.block === 'expenses' && input.mixed.has(input.code), fallback: b.fallback, plan: input.plan, itemize: input.itemize,
+  });
 }
 
 /** Each P&L line of each block, split: the lines the P&L printed, their account, legs. */
@@ -103,15 +131,16 @@ export function splitPnlLines(input: {
   legsOf: ReadonlyMap<string, readonly SplitLeg[]>; plan: DepartmentPlan;
 }): Record<PnlBlock, Array<{ code: string; name: string; amountSen: number; cells: DeptCells }>> {
   const out = {} as Record<PnlBlock, Array<{ code: string; name: string; amountSen: number; cells: DeptCells }>>;
-  for (const { block, sign, recharge, fallback } of PNL_BLOCKS) {
-    out[block] = input.lines[block].map((l) => ({
-      code: l.code, name: l.name, amountSen: l.amountSen,
-      cells: splitLine({
-        amountSen: l.amountSen, sign, account: input.chart.get(l.code), legs: input.legsOf.get(l.code),
-        payroll: block === 'expenses' && input.payroll.has(l.code), recharge, mixed: block === 'expenses' && input.mixed.has(l.code),
-        fallback, plan: input.plan,
-      }),
-    }));
+  for (const { block } of PNL_BLOCKS) {
+    out[block] = input.lines[block].map((l) => {
+      const cells = zeroDeptCells(input.plan);
+      const parts = splitPnlLineParts({
+        block, code: l.code, amountSen: l.amountSen, chart: input.chart, payroll: input.payroll, mixed: input.mixed,
+        legs: input.legsOf.get(l.code), plan: input.plan, itemize: false,
+      });
+      for (const p of parts) cells[p.dept] = (cells[p.dept] ?? 0) + p.sen;
+      return { code: l.code, name: l.name, amountSen: l.amountSen, cells };
+    });
   }
   return out;
 }
@@ -171,7 +200,7 @@ export type LogisticsMonthIn = {
   net: Partial<Record<RegionCode, number>>;
   /** Each fair opened in the month: its transport income and its setup / dismantle
       transport cost (the in-house charge and the outsourced lines). */
-  fairs: ReadonlyArray<{ region: RegionCode; incomeSen: number; costSen: number }>;
+  fairs: ReadonlyArray<{ id: number; code: string | null; name: string; venue: string | null; region: RegionCode; incomeSen: number; costSen: number }>;
 };
 
 /** The sheet's row an OPERATION CHARGES line fills, by who was billed — the Logistics
@@ -191,9 +220,46 @@ export type OpManpowerLine = {
   row: ManpowerRow; region: OpRegion | null; cells: OpCells;
 };
 
+/** How an amount behind an Operation figure was arrived at, where it is not simply its line's. */
+export type OpHow =
+  /** A payroll line naming no region: the whole line, shared by the month's DO value. */
+  | { kind: 'shared'; wholeSen: number }
+  /** One month's part (`part` of `months`) of an upkeep or insurance bill. */
+  | { kind: 'spread'; wholeSen: number; part: number; months: number }
+  /** The month's Delivery Orders in the region, as the Logistics cost report counts them. */
+  | { kind: 'dos'; count: number }
+  /** Operation's rate of the month's DO value in the region. */
+  | { kind: 'rate'; baseSen: number; bp: number }
+  /** The Logistics cost report's Transport Income (its own % of the DO value). */
+  | { kind: 'transport'; baseSen: number }
+  /** The Logistics cost report's net, less its fair income. */
+  | { kind: 'logistics'; netSen: number; fairIncomeSen: number }
+  /** One fair's transport income less its setup and dismantle transport. */
+  | { kind: 'fair'; incomeSen: number; costSen: number };
+
+/** One amount behind a figure of the Operation sheet — a ledger line, an Other Debtor
+    bill line, a fair or a figure of the Logistics cost report — and what it put in
+    which region of which month. Every row but the results (Gross, Total Warehouse
+    Expenses, Net, Net after) IS its lines added up. */
+export type OpLine = {
+  id: string; row: OpRowKey; month: string; cells: OpCells;
+  /** A ledger line (a spread bill's month too), an Other Debtor bill line, a fair, a figure of the Logistics cost report. */
+  src: 'ledger' | 'bill' | 'fair' | 'figure';
+  day: string | null;
+  /** The journal entry, the bill or the fair's code. */
+  ref: string | null;
+  accountCode: string | null; accountName: string | null;
+  /** The line's own words: a ledger line's notes, a bill line's description, a fair's name. */
+  text: string | null;
+  /** Who was billed; a fair's venue. */
+  party: string | null;
+  how: OpHow | null;
+};
+
 export type OperationInput = {
   months: readonly string[];
   incomeBp: number;
+  /** The Logistics cost report's months, by Logistics region. */
   logistics: ReadonlyMap<string, LogisticsMonthIn>;
   bills: readonly BillLine[];
   /** Every leg on the payroll accounts and the Operation accounts, from far enough
@@ -208,6 +274,8 @@ export type OperationPnl = {
   months: string[];
   incomeBp: number;
   perMonth: OperationMonth[];
+  /** What every row but the results is made of, in the sheet's order. */
+  lines: OpLine[];
   income: OpIncomeLine[];
   manpower: OpManpowerLine[];
   spreads: OpSpreadRow[];
@@ -239,8 +307,13 @@ const addInto = (into: OpCells, x: OpCells, sign = 1): void => { into.PG += sign
 export function buildOperationPnl(input: OperationInput): OperationPnl {
   const months = [...input.months];
   const inRange = new Set(months);
-  const byMonth = new Map(months.map((m) => [m, emptyRows()] as const));
   const doValue = new Map(months.map((m) => [m, fold(input.logistics.get(m)?.doValue ?? {})] as const));
+  const only = (region: OpRegion, sen: number): OpCells => ({ ...zeroOp(), [region]: sen });
+  /* What every row but the results is made of; the rows are these added up, below. */
+  const lines: OpLine[] = [];
+  const ledger = (l: Leg, row: OpRowKey, month: string, cells: OpCells, how: OpHow | null, id = `gl:${l.lineId}`): OpLine => ({
+    id, row, month, cells, src: 'ledger', day: l.day, ref: l.docNo, accountCode: l.accountCode, accountName: l.accountName, text: l.notes, party: null, how,
+  });
 
   /* The recharges billed: each in the month it names, in the region it names (else KL). */
   const income: OpIncomeLine[] = [];
@@ -251,7 +324,10 @@ export function buildOperationPnl(input: OperationInput): OperationPnl {
     if (!inRange.has(month)) continue;
     const key = home.income === 'warehouse' ? 'income_warehouse' : CHARGES_ROW[incomeRowOf(b.debtorName)];
     const region = home.region ?? 'KL';
-    byMonth.get(month)![key][region] += b.amountSen;
+    lines.push({
+      id: `bill:${b.lineId}`, row: key, month, cells: only(region, b.amountSen), src: 'bill', day: b.billDate, ref: b.billNo,
+      accountCode: b.accountCode || null, accountName: b.accountName, text: b.description, party: b.debtorName || null, how: null,
+    });
     income.push({ ...b, month, key, region });
   }
 
@@ -268,8 +344,8 @@ export function buildOperationPnl(input: OperationInput): OperationPnl {
     if ((MANPOWER_ROWS as readonly string[]).includes(home.row)) {
       if (!inRange.has(month)) continue;
       const row = home.row as ManpowerRow;
-      const cells = home.region ? { ...zeroOp(), [home.region]: net } as OpCells : shareByValue(net, doValue.get(month)!);
-      addInto(byMonth.get(month)![row], cells);
+      const cells = home.region ? only(home.region, net) : shareByValue(net, doValue.get(month)!);
+      lines.push(ledger(l, row, month, cells, home.region ? null : { kind: 'shared', wholeSen: net }));
       manpower.push({ lineId: l.lineId, day: l.day, accountCode: l.accountCode, accountName: l.accountName, notes: l.notes, amountSen: net, row, region: home.region, cells });
       continue;
     }
@@ -283,8 +359,8 @@ export function buildOperationPnl(input: OperationInput): OperationPnl {
       let mine = 0;
       parts.forEach((p, i) => {
         const m = addMonths(month, i);
-        if (!inRange.has(m)) return;
-        byMonth.get(m)![row][region] += p;
+        if (!inRange.has(m) || p === 0) return;
+        lines.push(ledger(l, row, m, only(region, p), { kind: 'spread', wholeSen: net, part: i + 1, months: n }, `gl:${l.lineId}:${m}`));
         mine += p;
       });
       if (lastMonth < months[0]! || month > months[months.length - 1]!) continue;
@@ -295,34 +371,59 @@ export function buildOperationPnl(input: OperationInput): OperationPnl {
       continue;
     }
     if (!inRange.has(month)) continue;
-    byMonth.get(month)![row][region] += net;
+    lines.push(ledger(l, row, month, only(region, net), null));
   }
 
-  /* Each month's arithmetic, region by region. */
-  const perMonth: OperationMonth[] = months.map((m) => {
-    const rows = byMonth.get(m)!;
+  /* The Logistics cost report's figures, region by region: the DOs, Operation's rate of
+     their value, the report's own Transport Income, its net less its fair income, the fairs. */
+  for (const m of months) {
     const lg = input.logistics.get(m);
     const dv = doValue.get(m)!;
-    rows.do_value = { ...dv };
-    rows.do_income = { PG: Math.round((dv.PG * input.incomeBp) / 10_000), KL: Math.round((dv.KL * input.incomeBp) / 10_000), EM: Math.round((dv.EM * input.incomeBp) / 10_000) };
+    const count = fold(lg?.doCount ?? {});
     const ti = fold(lg?.transportIncome ?? {});
-    rows.logistic_expense = { PG: -ti.PG, KL: -ti.KL, EM: -ti.EM };
+    const lNet = fold(lg?.net ?? {});
+    const lFair = fold(lg?.fairIncome ?? {});
+    for (const r of OP_REGION_CODES) {
+      const figure = (row: OpRowKey, sen: number, how: OpHow) => {
+        if (sen === 0) return;
+        lines.push({ id: `${row}:${m}:${r}`, row, month: m, cells: only(r, sen), src: 'figure', day: null, ref: null, accountCode: null, accountName: null, text: null, party: null, how });
+      };
+      figure('do_value', dv[r], { kind: 'dos', count: count[r] });
+      figure('do_income', Math.round((dv[r] * input.incomeBp) / 10_000), { kind: 'rate', baseSen: dv[r], bp: input.incomeBp });
+      figure('logistic_expense', -ti[r], { kind: 'transport', baseSen: dv[r] });
+      figure('logistics_net', lNet[r] - lFair[r], { kind: 'logistics', netSen: lNet[r], fairIncomeSen: lFair[r] });
+    }
+    for (const f of lg?.fairs ?? []) {
+      const sen = f.incomeSen - f.costSen;
+      if (sen === 0) continue;
+      lines.push({
+        id: `fair:${m}:${f.id}`, row: 'sd_net', month: m, cells: only(opRegionOf(f.region), sen), src: 'fair', day: null, ref: f.code,
+        accountCode: null, accountName: null, text: f.name, party: f.venue, how: { kind: 'fair', incomeSen: f.incomeSen, costSen: f.costSen },
+      });
+    }
+  }
+
+  /* Each month: its lines added up, then the results, region by region. */
+  const byMonth = new Map(months.map((m) => [m, emptyRows()] as const));
+  for (const l of lines) addInto(byMonth.get(l.month)![l.row], l.cells);
+  const perMonth: OperationMonth[] = months.map((m) => {
+    const rows = byMonth.get(m)!;
     for (const k of ROWS_OF('gross')) addInto(rows.gross, rows[k]);
     for (const k of ROWS_OF('expense')) addInto(rows.total_expense, rows[k]);
     addInto(rows.net, rows.gross);
     addInto(rows.net, rows.total_expense, -1);
-    const lNet = fold(lg?.net ?? {});
-    const lFair = fold(lg?.fairIncome ?? {});
-    rows.logistics_net = { PG: lNet.PG - lFair.PG, KL: lNet.KL - lFair.KL, EM: lNet.EM - lFair.EM };
-    for (const f of lg?.fairs ?? []) rows.sd_net[opRegionOf(f.region)] += f.incomeSen - f.costSen;
     for (const k of ['net', 'logistics_net', 'sd_net'] as const) addInto(rows.net_after, rows[k]);
-    return { month: m, rows, dos: fold(lg?.doCount ?? {}) };
+    return { month: m, rows, dos: fold(input.logistics.get(m)?.doCount ?? {}) };
   });
 
+  const order = new Map(operationRows(0).map((r, i) => [r.key, i] as const));
+  const regionRank = (l: OpLine) => OP_REGION_CODES.findIndex((r) => l.cells[r] !== 0);
+  lines.sort((a, b) => order.get(a.row)! - order.get(b.row)! || a.month.localeCompare(b.month) || (a.day ?? '').localeCompare(b.day ?? '')
+    || regionRank(a) - regionRank(b) || a.id.localeCompare(b.id));
   manpower.sort((a, b) => a.day.localeCompare(b.day) || a.lineId.localeCompare(b.lineId));
   spreads.sort((a, b) => a.day.localeCompare(b.day) || a.accountCode.localeCompare(b.accountCode));
   income.sort((a, b) => a.month.localeCompare(b.month) || a.billNo.localeCompare(b.billNo));
-  return { months, incomeBp: input.incomeBp, perMonth, income, manpower, spreads };
+  return { months, incomeBp: input.incomeBp, perMonth, lines, income, manpower, spreads };
 }
 
 /** A row's figure over months and regions — the screen's columns add the same way. */
@@ -358,13 +459,15 @@ export type GaPnl = {
   teams: Array<{ team: GaTeam; label: string; lines: Array<{ lineId: string; day: string; accountCode: string; notes: string | null; amountSen: number }> }>;
 };
 
-export function buildGaPnl(input: GaInput): GaPnl {
-  const months = [...input.months];
-  const inRange = new Set(months);
-  const byAccount = new Map<string, Record<string, number>>();
-  const byTeam = new Map<GaTeam, Record<string, number>>();
-  const teamLines = new Map<GaTeam, GaPnl['teams'][number]['lines']>();
-  const add = (into: Record<string, number>, month: string, sen: number) => { into[month] = (into[month] ?? 0) + sen; };
+/** One leg G&A counts, in its month: on its HQ team's row (a payroll line naming the
+    team — key team:<TEAM>) or on its account's (key = the account's code). */
+export type GaLine = { leg: Leg; month: string; key: string; team: GaTeam | null; sen: number };
+
+/** The legs G&A counts in the months: the HQ teams' payroll lines and every leg the plan
+    puts in G&A on its account (Houzs's showroom too). */
+export function gaLines(input: Pick<GaInput, 'months' | 'legs' | 'chart' | 'payroll' | 'plan'>): GaLine[] {
+  const inRange = new Set(input.months);
+  const out: GaLine[] = [];
   for (const l of input.legs) {
     const month = monthOf(l.day);
     if (!inRange.has(month)) continue;
@@ -372,11 +475,24 @@ export function buildGaPnl(input: GaInput): GaPnl {
     if (net === 0) continue;
     const home = lineHome(input.chart.get(l.accountCode), l.notes, { payroll: input.payroll.has(l.accountCode), recharge: false });
     if (resolveDept(home.dept, input.plan) !== 'ga') continue;
-    if (home.dept === 'ga' && home.team) {
-      add(byTeam.get(home.team) ?? (byTeam.set(home.team, {}), byTeam.get(home.team)!), month, net);
-      const ls = teamLines.get(home.team) ?? [];
+    const team = home.dept === 'ga' && home.team ? home.team : null;
+    out.push({ leg: l, month, key: team ? `team:${team}` : l.accountCode, team, sen: net });
+  }
+  return out;
+}
+
+export function buildGaPnl(input: GaInput): GaPnl {
+  const months = [...input.months];
+  const byAccount = new Map<string, Record<string, number>>();
+  const byTeam = new Map<GaTeam, Record<string, number>>();
+  const teamLines = new Map<GaTeam, GaPnl['teams'][number]['lines']>();
+  const add = (into: Record<string, number>, month: string, sen: number) => { into[month] = (into[month] ?? 0) + sen; };
+  for (const { leg: l, month, team, sen: net } of gaLines(input)) {
+    if (team) {
+      add(byTeam.get(team) ?? (byTeam.set(team, {}), byTeam.get(team)!), month, net);
+      const ls = teamLines.get(team) ?? [];
       ls.push({ lineId: l.lineId, day: l.day, accountCode: l.accountCode, notes: l.notes, amountSen: net });
-      teamLines.set(home.team, ls);
+      teamLines.set(team, ls);
     } else {
       add(byAccount.get(l.accountCode) ?? (byAccount.set(l.accountCode, {}), byAccount.get(l.accountCode)!), month, net);
     }

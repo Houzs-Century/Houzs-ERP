@@ -12,6 +12,9 @@
 //   GET /departments/operation?from=&to=   the Operation sheet month by month, by region
 //   GET /departments/dept?d=&from=&to=     one department's own P&L month by month
 //                                          (the Exhibition P&L, the Showroom P&L)
+//   GET /departments/lines?view=&keys=…    the lines behind one figure of All, G&A or
+//                                          a department's P&L (the Operation sheet
+//                                          sends its own with the report)
 //   PUT /departments/rate                  { dept: 'ga' | 'operation', pct } — G&A's
 //                                          share (8%) or Operation's income (7%)
 //
@@ -28,7 +31,7 @@ import { todayMyt } from '../lib/my-time';
 import { dateOrNull } from '../lib/date-coerce';
 import { countsInTheBooks } from '../../acc/reversal-pairs';
 import { layOutBlock, type LaidLine, type LaidNode, type LayoutItem } from '../../acc/report-layout';
-import { buildPnl, dbSources, type PnlReport } from './accounting-reports';
+import { buildPnl, dbSources, pnlStockLines, type PnlReport } from './accounting-reports';
 import { allowedIds, resolveLayout } from './accounting-report-layouts';
 import { PERFORMANCE_MONTHS_MAX, buildPerformanceMonths, perfDbSources } from './accounting-performance';
 import { loadLogisticsPnl } from './acc-logistics-pnl';
@@ -37,10 +40,10 @@ import { MAX_SPREAD, addMonths, monthsBetween, type Leg } from '../lib/logistics
 import {
   DEPARTMENT_LABEL, MANPOWER_LABEL, NONE_LABEL, OP_REGIONS, OP_ROW_LABEL, RECRUITMENT_LABEL, accountHome, isMixedAccount,
   parsePlan, payrollAccounts,
-  type DepartmentPlan, type DeptAccount, type DeptKey, type ManpowerRow, type OpRow,
+  type DepartmentPlan, type DeptAccount, type DeptKey, type GaTeam, type ManpowerRow, type OpRow,
 } from '../lib/department-rows';
 import {
-  PNL_BLOCKS, buildDeptView, buildGaPnl, buildOperationPnl, operationRows, splitPnlLines,
+  PNL_BLOCKS, buildDeptView, buildGaPnl, buildOperationPnl, gaLines, operationRows, splitPnlLineParts, splitPnlLines,
   type DeptMonthSplit, type LogisticsMonthIn, type PnlBlock, type SplitLeg,
 } from '../lib/department-pnl';
 
@@ -208,6 +211,10 @@ export const departmentsAllHandler = async (c: any): Promise<Response> => {
   });
 };
 
+/** Every expense account's code: the accounts G&A's legs are read on (the showroom's that fold into it too). */
+const expenseCodesOf = (chart: readonly DeptAccount[]): string[] =>
+  [...new Set(chart.filter((a) => String(a.section ?? '').toUpperCase() === 'EXPENSES').map((a) => a.account_code))];
+
 /* ── GET /departments/ga ──────────────────────────────────────────────────── */
 export const departmentsGaHandler = async (c: any): Promise<Response> => {
   if (!canRead(c)) return c.json(NO_PERM, 403);
@@ -227,8 +234,7 @@ export const departmentsGaHandler = async (c: any): Promise<Response> => {
   if (!laid.ok) return fail(c, 'P&L layout', laid.reason);
   if (!perf.ok) return fail(c, 'Performance P&L', perf.reason);
   /* Every expense account: what folds into G&A (Houzs's showroom) is G&A's too. */
-  const expenseCodes = setup.chart.filter((a) => String(a.section ?? '').toUpperCase() === 'EXPENSES').map((a) => a.account_code);
-  const legsRes = await readLegs(sb, companyId, [...new Set(expenseCodes)], r.from, r.to);
+  const legsRes = await readLegs(sb, companyId, expenseCodesOf(setup.chart), r.from, r.to);
   if (!legsRes.ok) return fail(c, 'ledger', legsRes.reason);
 
   const g = buildGaPnl({
@@ -321,7 +327,7 @@ export const departmentsOperationHandler = async (c: any): Promise<Response> => 
     transportIncome: sen(m.rows, 'do_income'),
     fairIncome: sen(m.rows, 'fair_income'),
     net: sen(m.rows, 'net'),
-    fairs: m.fairs.map((f) => ({ region: f.region, incomeSen: f.incomeSen, costSen: f.chargeSen + f.dismantleSen + f.transportSen })),
+    fairs: m.fairs.map((f) => ({ id: f.id, code: f.code, name: f.name, venue: f.venue, region: f.region, incomeSen: f.incomeSen, costSen: f.chargeSen + f.dismantleSen + f.transportSen })),
   }] as const));
 
   const p = buildOperationPnl({
@@ -343,6 +349,146 @@ export const departmentsOperationHandler = async (c: any): Promise<Response> => 
     logisticsIncomeBp: lg.body.doIncomeBp,
     logisticsProblem: lg.body.fairsProblem ?? lg.body.tripsProblem ?? null,
   });
+};
+
+/* ── GET /departments/lines ───────────────────────────────────────────────── */
+
+/** The most accounts one read names (a block's every account). */
+export const LINES_KEYS_MAX = 2000;
+
+/** One line behind a figure: a ledger line, or the stock engine's opening or closing
+    stock (the P&L's own, not a journal line). `sen` in the figure's sign. */
+export type DeptEntry = {
+  id: string; month: string; day: string | null;
+  accountCode: string; accountName: string | null;
+  ref: string | null; text: string | null;
+  /** The department it counts in; on G&A, the HQ team its words name. */
+  dept: DeptKey; team: GaTeam | null;
+  sen: number;
+  source: 'ledger' | 'stock_opening' | 'stock_closing' | 'rest';
+};
+const linesBody = (lines: DeptEntry[]) => {
+  lines.sort((a, b) => (a.day ?? '').localeCompare(b.day ?? '') || a.accountCode.localeCompare(b.accountCode) || a.id.localeCompare(b.id));
+  return { lines, totalSen: lines.reduce((x, l) => x + l.sen, 0) };
+};
+
+/**
+ * GET /departments/lines?view=all|dept|ga&from=&to=&keys=…[&block=][&dept=][&d=]
+ * The lines behind one figure of All departments, a department's own P&L or G&A —
+ * read and split by the rules that made the figure, so they add up to it:
+ *   view=all   `block`; the column's department (`dept`: a department of the
+ *              company or none; absent = the P&L's Total); the range, read as one;
+ *   view=dept  `block`; the department `d`; the column's months, each month read
+ *              as the view reads it (its own opening and closing stock);
+ *   view=ga    the column's months; a key is an account's code or team:<TEAM>.
+ * `keys`: the accounts under the figure's row (one account, a category's, a block's).
+ */
+export const departmentLinesHandler = async (c: any): Promise<Response> => {
+  if (!canRead(c)) return c.json(NO_PERM, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const r = rangeOf(c);
+  if (!r.ok) return r.res;
+  const view = String(c.req.query('view') ?? '');
+  if (view !== 'all' && view !== 'dept' && view !== 'ga') return c.json({ error: 'bad_view', message: 'view is all, dept or ga.' }, 400);
+  const keys = [...new Set(String(c.req.query('keys') ?? '').split(',').map((k) => k.trim()).filter(Boolean))];
+  if (keys.length === 0 || keys.length > LINES_KEYS_MAX) return c.json({ error: 'bad_keys', message: `Name from 1 to ${LINES_KEYS_MAX} accounts.` }, 400);
+  const sb = c.get('supabase');
+  const companyId = co.companyId;
+  const setup = await loadSetup(sb, companyId);
+  if (!setup.ok) return fail(c, setup.what, setup.reason);
+  const { byCode, payroll, mixed } = chartOf(setup.chart);
+  const nameOf = (code: string): string | null => byCode.get(code)?.account_name ?? null;
+
+  if (view === 'ga') {
+    /* G&A's own read: the expense accounts asked — every payroll account for a team. */
+    const asked = new Set(keys);
+    const expense = new Set(expenseCodesOf(setup.chart));
+    const codes = [...new Set([...keys.filter((k) => !k.startsWith('team:')), ...(keys.some((k) => k.startsWith('team:')) ? payroll : [])])].filter((k) => expense.has(k));
+    const legs = await readLegs(sb, companyId, codes, r.from, r.to);
+    if (!legs.ok) return fail(c, 'ledger', legs.reason);
+    const lines = gaLines({ months: r.months, legs: legs.legs, chart: byCode, payroll, plan: setup.plan })
+      .filter((g) => asked.has(g.key))
+      .map((g): DeptEntry => ({
+        id: g.leg.lineId, month: g.month, day: g.leg.day, accountCode: g.leg.accountCode, accountName: g.leg.accountName ?? nameOf(g.leg.accountCode),
+        ref: g.leg.docNo, text: g.leg.notes, dept: 'ga', team: g.team, sen: g.sen, source: 'ledger',
+      }));
+    return c.json(linesBody(lines));
+  }
+
+  const blockArg = String(c.req.query('block') ?? '');
+  const blockDef = PNL_BLOCKS.find((b) => b.block === blockArg);
+  if (!blockDef) return c.json({ error: 'bad_block', message: `block is one of ${PNL_BLOCKS.map((b) => b.block).join(', ')}.` }, 400);
+  const block = blockDef.block;
+  let want: DeptKey | null = null;
+  if (view === 'dept') {
+    const d = String(c.req.query('d') ?? '');
+    const dept = setup.plan.departments.find((x) => x === d);
+    if (!dept) return c.json({ error: 'bad_department', message: `${d || '(none)'} is not one of this company's departments.` }, 400);
+    want = dept;
+  } else {
+    const d = String(c.req.query('dept') ?? '');
+    if (d !== '') {
+      const k = ([...setup.plan.departments, 'none'] as DeptKey[]).find((x) => x === d);
+      if (!k) return c.json({ error: 'bad_department', message: `${d} is not one of this company's departments.` }, 400);
+      want = k;
+    }
+  }
+
+  /* All reads the range as one P&L; a department's view reads each month as its own. */
+  const periods = view === 'all' ? [{ from: r.from, to: r.to }] : r.months.map((m) => ({ from: `${m}-01`, to: monthEnd(`${m}-01`) }));
+  /* Cost of sales carries the stock engine's lines where the ledger's own stock lines were. */
+  const stock: Array<Awaited<ReturnType<typeof pnlStockLines>> & { ok: true }> = [];
+  if (block === 'costOfSales') {
+    const src = dbSources(sb, companyId, allowedIds(c));
+    for (const p of periods) {
+      const s = await pnlStockLines(src, p.from, p.to);
+      if (!s.ok) return fail(c, 'stock', s.reason);
+      stock.push(s);
+    }
+  }
+  const stockCodes = new Set(stock.flatMap((s) => [...s.codes]));
+  const legsRes = await readLegs(sb, companyId, keys.filter((k) => !stockCodes.has(k)), r.from, r.to);
+  if (!legsRes.ok) return fail(c, 'ledger', legsRes.reason);
+
+  const lines: DeptEntry[] = [];
+  periods.forEach((p, i) => {
+    const legsOf = new Map<string, typeof legsRes.legs>();
+    for (const l of legsRes.legs) if (l.day >= p.from && l.day <= p.to) legsOf.set(l.accountCode, [...(legsOf.get(l.accountCode) ?? []), l]);
+    for (const code of keys) {
+      const engine = stockCodes.has(code) ? (stock[i]?.lines ?? []).filter((x) => x.code === code) : null;
+      const legs = engine ? undefined : legsOf.get(code) ?? [];
+      /* The P&L's figure for the account: the stock engine's, else its legs as the block reads them. */
+      const amountSen = engine ? engine.reduce((x, l) => x + l.amountSen, 0) : legs!.reduce((x, l) => x + blockDef.sign * (l.debitSen - l.creditSen), 0);
+      if (amountSen === 0) continue;
+      const parts = splitPnlLineParts({ block, code, amountSen, chart: byCode, payroll, mixed, legs, plan: setup.plan, itemize: true });
+      for (const part of parts) {
+        if (want != null && part.dept !== want) continue;
+        if (part.leg) {
+          lines.push({
+            id: part.leg.lineId, month: part.leg.day.slice(0, 7), day: part.leg.day, accountCode: code, accountName: part.leg.accountName ?? nameOf(code),
+            ref: part.leg.docNo, text: part.leg.notes, dept: part.dept, team: null, sen: part.sen, source: 'ledger',
+          });
+        } else if (engine) {
+          for (const e of engine) {
+            const opening = e.stock === 'opening';
+            lines.push({
+              id: `stock:${p.from}:${code}:${e.stock}`, month: (opening ? p.from : p.to).slice(0, 7), day: opening ? p.from : p.to,
+              accountCode: code, accountName: e.name, ref: null,
+              text: opening ? 'Opening stock (the stock engine)' : `Closing stock (the stock engine)${stock[i]!.closingProvisional ? ' — provisional until the month is closed' : ''}`,
+              dept: part.dept, team: null, sen: e.amountSen, source: opening ? 'stock_opening' : 'stock_closing',
+            });
+          }
+        } else {
+          lines.push({
+            id: `rest:${p.from}:${code}`, month: p.to.slice(0, 7), day: null, accountCode: code, accountName: nameOf(code), ref: null,
+            text: 'Not on a ledger line', dept: part.dept, team: null, sen: part.sen, source: 'rest',
+          });
+        }
+      }
+    }
+  });
+  return c.json(linesBody(lines));
 };
 
 /* ── PUT /departments/rate ────────────────────────────────────────────────── */
