@@ -218,7 +218,7 @@ export function EventPnlTable({ pnl, editable, busyCategory, books, rentalNote, 
     if (!batch || !layers || !onForecast) return;
     const changes: Array<[ForecastLine, number | null]> = [];
     for (const [k, text] of Object.entries(batch) as Array<[ForecastLine, string]>) {
-      const parsed = parseForecastInput(text ?? "");
+      const parsed = parseForecastInput(text);
       if (!parsed.ok) { setBatchErr(`${FORECAST_LINE_LABELS[k]}: ${parsed.error}`); return; }
       if (parsed.amount !== layers.lines[k].forecast) changes.push([k, parsed.amount]);
     }
