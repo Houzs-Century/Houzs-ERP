@@ -64,6 +64,7 @@ import { attendance } from "./routes/attendance";
 import { runAutoClockOut } from "./routes/lib/hr-labor-store";
 import { posDevice } from "./routes/pos-device";
 import projectsOutstanding from "./routes/projectsOutstanding";
+import projectsDefectList from "./routes/projectsDefectList";
 import projectsCalendarSearch from "./routes/projectsCalendarSearch";
 import { projectDataGaps } from "./routes/projectDataGaps";
 import { projectOverview } from "./routes/projectOverview";
@@ -559,6 +560,9 @@ app.route("/api/presence", presence);
 app.route("/api/projects/outstanding-tasks", projectsOutstanding);
 // All-dates calendar search (Previous / Next match). Same exact-path-first reason.
 app.route("/api/projects/calendar/search", projectsCalendarSearch);
+// Cross-project open-defect feed (service team's Defect List). Same exact-path-
+// first reason; gated projects.list inside. See routes/projectsDefectList.ts.
+app.route("/api/projects/defect-list", projectsDefectList);
 // Finished events with incomplete books (Project Overview, Overview). Same exact-
 // path-first reason as above; finance-viewer rule inside. See routes/projectDataGaps.ts.
 app.use("/api/projects/data-gaps/*", requirePageAccess("projects.finances"));

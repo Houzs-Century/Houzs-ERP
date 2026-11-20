@@ -96,6 +96,8 @@ import { api, buildQuery } from "../api/client";
 import { useChecklistPaymentRequests, type PaymentRequest } from "../vendor/scm/lib/payment-request-queries";
 import { PAYMENT_REQUEST_PERMS, RequestPaymentButton, RowRequests, isPayableSectionName, requestsByRow } from "./projects/PmsRequestPayment";
 import OutstandingReminders from "./projects/OutstandingReminders";
+import { DefectListView } from "./projects/DefectListView";
+import { canPurchaseDefect, canReviewDefect, defectActionLabel } from "./projects/defectReviewer";
 import { formatPhone } from "../vendor/shared/phone";
 import { MediaLightbox } from "../components/MediaLightbox";
 import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
@@ -393,11 +395,12 @@ const stageVariant = pmsStageVariant;
 
 // ── Main page ────────────────────────────────────────────────
 
-type ProjectsView = "hub" | "list" | "calendar" | "finances" | "maintenance";
+type ProjectsView = "hub" | "list" | "calendar" | "defects" | "finances" | "maintenance";
 
 const PROJECTS_VIEWS: ProjectsView[] = [
   "list",
   "calendar",
+  "defects",
   "finances",
   "maintenance",
 ];
@@ -429,6 +432,10 @@ export function Projects() {
   const access = {
     list: usePageAccess("projects.list"),
     calendar: usePageAccess("projects.calendar"),
+    // Defect List rides the project-list access: the same cohort that sees the
+    // project list sees the cross-project defect feed (only Calendar-only users
+    // are deliberately out). The action buttons on it carry their own gate.
+    defects: usePageAccess("projects.list"),
     finances: usePageAccess("projects.finances"),
     maintenance: usePageAccess("projects.maintenance"),
   };
@@ -495,6 +502,7 @@ export function Projects() {
       [
         { key: "list", label: "Project List", description: "All projects — status, brand, dates, PIC, budget.", icon: ClipboardList, v: "list" },
         { key: "calendar", label: "Calendar", description: "Projects & tasks on a month timeline.", icon: Calendar, v: "calendar" },
+        { key: "defects", label: "Defect List", description: "Open defect photos across every project.", icon: AlertTriangle, v: "defects" },
         { key: "finances", label: "Project Overview", description: "Sales, COGS, GP and NP across projects.", icon: DollarSign, v: "finances" },
         { key: "maintenance", label: "Project Maintenance", description: "Templates, checklists and defaults.", icon: Wrench, v: "maintenance" },
       ] as const
@@ -528,6 +536,7 @@ export function Projects() {
     <div>
       {view === "list" && <ProjectsListView />}
       {view === "calendar" && <ProjectsCalendarView />}
+      {view === "defects" && <DefectListView />}
       {view === "finances" &&
         (canProjectFinance ? (
           <ProjectsFinancesView />
@@ -1904,21 +1913,8 @@ function ProjectDetailContent({
       //    always. Triages a fresh defect: Done (cleaned) or Replace (escalate).
       //  - canPurchase = purchaser (Sim / Farra) / BD or admin — closes an
       //    escalated (Replace) defect with Done once the replacement is ordered.
-      canReview: (() => {
-        if (!user) return false;
-        const perms = user.permissions ?? [];
-        if (perms.includes("*") || perms.includes("projects.manage")) return true;
-        const region = new Set(["pulau pinang", "kelantan", "terengganu", "perak"]);
-        const inRegion = region.has(((detail.data as any)?.project?.state ?? "").trim().toLowerCase());
-        const isShukor = /^storekeeper supervisor$/i.test((user.position_name ?? "").trim());
-        const isNancy = /^ops exec$/i.test((user.role_name ?? "").trim());
-        return (isShukor && !inRegion) || (isNancy && inRegion);
-      })(),
-      canPurchase:
-        !!user &&
-        (user.permissions?.includes("*") ||
-          user.permissions?.includes("projects.manage") ||
-          /purchaser|bd/i.test(user.role_name ?? "")),
+      canReview: canReviewDefect(user, (detail.data as any)?.project?.state ?? null),
+      canPurchase: canPurchaseDefect(user),
       reload: () => detail.reload(),
     }),
     [detail, detail.data, user],
@@ -3383,7 +3379,7 @@ function TaskAttachmentRow({
                       : "border-rose-300 dark:border-rose-800 bg-surface text-rose-600 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-950/40",
                   )}
                 >
-                  Replace
+                  Exchange
                 </button>
               </div>
             )}
@@ -3458,11 +3454,7 @@ function TaskAttachmentRow({
                               : "bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300",
                         )}
                       >
-                        {a.status === "done"
-                          ? "Done"
-                          : a.status === "replace"
-                            ? "Replace"
-                            : "Ongoing"}
+                        {defectActionLabel(a.status)}
                       </span>
                       <span className="text-ink-muted">
                         {a.user_name || "—"} · {formatDateTime(a.created_at)}
