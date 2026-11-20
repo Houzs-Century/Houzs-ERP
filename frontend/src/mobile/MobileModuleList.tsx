@@ -884,12 +884,7 @@ export const FORM_SUPPLIERS: FormSchema = {
   idKey: "id",
   responseIdKeys: ["id"],
   fields: [
-    /* Owner 2026-11-20: a blank code is numbered by the server — 400 or 405,
-       the name's first letter, the next number. Finance picks the kind; a
-       purchaser opens suppliers of goods (400). */
-    { key: "codeKind", label: "Type", type: "select", options: [
-      { value: "400", label: "Supplier of goods (400)" }, { value: "405", label: "Other creditor (405)" },
-    ], placeholder: "Supplier of goods (400)" },
+    { key: "codeKind", label: "Type", type: "select", options: [{ value: "400", label: "Supplier of goods (400)" }, { value: "405", label: "Other creditor (405)" }], placeholder: "Supplier of goods (400)" }, // owner 2026-11-20: Finance picks; a blank code is numbered by the server
     { key: "code", label: "Code", type: "text", placeholder: "Leave blank to number it from the name", hint: "Blank: 400- or 405-, the name's first letter, the next number." },
     { key: "name", label: "Name", type: "text", required: true, placeholder: "Company name" },
     { key: "contactPerson", label: "Contact Person", type: "text" },
