@@ -195,3 +195,15 @@ describe("EventPnlTable - every Forecast at once, one Save (owner 2026-11-20)", 
     await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/Not saved - Commission: forbidden/));
   });
 });
+
+describe("EventPnlTable - a saved Forecast shows at once (owner 2026-11-20)", () => {
+  it("the label shows the new Forecast before the page has re-read the project", async () => {
+    const onForecast = vi.fn().mockResolvedValue(undefined);
+    render(<EventPnlTable pnl={FUTURE} editable={() => undefined} busyCategory={null} books={new Set()} layers={LAYERS} onForecast={onForecast} />);
+    const row = screen.getByText("Setup").closest("tr") as HTMLTableRowElement;
+    fireEvent.click(within(row).getByRole("button", { name: /Forecast/ }));
+    fireEvent.change(within(row).getByLabelText("Forecast amount"), { target: { value: "4321" } });
+    fireEvent.click(within(row).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(within(row).getByRole("button", { name: /Forecast RM 4,321/ })).toBeTruthy());
+  });
+});

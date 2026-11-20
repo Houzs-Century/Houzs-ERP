@@ -15,7 +15,7 @@
 // they include an estimate. A line's label opens its Forecast to set or clear.
 // ----------------------------------------------------------------------------
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { cn, formatCurrency } from "../../lib/utils";
 import type { EventPnl, PnlColumn, PnlPctRow } from "./types";
 import { ESTIMATE_NOTE, FORECAST_LINE_LABELS, parseForecastInput, sourceTag, type DetailForecast, type ForecastLine, type LineSource } from "./forecastLayers";
@@ -202,6 +202,19 @@ export function EventPnlTable({ pnl, editable, busyCategory, books, rentalNote, 
   /* Every Forecast at once, one Save (owner 2026-11-20: 不能放完figure了 全部一次save？).
      null = not editing; else the draft per line, prefilled with today's Forecast. */
   const [batch, setBatch] = useState<Partial<Record<ForecastLine, string>> | null>(null);
+  /* A saved Forecast shows at once (owner 2026-11-20: 每次输入 forecast 很慢): the page's
+     re-read of the project takes a second or two, so the figure just saved is held
+     here until the fresh layers arrive, then dropped. */
+  const [justSaved, setJustSaved] = useState<Partial<Record<ForecastLine, number | null>>>({});
+  useEffect(() => { setJustSaved({}); }, [layers]);
+  const saveForecast = onForecast
+    ? async (line: ForecastLine, amount: number | null) => {
+        await onForecast(line, amount);
+        setJustSaved((m) => ({ ...m, [line]: amount }));
+      }
+    : null;
+  const forecastOf = (line: ForecastLine): number | null =>
+    line in justSaved ? (justSaved[line] ?? null) : (layers?.lines[line].forecast ?? null);
   const [batchBusy, setBatchBusy] = useState(false);
   const [batchErr, setBatchErr] = useState<string | null>(null);
   const canBatch = !!layers && !!onForecast;
@@ -226,7 +239,7 @@ export function EventPnlTable({ pnl, editable, busyCategory, books, rentalNote, 
     setBatchErr(null);
     const failed: string[] = [];
     for (const [k, amount] of changes) {
-      try { await onForecast(k, amount); } catch (e) {
+      try { await (saveForecast ?? onForecast)(k, amount); } catch (e) {
         failed.push(`${FORECAST_LINE_LABELS[k]}: ${e instanceof Error ? e.message : "not saved"}`);
       }
     }
@@ -241,7 +254,8 @@ export function EventPnlTable({ pnl, editable, busyCategory, books, rentalNote, 
     const actualA = pick(a);
     const layered = layers && opts.line ? layers.lines[opts.line] : null;
     const total = layers && opts.total ? layers.totals[opts.total] : null;
-    const va = layered ? layered.amount : total ? total.amount : actualA;
+    const held = opts.line && layered && layered.source !== "actual" && opts.line in justSaved ? justSaved[opts.line] : undefined;
+    const va = held != null ? held : layered ? layered.amount : total ? total.amount : actualA;
     const noteA = total?.estimated ? [opts.noteA, ESTIMATE_NOTE].filter(Boolean).join(" · ") : layered && layered.source !== "actual" ? undefined : opts.noteA;
     const vb = b ? pick(b) : null;
     return (
@@ -263,7 +277,7 @@ export function EventPnlTable({ pnl, editable, busyCategory, books, rentalNote, 
             </div>
           )}
           {layers && opts.line && onForecast && !batch && (
-            <ForecastEditor line={opts.line} current={layers.lines[opts.line].forecast} onForecast={onForecast} />
+            <ForecastEditor line={opts.line} current={forecastOf(opts.line)} onForecast={saveForecast ?? onForecast} />
           )}
         </th>
         <Cell value={va} note={noteA} bold={opts.sub} tone={opts.tone?.(va)}
