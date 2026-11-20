@@ -135,12 +135,17 @@ function tsDate_(v) {
   return s.slice(0, 10).replace(/-/g, "/");
 }
 
-/** target header (normalised) -> 0-based column index (first wins). */
+/** target header (normalised) -> 0-based column index (first wins). A header is
+ *  ALSO indexed with a trailing "(...)" annotation stripped, so a column titled
+ *  "ETD Port Klang (YYYY/MM/DD)" is matched by "etd port klang" too. */
 function tsTargetColumns_(headers) {
   var tCol = {};
   headers.forEach(function (h, i) {
     var k = tsNormHeader_(h);
-    if (k && tCol[k] === undefined) tCol[k] = i;
+    if (!k) return;
+    if (tCol[k] === undefined) tCol[k] = i;
+    var base = k.replace(/\s*\([^)]*\)\s*$/, "").trim(); // drop a trailing (…) note
+    if (base && tCol[base] === undefined) tCol[base] = i;
   });
   return tCol;
 }
