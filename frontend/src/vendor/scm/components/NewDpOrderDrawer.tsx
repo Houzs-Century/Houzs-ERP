@@ -72,6 +72,9 @@ function sourceMeta(jobType: DpOrderCreate['jobType']): { label: string; hint: s
     case 'SERVICE': return { label: 'Service case', hint: 'service case id — customer auto-fills', kind: 'assr' };
     case 'LORRY_SERVICE': return { label: 'Workshop', hint: 'workshop id — name, contact + address auto-fill from the workshop master', kind: 'workshop' };
     case 'TRANSFER': return { label: 'Stock transfer', hint: 'transfer id — the destination warehouse auto-fills from the document', kind: 'transfer' };
+    /* Create-mode DELIVERY is "Delivery (no SO)": no document to pick - an SO-backed
+       delivery is scheduled from "Delivery order" instead (a so_doc_no here would hide it). */
+    case 'DELIVERY': return { label: 'Customer', hint: '', kind: 'none' };
     default: return { label: 'Sales order', hint: 'SO No. — customer auto-fills (optional)', kind: 'so' };
   }
 }
@@ -586,6 +589,7 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
       else if (src.kind === 'workshop') body.workshopId = ref;
       else if (src.kind === 'transfer') body.stockTransferId = ref;
       else if (src.kind === 'so') body.soDocNo = ref;
+      /* kind 'none' (Delivery (no SO)) sends no document ref at all. */
     }
     /* The destination rides alongside the transfer document, not instead of it:
        an ad-hoc move has a destination and no document, and a document-backed one
@@ -788,6 +792,11 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
           ) : (
           <>
 
+          {src.kind === 'none' ? (
+            <div style={{ ...fieldRow, fontSize: 'var(--fs-12)', color: 'var(--c-muted, var(--hz-c-ink-muted))' }}>
+              A delivery with no sales order: type the customer, address and postcode below, and what is going in Remark. It goes on the board, Last Mile and Trip Pay; no stock moves and no DO is made.
+            </div>
+          ) : (
           <label style={fieldRow}>
             <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>{src.label} <span style={{ textTransform: 'none', color: 'var(--c-muted, var(--hz-c-ink-muted))' }}>— optional</span></div>
             {sourceControl === 'supplier-picker' ? (
@@ -837,6 +846,7 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
               </div>
             )}
           </label>
+          )}
 
           {/* The lorry being serviced. LORRY_SERVICE only, and the one field on
               this drawer that is genuinely REQUIRED: without it the job knows
