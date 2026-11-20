@@ -551,6 +551,20 @@ export function sheetRegion(
   return null;
 }
 
+/** East / West / SG from a RAW sales_location, mapping the book spelling to its
+ *  code FIRST — the two steps toSheetRecord does (bookSpellingOrOwn → sheetRegion).
+ *  sheetRegion alone only matches the codes KL/PG/HQ/SBH/SRW, so a raw warehouse
+ *  name like "SBH WAREHOUSE" reads as null and an East order looks West/unknown.
+ *  Any caller outside the feed (the EM delivery-message gate) must use THIS, not
+ *  sheetRegion, or every "X WAREHOUSE" East order is misread. */
+export function salesLocationRegion(
+  salesLocation: string | null,
+  addr3: string | null,
+  country: string | null = null,
+): DeliverySheetRecord["Region"] {
+  return sheetRegion(bookSpellingOrOwn(salesLocation, LOCATION_MAP), addr3, country);
+}
+
 /** The state column (InvAddr4) in the SHEET's vocabulary. AutoCount-era rows
  *  carry the typed "Penang" while the ERP stores "Pulau Pinang" (mig 0175), and
  *  the dispatch team filters on "Penang" — so a native order dropped out of
