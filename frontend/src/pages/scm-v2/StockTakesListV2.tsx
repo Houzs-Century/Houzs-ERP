@@ -35,7 +35,7 @@ import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
 import { withStatusLabels } from "../../vendor/scm/lib/status-pill";
 import { stockTakeRowMenu } from "./row-menus";
 
-type StatusTab = "all" | "open" | "posted" | "cancelled";
+type StatusTab = "all" | "open" | "pending" | "posted" | "cancelled";
 
 /* Code first, then name — the one warehouse rule (vendor/scm/lib/warehouse-label.ts). */
 const warehouseOf = (r: StockTakeRow): string =>
@@ -49,9 +49,12 @@ const STATUS_OWN: Record<
   string,
   { tone: "success" | "warning" | "error" | "neutral"; bucket: StatusTab }
 > = {
-  OPEN:      { tone: "warning", bucket: "open" },
-  POSTED:    { tone: "success", bucket: "posted" },
-  CANCELLED: { tone: "error",   bucket: "cancelled" },
+  OPEN:             { tone: "neutral", bucket: "open" },
+  /* Owner 2026-11-20: over-limit counts waiting on a supervisor — their own tab
+     so a supervisor sees at a glance what needs signing off. */
+  PENDING_APPROVAL: { tone: "warning", bucket: "pending" },
+  POSTED:           { tone: "success", bucket: "posted" },
+  CANCELLED:        { tone: "error",   bucket: "cancelled" },
 };
 const STATUS_TONE = withStatusLabels("stockTake", STATUS_OWN);
 
@@ -174,10 +177,11 @@ export function StockTakesListV2() {
   }, [scopedByBucket, search]);
 
   const counts = useMemo(() => {
-    const acc = { all: allRows.length, open: 0, posted: 0, cancelled: 0 };
+    const acc = { all: allRows.length, open: 0, pending: 0, posted: 0, cancelled: 0 };
     for (const r of allRows) {
       const b = statusFor(r.status).bucket;
       if (b === "open") acc.open += 1;
+      else if (b === "pending") acc.pending += 1;
       else if (b === "posted") acc.posted += 1;
       else if (b === "cancelled") acc.cancelled += 1;
     }
@@ -341,6 +345,9 @@ export function StockTakesListV2() {
   const statusPillOptions: Array<{ value: StatusTab; label: string }> = [
     { value: "all", label: `All · ${counts.all}` },
     { value: "open", label: `Open · ${counts.open}` },
+    /* Pending-approval chip appears only once there is something waiting, so the
+       filter bar stays short on the common day where nothing is over the limit. */
+    ...(counts.pending > 0 ? [{ value: "pending" as StatusTab, label: `Pending · ${counts.pending}` }] : []),
     { value: "posted", label: `Confirmed · ${counts.posted}` },
     { value: "cancelled", label: `Cancelled · ${counts.cancelled}` },
   ];

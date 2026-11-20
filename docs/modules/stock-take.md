@@ -1,10 +1,12 @@
 # Stock Take
 
-The cycle-count document — `scm.stock_takes` + `scm.stock_take_lines`. OPEN (counting) -> POSTED (variance booked as signed ADJUSTMENT inventory movements) -> CANCELLED. Desktop-only for counting; mobile has a read-only list.
+The cycle-count document — `scm.stock_takes` + `scm.stock_take_lines`. OPEN (counting) -> POSTED (variance booked as signed ADJUSTMENT inventory movements) -> CANCELLED, with an optional PENDING_APPROVAL step for an over-limit count. Desktop-only for counting; mobile has a read-only list.
 
 ## Statuses and flow
 
 - OPEN -> POSTED (post books one ADJUSTMENT movement per non-zero-variance line) or OPEN -> CANCELLED (cancel, no movement to reverse). Undoing a POSTED take is a separate action, `/reverse`, not something a list row offers.
+- Approval lane (owner 2026-11-20): a non-supervisor's post whose variance breaches the threshold (below) does NOT refuse — it SUBMITS: OPEN -> PENDING_APPROVAL (`/post` returns `{ pendingApproval: true, itemCodes }`, nothing moved, `submitted_at`/`submitted_by` stamped). A supervisor then `/approve` (PENDING_APPROVAL -> POSTED, books the movements, attributed to the supervisor) or `/reject` (-> OPEN, clears the submit marks, for a recount). A supervisor's own post still books straight through; a within-limit count by anyone books immediately. status is plain text — `PENDING_APPROVAL` is an additive value, no enum/constraint change (mig 20261120T1400 adds only the two submit columns).
+- A POSTED take's detail carries `adjustments` — the ADJUSTMENT movements it booked (item, signed qty, unit cost), each a deep-link to the SKU's stock card; the stock card links back to the take (closed loop). Only POSTED; an OPEN/PENDING take booked nothing and a reversed take nets to zero.
 - The right-click menu offers only Open, Print and Cancel (OPEN-only) — no Edit (counting happens in place on the detail sheet, there is no edit route) and no Confirm/Post (posting needs the detail page's full variance summary in front of the operator before they commit).
 - "Only SKUs with stock" (`nonzeroOnly`, stored as `nonzero_only`; on by default in the New form) snapshots only buckets whose system quantity is nonzero, and combines with ALL / CATEGORY / CODE_PREFIX. The old `scopeType: 'NONZERO'` still means the same for existing takes.
 - A take names one or more ASSIGNEES (`assignee_staff_ids`; `assignee_staff_id` = the first, for single-column readers). They are a RECORD of who counted (owner 2026-10-06) and are editable with the notes while OPEN (`PATCH /:id`); warehouse / scope / date are not.
@@ -22,12 +24,12 @@ The cycle-count document — `scm.stock_takes` + `scm.stock_take_lines`. OPEN (c
 
 - `scmAreaGuard("scm.warehouse.stock_take")` on the whole router.
 - Any area-access caller may post (owner 2026-10-06: the assignees are a record, not a gate).
-- A variance breach without `scm.stock_take.supervise` refuses the post (see Rules) — normal wildcard semantics, Owner/IT Admin pass via `*`.
+- A variance breach without `scm.stock_take.supervise` SUBMITS for approval rather than booking (see Rules). `/approve` and `/reject` require `scm.stock_take.supervise` (403 `supervisor_required`); normal wildcard semantics, Owner/IT Admin pass via `*`.
 - Blind-count stripping (below) applies to every caller without `scm.stock_take.supervise`, including the assignee themselves.
 
 ## Rules that must not break
 
-- A variance breach (|counted − live| over the qty limit, default 5, OR the value limit, default RM500 when cost is known) posted by a non-supervisor is refused (403 `variance_supervisor_required`, naming the SKUs) and the POSTED flip is fully reverted — nothing is written, the take stays OPEN.
+- A variance breach (|counted − live| over the qty limit, default 5, OR the value limit, default RM500 when cost is known) by a non-supervisor does NOT book: the take goes OPEN -> PENDING_APPROVAL (`/post` returns `{ pendingApproval: true, itemCodes }`, naming the SKUs), nothing is written, and it stays editable only after a supervisor `/reject`s it back to OPEN. The breach is decided BEFORE the flip (read-only compute), so no status is written then reverted. `/approve` books it (PENDING_APPROVAL -> POSTED) without re-checking the threshold — approving IS the override. A supervisor's own `/post` still books straight through.
 - A positive variance must resolve a real unit cost before posting, or the post is refused (422 `cost_required`) rather than booking an uncosted lot at RM0.
 - `counted_by`/`counted_at` are stamped from the caller's REAL `scm.staff` uuid on every cell whose count changes; clearing a count clears its attribution.
 - Every ADJUSTMENT movement (post, reverse, and manual `/inventory/adjustments`) stamps `performed_by` with the caller's real staff uuid — never `c.get('user').id` inside `/api/scm/*` (the pinned system row), except the documented fallback in `stock-takes.ts` for when the staff bridge resolves nobody, which exists only to keep the FK satisfied.
@@ -48,7 +50,7 @@ The cycle-count document — `scm.stock_takes` + `scm.stock_take_lines`. OPEN (c
 
 ## Where the code is
 
-- `backend/src/scm/routes/stock-takes.ts` — main API surface.
+- `backend/src/scm/routes/stock-takes.ts` — main API surface (post / approve / reject share `computeStockTakePosting` + `writePostingEffects`; `20261120T1400_scm_stock_take_approval.sql` adds `submitted_at`/`submitted_by`).
 - `backend/src/scm/shared/stock-take-threshold.ts` — the variance-breach pure fold.
 - `frontend/src/pages/scm-v2/StockTakesListV2.tsx`, `StockTakeNew.tsx`, `StockTakeDetail.tsx` — desktop surfaces.
 - `frontend/src/pages/scm-v2/stock-take-grouping.ts` — model-view grouping fold.
