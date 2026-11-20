@@ -7,6 +7,7 @@ import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity, fmtQty } 
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { LazySlot } from "../../components/LazySlot";
 import { scmListReturnTo } from "../../lib/scmListReturn";
+import { returnToWorkspaceOpener, useWorkspaceOpener } from "../../lib/useWorkspaceOpener";
 import {
   ArrowLeft,
   Copy,
@@ -388,6 +389,7 @@ function PurchaseInvoiceDetailV2ReadOnly() {
   const { id } = useParams<{ id: string }>();
   const [params] = useSearchParams();
   const navigate = useNavigate();
+  const cameFrom = useWorkspaceOpener();
 
   const detail = usePurchaseInvoiceDetail(id ?? null);
   const cancelPi = useCancelPurchaseInvoice();
@@ -455,11 +457,14 @@ function PurchaseInvoiceDetailV2ReadOnly() {
   const overdueDays = purchaseInvoice ? daysPast(purchaseInvoice.due_date) : -1;
   const isOverdue = overdueDays > 0 && outstanding > 0;
 
-  // Back always returns to the Purchase Invoices list (owner 2026-07-24: every
+  // Back returns to the Purchase Invoices list (owner 2026-07-24: every
   // details page's back button goes to its relevant list, not wherever
   // browser history happens to point). The list restores its own sticky
   // filters, so the prior filtered view comes back — no context lost.
-  const goBack = () => navigate(scmListReturnTo("/scm/purchase-invoices"));
+  // Opened as a document from another page (a voucher's Applies to): back to
+  // THAT page and its tab, as the AP bill does (owner 2026-11-20).
+  const goBack = () => navigate(returnToWorkspaceOpener() ?? scmListReturnTo("/scm/purchase-invoices"));
+  const backLabel = cameFrom ? `Back to ${cameFrom.label}` : "Back to Purchase Invoices";
   const goEdit = () => id && navigate(`/scm/purchase-invoices/${id}?edit=1`);
   /* "Add line" from the page you START on — the affordance lived only
      inside the editor, under a different name per document, so it read as
@@ -680,7 +685,7 @@ function PurchaseInvoiceDetailV2ReadOnly() {
         </p>
         <div className="mt-4">
           <Button variant="secondary" onClick={goBack} icon={<ArrowLeft size={14} />}>
-            Back to Purchase Invoices
+            {backLabel}
           </Button>
         </div>
       </div>
@@ -701,8 +706,8 @@ function PurchaseInvoiceDetailV2ReadOnly() {
     <div className="pb-24 md:pb-0">
       <div className="sticky top-0 z-20 -mx-4 -mt-4 bg-sidebar text-sidebar-ink shadow-slab md:hidden">
         <div className="flex items-center justify-between gap-3 px-4 pt-3">
-          <button type="button" onClick={goBack} className="inline-flex items-center gap-1 text-[14px] font-semibold text-accent-bright" aria-label="Back to Purchase Invoices">
-            <ArrowLeft size={16} /> PIs
+          <button type="button" onClick={goBack} className="inline-flex items-center gap-1 text-[14px] font-semibold text-accent-bright" aria-label={backLabel}>
+            <ArrowLeft size={16} /> {cameFrom ? "Back" : "PIs"}
           </button>
           <span className="font-mono text-[12.5px] font-semibold text-sidebar-ink">{purchaseInvoice.invoice_number}</span>
           <button type="button" className="text-sidebar-ink-muted" aria-label="More actions">
@@ -732,7 +737,7 @@ function PurchaseInvoiceDetailV2ReadOnly() {
             <button
               type="button"
               onClick={goBack}
-              aria-label="Back to Purchase Invoices"
+              aria-label={backLabel}
               className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-surface text-ink-secondary hover:border-primary/50 hover:text-primary"
             >
               <ArrowLeft size={16} />
