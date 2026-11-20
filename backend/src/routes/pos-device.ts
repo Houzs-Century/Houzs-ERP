@@ -12,6 +12,7 @@
 // terminal, and that terminal's company is the scope of everything read.
 //   POST /sales/batch         the receipts (routes/lib/pos-ingest.ts books them)
 //   GET  /report              the event bills for the all-terminals report (P13)
+//   GET  /sales               the event bills in full, so any device can reprint another device's receipt
 //   POST /pair                redeem the pairing code from POS Admin (no token yet)
 //   POST /reconnect/request   a displaced device asks for its terminal back (its dead token proves it)
 //   POST /reconnect/claim     ...and collects the new token once a supervisor approved
@@ -32,6 +33,7 @@ import { loadPosBundle, type BundleCompany } from "./lib/pos-bundle-load";
 import { parseIncomingSale, type BatchResult } from "./lib/pos-sync";
 import { ingestSale, stockLocationFor } from "./lib/pos-ingest";
 import { loadReportSales } from "./lib/pos-report-load";
+import { loadDeviceSales } from "./lib/pos-sale-read";
 import { reconnectPhase } from "./lib/pos-reconnect";
 
 type Terminal = typeof pos_terminals.$inferSelect;
@@ -244,6 +246,20 @@ posDevice.get("/report", async (c: Ctx) => {
   const to = c.req.query("to") ?? "";
   if (!day.test(from) || !day.test(to)) return c.json({ error: "from_and_to_required" }, 400);
   const sales = await loadReportSales(getDb(c.env), t.company_id, { projectId: t.project_id, fromIso: `${from}T00:00:00+08:00`, toIso: `${to}T23:59:59.999+08:00` });
+  return c.json({ sales, at: new Date().toISOString() });
+});
+
+/** Find bill, "Other terminals": the bills of this terminal's event from
+ *  every device, whole, in the Malaysia-day range [from, to]. For a reprint
+ *  only; nothing a device does with these comes back to the ERP. */
+posDevice.get("/sales", async (c: Ctx) => {
+  const t = c.get("terminal");
+  if (t.project_id == null) return c.json({ error: "no_event" }, 409);
+  const day = /^\d{4}-\d{2}-\d{2}$/;
+  const from = c.req.query("from") ?? "";
+  const to = c.req.query("to") ?? "";
+  if (!day.test(from) || !day.test(to)) return c.json({ error: "from_and_to_required" }, 400);
+  const sales = await loadDeviceSales(getDb(c.env), t.company_id, t.project_id, `${from}T00:00:00+08:00`, `${to}T23:59:59.999+08:00`);
   return c.json({ sales, at: new Date().toISOString() });
 });
 

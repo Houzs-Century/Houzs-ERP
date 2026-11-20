@@ -1078,6 +1078,37 @@ describe('closed months — the goods and rate Now is worked on', () => {
     expect(r.totals.totalSen).toBe(169_00);
   });
 
+  /* Owner 2026-11-20 (开始修): a cancellation's goods were ADDED, so a closed month
+     recalculated with one showed plus goods against a minus Now. */
+  it('a cancellation takes its goods back: they count less, and Goods × Rate is the Now it takes back', () => {
+    const r = buildEventCommission({
+      ...OCT, fairs: [SEPF], ratePctByBrand: RATES,
+      sos: [sep({ status: 'CANCELLED' })], payments: [PAID], changes: [], cancels: [{ docNo: 'HC-SO-2609-050', at: '2026-10-12T03:00:00Z' }],
+    });
+    expect(r.adjustments.map((a) => [a.kind, a.goodsSen, a.commissionSen])).toEqual([['cancelled', 1_000_00, -130_00]]);
+    expect(goodsAndRateOf(r).get('HC-SO-2609-050')).toEqual({ goodsSen: -1_000_00, ratePct: 13 });
+    const [row] = monthAdjustmentsOf([{ month: '2026-10', paid: {}, carried: [] }], new Map([['2026-10', r]]));
+    expect(row).toMatchObject({ docNo: 'HC-SO-2609-050', goodsSen: -1_000_00, ratePct: 13, nowSen: -130_00, adjustmentSen: -130_00 });
+    expect(Math.round((row!.goodsSen! * row!.ratePct!) / 100)).toBe(row!.nowSen);
+  });
+
+  it('reaching 30% is worked on its goods less the changes Finance left out, as it earns', () => {
+    const mark: CommissionMark = { id: 'c1', docNo: 'HC-SO-2609-050', kind: 'exclude_change', month: '2026-10', reason: null, markedBy: 'Finance', markedAt: '2026-10-21T03:00:00Z' };
+    const r = buildEventCommission({
+      ...OCT, fairs: [SEPF], ratePctByBrand: RATES,
+      sos: [sep({ goodsSen: 1_100_00, totalSen: 1_200_00 })],
+      payments: [{ docNo: 'HC-SO-2609-050', paidAt: '2026-10-10', amountSen: 400_00 }],
+      changes: withUncountedChanges([change({
+        docNo: 'HC-SO-2609-050', changedAt: '2026-10-03T02:00:00Z', beforeGoodsSen: 1_000_00, afterGoodsSen: 1_100_00, beforeTotalSen: 1_100_00, afterTotalSen: 1_200_00,
+      })], [mark]),
+      cancels: [],
+    });
+    /* 1,100 on reaching 30%, of which the 100 left out: 1,000 × 13% = the 130.00 the month pays. */
+    expect(r.adjustments.find((a) => a.kind === 'reached')).toMatchObject({ goodsSen: 1_100_00, uncountedGoodsSen: 100_00, commissionSen: 130_00 });
+    expect(r.totals.totalSen).toBe(130_00);
+    expect(goodsAndRateOf(r).get('HC-SO-2609-050')).toEqual({ goodsSen: 1_000_00, ratePct: 13 });
+  });
+
   it('a mark that takes the order out of the month leaves it worked on nothing; the row keeps its rate', () => {
     const marked = withMarks(september([PAID]), [{
       id: 'm1', docNo: 'HC-SO-2609-050', kind: 'exclude', month: null, reason: 'checking', markedBy: 'Finance', markedAt: '2026-10-01T03:00:00Z',
