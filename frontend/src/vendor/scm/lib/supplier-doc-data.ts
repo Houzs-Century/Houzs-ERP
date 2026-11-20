@@ -19,7 +19,7 @@
 // our internal codes.
 // ----------------------------------------------------------------------------
 
-import { buildVariantSummary } from '@2990s/shared';
+import { buildVariantSummary, withFabricSupplierCode } from '@2990s/shared';
 import { authedFetch } from './authed-fetch';
 
 /** Minimal line shape the PDF generators share. Extra fields welcome. */
@@ -310,9 +310,8 @@ export function docVariantLine(
           ? desc.slice(code.length).trim()
           : desc;
         mapped[key] = `${code}${cleanDesc ? ` ${cleanDesc}` : ''}`;
-        if (ext && !(mapped as Record<string, unknown>).fabricSupplierCode) {
-          (mapped as Record<string, unknown>).fabricSupplierCode = ext;
-        }
+        // The fresh lookup wins over a stamp saved on the line (2990-0067).
+        if (ext) mapped = withFabricSupplierCode(mapped, ext);
       }
     }
   }

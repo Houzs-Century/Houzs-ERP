@@ -21,18 +21,11 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { scopeToCompany, type CompanyScopeCtx } from './companyScope';
+import { fabricCodeOf, withFabricSupplierCode } from '../shared/variant-summary';
 
-/* The variant keys that can carry the internal fabric code, in the SAME
-   precedence order computeVariantKey / buildVariantSummary read them:
-   SO/PO/DO/SI lines store it under `fabricCode`; the GRN / PI / PR /
-   Stock-Adjustment variant editors store the pick under `fabricColor`; POS
-   lines may carry `colorCode` / `colourCode`. The summary renders whichever is
-   present, so the enrichment must resolve the same chain — otherwise a PI/GRN
-   line whose fabric lives in `fabricColor` never gets its supplier parens
-   (owner 2026-07-24, "为什么我的 Purchase Invoice 没有看到 PC151-01 那种 code").
-   A value that is not actually a fabric code (e.g. a bare colour code) simply
-   finds no fabric_trackings row and the line is left unchanged. */
-const FABRIC_CODE_KEYS = ['fabricCode', 'colorCode', 'colourCode', 'fabricColor'] as const;
+/* fabricCodeOf (the internal-fabric-code alias chain) lives in shared so
+   buildVariantSummary reads the same chain; re-exported for existing callers. */
+export { fabricCodeOf };
 
 /* A returned order line, loose enough to accept every detail endpoint's mapped
    row shape. Record (index signature) — NOT `{ variants?: unknown }`, which is a
@@ -41,15 +34,6 @@ const FABRIC_CODE_KEYS = ['fabricCode', 'colorCode', 'colourCode', 'fabricColor'
 type LineWithVariants = Record<string, unknown>;
 
 const trimStr = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
-
-/* The line's internal fabric code, read through the alias chain above. */
-export const fabricCodeOf = (v: Record<string, unknown>): string => {
-  for (const k of FABRIC_CODE_KEYS) {
-    const fc = trimStr(v[k]);
-    if (fc) return fc;
-  }
-  return '';
-};
 
 /**
  * Stamp `variants.fabricSupplierCode` on every line whose internal fabricCode has
@@ -102,7 +86,7 @@ export async function enrichLinesWithFabricSupplierCode(
     // Distinct-only: a supplier code equal to the internal code adds no parens
     // (buildVariantSummary guards this too — belt and braces).
     if (sup && sup !== fc) {
-      it.variants = { ...(v as Record<string, unknown>), fabricSupplierCode: sup };
+      it.variants = withFabricSupplierCode(v as Record<string, unknown>, sup);
     }
   }
 }

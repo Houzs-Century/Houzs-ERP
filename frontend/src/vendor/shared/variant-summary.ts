@@ -199,6 +199,31 @@ export function liveColour(v: string): string {
   return successor || v.replace(SUPERSEDED_NOTE, '').trim();
 }
 
+/* The line's internal fabric code: SO/PO/DO/SI store it as fabricCode, the
+   GRN / PI / PR / Stock-Adjustment editors as fabricColor, POS as colorCode /
+   colourCode. */
+const FABRIC_CODE_KEYS = ['fabricCode', 'colorCode', 'colourCode', 'fabricColor'] as const;
+export function fabricCodeOf(v: Record<string, unknown>): string {
+  for (const k of FABRIC_CODE_KEYS) {
+    const fc = str(v[k]);
+    if (fc) return fc;
+  }
+  return '';
+}
+
+/* fabricSupplierCode is a display stamp that rides on variants, so editors save
+   it with the line. It is trusted only for the fabric it was looked up for
+   (fabricSupplierCodeOf): after an SO amendment from EZ-002 to EZ-011 the saved
+   M2402-4 must not print (2990-0067). Stamp with withFabricSupplierCode. */
+export function trustedFabricSupplierCode(v: Record<string, unknown>): string {
+  const fc = fabricCodeOf(v);
+  return fc && str(v.fabricSupplierCodeOf) === fc ? str(v.fabricSupplierCode) : '';
+}
+
+export function withFabricSupplierCode(v: Record<string, unknown>, supplierCode: string): Record<string, unknown> {
+  return { ...v, fabricSupplierCode: supplierCode, fabricSupplierCodeOf: fabricCodeOf(v) };
+}
+
 /* Words that label a colour rather than name one: "Col : cove 13", "Fabric : Cove-03". */
 const COLOUR_LABEL_WORD = /^(?:COL|COLOU?R|CLR|FABRIC|FAB|CODE)$/;
 
@@ -262,7 +287,7 @@ export function buildVariantSummary(
   // is unchanged. Distinct-only: a supplier code equal to the internal code adds
   // no parens.
   const fabricCodeRaw = liveColour(str(variants.fabricCode));
-  const fabricSupplierCode = str(variants.fabricSupplierCode);
+  const fabricSupplierCode = trustedFabricSupplierCode(variants);
   // Owner format ruling 2026-07-24 (second pass): the supplier code's parens
   // go at the END of the whole fabric segment - "CG-001 Pearl (KN390-1)" -
   // NEVER inline after the bare code ("CG-001 (KN390-1) CG-001 Pearl" was the

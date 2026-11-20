@@ -78,6 +78,9 @@ export function variantsForCompare(v: unknown): string {
   const rest: Record<string, unknown> = { ...(v as Record<string, unknown>) };
   delete rest.remark;
   delete rest.totalHeight;
+  // Display-only stamp from the read path, not part of the spec.
+  delete rest.fabricSupplierCode;
+  delete rest.fabricSupplierCodeOf;
   if (typeof rest.legHeight === 'string' && DEFAULT_LEG_RE.test(rest.legHeight)) delete rest.legHeight;
   return Object.keys(rest).length === 0 ? 'null' : canonicalJson(rest);
 }

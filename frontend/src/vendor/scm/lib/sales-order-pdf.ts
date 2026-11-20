@@ -1,5 +1,5 @@
 import { formatPhone } from '@2990s/shared/phone';
-import { buildVariantSummary } from '@2990s/shared';
+import { buildVariantSummary, withFabricSupplierCode } from '@2990s/shared';
 import { customerRefOf } from '../../../lib/customer-ref';
 import type { RowInput } from 'jspdf-autotable';
 import {
@@ -314,9 +314,8 @@ const variantLine = (
           ? desc.slice(code.length).trim()
           : desc;
         mapped[key] = `${code}${cleanDesc ? ` ${cleanDesc}` : ''}`;
-        if (ext && !(mapped as Record<string, unknown>).fabricSupplierCode) {
-          (mapped as Record<string, unknown>).fabricSupplierCode = ext;
-        }
+        // The fresh lookup wins over a stamp saved on the line (2990-0067).
+        if (ext) mapped = withFabricSupplierCode(mapped, ext);
       }
     }
   }

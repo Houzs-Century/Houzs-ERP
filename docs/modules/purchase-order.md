@@ -128,7 +128,8 @@ Export and print
 - Assigned SO / Delivered columns arrive later from `GET /list-mrp-enrichment`; while loading show WORKING… / NOT LOADED, never `STOCK` or a dash.
 - `/outstanding-so-items` shows only lines with pooled MRP shortage > 0; a line MRP did not plan reads the same as a covered one. A DRAFT SO is never convertible — confirm it first.
 - Do not write `ON_HOLD` to status or re-derive status in a way that erases a hold; the hold is the marker columns.
-- SO-drift compare must strip `DISPLAY_ONLY_VARIANT_KEYS` (e.g. `fabricSupplierCode`) from both sides; add any new read-side stamp there the same day.
+- SO-drift compare must strip `DISPLAY_ONLY_VARIANT_KEYS` (`fabricSupplierCode`, `fabricSupplierCodeOf`) from both sides; add any new read-side stamp there the same day.
+- `fabricSupplierCode` prints only when `fabricSupplierCodeOf` equals the line's current fabric code; stamp it with `withFabricSupplierCode`, never by hand.
 - Do not pass `sofaPhotos` from new print callers; `po-print-paths-draw-the-sofa.test.ts` counts callers. Generated PDF strings stay English-only.
 - Sofa piece ordering (LHF first, RHF last) is applied when lines are created (`orderSofaCellsForNewLines`), never at display time — that would re-sequence old orders.
 - `PoLineCard` is shared with PI/PC pages: its Remarks box is opt-in (`showRemarks`) and only safe when the parent sends `notes` in both add and update payloads; photos come through a render slot, never an own uploader.
