@@ -48,8 +48,10 @@ const EAST = ['SBH WAREHOUSE', 'SRW WAREHOUSE'];
 function fail(msg, code = 1) { console.error(`ERROR: ${msg}`); process.exit(code); }
 
 async function candidates(sql) {
+  // No customer name (debtor) is selected or logged: this runs on a PUBLIC repo
+  // whose Actions logs are public, so the plan prints internal refs only.
   return sql`
-    SELECT so.doc_no, so.debtor_name, so.delivery_message_status AS board_status,
+    SELECT so.doc_no, so.delivery_message_status AS board_status,
            (SELECT MAX(d.do_date) FROM scm.delivery_orders d
              WHERE d.so_doc_no = so.doc_no
                AND upper(COALESCE(d.status::text, '')) NOT IN ('DRAFT', 'CANCELLED')) AS shipout_date
@@ -77,7 +79,7 @@ async function main() {
     console.log(`  ${toWrite.length} will get amended_delivery_date = their shipout date:\n`);
     for (const r of toWrite) {
       const d = String(r.shipout_date).slice(0, 10);
-      console.log(`  ${r.doc_no}  ${d}  [${r.board_status || '(blank status)'}]  ${r.debtor_name || ''}`);
+      console.log(`  ${r.doc_no}  ${d}  [${r.board_status || '(blank status)'}]`);
     }
 
     if (!APPLY) {

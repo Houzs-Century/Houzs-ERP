@@ -1,7 +1,7 @@
 /* The East Malaysia touchpoints (owner 2026-11-20): each kind shows its own
-   title and operator note. Shipped / Arrived read the shipment facts off the
-   board's EM columns server-side, so the modal only explains that; nothing is
-   typed here. */
+   title and operator note. Shipped reads the shipment facts off the board's EM
+   columns server-side; Arrived is an operator-judgment send with no date gate.
+   The modal only explains each; nothing is typed here. */
 import { render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { describe, expect, test, vi } from 'vitest';
@@ -43,9 +43,9 @@ describe('SendDeliveryMessageModal — East Malaysia touchpoints', () => {
     expect(screen.getByText(/ETA \(arriving port\)/)).toBeTruthy();
   });
 
-  test('arrived: title and the warehouse-arrival-date note', () => {
+  test('arrived: title and the operator-judgment note (no date gate)', () => {
     renderWith('eastmy_arrived');
     expect(screen.getByText('Send East Malaysia arrived notice')).toBeTruthy();
-    expect(screen.getByText(/EM-warehouse arrival date/)).toBeTruthy();
+    expect(screen.getByText(/no date check on the row/i)).toBeTruthy();
   });
 });

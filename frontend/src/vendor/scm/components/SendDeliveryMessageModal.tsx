@@ -132,7 +132,6 @@ export const SKIP_LABEL: Record<string, string> = {
   assr_only: 'Service Case jobs only',
   not_east: 'not an East Malaysia order',
   eastmy_shipment_fields_required: 'set Consignment No. + ETA on the row first',
-  eastmy_not_arrived: 'no EM-warehouse arrival date on the row yet',
 };
 
 /** The per-customer block reasons, phrased for the operator. */
@@ -312,7 +311,7 @@ export const SendDeliveryMessageModal = ({ rows, onClose, onSent, kind = 'delive
 
           {isEmArrived && (
             <div style={noteStyle}>
-              East Malaysia arrived notice — tells the customer the goods have reached the East Malaysia port. Sends only once the row's <strong>EM-warehouse arrival date</strong> is set; an order without it is skipped. Only East Malaysia orders are sent.
+              East Malaysia arrived notice — tells the customer the goods have reached East Malaysia. Send this when you can see the order has arrived; there is no date check on the row. Only East Malaysia orders are sent.
             </div>
           )}
 
