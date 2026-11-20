@@ -37,6 +37,7 @@ export const REACH_LABEL: Record<MailReach, string> = {
 
 export const LEVEL_LABEL: Record<string, string> = {
   personal: "Your own and shared mailboxes",
-  department: "Plus every mailbox in your department",
+  department: "Plus your departments' shared mailboxes",
+  department_all: "Plus every mailbox in your departments, colleagues' included",
   company: "Every mailbox in the company",
 };

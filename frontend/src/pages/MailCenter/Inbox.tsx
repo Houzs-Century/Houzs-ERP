@@ -2724,7 +2724,7 @@ function PersonItem({
       <span className="flex min-w-0 items-center gap-2">
         <Icon className={cn("h-3.5 w-3.5 shrink-0", active ? "text-primary" : "text-ink-muted/50")} />
         <span className="truncate">{label}</span>
-        {title && <ReachTag address={title} />}
+        {title && <ReachTag address={title} personal={!shared} />}
       </span>
       {unread > 0 && (
         <span

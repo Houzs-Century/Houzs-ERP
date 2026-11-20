@@ -194,14 +194,22 @@ export function FolderItem({
   );
 }
 
-/* Owner 2026-11-21: a mailbox someone shared with you says so in the rail, so a
-   cross-department or covering read is never mistaken for your own. */
-export function ReachTag({ address }: { address: string }) {
+/* Owner 2026-11-21: the rail says why a mailbox is there when it is not your own
+   or your department's: shared with you by an admin, or a colleague's mailbox
+   your Whole department level opens. */
+export function ReachTag({ address, personal }: { address: string; personal: boolean }) {
   const reach = useMailVisibility()?.mailboxes.find((m) => m.address === address.toLowerCase())?.reach ?? null;
-  if (reach !== "granted") return null;
+  const tag = reach === "granted" ? "Shared" : reach === "department" && personal ? "Team" : null;
+  if (!tag) return null;
   return (
-    <span className="shrink-0 rounded-full bg-warning-bg px-1.5 py-0.5 text-[10px] font-semibold text-warning-text" title={REACH_LABEL.granted}>
-      Shared
+    <span
+      className={cn(
+        "shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold",
+        tag === "Shared" ? "bg-warning-bg text-warning-text" : "bg-primary/15 text-primary",
+      )}
+      title={tag === "Shared" ? REACH_LABEL.granted : REACH_LABEL.department}
+    >
+      {tag}
     </span>
   );
 }
