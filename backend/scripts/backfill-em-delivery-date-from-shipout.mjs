@@ -52,7 +52,10 @@ async function candidates(sql) {
   // whose Actions logs are public, so the plan prints internal refs only.
   return sql`
     SELECT so.doc_no, so.delivery_message_status AS board_status,
-           (SELECT MAX(d.do_date) FROM scm.delivery_orders d
+           -- to_char, not the bare date: postgres.js returns a date column as a JS
+           -- Date, whose String() is "Sat Oct 24 2026 …" — slicing that gave a
+           -- garbage date. Text "2026-10-24" is unambiguous to print and to ::date.
+           (SELECT to_char(MAX(d.do_date), 'YYYY-MM-DD') FROM scm.delivery_orders d
              WHERE d.so_doc_no = so.doc_no
                AND upper(COALESCE(d.status::text, '')) NOT IN ('DRAFT', 'CANCELLED')) AS shipout_date
       FROM scm.mfg_sales_orders so
