@@ -45,24 +45,25 @@ const OverviewGlyph = (
 );
 const g = (t: string) => <span className="text-[11px] font-bold leading-none tracking-tight">{t}</span>;
 
-/** The nav model. `key` matches HrEmployees' page keys. */
+/** The nav model. `key` matches HrEmployees' page keys. Sub-labels are static
+ *  descriptions (no live counts) so the rail never shows a stale number. */
 export const HR_NAV: Item[] = [
   { key: "overview", label: "Overview", glyph: OverviewGlyph, sub: "today at a glance", group: "overview" },
-  { key: "employees", label: "Employee Master", glyph: g("E"), sub: "17 active · 1 not linked", group: "people" },
-  { key: "shifts", label: "Shifts", glyph: g("S"), sub: "4 shifts", group: "people" },
-  { key: "sites", label: "Punch Sites", glyph: g("P"), sub: "5 sites · 14 punches today", group: "people" },
-  { key: "attendance", label: "Attendance", glyph: g("A"), sub: "14 / 17 in today", group: "time" },
-  { key: "ot-requests", label: "OT Requests", glyph: g("OT"), sub: "4 pending", group: "time" },
-  { key: "hours", label: "Working Hours", glyph: g("W"), sub: "November", group: "time" },
-  { key: "holidays", label: "Public Holidays", glyph: g("PH"), sub: "Next: 11 Dec", group: "time" },
-  { key: "payroll", label: "Payroll", glyph: g("P"), sub: "Nov · Draft", group: "pay" },
-  { key: "pay-rules", label: "Pay Rules", glyph: g("R"), sub: "4 active rules", group: "pay" },
-  { key: "trip-pay", label: "Trip Pay", glyph: g("T"), sub: "5 drivers", group: "pay" },
-  { key: "allowances", label: "Allowances", glyph: g("A"), sub: "10 active", group: "pay" },
-  { key: "advances", label: "Advances", glyph: g("Ad"), sub: "1 request", group: "pay" },
-  { key: "penalties", label: "Penalty", glyph: g("Pe"), sub: "1 this month", group: "pay" },
-  { key: "labor", label: "Labor Cost", glyph: g("L"), sub: "November", group: "pay" },
-  { key: "kpi", label: "KPI", glyph: g("K"), sub: "team avg 82", group: "perf" },
+  { key: "employees", label: "Employee Master", glyph: g("E"), sub: "drivers, helpers and crew", group: "people" },
+  { key: "shifts", label: "Shifts", glyph: g("S"), sub: "shift groups", group: "people" },
+  { key: "sites", label: "Punch Sites", glyph: g("P"), sub: "phone punch locations", group: "people" },
+  { key: "attendance", label: "Attendance", glyph: g("A"), sub: "daily punches", group: "time" },
+  { key: "ot-requests", label: "OT Requests", glyph: g("OT"), sub: "confirm before payroll", group: "time" },
+  { key: "hours", label: "Working Hours", glyph: g("W"), sub: "hours per employee", group: "time" },
+  { key: "holidays", label: "Public Holidays", glyph: g("PH"), sub: "paid days off", group: "time" },
+  { key: "payroll", label: "Payroll", glyph: g("P"), sub: "monthly payslips", group: "pay" },
+  { key: "pay-rules", label: "Pay Rules", glyph: g("R"), sub: "rates and shift", group: "pay" },
+  { key: "trip-pay", label: "Trip Pay", glyph: g("T"), sub: "driver commission", group: "pay" },
+  { key: "allowances", label: "Allowances", glyph: g("A"), sub: "recurring allowances", group: "pay" },
+  { key: "advances", label: "Advances", glyph: g("Ad"), sub: "cash advances", group: "pay" },
+  { key: "penalties", label: "Penalty", glyph: g("Pe"), sub: "incident deductions", group: "pay" },
+  { key: "labor", label: "Labor Cost", glyph: g("L"), sub: "cost of hours", group: "pay" },
+  { key: "kpi", label: "KPI", glyph: g("K"), sub: "monthly scorecard", group: "perf" },
 ];
 
 const clampW = (w: number) => Math.min(Math.max(w, MIN_W), MAX_W);
@@ -84,7 +85,8 @@ function readWidth(): number {
   return DEFAULT_W;
 }
 
-export function HrSubnav({ active, onSelect }: { active: string; onSelect: (key: string) => void }) {
+export function HrSubnav({ active, onSelect, hiddenKeys }: { active: string; onSelect: (key: string) => void; hiddenKeys?: ReadonlySet<string> }) {
+  const items = hiddenKeys ? HR_NAV.filter((it) => !hiddenKeys.has(it.key)) : HR_NAV;
   const [open, setOpen] = useState<boolean>(readOpen);
   const [width, setWidth] = useState<number>(readWidth);
   const [dragging, setDragging] = useState(false);
@@ -142,7 +144,7 @@ export function HrSubnav({ active, onSelect }: { active: string; onSelect: (key:
         >
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 3l5 5-5 5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
         </button>
-        {HR_NAV.map((it) => {
+        {items.map((it) => {
           const on = it.key === active;
           const gc = GROUP[it.group];
           return (
@@ -183,7 +185,7 @@ export function HrSubnav({ active, onSelect }: { active: string; onSelect: (key:
 
       {/* scrollable item list */}
       <div className="thin-scroll flex-1 overflow-y-auto px-2 py-2">
-        {HR_NAV.map((it) => {
+        {items.map((it) => {
           const gc = GROUP[it.group];
           const showHeading = it.group !== lastGroup && gc.heading;
           lastGroup = it.group;

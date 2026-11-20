@@ -1,25 +1,29 @@
-/* HR · Employees & Attendance — Overview (redesign stage 2). A 12-column
- * dashboard: Today / Headcount / Payroll, a month attendance chart with a
- * per-day hover popover, Needs attention, Coming up, Most late. Sample data
- * (handoff: data wiring later). Amounts masked behind an eye toggle. */
-import { useState } from "react";
+/* HR · Employees & Attendance — Overview (redesign look, real data). A 12-col
+ * dashboard built from the reads HR already has: Today (the attendance day read),
+ * Headcount (the employee master + today's punch), Payroll (the month's run),
+ * Needs attention (unlinked accounts, OT to confirm, a draft payroll) and
+ * Coming up (public holidays). The month attendance chart and "most late" are a
+ * step-2 item: they need a per-day late/rest source this read set does not
+ * carry. Amounts masked behind the eye toggle. */
+import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { ATTEND_DAYS, COMING_UP, EMPLOYEES, MOST_LATE, NEEDS_ATTENTION, POSITION, avatarColor, initials, type Emp, type Punch } from "./hrSampleData";
+import { fmtSen, todayMY } from "../../vendor/shared/format";
+import { useAuth } from "../../auth/AuthContext";
+import { api } from "../../api/client";
+import { useQuery } from "../../hooks/useQuery";
+import { avatarColor, initials } from "./hrAvatar";
+import { dayByEmployee, punchOf, type PunchState } from "./attendanceToday";
+import { useAttendance, useEmployees, useHolidays, usePayroll, type Employee } from "./hrApi";
 
 const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(" ");
 
 function Avatar({ name, size = 24, ring = false }: { name: string; size?: number; ring?: boolean }) {
   return (
-    <span
-      className={cx("inline-flex shrink-0 items-center justify-center rounded-full font-semibold text-white", avatarColor(name), ring && "ring-2 ring-surface")}
-      style={{ width: size, height: size, fontSize: size * 0.4 }}
-      title={name}
-    >
+    <span className={cx("inline-flex shrink-0 items-center justify-center rounded-full font-semibold text-white", avatarColor(name), ring && "ring-2 ring-surface")} style={{ width: size, height: size, fontSize: size * 0.4 }} title={name}>
       {initials(name)}
     </span>
   );
 }
-
 function Card({ title, right, children, className }: { title: ReactNode; right?: ReactNode; children: ReactNode; className?: string }) {
   return (
     <section className={cx("flex min-w-0 flex-col rounded-xl border border-border bg-surface px-[18px] py-4", className)}>
@@ -31,270 +35,215 @@ function Card({ title, right, children, className }: { title: ReactNode; right?:
     </section>
   );
 }
-
 const linkCls = "text-[11px] font-semibold text-primary hover:text-primary-ink";
 
-const PUNCH: Record<Punch, { label: string; dot: string }> = {
+const PUNCH: Record<PunchState, { label: string; dot: string }> = {
   on: { label: "On duty", dot: "bg-synced" },
   late: { label: "Late", dot: "bg-time" },
   out: { label: "Not in yet", dot: "bg-err" },
   leave: { label: "On leave", dot: "bg-ink-muted" },
 };
 
-function StatusCell({ punch, emps, onPick }: { punch: Punch; emps: Emp[]; onPick: (e: Emp) => void }) {
-  const info = PUNCH[punch];
+type Row = { e: Employee; punch: PunchState };
+
+function StatusCell({ state, rows, onPick }: { state: PunchState; rows: Row[]; onPick: (e: Employee) => void }) {
+  const info = PUNCH[state];
+  const list = rows.filter((r) => r.punch === state);
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-center gap-1.5">
         <span className={cx("h-2 w-2 rounded-full", info.dot)} />
         <span className="text-[12px] text-ink-secondary">{info.label}</span>
-        <span className="ml-auto text-[13px] font-bold text-ink">{emps.length}</span>
+        <span className="ml-auto text-[13px] font-bold text-ink">{list.length}</span>
       </div>
       <div className="flex pl-0.5">
-        {emps.slice(0, 6).map((e, i) => (
-          <button key={e.id} type="button" onClick={() => onPick(e)} className="-ml-1.5 first:ml-0 transition-transform hover:z-10 hover:-translate-y-0.5">
-            <Avatar name={e.name} size={24} ring />
+        {list.slice(0, 6).map((r) => (
+          <button key={r.e.id} type="button" onClick={() => onPick(r.e)} className="-ml-1.5 transition-transform first:ml-0 hover:z-10 hover:-translate-y-0.5">
+            <Avatar name={r.e.name} size={24} ring />
           </button>
         ))}
+        {list.length > 6 && <span className="ml-1 self-center text-[11px] text-ink-muted">+{list.length - 6}</span>}
       </div>
     </div>
   );
 }
 
-const toneBar: Record<string, string> = { err: "bg-err", warning: "bg-time", primary: "bg-primary", accent: "bg-accent", learning: "bg-learning" };
-const comingTone: Record<string, string> = { accent: "bg-accent-soft text-accent", err: "bg-err-bg text-err", primary: "bg-primary-soft text-primary-ink", learning: "bg-learning-soft text-learning" };
+const toneBar: Record<string, string> = { err: "bg-err", warning: "bg-time", primary: "bg-primary", accent: "bg-accent" };
+const comingTone: Record<string, string> = { National: "bg-err-bg text-err", State: "bg-accent-soft text-accent" };
 
-export function OverviewPage({ onNavigate, onPickEmployee }: { onNavigate: (key: string) => void; onPickEmployee?: (e: Emp) => void }) {
+export function OverviewPage({ onNavigate, onPickEmployee }: { onNavigate: (key: string) => void; onPickEmployee: (e: Employee) => void }) {
+  const { can } = useAuth();
+  const canOt = can("hr.ot.confirm");
+  const period = todayMY().slice(0, 7);
+  const today = todayMY().slice(0, 10);
   const [showPay, setShowPay] = useState(false);
-  const [hoverDay, setHoverDay] = useState<number | null>(null);
-  const pick = (e: Emp) => onPickEmployee?.(e);
-  const money = (v: string) => (showPay ? v : "RM ••••••");
 
-  const byPunch = (p: Punch) => EMPLOYEES.filter((e) => e.punch === p);
-  const punchedIn = EMPLOYEES.filter((e) => e.punch === "on" || e.punch === "late").length;
-  const onDuty = byPunch("on").length, late = byPunch("late").length, notIn = byPunch("out").length, leave = byPunch("leave").length;
-  const seg = (n: number) => `${(n / EMPLOYEES.length) * 100}%`;
+  const emp = useEmployees();
+  const att = useAttendance(today);
+  const payroll = usePayroll(period);
+  const holidays = useHolidays();
+  const ot = useQuery<{ claims: { status: string }[] }>(["attendance-ot-admin", period], () => api.get<{ claims: { status: string }[] }>(`/api/attendance/ot/admin?month=${period}`), [period], { enabled: canOt });
+
+  const dayByEmp = useMemo(() => dayByEmployee(att.data), [att.data]);
+  const active = useMemo(() => (emp.data?.employees ?? []).filter((e) => e.status === "ACTIVE"), [emp.data]);
+  const rows = useMemo<Row[]>(() => active.map((e) => ({ e, punch: punchOf(dayByEmp.get(e.id) ?? null).state })), [active, dayByEmp]);
+  const attReady = att.data != null;
+
+  const total = active.length;
+  const onDuty = rows.filter((r) => r.punch === "on").length;
+  const late = rows.filter((r) => r.punch === "late").length;
+  const notIn = rows.filter((r) => r.punch === "out").length;
+  const leave = rows.filter((r) => r.punch === "leave").length;
+  const punchedIn = onDuty + late;
+  const seg = (n: number) => (total ? `${(n / total) * 100}%` : "0%");
+
+  const outsourced = active.filter((e) => e.isOutsource).length;
+  const notLinked = active.filter((e) => !e.userId).length;
+  const positions = useMemo(() => {
+    const m = new Map<string, { total: number; onDuty: number }>();
+    for (const r of rows) {
+      const key = r.e.position || "No position";
+      const cur = m.get(key) ?? { total: 0, onDuty: 0 };
+      cur.total++;
+      if (r.punch === "on" || r.punch === "late") cur.onDuty++;
+      m.set(key, cur);
+    }
+    return [...m.entries()].sort((a, b) => b[1].total - a[1].total).slice(0, 5);
+  }, [rows]);
+
+  const slips = payroll.data?.slips ?? [];
+  const gross = slips.reduce((s, p) => s + p.grossSen, 0);
+  const net = slips.reduce((s, p) => s + p.netSen, 0);
+  const deductions = gross - net;
+  const payStatus = payroll.data ? (payroll.data.status ?? (payroll.data.projected ? "Projected" : "Draft")) : "—";
+  const money = (sen: number) => (showPay ? fmtSen(sen) : "RM ••••••");
+
+  const otPending = canOt ? (ot.data?.claims.filter((c) => c.status === "PENDING").length ?? 0) : 0;
+  const needs = useMemo(() => {
+    const items: { tone: string; title: string; sub: string; action: string; to: string }[] = [];
+    if (notLinked > 0) items.push({ tone: "warning", title: `${notLinked} without an ERP account`, sub: "Cannot punch in until linked", action: "Link", to: "employees" });
+    if (otPending > 0) items.push({ tone: "primary", title: `${otPending} overtime to confirm`, sub: "Confirm before payroll closes", action: "Review", to: "ot-requests" });
+    if (payroll.data && (payStatus === "DRAFT" || payStatus === "Draft" || payStatus === "MIXED")) items.push({ tone: "accent", title: "Payroll is still in draft", sub: `${period} run`, action: "Open", to: "payroll" });
+    return items;
+  }, [notLinked, otPending, payroll.data, payStatus, period]);
+
+  const upcoming = useMemo(() => {
+    const list = (holidays.data?.holidays ?? []).filter((h) => h.date >= today).sort((a, b) => a.date.localeCompare(b.date)).slice(0, 5);
+    return list.map((h) => ({ day: h.date.slice(8, 10), mon: h.date.slice(5, 7), label: h.name ?? "Public holiday", kind: "Holiday" as const }));
+  }, [holidays.data, today]);
 
   return (
-    <div className="grid min-w-[1080px] grid-cols-12 gap-[14px] px-6 py-4" style={{ gridAutoRows: "min-content" }}>
-      {/* ── Today ───────────────────────────────────────────── */}
-      <Card
-        title="Today"
-        className="col-span-5"
-        right={<button type="button" onClick={() => onNavigate("attendance")} className={linkCls}>Attendance ›</button>}
-      >
-        <div className="text-[11px] text-ink-muted">Fri, 20 Nov · as of 09:30</div>
-        <div className="mt-1 flex items-baseline gap-2">
-          <span className="text-[40px] font-bold leading-none text-ink">{punchedIn}</span>
-          <span className="text-[13px] text-ink-muted">/ {EMPLOYEES.length} punched in</span>
-        </div>
-        <div className="mt-3 flex h-2.5 overflow-hidden rounded-full bg-surface-2">
-          <div className="bg-synced" style={{ width: seg(onDuty) }} />
-          <div className="bg-time" style={{ width: seg(late) }} />
-          <div className="bg-err" style={{ width: seg(notIn) }} />
-          <div className="bg-ink-muted" style={{ width: seg(leave) }} />
-        </div>
-        <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-4">
-          <StatusCell punch="on" emps={byPunch("on")} onPick={pick} />
-          <StatusCell punch="late" emps={byPunch("late")} onPick={pick} />
-          <StatusCell punch="out" emps={byPunch("out")} onPick={pick} />
-          <StatusCell punch="leave" emps={byPunch("leave")} onPick={pick} />
-        </div>
+    <div className="grid min-w-[960px] grid-cols-12 gap-[14px] px-6 py-4" style={{ gridAutoRows: "min-content" }}>
+      {/* Today */}
+      <Card title="Today" className="col-span-5" right={<button type="button" onClick={() => onNavigate("attendance")} className={linkCls}>Attendance ›</button>}>
+        {!attReady ? (
+          <div className="py-6 text-center text-[12px] text-ink-muted">{att.error ?? "Loading today's punches…"}</div>
+        ) : (
+          <>
+            <div className="flex items-baseline gap-2">
+              <span className="text-[40px] font-bold leading-none text-ink">{punchedIn}</span>
+              <span className="text-[13px] text-ink-muted">/ {total} punched in</span>
+            </div>
+            <div className="mt-3 flex h-2.5 overflow-hidden rounded-full bg-surface-2">
+              <div className="bg-synced" style={{ width: seg(onDuty) }} />
+              <div className="bg-time" style={{ width: seg(late) }} />
+              <div className="bg-err" style={{ width: seg(notIn) }} />
+              <div className="bg-ink-muted" style={{ width: seg(leave) }} />
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-4">
+              <StatusCell state="on" rows={rows} onPick={onPickEmployee} />
+              <StatusCell state="late" rows={rows} onPick={onPickEmployee} />
+              <StatusCell state="out" rows={rows} onPick={onPickEmployee} />
+              <StatusCell state="leave" rows={rows} onPick={onPickEmployee} />
+            </div>
+          </>
+        )}
       </Card>
 
-      {/* ── Headcount ───────────────────────────────────────── */}
-      <Card
-        title="Headcount"
-        className="col-span-4"
-        right={
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] text-ink-muted">Operation Department</span>
-            <button type="button" onClick={() => onNavigate("employees")} className={linkCls}>Employees ›</button>
-          </div>
-        }
-      >
+      {/* Headcount */}
+      <Card title="Headcount" className="col-span-4" right={<button type="button" onClick={() => onNavigate("employees")} className={linkCls}>Employees ›</button>}>
         <div className="flex gap-6">
-          {[{ n: 17, l: "Active" }, { n: 3, l: "Probation" }, { n: 11, l: "Foreign (HCFW)" }].map((s) => (
+          {[{ n: total, l: "Active" }, { n: outsourced, l: "Outsourced" }, { n: notLinked, l: "Not linked" }].map((s) => (
             <div key={s.l}>
-              <div className="text-[22px] font-bold leading-none text-ink">{s.n}</div>
+              <div className="text-[22px] font-bold leading-none text-ink">{emp.data ? s.n : "—"}</div>
               <div className="mt-0.5 text-[11px] text-ink-muted">{s.l}</div>
             </div>
           ))}
         </div>
         <div className="mt-4 flex flex-col gap-3">
-          {[
-            { pos: "driver" as const, on: 4, total: 5 },
-            { pos: "crew" as const, on: 9, total: 11 },
-            { pos: "supervisor" as const, on: 1, total: 1 },
-          ].map((r) => (
-            <div key={r.pos}>
+          {positions.map(([name, c]) => (
+            <div key={name}>
               <div className="mb-1 flex items-center justify-between text-[12px]">
-                <span className="flex items-center gap-1.5 text-ink-secondary"><span className={cx("h-2 w-2 rounded-sm", POSITION[r.pos].dot)} />{POSITION[r.pos].label}</span>
-                <span className="text-[11px] text-ink-muted">{r.on} / {r.total} on duty</span>
+                <span className="truncate text-ink-secondary">{name}</span>
+                <span className="shrink-0 text-[11px] text-ink-muted">{attReady ? `${c.onDuty} / ${c.total} on duty` : `${c.total}`}</span>
               </div>
               <div className="h-1.5 overflow-hidden rounded-full bg-surface-2">
-                <div className={cx("h-full rounded-full", POSITION[r.pos].bar)} style={{ width: `${(r.on / r.total) * 100}%` }} />
+                <div className="h-full rounded-full bg-primary" style={{ width: `${attReady && c.total ? (c.onDuty / c.total) * 100 : 0}%` }} />
               </div>
             </div>
           ))}
+          {positions.length === 0 && <div className="text-[12px] text-ink-muted">{emp.loading ? "Loading…" : "No employees yet."}</div>}
         </div>
       </Card>
 
-      {/* ── Payroll · Nov ───────────────────────────────────── */}
-      <Card
-        title="Payroll · Nov"
-        className="col-span-3"
-        right={
-          <button type="button" onClick={() => setShowPay((v) => !v)} aria-label={showPay ? "Hide amounts" : "Show amounts"} className="text-ink-muted hover:text-ink">
-            <EyeIcon off={!showPay} />
-          </button>
-        }
-      >
-        <div className="text-[11px] text-ink-muted">Net payable</div>
-        <div className="mt-0.5 font-money text-[26px] font-bold leading-none text-ink">{money("RM 48,210")}</div>
-        <div className="mt-3 flex flex-col gap-1.5 text-[12px]">
-          <div className="flex justify-between"><span className="text-ink-muted">Gross</span><span className="font-money text-ink">{money("RM 61,540")}</span></div>
-          <div className="flex justify-between"><span className="text-ink-muted">Deductions</span><span className="font-money text-err">{money("RM 13,330")}</span></div>
-        </div>
-        <button type="button" onClick={() => onNavigate("payroll")} className="mt-auto flex items-center justify-between rounded-lg bg-warning-bg px-3 py-2 text-left text-[11px] font-semibold text-warning-text">
-          <span>Draft · pay date in 10 days</span><span>Review ›</span>
-        </button>
+      {/* Payroll */}
+      <Card title={`Payroll · ${period.slice(5, 7)}/${period.slice(0, 4)}`} className="col-span-3" right={<button type="button" onClick={() => setShowPay((v) => !v)} aria-label={showPay ? "Hide amounts" : "Show amounts"} className="text-ink-muted hover:text-ink"><EyeIcon off={!showPay} /></button>}>
+        {payroll.error ? (
+          <div className="py-4 text-[12px] text-ink-muted">Payroll not available.</div>
+        ) : (
+          <>
+            <div className="text-[11px] text-ink-muted">Net payable</div>
+            <div className="mt-0.5 font-money text-[26px] font-bold leading-none text-ink">{payroll.data ? money(net) : "—"}</div>
+            <div className="mt-3 flex flex-col gap-1.5 text-[12px]">
+              <div className="flex justify-between"><span className="text-ink-muted">Gross</span><span className="font-money text-ink">{payroll.data ? money(gross) : "—"}</span></div>
+              <div className="flex justify-between"><span className="text-ink-muted">Deductions</span><span className="font-money text-err">{payroll.data ? money(deductions) : "—"}</span></div>
+            </div>
+            <button type="button" onClick={() => onNavigate("payroll")} className="mt-3 flex items-center justify-between rounded-lg bg-surface-2 px-3 py-2 text-left text-[11px] font-semibold text-ink-secondary hover:bg-surface-dim">
+              <span>{String(payStatus)}</span><span>Open ›</span>
+            </button>
+          </>
+        )}
       </Card>
 
-      {/* ── Attendance · November ───────────────────────────── */}
-      <Card
-        title="Attendance · November"
-        className="col-span-8 row-span-2"
-        right={
-          <div className="flex items-center gap-4 text-[11px]">
-            <span><span className="font-bold text-primary">79%</span> <span className="text-ink-muted">Avg on-time</span></span>
-            <span><span className="font-bold text-time">27</span> <span className="text-ink-muted">Late</span></span>
-            <span><span className="font-bold text-err">16</span> <span className="text-ink-muted">Absent</span></span>
+      {/* Needs attention */}
+      <Card title="Needs attention" className="col-span-7" right={needs.length > 0 ? <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-err px-1 text-[11px] font-bold text-white">{needs.length}</span> : undefined}>
+        {needs.length === 0 ? (
+          <div className="py-4 text-[12px] text-ink-muted">{emp.loading ? "Loading…" : "Nothing needs attention right now."}</div>
+        ) : (
+          <div className="flex flex-col divide-y divide-border-subtle">
+            {needs.map((n, i) => (
+              <div key={i} className="flex items-center gap-3 py-2 first:pt-0">
+                <span className={cx("h-8 w-1 shrink-0 rounded-full", toneBar[n.tone] ?? "bg-primary")} />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[12.5px] font-semibold text-ink">{n.title}</div>
+                  <div className="truncate text-[11px] text-ink-muted">{n.sub}</div>
+                </div>
+                <button type="button" onClick={() => onNavigate(n.to)} className={cx(linkCls, "shrink-0")}>{n.action} ›</button>
+              </div>
+            ))}
           </div>
-        }
-      >
-        <div className="relative flex flex-1 items-end gap-2 pt-6">
-          {ATTEND_DAYS.map((d, i) => {
-            const low = d.onTime < 70;
-            const openLeft = i >= ATTEND_DAYS.length / 2;
-            return (
-              <div
-                key={d.date}
-                className={cx("relative flex flex-1 flex-col items-center gap-1 rounded-md pb-1 pt-1", d.today && "bg-primary-soft/50")}
-                onMouseEnter={() => setHoverDay(i)}
-                onMouseLeave={() => setHoverDay((h) => (h === i ? null : h))}
-              >
-                <span className={cx("text-[10px] font-semibold", low ? "text-time" : "text-ink-muted")}>{d.onTime}%</span>
-                <div className="flex h-[150px] w-2.5 items-end overflow-hidden rounded-full bg-surface-2">
-                  <div className={cx("w-full rounded-full", low ? "bg-[rgb(201_162_90)]" : "bg-primary")} style={{ height: `${d.onTime}%` }} />
+        )}
+      </Card>
+
+      {/* Coming up */}
+      <Card title="Coming up" className="col-span-5">
+        {upcoming.length === 0 ? (
+          <div className="py-4 text-[12px] text-ink-muted">{holidays.loading ? "Loading…" : "No public holidays ahead."}</div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {upcoming.map((c, i) => (
+              <div key={i} className="flex items-center gap-3">
+                <div className="flex w-10 shrink-0 flex-col items-center">
+                  <span className="text-[17px] font-bold leading-none text-ink">{c.day}</span>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-accent">{c.mon}</span>
                 </div>
-                <div className="flex min-h-[14px] gap-0.5">
-                  {d.late > 0 && <span className="rounded bg-warning-bg px-1 text-[9px] font-bold leading-[13px] text-warning-text">{d.late}</span>}
-                  {d.absent > 0 && <span className="rounded bg-err-bg px-1 text-[9px] font-bold leading-[13px] text-err">{d.absent}</span>}
-                </div>
-                <div className="text-center leading-tight">
-                  <div className="text-[10px] text-ink-muted">{d.dow}</div>
-                  <div className={cx("text-[11px] font-semibold", d.today ? "text-primary-ink" : "text-ink-secondary")}>{d.date}</div>
-                </div>
-                {hoverDay === i && <DayPopover day={d} openLeft={openLeft} />}
+                <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink">{c.label}</span>
+                <span className={cx("shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold", comingTone.National)}>{c.kind}</span>
               </div>
-            );
-          })}
-        </div>
-        <div className="mt-3 flex items-center gap-4 border-t border-border-subtle pt-2 text-[11px] text-ink-muted">
-          <Legend dot="bg-primary" label="On time" />
-          <Legend dot="bg-time" label="Late count" />
-          <Legend dot="bg-err" label="Absent count" />
-        </div>
+            ))}
+          </div>
+        )}
       </Card>
-
-      {/* ── Needs attention ─────────────────────────────────── */}
-      <Card
-        title="Needs attention"
-        className="col-span-4 row-span-2"
-        right={<span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-err px-1 text-[11px] font-bold text-white">{NEEDS_ATTENTION.length}</span>}
-      >
-        <div className="flex flex-col divide-y divide-border-subtle">
-          {NEEDS_ATTENTION.map((n, i) => (
-            <div key={i} className="flex items-center gap-3 py-2 first:pt-0">
-              <span className={cx("h-8 w-1 shrink-0 rounded-full", toneBar[n.tone])} />
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-[12.5px] font-semibold text-ink">{n.title}</div>
-                <div className="truncate text-[11px] text-ink-muted">{n.sub}</div>
-              </div>
-              <button type="button" onClick={() => onNavigate(n.to)} className={cx(linkCls, "shrink-0")}>{n.action} ›</button>
-            </div>
-          ))}
-        </div>
-      </Card>
-
-      {/* ── Coming up ───────────────────────────────────────── */}
-      <Card title="Coming up" className="col-span-4">
-        <div className="flex flex-col gap-3">
-          {COMING_UP.slice(0, 4).map((c, i) => (
-            <div key={i} className="flex items-center gap-3">
-              <div className="flex w-10 shrink-0 flex-col items-center">
-                <span className="text-[17px] font-bold leading-none text-ink">{c.day}</span>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-accent">{c.mon}</span>
-              </div>
-              <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink">{c.label}</span>
-              <span className={cx("shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold", comingTone[c.tone])}>{c.kind}</span>
-            </div>
-          ))}
-        </div>
-      </Card>
-
-      {/* ── Most late · this month ──────────────────────────── */}
-      <Card title="Most late · this month" className="col-span-4">
-        <div className="flex flex-col gap-2.5">
-          {MOST_LATE.map((m, i) => (
-            <div key={i} className="flex items-center gap-2.5">
-              <Avatar name={m.name} size={26} />
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-[12.5px] font-semibold text-ink">{m.name}</div>
-                <div className="truncate text-[11px] text-ink-muted">{POSITION[m.position].label}</div>
-              </div>
-              <div className="h-1.5 w-20 overflow-hidden rounded-full bg-surface-2">
-                <div className="h-full rounded-full bg-time" style={{ width: `${(m.count / MOST_LATE[0].count) * 100}%` }} />
-              </div>
-              <span className="w-4 text-right text-[12px] font-bold text-ink">{m.count}</span>
-            </div>
-          ))}
-        </div>
-      </Card>
-    </div>
-  );
-}
-
-function Legend({ dot, label }: { dot: string; label: string }) {
-  return <span className="flex items-center gap-1.5"><span className={cx("h-2 w-2 rounded-full", dot)} />{label}</span>;
-}
-
-function DayPopover({ day, openLeft }: { day: (typeof ATTEND_DAYS)[number]; openLeft: boolean }) {
-  const groups: { label: string; names: string[]; dot: string }[] = [
-    { label: "Late", names: day.names.late, dot: "bg-time" },
-    { label: "Absent", names: day.names.absent, dot: "bg-err" },
-    { label: "Not in yet", names: day.names.notin, dot: "bg-err" },
-    { label: "On leave", names: day.names.leave, dot: "bg-ink-muted" },
-  ].filter((g) => g.names.length > 0);
-  return (
-    <div className={cx("absolute bottom-[calc(100%+6px)] z-20 w-[240px] rounded-xl border border-border bg-surface p-3 shadow-lg", openLeft ? "right-0" : "left-0")}>
-      <div className="mb-2 flex items-center justify-between text-[12px] font-bold text-ink">
-        <span>{day.dow} {day.date} Nov</span>
-        <span className="text-primary">{day.onTime}% on time</span>
-      </div>
-      {groups.length === 0 ? (
-        <div className="text-[11px] text-ink-muted">Everyone on time.</div>
-      ) : (
-        <div className="flex flex-col gap-2">
-          {groups.map((g) => (
-            <div key={g.label}>
-              <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-ink-muted"><span className={cx("h-1.5 w-1.5 rounded-full", g.dot)} />{g.label} · {g.names.length}</div>
-              <div className="mt-0.5 pl-3 text-[11.5px] text-ink-secondary">{g.names.join(", ")}</div>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
