@@ -34,3 +34,61 @@ export function confirmedOtMinutes(rows: ReadonlyArray<{ status: string; start_m
   for (const r of rows) if (r.status === "CONFIRMED") total += r.end_min - r.start_min;
   return total;
 }
+
+// ── Punch-derived overtime (HC-0125 hybrid, owner 2026-11-20) ────────────────
+// The owner reversed the report-a-window model: overtime hours are now AUTO-
+// COMPUTED from the day's punch (the span a worker was present, less their
+// standard working day and the unpaid break), recorded as ONE pending claim a
+// supervisor still confirms before it pays. The confirm gate is unchanged, so a
+// punch that merely ran long never pays OT on its own.
+
+/** Overtime minutes a day's punch earns: the present span over the standard
+ *  working day and the unpaid break, rounded to the minute, never negative. Uses
+ *  the SAME standardWorkMin / lunchMin the attendance view and docks already use,
+ *  so a late start eats into it exactly as it shortens the regular day. */
+export function punchOtMinutes(spanMin: number, standardWorkMin: number, lunchMin: number): number {
+  return Math.max(0, Math.round(spanMin - standardWorkMin - lunchMin));
+}
+
+/** Where the auto claim's window sits: from the shift end for its minutes. The
+ *  minutes (end - start) are what pays; the window is the honest label for a
+ *  worker who stayed past knock-off. */
+export function autoOtWindow(shiftEndMin: number, otMin: number): { startMin: number; endMin: number } {
+  return { startMin: shiftEndMin, endMin: shiftEndMin + otMin };
+}
+
+export type AutoOtPlan =
+  | { kind: "none" }
+  | { kind: "delete"; id: number }
+  | { kind: "insert"; startMin: number; endMin: number }
+  | { kind: "update"; id: number; startMin: number; endMin: number };
+
+/* What the punch sync should do with the single AUTO claim for an employee-day,
+ * given the AUTO claim already there (if any) and whether a human has REPORTED
+ * overtime for the same day. Keeps the books to at most one live OT figure per
+ * day, so payroll (which sums every confirmed claim) can never double-pay:
+ *
+ *   - A human-reported claim (pending or confirmed) OWNS the day: the auto
+ *     figure stands aside. Any pending auto claim is removed; a reported one is
+ *     the precise record of split or outside-shift windows a single punch cannot
+ *     show (the case the owner built reporting for).
+ *   - A supervisor's decision on the auto claim is final: a confirmed or
+ *     rejected auto claim is left as it is, never re-raised or overwritten from a
+ *     later re-sync (the sync runs on every punch and page load).
+ *   - Otherwise the auto claim tracks the punch: inserted when OT appears,
+ *     refreshed while it is still pending, removed when the punch no longer earns
+ *     any (a corrected or forgotten punch).
+ */
+export function planAutoOtClaim(input: {
+  existingAuto: { id: number; status: string } | null;
+  reportedOwnsDay: boolean;
+  shiftEndMin: number;
+  otMin: number;
+}): AutoOtPlan {
+  const { existingAuto, reportedOwnsDay, shiftEndMin, otMin } = input;
+  const pendingAuto = existingAuto && existingAuto.status === "PENDING" ? existingAuto : null;
+  if (existingAuto && existingAuto.status !== "PENDING") return { kind: "none" };
+  if (reportedOwnsDay || otMin <= 0) return pendingAuto ? { kind: "delete", id: pendingAuto.id } : { kind: "none" };
+  const { startMin, endMin } = autoOtWindow(shiftEndMin, otMin);
+  return pendingAuto ? { kind: "update", id: pendingAuto.id, startMin, endMin } : { kind: "insert", startMin, endMin };
+}

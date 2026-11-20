@@ -301,8 +301,8 @@ attendance.get("/me/payslip/:period", async (c) => {
 // hr.ot.confirm confirms or rejects. Confirmed OT is what payroll pays (a punch
 // past the shift end no longer auto-grants OT). Account-based like /punch; only
 // review is gated, in-handler, so a floor supervisor needs just hr.ot.confirm.
-type OtRow = { id: number; work_date: string; start_min: number; end_min: number; note: string; status: string; reject_reason: string | null };
-const otOut = (r: OtRow) => ({ id: r.id, workDate: r.work_date, startMin: r.start_min, endMin: r.end_min, note: r.note, status: r.status, rejectReason: r.reject_reason });
+type OtRow = { id: number; work_date: string; start_min: number; end_min: number; note: string; status: string; source: string; reject_reason: string | null };
+const otOut = (r: OtRow) => ({ id: r.id, workDate: r.work_date, startMin: r.start_min, endMin: r.end_min, note: r.note, status: r.status, source: r.source, rejectReason: r.reject_reason });
 const canConfirmOt = (c: Ctx): boolean => {
   const u = c.get("user");
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- tests build AuthUser without permissions_set
@@ -372,10 +372,28 @@ attendance.post("/ot", async (c: Ctx) => {
   const seg = parseOtSegment(String(body.startHHMM ?? ""), String(body.endHHMM ?? ""));
   if (!seg.ok) return c.json({ error: "bad_segment", message: seg.message }, 400);
   const note = typeof body.note === "string" ? body.note.trim().slice(0, 500) : "";
+  /* A reported window and the punch-derived AUTO claim must never both pay for
+     one day. The AUTO claim is removed below; but if a supervisor already
+     CONFIRMED it, the day's overtime is settled — refuse the report and send
+     the worker to HR rather than silently voiding an approved figure. */
+  const confirmedAuto = (
+    await db
+      .select({ id: hr_ot_claims.id })
+      .from(hr_ot_claims)
+      .where(and(eq(hr_ot_claims.company_id, co.companyId), eq(hr_ot_claims.employee_id, emp.id), eq(hr_ot_claims.work_date, workDate), eq(hr_ot_claims.source, "AUTO"), eq(hr_ot_claims.status, "CONFIRMED")))
+      .limit(1)
+  ).at(0);
+  if (confirmedAuto) return c.json({ error: "ot_already_confirmed", message: "Overtime for that day is already confirmed from your punch. Ask HR to adjust it." }, 409);
   const [row] = await db
     .insert(hr_ot_claims)
-    .values({ company_id: co.companyId, employee_id: emp.id, work_date: workDate, start_min: seg.startMin, end_min: seg.endMin, note, status: "PENDING", created_by: userId })
+    .values({ company_id: co.companyId, employee_id: emp.id, work_date: workDate, start_min: seg.startMin, end_min: seg.endMin, note, status: "PENDING", source: "REPORTED", created_by: userId })
     .returning({ id: hr_ot_claims.id });
+  /* A reported window is the precise record for the day, so the crude punch-
+     derived AUTO claim steps aside — removed here too (not only on the next
+     punch sync) so the two never both reach a supervisor for one day. */
+  await db
+    .delete(hr_ot_claims)
+    .where(and(eq(hr_ot_claims.company_id, co.companyId), eq(hr_ot_claims.employee_id, emp.id), eq(hr_ot_claims.work_date, workDate), eq(hr_ot_claims.source, "AUTO"), eq(hr_ot_claims.status, "PENDING")));
   return c.json({ id: row.id }, 201);
 });
 
