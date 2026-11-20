@@ -314,8 +314,8 @@ export function OcrDashboard() {
               <div className={cardTitle}>Scans by document · {monthLabel(r.month)}</div>
               <div className={cardNote}>
                 Every scan this month, including failed ones. Accuracy = sales slips confirmed with no edits, out of those reviewed.
-                Fields read right = fields the person did not change, out of every filled field on those slips (a missed or extra line counts each of its fields);
-                only slips confirmed since 17 Nov 2026, when edits started being recorded exactly.
+                Fields read right = fields the person did not change, out of every filled field on those slips (a missed or extra line counts each of its fields).
+                Both count only slips scanned once the draft was kept as the scan built it (from 17 Nov 2026 afternoon); older slips count the scan's own reformatting as edits.
                 Supplier documents: Failed = the read itself broke; Needs review = read, but no document could be made (e.g. no matching PO or goods receipt);
                 Awaiting review = waiting in the check queue; Discarded = removed from the check queue.
                 * = fewer than {MIN_SAMPLE} reviewed, not enough to judge. Model: {r.model} (the same for every scan; it is not saved per scan).
@@ -329,7 +329,7 @@ export function OcrDashboard() {
 
             <div className={card}>
               <div className={cardTitle}>Where it misses · sales slips</div>
-              <div className={cardNote}>Share of the {reviewed} reviewed slips where the person confirming the order corrected this field.</div>
+              <div className={cardNote}>Share of the {reviewed} reviewed slips (scanned from 17 Nov 2026 afternoon) where the person confirming the order corrected this field.</div>
               {r.fieldMisses.fields.length === 0 ? (
                 <div className="py-6 text-center text-[12px] text-ink-muted">{reviewed ? "No field was corrected this month." : "No sales slip was reviewed this month."}</div>
               ) : (

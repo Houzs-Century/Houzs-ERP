@@ -87,8 +87,8 @@ describe("buildOcrReport before/after", () => {
 describe("buildOcrReport", () => {
   it("counts outcomes, accuracy, field misses and time per document type", () => {
     const rows = [
-      row({ id: "a" }),
-      row({ id: "b", sample_status: "CONFIRMED", extracted: slip("A"), corrected: slip("B"), updated_at: "2026-10-10T01:00:30.000Z" }),
+      row({ id: "a", has_baseline: true }),
+      row({ id: "b", has_baseline: true, sample_status: "CONFIRMED", extracted: slip("A"), corrected: slip("B"), updated_at: "2026-10-10T01:00:30.000Z" }),
       row({ id: "c", status: "error", error: "boom" }),
       row({ id: "d", status: "queued" }),
       row({ id: "e", document_type: "PI", doc_no: "PI-9" }),
@@ -121,20 +121,24 @@ describe("buildOcrReport", () => {
     expect(buildOcrReport("2026-10", "m", [corrected, failed]).problems.map((p) => p.slipImageKey)).toEqual(["scan-slips/s1", null]);
   });
 
-  it("scores fields only on scans whose edits are recorded exactly", () => {
-    const after = "2026-11-20T01:00:00.000Z";
+  it("scores only slips with a draft baseline, so pipeline changes never read as a person's", () => {
     const rows = [
-      row({ id: "clean", created_at: after, extracted: slip("A") }),
-      row({ id: "fixed", created_at: after, sample_status: "CONFIRMED", extracted: slip("A"), corrected: slip("B") }),
-      row({ id: "baseline", has_baseline: true, sample_status: "CONFIRMED", extracted: slip("A"), corrected: slip("A", 2) }),
-      row({ id: "old", sample_status: "CONFIRMED", extracted: slip("A"), corrected: slip("B", 1, { customerName: "X" }) }),
+      row({ id: "clean", has_baseline: true, extracted: slip("A") }),
+      row({ id: "fixed", has_baseline: true, sample_status: "CONFIRMED", extracted: slip("A"), corrected: slip("B") }),
+      row({ id: "qty", has_baseline: true, sample_status: "CONFIRMED", extracted: slip("A"), corrected: slip("A", 2) }),
+      // No baseline (even if scanned after the snapshot shipped): its "phone fix" is the pipeline's reformat.
+      row({ id: "old", created_at: "2026-11-17T19:44:00.000Z", extracted: slip("A"), sample_status: "CONFIRMED", corrected: slip("A", 1, { phones: ["+60123"] }) }),
+      row({ id: "oldClean", extracted: slip("A") }),
     ];
     const r = buildOcrReport("2026-11", "m", rows);
-    // 4 fields each (name, phone, code, qty); 1 change on "fixed", 1 on "baseline"; "old" left out.
-    expect(r.docTypes[0].fieldAccuracy).toEqual({ correct: 10, total: 12, scans: 3 });
+    const so = r.docTypes[0];
+    expect(so).toMatchObject({ clean: 2, corrected: 3, accuracy: { clean: 1, reviewed: 3 } });
+    // 4 fields each (name, phone, code, qty); 1 change on "fixed", 1 on "qty".
+    expect(so.fieldAccuracy).toEqual({ correct: 10, total: 12, scans: 3 });
+    expect(r.fieldMisses).toEqual({ reviewed: 3, fields: [{ field: "Product code", count: 1 }, { field: "Qty", count: 1 }] });
     expect(r.problems.map((p) => [p.id, p.fieldAccuracy])).toEqual([
       ["fixed", { correct: 3, total: 4 }],
-      ["baseline", { correct: 3, total: 4 }],
+      ["qty", { correct: 3, total: 4 }],
       ["old", null],
     ]);
   });

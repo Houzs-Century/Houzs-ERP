@@ -12,7 +12,6 @@ import { scanSoModel } from "../scm/lib/scan-ocr";
 import { changedFields, LINES_CHANGED } from "../scm/lib/scan-slip-fields";
 import { correctionChanges, type FieldChange } from "../scm/lib/scan-correction-detail";
 import { fieldScore } from "../scm/lib/scan-field-accuracy";
-import { LEARNING_POOL_CLEAN_SINCE } from "../scm/lib/scan-sample-review";
 import { SCAN_DOCUMENT_TYPES, SCAN_DOCUMENT_TYPE_LABEL, isScanDocumentType } from "../scm/lib/scan-document-type";
 
 export { changedFields, LINES_CHANGED };
@@ -85,7 +84,7 @@ export interface DocTypeStats {
   clean: number;
   corrected: number;
   imported: number;
-  /** clean / (clean + corrected); null where the review is not recorded (GR, PI). */
+  /** clean / reviewed, over reviewed scans with a draft baseline; null where the review is not recorded (GR, PI). */
   accuracy: { clean: number; reviewed: number } | null;
   /** SO only: fields read right / fields on the slip, over reviewed scans whose edits are recorded exactly. */
   fieldAccuracy: { correct: number; total: number; scans: number } | null;
@@ -111,21 +110,19 @@ export interface OcrReport {
   month: string;
   model: string;
   docTypes: DocTypeStats[];
-  /** SO only: per field, how many reviewed scans the operator corrected it on. */
+  /** SO only: per field, how many reviewed scans (with a draft baseline) the operator corrected it on. */
   fieldMisses: { reviewed: number; fields: FieldMiss[] };
   problems: ProblemScan[];
 }
 
 const PROBLEM_LIMIT_PER_TYPE = 30;
-const EXACT_EDITS_SINCE = new Date(LEARNING_POOL_CLEAN_SINCE).getTime();
-
 /**
- * Edits are recorded exactly once the draft baseline exists; the interactive
- * confirm route never writes one but was exact from the same day. Older
- * corrections include the pipeline's own changes, so they are left out.
+ * A reviewed slip's edits are exact only when the draft baseline was kept.
+ * Without it the review counts the scan pipeline's own changes (phone format,
+ * city, postcode) as a person's, so no slip could ever read as clean.
  */
 export function editsRecordedExactly(r: ScanRow): boolean {
-  return r.has_baseline || new Date(r.created_at).getTime() >= EXACT_EDITS_SINCE;
+  return r.has_baseline;
 }
 const iso = (v: string | Date) => new Date(v).toISOString();
 
@@ -155,7 +152,8 @@ export function buildOcrReport(month: string, model: string, rows: ScanRow[]): O
     }
     const { outcome, detail } = classifyScan(r);
     const changes = outcome === "corrected" ? correctionChanges(r.extracted, r.corrected, r.draft_baseline) : null;
-    const score = (outcome === "clean" || outcome === "corrected") && editsRecordedExactly(r)
+    const exact = (outcome === "clean" || outcome === "corrected") && editsRecordedExactly(r);
+    const score = exact
       ? fieldScore(r.extracted, outcome === "clean" ? r.extracted : r.corrected)
       : null;
     if (score) {
@@ -164,14 +162,19 @@ export function buildOcrReport(month: string, model: string, rows: ScanRow[]): O
       fa.total += score.total;
       fa.scans++;
     }
+    if (exact) {
+      const acc = (s.accuracy ??= { clean: 0, reviewed: 0 });
+      acc.reviewed++;
+      if (outcome === "clean") acc.clean++;
+    }
     s.scans++;
     s[outcome]++;
     if (outcome !== "pending") {
       const sec = (new Date(r.updated_at).getTime() - new Date(r.created_at).getTime()) / 1000;
       if (Number.isFinite(sec) && sec >= 0) secs.get(t)!.push(sec);
     }
-    if (outcome === "clean" || outcome === "corrected") reviewed++;
-    if (outcome === "corrected" && detail) {
+    if (exact) reviewed++;
+    if (exact && outcome === "corrected" && detail) {
       for (const f of detail.split(", ")) misses.set(f, (misses.get(f) ?? 0) + 1);
     }
     const problemsOfType = problemCounts.get(t) ?? 0;
@@ -186,7 +189,7 @@ export function buildOcrReport(month: string, model: string, rows: ScanRow[]): O
 
   for (const s of byType.values()) {
     if (s.documentType === "SO") {
-      s.accuracy = { clean: s.clean, reviewed: s.clean + s.corrected };
+      s.accuracy ??= { clean: 0, reviewed: 0 };
       s.fieldAccuracy ??= { correct: 0, total: 0, scans: 0 };
     }
     const list = secs.get(s.documentType)!.sort((a, b) => a - b);
