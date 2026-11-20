@@ -782,6 +782,9 @@ export type DpOrderCreate = {
   fromOverrides?: Record<string, string | null>;
   requestedDate?: string;
   remark?: string;
+  /* "Delivery (no SO)": its sales amount in sen, which Trip Pay's Delivery
+     commission is worked out on (owner 2026-11-20). */
+  salesAmountSen?: number | null;
   overrides?: Record<string, string | null>;
 };
 export function useCreateDpOrder() {
@@ -819,6 +822,7 @@ export type DpOrderPatch = {
   fromState?: string | null;
   requestedDate?: string | null;
   remark?: string | null;
+  salesAmountSen?: number | null;
 };
 export function useUpdateDpOrder() {
   const qc = useQueryClient();
@@ -928,6 +932,8 @@ export function useDpCrew() {
    existing create / cancel / schedule mutation invalidates that prefix, so the
    list refreshes with zero changes to the mutations. */
 export type DpOrderRow = {
+  /** "Delivery (no SO)": the typed sales amount, sen (mig 20261120T2000); null otherwise. */
+  sales_amount_sen?: number | string | null;
   id: string;
   dp_no: string | null;
   job_type: string;
@@ -1422,4 +1428,12 @@ export function useConvertSosToDo() {
       qc.invalidateQueries({ queryKey: ['inventory'] });
     },
   });
+}
+
+/** "350.50" / "1,200" -> sen; "" -> null; anything else -> undefined (not an amount). */
+export function salesAmountSenOf(text: string): number | null | undefined {
+  const t = text.replace(/,/g, '').trim();
+  if (t === '') return null;
+  const n = Number(t);
+  return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) : undefined;
 }
