@@ -31,7 +31,7 @@ export function PublicHolidaysPage() {
   );
   const thisYear = rows.filter((h) => h.date.startsWith(year)).length;
   const upcoming = rows.filter((h) => h.date >= today);
-  const next = upcoming[0] ?? null;
+  const next = upcoming.at(0);
 
   async function remove(h: Row) {
     const ok = await dialog.confirm({
