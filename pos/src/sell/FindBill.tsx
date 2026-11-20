@@ -1,9 +1,12 @@
 /* Find bill (layout P12): search by receipt no / amount / customer, filters
  * Today / cashier / status; the detail with PAID / VOID / RETURN and SYNCED /
  * NOT SYNCED; Reprint (COPY), E-receipt, Change salesman, Return / Exchange,
- * Void bill (supervisor PIN + reason). */
+ * Void bill (supervisor PIN + reason). "Other terminals" adds the bills other
+ * devices made, read from the ERP, for a reprint only (findBillRules.ts). */
 import { useEffect, useMemo, useState } from "react";
 import { posMethodLabel } from "@shared/pos-vocabulary";
+import { deviceApi } from "../api";
+import { findBillDays, otherDeviceBills } from "../findBillRules";
 import { fmtMyt } from "../loginRules";
 import { printSale, shareReceipt } from "../printing";
 import { mytDate, voidAllowed, voidSale, type SaleRecord } from "../sale";
@@ -30,14 +33,36 @@ export function FindBill({ state, initialQuery, onReturn, onClose, say }: {
   const [voidStep, setVoidStep] = useState<null | "pin" | { sup: BundleCashier }>(null);
   const [reason, setReason] = useState("");
   const [salesmanPick, setSalesmanPick] = useState(false);
+  const [withOthers, setWithOthers] = useState(false);
+  const [erp, setErp] = useState<SaleRecord[]>([]);
+  const [loadingOthers, setLoadingOthers] = useState(false);
   const reload = () => listSales().then((rows) => { setAll(rows.sort((a, b) => (a.sold_at < b.sold_at ? 1 : -1))); }).catch(() => say("Could not read bills", true));
   useEffect(() => { void reload(); }, []);
 
   const today = mytDate(new Date().toISOString());
+  const eventStart = state.bundle.event.start_date;
+  useEffect(() => {
+    if (!withOthers) { setErp([]); return; }
+    let alive = true;
+    const days = findBillDays(todayOnly, eventStart, today);
+    setLoadingOthers(true);
+    deviceApi.sales<SaleRecord>(state.token, days.from, days.to)
+      .then((r) => { if (alive) setErp(r.sales); })
+      .catch((e) => { if (alive) { setWithOthers(false); say(`Other terminals need the ERP: ${e instanceof Error ? e.message : "not reachable"}`, true); } })
+      .finally(() => { if (alive) setLoadingOthers(false); });
+    return () => { alive = false; };
+    // say is the parent's toast; a new identity must not refetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [withOthers, todayOnly, eventStart, today, state.token]);
+  const others = useMemo(() => otherDeviceBills(all, erp), [all, erp]);
+  const otherIds = useMemo(() => new Set(others.map((s) => s.uuid)), [others]);
+  const everything = useMemo(() => (others.length ? [...all, ...others].sort((a, b) => (a.sold_at < b.sold_at ? 1 : -1)) : all), [all, others]);
+  const selOther = sel != null && otherIds.has(sel.uuid);
+
   const rows = useMemo(() => {
     const t = q.trim().toLowerCase();
     const amt = Number(t.replace(/[^0-9.]/g, ""));
-    return all.filter((s) => {
+    return everything.filter((s) => {
       if (s.is_test && !state.test_mode) return false;
       if (todayOnly && mytDate(s.sold_at) !== today) return false;
       if (cashier && s.cashier_name !== cashier) return false;
@@ -50,8 +75,8 @@ export function FindBill({ state, initialQuery, onReturn, onClose, say }: {
       if (Number.isFinite(amt) && amt > 0 && Math.abs(Math.abs(s.total_sen) / 100 - amt) < 0.005) return true;
       return false;
     });
-  }, [all, q, todayOnly, cashier, status, today, state.test_mode]);
-  const cashiers = Array.from(new Set(all.map((s) => s.cashier_name))).sort();
+  }, [everything, q, todayOnly, cashier, status, today, state.test_mode]);
+  const cashiers = Array.from(new Set(everything.map((s) => s.cashier_name).filter(Boolean))).sort();
 
   async function doVoid(sup: BundleCashier) {
     if (!sel) return;
@@ -89,14 +114,16 @@ export function FindBill({ state, initialQuery, onReturn, onClose, say }: {
           <input className="kbd-input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Receipt no, amount or customer" autoFocus />
           <div className="row small" style={{ margin: "6px 0" }}>
             <label><input type="checkbox" checked={todayOnly} onChange={(e) => setTodayOnly(e.target.checked)} /> Today</label>
+            <label title="Bills made on other devices, read from the ERP (needs internet). Reprint only."><input type="checkbox" checked={withOthers} onChange={(e) => { setWithOthers(e.target.checked); setSel(null); }} /> Other terminals{loadingOthers ? "…" : ""}</label>
             <select className="kbd-input" style={{ minHeight: 32, width: "auto" }} value={cashier} onChange={(e) => setCashier(e.target.value)}><option value="">All cashiers</option>{cashiers.map((c) => <option key={c}>{c}</option>)}</select>
             <select className="kbd-input" style={{ minHeight: 32, width: "auto" }} value={status} onChange={(e) => setStatus(e.target.value as typeof status)}><option value="">All</option><option value="PAID">Paid</option><option value="VOID">Void</option><option value="RETURN">Return</option></select>
           </div>
           <div className="find-rows">
-            {rows.length === 0 && <div className="muted" style={{ padding: 12 }}>No bill matches.</div>}
+            {rows.length === 0 && <div className="muted" style={{ padding: 12 }}>{loadingOthers ? "Reading the ERP…" : withOthers ? "No bill matches, on this device or in the ERP." : "No bill matches on this device. Tick Other terminals for a bill another device made."}</div>}
             {rows.map((s) => (
               <button key={s.uuid} type="button" className={`search-row${sel?.uuid === s.uuid ? " sel" : ""}`} onClick={() => setSel(s)}>
                 <span className="grow"><b className="mono">{s.receipt_no}</b> <span className="muted">{fmtMyt(s.sold_at)} · {s.cashier_name}{s.customer_name ? ` · ${s.customer_name}` : ""}</span></span>
+                {otherIds.has(s.uuid) && <span className="pill auto">OTHER DEVICE</span>}
                 {badge(s)}
                 <span className="money">RM {rm(s.total_sen)}</span>
               </button>
@@ -106,7 +133,7 @@ export function FindBill({ state, initialQuery, onReturn, onClose, say }: {
         <div className="find-detail">
           {!sel ? <div className="muted">Pick a bill to see its receipt.</div> : (
             <>
-              <div className="row"><b className="mono">{sel.receipt_no}</b>{badge(sel)}<span className={`pill ${sel.synced_at ? "okp" : "warnp"}`}>{sel.synced_at ? "SYNCED" : "NOT SYNCED"}</span>{sel.is_test && <span className="pill warnp">TEST</span>}</div>
+              <div className="row"><b className="mono">{sel.receipt_no}</b>{badge(sel)}{selOther ? <span className="pill auto">OTHER DEVICE</span> : <span className={`pill ${sel.synced_at ? "okp" : "warnp"}`}>{sel.synced_at ? "SYNCED" : "NOT SYNCED"}</span>}{sel.is_test && <span className="pill warnp">TEST</span>}</div>
               <div className="muted small">{fmtMyt(sel.sold_at)} · Terminal {sel.terminal_code} · Cashier {sel.cashier_name} · Salesman {sel.salesman_name ?? "Booth"}{sel.ref_receipt_no ? ` · Ref ${sel.ref_receipt_no}` : ""}</div>
               <table className="cart" style={{ marginTop: 8 }}>
                 <thead><tr><th>Item</th><th className="num">Qty</th><th className="num">Price</th><th>Disc</th><th className="num">Amount</th></tr></thead>
@@ -128,10 +155,11 @@ export function FindBill({ state, initialQuery, onReturn, onClose, say }: {
               <div className="row" style={{ marginTop: 12, flexWrap: "wrap" }}>
                 <button type="button" className="btn" onClick={() => printSale(sel, state, "COPY").then((r) => say(r.ok ? "Copy printed" : r.reason, !r.ok))}>Reprint (COPY)</button>
                 <button type="button" className="btn" onClick={() => void shareReceipt(sel, state)}>E-receipt</button>
-                {sel.status === "PAID" && sel.type === "SALE" && <button type="button" className="btn" onClick={() => setSalesmanPick(true)}>Change salesman</button>}
-                {sel.status === "PAID" && sel.type === "SALE" && <button type="button" className="btn" onClick={() => onReturn(sel)}>Return / Exchange</button>}
-                {sel.status === "PAID" && <button type="button" className="btn danger" onClick={() => setVoidStep("pin")}>Void bill…</button>}
+                {!selOther && sel.status === "PAID" && sel.type === "SALE" && <button type="button" className="btn" onClick={() => setSalesmanPick(true)}>Change salesman</button>}
+                {!selOther && sel.status === "PAID" && sel.type === "SALE" && <button type="button" className="btn" onClick={() => onReturn(sel)}>Return / Exchange</button>}
+                {!selOther && sel.status === "PAID" && <button type="button" className="btn danger" onClick={() => setVoidStep("pin")}>Void bill…</button>}
               </div>
+              {selOther && <div className="muted small" style={{ marginTop: 8 }}>This bill was made on another device and is read from the ERP: it can be reprinted here. To void it, return it or change its salesman, use the device that made it.</div>}
               {voidStep && typeof voidStep === "object" && (
                 <div className="card" style={{ marginTop: 10 }}>
                   <div className="lbl">Void {sel.receipt_no} · approved by {voidStep.sup.name}</div>
