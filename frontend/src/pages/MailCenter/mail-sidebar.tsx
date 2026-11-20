@@ -198,7 +198,8 @@ export function FolderItem({
    or your department's: shared with you by an admin, or a colleague's mailbox
    your Whole department level opens. */
 export function reachTagOf(vis: MailVisibility | null, address: string, personal: boolean): "Shared" | "Team" | null {
-  const reach = vis?.mailboxes.find((m) => m.address === address.toLowerCase())?.reach ?? null;
+  const list = vis && Array.isArray(vis.mailboxes) ? vis.mailboxes : [];
+  const reach = list.find((m) => m.address === address.toLowerCase())?.reach ?? null;
   return reach === "granted" ? "Shared" : reach === "department" && personal ? "Team" : null;
 }
 

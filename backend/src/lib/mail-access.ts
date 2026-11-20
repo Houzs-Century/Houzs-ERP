@@ -4,7 +4,10 @@
 //  - 'department_all' also opens those departments' colleagues' own mailboxes;
 //  - a member of the Management department reads every mailbox;
 //  - every level change and grant is written to mail_access_changes.
+import type { Context } from "hono";
 import type { Env } from "../types";
+import { activeCompanyId, activeCompanySql } from "../scm/lib/companyScope";
+import { postPersonalNotice } from "../services/personalNotice";
 
 /** The Org Chart department whose members read the whole company's mail. */
 export const MANAGEMENT_DEPARTMENT = "management";
@@ -97,3 +100,41 @@ export const LEVEL_NAME: Record<string, string> = {
   department_all: "L3 · Whole department",
   company: "L4 · Company",
 };
+
+/* Every grant is logged, and a colleague's OWN mailbox being opened to someone
+   tells its owner (owner 2026-11-21). */
+export async function afterGrantChange(
+  c: Context<{ Bindings: Env }>,
+  addressId: string,
+  userId: number,
+  verb: "shared" | "stopped sharing",
+): Promise<void> {
+  // company-scope: the mailbox row is read inside the active company.
+  const mb = await c.env.DB.prepare(
+    `SELECT address, assigned_user_id FROM email_addresses WHERE id = ?${activeCompanySql(c)} LIMIT 1`,
+  )
+    .bind(addressId)
+    .first<{ address: string; assigned_user_id: number | null }>();
+  if (!mb) return;
+  await recordAccessChange(c.env.DB, {
+    companyId: activeCompanyId(c) ?? null,
+    byUserId: c.get("userId") ?? null,
+    userId,
+    change: `${verb} ${mb.address}`,
+  });
+  const owner = mb.assigned_user_id == null ? null : Number(mb.assigned_user_id);
+  if (owner == null || owner === userId) return;
+  const row = await c.env.DB.prepare(`SELECT name, email FROM users WHERE id = ? LIMIT 1`)
+    .bind(userId)
+    .first<{ name: string | null; email: string | null }>();
+  const who = row?.name?.trim() || row?.email || "A colleague";
+  await postPersonalNotice(c.env, {
+    userIds: [owner],
+    category: "GENERAL",
+    title: verb === "shared" ? `${who} can now read your mailbox` : `${who} can no longer read your mailbox`,
+    body: verb === "shared"
+      ? `An admin shared ${mb.address} with ${who} in Mail Center.`
+      : `An admin stopped sharing ${mb.address} with ${who}.`,
+    source: "mail_access",
+  });
+}

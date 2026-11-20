@@ -22,8 +22,7 @@
 //
 // Timestamp columns are TEXT, written via new Date().toISOString() (per mig 0008).
 // ---------------------------------------------------------------------------
-import { departmentIdsOf, departmentMailboxes, isInManagement, LEVEL_NAME, recordAccessChange } from "../lib/mail-access";
-import { postPersonalNotice } from "../services/personalNotice";
+import { afterGrantChange, departmentIdsOf, departmentMailboxes, isInManagement, LEVEL_NAME, recordAccessChange } from "../lib/mail-access";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { Env } from "../types";
@@ -1756,37 +1755,6 @@ app.delete("/access", async (c) => {
   return c.json({ ok: true });
 });
 
-/* Owner 2026-11-21: every grant is logged, and a colleague's OWN mailbox being
-   opened to someone tells its owner. */
-async function afterGrantChange(
-  c: Context<{ Bindings: Env }>,
-  addressId: string,
-  userId: number,
-  verb: "shared" | "stopped sharing",
-): Promise<void> {
-  // company-scope: the mailbox row is read inside the active company.
-  const mb = await c.env.DB.prepare(
-    `SELECT address, assigned_user_id FROM email_addresses WHERE id = ?${activeCompanySql(c)} LIMIT 1`,
-  )
-    .bind(addressId)
-    .first<{ address: string; assigned_user_id: number | null }>();
-  if (!mb) return;
-  const byUserId = c.get("userId") ?? null;
-  await recordAccessChange(c.env.DB, { companyId: activeCompanyId(c) ?? null, byUserId, userId, change: `${verb} ${mb.address}` });
-  const owner = mb.assigned_user_id == null ? null : Number(mb.assigned_user_id);
-  if (owner == null || owner === userId) return;
-  const who = await senderName(c.env.DB, userId);
-  await postPersonalNotice(c.env, {
-    userIds: [owner],
-    category: "GENERAL",
-    title: verb === "shared" ? `${who} can now read your mailbox` : `${who} can no longer read your mailbox`,
-    body: verb === "shared"
-      ? `An admin shared ${mb.address} with ${who} in Mail Center.`
-      : `An admin stopped sharing ${mb.address} with ${who}.`,
-    source: "mail_access",
-  });
-}
-
 // ---------------------------------------------------------------------------
 // Hierarchical mail-visibility levels. Admin sets a per-user level in
 // mail_user_scope: 'personal' | 'department' | 'company'. Absent row =
@@ -1843,30 +1811,6 @@ app.put("/scope-level", async (c) => {
     change: `set level to ${LEVEL_NAME[level] ?? level}`,
   });
   return c.json({ ok: true });
-});
-
-// GET /api/mail-center/access/changes — the newest 50 access changes of the active company.
-app.get("/access/changes", async (c) => {
-  if (!isMailAdmin(c.get("user"))) {
-    return c.json({ error: "You do not have permission to manage the Mail Center." }, 403);
-  }
-  c.header("Cache-Control", "no-store");
-  try {
-    const res = await c.env.DB.prepare(
-      `SELECT m.changed_at, m.change, b.name AS by_name, u.name AS who_name
-         FROM mail_access_changes m
-         LEFT JOIN users b ON b.id = m.by_user_id
-         LEFT JOIN users u ON u.id = m.user_id
-        WHERE 1=1${activeCompanySql(c, "m.company_id")}
-        ORDER BY m.changed_at DESC
-        LIMIT 50`,
-    ).all<{ changed_at: string; change: string; by_name: string | null; who_name: string | null }>();
-    return c.json(
-      (res.results ?? []).map((r) => ({ at: r.changed_at, by: r.by_name ?? "Someone", who: r.who_name ?? "a member", change: r.change })),
-    );
-  } catch {
-    return c.json([]);
-  }
 });
 
 // ---------------------------------------------------------------------------
