@@ -5,12 +5,15 @@
  * (default) and OT Requests — join the existing tab bodies. Sidebar first;
  * Overview / OT Requests / per-page restyle land in later stages. The URL
  * carries the page in ?tab. */
+import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { PageHeader } from "../components/Layout";
 import { HrSubnav, HR_NAV } from "./hr/HrSubnav";
 import { HrPageHeader, hrPrimaryBtn, hrSecondaryBtn } from "./hr/HrPageHeader";
 import { OverviewPage } from "./hr/OverviewPage";
 import { EmployeeMasterPage } from "./hr/EmployeeMasterPage";
+import { EmployeeEditModal } from "./hr/EmployeeEditModal";
+import type { Emp } from "./hr/hrSampleData";
 import { EmployeeMasterTab } from "./hr/EmployeeMasterTab";
 import { PublicHolidaysTab } from "./hr/PublicHolidaysTab";
 import { PayRulesTab } from "./hr/PayRulesTab";
@@ -97,6 +100,7 @@ function ComingSoon({ title }: { title: string }) {
 
 export function HrEmployees() {
   const [params, setParams] = useSearchParams();
+  const [modalEmp, setModalEmp] = useState<Emp | null>(null);
   const raw = params.get("tab");
   const active: Tab = (raw && NAV_KEYS.has(raw) ? raw : "overview") as Tab;
   const setTab = (next: string) =>
@@ -148,10 +152,10 @@ export function HrEmployees() {
                 </>
               }
             />
-            <OverviewPage onNavigate={setTab} />
+            <OverviewPage onNavigate={setTab} onPickEmployee={setModalEmp} />
           </>
         ) : active === "employees" ? (
-          <EmployeeMasterPage />
+          <EmployeeMasterPage onPickEmployee={setModalEmp} />
         ) : active === "ot-requests" ? (
           <ComingSoon title="OT Requests" />
         ) : (
@@ -161,6 +165,7 @@ export function HrEmployees() {
           </div>
         )}
       </div>
+      {modalEmp && <EmployeeEditModal emp={modalEmp} onClose={() => setModalEmp(null)} />}
     </div>
   );
 }
