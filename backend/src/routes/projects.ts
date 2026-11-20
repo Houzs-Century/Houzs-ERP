@@ -4300,19 +4300,11 @@ app.patch(
 );
 
 // Per-attachment ACTION TIMELINE (owner 2026-07-29; five-state 2026-11-20):
-// append-only entries stamped on each defect-list upload — each click ADDS an
-// entry with an optional remark; history is never overwritten. TWO actors, five
-// statuses:
-//   - The reviewer (Shukor the Storekeeper Supervisor / Nancy the Ops Exec)
-//     triages a fresh defect: 'done_clean' (he cleaned it — resolved), or
-//     'exchange' / 'service' (both escalate it to the purchaser).
-//   - The purchaser (Farra) or BD then works the escalation: 'in_progress', then
-//     'done' (resolved).
-// A file whose LATEST entry is 'done'/'done_clean' is resolved and drops out of
-// every lane; 'exchange'/'service'/'in_progress' (and legacy 'replace') sit in
-// the purchaser lane; anything else (fresh/legacy 'ongoing') is in the reviewer
-// lane (listProjects DEFECT_REVIEW / PURCHASER arms, defectStage). Wildcard /
-// projects.manage admins may act as either.
+// append-only — each click ADDS one entry (optional remark), history is never
+// overwritten. The reviewer (Shukor/Nancy) triages a fresh defect with
+// 'done_clean', 'exchange' or 'service'; the purchaser (Farra)/BD then works an
+// escalation with 'in_progress' then 'done'. Lanes + stage: defectStage
+// (frontend) and listProjects (DEFECT_REVIEW / PURCHASER arms). Admins act as either.
 app.post(
   "/checklist/attachments/:attId/actions",
   requireAnyPermission(["projects.write", "projects.checklist.tick"]),
@@ -4323,51 +4315,20 @@ app.post(
     const user = c.get("user");
     const granted = user?.permissions_set ?? user?.permissions;
     const role = (user?.role_name ?? "").toLowerCase();
-    const position = (user?.position_name ?? "").trim().toLowerCase();
-    const isAdmin =
-      hasPermission(granted, "*") || hasPermission(granted, "projects.manage");
-    // Defect reviewers triage a fresh defect (Done = cleaned, Replace =
-    // escalate). Two warehouses (owner 2026-08-11): Shukor the Storekeeper
-    // Supervisor + Nancy the Ops Exec (region states). The purchaser (Sim /
-    // Farra) and BD only close escalations. State routing governs My Pending
-    // visibility; either reviewer may act, the frontend shows the right one.
+    const isAdmin = hasPermission(granted, "*") || hasPermission(granted, "projects.manage");
+    // Region split (owner 2026-08-11): Nancy the Ops Exec reviews the region
+    // states, Shukor the Storekeeper Supervisor the rest; the purchaser/BD close.
     const isReviewer = isDefectReviewerPosition(user) || role === "ops exec";
     const isPurchaser = role.includes("purchaser") || role.includes("bd");
-    if (!isAdmin && !isReviewer && !isPurchaser) {
-      return c.json(
-        { error: "Only a defect reviewer, purchaser or BD can log defect actions" },
-        403
-      );
-    }
+    if (!isAdmin && !isReviewer && !isPurchaser) return c.json({ error: "Only a defect reviewer, purchaser or BD can log defect actions" }, 403);
     const body = await c.req.json<{ status?: string; remark?: string | null }>();
     const status = (body.status ?? "").toLowerCase();
-    // Five-state timeline (owner 2026-11-20): the reviewer (Shukor/Nancy) triages
-    // a fresh defect — done_clean (cleaned, resolved), or exchange / service (both
-    // escalate to the purchaser). The purchaser (Farra) then works the escalation:
-    // in_progress, then done (resolved). Legacy 'replace' (escalated) and 'done'
-    // (resolved) rows still read correctly through the stage helper.
+    // Reviewer statuses clean/escalate; purchaser statuses work the escalation.
     const REVIEWER_STATUSES = new Set(["done_clean", "exchange", "service"]);
     const PURCHASER_STATUSES = new Set(["in_progress", "done"]);
-    if (!REVIEWER_STATUSES.has(status) && !PURCHASER_STATUSES.has(status)) {
-      return c.json(
-        { error: "status must be one of done_clean, exchange, service, in_progress, done" },
-        400
-      );
-    }
-    // A reviewer-stage stamp (clean / escalate) is the reviewer's or an admin's.
-    if (REVIEWER_STATUSES.has(status) && !isReviewer && !isAdmin) {
-      return c.json(
-        { error: "Only a defect reviewer can clean or escalate a defect" },
-        403
-      );
-    }
-    // A purchaser-stage stamp (in progress / done) is the purchaser's / BD's or an admin's.
-    if (PURCHASER_STATUSES.has(status) && !isPurchaser && !isAdmin) {
-      return c.json(
-        { error: "Only the purchaser or BD can mark a defect in progress or done" },
-        403
-      );
-    }
+    if (!REVIEWER_STATUSES.has(status) && !PURCHASER_STATUSES.has(status)) return c.json({ error: "status must be one of done_clean, exchange, service, in_progress, done" }, 400);
+    if (REVIEWER_STATUSES.has(status) && !isReviewer && !isAdmin) return c.json({ error: "Only a defect reviewer can clean or escalate a defect" }, 403);
+    if (PURCHASER_STATUSES.has(status) && !isPurchaser && !isAdmin) return c.json({ error: "Only the purchaser or BD can mark a defect in progress or done" }, 403);
     const att = await c.env.DB.prepare(
       `SELECT a.id, p.state
          FROM project_checklist_attachments a

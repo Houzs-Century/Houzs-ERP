@@ -1538,17 +1538,13 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
     );
     pendingBinds.push(dueToday);
     // Defect ACTIONING (owner 2026-07-29; five-state 2026-11-20): a defect-list
-    // file reaches the PURCHASER (Farra) once the reviewer has ESCALATED it — its
-    // LATEST timeline entry is 'exchange' or 'service' (legacy 'replace' too), and
-    // it stays in her lane while she works it ('in_progress'). She clears it with
-    // 'done'; a reviewer clears a clean-able one with 'done_clean' (never reaches
-    // here). Timeline-gated to events that ended
-    // within the last 30 days so the historical backlog does not flood the lane.
-    // The defect ITEM must still be open: once it is ticked done/na the
-    // purchaser is finished, so the project leaves this lane even though the
-    // attachment's last action stays 'replace' on record (owner 2026-10-21 —
-    // Sim saw two done HOMEDEC events linger here, chip falling back to a
-    // BD/owner section). One bind (defectSince).
+    // file reaches the PURCHASER (Farra) once the reviewer ESCALATED it ('exchange'
+    // / 'service', legacy 'replace'), and stays while she works it ('in_progress');
+    // she clears it 'done' (a reviewer cleans with 'done_clean', never here).
+    // Timeline-gated to events ended within 30 days so the backlog does not flood.
+    // The defect ITEM must still be open: once ticked done/na the purchaser is
+    // finished, so the project leaves this lane even though the attachment's last
+    // action stays escalated on record (owner 2026-10-21). One bind (defectSince).
     const defectSince = (() => {
       const d = new Date(`${dueToday}T00:00:00Z`);
       d.setUTCDate(d.getUTCDate() - 30);
