@@ -103,7 +103,11 @@ export type AssrLegRecord = DeliverySheetRecord & { Kind: AssrLegKind };
  * against `?2::timestamptz` is `text > timestamptz`, which Postgres rejects
  * (42883), and the route surfaced that as a 502 the first time the sheet
  * actually pulled this feed. The pg fixture mirrors the TEXT column so the cast
- * is under test.
+ * is under test. Every `updated_at` is qualified `assr_cases.updated_at`:
+ * `assr_case_address` (joined for the case's own postcode / city / state) also
+ * has an `updated_at`, so a bare reference is ambiguous (42702) and 502s both
+ * this feed and /em-transporter — the fixture gives the address table its own
+ * `updated_at` so that ambiguity is under test.
  *
  * `customer_country` comes from the linked Sales Order: a Singapore case's
  * address line 3 often lacks the word (locality-master addresses read "600314
@@ -136,7 +140,7 @@ SELECT assr_no,
        pickup_by, customer_pickup_at,
        delivery_by, do_date,
        so.customer_country, so.so_postcode, so.so_city, so.so_state,
-       updated_at::text AS last_modified_text
+       assr_cases.updated_at::text AS last_modified_text
   FROM assr_cases
   LEFT JOIN assr_case_address ca ON ca.assr_id = assr_cases.id
   LEFT JOIN LATERAL (
@@ -149,8 +153,8 @@ SELECT assr_no,
    AND archived_at IS NULL`;
 
 const ASSR_FEED_PAGE = `
-   AND updated_at::timestamptz > ?1::timestamptz
- ORDER BY updated_at::timestamptz, assr_no
+   AND assr_cases.updated_at::timestamptz > ?1::timestamptz
+ ORDER BY assr_cases.updated_at::timestamptz, assr_no
  LIMIT ?2`;
 
 export const FEED_ASSR_LEGS_SQL = `${ASSR_FEED_SELECT}
