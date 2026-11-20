@@ -97,9 +97,10 @@ describe('kindAttributes', () => {
     expect(r.attributes).toEqual({ consignment_no: 'MSCU1234567', eta_em_port: '2026/12/15' });
   });
 
-  it('East Malaysia arrived gates on the EM-warehouse arrival date; adds nothing when set', () => {
-    expect(kindAttributes('eastmy_arrived', row, null, 0, undefined).skip).toBe('eastmy_not_arrived');
-    const r = kindAttributes('eastmy_arrived', { ...row, arrives_em_warehouse_date: '2026-12-20' }, null, 0, undefined);
+  it('East Malaysia arrived is an operator-judgment send: never gated, adds nothing', () => {
+    // No system date gate (owner 2026-11-20): Sya Sya decides it has arrived and
+    // sends by hand, so it fires regardless of any arrival date on the row.
+    const r = kindAttributes('eastmy_arrived', row, null, 0, undefined);
     expect(r.skip).toBeUndefined();
     expect(r.attributes).toEqual({});
   });
