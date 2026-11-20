@@ -44,6 +44,11 @@ describe("chatRequestPatch — what a WhatsApp tap may write on the SO", () => {
     expect(chatRequestPatch("postage_amend", null, null)).toEqual({});
   });
 
+  it("eastmy_ack writes nothing on the SO — the prep details are recorded on the log row only", () => {
+    expect(chatRequestPatch("eastmy_ack", null, null)).toEqual({});
+    expect(CHAT_MESSAGE_STATUS.eastmy_ack).toBeNull();
+  });
+
   it("confirm: only the message status moves", () => {
     expect(chatRequestPatch("confirm", null, null)).toEqual({ delivery_message_status: "Done Scheduling" });
   });

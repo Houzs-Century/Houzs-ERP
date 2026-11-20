@@ -58,6 +58,12 @@ export const CHAT_MESSAGE_STATUS = {
   // The Property Details form answers — written to the house / disposal
   // columns, no board status moves (the order was "Done Scheduling" already).
   property: null,
+  // East Malaysia prep callback: the customer's confirmed final-mile delivery
+  // details (recipient / phone / address / remark) after the Prep Notice. Like
+  // the postage address, these are RECORDED on the message-log row (the route
+  // folds them into its note) and never written onto the Sales Order — the SO's
+  // address is staff's to change — so no column patch and no board status moves.
+  eastmy_ack: null,
 } as const;
 
 export type ChatEvent = keyof typeof CHAT_MESSAGE_STATUS;
