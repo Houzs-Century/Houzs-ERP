@@ -44,6 +44,17 @@ describe("Overtime on the phone", () => {
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/attendance/ot/3/review", { decision: "confirm", reason: "" }));
   });
 
+  it("a punch-derived claim is tagged and cannot be deleted by the worker", async () => {
+    api.get.mockResolvedValue({
+      canConfirm: false,
+      mine: [{ id: 5, workDate: "2026-11-20", startMin: 1140, endMin: 1230, note: "Auto from punch (1.5h past the shift)", status: "PENDING", source: "AUTO", rejectReason: null }],
+      pending: [],
+    });
+    show();
+    await waitFor(() => expect(screen.getByText("From your punch")).toBeTruthy());
+    expect(screen.queryByText("Delete")).toBeNull();
+  });
+
   it("adding a window posts the times", async () => {
     api.get.mockResolvedValue({ canConfirm: false, mine: [], pending: [] });
     const { container } = show();

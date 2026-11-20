@@ -1,7 +1,8 @@
-/* Overtime on the phone (HC-0125). A worker reports overtime as one or more
- * windows on a day ("20:30-21:30 rushed an order"); a supervisor with
- * hr.ot.confirm sees the pending ones and confirms or rejects. Confirmed
- * overtime is what payroll pays - a punch past the shift end no longer does. */
+/* Overtime on the phone (HC-0125 hybrid, owner 2026-11-20). Overtime is counted
+ * automatically from the day's punch (the time present past a full working day);
+ * a worker can still add a window by hand for extra time the single punch cannot
+ * show - a split shift, or work before/after being clocked in. Either way a
+ * supervisor with hr.ot.confirm confirms it, and only confirmed overtime pays. */
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
@@ -12,7 +13,8 @@ import { DateField } from "../vendor/scm/components/DateField";
 import "./mobile.css";
 
 type OtStatus = "PENDING" | "CONFIRMED" | "REJECTED";
-type OtClaim = { id: number; workDate: string; startMin: number; endMin: number; note: string; status: OtStatus; rejectReason: string | null };
+type OtSource = "REPORTED" | "AUTO";
+type OtClaim = { id: number; workDate: string; startMin: number; endMin: number; note: string; status: OtStatus; source?: OtSource; rejectReason: string | null };
 type PendingClaim = OtClaim & { employeeName: string; empNo: string };
 type OtData = { canConfirm: boolean; mine: OtClaim[]; pending: PendingClaim[] };
 
@@ -26,6 +28,10 @@ const hoursLabel = (c: { startMin: number; endMin: number }) => {
 };
 const STATUS_TONE: Record<OtStatus, string> = { PENDING: "var(--warn, #9a6b00)", CONFIRMED: "var(--green)", REJECTED: "var(--red)" };
 const STATUS_TEXT: Record<OtStatus, string> = { PENDING: "Waiting for your supervisor", CONFIRMED: "Confirmed", REJECTED: "Rejected" };
+const SourceTag = ({ source }: { source?: OtSource }) =>
+  source === "AUTO" ? (
+    <span style={{ fontSize: 10, fontWeight: 600, color: "var(--mut)", border: "1px solid var(--border, #d0d0d0)", borderRadius: 6, padding: "1px 5px" }}>From your punch</span>
+  ) : null;
 
 export function OvertimeBody() {
   const qc = useQueryClient();
@@ -85,7 +91,7 @@ export function OvertimeBody() {
 
       <div className="card" style={{ padding: 14 }}>
         <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)" }}>Report overtime</div>
-        <div style={{ fontSize: 11.5, color: "var(--mut)", marginTop: 2 }}>Add each block you worked extra - before, after or outside your shift. Your supervisor confirms it.</div>
+        <div style={{ fontSize: 11.5, color: "var(--mut)", marginTop: 2 }}>Your overtime is counted from your punch each day. Only add a block here for extra time the punch cannot show - a split shift, or work before or after you clocked in. Your supervisor confirms it.</div>
         <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
           <label style={{ fontSize: 11.5, color: "var(--mut)" }}>
             Day
@@ -118,7 +124,7 @@ export function OvertimeBody() {
       {(data?.mine ?? []).map((c) => (
         <div key={c.id} className="card" style={{ padding: "10px 12px", marginTop: 8, fontSize: 12.5 }}>
           <div style={{ display: "flex", justifyContent: "space-between", color: "var(--ink)", fontWeight: 600 }}>
-            <span>{formatDate(c.workDate)} · {windowLabel(c)}</span>
+            <span style={{ display: "flex", alignItems: "center", gap: 6 }}>{formatDate(c.workDate)} · {windowLabel(c)} <SourceTag source={c.source} /></span>
             <span>{hoursLabel(c)}</span>
           </div>
           {c.note && <div style={{ color: "var(--mut)", marginTop: 2 }}>{c.note}</div>}
@@ -126,7 +132,7 @@ export function OvertimeBody() {
             <span style={{ color: STATUS_TONE[c.status], fontWeight: 600 }}>
               {STATUS_TEXT[c.status]}{c.status === "REJECTED" && c.rejectReason ? `: ${c.rejectReason}` : ""}
             </span>
-            {c.status === "PENDING" && (
+            {c.status === "PENDING" && c.source !== "AUTO" && (
               <button type="button" className="btn-ghost" onClick={() => void remove(c.id)} style={{ minHeight: 28, fontSize: 12, padding: "0 10px" }}>
                 Delete
               </button>
@@ -145,7 +151,7 @@ export function OvertimeBody() {
                 <span>{c.empNo} · {c.employeeName}</span>
                 <span>{hoursLabel(c)}</span>
               </div>
-              <div style={{ color: "var(--mut)", marginTop: 2 }}>{formatDate(c.workDate)} · {windowLabel(c)}{c.note ? ` · ${c.note}` : ""}</div>
+              <div style={{ color: "var(--mut)", marginTop: 2, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}><span>{formatDate(c.workDate)} · {windowLabel(c)}{c.note ? ` · ${c.note}` : ""}</span> <SourceTag source={c.source} /></div>
               <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                 <button type="button" className="btn" onClick={() => void review(c.id, "confirm")} style={{ flex: 1, minHeight: 36, fontSize: 13 }}>
                   Confirm

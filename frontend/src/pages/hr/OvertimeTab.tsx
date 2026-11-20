@@ -23,6 +23,7 @@ type OtClaim = {
   endMin: number;
   note: string;
   status: OtStatus;
+  source?: "REPORTED" | "AUTO";
   rejectReason: string | null;
   employeeName: string;
   empNo: string;
@@ -92,7 +93,17 @@ export function OvertimeTab() {
     { key: "date", label: "Date", getValue: (c) => c.workDate, render: (c) => <span className="font-mono">{formatDate(c.workDate)}</span> },
     { key: "empNo", label: "Emp No", getValue: (c) => c.empNo, render: (c) => <span className="font-mono text-[11px] font-semibold text-accent">{c.empNo}</span> },
     { key: "name", label: "Name", getValue: (c) => c.employeeName, render: (c) => c.employeeName },
-    { key: "window", label: "Window", getValue: (c) => c.startMin, render: (c) => <span className="font-mono">{windowLabel(c)}</span> },
+    {
+      key: "window",
+      label: "Window",
+      getValue: (c) => c.startMin,
+      render: (c) => (
+        <span className="inline-flex items-center gap-1.5">
+          <span className="font-mono">{windowLabel(c)}</span>
+          {c.source === "AUTO" ? <span className="rounded border border-border px-1 text-[10px] font-semibold text-ink-muted">From punch</span> : null}
+        </span>
+      ),
+    },
     { key: "hours", label: "Hours", align: "right", getValue: (c) => minutesOf(c), render: (c) => <span className="font-mono">{hoursLabel(minutesOf(c))}</span> },
     { key: "note", label: "What they did", getValue: (c) => c.note, render: (c) => c.note || <span className="text-ink-muted">—</span> },
     {

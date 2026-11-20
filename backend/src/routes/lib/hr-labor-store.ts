@@ -8,10 +8,12 @@
 import { and, eq, gte, lte, or, sql } from "drizzle-orm";
 import type { Env } from "../../types";
 import { getDb } from "../../db/client";
-import { hr_attendance, hr_employees, hr_hour_deductions, hr_public_holidays, hr_working_hours } from "../../db/schema";
+import { hr_attendance, hr_employees, hr_hour_deductions, hr_ot_claims, hr_public_holidays, hr_working_hours } from "../../db/schema";
 import { minutesFromWorkDate } from "../../scm/shared/hr-attendance";
 import { MIN_DOCK_HOURS, isWorkingDay, punchDayHours, punchShortfallHours, rulesForEmployeeHours } from "../../scm/shared/hr-labor";
+import { planAutoOtClaim, punchOtMinutes } from "./hr-ot";
 import { asDate } from "./hr-attendance-view";
+import type { AttendanceRules } from "../../scm/shared/hr-attendance";
 import { closeForgottenPunches, payRulesResolver } from "./hr-attendance-store";
 import { shiftRulesResolver } from "./hr-shift-store";
 
@@ -56,6 +58,52 @@ export async function applyDayDock(db: Db, companyId: number, employeeId: number
     await db.insert(hr_hour_deductions).values({ company_id: companyId, employee_id: employeeId, work_date: workDate, hours, source: "AUTO", note });
   }
   return "applied";
+}
+
+/* HC-0125 hybrid overtime (owner 2026-11-20): a closed punch on a working day
+ * earns overtime automatically — the span present over the standard day and the
+ * break — kept as ONE pending AUTO claim a supervisor still confirms before it
+ * pays. Suppressed when a human reported overtime for the day (their precise
+ * windows own it), and never over a supervisor's own confirm/reject, so payroll
+ * (which pays every confirmed claim) sees at most one live figure a day and
+ * never double-pays. Company-scoped on the write as well as the read. */
+async function syncAutoOtClaim(
+  db: Db,
+  companyId: number,
+  employeeId: number,
+  workDate: string,
+  rules: AttendanceRules,
+  otMin: number,
+): Promise<void> {
+  const claims = await db
+    .select({ id: hr_ot_claims.id, status: hr_ot_claims.status, source: hr_ot_claims.source })
+    .from(hr_ot_claims)
+    .where(and(eq(hr_ot_claims.company_id, companyId), eq(hr_ot_claims.employee_id, employeeId), eq(hr_ot_claims.work_date, workDate)));
+  const existingAuto = claims.find((r) => r.source === "AUTO") ?? null;
+  const reportedOwnsDay = claims.some((r) => r.source === "REPORTED" && (r.status === "PENDING" || r.status === "CONFIRMED"));
+  const plan = planAutoOtClaim({ existingAuto, reportedOwnsDay, shiftEndMin: rules.endMin, otMin });
+  if (plan.kind === "none") return;
+  if (plan.kind === "delete") {
+    await db.delete(hr_ot_claims).where(and(eq(hr_ot_claims.id, plan.id), eq(hr_ot_claims.company_id, companyId)));
+    return;
+  }
+  const note = `Auto from punch (${round2(otMin / 60)}h past the shift)`;
+  if (plan.kind === "update") {
+    await db
+      .update(hr_ot_claims)
+      .set({ start_min: plan.startMin, end_min: plan.endMin, note, updated_at: new Date().toISOString() })
+      .where(and(eq(hr_ot_claims.id, plan.id), eq(hr_ot_claims.company_id, companyId), eq(hr_ot_claims.status, "PENDING")));
+    return;
+  }
+  try {
+    await db
+      .insert(hr_ot_claims)
+      .values({ company_id: companyId, employee_id: employeeId, work_date: workDate, start_min: plan.startMin, end_min: plan.endMin, note, status: "PENDING", source: "AUTO", created_by: null });
+  } catch (e) {
+    /* The one-AUTO-row-per-day unique index: a concurrent sync already inserted
+       it, which is the row this call would have written. */
+    if ((e as { code?: string } | null)?.code !== "23505" && !String((e as Error | null)?.message ?? "").includes("duplicate key")) throw e;
+  }
 }
 
 /* A closed punch puts its hours on Working Hours and docks its short hours.
@@ -113,6 +161,11 @@ export async function syncDayFromPunch(db: Db, companyId: number, attendanceId: 
   const short = forgotten || broken || !workingDay ? 0 : punchShortfallHours(inMin, outMin, rules);
   const late = Math.max(0, inMin - rules.startMin);
   await applyDayDock(db, companyId, day.employee_id, day.work_date, short, `Auto: short ${short}h${late > rules.lateGraceMin ? `, late ${late} min` : ""} (from punch)`);
+
+  /* Overtime from the same punch (HC-0125 hybrid). A forgotten or broken punch,
+     and Sunday / holiday work (all OT via the hours path), earn no weekday claim. */
+  const otMin = forgotten || broken || !workingDay ? 0 : punchOtMinutes(outMin - inMin, rules.standardWorkMin, rules.lunchMin);
+  await syncAutoOtClaim(db, companyId, day.employee_id, day.work_date, rules, otMin);
 }
 
 /** Close forgotten punches for a company (or one employee) and put each closed day on Working Hours. */

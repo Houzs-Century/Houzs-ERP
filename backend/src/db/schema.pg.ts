@@ -1125,6 +1125,10 @@ export const hr_ot_claims = pgTable(
     end_min: integer("end_min").notNull(),
     note: text("note").notNull().default(""),
     status: text("status").notNull().default("PENDING"),
+    // REPORTED = a worker typed a window; AUTO = derived from the day's punch
+    // (HC-0125 hybrid). At most one AUTO row per employee-day (partial unique
+    // index in the migration).
+    source: text("source").notNull().default("REPORTED"),
     reject_reason: text("reject_reason"),
     reviewed_by: integer("reviewed_by"),
     reviewed_at: timestamp("reviewed_at", { withTimezone: true, mode: "string" }),
