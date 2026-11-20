@@ -1,4 +1,4 @@
-/* The phone's supplier form per caller (owner 2026-09-30). Pinned against the
+/* The phone's supplier form per caller (owner 2026-09-30, 2026-11-20). Pinned against the
    REAL FORM_SUPPLIERS: a purchaser gets no Finance field on new or edit and no
    code on edit; Finance gets the form as it is. */
 import { describe, expect, it } from "vitest";
@@ -33,8 +33,23 @@ describe("supplierFormFor", () => {
     }
   });
 
-  it("Finance gets the form as it is", () => {
-    expect(supplierFormFor(FORM_SUPPLIERS, true, "edit")).toBe(FORM_SUPPLIERS);
+  it("Finance gets the whole form for a new supplier, and the same without the Type when editing", () => {
     expect(supplierFormFor(FORM_SUPPLIERS, true, "new")).toBe(FORM_SUPPLIERS);
+    expect(keys("edit", true)).toEqual(FORM_SUPPLIERS.fields.map((f) => f.key).filter((k) => k !== "codeKind"));
+  });
+
+  /* Owner 2026-11-20: a blank code is numbered from the name; Finance picks 400
+     or 405, a purchaser opens suppliers of goods (400). */
+  it("the code may be left blank for the server to number", () => {
+    expect(FORM_SUPPLIERS.fields.find((f) => f.key === "code")?.required).toBeFalsy();
+    expect(FORM_SUPPLIERS.fields.find((f) => f.key === "name")?.required).toBe(true);
+  });
+
+  it("only Finance picks the Type, and only on a new supplier", () => {
+    expect(keys("new", true)).toContain("codeKind");
+    expect(keys("new", false)).not.toContain("codeKind");
+    expect(keys("edit", true)).not.toContain("codeKind");
+    expect(keys("edit", false)).not.toContain("codeKind");
+    expect(FORM_SUPPLIERS.fields.find((f) => f.key === "codeKind")?.options?.map((o) => o.value)).toEqual(["400", "405"]);
   });
 });

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import app from "../src/routes/deliverySheetSync";
-import { FEED_EPOCH, FEED_MAX_LIMIT, isSheetReady, normSheetDate, parseFromDate, parseLimit, parseSince, sheetReadinessWording, toSheetRecord, type FeedHeadRow } from "../src/lib/delivery-sheet-feed";
+import { FEED_EPOCH, FEED_MAX_LIMIT, isSheetReady, normSheetDate, parseFromDate, parseLimit, parseSince, salesLocationRegion, sheetRegion, sheetReadinessWording, toSheetRecord, type FeedHeadRow } from "../src/lib/delivery-sheet-feed";
 import { toOutstandingPoRecord, type PoFeedRow } from "../src/lib/delivery-sheet-po-feed";
 import { toAssrContactRecord, toAssrLegRecords, type AssrFeedRow } from "../src/lib/delivery-sheet-assr-feed";
 
@@ -1209,5 +1209,22 @@ describe("GET /assr-contacts", () => {
     expect(feed.sql).toContain("closed_at IS NULL");
     expect(feed.sql).toContain("archived_at IS NULL");
     expect(feed.sql).not.toMatch(/inspection_by\s*=/);
+  });
+});
+
+describe("salesLocationRegion — raw sales_location, book spelling mapped first", () => {
+  test("a raw East warehouse name reads as EAST (the EM message gate's bug)", () => {
+    // sheetRegion alone only knows the CODE, so the warehouse name is null...
+    expect(sheetRegion("SBH WAREHOUSE", null, "Malaysia")).toBeNull();
+    expect(sheetRegion("SRW WAREHOUSE", null, "Malaysia")).toBeNull();
+    // ...salesLocationRegion maps "SBH WAREHOUSE" -> "SBH" first, so it is EAST.
+    expect(salesLocationRegion("SBH WAREHOUSE", null, "Malaysia")).toBe("EAST");
+    expect(salesLocationRegion("SRW WAREHOUSE", null, "Malaysia")).toBe("EAST");
+  });
+  test("West warehouses stay WEST; Singapore wins off country / addr3", () => {
+    expect(salesLocationRegion("KL WAREHOUSE", null, "Malaysia")).toBe("WEST");
+    expect(salesLocationRegion("PG WAREHOUSE", null, "Malaysia")).toBe("WEST");
+    expect(salesLocationRegion("SBH WAREHOUSE", null, "Singapore")).toBe("SG");
+    expect(salesLocationRegion("SBH WAREHOUSE", "600314 SINGAPORE", "Malaysia")).toBe("SG");
   });
 });
