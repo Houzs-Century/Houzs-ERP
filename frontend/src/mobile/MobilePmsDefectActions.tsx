@@ -10,7 +10,30 @@ import { api } from "../api/client";
 import { fmtDateTime } from "../vendor/shared/format";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { parseDefectCaption } from "../pages/projects/defectRemark";
-import { defectActionLabel } from "../pages/projects/defectReviewer";
+import {
+  defectActionLabel,
+  defectStage,
+  REVIEWER_DEFECT_ACTIONS,
+  PURCHASER_DEFECT_ACTIONS,
+  type DefectActionTone,
+} from "../pages/projects/defectReviewer";
+
+// Outline-button + badge colours per action tone, shared by the fresh (reviewer)
+// and escalated (purchaser) rows and the timeline badges below.
+const TONE_STYLE: Record<DefectActionTone | "fresh", { border: string; color: string; activeBg: string }> = {
+  done: { border: "#bcdcd7", color: "var(--hz-c-synced)", activeBg: "var(--hz-c-synced-bg)" },
+  escalate: { border: "#e6bcbc", color: "#b4362f", activeBg: "#f7e3e3" },
+  progress: { border: "#e6d2a0", color: "#a9771a", activeBg: "var(--hz-c-warning-bg)" },
+  fresh: { border: "#e6d2a0", color: "var(--hz-c-warning-text)", activeBg: "var(--hz-c-warning-bg)" },
+};
+
+/** The tone a stored status renders in on the timeline badge/dot. */
+function statusTone(status: string): DefectActionTone | "fresh" {
+  const stage = defectStage(status);
+  if (stage === "resolved") return "done";
+  if (stage === "fresh") return "fresh";
+  return status.toLowerCase() === "in_progress" ? "progress" : "escalate";
+}
 
 // A small image preview so people can tell what a defect photo is WITHOUT
 // opening it (owner 2026-09-28: "make it can see a bit picture inside without
@@ -70,7 +93,7 @@ export function DefectFileActions({
   wide?: boolean;
 }) {
   const ctx = useContext(DefectActionsCtx);
-  const [draft, setDraft] = useState<null | "done" | "replace">(null);
+  const [draft, setDraft] = useState<string | null>(null);
   const [remark, setRemark] = useState("");
   const [saving, setSaving] = useState(false);
   const notify = useNotify();
@@ -82,12 +105,12 @@ export function DefectFileActions({
   // and never gated on review/purchase rights.
   const { model, reason } = parseDefectCaption(att.caption);
   const list = ctx.actions.filter((x) => x.attachment_id === att.id);
-  // Latest timeline entry drives the state machine: fresh (no action / legacy
-  // 'ongoing') awaits the reviewer; 'replace' awaits the purchaser; 'done' is
+  // Latest timeline entry drives the five-state machine (defectStage): a fresh
+  // upload awaits the reviewer (Done Clean / Exchange / Service); an escalated or
+  // in-progress one awaits the purchaser (In Progress / Done); done/done_clean is
   // resolved. Mirrors desktop TaskAttachmentRow.
   const latest = list.length ? list.reduce((m, a) => (a.id > m.id ? a : m)) : null;
-  const isFresh = !latest || (latest.status !== "done" && latest.status !== "replace");
-  const isEscalated = latest?.status === "replace";
+  const stage = defectStage(latest?.status);
   const save = async () => {
     if (!draft) return;
     setSaving(true);
@@ -142,15 +165,22 @@ export function DefectFileActions({
           </div>
         )
       )}
-      {isFresh && ctx.canReview && (
-        <div style={{ display: "flex", gap: 6, marginTop: wide ? 8 : 2 }}>
-          <button className="tinybtn" disabled={saving} style={{ ...wideBtn, background: draft === "done" ? "var(--hz-c-synced-bg)" : "var(--hz-c-surface)", borderColor: "#bcdcd7", color: "var(--hz-c-synced)", fontWeight: draft === "done" ? 800 : 700 }} onClick={() => setDraft("done")}>Done</button>
-          <button className="tinybtn" disabled={saving} style={{ ...wideBtn, background: draft === "replace" ? "#f7e3e3" : "var(--hz-c-surface)", borderColor: "#e6bcbc", color: "#b4362f", fontWeight: draft === "replace" ? 800 : 700 }} onClick={() => setDraft("replace")}>Exchange</button>
-        </div>
-      )}
-      {isEscalated && ctx.canPurchase && (
-        <div style={{ display: "flex", gap: 6, marginTop: wide ? 8 : 2 }}>
-          <button className="tinybtn" disabled={saving} style={{ ...wideBtn, background: draft === "done" ? "var(--hz-c-synced-bg)" : "var(--hz-c-surface)", borderColor: "#bcdcd7", color: "var(--hz-c-synced)", fontWeight: draft === "done" ? 800 : 700 }} onClick={() => setDraft("done")}>Done</button>
+      {((stage === "fresh" && ctx.canReview) || (stage === "purchaser" && ctx.canPurchase)) && (
+        <div style={{ display: "flex", gap: 6, marginTop: wide ? 8 : 2, flexWrap: "wrap" }}>
+          {(stage === "fresh" ? REVIEWER_DEFECT_ACTIONS : PURCHASER_DEFECT_ACTIONS).map((a) => {
+            const t = TONE_STYLE[a.tone];
+            return (
+              <button
+                key={a.status}
+                className="tinybtn"
+                disabled={saving}
+                style={{ ...wideBtn, background: draft === a.status ? t.activeBg : "var(--hz-c-surface)", borderColor: t.border, color: t.color, fontWeight: draft === a.status ? 800 : 700 }}
+                onClick={() => { setDraft(a.status); setRemark(""); }}
+              >
+                {a.label}
+              </button>
+            );
+          })}
         </div>
       )}
       {draft && (
@@ -167,8 +197,10 @@ export function DefectFileActions({
           {[...list].reverse().map((a) => (
             <div key={a.id}>
               <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                <span style={{ width: 6, height: 6, borderRadius: 3, background: a.status === "done" ? "#2f8a5b" : a.status === "replace" ? "#b4362f" : "#c9971f", flex: "none" }} />
-                <span className="rbadge" style={{ background: a.status === "done" ? "var(--hz-c-synced-bg)" : a.status === "replace" ? "#f7e3e3" : "var(--hz-c-warning-bg)", color: a.status === "done" ? "var(--hz-c-synced)" : a.status === "replace" ? "#b4362f" : "var(--hz-c-warning-text)" }}>{defectActionLabel(a.status)}</span>
+                {(() => { const t = TONE_STYLE[statusTone(a.status)]; return (<>
+                  <span style={{ width: 6, height: 6, borderRadius: 3, background: t.color, flex: "none" }} />
+                  <span className="rbadge" style={{ background: t.activeBg, color: t.color }}>{defectActionLabel(a.status)}</span>
+                </>); })()}
                 <span style={{ fontSize: 10.5, color: "var(--hz-c-ink-soft)" }}>{a.user_name || "—"} · {ts(a.created_at)}</span>
               </div>
               {a.remark && <div style={{ fontSize: 11.5, color: "#6b6f63", marginLeft: 12, marginTop: 2, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{a.remark}</div>}

@@ -1537,11 +1537,12 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
                                      AND (fp.status = 'done' OR fp.review_status = 'approved'))))`
     );
     pendingBinds.push(dueToday);
-    // Defect ACTIONING (owner 2026-07-29; two-stage 2026-08-07): a defect-list
-    // file reaches the PURCHASER only once the Storekeeper Supervisor (Shukor)
-    // has ESCALATED it — its LATEST timeline entry is 'replace'. He resolves
-    // clean-able ones himself with 'done' (they never reach here); the purchaser
-    // then closes a replace with 'done'. Timeline-gated to events that ended
+    // Defect ACTIONING (owner 2026-07-29; five-state 2026-11-20): a defect-list
+    // file reaches the PURCHASER (Farra) once the reviewer has ESCALATED it — its
+    // LATEST timeline entry is 'exchange' or 'service' (legacy 'replace' too), and
+    // it stays in her lane while she works it ('in_progress'). She clears it with
+    // 'done'; a reviewer clears a clean-able one with 'done_clean' (never reaches
+    // here). Timeline-gated to events that ended
     // within the last 30 days so the historical backlog does not flood the lane.
     // The defect ITEM must still be open: once it is ticked done/na the
     // purchaser is finished, so the project leaves this lane even though the
@@ -1564,7 +1565,8 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
                   AND COALESCE((SELECT act.status
                                   FROM project_checklist_attachment_actions act
                                  WHERE act.attachment_id = da.id
-                                 ORDER BY act.id DESC LIMIT 1), '') = 'replace'))`
+                                 ORDER BY act.id DESC LIMIT 1), '')
+                      IN ('replace', 'exchange', 'service', 'in_progress')))`
     );
     pendingBinds.push(defectSince);
   } else if (f.pending_label) {
@@ -1579,10 +1581,11 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
     pendingBinds.push(`%${f.pending_label}%`, dueToday);
   }
   if (f.pending_defect_review) {
-    // Defect clean-or-replace REVIEW (owner 2026-08-07): the Storekeeper
-    // Supervisor's lane (Shukor). A live defect-list attachment whose LATEST
-    // timeline entry is neither 'done' (he cleaned it) nor 'replace' (he
-    // escalated it to the purchaser) is a fresh upload awaiting his triage.
+    // Defect triage REVIEW (owner 2026-08-07): the reviewer's lane (Shukor /
+    // Nancy). A live defect-list attachment whose LATEST timeline entry is a fresh
+    // upload (no action yet, or legacy 'ongoing') awaits triage — it has NOT been
+    // cleaned ('done_clean'/'done'), escalated ('exchange'/'service'/legacy
+    // 'replace'), or picked up by the purchaser ('in_progress').
     // Same 30-day window as the purchaser arm so the pre-feature backlog stays
     // out. One bind (reviewSince).
     const reviewSince = (() => {
@@ -1609,7 +1612,8 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
                   AND COALESCE((SELECT act.status
                                   FROM project_checklist_attachment_actions act
                                  WHERE act.attachment_id = da.id
-                                 ORDER BY act.id DESC LIMIT 1), '') NOT IN ('done', 'replace')))`
+                                 ORDER BY act.id DESC LIMIT 1), '')
+                      NOT IN ('done', 'done_clean', 'exchange', 'service', 'in_progress', 'replace')))`
     );
     pendingBinds.push(reviewSince, ...stateBinds);
   }

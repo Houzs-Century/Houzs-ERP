@@ -4299,17 +4299,19 @@ app.patch(
   }
 );
 
-// Per-attachment ACTION TIMELINE (owner 2026-07-29; two-stage 2026-08-07):
+// Per-attachment ACTION TIMELINE (owner 2026-07-29; five-state 2026-11-20):
 // append-only entries stamped on each defect-list upload — each click ADDS an
-// entry with an optional remark; history is never overwritten. The flow now
-// has TWO actors and TWO statuses:
-//   - The Storekeeper Supervisor (Shukor) triages a fresh defect: 'done' means
-//     he cleaned it (resolved), 'replace' escalates it to the purchaser.
-//   - The Purchaser (Sim / Farra) or BD closes a 'replace' with 'done' once the
-//     replacement is ordered.
-// A file whose LATEST entry is 'done' is resolved and drops out of every lane;
-// 'replace' moves it from the Storekeeper-Supervisor review lane to the
-// purchaser lane (listProjects DEFECT_REVIEW / PURCHASER arms). Wildcard /
+// entry with an optional remark; history is never overwritten. TWO actors, five
+// statuses:
+//   - The reviewer (Shukor the Storekeeper Supervisor / Nancy the Ops Exec)
+//     triages a fresh defect: 'done_clean' (he cleaned it — resolved), or
+//     'exchange' / 'service' (both escalate it to the purchaser).
+//   - The purchaser (Farra) or BD then works the escalation: 'in_progress', then
+//     'done' (resolved).
+// A file whose LATEST entry is 'done'/'done_clean' is resolved and drops out of
+// every lane; 'exchange'/'service'/'in_progress' (and legacy 'replace') sit in
+// the purchaser lane; anything else (fresh/legacy 'ongoing') is in the reviewer
+// lane (listProjects DEFECT_REVIEW / PURCHASER arms, defectStage). Wildcard /
 // projects.manage admins may act as either.
 app.post(
   "/checklist/attachments/:attId/actions",
@@ -4339,14 +4341,30 @@ app.post(
     }
     const body = await c.req.json<{ status?: string; remark?: string | null }>();
     const status = (body.status ?? "").toLowerCase();
-    if (status !== "done" && status !== "replace") {
-      return c.json({ error: "status must be done or replace" }, 400);
-    }
-    // Escalation to Replace is the reviewer's decision (or an admin's) — the
-    // purchaser / BD close a replace with Done, they do not re-escalate.
-    if (status === "replace" && !isReviewer && !isAdmin) {
+    // Five-state timeline (owner 2026-11-20): the reviewer (Shukor/Nancy) triages
+    // a fresh defect — done_clean (cleaned, resolved), or exchange / service (both
+    // escalate to the purchaser). The purchaser (Farra) then works the escalation:
+    // in_progress, then done (resolved). Legacy 'replace' (escalated) and 'done'
+    // (resolved) rows still read correctly through the stage helper.
+    const REVIEWER_STATUSES = new Set(["done_clean", "exchange", "service"]);
+    const PURCHASER_STATUSES = new Set(["in_progress", "done"]);
+    if (!REVIEWER_STATUSES.has(status) && !PURCHASER_STATUSES.has(status)) {
       return c.json(
-        { error: "Only a defect reviewer can mark a defect for replacement" },
+        { error: "status must be one of done_clean, exchange, service, in_progress, done" },
+        400
+      );
+    }
+    // A reviewer-stage stamp (clean / escalate) is the reviewer's or an admin's.
+    if (REVIEWER_STATUSES.has(status) && !isReviewer && !isAdmin) {
+      return c.json(
+        { error: "Only a defect reviewer can clean or escalate a defect" },
+        403
+      );
+    }
+    // A purchaser-stage stamp (in progress / done) is the purchaser's / BD's or an admin's.
+    if (PURCHASER_STATUSES.has(status) && !isPurchaser && !isAdmin) {
+      return c.json(
+        { error: "Only the purchaser or BD can mark a defect in progress or done" },
         403
       );
     }
@@ -4366,7 +4384,7 @@ app.post(
     // reviewer on any project — so a mis-tap or a stale tab could still close a
     // Sarawak defect as Nancy. Each reviewer may act only on their own states;
     // admins and the purchaser/BD closing an escalation are unaffected.
-    if (!isAdmin && isReviewer && !isPurchaser) {
+    if (!isAdmin && isReviewer && !isPurchaser && REVIEWER_STATUSES.has(status)) {
       const inRegion = isDefectRegionState(att.state);
       const mine = role === "ops exec" ? inRegion : !inRegion;
       if (!mine) {

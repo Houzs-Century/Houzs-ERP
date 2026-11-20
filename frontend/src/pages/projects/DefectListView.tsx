@@ -11,7 +11,37 @@ import { PageHeader } from "../../components/Layout";
 import { EmptyState } from "../../components/EmptyState";
 import { MediaLightbox } from "../../components/MediaLightbox";
 import { parseDefectCaption } from "./defectRemark";
-import { canPurchaseDefect, canReviewDefect, defectActionLabel } from "./defectReviewer";
+import {
+  canPurchaseDefect,
+  canReviewDefect,
+  defectActionLabel,
+  defectStage,
+  REVIEWER_DEFECT_ACTIONS,
+  PURCHASER_DEFECT_ACTIONS,
+  type DefectActionTone,
+} from "./defectReviewer";
+
+/** Outline-button Tailwind for a defect action tone (the list only shows idle
+ *  buttons — the editor replaces them once one is picked). */
+function defectListBtn(tone: DefectActionTone): string {
+  switch (tone) {
+    case "done":
+      return "border-green-300 bg-surface text-green-600 hover:bg-green-50 dark:border-green-800 dark:text-green-300 dark:hover:bg-green-950/40";
+    case "escalate":
+      return "border-rose-300 bg-surface text-rose-600 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-300 dark:hover:bg-rose-950/40";
+    case "progress":
+      return "border-amber-300 bg-surface text-amber-600 hover:bg-amber-50 dark:border-amber-800 dark:text-amber-300 dark:hover:bg-amber-950/40";
+  }
+}
+/** Badge Tailwind for a stored status: resolved green, in-progress/fresh amber,
+ *  escalated rose. */
+function defectListBadge(status: string | null): string {
+  const stage = defectStage(status);
+  if (stage === "resolved") return "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300";
+  if (stage === "fresh" || (status ?? "").toLowerCase() === "in_progress")
+    return "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300";
+  return "bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300";
+}
 
 /**
  * Projects › Defect List (owner 2026-11-20).
@@ -170,7 +200,7 @@ export function DefectListView() {
   const [showAll, setShowAll] = useState(false);
   const [lightbox, setLightbox] = useState<number | null>(null);
   // One action editor open at a time, keyed by attachment id.
-  const [draft, setDraft] = useState<{ attId: number; status: "done" | "replace" } | null>(null);
+  const [draft, setDraft] = useState<{ attId: number; status: string } | null>(null);
   const [remark, setRemark] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -199,7 +229,7 @@ export function DefectListView() {
       });
       setDraft(null);
       setRemark("");
-      toast.success(draft.status === "done" ? "Marked Done" : "Marked Exchange");
+      toast.success(`Marked ${defectActionLabel(draft.status)}`);
       q.reload();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not save — please try again");
@@ -294,9 +324,7 @@ export function DefectListView() {
                   const idx = rows.indexOf(r);
                   const { model, reason } = parseDefectCaption(r.caption);
                   const latest = r.latest_status;
-                  const isFresh = latest !== "done" && latest !== "replace";
-                  const isEscalated = latest === "replace";
-                  const isDone = latest === "done";
+                  const stage = defectStage(latest);
                   const canReview = canReviewDefect(user, r.state);
                   const canPurchase = canPurchaseDefect(user);
                   const editing = draft?.attId === r.attachment_id;
@@ -324,24 +352,15 @@ export function DefectListView() {
                           </div>
                         )}
                         <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10.5px] text-ink-muted">
-                          <span
-                            className={cn(
-                              "rounded px-1.5 py-0.5 font-bold",
-                              isDone
-                                ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300"
-                                : isEscalated
-                                  ? "bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300"
-                                  : "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
-                            )}
-                          >
-                            {isFresh ? "Baru" : defectActionLabel(latest)}
+                          <span className={cn("rounded px-1.5 py-0.5 font-bold", defectListBadge(latest))}>
+                            {stage === "fresh" ? "Baru" : defectActionLabel(latest)}
                           </span>
                           {r.latest_at && (
                             <span>
                               {r.latest_user_name || "—"} · {formatDateTime(r.latest_at)}
                             </span>
                           )}
-                          {r.uploader_name && isFresh && <span>Upload: {r.uploader_name}</span>}
+                          {r.uploader_name && stage === "fresh" && <span>Upload: {r.uploader_name}</span>}
                         </div>
                         {r.latest_remark && (
                           <div className="mt-0.5 whitespace-pre-wrap break-words text-[11px] text-ink-secondary">
@@ -350,46 +369,30 @@ export function DefectListView() {
                         )}
 
                         {/* Action buttons — same gate and route as the project
-                            detail card. Fresh → reviewer triages; escalated →
-                            purchaser closes. */}
-                        {isFresh && canReview && !editing && (
-                          <div className="mt-1.5 flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setDraft({ attId: r.attachment_id, status: "done" });
-                                setRemark("");
-                              }}
-                              className="rounded-full border border-green-300 bg-surface px-2.5 py-0.5 text-[10px] font-bold text-green-600 hover:bg-green-50 dark:border-green-800 dark:text-green-300 dark:hover:bg-green-950/40"
-                            >
-                              Done
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setDraft({ attId: r.attachment_id, status: "replace" });
-                                setRemark("");
-                              }}
-                              className="rounded-full border border-rose-300 bg-surface px-2.5 py-0.5 text-[10px] font-bold text-rose-600 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-300 dark:hover:bg-rose-950/40"
-                            >
-                              Exchange
-                            </button>
-                          </div>
-                        )}
-                        {isEscalated && canPurchase && !editing && (
-                          <div className="mt-1.5 flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setDraft({ attId: r.attachment_id, status: "done" });
-                                setRemark("");
-                              }}
-                              className="rounded-full border border-green-300 bg-surface px-2.5 py-0.5 text-[10px] font-bold text-green-600 hover:bg-green-50 dark:border-green-800 dark:text-green-300 dark:hover:bg-green-950/40"
-                            >
-                              Done
-                            </button>
-                          </div>
-                        )}
+                            detail card. Fresh → reviewer (Done Clean / Exchange /
+                            Service); escalated → purchaser (In Progress / Done).
+                            Every button opens the remark editor before it saves. */}
+                        {((stage === "fresh" && canReview) || (stage === "purchaser" && canPurchase)) &&
+                          !editing && (
+                            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                              {(stage === "fresh" ? REVIEWER_DEFECT_ACTIONS : PURCHASER_DEFECT_ACTIONS).map((a) => (
+                                <button
+                                  key={a.status}
+                                  type="button"
+                                  onClick={() => {
+                                    setDraft({ attId: r.attachment_id, status: a.status });
+                                    setRemark("");
+                                  }}
+                                  className={cn(
+                                    "rounded-full border px-2.5 py-0.5 text-[10px] font-bold",
+                                    defectListBtn(a.tone),
+                                  )}
+                                >
+                                  {a.label}
+                                </button>
+                              ))}
+                            </div>
+                          )}
                         {editing && (
                           <div className="mt-1.5">
                             <textarea
@@ -402,7 +405,7 @@ export function DefectListView() {
                             />
                             <div className="mt-1 flex items-center justify-end gap-1.5">
                               <span className="mr-auto text-[10.5px] font-semibold text-ink-muted">
-                                {draft.status === "done" ? "Mark Done" : "Mark Exchange"}
+                                Mark {defectActionLabel(draft.status)}
                               </span>
                               <button
                                 type="button"
