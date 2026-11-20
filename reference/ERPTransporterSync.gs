@@ -354,7 +354,12 @@ function tsSyncTransporters_(triggerType) {
     "ESB: " + esb.updated + " updated, " + esb.appended + " added" + (esb.blocked ? ", " + esb.blocked + " skipped by dropdown" : "") + ". " +
     "BS: " + bs.updated + " updated, " + bs.appended + " added" + (bs.blocked ? ", " + bs.blocked + " skipped by dropdown" : "") + ".";
   Logger.log(msg);
-  if (triggerType === "MANUAL") SpreadsheetApp.getUi().alert("ERP <-> ESB / BS sync\n\n" + msg);
+  // The summary pop-up only works from the sheet menu (a UI context). Run from
+  // the editor's Run button and getUi() throws — the sync already finished, so
+  // swallow it; the summary is in the Execution log either way.
+  if (triggerType === "MANUAL") {
+    try { SpreadsheetApp.getUi().alert("ERP <-> ESB / BS sync\n\n" + msg); } catch (e) { /* no UI when run from the editor */ }
+  }
   return msg;
 }
 
