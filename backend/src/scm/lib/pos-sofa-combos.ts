@@ -125,7 +125,10 @@ export async function loadMasterSofaCombos(sb: Sb, c: CompanyScopeCtx): Promise<
  *  over the cost one, which is right for a selling reader and wrong for a cost
  *  spread: 2990-SO-2610-017 booked a PLLAO set at its selling figure instead
  *  of its cost. A failed read is returned, never read as
- *  "no combos", which would write unspread costs to the header as fact. */
+ *  "no combos", which would write unspread costs to the header as fact.
+ *  Deleted rows come back too, with deletedAt set: an order costs the set
+ *  prices that stood on its date, a since-deleted one included, so the caller
+ *  keeps those (combosStandingOn); the matcher alone skips every deleted row. */
 export async function loadMasterSofaComboCosts(
   sb: Sb,
   c: CompanyScopeCtx,
@@ -136,7 +139,6 @@ export async function loadMasterSofaComboCosts(
       .select('id, base_model, modules, tier, customer_id, prices_by_height, label, effective_from, created_at, deleted_at'),
     c,
   )
-    .is('deleted_at', null)
     .is('customer_id', null)
     .is('supplier_id', null);
   if (error) return { rows: [], error: error.message ?? String(error) };

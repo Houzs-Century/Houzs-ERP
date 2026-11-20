@@ -12,8 +12,10 @@
        day matches the same lines. Read in database order, two saves of
        2990-SO-2610-046 put a set price on each seat in turn and the order
        carried the set twice.
-   The combos passed in must be cost-priced (loadMasterSofaComboCosts). */
+   The combos passed in must be cost-priced (loadMasterSofaComboCosts) and
+   standing on the day priced (combosStandingOn). */
 
+import { mytDateOf } from './my-time';
 import {
   pickCostComboMatch,
   sofaHeightKey,
@@ -30,6 +32,27 @@ export interface ComboCostLine {
   variants: Record<string, unknown> | null;
   qty: number;
   line_cost_sen: number;
+}
+
+/** The day whose set prices cost an order: its order date, YYYY-MM-DD. Owner
+ *  2026-11-19: a set price created after the order never re-costs it, on any
+ *  edit or approved amendment. Null (today's prices) only for an order with no
+ *  readable date. */
+export function comboCostAsOf(soDate: string | null): string | null {
+  return soDate != null && /^\d{4}-\d{2}-\d{2}/.test(soDate) ? soDate.slice(0, 10) : null;
+}
+
+/** The master set prices that stood on `day` (YYYY-MM-DD, Malaysia): created by
+ *  then, and not deleted by then. Owner 2026-11-20: a set price that stood on
+ *  the order date counts even if it was deleted since, and one created later
+ *  never counts, whatever start date it was given (2990 has rows created in
+ *  August that start on 31 May). A row created and deleted on one day never
+ *  stood. The start date (effectiveFrom) is still checked by the matcher. */
+export function combosStandingOn(rows: readonly SofaComboRow[], day: string): SofaComboRow[] {
+  return rows
+    .filter((r) => !r.createdAt || mytDateOf(r.createdAt) <= day)
+    .filter((r) => !r.deletedAt || mytDateOf(r.deletedAt) > day)
+    .map((r) => ({ ...r, deletedAt: null }));
 }
 
 /** The new line cost (sen) of every line the spread re-prices, by line id.
