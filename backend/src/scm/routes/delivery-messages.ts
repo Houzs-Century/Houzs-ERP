@@ -39,7 +39,10 @@ import {
 } from '../lib/delivery-message-kinds';
 // East Malaysia detection (Sabah / Sarawak), the SAME rule the transporter feed
 // uses: sales_location SBH / SRW, with a Singapore re-check off the country / addr3.
-import { sheetRegion } from '../../lib/delivery-sheet-feed';
+// salesLocationRegion maps the raw "SBH WAREHOUSE" book spelling to its code
+// FIRST (sheetRegion alone reads a warehouse name as null, so every East order
+// was skipped as not_east).
+import { salesLocationRegion } from '../../lib/delivery-sheet-feed';
 import { markSentStatus } from '../lib/delivery-message-status';
 import { parseAssrRowKey, sendAssrArrangement } from '../lib/assr-arrangement-message';
 import {
@@ -143,28 +146,28 @@ export async function sendDeliveryMessageForDocs(
   // East Malaysia kinds only fire for East (Sabah / Sarawak) orders.
   const isEmKind = kind === 'eastmy_prep' || kind === 'eastmy_shipped' || kind === 'eastmy_arrived';
 
-  // eastmy_shipped / eastmy_arrived read the shipment facts the staff enter on the
-  // board's EM columns — the latest live DO's consignment_no / eta_arriving_port /
-  // arrives_em_warehouse_date (delivery-planning-fields.ts). Merge them onto each
-  // SO row so kindAttributes can read them off the group's first order. The read
-  // is keyed on the already company-scoped doc_nos; "last live DO wins" is the
-  // board's own rule (delivery-board-maps.foldDos), excluding DRAFT / CANCELLED.
-  if (kind === 'eastmy_shipped' || kind === 'eastmy_arrived') {
+  // eastmy_shipped reads the shipment facts the staff enter on the board's EM
+  // columns — the latest live DO's consignment_no / eta_arriving_port
+  // (delivery-planning-fields.ts). Merge them onto each SO row so kindAttributes
+  // can read them off the group's first order. The read is keyed on the already
+  // company-scoped doc_nos; "last live DO wins" is the board's own rule
+  // (delivery-board-maps.foldDos), excluding DRAFT / CANCELLED. (eastmy_arrived
+  // is an operator-judgment send and reads no DO field.)
+  if (kind === 'eastmy_shipped') {
     const emDocs = rows.map((r) => String(r.doc_no));
     const { data: doRaw, error: doErr } = await sb.from('delivery_orders')
-      .select('so_doc_no, status, consignment_no, eta_arriving_port, arrives_em_warehouse_date')
+      .select('so_doc_no, status, consignment_no, eta_arriving_port')
       .in('so_doc_no', emDocs).order('created_at').order('id');
     // Fail-closed like the profile / balance reads: a shipment fact we could not
-    // read must not send a Shipped/Arrived message with a blank or stale field.
+    // read must not send a Shipped message with a blank or stale field.
     if (doErr) return { sent: [], failed: [], skipped: [], notLogged: [], readError: { code: 'em_fields_load_failed', reason: doErr.message } };
-    const emByDoc = new Map<string, { consignment_no: unknown; eta_arriving_port: unknown; arrives_em_warehouse_date: unknown }>();
+    const emByDoc = new Map<string, { consignment_no: unknown; eta_arriving_port: unknown }>();
     for (const d of (doRaw as Array<Record<string, unknown>> | null) ?? []) {
       const st = String(d.status ?? '').toUpperCase();
       if (st === 'DRAFT' || st === 'CANCELLED') continue;  // same live filter as the board
       emByDoc.set(String(d.so_doc_no), {
         consignment_no: d.consignment_no ?? null,
         eta_arriving_port: d.eta_arriving_port ?? null,
-        arrives_em_warehouse_date: d.arrives_em_warehouse_date ?? null,
       });
     }
     for (const r of rows) { const em = emByDoc.get(String(r.doc_no)); if (em) Object.assign(r, em); }
@@ -187,7 +190,7 @@ export async function sendDeliveryMessageForDocs(
     // An East Malaysia kind only fires for an East (Sabah / Sarawak) order —
     // belt-and-suspenders with the board, which shows these entries on the EM
     // tab: a West / SG order ticked by mistake is skipped, not sent an EM template.
-    if (isEmKind && sheetRegion(r.sales_location as string | null, r.address3 as string | null, r.customer_country as string | null) !== 'EAST') {
+    if (isEmKind && salesLocationRegion(r.sales_location as string | null, r.address3 as string | null, r.customer_country as string | null) !== 'EAST') {
       skipped.push({ docNo, reason: 'not_east' });
       continue;
     }

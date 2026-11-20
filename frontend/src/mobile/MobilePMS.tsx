@@ -29,6 +29,7 @@ import { fmtTime } from "../vendor/shared/format";
 import { DateField } from "../vendor/scm/components/DateField";
 import { EditProjectSheet } from "./MobileEditProjectSheet";
 import { DefectActionsCtx, DefectFileActions, type AttachmentAction } from "./MobilePmsDefectActions";
+import { canPurchaseDefect, canReviewDefect } from "../pages/projects/defectReviewer";
 import {
   SalesDocsCard, BigFilePreview, ReviewBadge, ReviewButtons, R2Thumb, UploadGlyph,
   CREW_DOC_TILES, DEFECT_REVIEW_TILES,
@@ -931,21 +932,8 @@ function ProjectDetailView({
   const defectActionsValue = useMemo(
     () => ({
       actions: (((data as any)?.checklist_attachment_actions ?? []) as AttachmentAction[]),
-      canReview: (() => {
-        if (!user) return false;
-        const perms = user.permissions ?? [];
-        if (perms.includes("*") || perms.includes("projects.manage")) return true;
-        const region = new Set(["pulau pinang", "kelantan", "terengganu", "perak"]);
-        const inRegion = region.has(((data as any)?.project?.state ?? "").trim().toLowerCase());
-        const isShukor = user.capabilities ? user.capabilities["org.defect.reviewer"] === true : /^storekeeper supervisor$/i.test((user.position_name ?? "").trim());
-        const isNancy = /^ops exec$/i.test((user.role_name ?? "").trim());
-        return (isShukor && !inRegion) || (isNancy && inRegion);
-      })(),
-      canPurchase:
-        !!user &&
-        (user.permissions?.includes("*") ||
-          user.permissions?.includes("projects.manage") ||
-          /purchaser|bd/i.test(user.role_name ?? "")),
+      canReview: canReviewDefect(user, (data as any)?.project?.state ?? null),
+      canPurchase: canPurchaseDefect(user),
       reload,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps

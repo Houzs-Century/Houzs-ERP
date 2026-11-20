@@ -292,8 +292,8 @@
     },
     {
       "check": "D1",
-      "key": "KELANTAN,PERAK,PULAU PINANG,TERENGGANU|backend/src/services/projectGates.ts frontend/src/mobile/MobilePMS.tsx frontend/src/pages/Projects.tsx",
-      "why": "THE DEFECT-REVIEW REGION STATES (owner 2026-08-11, two-warehouse split). backend/src/services/projectGates.ts is the authored home; Projects.tsx and MobilePMS.tsx each re-type it to decide which reviewer to SHOW. A server/UI disagreement here sends a defect to the wrong reviewer's screen while the server routes it correctly — the same shape as the crew predicate this PR pins, and the next one worth pinning."
+      "key": "KELANTAN,PERAK,PULAU PINANG,TERENGGANU|backend/src/services/projectGates.ts frontend/src/pages/projects/defectReviewer.ts",
+      "why": "THE DEFECT-REVIEW REGION STATES (owner 2026-08-11, two-warehouse split). backend/src/services/projectGates.ts is the authored home; frontend/src/pages/projects/defectReviewer.ts mirrors it as the ONE frontend home (desktop and mobile both import it) to decide which reviewer to SHOW. A server/UI disagreement here sends a defect to the wrong reviewer's screen while the server routes it correctly — the same shape as the crew predicate this PR pins, and is itself now pinned by backend/tests/duplicatedDecisionPins.test.ts."
     },
     {
       "check": "D1",

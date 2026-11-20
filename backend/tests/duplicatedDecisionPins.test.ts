@@ -351,3 +351,21 @@ describe("quote-folding and identity-folding — one question after all", () => 
     expect(bedframe("12“")).not.toBe(bedframe('13"'));
   });
 });
+
+import { DEFECT_REVIEW_REGION_STATES } from "../src/services/projectGates";
+import { DEFECT_REGION_STATES } from "../../frontend/src/pages/projects/defectReviewer";
+
+// THE DEFECT-REVIEW REGION STATES — one authored home (projectGates.ts) mirrored
+// by the shared frontend helper defectReviewer.ts (desktop + mobile both import
+// it). A disagreement sends a defect to the wrong reviewer's screen while the
+// server routes it correctly, so pin the two sets equal (case-folded).
+describe("defect-review region states — one home, pinned", () => {
+  test("the frontend mirror equals the backend authored set", () => {
+    const norm = (xs: readonly string[]) =>
+      [...new Set(xs.map((s) => s.trim().toUpperCase()))].sort();
+    const backend = norm(DEFECT_REVIEW_REGION_STATES);
+    const frontend = norm(DEFECT_REGION_STATES);
+    expect(backend.length).toBeGreaterThan(0);
+    expect(frontend).toEqual(backend);
+  });
+});

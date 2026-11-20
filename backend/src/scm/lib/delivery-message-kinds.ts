@@ -134,9 +134,9 @@ export interface KindSoRow {
   amend_reason?: unknown; amended_delivery_date?: unknown; customer_delivery_date?: unknown;
   // East Malaysia shipment facts the board holds on the latest live DO
   // (delivery-planning-fields.ts), merged onto the row by the sender:
-  // consignment_no + eta_arriving_port drive the Shipped message; the EM
-  // warehouse arrival date gates the Arrived message.
-  consignment_no?: unknown; eta_arriving_port?: unknown; arrives_em_warehouse_date?: unknown;
+  // consignment_no + eta_arriving_port drive the Shipped message. (Arrived is
+  // an operator-judgment send and reads nothing off the DO.)
+  consignment_no?: unknown; eta_arriving_port?: unknown;
 }
 
 /** ISO yyyy-mm-dd → the templates' yyyy/mm/dd; '' when blank. */
@@ -273,11 +273,12 @@ export function kindAttributes(
     }
 
     case 'eastmy_arrived': {
-      // Fires when the goods reach the EM port/warehouse: the board's
-      // arrives_em_warehouse_date (latest live DO). Skip until it is set, so
-      // "arrived" is never sent before the order actually has. Nothing beyond the
-      // shared bundle's ref_1 is in this template.
-      if (!clean(first.arrives_em_warehouse_date)) return { attributes: {}, skip: 'eastmy_not_arrived' };
+      // Operator-judgment send (owner 2026-11-20): Sya Sya decides from Delivery
+      // Planning that the goods have arrived and sends this by hand, so there is
+      // NO system date gate. The structured arrival date is never filled in
+      // practice (ops track arrival as free text in em_delivery_status), which
+      // would otherwise block every send. Nothing beyond the shared bundle's
+      // ref_1 is in this template.
       return { attributes: {} };
     }
   }

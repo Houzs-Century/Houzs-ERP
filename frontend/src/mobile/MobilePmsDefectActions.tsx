@@ -10,6 +10,7 @@ import { api } from "../api/client";
 import { fmtDateTime } from "../vendor/shared/format";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { parseDefectCaption } from "../pages/projects/defectRemark";
+import { defectActionLabel } from "../pages/projects/defectReviewer";
 
 // A small image preview so people can tell what a defect photo is WITHOUT
 // opening it (owner 2026-09-28: "make it can see a bit picture inside without
@@ -144,7 +145,7 @@ export function DefectFileActions({
       {isFresh && ctx.canReview && (
         <div style={{ display: "flex", gap: 6, marginTop: wide ? 8 : 2 }}>
           <button className="tinybtn" disabled={saving} style={{ ...wideBtn, background: draft === "done" ? "var(--hz-c-synced-bg)" : "var(--hz-c-surface)", borderColor: "#bcdcd7", color: "var(--hz-c-synced)", fontWeight: draft === "done" ? 800 : 700 }} onClick={() => setDraft("done")}>Done</button>
-          <button className="tinybtn" disabled={saving} style={{ ...wideBtn, background: draft === "replace" ? "#f7e3e3" : "var(--hz-c-surface)", borderColor: "#e6bcbc", color: "#b4362f", fontWeight: draft === "replace" ? 800 : 700 }} onClick={() => setDraft("replace")}>Replace</button>
+          <button className="tinybtn" disabled={saving} style={{ ...wideBtn, background: draft === "replace" ? "#f7e3e3" : "var(--hz-c-surface)", borderColor: "#e6bcbc", color: "#b4362f", fontWeight: draft === "replace" ? 800 : 700 }} onClick={() => setDraft("replace")}>Exchange</button>
         </div>
       )}
       {isEscalated && ctx.canPurchase && (
@@ -167,7 +168,7 @@ export function DefectFileActions({
             <div key={a.id}>
               <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                 <span style={{ width: 6, height: 6, borderRadius: 3, background: a.status === "done" ? "#2f8a5b" : a.status === "replace" ? "#b4362f" : "#c9971f", flex: "none" }} />
-                <span className="rbadge" style={{ background: a.status === "done" ? "var(--hz-c-synced-bg)" : a.status === "replace" ? "#f7e3e3" : "var(--hz-c-warning-bg)", color: a.status === "done" ? "var(--hz-c-synced)" : a.status === "replace" ? "#b4362f" : "var(--hz-c-warning-text)" }}>{a.status === "done" ? "Done" : a.status === "replace" ? "Replace" : "Ongoing"}</span>
+                <span className="rbadge" style={{ background: a.status === "done" ? "var(--hz-c-synced-bg)" : a.status === "replace" ? "#f7e3e3" : "var(--hz-c-warning-bg)", color: a.status === "done" ? "var(--hz-c-synced)" : a.status === "replace" ? "#b4362f" : "var(--hz-c-warning-text)" }}>{defectActionLabel(a.status)}</span>
                 <span style={{ fontSize: 10.5, color: "var(--hz-c-ink-soft)" }}>{a.user_name || "—"} · {ts(a.created_at)}</span>
               </div>
               {a.remark && <div style={{ fontSize: 11.5, color: "#6b6f63", marginLeft: 12, marginTop: 2, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{a.remark}</div>}

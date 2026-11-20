@@ -76,7 +76,6 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import { activeCompanyId, scopeToCompany } from '../lib/companyScope';
-import { HARD_BOUND_COMPANY_ID } from '../lib/so-stock-allocation';
 import { computeVariantKey } from '../shared';
 import { effectiveSoDelivery } from '../shared';
 import { parseProvenanceNote } from './document-flow';
@@ -368,7 +367,15 @@ export function buildDeliveredSoLock(
    raised for. (b) stays on the wire as `provenance` — the "Bought for" chip —
    and still wins when MRP has no answer for the SKU (received / stock). The
    hard-bound company keeps a > b > c: its bound lines only ever use their own
-   PO, so there (c) already equals (b). */
+   PO, so there (c) already equals (b).
+
+   Owner 2026-11-19: Assigned SO follows MRP's record in BOTH companies. Keeping
+   a > b > c for company 1 named the raise-link SO for every SKU, a standard
+   mattress included, while MRP had given the PO to another order (HC-PO-2611-143
+   / -256 read HC-SO-003726; MRP gave them to HC-SO-012294 / HC-SO-2611-174). A
+   bound line's MRP answer is its own PO, so nothing changes for it. */
+export const ASSIGNED_FOLLOWS_MRP = true;
+
 export function mergeAssignments(
   poSkus: Array<string | null | undefined>,
   doLock: Map<string, OriginAssignment[]>,
@@ -600,7 +607,7 @@ poSoCoverage.get('/:type/:id', async (c) => {
 
     const origins = mergeAssignments(
       poSkus, doLockRes.bySku, storedOrigin, floating, linkedSkus,
-      activeCompanyId(c) !== HARD_BOUND_COMPANY_ID,
+      ASSIGNED_FOLLOWS_MRP,
     );
     /* "Delivered" per SKU — the DO(s) that shipped this PO's goods + qty (owner
        2026-07-31). The forward companion of the delivered-lock above; the drill-
@@ -954,7 +961,7 @@ export async function resolvePoSoCoveragePerSkuForPos(
   }
 
   // ── Precedence merge per PO (a > b > c > none; a > c > b when pooled) ──
-  const pooled = activeCompanyId(c) !== HARD_BOUND_COMPANY_ID;
+  const pooled = ASSIGNED_FOLLOWS_MRP;
   for (const id of validIds) {
     const poNum = poNumberById.get(id) ?? '';
     const skus = skusByPo.get(id) ?? [];
