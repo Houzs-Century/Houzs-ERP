@@ -285,6 +285,33 @@ describe("stockTakeRowMenu", () => {
   test("Confirm is not offered — posting needs the variance summary a row cannot show", () => {
     expect(labels(stkMenu()(R({ status: "OPEN" })))).not.toContain("Confirm");
   });
+
+  /* Approve "from outside" (owner 2026-11-20): a supervisor signs off a pending
+     count from the list. Offered only when the viewer may supervise AND the row
+     is PENDING_APPROVAL. */
+  const stkMenuSup = (sup: boolean) =>
+    stockTakeRowMenu<Row>({
+      open: noop, print: noop, cancel: noop,
+      canCancel: (r) => (r.status ?? "").toUpperCase() === "OPEN",
+      approve: noop, reject: noop,
+      canApprove: (r) => sup && (r.status ?? "").toUpperCase() === "PENDING_APPROVAL",
+    });
+
+  test("a supervisor is offered Approve & Return on a PENDING take", () => {
+    expect(labels(stkMenuSup(true)(R({ status: "PENDING_APPROVAL" }))))
+      .toEqual(["Open", "Print", "—", "Approve & post", "Return to Open"]);
+  });
+
+  test("a non-supervisor is NOT offered Approve / Return on a PENDING take", () => {
+    expect(labels(stkMenuSup(false)(R({ status: "PENDING_APPROVAL" }))))
+      .toEqual(["Open", "Print"]);
+  });
+
+  test("Approve / Return are not offered on a non-pending take, even for a supervisor", () => {
+    expect(labels(stkMenuSup(true)(R({ status: "POSTED" })))).toEqual(["Open", "Print"]);
+    expect(labels(stkMenuSup(true)(R({ status: "OPEN" }))))
+      .toEqual(["Open", "Print", "—", "Cancel Stock Take"]);
+  });
 });
 
 /* ── The two invariants that would otherwise rot one list at a time ───────── */
