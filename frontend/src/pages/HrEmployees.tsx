@@ -21,6 +21,8 @@ import { HrPageHeader } from "./hr/HrPageHeader";
 import { OverviewPage } from "./hr/OverviewPage";
 import { EmployeeMasterPage } from "./hr/EmployeeMasterPage";
 import { OtRequestsPage } from "./hr/OtRequestsPage";
+import { PublicHolidaysPage } from "./hr/PublicHolidaysPage";
+import { AdvancesPage } from "./hr/AdvancesPage";
 import { EmployeeDrawer } from "./hr/EmployeeDrawer";
 import { AddFromAccountsModal } from "./hr/AddFromAccountsModal";
 import { ImportEmployeesModal } from "./hr/ImportEmployeesModal";
@@ -31,12 +33,10 @@ import { AttendanceTab } from "./hr/AttendanceTab";
 import { ShiftsTab } from "./hr/ShiftsTab";
 import { PunchSitesTab } from "./hr/PunchSitesTab";
 import { WorkingHoursTab } from "./hr/WorkingHoursTab";
-import { PublicHolidaysTab } from "./hr/PublicHolidaysTab";
 import { PayrollTab } from "./hr/PayrollTab";
 import { PayRulesTab } from "./hr/PayRulesTab";
 import { TripPayTab } from "./hr/TripPayTab";
 import { AllowancesTab } from "./hr/AllowancesTab";
-import { AdvancesTab } from "./hr/AdvancesTab";
 import { PenaltiesTab } from "./hr/PenaltiesTab";
 import { LaborCostTab } from "./hr/LaborCostTab";
 import { KpiTab } from "./hr/KpiTab";
@@ -58,12 +58,10 @@ const LEGACY: Record<string, { title: string; subtitle: string; el: ReactNode }>
   shifts: { title: "Shifts", subtitle: "Per-employee shift groups for lateness and overtime", el: <ShiftsTab /> },
   sites: { title: "Punch Sites", subtitle: "Where a phone punch counts as on site", el: <PunchSitesTab /> },
   hours: { title: "Working Hours", subtitle: "Hours worked per employee", el: <WorkingHoursTab /> },
-  holidays: { title: "Public Holidays", subtitle: "Days nobody is docked for not working", el: <PublicHolidaysTab /> },
   payroll: { title: "Payroll", subtitle: "The month's payslips", el: <PayrollTab /> },
   "pay-rules": { title: "Pay Rules", subtitle: "Shift, lateness, overtime and statutory rates", el: <PayRulesTab /> },
   "trip-pay": { title: "Trip Pay", subtitle: "Driver commission and trip allowances", el: <TripPayTab /> },
   allowances: { title: "Allowances", subtitle: "Leadership, transport, KPI and attendance allowances", el: <AllowancesTab /> },
-  advances: { title: "Advances", subtitle: "Cash given ahead of payday, recovered in full", el: <AdvancesTab /> },
   penalties: { title: "Penalty", subtitle: "Deductions for incidents, approved by someone other than who raised it", el: <PenaltiesTab /> },
   labor: { title: "Labor Cost", subtitle: "A month's logged hours priced the way payroll prices them", el: <LaborCostTab /> },
   kpi: { title: "KPI", subtitle: "Monthly scorecard and allowance tier", el: <KpiTab /> },
@@ -114,6 +112,10 @@ export function HrEmployees() {
             <OtRequestsPage />
           </>
         );
+      case "holidays":
+        return <PublicHolidaysPage />;
+      case "advances":
+        return <AdvancesPage />;
       default: {
         const l = LEGACY[active] as { title: string; subtitle: string; el: ReactNode } | undefined;
         return l ? <LegacyPage title={l.title} subtitle={l.subtitle}>{l.el}</LegacyPage> : null;
