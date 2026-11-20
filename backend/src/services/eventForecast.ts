@@ -123,6 +123,10 @@ const COST_LINES: readonly ForecastLine[] = [
 /** The lines priced as a share of sales. */
 export const SALES_DRIVEN_LINES: readonly ForecastLine[] = ['transport_fee', 'commission', 'merchandise'];
 
+/** The brand's rate-card % for a sales-driven line, kept on the P&L row even before any real sale. */
+const rateOf = (col: PnlColumn, k: ForecastLine): number | null =>
+  k === 'transport_fee' ? col.transportFee.pct : k === 'commission' ? col.commission.pct : k === 'merchandise' ? col.merchandise.pct : null;
+
 export function layerPnl(input: {
   col: PnlColumn;
   booksRows: ReadonlySet<string>;
@@ -141,12 +145,18 @@ export function layerPnl(input: {
     const forecast = f == null ? null : round2(f);
     const lastEvent = l == null ? null : round2(l);
     const sales = k === 'sales' ? null : lines.sales;
+    const rate = rateOf(input.col, k);
     if (a.actual) lines[k] = { amount: round2(a.amount), source: 'actual', forecast, last_event: lastEvent };
     else if (forecast != null) lines[k] = { amount: forecast, source: 'forecast', forecast, last_event: lastEvent };
     else if (lastEvent != null && sales && lastSales > 0 && SALES_DRIVEN_LINES.includes(k)) {
       /* The shown Sales at the last event's ratio; a typed Sales makes it a forecast. */
       lines[k] = { amount: round2((sales.amount * lastEvent) / lastSales), source: sales.source === 'forecast' ? 'forecast' : 'last_event', forecast, last_event: lastEvent };
     } else if (lastEvent != null) lines[k] = { amount: lastEvent, source: 'last_event', forecast, last_event: lastEvent };
+    else if (sales && sales.source !== 'actual' && sales.amount > 0 && rate != null) {
+      /* No last event to take a ratio from: the brand's rate card on the shown
+         (forecast) Sales (owner 2026-11-20: comm 那些下面的没有根据变). */
+      lines[k] = { amount: round2((sales.amount * rate) / 100), source: sales.source, forecast, last_event: null };
+    }
     else lines[k] = { amount: round2(a.amount), source: 'actual', forecast, last_event: lastEvent };
   }
 
