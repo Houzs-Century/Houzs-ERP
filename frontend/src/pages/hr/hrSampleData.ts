@@ -45,20 +45,20 @@ export const ATTEND_DAYS: {
   date: number; dow: string; onTime: number; late: number; absent: number; today?: boolean;
   names: { late: string[]; absent: string[]; notin: string[]; leave: string[] };
 }[] = [
-  { date: 3, dow: "M", onTime: 82, late: 2, absent: 1, names: { late: ["Shamsul F.", "Mia S."], absent: ["Jamal H."], notin: [], leave: [] } },
-  { date: 4, dow: "T", onTime: 76, late: 3, absent: 1, names: { late: ["Mia S.", "Sultan M.", "Rahim U."], absent: ["Hafiz D."], notin: [], leave: [] } },
-  { date: 5, dow: "W", onTime: 94, late: 1, absent: 0, names: { late: ["Shamsul F."], absent: [], notin: [], leave: [] } },
-  { date: 6, dow: "T", onTime: 53, late: 5, absent: 2, today: false, names: { late: ["Mia S.", "Sultan M.", "Shamsul F.", "Rahim U.", "Arif F."], absent: ["Jamal H.", "Hafiz D."], notin: [], leave: [] } },
-  { date: 7, dow: "F", onTime: 82, late: 2, absent: 1, names: { late: ["Mia S.", "Sultan M."], absent: ["Jamal H."], notin: [], leave: [] } },
-  { date: 10, dow: "M", onTime: 94, late: 1, absent: 0, names: { late: ["Shamsul F."], absent: [], notin: [], leave: [] } },
-  { date: 11, dow: "T", onTime: 82, late: 2, absent: 1, names: { late: ["Mia S.", "Shamsul F."], absent: ["Hafiz D."], notin: [], leave: [] } },
-  { date: 12, dow: "W", onTime: 88, late: 1, absent: 1, names: { late: ["Sultan M."], absent: ["Jamal H."], notin: [], leave: [] } },
+  { date: 3, dow: "M", onTime: 82, late: 2, absent: 1, names: { late: ["Shamsul F.", "Kaiyum M."], absent: ["Amiuzzaman S."], notin: [], leave: [] } },
+  { date: 4, dow: "T", onTime: 76, late: 3, absent: 1, names: { late: ["Rafi H.", "Billal H.", "Rahim U."], absent: ["Hafiz D."], notin: [], leave: [] } },
+  { date: 5, dow: "W", onTime: 94, late: 1, absent: 0, names: { late: ["Faslie D."], absent: [], notin: [], leave: [] } },
+  { date: 6, dow: "T", onTime: 53, late: 5, absent: 2, today: false, names: { late: ["Umar F.", "Zaimir S.", "Shahfwan M.", "Abdul K.", "Wong J."], absent: ["Billal H.", "Sagor M."], notin: [], leave: [] } },
+  { date: 7, dow: "F", onTime: 82, late: 2, absent: 1, names: { late: ["Hafiz D.", "Arif F."], absent: ["Kaiyum M."], notin: [], leave: [] } },
+  { date: 10, dow: "M", onTime: 94, late: 1, absent: 0, names: { late: ["Zaimir S."], absent: [], notin: [], leave: [] } },
+  { date: 11, dow: "T", onTime: 82, late: 2, absent: 1, names: { late: ["Sagor M.", "Rahim U."], absent: ["Rafi H."], notin: [], leave: [] } },
+  { date: 12, dow: "W", onTime: 88, late: 1, absent: 1, names: { late: ["Billal H."], absent: ["Arif F."], notin: [], leave: [] } },
   { date: 13, dow: "T", onTime: 100, late: 0, absent: 0, names: { late: [], absent: [], notin: [], leave: [] } },
-  { date: 14, dow: "F", onTime: 65, late: 4, absent: 1, names: { late: ["Mia S.", "Sultan M.", "Shamsul F.", "Rahim U."], absent: ["Hafiz D."], notin: [], leave: [] } },
-  { date: 17, dow: "M", onTime: 82, late: 2, absent: 1, names: { late: ["Mia S.", "Shamsul F."], absent: ["Jamal H."], notin: [], leave: [] } },
-  { date: 18, dow: "T", onTime: 88, late: 1, absent: 1, names: { late: ["Sultan M."], absent: ["Hafiz D."], notin: [], leave: [] } },
-  { date: 19, dow: "W", onTime: 76, late: 3, absent: 1, names: { late: ["Mia S.", "Sultan M.", "Rahim U."], absent: ["Jamal H."], notin: [], leave: [] } },
-  { date: 20, dow: "T", onTime: 65, late: 3, absent: 2, today: true, names: { late: ["Mia S.", "Sultan M.", "Shamsul F."], absent: [], notin: ["Amiuzzaman S.", "Hafiz D."], leave: ["Jamal H."] } },
+  { date: 14, dow: "F", onTime: 65, late: 4, absent: 1, names: { late: ["Faslie D.", "Amiuzzaman S.", "Shamsul F.", "Umar F."], absent: ["Rahim U."], notin: [], leave: [] } },
+  { date: 17, dow: "M", onTime: 82, late: 2, absent: 1, names: { late: ["Umar F.", "Wong J."], absent: ["Faslie D."], notin: [], leave: [] } },
+  { date: 18, dow: "T", onTime: 88, late: 1, absent: 1, names: { late: ["Hafiz D."], absent: ["Shahfwan M."], notin: [], leave: [] } },
+  { date: 19, dow: "W", onTime: 76, late: 3, absent: 1, names: { late: ["Zaimir S.", "Abdul K.", "Arif F."], absent: ["Sagor M."], notin: [], leave: [] } },
+  { date: 20, dow: "T", onTime: 65, late: 3, absent: 0, today: true, names: { late: ["Sagor M.", "Shahfwan M.", "Shamsul F."], absent: [], notin: ["Amiuzzaman S.", "Hafiz D."], leave: ["Rahim U."] } },
 ];
 
 export const NEEDS_ATTENTION: { tone: "err" | "warning" | "primary" | "accent" | "learning"; title: string; sub: string; action: string; to: string }[] = [
