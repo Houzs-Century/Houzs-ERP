@@ -12,6 +12,8 @@ import {
   ClipboardList,
   LayoutGrid,
   Table as TableIcon,
+  Check,
+  CornerUpLeft,
 } from "lucide-react";
 import { PageHeader } from "../../components/Layout";
 import { StatCard } from "../../components/StatCard";
@@ -23,6 +25,8 @@ import { PullToRefresh } from "../../components/PullToRefresh";
 import {
   useStockTakes,
   useCancelStockTake,
+  useApproveStockTake,
+  useRejectStockTake,
   type StockTakeRow,
 } from "../../vendor/scm/lib/stock-queries";
 import { useQueryClient } from "@tanstack/react-query";
@@ -30,6 +34,8 @@ import { cn } from "../../lib/utils";
 import { cancelledDocNoClass, cancelledRowClass } from "../../lib/scm";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
+import { useNotify } from "../../vendor/scm/components/NotifyDialog";
+import { useAuth } from "../../auth/AuthContext";
 import { fmtDate } from "../../vendor/shared/format";
 import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
 import { withStatusLabels } from "../../vendor/scm/lib/status-pill";
@@ -149,6 +155,14 @@ export function StockTakesListV2() {
   const queryClient = useQueryClient();
   const { actorNameOf } = useStaffLookup();
   const askConfirm = useConfirm();
+  const notify = useNotify();
+  /* Approve "from outside" (owner 2026-11-20): a stock-take supervisor signs off
+     a PENDING_APPROVAL count straight from the list, like the SO amendment queue.
+     `can` honours the "*" wildcard, so Owner / IT Admin qualify. */
+  const { can } = useAuth();
+  const canSupervise = can("scm.stock_take.supervise");
+  const approveTake = useApproveStockTake();
+  const rejectTake = useRejectStockTake();
 
   const status = (params.get("status") ?? "all") as StatusTab;
   const view = (params.get("view") ?? "table") as "table" | "cards";
@@ -239,6 +253,42 @@ export function StockTakesListV2() {
     }
   };
 
+  const isPending = (r: StockTakeRow) => r.status.toUpperCase() === "PENDING_APPROVAL";
+  const busy = approveTake.isPending || rejectTake.isPending;
+
+  /* Approve books the variance now. The list row carries no line-by-line sheet,
+     so the confirm shows what it DOES have — net variance and line count — and
+     points to the take for the full breakdown. Reject moves no stock. */
+  const doApprove = async (r: StockTakeRow) => {
+    const net = Number(r.variance_total ?? 0);
+    const proceed = await askConfirm({
+      title: `Approve ${r.take_no} and post?`,
+      body:
+        `Net variance ${net > 0 ? "+" : ""}${net} across ${r.line_count ?? 0} line${(r.line_count ?? 0) === 1 ? "" : "s"}. ` +
+        `The variance will be booked now (one ADJUSTMENT per non-zero-variance line). ` +
+        `Open the take first if you want the full breakdown.`,
+      confirmLabel: "Approve & post",
+    });
+    if (!proceed) return;
+    approveTake.mutate(r.id, {
+      onSuccess: (res) => { void notify({ title: "Approved", body: `${res.movementsWritten ?? 0} adjustment movement${(res.movementsWritten ?? 0) === 1 ? "" : "s"} written.` }); },
+      onError: (err) => { void notify({ title: "Approve failed", body: err instanceof Error ? err.message : "Something went wrong.", tone: "error" }); },
+    });
+  };
+  const doReject = async (r: StockTakeRow) => {
+    const proceed = await askConfirm({
+      title: `Return ${r.take_no} for a recount?`,
+      body: "It goes back to Open so the counts can be edited and re-submitted. No stock has moved, so nothing is reversed.",
+      confirmLabel: "Return to Open",
+      danger: true,
+    });
+    if (!proceed) return;
+    rejectTake.mutate(r.id, {
+      onSuccess: () => { void notify({ title: "Returned", body: "The count is Open again for editing." }); },
+      onError: (err) => { void notify({ title: "Return failed", body: err instanceof Error ? err.message : "Something went wrong.", tone: "error" }); },
+    });
+  };
+
   /* Right-click (owner 2026-08-22). Cancel is the handler directly above, which
      until now was written and called from nowhere. OPEN only, because that is
      the only transition this route accepts — undoing a POSTED take is
@@ -250,6 +300,9 @@ export function StockTakesListV2() {
     print: goPrint,
     cancel: doCancel,
     canCancel: (r) => r.status.toUpperCase() === "OPEN",
+    approve: (r) => { void doApprove(r); },
+    reject: (r) => { void doReject(r); },
+    canApprove: (r) => canSupervise && isPending(r),
   });
 
   const columns: Column<StockTakeRow>[] = [
@@ -341,6 +394,31 @@ export function StockTakesListV2() {
       },
     },
   ];
+
+  /* Inline approve/return on the list (owner 2026-11-20) — a supervisor signs off
+     a PENDING count "from outside" without opening it. Shown only to supervisors,
+     and only on the tabs where pending rows live (Pending / All), so the column
+     never sits empty on Open/Confirmed/Cancelled. Buttons stop row-click so a tap
+     approves rather than opening the take. */
+  if (canSupervise && (status === "pending" || status === "all")) {
+    columns.push({
+      key: "approve",
+      label: "Approve",
+      width: "200px",
+      alwaysVisible: true,
+      getValue: () => "",
+      render: (r) => (isPending(r) ? (
+        <div style={{ display: "inline-flex", gap: 6 }} onClick={(e) => e.stopPropagation()}>
+          <Button variant="primary" icon={<Check size={13} />} disabled={busy} onClick={() => { void doApprove(r); }}>
+            Approve
+          </Button>
+          <Button variant="ghost" icon={<CornerUpLeft size={13} />} disabled={busy} onClick={() => { void doReject(r); }}>
+            Return
+          </Button>
+        </div>
+      ) : null),
+    });
+  }
 
   const statusPillOptions: Array<{ value: StatusTab; label: string }> = [
     { value: "all", label: `All · ${counts.all}` },
