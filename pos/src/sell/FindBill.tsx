@@ -1,9 +1,10 @@
 /* Find bill (layout P12): search by receipt no / amount / customer, filters
  * Today / cashier / status; the detail with PAID / VOID / RETURN and SYNCED /
  * NOT SYNCED; Reprint (COPY), E-receipt, Change salesman, Return / Exchange,
- * Void bill (supervisor PIN + reason). "Other terminals" adds the bills other
- * devices made, read from the ERP, for a reprint only (findBillRules.ts). */
-import { useEffect, useMemo, useState } from "react";
+ * Void bill (supervisor PIN + reason). "Other terminals" (on by itself when
+ * the ERP answers) adds the bills other devices made, read from the ERP, for
+ * a reprint only (findBillRules.ts). */
+import { useEffect, useMemo, useRef, useState } from "react";
 import { posMethodLabel } from "@shared/pos-vocabulary";
 import { deviceApi } from "../api";
 import { findBillDays, otherDeviceBills } from "../findBillRules";
@@ -33,7 +34,11 @@ export function FindBill({ state, initialQuery, onReturn, onClose, say }: {
   const [voidStep, setVoidStep] = useState<null | "pin" | { sup: BundleCashier }>(null);
   const [reason, setReason] = useState("");
   const [salesmanPick, setSalesmanPick] = useState(false);
-  const [withOthers, setWithOthers] = useState(false);
+  /* On from the start: the owner expects a bill sold on one laptop to be
+     findable on another. Offline it turns itself off without a word; only a
+     tick the user made themself is answered with the reason. */
+  const [withOthers, setWithOthers] = useState(true);
+  const askedOthers = useRef(false);
   const [erp, setErp] = useState<SaleRecord[]>([]);
   const [loadingOthers, setLoadingOthers] = useState(false);
   const reload = () => listSales().then((rows) => { setAll(rows.sort((a, b) => (a.sold_at < b.sold_at ? 1 : -1))); }).catch(() => say("Could not read bills", true));
@@ -48,7 +53,7 @@ export function FindBill({ state, initialQuery, onReturn, onClose, say }: {
     setLoadingOthers(true);
     deviceApi.sales<SaleRecord>(state.token, days.from, days.to)
       .then((r) => { if (alive) setErp(r.sales); })
-      .catch((e) => { if (alive) { setWithOthers(false); say(`Other terminals need the ERP: ${e instanceof Error ? e.message : "not reachable"}`, true); } })
+      .catch((e) => { if (alive) { setWithOthers(false); if (askedOthers.current) say(`Other terminals need the ERP: ${e instanceof Error ? e.message : "not reachable"}`, true); } })
       .finally(() => { if (alive) setLoadingOthers(false); });
     return () => { alive = false; };
     // say is the parent's toast; a new identity must not refetch.
@@ -114,7 +119,7 @@ export function FindBill({ state, initialQuery, onReturn, onClose, say }: {
           <input className="kbd-input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Receipt no, amount or customer" autoFocus />
           <div className="row small" style={{ margin: "6px 0" }}>
             <label><input type="checkbox" checked={todayOnly} onChange={(e) => setTodayOnly(e.target.checked)} /> Today</label>
-            <label title="Bills made on other devices, read from the ERP (needs internet). Reprint only."><input type="checkbox" checked={withOthers} onChange={(e) => { setWithOthers(e.target.checked); setSel(null); }} /> Other terminals{loadingOthers ? "…" : ""}</label>
+            <label title="Bills made on other devices, read from the ERP (needs internet). Reprint only."><input type="checkbox" checked={withOthers} onChange={(e) => { askedOthers.current = true; setWithOthers(e.target.checked); setSel(null); }} /> Other terminals{loadingOthers ? "…" : ""}</label>
             <select className="kbd-input" style={{ minHeight: 32, width: "auto" }} value={cashier} onChange={(e) => setCashier(e.target.value)}><option value="">All cashiers</option>{cashiers.map((c) => <option key={c}>{c}</option>)}</select>
             <select className="kbd-input" style={{ minHeight: 32, width: "auto" }} value={status} onChange={(e) => setStatus(e.target.value as typeof status)}><option value="">All</option><option value="PAID">Paid</option><option value="VOID">Void</option><option value="RETURN">Return</option></select>
           </div>
