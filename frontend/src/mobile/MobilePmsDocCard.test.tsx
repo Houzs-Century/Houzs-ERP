@@ -101,10 +101,10 @@ describe("the B2 document card", () => {
     expect(screen.getByText("stock-in.jpg")).toBeTruthy();
   });
 
-  test("a defect file carries Done / Replace under its preview", () => {
+  test("a defect file carries Done / Exchange under its preview", () => {
     mount();
     expect(screen.getByRole("button", { name: "Done" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Replace" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Exchange" })).toBeTruthy();
     // Its caption reaches every viewer via the defect remark strip.
     expect(screen.getByText(/torn cushion/)).toBeTruthy();
   });

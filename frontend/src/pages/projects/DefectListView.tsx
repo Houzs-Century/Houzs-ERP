@@ -402,7 +402,7 @@ export function DefectListView() {
                             />
                             <div className="mt-1 flex items-center justify-end gap-1.5">
                               <span className="mr-auto text-[10.5px] font-semibold text-ink-muted">
-                                {draft?.status === "done" ? "Mark Done" : "Mark Exchange"}
+                                {draft.status === "done" ? "Mark Done" : "Mark Exchange"}
                               </span>
                               <button
                                 type="button"
