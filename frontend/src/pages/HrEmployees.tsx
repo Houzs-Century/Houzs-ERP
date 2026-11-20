@@ -10,6 +10,7 @@ import { PageHeader } from "../components/Layout";
 import { HrSubnav, HR_NAV } from "./hr/HrSubnav";
 import { HrPageHeader, hrPrimaryBtn, hrSecondaryBtn } from "./hr/HrPageHeader";
 import { OverviewPage } from "./hr/OverviewPage";
+import { EmployeeMasterPage } from "./hr/EmployeeMasterPage";
 import { EmployeeMasterTab } from "./hr/EmployeeMasterTab";
 import { PublicHolidaysTab } from "./hr/PublicHolidaysTab";
 import { PayRulesTab } from "./hr/PayRulesTab";
@@ -149,6 +150,8 @@ export function HrEmployees() {
             />
             <OverviewPage onNavigate={setTab} />
           </>
+        ) : active === "employees" ? (
+          <EmployeeMasterPage />
         ) : active === "ot-requests" ? (
           <ComingSoon title="OT Requests" />
         ) : (

@@ -13,26 +13,32 @@ export const POSITION: Record<Position, { label: string; dot: string; soft: stri
 };
 
 export type Punch = "on" | "late" | "out" | "leave";
-export type Emp = { id: number; name: string; empNo: string; position: Position; punch: Punch; time: string | null };
+export type Emp = {
+  id: number; name: string; empNo: string; position: Position;
+  punch: Punch; time: string | null; shift: string; lateMin: number;
+  erp: string | null; salarySen: number; status: "ACTIVE" | "PROBATION";
+  foreign: boolean; joined: string; probationEnds: string | null;
+  permitExpiry: string | null;
+};
 
 export const EMPLOYEES: Emp[] = [
-  { id: 1, name: "Mohd Faiz bin Rahman", empNo: "HC0012", position: "driver", punch: "on", time: "08:55" },
-  { id: 2, name: "Shamsul Fiqri Bin Samsuddin", empNo: "HC0007", position: "driver", punch: "late", time: "09:18" },
-  { id: 3, name: "Lim Chee Keong", empNo: "HC0003", position: "supervisor", punch: "on", time: "08:40" },
-  { id: 4, name: "Mia Md Sagor", empNo: "HCFW006", position: "crew", punch: "late", time: "09:22" },
-  { id: 5, name: "Amiuzzaman Shohag", empNo: "HCFW011", position: "crew", punch: "out", time: null },
-  { id: 6, name: "Abdul Karim", empNo: "HCFW014", position: "crew", punch: "on", time: "08:58" },
-  { id: 7, name: "Rahim Uddin", empNo: "HCFW009", position: "crew", punch: "on", time: "08:51" },
-  { id: 8, name: "Tan Wei Sheng", empNo: "HC0021", position: "driver", punch: "on", time: "08:47" },
-  { id: 9, name: "Jamal Hossain", empNo: "HCFW018", position: "crew", punch: "leave", time: null },
-  { id: 10, name: "Nabil Haikal", empNo: "HC0025", position: "driver", punch: "on", time: "08:59" },
-  { id: 11, name: "Sultan Mahmud", empNo: "HCFW022", position: "crew", punch: "late", time: "09:10" },
-  { id: 12, name: "Chong Zi Xuan", empNo: "HC0030", position: "crew", punch: "on", time: "08:44" },
-  { id: 13, name: "Ravi Kumar", empNo: "HC0031", position: "crew", punch: "on", time: "08:49" },
-  { id: 14, name: "Hafiz Danial", empNo: "HCFW027", position: "crew", punch: "out", time: null },
-  { id: 15, name: "Wong Jun Hao", empNo: "HC0034", position: "crew", punch: "on", time: "08:53" },
-  { id: 16, name: "Arif Firdaus", empNo: "HC0036", position: "crew", punch: "on", time: "08:56" },
-  { id: 17, name: "Suresh Nair", empNo: "HC0038", position: "crew", punch: "on", time: "08:52" },
+  { id: 1, name: "Faslie Anak Dennis", empNo: "HC0012", position: "driver", punch: "on", time: "07:48", shift: "08:00", lateMin: 0, erp: "faslie anak dennis", salarySen: 220000, status: "ACTIVE", foreign: false, joined: "2023-04-10", probationEnds: null, permitExpiry: null },
+  { id: 2, name: "Abd Khalid Bin Ta'arif", empNo: "HC0009", position: "driver", punch: "on", time: "07:52", shift: "08:00", lateMin: 0, erp: "abd khalid bin ta arif", salarySen: 215000, status: "ACTIVE", foreign: false, joined: "2022-09-01", probationEnds: null, permitExpiry: null },
+  { id: 3, name: "Umar Farhan Bin Md Yusof", empNo: "HC0011", position: "driver", punch: "late", time: "08:14", shift: "08:00", lateMin: 14, erp: "umar farhan bin md yusof", salarySen: 210000, status: "ACTIVE", foreign: false, joined: "2024-01-15", probationEnds: null, permitExpiry: null },
+  { id: 4, name: "Mohd Zaimir Bin Mohd Sharani", empNo: "HC0014", position: "driver", punch: "on", time: "07:41", shift: "08:00", lateMin: 0, erp: "mohd zaimir bin mohd sha…", salarySen: 218000, status: "ACTIVE", foreign: false, joined: "2023-07-22", probationEnds: null, permitExpiry: null },
+  { id: 5, name: "Shamsul Fiqri Bin Samsuddin", empNo: "HC0017", position: "driver", punch: "out", time: null, shift: "08:00", lateMin: 0, erp: "shamsul fiqri bin samsuddin", salarySen: 212000, status: "ACTIVE", foreign: false, joined: "2022-03-30", probationEnds: null, permitExpiry: null },
+  { id: 6, name: "Muhammad Shahfwan", empNo: "HC0008", position: "crew", punch: "on", time: "08:21", shift: "08:30", lateMin: 0, erp: "muhammad shahfwan", salarySen: 180000, status: "ACTIVE", foreign: false, joined: "2023-11-05", probationEnds: null, permitExpiry: null },
+  { id: 7, name: "Rafi Shamim Hasnat", empNo: "HCFW0001", position: "crew", punch: "on", time: "08:12", shift: "08:30", lateMin: 0, erp: "rafi shamim hasnat", salarySen: 160000, status: "ACTIVE", foreign: true, joined: "2024-02-18", probationEnds: null, permitExpiry: "2026-01-20" },
+  { id: 8, name: "Mia Md Kaiyum", empNo: "HCFW0002", position: "crew", punch: "late", time: "08:52", shift: "08:30", lateMin: 22, erp: "mia md kayum", salarySen: 160000, status: "ACTIVE", foreign: true, joined: "2024-02-18", probationEnds: null, permitExpiry: "2026-02-28" },
+  { id: 9, name: "Md Billal Hossain", empNo: "HCFW0003", position: "crew", punch: "on", time: "08:18", shift: "08:30", lateMin: 0, erp: "md billal hossain", salarySen: 160000, status: "ACTIVE", foreign: true, joined: "2023-06-01", probationEnds: null, permitExpiry: "2026-03-15" },
+  { id: 10, name: "Amiuzzaman Shohag", empNo: "HCFW0011", position: "crew", punch: "out", time: null, shift: "08:30", lateMin: 0, erp: null, salarySen: 155000, status: "PROBATION", foreign: true, joined: "2026-10-01", probationEnds: "2027-02-14", permitExpiry: "2026-01-10" },
+  { id: 11, name: "Mia Md Sagor", empNo: "HCFW0006", position: "crew", punch: "late", time: "09:10", shift: "08:30", lateMin: 40, erp: "mia md sagor", salarySen: 158000, status: "ACTIVE", foreign: true, joined: "2024-05-12", probationEnds: null, permitExpiry: "2026-02-05" },
+  { id: 12, name: "Rahim Uddin", empNo: "HCFW0009", position: "crew", punch: "on", time: "08:25", shift: "08:30", lateMin: 0, erp: "rahim uddin", salarySen: 158000, status: "ACTIVE", foreign: true, joined: "2023-09-20", probationEnds: null, permitExpiry: "2026-04-18" },
+  { id: 13, name: "Abdul Karim", empNo: "HCFW0014", position: "crew", punch: "on", time: "08:19", shift: "08:30", lateMin: 0, erp: "abdul karim", salarySen: 155000, status: "PROBATION", foreign: true, joined: "2026-10-05", probationEnds: "2027-01-02", permitExpiry: "2026-05-30" },
+  { id: 14, name: "Hafiz Danial", empNo: "HC0027", position: "crew", punch: "leave", time: null, shift: "08:30", lateMin: 0, erp: "hafiz danial", salarySen: 165000, status: "ACTIVE", foreign: false, joined: "2023-02-14", probationEnds: null, permitExpiry: null },
+  { id: 15, name: "Wong Jun Hao", empNo: "HC0034", position: "crew", punch: "on", time: "08:23", shift: "08:30", lateMin: 0, erp: "wong jun hao", salarySen: 170000, status: "PROBATION", foreign: false, joined: "2026-09-28", probationEnds: "2026-12-27", permitExpiry: null },
+  { id: 16, name: "Arif Firdaus", empNo: "HC0036", position: "crew", punch: "on", time: "08:16", shift: "08:30", lateMin: 0, erp: "arif firdaus", salarySen: 172000, status: "ACTIVE", foreign: false, joined: "2022-12-01", probationEnds: null, permitExpiry: null },
+  { id: 17, name: "Lim Chee Keong", empNo: "HC0003", position: "supervisor", punch: "on", time: "08:05", shift: "08:00", lateMin: 0, erp: "lim chee keong", salarySen: 320000, status: "ACTIVE", foreign: false, joined: "2019-05-02", probationEnds: null, permitExpiry: null },
 ];
 
 export const ATTEND_DAYS: {
