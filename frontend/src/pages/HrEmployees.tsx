@@ -8,6 +8,8 @@
 import { useSearchParams } from "react-router-dom";
 import { PageHeader } from "../components/Layout";
 import { HrSubnav, HR_NAV } from "./hr/HrSubnav";
+import { HrPageHeader, hrPrimaryBtn, hrSecondaryBtn } from "./hr/HrPageHeader";
+import { OverviewPage } from "./hr/OverviewPage";
 import { EmployeeMasterTab } from "./hr/EmployeeMasterTab";
 import { PublicHolidaysTab } from "./hr/PublicHolidaysTab";
 import { PayRulesTab } from "./hr/PayRulesTab";
@@ -108,8 +110,6 @@ export function HrEmployees() {
 
   const body = (() => {
     switch (active) {
-      case "overview": return <ComingSoon title="Overview" />;
-      case "ot-requests": return <ComingSoon title="OT Requests" />;
       case "employees": return <EmployeeMasterTab />;
       case "attendance": return <AttendanceTab />;
       case "hours": return <WorkingHoursTab />;
@@ -127,7 +127,6 @@ export function HrEmployees() {
       default: return null;
     }
   })();
-  const isPlaceholder = active === "overview" || active === "ot-requests";
   const head = HEADER[active];
 
   return (
@@ -136,8 +135,22 @@ export function HrEmployees() {
     <div className="-mx-3 -mt-6 -mb-[calc(10rem+env(safe-area-inset-bottom))] flex h-[calc(100dvh-52px)] overflow-hidden bg-bg sm:-mx-4 lg:-mx-4 lg:-mt-2 lg:-mb-10 lg:h-[calc(100dvh-52px)]">
       <HrSubnav active={active} onSelect={setTab} />
       <div className="flex min-w-0 flex-1 flex-col overflow-y-auto thin-scroll">
-        {isPlaceholder ? (
-          body
+        {active === "overview" ? (
+          <>
+            <HrPageHeader
+              title="Overview"
+              subtitle="Friday, 20 Nov 2026 · Operation Department"
+              actions={
+                <>
+                  <button type="button" className={hrSecondaryBtn}>Export report</button>
+                  <button type="button" className={hrPrimaryBtn}>+ Add employee</button>
+                </>
+              }
+            />
+            <OverviewPage onNavigate={setTab} />
+          </>
+        ) : active === "ot-requests" ? (
+          <ComingSoon title="OT Requests" />
         ) : (
           <div className="px-6 py-4">
             <PageHeader eyebrow="HR · Employees & Attendance" title={head.title} description={head.description} />
