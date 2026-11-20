@@ -94,6 +94,8 @@ import { baseKeyOf, thumbKeyFor } from '../../services/photoThumbs';
 import { proxyFallbackPayload, type PhotoUrlPayload } from '../lib/photoProxyFallback';
 import { markIdempotencyNoWrite } from '../../middleware/idempotency';
 import { soHasPoGate } from '../lib/so-line-po-duplicate';
+import { withMrpAssignments } from '../lib/so-has-po-assignments';
+import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChange } from '../lib/entity-audit';
 import { PO_LINE_AUDIT_FIELDS, PO_LINE_AUDIT_SELECT } from '../lib/entity-audit-fields';
@@ -1100,7 +1102,7 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
          the idempotency claim no-write so the confirmed replay re-runs instead of
          replaying this 409 (mirrors the short_stock gate). */
       const dupGate = await soHasPoGate(supabase, soRows, body.confirmDuplicatePo); // 2990-0065; lines confirmed there skip the qty prompt
-      if (dupGate.refusal) { markIdempotencyNoWrite(c); return c.json(dupGate.refusal, 409); }
+      if (dupGate.refusal) { markIdempotencyNoWrite(c); return c.json(await withMrpAssignments(supabase, c, dupGate.refusal), 409); }
       if (!confirmOverConvert) {
         const offender = findOverConvertOffender(items.filter((it) => !dupGate.confirmed.has(it.soItemId as string)), soRows);
         if (offender) {
@@ -1691,7 +1693,8 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
   }
 
   const dupGate = await soHasPoGate(supabase, pickedItems.map((p) => p.row), body.confirmDuplicatePo); // 2990-0065, after the hard caps
-  if (dupGate.refusal) return c.json(dupGate.refusal, 409);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the HTTP route passes its real Context here; the headless agent never reaches the prompt
+  if (dupGate.refusal) return c.json(await withMrpAssignments(supabase, c as unknown as Context<any>, dupGate.refusal), 409);
 
   // Re-project into the legacy soItems shape for the rest of the handler.
   // Commander 2026-05-28 — carry the per-line derived warehouse + delivery
@@ -2947,7 +2950,7 @@ mfgPurchaseOrders.post('/:id/items', async (c) => {
   /* Remaining-qty cap — a NEW line contributes nothing to po_qty_picked yet, so
      its own headroom is the raw remainder (ownCurrentQty = 0). */
   const dupGate = await soHasPoGate(sb, soItemId ? [{ id: soItemId, doc_no: null, item_code: String(it.itemCode ?? '') }] : [], it.confirmDuplicatePo); // 2990-0065
-  if (dupGate.refusal) { markIdempotencyNoWrite(c); return c.json(dupGate.refusal, 409); }
+  if (dupGate.refusal) { markIdempotencyNoWrite(c); return c.json(await withMrpAssignments(sb, c, dupGate.refusal), 409); }
   if (it.confirmOverConvert !== true) {
     const over = await soLineOverConvertRefusal(sb, soItemId, qty, 0);
     if (over) return c.json({ error: 'qty_exceeds_remaining', ...over }, 409);
