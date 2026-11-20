@@ -24,6 +24,25 @@ vi.mock('../../vendor/scm/lib/supplier-maintenance-queries', async (importOrigin
   useCreateMaintainedSupplier: () => ({ mutateAsync: createSupplier, isPending: false }),
   useUpdateMaintainedSupplier: () => ({ mutateAsync: updateSupplier, isPending: false }),
 }));
+/* The next-code preview (GET /suppliers/next-code): the kind, the name's first
+   letter, and — in this fake — always number 002. */
+vi.mock('../../vendor/scm/lib/suppliers-queries', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../vendor/scm/lib/suppliers-queries')>()),
+  useNextSupplierCode: (kind: string, name: string, enabled: boolean) => ({
+    data: enabled && name.trim() ? { kind, code: `${kind}-${name.trim()[0]!.toUpperCase()}002` } : undefined,
+  }),
+}));
+/* State / City / Postcode reads the localities master; the form only needs the postcode here. */
+vi.mock('../../vendor/scm/components/AddressTripleFields', () => ({
+  AddressTripleFields: ({ value, onChange, postcodeRequired }: {
+    value: { state: string; city: string; postcode: string };
+    onChange: (next: { state: string; city: string; postcode: string }, country: string | null) => void;
+    postcodeRequired: boolean;
+  }) => (
+    <input aria-label={postcodeRequired ? 'Postcode *' : 'Postcode'} value={value.postcode}
+      onChange={(e) => onChange({ ...value, postcode: e.target.value }, null)} />
+  ),
+}));
 
 import { SupplierMaintenance, codeNote } from './SupplierMaintenance';
 
@@ -137,11 +156,57 @@ describe('the form', () => {
     fireEvent.change(screen.getByLabelText('Company name *'), { target: { value: 'TENAGA NASIONAL BERHAD' } });
     fireEvent.change(screen.getByLabelText('Bank'), { target: { value: 'Maybank' } });
     fireEvent.change(screen.getByLabelText('Account no.'), { target: { value: '5123 0000 1111' } });
+    fireEvent.change(screen.getByLabelText('Postcode *'), { target: { value: '47500' } });
     expect((screen.getByLabelText('Purchasing uses it too') as HTMLInputElement).checked).toBe(false);
     expect(screen.getByText('Other creditor — posts to 405-0000.')).toBeTruthy();
     fireEvent.click(screen.getByText('Create supplier'));
     await waitFor(() => expect(createSupplier).toHaveBeenCalled());
-    expect(createSupplier.mock.calls[0]![0]).toMatchObject({ code: '405-T009', name: 'TENAGA NASIONAL BERHAD', forPurchasing: false, bankName: 'Maybank', bankAccountNo: '5123 0000 1111' });
+    expect(createSupplier.mock.calls[0]![0]).toMatchObject({ code: '405-T009', codeKind: '405', name: 'TENAGA NASIONAL BERHAD', forPurchasing: false, bankName: 'Maybank', bankAccountNo: '5123 0000 1111', postcode: '47500' });
+  });
+
+  /* Owner 2026-11-20: 默认是公司名的字母; 400 或 405 也要可以选. */
+  test('a new supplier\'s code is numbered from its name, and the Type picks 400 or 405 and who sees it', async () => {
+    draw();
+    fireEvent.click(screen.getByText('New supplier'));
+    const code = () => (screen.getByLabelText('Credit Account (code)') as HTMLInputElement).value;
+    const shared = () => (screen.getByLabelText('Purchasing uses it too') as HTMLInputElement).checked;
+    expect((screen.getByLabelText('Type') as HTMLSelectElement).value).toBe('405');
+    fireEvent.change(screen.getByLabelText('Company name *'), { target: { value: 'TIOW WAI KEONG' } });
+    await waitFor(() => expect(code()).toBe('405-T002'));
+    expect(shared()).toBe(false);
+    expect(screen.getByText('Numbered from the name. Type over it to use another code.')).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('Type'), { target: { value: '400' } });
+    await waitFor(() => expect(code()).toBe('400-T002'));
+    expect(shared()).toBe(true);
+
+    /* Typed over, the code stays — a later name change does not renumber it. */
+    fireEvent.change(screen.getByLabelText('Credit Account (code)'), { target: { value: '400-X001' } });
+    fireEvent.change(screen.getByLabelText('Company name *'), { target: { value: 'ANOTHER NAME' } });
+    expect(code()).toBe('400-X001');
+
+    fireEvent.change(screen.getByLabelText('Postcode *'), { target: { value: '43000' } });
+    fireEvent.click(screen.getByText('Create supplier'));
+    await waitFor(() => expect(createSupplier).toHaveBeenCalled());
+    expect(createSupplier.mock.calls[0]![0]).toMatchObject({ code: '400-X001', codeKind: '400', forPurchasing: true, postcode: '43000' });
+  });
+
+  test('a ticked box is Finance\'s own choice: changing the Type no longer moves it', async () => {
+    draw();
+    fireEvent.click(screen.getByText('New supplier'));
+    fireEvent.click(screen.getByLabelText('Purchasing uses it too'));
+    fireEvent.change(screen.getByLabelText('Type'), { target: { value: '400' } });
+    fireEvent.change(screen.getByLabelText('Type'), { target: { value: '405' } });
+    expect((screen.getByLabelText('Purchasing uses it too') as HTMLInputElement).checked).toBe(true);
+  });
+
+  test('a new Malaysian supplier is asked for its postcode before anything is sent', () => {
+    draw();
+    fireEvent.click(screen.getByText('New supplier'));
+    fireEvent.change(screen.getByLabelText('Company name *'), { target: { value: 'TENAGA NASIONAL BERHAD' } });
+    fireEvent.click(screen.getByText('Create supplier'));
+    expect(screen.getByRole('alert').textContent).toBe('Postcode is required for an address in Malaysia or Singapore.');
+    expect(createSupplier).not.toHaveBeenCalled();
   });
 
   test('an edit sends the code only when it changed; the tick shares the supplier', async () => {

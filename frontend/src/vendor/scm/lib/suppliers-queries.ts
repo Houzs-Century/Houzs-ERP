@@ -18,6 +18,7 @@ import { writeFailed, writeFailedAs, reportInBandFailure, type InBandFailure } f
 import { idempotentInit } from '../../../lib/idempotency';
 import { invalidateSoLists } from './sales-order-queries';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
+import { supplierCodeLetter, type SupplierCodeKind } from '../../shared/supplier-code';
 import type { OriginAssignment } from './flow-queries';
 import type { OutstandingScope } from '../../../lib/outstandingEmptyReason';
 
@@ -434,7 +435,25 @@ export function invalidateSupplierLists(qc: ReturnType<typeof useQueryClient>) {
   return Promise.all([
     qc.invalidateQueries({ queryKey: ['suppliers'] }),
     qc.invalidateQueries({ queryKey: ['suppliers-paged'] }),
+    /* A new supplier used up the number the next-code preview offered. */
+    qc.invalidateQueries({ queryKey: ['supplier-next-code'] }),
   ]);
+}
+
+/** The code a new supplier would get (GET /suppliers/next-code, owner
+    2026-11-20): kind, the name's first letter, the next number. Keyed by the
+    letter, not the whole name — the answer only changes when the letter does. */
+export function useNextSupplierCode(kind: SupplierCodeKind, name: string, enabled: boolean) {
+  const letter = supplierCodeLetter(name);
+  return useQuery({
+    queryKey: ['supplier-next-code', kind, letter],
+    queryFn: () => authedFetch<{ kind: SupplierCodeKind; code: string | null }>(
+      `/suppliers/next-code?kind=${kind}&name=${encodeURIComponent(letter ?? '')}`,
+    ),
+    enabled: enabled && letter !== null,
+    staleTime: 15_000,
+    retry: retryUnlessClientError,
+  });
 }
 
 export function useSupplierDetail(id: string | null) {
