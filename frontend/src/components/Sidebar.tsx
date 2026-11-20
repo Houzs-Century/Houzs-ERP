@@ -24,6 +24,7 @@ import {
   Users,
   LogOut,
   Calendar,
+  AlertTriangle,
   DollarSign,
   Wrench,
   FolderKanban,
@@ -411,6 +412,12 @@ export const NAV_TABS: NavTab[] = [
         label: "Calendar",
         icon: Calendar,
         pageAccess: "projects.calendar",
+      },
+      {
+        to: "/projects?view=defects",
+        label: "Defect List",
+        icon: AlertTriangle,
+        pageAccess: "projects.list",
       },
       {
         to: "/projects?view=maintenance",
