@@ -26,7 +26,7 @@ The return leg of the WhatsApp delivery conversation. `chat.houzscentury.com` po
 | `delivery_completed` | Delivery Completed | — | — | no |
 | `eastmy_prep` | East Malaysia Prep Notice | — (opener; callback is `eastmy_ack`) | not an East order (`not_east`) | yes |
 | `eastmy_shipped` | East Malaysia Shipped | `consignment_no`, `eta_em_port` (from the latest live DO's `consignment_no` / `eta_arriving_port`, staff-entered on the board's EM columns) | not East (`not_east`), or no Consignment No. + ETA on the row (`eastmy_shipment_fields_required`) | no |
-| `eastmy_arrived` | East Malaysia Arrived | — | not East (`not_east`), or no EM-warehouse arrival date yet (`eastmy_not_arrived`) | no |
+| `eastmy_arrived` | East Malaysia Arrived | — | not East (`not_east`) — operator-judgment send, no date gate | no |
 
 After the messages leave, the same request moves each sent order's `delivery_message_status` to its "Done X" (`KIND_AFTER_STATUS` in `delivery-message-kinds.ts`, via `advanceSoGeneration` + an SO History row; `scm/lib/delivery-message-status.ts`). Overdue Order and the three East Malaysia touchpoints move NO status (`NO_STATUS_MOVE_KINDS`): they track their own lifecycle on the board's EM columns and must not disturb the delivery-date conversation's status. An order it could not move (an open SO editor lease, a version race that outlived two retries) comes back in `statusNotMoved` and the board names it — the board used to write the status itself, fire-and-forget, and lost it silently (HC-0164).
 

@@ -1,9 +1,10 @@
 // Stock take phase 1 (owner-approved 2026-08-08) — the ACCOUNTABILITY gates:
 //   • the assignees are a RECORD of who counted (owner 2026-10-06) — anyone
 //     with stock-take access may post; a take may name several assignees;
-//   • variances beyond the threshold (shared/stock-take-threshold.ts) need the
-//     supervise permission, refusal reverts the POSTED flip — same posture as
-//     the R3 cost_required path;
+//   • variances beyond the threshold (shared/stock-take-threshold.ts) need a
+//     supervisor: owner 2026-11-20, a non-supervisor's over-limit post now
+//     SUBMITS (OPEN -> PENDING_APPROVAL, nothing moved) and a supervisor
+//     /approve books it or /reject returns it, rather than a hard refusal;
 //   • movements stamp the REAL caller's staff uuid, not the pinned system row
 //     (the "Performed by: Unknown user" fix);
 //   • counted cells record counted_by / counted_at from the same real uuid;
@@ -19,12 +20,14 @@ import { Hono } from 'hono';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
   addStockTakeLineHandler,
+  approveStockTakeHandler,
   createStockTakeHandler,
   deleteStockTakeLineHandler,
   getStockTakeDetailHandler,
   patchStockTakeHeaderHandler,
   patchStockTakeLinesHandler,
   postStockTakeHandler,
+  rejectStockTakeHandler,
 } from '../src/scm/routes/stock-takes';
 import { readStockTakeSheetHandler } from '../src/scm/routes/stock-take-sheet-read';
 
@@ -117,6 +120,8 @@ function harness(tables: Record<string, Row[]>, opts?: { perms?: string[] }) {
   app.post('/stock-takes', createStockTakeHandler as never);
   app.get('/stock-takes/:id', getStockTakeDetailHandler as never);
   app.patch('/stock-takes/:id/post', postStockTakeHandler as never);
+  app.patch('/stock-takes/:id/approve', approveStockTakeHandler as never);
+  app.patch('/stock-takes/:id/reject', rejectStockTakeHandler as never);
   app.patch('/stock-takes/:id/lines', patchStockTakeLinesHandler as never);
   app.patch('/stock-takes/:id', patchStockTakeHeaderHandler as never);
   app.post('/stock-takes/:id/lines', addStockTakeLineHandler as never);
@@ -198,44 +203,48 @@ describe('post gate — assignees are a record, not a gate', () => {
   });
 });
 
-describe('post gate — variance threshold', () => {
-  test('an over-threshold qty variance refuses for the assignee, reverts the flip, writes nothing', async () => {
+describe('post gate — variance threshold now SUBMITS for approval (owner 2026-11-20)', () => {
+  test('an over-threshold qty variance by a non-supervisor is SENT FOR APPROVAL, not refused; nothing moves', async () => {
     const t = takeFixture();
     t.stock_take_lines[0].counted_qty = 20; // variance +10 > default 5
     const res = await jsonReq(harness(t).app, '/stock-takes/st-1/post', 'PATCH');
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
     const body = await res.json() as Row;
-    expect(body.error).toBe('variance_supervisor_required');
+    expect(body.pendingApproval).toBe(true);
     expect(body.itemCodes).toEqual(['CODY']);
-    expect(body.postReverted).toBe(true);
-    // The refusal SAYS a supervisor is needed, and survives the client filter.
+    // The message names a supervisor and survives the client filter (< 200 chars).
     expect(String(body.message)).toContain('supervisor');
     expect(String(body.message).length).toBeLessThan(200);
-    // Reverted, still editable, nothing written.
-    expect(t.stock_takes[0].status).toBe('OPEN');
+    // Flipped to PENDING_APPROVAL, submitter stamped, nothing written.
+    expect(t.stock_takes[0].status).toBe('PENDING_APPROVAL');
+    expect(t.stock_takes[0].submitted_by).toBe(CALLER_STAFF);
+    expect(typeof t.stock_takes[0].submitted_at).toBe('string');
     expect(t.stock_takes[0].posted_at ?? null).toBeNull();
     expect(t.inventory_movements).toHaveLength(0);
   });
 
-  test('a small variance on an EXPENSIVE SKU breaches on value (2 x RM300 > RM500)', async () => {
+  test('a small variance on an EXPENSIVE SKU also goes to approval (2 x RM300 > RM500)', async () => {
     const t = takeFixture();
     t.stock_take_lines[0].counted_qty = 8; // variance −2, within qty limit
     t.inventory_lots[0].unit_cost_sen = 30_000; // RM300/unit
     const res = await jsonReq(harness(t).app, '/stock-takes/st-1/post', 'PATCH');
-    expect(res.status).toBe(403);
-    expect(((await res.json()) as Row).error).toBe('variance_supervisor_required');
-    expect(t.stock_takes[0].status).toBe('OPEN');
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as Row).pendingApproval).toBe(true);
+    expect(t.stock_takes[0].status).toBe('PENDING_APPROVAL');
+    expect(t.inventory_movements).toHaveLength(0);
   });
 
-  test('an under-threshold variance posts normally for the assignee', async () => {
+  test('an under-threshold variance posts straight through for the assignee', async () => {
     const t = takeFixture(); // variance +2, RM10 cost — under both limits
     const res = await jsonReq(harness(t).app, '/stock-takes/st-1/post', 'PATCH');
     expect(res.status).toBe(200);
+    expect(((await res.json()) as Row).pendingApproval ?? false).toBe(false);
+    expect(t.stock_takes[0].status).toBe('POSTED');
     expect(t.inventory_movements).toHaveLength(1);
     expect(t.inventory_movements[0].qty).toBe(2);
   });
 
-  test('a supervisor may post an over-threshold variance', async () => {
+  test('a supervisor still posts an over-threshold variance straight through', async () => {
     const t = takeFixture();
     t.stock_take_lines[0].counted_qty = 20; // variance +10
     const res = await jsonReq(
@@ -243,8 +252,94 @@ describe('post gate — variance threshold', () => {
       '/stock-takes/st-1/post', 'PATCH',
     );
     expect(res.status).toBe(200);
+    expect(t.stock_takes[0].status).toBe('POSTED');
     expect(t.inventory_movements).toHaveLength(1);
     expect(t.inventory_movements[0].qty).toBe(10);
+  });
+});
+
+describe('approve / reject a pending count (owner 2026-11-20)', () => {
+  /* A take already submitted and waiting: +10 variance, over the limit. */
+  const pendingFixture = () => {
+    const t = takeFixture({ status: 'PENDING_APPROVAL', submitted_by: CALLER_STAFF, submitted_at: '2026-11-20T00:00:00Z' });
+    t.stock_take_lines[0].counted_qty = 20;
+    return t;
+  };
+
+  test('a supervisor approves: PENDING_APPROVAL -> POSTED and the variance is booked', async () => {
+    const t = pendingFixture();
+    const res = await jsonReq(
+      harness(t, { perms: ['scm.stock_take.supervise'] }).app,
+      '/stock-takes/st-1/approve', 'PATCH',
+    );
+    expect(res.status).toBe(200);
+    expect(t.stock_takes[0].status).toBe('POSTED');
+    expect(t.inventory_movements).toHaveLength(1);
+    expect(t.inventory_movements[0].qty).toBe(10);
+    // Booked and attributed to the supervisor who signed it off.
+    expect(t.inventory_movements[0].performed_by).toBe(CALLER_STAFF);
+  });
+
+  test('a non-supervisor may NOT approve', async () => {
+    const t = pendingFixture();
+    const res = await jsonReq(harness(t).app, '/stock-takes/st-1/approve', 'PATCH');
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as Row).error).toBe('supervisor_required');
+    expect(t.stock_takes[0].status).toBe('PENDING_APPROVAL');
+    expect(t.inventory_movements).toHaveLength(0);
+  });
+
+  test('a supervisor rejects: PENDING_APPROVAL -> OPEN, submission marks cleared, nothing moved', async () => {
+    const t = pendingFixture();
+    const res = await jsonReq(
+      harness(t, { perms: ['scm.stock_take.supervise'] }).app,
+      '/stock-takes/st-1/reject', 'PATCH',
+    );
+    expect(res.status).toBe(200);
+    expect(t.stock_takes[0].status).toBe('OPEN');
+    expect(t.stock_takes[0].submitted_by ?? null).toBeNull();
+    expect(t.stock_takes[0].submitted_at ?? null).toBeNull();
+    expect(t.inventory_movements).toHaveLength(0);
+  });
+
+  test('a non-supervisor may NOT reject', async () => {
+    const t = pendingFixture();
+    const res = await jsonReq(harness(t).app, '/stock-takes/st-1/reject', 'PATCH');
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as Row).error).toBe('supervisor_required');
+    expect(t.stock_takes[0].status).toBe('PENDING_APPROVAL');
+  });
+
+  test('approve refuses when the take is not pending (already posted)', async () => {
+    const t = takeFixture({ status: 'POSTED' });
+    const res = await jsonReq(
+      harness(t, { perms: ['scm.stock_take.supervise'] }).app,
+      '/stock-takes/st-1/approve', 'PATCH',
+    );
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as Row).error).toBe('not_pending');
+  });
+});
+
+describe('posted detail surfaces its booked adjustments (owner 2026-11-20)', () => {
+  test('a POSTED take returns its STOCK_TAKE movements, sorted, excluding other takes and zero-qty rows', async () => {
+    const t = takeFixture({ status: 'POSTED' });
+    t.inventory_movements = [
+      { source_doc_type: 'STOCK_TAKE', source_doc_id: 'st-1', item_code: 'ZED', product_name: 'Zed', variant_key: '', qty: -1, unit_cost_sen: 0 },
+      { source_doc_type: 'STOCK_TAKE', source_doc_id: 'st-1', item_code: 'CODY', product_name: 'Cody sofa', variant_key: '', qty: 2, unit_cost_sen: 1000 },
+      { source_doc_type: 'STOCK_TAKE', source_doc_id: 'st-1', item_code: 'NIL', product_name: 'Nil', variant_key: '', qty: 0, unit_cost_sen: 0 },
+      { source_doc_type: 'STOCK_TAKE', source_doc_id: 'other', item_code: 'NOPE', product_name: 'Other take', variant_key: '', qty: 5, unit_cost_sen: 0 },
+    ];
+    const body = await (await harness(t).app.request('/stock-takes/st-1')).json() as Row;
+    expect((body.adjustments as Row[]).map((a) => a.item_code)).toEqual(['CODY', 'ZED']);
+    expect((body.adjustments as Row[])[0].qty).toBe(2);
+  });
+
+  test('an OPEN take exposes no adjustments', async () => {
+    const t = takeFixture();
+    t.inventory_movements = [{ source_doc_type: 'STOCK_TAKE', source_doc_id: 'st-1', item_code: 'CODY', variant_key: '', qty: 2, unit_cost_sen: 1000 }];
+    const body = await (await harness(t).app.request('/stock-takes/st-1')).json() as Row;
+    expect(body.adjustments).toEqual([]);
   });
 });
 

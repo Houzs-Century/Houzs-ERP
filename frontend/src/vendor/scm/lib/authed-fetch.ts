@@ -242,18 +242,36 @@ async function confirmNotReady(raw: string): Promise<boolean> {
 /* 2990-0065 — the picked Sales Order lines are already on a live purchase order.
    A question, not a block (Sim 2026-11-19): Continue replays with
    confirmDuplicatePo:true. Returns true on Continue. */
-function soHasPoMessage(raw: string): string {
+export function soHasPoMessage(raw: string): string {
   const body = JSON.parse(raw.slice(raw.indexOf('{'))) as {
     poNumbers?: string[];
-    lines?: Array<{ itemCode: string | null; soDocNo: string | null; poNumber: string }>;
+    lines?: Array<{ itemCode: string | null; soDocNo: string | null; poNumber: string; assignedTo?: string[] | null; coversThisSo?: boolean | null }>;
+    assignmentError?: string | null;
   };
+  /* Each PO says where MRP is sending it NOW (owner 2026-11-19): a PO MRP has given
+     to another order is not this order's any more - the line is short again. */
   const byLine = new Map<string, string[]>();
   for (const l of body.lines ?? []) {
     const k = [l.itemCode, l.soDocNo && `(${l.soDocNo})`].filter(Boolean).join(' ') || 'A line';
-    byLine.set(k, [...(byLine.get(k) ?? []), l.poNumber]);
+    const where = l.assignedTo == null
+      ? ''
+      : l.coversThisSo
+        ? ' - still covering this order'
+        : l.assignedTo.length > 0
+          ? ` - MRP has given it to ${l.assignedTo.join(', ')}`
+          : ' - MRP has not assigned it to any order';
+    byLine.set(k, [...(byLine.get(k) ?? []), `${l.poNumber}${where}`]);
   }
-  const lines = [...byLine.entries()].map(([k, pos]) => `• ${k}\n   already on ${pos.join(', ')}`).join('\n\n');
-  return `This Sales Order already has PO(s): ${(body.poNumbers ?? []).join(', ')}.\n\n${lines}\n\nContinue to generate another PO for these lines?`;
+  const lines = [...byLine.entries()].map(([k, pos]) => `• ${k}\n${pos.map((p) => `   raised on ${p}`).join('\n')}`).join('\n\n');
+  const all = body.lines ?? [];
+  const known = all.length > 0 && all.every((l) => l.assignedTo != null);
+  const stillHere = all.some((l) => l.coversThisSo === true);
+  const foot = !known
+    ? (body.assignmentError ? `\n\nCould not read where MRP is sending these POs (${body.assignmentError}).` : '')
+    : stillHere
+      ? '\n\nA PO above is still covering this order - another PO may order the same goods twice.'
+      : '\n\nEvery PO above has been given to another order by MRP, so this order is short again.';
+  return `This Sales Order was already raised on PO(s): ${(body.poNumbers ?? []).join(', ')}.\n\n${lines}${foot}\n\nContinue to generate another PO for these lines?`;
 }
 async function confirmSoHasPo(raw: string): Promise<boolean> {
   try {

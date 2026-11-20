@@ -40,7 +40,7 @@ describe('buildPoChainNodes', () => {
     expect(cell(nodes, 'Purchase Order').state).toBe('current');
     expect(cell(nodes, 'Purchase Order').doc).toBe('PO-1');
     expect(cell(nodes, 'Sales Order').doc).toBe('SO-1');
-    expect(cell(nodes, 'Sales Order').meta).toBe('Tap to open');
+    expect(cell(nodes, 'Sales Order').meta).toBe('Raised for — tap to open');
     expect(cell(nodes, 'GRN').doc).toBe('GRN-1');
     expect(cell(nodes, 'Purchase Invoice').doc).toBe('PINV-1');
     expect(cell(nodes, 'Purchase Return').state).toBe('pending');
@@ -82,28 +82,33 @@ describe('buildPoChainNodes', () => {
     expect(cell(nodes, 'Purchase Return').meta).toBe('Tap to open');
   });
 
-  /* "Soft until DO, hard from DO" — the floating slot. A live MRP pairing is
-     shown but never painted as Linked: it floats (dashed, tappable) and a
-     stored raise-link always beats it for the slot's solid state. */
-  it('floats a live MRP pairing on a stock buy — pending + float, never done', () => {
+  /* Owner 2026-11-19: where MRP sends the goods NOW leads the slot; the order the
+     PO was raised for is the reference ("a PO is a PO"). */
+  it("MRP's order leads the slot and paints it done, even on a stock buy", () => {
     const nodes = buildPoChainNodes(header, [], [], [], [], openAll, ['SO-9']);
     const so = cell(nodes, 'Sales Order');
     expect(so.doc).toBe('SO-9');
-    expect(so.state).toBe('pending');
-    expect(so.float).toBe(true);
-    expect(so.actionable).toBe(true);
-    expect(so.meta).toBe('Live MRP pairing — tap');
-  });
-
-  it('a stored raise-link keeps the slot solid; extra floating SOs join the count', () => {
-    const nodes = buildPoChainNodes(header, ['SO-1'], [], [], [], openAll, ['SO-1', 'SO-2']);
-    const so = cell(nodes, 'Sales Order');
-    expect(so.doc).toBe('2 sales orders'); // SO-1 stored + SO-2 floating, deduped
     expect(so.state).toBe('done');
     expect(so.float).toBe(false);
+    expect(so.actionable).toBe(true);
+    expect(so.meta).toBe('Assigned by MRP — tap');
   });
 
-  it('no floating arg keeps the legacy shape (backwards compatible)', () => {
+  it("MRP gave the PO to another order: MRP's order shows, the raise-link is named as reference", () => {
+    const nodes = buildPoChainNodes(header, ['HC-SO-003726'], [], [], [], openAll, ['HC-SO-012294']);
+    const so = cell(nodes, 'Sales Order');
+    expect(so.doc).toBe('HC-SO-012294');
+    expect(so.meta).toBe('Assigned by MRP · raised for HC-SO-003726 — tap');
+  });
+
+  it('MRP agrees with the raise-link: one order, no reference note', () => {
+    const nodes = buildPoChainNodes(header, ['SO-1'], [], [], [], openAll, ['SO-1']);
+    const so = cell(nodes, 'Sales Order');
+    expect(so.doc).toBe('SO-1');
+    expect(so.meta).toBe('Assigned by MRP — tap');
+  });
+
+  it('no MRP pairing keeps the raise-link shape', () => {
     const nodes = buildPoChainNodes(header, [], [], [], [], openAll);
     const so = cell(nodes, 'Sales Order');
     expect(so.doc).toBe('Not linked');
