@@ -193,3 +193,15 @@ export function FolderItem({
     </button>
   );
 }
+
+/* Owner 2026-11-21: a mailbox someone shared with you says so in the rail, so a
+   cross-department or covering read is never mistaken for your own. */
+export function ReachTag({ address }: { address: string }) {
+  const reach = useMailVisibility()?.mailboxes.find((m) => m.address === address.toLowerCase())?.reach ?? null;
+  if (reach !== "granted") return null;
+  return (
+    <span className="shrink-0 rounded-full bg-warning-bg px-1.5 py-0.5 text-[10px] font-semibold text-warning-text" title={REACH_LABEL.granted}>
+      Shared
+    </span>
+  );
+}

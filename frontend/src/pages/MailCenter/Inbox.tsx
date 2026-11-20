@@ -53,7 +53,7 @@ import { MailThread } from "./Thread";
 import { ThreadFileChips, type ThreadFilePreview } from "./ThreadFileChips";
 import { EMAIL_FRAME_SANDBOX, emailSrcDoc } from "./mail-email-frame";
 import { PendingAcks } from "./mail-acks";
-import { FolderItem, MyMailboxNav, VisibilityPanel } from "./mail-sidebar";
+import { FolderItem, MyMailboxNav, ReachTag, VisibilityPanel } from "./mail-sidebar";
 import {
   subscribe as subscribeLocal,
   getSnapshot as getLocalSnapshot,
@@ -1610,7 +1610,7 @@ export function MailInbox() {
               <Building2 className="h-3 w-3" />
               Departments
             </p>
-            {departmentGroups.map((g) => (
+            {departmentGroups.filter((g) => isAdmin || g.entries.length > 0).map((g) => (
               <DeptGroup
                 key={g.dept}
                 dept={g.dept}
@@ -2724,6 +2724,7 @@ function PersonItem({
       <span className="flex min-w-0 items-center gap-2">
         <Icon className={cn("h-3.5 w-3.5 shrink-0", active ? "text-primary" : "text-ink-muted/50")} />
         <span className="truncate">{label}</span>
+        {title && <ReachTag address={title} />}
       </span>
       {unread > 0 && (
         <span
