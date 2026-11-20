@@ -14,6 +14,7 @@ import { OverviewPage } from "./hr/OverviewPage";
 import { EmployeeMasterPage } from "./hr/EmployeeMasterPage";
 import { AttendancePage } from "./hr/AttendancePage";
 import { OtRequestsPage } from "./hr/OtRequestsPage";
+import { PayrollPage } from "./hr/PayrollPage";
 import { EmployeeEditModal } from "./hr/EmployeeEditModal";
 import type { Emp } from "./hr/hrSampleData";
 import { EmployeeMasterTab } from "./hr/EmployeeMasterTab";
@@ -157,6 +158,8 @@ export function HrEmployees() {
             />
             <OtRequestsPage />
           </>
+        ) : active === "payroll" ? (
+          <PayrollPage />
         ) : (
           <div className="px-6 py-4">
             <PageHeader eyebrow="HR · Employees & Attendance" title={head.title} description={head.description} />
