@@ -17,6 +17,7 @@ Manual stock correction (found stock, recount, damage, write-off) as a numbered 
 ## Rules that must not break
 
 - Every movement carries `source_doc_type = 'ADJUSTMENT'`, `source_doc_id = header id`, `source_doc_no = adjustment_no`. What a document has moved is read from those movements, never from its lines.
+- A STOCK-TAKE MIRROR adjustment (`source_stock_take_id` set, owner 2026-11-20) is the one document that owns NO movements of its own: a posted stock take minted it (`stock-takes.ts createMirrorAdjustment`) as a record, but the stock moved under the TAKE (`source_doc_type = 'STOCK_TAKE'`). So it is READ-ONLY — `PATCH /:id` refuses `stock_take_adjustment_readonly` (editing it would write movements against this header and double-move) — and it is created / deleted only by the stock take's post / reverse, never here. The frontend hides Edit and marks it "From stock take".
 - A write-off (or an edit that lowers a bucket) may not take out more than the bucket's open qty: 422 on create, 409 on edit, nothing written. A null batch means un-batched lots only.
 - Found stock never enters at RM0: operator cost, else (on an edit that puts written-off stock back) the cost it was written off at, else the bucket's lot cost; no basis at all = 422 `cost_required`.
 - A sofa / bedframe increase needs its variant axes (and sofa a batch). On edit only a bucket that changes is gated, so an untouched legacy line never blocks a notes fix.

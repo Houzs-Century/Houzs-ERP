@@ -158,6 +158,10 @@ export type StockAdjustmentDoc = {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  /* Set when this adjustment was auto-created by a posted stock take (owner
+     2026-11-20): it is READ-ONLY (its stock moved through the take) and links
+     back to it. Null for a hand-raised adjustment. */
+  source_stock_take_id?: string | null;
   lines: StockAdjustmentLine[];
 };
 
@@ -568,6 +572,10 @@ export type StockTakeDetail = {
   /* The ADJUSTMENT movements this take booked — present (and non-empty) only on
      a POSTED take with non-zero variance. */
   adjustments?: StockTakeAdjustment[];
+  /* The formal Stock Adjustment document this take booked (owner 2026-11-20) —
+     the take links to it instead of a stock card. Null for a take posted before
+     this feature (or until a backfill mints one). */
+  adjustment?: { id: string; adjustment_no: string } | null;
   viewer?: StockTakeViewer;
 };
 
@@ -677,6 +685,9 @@ export type PostStockTakeResult = {
   pendingApproval?: boolean;
   itemCodes?: string[];
   message?: string;
+  /* The Stock Adjustment document this post booked (owner 2026-11-20). */
+  adjustmentId?: string;
+  adjustmentNo?: string;
 };
 
 export function usePostStockTake() {
