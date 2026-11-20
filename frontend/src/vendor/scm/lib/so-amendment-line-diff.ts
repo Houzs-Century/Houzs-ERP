@@ -356,6 +356,9 @@ export const amendmentVariantsKey = (v: unknown): string => {
   const rest = amendmentVariants(v);
   if (!rest) return 'null';
   delete rest.totalHeight;
+  // Display-only supplier-code stamp (2990-0067), as the server ignores it.
+  delete rest.fabricSupplierCode;
+  delete rest.fabricSupplierCodeOf;
   if (typeof rest.legHeight === 'string' && DEFAULT_LEG_RE.test(rest.legHeight)) delete rest.legHeight;
   return Object.keys(rest).length === 0 ? 'null' : canonicalJson(rest);
 };

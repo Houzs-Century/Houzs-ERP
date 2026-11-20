@@ -299,7 +299,7 @@ export function DefectListView() {
           description={
             showAll
               ? "No defect photos uploaded yet."
-              : "Switch to All to include defects that are already closed."
+              : "Switch the toggle above to include defects that are already closed."
           }
         />
       ) : (
