@@ -1,12 +1,13 @@
-/* Restamp SO line cost from the CURRENT product cost, for lines that carry none.
+/* Stamp SO line cost from the product cost, for lines that carry none.
 
    WHY. SO line costs are SNAPSHOTTED at save time. When a product had no cost
    then, the line stored unit_cost_sen = 0 and the Sales Report shows a kosong
    gap (and a fake 100% margin). Filling the cost in Product Maintenance later
    does NOT move those snapshots. Owner 2026-09-25: once the product cost lands,
-   the report's 0-cost lines must fill too. This restamps them from the cost the
-   product carries NOW (not as-of the order date — the point is to fill a gap
-   that was 0 only because no cost existed then).
+   the report's 0-cost lines must fill too. Owner 2026-11-20: an order costs the
+   prices of its ORDER DATE, so a line takes the cost its product had that day
+   (scm.mfg_product_cost_history, lib ownCostOn); a product that had no cost
+   that day takes the cost it has now, the gap this fill was made to close.
 
    IT CHANGES HISTORICAL MARGIN for the touched orders: from an overstated
    100% (cost 0) down to the real figure (revenue - real cost). That is the
@@ -18,7 +19,7 @@
    recomputed as the SUM of its line costs (the invariant already true for
    189/190 costed 2990 orders), so an order's existing correct lines are left as
    they are and only the newly-stamped cost is added. Per line the cost is:
-     SOFA   seat grid PRICE_2 at the ordered height (variants.seatHeight), the nearest
+     SOFA   seat grid PRICE_2 (as it stood on the order date) at the ordered height (variants.seatHeight), the nearest
             the grid holds when it has no price there, or with no height the one the SKU, model or all sofas sell at most -> base_price_sen
             -> cost_price_sen. A set a combo covers costs its set price (below).
      other  base_price_sen -> cost_price_sen
@@ -26,12 +27,13 @@
    margin (revenue - cost) are recomputed.
 
    A SOFA SET (lib/so-line-unit-cost.mjs wholeSetCosts), on every order. Owner's
-   rule 2026-11-19: a set costs the set price that existed on its ORDER DATE; with
-   none then, each piece its own cost. When a piece being stamped belongs to a set
-   a set price covered on the order date, the set costs it as a save prices it
-   (planComboCostSpread), shared by each piece's own product cost, the pieces
-   already costed moving too. A set price added after the order date never counts,
-   and one a later save spread over the set's other pieces is taken back off, so a
+   rule 2026-11-19: a set costs the set price that stood on its ORDER DATE (one
+   deleted since included, 2026-11-20); with none then, each piece its own cost.
+   When a piece being stamped belongs to a set a set price covered on the order
+   date, the set costs it as a save prices it (planComboCostSpread), shared by
+   each piece's own cost of that day, the pieces already costed moving too. A set
+   price created after the order date never counts, whatever start date it was
+   given, and one a later save spread over the set's other pieces is taken back off, so a
    piece at RM 0 is never costed on top of a set price (HC-SO-2609-359;
    2990-SO-2611-107 on the POS). Such an
    order is written in its own transaction, every UPDATE guarded on the value the
@@ -60,8 +62,8 @@
    stamps nothing (every gap the products can fill is already filled). */
 import "./lib/public-log-guard.mjs";
 import postgres from 'postgres';
-import { unitCostSen, usualHeights, wholeSetCosts } from './lib/so-line-unit-cost.mjs';
-import { costCombos, isoDay } from './lib/sofa-combo-set-cost.mjs';
+import { masterSetRows, ownCostOn, unitCostSen, usualHeights, wholeSetCosts } from './lib/so-line-unit-cost.mjs';
+import { isoDay } from './lib/sofa-combo-set-cost.mjs';
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error('need DATABASE_URL'); process.exit(2); }
@@ -104,12 +106,16 @@ async function main() {
                                    WHERE company_id = ${co} AND coalesce(variants->>'seatHeight', variants->>'seat_height', variants->>'depth') IS NOT NULL
                                    GROUP BY 1, 2`;
     const usual = usualHeights(heightCounts);
-    const comboRows = await sql`SELECT id, base_model, modules, tier, customer_id, prices_by_height, label, effective_from, created_at
+    // Deleted rows too: a set price that stood on an order's date still costs it.
+    const comboRows = await sql`SELECT id, base_model, modules, tier, customer_id, supplier_id, prices_by_height, label, effective_from, created_at, deleted_at
                                 FROM scm.sofa_combo_pricing
-                                WHERE company_id = ${co} AND deleted_at IS NULL AND customer_id IS NULL AND supplier_id IS NULL`;
+                                WHERE company_id = ${co} AND customer_id IS NULL AND supplier_id IS NULL`;
     // Read as the order's save reads them: effective_from arrives as a Date, and
     // String(Date) ("Mon Oct 19") put every combo in the future.
-    const setCombos = costCombos(comboRows);
+    const setRows = masterSetRows(comboRows);
+    const historyRows = await sql`SELECT item_code, effective_from, created_at, base_price_sen, price1_sen, seat_height_prices
+                                  FROM scm.mfg_product_cost_history WHERE company_id = ${co}`;
+    const historyBy = Map.groupBy(historyRows, (h) => h.item_code);
     const tierRows = await sql`SELECT fabric_code, coalesce(sofa_price_tier, price_tier, 'PRICE_2') AS tier FROM scm.fabric_trackings WHERE company_id = ${co}`;
     const tierOf = new Map(tierRows.map((f) => [f.fabric_code, f.tier]));
     const tierOfFabric = (code) => tierOf.get(code) ?? 'PRICE_2';
@@ -152,18 +158,20 @@ async function main() {
     for (const so of sos) {
       const plan = { lineWrites: [], agg: { mattress_sofa: 0, bedframe: 0, accessories: 0, service: 0, others: 0 }, anyStamp: false };
       const lines = linesByDoc.get(so.doc_no) ?? [];
+      const orderDay = isoDay(so.so_date);
+      const ownOf = (l, p) => ownCostOn(p, historyBy.get(l.item_code), orderDay, l.variants, usual);
       const costed = lines.map((l) => {
         const p = prodBy.get(l.item_code);
         const qty = l.qty || 1;
         const held = Number(l.unit_cost_sen) || 0;
         if (held > 0) return { l, p, qty, uc: held, lc: held * qty, fresh: false };
-        const uc = unitCostSen(p, l.variants, usual);
+        const uc = ownOf(l, p);
         return { l, p, qty, uc, lc: uc * qty, fresh: uc > 0 };
       });
       const setCost = wholeSetCosts(costed.map((c) => ({
         id: c.l.id, item_code: c.l.item_code, item_group: c.l.item_group, variants: c.l.variants, qty: c.qty, cancelled: c.l.cancelled,
-        held: Number(c.l.unit_cost_sen) || 0, own: unitCostSen(c.p, c.l.variants, usual),
-      })), setCombos, tierOfFabric, isoDay(so.so_date));
+        held: Number(c.l.unit_cost_sen) || 0, own: ownOf(c.l, c.p),
+      })), setRows, tierOfFabric, orderDay);
       const moves = [];
       for (const c of costed) {
         if (setCost.has(c.l.id)) { c.lc = setCost.get(c.l.id); c.uc = Math.round(c.lc / c.qty); }
@@ -232,7 +240,7 @@ async function main() {
                    VALUES (${o.so.doc_no}, ${co}, 'UPDATE_LINE', 'System (nightly cost fill)',
                            ${tx.json([...o.plan.lineWrites, ...o.moves].map((w) => ({ field: `line_${w.code}_line_cost_sen`, from: w.from, to: w.lc })))},
                            ${o.so.status}, 'script:restamp-so-cost-from-product',
-                           ${'Cost filled: the sofa set costs the set price of its order date (none then: each piece its own cost); a piece at RM 0 is not costed on top of a set price'})`;
+                           ${'Cost filled at the prices of the order date: the sofa set costs the set price that stood that day (none then: each piece its own cost of that day); a piece at RM 0 is not costed on top of a set price'})`;
         });
       } catch (e) {
         bad(`  SKIP ${o.so.doc_no}: ${e instanceof Error ? e.message : String(e)}`);

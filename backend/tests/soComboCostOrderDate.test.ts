@@ -7,7 +7,7 @@
 // to the order's date. Figures are made up.
 import { describe, expect, test } from 'vitest';
 import { recomputeTotals } from '../src/scm/routes/mfg-sales-orders';
-import { comboCostAsOf } from '../src/scm/lib/sofa-combo-cost-spread';
+import { comboCostAsOf, combosStandingOn } from '../src/scm/lib/sofa-combo-cost-spread';
 
 /* Chainable supabase stub, as in soDeliveryFeeLineIntegrity.test.ts: awaiting a
    builder (or .single()/.maybeSingle()) resolves through `resolve`. */
@@ -47,10 +47,10 @@ const SET_PRICE = {
   prices_by_height: { 28: 100000 }, label: null, effective_from: '2026-10-10', created_at: '2026-10-10T02:00:00Z', deleted_at: null,
 };
 
-function orderOn(soDate: string | null, dateReadFails = false) {
+function orderOn(soDate: string | null, dateReadFails = false, setRow: Record<string, unknown> = SET_PRICE) {
   return makeSb((table, select, single) => {
     if (table === 'mfg_sales_order_items') return { data: PIECES.map((p) => ({ ...p })), error: null };
-    if (table === 'sofa_combo_pricing') return { data: [SET_PRICE], error: null };
+    if (table === 'sofa_combo_pricing') return { data: [setRow], error: null };
     if (table === 'mfg_sales_orders' && select.includes('so_date')) {
       return dateReadFails ? { data: null, error: { message: 'read failed' } } : { data: { so_date: soDate }, error: null };
     }
@@ -78,6 +78,28 @@ describe('recomputeTotals prices a sofa set as of the order date', () => {
     expect(headerCost(updates)).toBe(100000);
   });
 
+  // Owner 2026-11-20: the set price that STOOD on the order date.
+  test('a set price deleted after the order date still costs it', async () => {
+    const { sb, updates } = orderOn('2026-10-20', false, { ...SET_PRICE, deleted_at: '2026-11-18T02:10:00Z' });
+    await recomputeTotals(sb, 'HC-SO-TEST-4', ctx);
+    expect(lineCosts(updates)).toEqual([41666, 58334]);
+    expect(headerCost(updates)).toBe(100000);
+  });
+
+  test('a set price deleted before the order date does not', async () => {
+    const { sb, updates } = orderOn('2026-10-20', false, { ...SET_PRICE, deleted_at: '2026-10-15T02:00:00Z' });
+    await recomputeTotals(sb, 'HC-SO-TEST-5', ctx);
+    expect(lineCosts(updates)).toEqual([]);
+    expect(headerCost(updates)).toBe(120000);
+  });
+
+  test('a set price created after the order date never costs it, even with an earlier start date', async () => {
+    const { sb, updates } = orderOn('2026-10-20', false, { ...SET_PRICE, effective_from: '2026-05-31', created_at: '2026-10-25T02:00:00Z' });
+    await recomputeTotals(sb, 'HC-SO-TEST-6', ctx);
+    expect(lineCosts(updates)).toEqual([]);
+    expect(headerCost(updates)).toBe(120000);
+  });
+
   test('a failed order-date read writes nothing: today\'s set price would re-cost the order', async () => {
     const { sb, updates } = orderOn(null, true);
     await recomputeTotals(sb, 'HC-SO-TEST-3', ctx);
@@ -93,5 +115,22 @@ describe('comboCostAsOf', () => {
   test('is null (today) only without a readable date', () => {
     expect(comboCostAsOf(null)).toBeNull();
     expect(comboCostAsOf('')).toBeNull();
+  });
+});
+
+describe('combosStandingOn', () => {
+  const row = (createdAt: string, deletedAt: string | null) => ({
+    id: 'r', baseModel: 'M100', modules: [['1A(LHF)']], tier: null, customerId: null, pricesByHeight: { 28: 1 },
+    label: null, effectiveFrom: '2026-01-01', createdAt, deletedAt,
+  });
+  test('created by the day, in Malaysia, and not deleted by then', () => {
+    // 17:00 UTC on the 9th is 01:00 on the 10th in Malaysia.
+    expect(combosStandingOn([row('2026-06-09T17:00:00Z', null)], '2026-06-09')).toHaveLength(0);
+    expect(combosStandingOn([row('2026-06-09T17:00:00Z', null)], '2026-06-10')).toHaveLength(1);
+    expect(combosStandingOn([row('2026-06-01T02:00:00Z', '2026-07-04T07:19:00Z')], '2026-07-03')).toHaveLength(1);
+    expect(combosStandingOn([row('2026-06-01T02:00:00Z', '2026-07-04T07:19:00Z')], '2026-07-04')).toHaveLength(0);
+  });
+  test('a row it keeps reads as live to the matcher', () => {
+    expect(combosStandingOn([row('2026-06-01T02:00:00Z', '2026-07-04T07:19:00Z')], '2026-06-20')[0]?.deletedAt).toBeNull();
   });
 });

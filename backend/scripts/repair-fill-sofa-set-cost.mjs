@@ -1,9 +1,16 @@
 #!/usr/bin/env node
-/* Re-cost named orders' sofa sets to their ORDER-DATE cost.
+/* Re-cost named orders' sofa sets to the prices of their day.
 
-   THE RULE (owner, 2026-11-19): a set costs the set price that existed on the
-   order date; with none then, each piece keeps its own price
-   (「应该是根据当时有的价钱来算，如果当时没有combo price就是remain单个产品的价钱」).
+   THE RULES (owner, 2026-11-19 and 2026-11-20):
+     1. an order costs the prices of its ORDER DATE, set price and piece price
+        alike; with no set price then, each piece keeps its own price
+        (「应该是根据当时有的价钱来算，如果当时没有combo price就是remain单个产品的价钱」).
+        A set price that stood that day counts even if deleted since; one
+        created later never does, whatever start date it was given.
+     2. a later change to the product that moved its cost (another seat height,
+        pieces added or removed) prices the order at the CHANGE DAY. A new
+        colour, fabric or side, or a cost filled in where it was RM 0, is not
+        such a change.
 
    THE DAMAGE. The nightly cost fill (restamp-so-cost-from-product.mjs) first
    priced sets with no regard to dates, then (PR #5795) at today's set price, and
@@ -13,11 +20,13 @@
    the order date (lib/so-line-unit-cost.mjs wholeSetCosts); this script puts the
    named orders right. The owner names the orders, so they are not searched for.
 
-   WHAT IT DOES. COMPANY and DOCS are required. For each named order
-   (recostSetOrder -> orderDateSetCosts): a sofa set a set price covered on the
-   order date costs it, shared by each piece's own price-list cost, as a save
-   prices a set; a set none covered then, whose pieces carry a set price that came
-   later, goes back to each piece's own cost. Header cost, margin and margin basis
+   WHAT IT DOES. COMPANY and DOCS are required; CHANGE_DAYS names the change day
+   of an order rule 2 dates (DOC:YYYY-MM-DD,...), every other order is priced on
+   its order date. For each named order (recostSetOrder -> setCostsOnDay): a sofa
+   set a set price covered on that day costs it, shared by each piece's own cost
+   of that day (scm.mfg_product_cost_history), as a save prices a set; a set none
+   covered then, whose pieces carry a set price that did not stand that day, goes
+   back to each piece's own cost of that day. Header cost, margin and margin basis
    follow; an audit row names each line's cost before and after. An order that is
    DRAFT or CANCELLED, whose header is not the sum of its lines, or that has
    nothing to change is REFUSED and printed.
@@ -36,7 +45,7 @@
    then move the header's total_cost_sen, mattress_sofa_cost_sen and
    total_margin_sen back by the same difference.
 
-   RE-RUN: idempotent. A re-costed order already carries its order-date cost, so
+   RE-RUN: idempotent. A re-costed order already carries the cost of its day, so
    a second run refuses it as having nothing to change and writes nothing.
 
    Money in the output is redacted when it runs in GitHub Actions (this
@@ -44,8 +53,8 @@
    read on a machine with database access. */
 import './lib/public-log-guard.mjs';
 import postgres from 'postgres';
-import { recostSetOrder, unitCostSen, usualHeights } from './lib/so-line-unit-cost.mjs';
-import { costCombos, isoDay } from './lib/sofa-combo-set-cost.mjs';
+import { masterSetRows, ownCostOn, recostSetOrder, usualHeights } from './lib/so-line-unit-cost.mjs';
+import { isoDay } from './lib/sofa-combo-set-cost.mjs';
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error('need DATABASE_URL'); process.exit(2); }
@@ -54,11 +63,16 @@ const CONFIRM_PHRASE = 'I HAVE REVIEWED THE DRY-RUN';
 const CO = Number(process.env.COMPANY);
 const DOCS = [...new Set(String(process.env.DOCS || '').split(',').map((s) => s.trim()).filter(Boolean))];
 const SOURCE = 'script:repair-fill-sofa-set-cost';
+const CHANGE_DAYS = new Map(String(process.env.CHANGE_DAYS || '').split(',').map((s) => s.trim()).filter(Boolean)
+  .map((s) => { const i = s.lastIndexOf(':'); return [s.slice(0, i).trim(), s.slice(i + 1).trim()]; }));
 
 const note = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const bad = (m) => console.log(process.env.GITHUB_ACTIONS ? `::error::${m}` : `ERROR ${m}`);
 if (!Number.isInteger(CO) || CO <= 0) { bad(`COMPANY must be one company id, got "${process.env.COMPANY ?? ''}"`); process.exit(2); }
 if (DOCS.length === 0) { bad('DOCS must name the orders to re-cost, e.g. DOCS=HC-SO-010925,HC-SO-011219'); process.exit(2); }
+for (const [doc, day] of CHANGE_DAYS) {
+  if (!DOCS.includes(doc) || !/^\d{4}-\d{2}-\d{2}$/.test(day)) { bad(`CHANGE_DAYS entry "${doc}:${day}" must be DOC:YYYY-MM-DD for an order in DOCS`); process.exit(2); }
+}
 if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
   bad(`MODE=apply requires CONFIRM="${CONFIRM_PHRASE}"`);
   process.exit(2);
@@ -84,24 +98,32 @@ async function readState(db) {
       FROM scm.mfg_sales_order_items
      WHERE company_id = ${CO} AND coalesce(variants->>'seatHeight', variants->>'seat_height', variants->>'depth') IS NOT NULL
      GROUP BY 1, 2`;
+  // Deleted rows too: a set price that stood on an order's date still costs it.
   const comboRows = await db`
     SELECT id::text, base_model, modules, tier, customer_id, supplier_id, deleted_at, prices_by_height, label, effective_from, created_at
       FROM scm.sofa_combo_pricing
-     WHERE company_id = ${CO} AND deleted_at IS NULL AND customer_id IS NULL AND supplier_id IS NULL`;
+     WHERE company_id = ${CO} AND customer_id IS NULL AND supplier_id IS NULL`;
+  const history = codes.length ? await db`
+    SELECT item_code, effective_from, created_at, base_price_sen, price1_sen, seat_height_prices
+      FROM scm.mfg_product_cost_history WHERE company_id = ${CO} AND item_code = ANY(${codes}::text[])` : [];
   const fabrics = await db`
     SELECT fabric_code, coalesce(sofa_price_tier, price_tier, 'PRICE_2') AS tier FROM scm.fabric_trackings WHERE company_id = ${CO}`;
-  return { orders, lines, products, usual: usualHeights(heightCounts), combos: costCombos(comboRows), fabrics };
+  return { orders, lines, products, history, usual: usualHeights(heightCounts), rows: masterSetRows(comboRows), fabrics };
 }
 
 function planAll(state) {
   const productByCode = new Map(state.products.map((p) => [p.code, p]));
   const tierByFabric = new Map(state.fabrics.map((f) => [f.fabric_code, f.tier]));
+  const historyBy = Map.groupBy(state.history, (h) => h.item_code);
   const ctx = {
-    combos: state.combos,
+    rows: state.rows,
     tierOfFabric: (code) => tierByFabric.get(code) ?? 'PRICE_2',
-    ownCost: (l) => unitCostSen(productByCode.get(l.item_code), l.variants, state.usual),
+    ownCost: (l, day) => ownCostOn(productByCode.get(l.item_code), historyBy.get(l.item_code), day, l.variants, state.usual),
   };
-  return state.orders.map((o) => ({ order: o, result: recostSetOrder(o, state.lines.filter((l) => l.doc_no === o.doc_no), ctx) }));
+  return state.orders.map((o) => {
+    const day = CHANGE_DAYS.get(o.doc_no) ?? isoDay(o.so_date);
+    return { order: o, day, result: recostSetOrder(o, state.lines.filter((l) => l.doc_no === o.doc_no), ctx, day) };
+  });
 }
 
 async function main() {
@@ -114,13 +136,13 @@ async function main() {
   const repair = plans.filter((p) => p.result.status === 'repair');
   const refused = plans.filter((p) => p.result.status === 'refused');
   // A count right after a money word ("PRICE: 7") reads as money to the log guard.
-  note(`\n=== SOFA SETS TO RE-COST TO THEIR ORDER-DATE COST ===`);
+  note(`\n=== SOFA SETS TO RE-COST TO THE PRICES OF THEIR DAY ===`);
   note(`  orders: ${repair.length}, refused: ${refused.length}, not found: ${missing.length}`);
   let before = 0, after = 0;
   for (const p of repair) {
     const o = p.order; const r = p.result;
     before += Number(o.total_cost_sen); after += r.header.total_cost_sen;
-    note(`  ${o.doc_no}  ${isoDay(o.so_date)}  ${o.status}   cost ${rm(o.total_cost_sen)} -> ${rm(r.header.total_cost_sen)}`);
+    note(`  ${o.doc_no}  opened ${isoDay(o.so_date)}  priced on ${p.day}${CHANGE_DAYS.has(o.doc_no) ? ' (change day)' : ''}  ${o.status}   cost ${rm(o.total_cost_sen)} -> ${rm(r.header.total_cost_sen)}`);
     for (const c of r.changes) note(`      ${c.item_code.padEnd(24)} ${rm(c.from)} -> ${rm(c.to)}  line ${c.id}`);
   }
   for (const p of refused) bad(`  REFUSED ${p.order.doc_no}: ${p.result.why}`);
@@ -156,7 +178,7 @@ async function main() {
                  VALUES (${o.doc_no}, ${CO}, 'UPDATE_LINE', 'System (sofa set-price repair)',
                          ${tx.json(r.changes.map((c) => ({ field: `line_${c.item_code}_line_cost_sen`, from: c.from, to: c.to })))},
                          ${o.status}, ${SOURCE},
-                         ${'Cost repaired: the sofa set costs the set price of its order date (none then: each piece its own cost), as the nightly cost fill now does'})`;
+                         ${`Cost repaired at the prices of ${p.day}${CHANGE_DAYS.has(o.doc_no) ? ', the day its product changed' : ', its order date'}: the sofa set costs the set price that stood that day (none then: each piece its own cost of that day)`})`;
       });
       applied.push(p);
       note(`  OK   ${o.doc_no}`);
