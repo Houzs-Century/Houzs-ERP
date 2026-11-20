@@ -77,7 +77,9 @@
 .rowCheck .name { font-style: italic; }
 .rowBad > * { color: var(--fin-red); font-weight: 700; }
 .detailRow > td { padding: 0; background: var(--hz-dk-surface-2, #f7fbfa); border-bottom: 1px solid var(--hz-dk-primary-line, #d3e7e3); }
-.detail { padding: 10px 16px 12px 40px; }
+/* As wide as the box shows (--fg-visible), past a table narrower than the box, held at the left while it scrolls. */
+.table .detailRow > td { overflow: visible; white-space: normal; }
+.detail { position: sticky; left: 0; box-sizing: border-box; width: var(--fg-visible, 100%); padding: 10px 16px 12px 40px; background: var(--hz-dk-surface-2, #f7fbfa); }
 
 /* ── Under the table ── */
 .foot { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; padding: 10px 16px; border-top: 1px solid var(--fin-rule-soft); font-size: 12px; color: var(--fin-muted); }

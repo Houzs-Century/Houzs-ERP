@@ -8,11 +8,13 @@
        else shared by the DO value), insurance spread over 12 months, then the
        Logistics and Setup/Dismantle results and the net after both;
      • G&A: its share of the Performance sales against what the HQ teams and the
-       G&A accounts booked, on the P&L's own tree. */
+       G&A accounts booked, on the P&L's own tree;
+     • the lines a figure opens (owner 2026-11-20: 「我希望这里点开也能看」): a P&L
+       line's parts, the Operation sheet's lines, G&A's legs — each adding up to its figure. */
 
 import { describe, expect, test } from 'vitest';
 import {
-  buildDeptView, buildGaPnl, buildOperationPnl, opSum, shareByValue, splitLine, type LogisticsMonthIn,
+  buildDeptView, buildGaPnl, buildOperationPnl, gaLines, operationRows, opSum, shareByValue, splitLine, splitLineParts, type LogisticsMonthIn,
 } from './department-pnl';
 import { parsePlan, type DeptAccount } from './department-rows';
 import type { BillLine, Leg } from './logistics-pnl';
@@ -41,6 +43,20 @@ describe('All: one P&L line across the company\'s departments', () => {
     expect(Object.values(cells).reduce((a, b) => a! + b!, 0)).toBe(9_500);
     /* What the legs do not explain stays with the account — an account with no department says so. */
     expect(splitLine({ amountSen: 9_600, sign: 1, account: staff, payroll: true, recharge: false, mixed: true, fallback: 'none', plan: HOUZS, legs: payLegs }).none).toBe(100);
+  });
+
+  test('its parts are its legs, each in its department, adding up to the line — itemized or not', () => {
+    const legs = payLegs.map((l, i) => ({ ...l, lineId: `p${i}` }));
+    const parts = splitLineParts({ amountSen: 9_500, sign: 1, account: staff, payroll: true, recharge: false, mixed: true, fallback: 'none', plan: HOUZS, legs, itemize: false });
+    expect(parts.map((x) => [x.leg?.lineId, x.dept, x.sen])).toEqual([['p0', 'ga', 3_000], ['p1', 'logistics', 2_000], ['p2', 'operation', 4_000], ['p3', 'exhibition', 500]]);
+    /* An account read whole: unitemized one part; itemized its legs, the same department, the same sum. */
+    const print = acc('900-P001', 'PRINTING & STATIONERY', { department_row: 'ga' });
+    const own = [{ lineId: 'q1', accountCode: '900-P001', notes: null, debitSen: 700, creditSen: 0 }, { lineId: 'q2', accountCode: '900-P001', notes: null, debitSen: 0, creditSen: 200 }];
+    const whole = { amountSen: 500, sign: 1 as const, account: print, payroll: false, recharge: false, mixed: false, fallback: 'none' as const, plan: HOUZS, legs: own };
+    expect(splitLineParts({ ...whole, itemize: false }).map((x) => [x.leg, x.dept, x.sen])).toEqual([[null, 'ga', 500]]);
+    expect(splitLineParts({ ...whole, itemize: true }).map((x) => [x.leg?.lineId, x.dept, x.sen])).toEqual([['q1', 'ga', 700], ['q2', 'ga', -200]]);
+    /* What the legs do not explain (a stock line, read whole): one part, in the account's own department. */
+    expect(splitLineParts({ ...whole, legs: undefined, itemize: true }).map((x) => [x.leg, x.dept, x.sen])).toEqual([[null, 'ga', 500]]);
   });
 
   test("2990's plan: its operation and logistics count in Showroom, its office in G&A", () => {
@@ -98,7 +114,10 @@ describe("Operation: the owner's sheet by region", () => {
     transportIncome: { PG: 6_000, KL: 15_000, EM: 6_000, SG: 3_000 },
     fairIncome: { PG: 1_000, KL: 2_000, EM: 0, SG: 0 },
     net: { PG: 4_000, KL: -1_000, EM: 500, SG: 300 },
-    fairs: [{ region: 'PG', incomeSen: 1_000, costSen: 400 }, { region: 'KL', incomeSen: 2_000, costSen: 2_600 }],
+    fairs: [
+      { id: 11, code: 'EV-PG-01', name: 'PENANG HOME FAIR', venue: 'SPICE ARENA', region: 'PG', incomeSen: 1_000, costSen: 400 },
+      { id: 12, code: 'EV-KL-01', name: 'KL HOME FAIR', venue: 'MITEC', region: 'KL', incomeSen: 2_000, costSen: 2_600 },
+    ],
   };
   const bills: BillLine[] = [
     { lineId: 'b1', billNo: 'HC-ODB-2610-001', billDate: '2026-10-23', debtorName: '2990 HOME SDN BHD', description: "OPERATION CHARGES - SEP'26", accountCode: '599-0000', accountName: null, amountSen: 7_000 },
@@ -159,6 +178,42 @@ describe("Operation: the owner's sheet by region", () => {
     expect(own.perMonth[0]!.rows.insurance.KL).toBe(6_000);
   });
 
+  test('every row but the results is its lines added up, month by month and region by region', () => {
+    const results = new Set(['gross', 'total_expense', 'net', 'net_after']);
+    for (const r of operationRows(700).filter((x) => !results.has(x.key))) {
+      for (const region of ['PG', 'KL', 'EM'] as const) {
+        const sum = p.lines.filter((l) => l.row === r.key && l.month === '2026-09').reduce((x, l) => x + l.cells[region], 0);
+        expect(sum, `${r.key} ${region}`).toBe(row(r.key)[region]);
+      }
+    }
+    expect(new Set(p.lines.map((l) => l.id)).size).toBe(p.lines.length);
+  });
+
+  test('a line says what it is: the ledger line, the bill, the fair, or the Logistics figure and how it was worked out', () => {
+    const of = (rowKey: string) => p.lines.filter((l) => l.row === rowKey);
+    /* A payroll line naming no region: the whole line, shared by the DO value. */
+    expect(of('manpower_operation').map((l) => [l.text, l.cells, l.how])).toEqual([
+      ["WAREHOUSE OPERATIONS SALARY - SEPT'26", { PG: 1_800, KL: 5_400, EM: 1_800 }, { kind: 'shared', wholeSen: 9_000 }],
+    ]);
+    expect(of('manpower_storekeeper')[0]!.how).toBeNull();
+    expect(of('rental').map((l) => [l.accountCode, l.ref, l.cells])).toEqual([
+      ['900-R004', expect.stringMatching(/^JE-/), { PG: 18_000, KL: 0, EM: 0 }],
+      ['900-R005', expect.stringMatching(/^JE-/), { PG: 0, KL: 27_000, EM: 0 }],
+      ['900-R046', expect.stringMatching(/^JE-/), { PG: 0, KL: 0, EM: 800 }],
+    ]);
+    /* August's insurance bill: its September part, 1 of 12. */
+    expect(of('insurance').map((l) => [l.id, l.day, l.how])).toEqual([[`gl:${insurance.lineId}:2026-09`, '2026-08-15', { kind: 'spread', wholeSen: 12_000, part: 2, months: 12 }]]);
+    expect(of('income_2990').map((l) => [l.ref, l.party, l.text])).toEqual([['HC-ODB-2610-001', '2990 HOME SDN BHD', "OPERATION CHARGES - SEP'26"]]);
+    expect(of('do_value').map((l) => l.how)).toEqual([{ kind: 'dos', count: 2 }, { kind: 'dos', count: 6 }, { kind: 'dos', count: 2 }]);
+    expect(of('do_income').find((l) => l.cells.KL !== 0)!.how).toEqual({ kind: 'rate', baseSen: 600_000, bp: 700 });
+    expect(of('logistic_expense').find((l) => l.cells.KL !== 0)!.how).toEqual({ kind: 'transport', baseSen: 600_000 });
+    expect(of('logistics_net').find((l) => l.cells.KL !== 0)!.how).toEqual({ kind: 'logistics', netSen: -700, fairIncomeSen: 2_000 });
+    expect(of('sd_net').map((l) => [l.ref, l.text, l.party, l.cells, l.how])).toEqual([
+      ['EV-PG-01', 'PENANG HOME FAIR', 'SPICE ARENA', { PG: 600, KL: 0, EM: 0 }, { kind: 'fair', incomeSen: 1_000, costSen: 400 }],
+      ['EV-KL-01', 'KL HOME FAIR', 'MITEC', { PG: 0, KL: -600, EM: 0 }, { kind: 'fair', incomeSen: 2_000, costSen: 2_600 }],
+    ]);
+  });
+
   test('net, the Logistics and Setup/Dismantle results, and the net after both — a Total adds its regions', () => {
     const expense = { PG: 18_000 + 1_800 + 3_000, KL: 27_000 + 1_700 + 5_400 + 1_000, EM: 800 + 1_800 };
     expect(row('total_expense')).toEqual(expense);
@@ -204,21 +259,22 @@ describe('G&A: its share of the Performance sales against what it booked', () =>
       ],
     },
   ] as LayoutItem[];
+  const gLegs = [
+    leg('900-S100', '2026-09-30', 8_000, "FINANCE - SALARY - SEP'26"),
+    leg('900-S200', '2026-09-30', 1_000, "FINANCE - EPF - SEP'26"),
+    leg('900-S100', '2026-10-31', 6_000, "IT SALARY - OCT'26"),
+    leg('900-S100', '2026-10-31', 4_000, "OPERATION HELPER SALARY - OCT'26"),
+    leg('900-S100', '2026-10-31', 2_000, "GROSS SALARY - OCT'26"),
+    leg('900-D100', '2026-10-05', 20_000, "SALARY - SEP'26"),
+    leg('900-P001', '2026-09-10', 500),
+    leg('900-R004', '2026-09-07', 18_000),
+    leg('900-P001', '2026-11-02', 999),
+  ];
   const g = buildGaPnl({
     months: ['2026-09', '2026-10'],
     sales: new Map([['2026-09', 1_000_000], ['2026-10', 500_000]]),
     shareBp: 800,
-    legs: [
-      leg('900-S100', '2026-09-30', 8_000, "FINANCE - SALARY - SEP'26"),
-      leg('900-S200', '2026-09-30', 1_000, "FINANCE - EPF - SEP'26"),
-      leg('900-S100', '2026-10-31', 6_000, "IT SALARY - OCT'26"),
-      leg('900-S100', '2026-10-31', 4_000, "OPERATION HELPER SALARY - OCT'26"),
-      leg('900-S100', '2026-10-31', 2_000, "GROSS SALARY - OCT'26"),
-      leg('900-D100', '2026-10-05', 20_000, "SALARY - SEP'26"),
-      leg('900-P001', '2026-09-10', 500),
-      leg('900-R004', '2026-09-07', 18_000),
-      leg('900-P001', '2026-11-02', 999),
-    ],
+    legs: gLegs,
     chart, payroll: new Set(['900-S100', '900-S200']), plan: HOUZS, layout, companyId: 1,
   });
 
@@ -227,6 +283,17 @@ describe('G&A: its share of the Performance sales against what it booked', () =>
       { month: '2026-09', salesSen: 1_000_000, shareSen: 80_000, expenseSen: 9_500, surplusSen: 70_500 },
       { month: '2026-10', salesSen: 500_000, shareSen: 40_000, expenseSen: 26_000, surplusSen: 14_000 },
     ]);
+  });
+
+  test("the legs G&A counts are its figures: each tree row's month is its key's legs added up", () => {
+    const lines = gaLines({ months: g.months, legs: gLegs, chart, payroll: new Set(['900-S100', '900-S200']), plan: HOUZS });
+    const leaves = (n: (typeof g.tree)[number]): string[] => (n.kind === 'account' ? [n.key ?? n.code!] : n.children.flatMap(leaves));
+    const nodes = (ns: typeof g.tree): typeof g.tree => ns.flatMap((n) => [n, ...nodes(n.children)]);
+    for (const n of nodes(g.tree)) {
+      const keys = new Set(leaves(n));
+      for (const m of g.months) expect(lines.filter((l) => keys.has(l.key) && l.month === m).reduce((x, l) => x + l.sen, 0), `${n.id} ${m}`).toBe(n.cells?.[m] ?? 0);
+    }
+    expect(lines.filter((l) => l.key === 'team:FINANCE').map((l) => [l.leg.notes, l.sen])).toEqual([["FINANCE - SALARY - SEP'26", 8_000], ["FINANCE - EPF - SEP'26", 1_000]]);
   });
 
   test("G&A's accounts on the P&L's tree, the HQ teams under Salary & related", () => {

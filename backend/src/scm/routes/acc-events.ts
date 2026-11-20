@@ -47,7 +47,7 @@ import {
   logisticsPnlHandler, saveAreaRateHandler, saveFairIncomeRateHandler, saveIncomeRateHandler, saveSpreadHandler, saveTripMarkHandler,
 } from './acc-logistics-pnl';
 import {
-  departmentViewHandler, departmentsAllHandler, departmentsGaHandler, departmentsOperationHandler, departmentsPlanHandler, saveDepartmentRateHandler,
+  departmentLinesHandler, departmentViewHandler, departmentsAllHandler, departmentsGaHandler, departmentsOperationHandler, departmentsPlanHandler, saveDepartmentRateHandler,
 } from './acc-departments';
 
 export const accEvents = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -153,6 +153,7 @@ accEvents.get('/departments/all', departmentsAllHandler);
 accEvents.get('/departments/dept', departmentViewHandler);
 accEvents.get('/departments/ga', departmentsGaHandler);
 accEvents.get('/departments/operation', departmentsOperationHandler);
+accEvents.get('/departments/lines', departmentLinesHandler);
 accEvents.put('/departments/rate', saveDepartmentRateHandler);
 
 /* ── POST /pv-lines/:lineId/event ─────────────────────────────────────────────

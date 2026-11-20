@@ -9,13 +9,17 @@
        warehouse accounts and the warehouse teams' payroll lines;
      • G&A: its share of the Performance sales and what the HQ teams and the G&A
        accounts booked;
-     • the two rates: Finance's right only, checked, saved and read back. */
+     • the two rates: Finance's right only, checked, saved and read back;
+     • a figure opened (owner 2026-11-20: 「我希望这里点开也能看」): the lines behind every
+       figure of All, the Exhibition P&L and G&A add up to it, the stock engine's
+       opening stock in place of the ledger's own, nothing of another company's;
+       the Operation sheet's rows are its lines added up. */
 
 import { Hono } from 'hono';
 import { describe, expect, test } from 'vitest';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
 import {
-  departmentViewHandler, departmentsAllHandler, departmentsGaHandler, departmentsOperationHandler, departmentsPlanHandler, saveDepartmentRateHandler,
+  departmentLinesHandler, departmentViewHandler, departmentsAllHandler, departmentsGaHandler, departmentsOperationHandler, departmentsPlanHandler, saveDepartmentRateHandler,
 } from '../src/scm/routes/acc-departments';
 
 const CO = 1;
@@ -111,6 +115,7 @@ function harness(sb: ReturnType<typeof world>, perms: string[] = ['scm.payment_v
   app.get('/departments/all', departmentsAllHandler as never);
   app.get('/departments/ga', departmentsGaHandler as never);
   app.get('/departments/operation', departmentsOperationHandler as never);
+  app.get('/departments/lines', departmentLinesHandler as never);
   app.put('/departments/rate', saveDepartmentRateHandler as never);
   const get = async (path: string) => { const r = await app.request(path); return { status: r.status, body: await r.json() as any }; };
   const put = async (body: unknown) => {
@@ -218,6 +223,109 @@ describe('GET /departments/ga — G&A against its share', () => {
     expect(sep.expenseSen).toBe(80_000 + 200_000 + 5_000 + 220_000 + 2_500);
     expect(sep.surplusSen).toBe(200_000 - 507_500);
     expect(body.teams.map((t: any) => t.team)).toEqual(['FINANCE']);
+  });
+});
+
+describe('GET /departments/lines — the lines behind a figure add up to it', () => {
+  const BLOCKS = ['tradingIncome', 'costOfSales', 'otherIncome', 'expenses', 'taxation'] as const;
+  const nodes = (ns: any[]): any[] => ns.flatMap((n: any) => [n, ...nodes(n.children ?? [])]);
+  const leaves = (n: any): string[] => (n.kind === 'account' ? [n.key ?? n.code] : (n.children ?? []).flatMap(leaves));
+  const keysOf = (n: any) => encodeURIComponent(leaves(n).join(','));
+  /* Houzs's books start on 1 September with opening stock; the ledger's own stock line is the P&L's to set aside. */
+  const booked = () => world({
+    acc_company_settings: [{ company_id: CO, books_start_date: '2026-09-01', opening_stock: { customer: 300_000 } }],
+    v_gl_entries: [
+      ...LEDGER.map((r) => ({ ...r })),
+      gl('600-0001', 77_777, 0, { entry_date: '2026-09-30', notes: 'MONTH CLOSE' }),
+      gl('900-P001', 123_456, 0, { company_id: 2, line_id: 'other-co' }),
+      gl('900-P001', 1_500, 0, { entry_date: '2026-10-12' }),
+      gl('900-S100', 60_000, 0, { notes: "IT SALARY - OCT'26", entry_date: '2026-10-31' }),
+    ],
+  });
+
+  test('All: every account, category and block, in every department and the Total', async () => {
+    const h = harness(booked());
+    const all = (await h.get(`/departments/all${SEP}`)).body;
+    let checked = 0;
+    for (const block of BLOCKS) {
+      for (const n of nodes(all.tree[block])) {
+        for (const col of [...all.columns.map((x: any) => x.key), 'none', null]) {
+          const res = await h.get(`/departments/lines?view=all&block=${block}&keys=${keysOf(n)}${col ? `&dept=${col}` : ''}&from=2026-09-01&to=2026-09-30`);
+          expect(res.status).toBe(200);
+          const cell = col ? (n.cells?.[col] ?? 0) : n.amountSen;
+          expect(res.body.totalSen, `${block} ${n.id} ${col ?? 'Total'}`).toBe(cell);
+          expect(res.body.lines.reduce((x: number, l: any) => x + l.sen, 0)).toBe(cell);
+          checked += 1;
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(40);
+    /* The payroll account's G&A figure: Finance's team line, nothing else. */
+    const pay = await h.get(`/departments/lines?view=all&block=expenses&keys=900-S100&dept=ga${SEP.replace('?', '&')}`);
+    expect(pay.body.lines.map((l: any) => [l.text, l.sen, l.dept])).toEqual([["FINANCE - SALARY - SEP'26", 80_000, 'ga']]);
+    /* Opening stock is the books' own, not the ledger's month-close line on the same account. */
+    const stock = await h.get(`/departments/lines?view=all&block=costOfSales&keys=600-0001${SEP.replace('?', '&')}`);
+    expect(stock.body.lines.map((l: any) => [l.source, l.sen, l.dept])).toEqual([['stock_opening', 300_000, 'exhibition']]);
+  });
+
+  test("the Exhibition P&L and G&A: each month's figure and the Total, row by row", async () => {
+    const h = harness(booked());
+    const both = '&from=2026-09-01&to=2026-10-31';
+    const months = ['2026-09', '2026-10'];
+    const range = (m: string | null) => (m ? `&from=${m}-01&to=${m === '2026-09' ? '2026-09-30' : '2026-10-31'}` : both);
+    const dept = (await h.get(`/departments/dept?d=exhibition${both}`)).body;
+    for (const block of BLOCKS) {
+      for (const n of nodes(dept.tree[block])) {
+        for (const m of [...months, null]) {
+          const res = await h.get(`/departments/lines?view=dept&d=exhibition&block=${block}&keys=${keysOf(n)}${range(m)}`);
+          const cell = m ? (n.cells?.[m] ?? 0) : months.reduce((x, k) => x + (n.cells?.[k] ?? 0), 0);
+          expect(res.body.totalSen, `${block} ${n.id} ${m ?? 'Total'}`).toBe(cell);
+        }
+      }
+    }
+    const ga = (await h.get(`/departments/ga?${both.slice(1)}`)).body;
+    for (const n of nodes(ga.tree)) {
+      for (const m of [...months, null]) {
+        const res = await h.get(`/departments/lines?view=ga&keys=${keysOf(n)}${range(m)}`);
+        const cell = m ? (n.cells?.[m] ?? 0) : months.reduce((x, k) => x + (n.cells?.[k] ?? 0), 0);
+        expect(res.body.totalSen, `G&A ${n.id} ${m ?? 'Total'}`).toBe(cell);
+      }
+    }
+    const it = await h.get(`/departments/lines?view=ga&keys=team:IT${both}`);
+    expect(it.body.lines.map((l: any) => [l.team, l.text, l.sen])).toEqual([['IT', "IT SALARY - OCT'26", 60_000]]);
+  });
+
+  test("only the company's own lines", async () => {
+    const h = harness(booked());
+    const res = await h.get(`/departments/lines?view=ga&keys=900-P001${SEP.replace('?', '&')}`);
+    expect(res.body.lines.map((l: any) => l.id)).not.toContain('other-co');
+    expect(res.body.totalSen).toBe(5_000);
+    const all = await h.get(`/departments/lines?view=all&block=expenses&keys=900-P001${SEP.replace('?', '&')}`);
+    expect(all.body.totalSen).toBe(5_000);
+  });
+
+  test('the statements\' right only; a view, a block, a department and accounts that make sense', async () => {
+    expect((await harness(world(), ['scm.access']).get(`/departments/lines?view=ga&keys=900-P001${SEP.replace('?', '&')}`)).status).toBe(403);
+    const h = harness(world());
+    const q = SEP.replace('?', '&');
+    expect((await h.get(`/departments/lines?view=operation&keys=900-P001${q}`)).body.error).toBe('bad_view');
+    expect((await h.get(`/departments/lines?view=ga${q}`)).body.error).toBe('bad_keys');
+    expect((await h.get(`/departments/lines?view=all&block=assets&keys=900-P001${q}`)).body.error).toBe('bad_block');
+    expect((await h.get(`/departments/lines?view=all&block=expenses&dept=showroom&keys=900-P001${q}`)).body.error).toBe('bad_department');
+    expect((await h.get(`/departments/lines?view=dept&d=logisticsx&block=expenses&keys=900-P001${q}`)).body.error).toBe('bad_department');
+  });
+
+  test('the Operation sheet: its rows are its lines added up, each line saying where it comes from', async () => {
+    const { body } = await harness(world()).get(`/departments/operation${SEP}`);
+    const results = new Set(['gross', 'total_expense', 'net', 'net_after']);
+    for (const r of body.rows.filter((x: any) => !results.has(x.key))) {
+      for (const region of ['PG', 'KL', 'EM']) {
+        const sum = body.lines.filter((l: any) => l.row === r.key).reduce((x: number, l: any) => x + l.cells[region], 0);
+        expect(sum, `${r.key} ${region}`).toBe(body.perMonth[0].rows[r.key][region]);
+      }
+    }
+    expect(body.lines.filter((l: any) => l.row === 'recruitment').map((l: any) => [l.accountCode, l.text, l.cells.KL])).toEqual([['900-A004', 'WAREHOUSE ASSISTANT - AUG26', 6_000]]);
+    expect(body.lines.filter((l: any) => l.row === 'income_2990').map((l: any) => [l.ref, l.party])).toEqual([['HC-ODB-2610-001', '2990 HOME SDN BHD']]);
   });
 });
 
