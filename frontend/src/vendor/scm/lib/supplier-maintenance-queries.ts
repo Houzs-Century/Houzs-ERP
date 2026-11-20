@@ -110,12 +110,20 @@ export type SupplierMaintenanceBody = {
   bankAccountNo?: string | null;
   bankAccountName?: string | null;
   forPurchasing?: boolean;
+  /** Create only: 400 or 405 — the kind the server numbers a blank code under. */
+  codeKind?: '400' | '405';
+  postcode?: string | null;
+  state?: string | null;
+  city?: string | null;
+  country?: string | null;
 };
 
 const refreshSuppliers = (qc: ReturnType<typeof useQueryClient>, id?: string) => {
   void qc.invalidateQueries({ queryKey: ['supplier-maintenance'] });
   void qc.invalidateQueries({ queryKey: ['suppliers'] });
   void qc.invalidateQueries({ queryKey: ['suppliers-paged'] });
+  /* The number just used is no longer the next one. */
+  void qc.invalidateQueries({ queryKey: ['supplier-next-code'] });
   if (id) void qc.invalidateQueries({ queryKey: ['supplier-detail', id] });
 };
 

@@ -12,8 +12,11 @@ import { SUPPLIER_FINANCE_BODY_KEYS } from "../vendor/shared/supplier-finance-fi
  * supplier still takes its code (it must match the AutoCount creditor).
  */
 export function supplierFormFor(form: FormSchema, finance: boolean, mode: "new" | "edit"): FormSchema {
-  if (finance) return form;
-  const hidden = new Set<string>(SUPPLIER_FINANCE_BODY_KEYS);
-  if (mode === "edit") hidden.add("code");
+  /* The Type numbers a NEW code (owner 2026-11-20): only Finance picks it, and
+     an edit numbers nothing. A purchaser's blank code is numbered 400-. */
+  const hidden = new Set<string>(finance ? [] : SUPPLIER_FINANCE_BODY_KEYS);
+  if (!finance || mode === "edit") hidden.add("codeKind");
+  if (!finance && mode === "edit") hidden.add("code");
+  if (hidden.size === 0) return form;
   return { ...form, fields: form.fields.filter((f) => !hidden.has(f.key)) };
 }
