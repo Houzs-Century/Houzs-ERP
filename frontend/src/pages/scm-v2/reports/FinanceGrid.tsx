@@ -11,7 +11,7 @@
 //     1,234.56 / (1,234.56), a % beside when asked; nothing wraps — except the
 //     second line a row asks for (Setup & Dismantle's venue and dates).
 // Rows are a tree: a group folds; open, its total prints on its own row below,
-// folded, on the title row. A figure may open a detail under its row.
+// folded, on the title row. A figure may open a detail under the line it is on.
 // Used by the Logistics cost views (LogisticsCost.tsx, LogisticsPnl.tsx).
 // ----------------------------------------------------------------------------
 
@@ -58,8 +58,9 @@ export type GridRow = {
   closedAtFirst?: boolean;
   /** The label spans the leading columns up to the first one with a cell (a list's subtotal). */
   span?: boolean;
-  /** A figure opens this under the row; null = that figure opens nothing. */
-  detail?: (colKey: string) => ReactNode | null;
+  /** A figure opens this under the line it is on (a group's title, or its total once
+      open); null = that figure opens nothing. `close` shuts it. */
+  detail?: (colKey: string, close: () => void) => ReactNode | null;
 };
 
 const NAME = '__name';
@@ -149,10 +150,21 @@ export function FinanceGrid({ layoutKey, nameColumn, columns, rows, showPct = fa
   const [closed, setClosed] = useState<Set<string>>(new Set());
   const [sort, setSort] = useState<{ key: string; dir: 1 | -1 } | null>(null);
   const [menu, setMenu] = useState<Menu | null>(null);
-  const [drill, setDrill] = useState<{ row: string; col: string } | null>(null);
+  const [drill, setDrill] = useState<{ row: string; col: string; at: 'title' | 'total' } | null>(null);
+  const closeDrill = useCallback(() => setDrill(null), []);
   const [dropAt, setDropAt] = useState<string | null>(null);
   useEffect(() => { setDrill(null); setClosed(new Set()); }, [drillKey]);
   const tableRef = useRef<HTMLTableElement>(null);
+  /* A detail opens as wide as the box shows, wherever it is scrolled — the P&L's lines' own rule. */
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState<number | null>(null);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(() => setVisible(el.clientWidth));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const resizing = useRef(false);
   const dragKey = useRef<string | null>(null);
 
@@ -300,7 +312,11 @@ export function FinanceGrid({ layoutKey, nameColumn, columns, rows, showPct = fa
   /* ── Rows ── */
   const tree = useMemo(() => (sort ? sortRows(rows, sort.key, sort.dir, kindOf) : rows), [rows, sort]); // eslint-disable-line react-hooks/exhaustive-deps -- kindOf reads the same columns
   const isOpen = (r: GridRow) => (r.closedAtFirst ? closed.has(r.id) : !closed.has(r.id));
-  const toggle = (id: string) => setClosed((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const toggle = (id: string) => {
+    setClosed((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+    /* A group folding or opening moves its figures to the other line: what they opened closes. */
+    setDrill((d) => (d?.row === id ? null : d));
+  };
   const colCount = shown.length + (nameColumn ? 1 : 0);
 
   const rowClass = (k: GridRowKind | undefined): string => ({
@@ -311,6 +327,7 @@ export function FinanceGrid({ layoutKey, nameColumn, columns, rows, showPct = fa
   const body: ReactNode[] = [];
   const line = (r: GridRow, depth: number, label: string, kind: GridRowKind | undefined, withValues: boolean, isTitle: boolean) => {
     const open = r.kids ? isOpen(r) : false;
+    const at = isTitle ? 'title' as const : 'total' as const;
     const nameCell = (span: number) => {
       const fz = frozenStyle(NAME);
       const two = r.capBelow && r.cap && isTitle;
@@ -347,10 +364,10 @@ export function FinanceGrid({ layoutKey, nameColumn, columns, rows, showPct = fa
       else {
         const text = withValues ? cellText(v, c.kind, r) : null;
         const fig = text == null ? <span className={s.dash}>-</span> : text;
-        const drillable = text != null && r.detail && r.detail(c.key) != null;
+        const drillable = text != null && r.detail != null && r.detail(c.key, closeDrill) != null;
         const shownFig = drillable ? (
-          <button type="button" className={s.figure} aria-pressed={drill?.row === r.id && drill.col === c.key}
-            onClick={() => setDrill((d) => (d?.row === r.id && d.col === c.key ? null : { row: r.id, col: c.key }))}>{fig}</button>
+          <button type="button" className={s.figure} aria-pressed={drill?.row === r.id && drill.col === c.key && drill.at === at}
+            onClick={() => setDrill((d) => (d?.row === r.id && d.col === c.key && d.at === at ? null : { row: r.id, col: c.key, at }))}>{fig}</button>
         ) : fig;
         const p = withValues && pctOn && isFigure(c.kind) ? r.pct?.[c.key] : undefined;
         inner = pctOn && isFigure(c.kind) ? (
@@ -360,9 +377,9 @@ export function FinanceGrid({ layoutKey, nameColumn, columns, rows, showPct = fa
       cells.push(<td key={c.key} data-col={c.key} className={cls} style={fz.style}>{inner}</td>);
     });
     body.push(<tr key={`${r.id}|${isTitle ? 't' : 'total'}`} className={rowClass(kind)}>{cells}</tr>);
-    if (isTitle && drill?.row === r.id && r.detail) {
-      const d = r.detail(drill.col);
-      if (d != null) body.push(<tr key={`${r.id}|detail`} className={s.detailRow}><td colSpan={colCount}><div className={s.detail}>{d}</div></td></tr>);
+    if (drill?.row === r.id && drill.at === at && r.detail) {
+      const d = r.detail(drill.col, closeDrill);
+      if (d != null) body.push(<tr key={`${r.id}|${at}|detail`} className={s.detailRow}><td colSpan={colCount}><div className={s.detail}>{d}</div></td></tr>);
     }
   };
   const walk = (list: GridRow[], depth: number) => {
@@ -424,7 +441,7 @@ export function FinanceGrid({ layoutKey, nameColumn, columns, rows, showPct = fa
 
   return (
     <section className={s.card} aria-label={ariaLabel}>
-      <div className={s.scroll}>
+      <div className={s.scroll} ref={scrollRef} style={visible ? ({ '--fg-visible': `${visible}px` } as CSSProperties) : undefined}>
         <table ref={tableRef} className={s.table} style={{ width: widths.reduce((a, b) => a + b, 0) }} aria-label={ariaLabel}>
           <colgroup>{widths.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>
           <thead>

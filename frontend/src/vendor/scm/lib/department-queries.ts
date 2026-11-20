@@ -58,12 +58,33 @@ export type DepartmentsGa = {
 export type OpRegion = 'PG' | 'KL' | 'EM';
 export type OpCells = Record<OpRegion, number>;
 export type OpRowKind = 'line' | 'strong' | 'final';
+
+/** How an amount behind an Operation figure was arrived at, where it is not simply its line's. */
+export type OpHow =
+  | { kind: 'shared'; wholeSen: number }
+  | { kind: 'spread'; wholeSen: number; part: number; months: number }
+  | { kind: 'dos'; count: number }
+  | { kind: 'rate'; baseSen: number; bp: number }
+  | { kind: 'transport'; baseSen: number }
+  | { kind: 'logistics'; netSen: number; fairIncomeSen: number }
+  | { kind: 'fair'; incomeSen: number; costSen: number };
+/** One amount behind an Operation figure — a ledger line, an Other Debtor bill line, a fair or
+    a figure of the Logistics cost report — and what it put in which region of which month.
+    Every row but the results is its lines added up (the server folds them so). */
+export type OpLine = {
+  id: string; row: string; month: string; cells: OpCells;
+  src: 'ledger' | 'bill' | 'fair' | 'figure';
+  day: string | null; ref: string | null; accountCode: string | null; accountName: string | null;
+  text: string | null; party: string | null; how: OpHow | null;
+};
 export type DepartmentsOperation = {
   from: string; to: string; months: string[]; incomeBp: number; logisticsIncomeBp: number;
   regions: Array<{ code: OpRegion; name: string }>;
   /** The sheet's rows in order: how each is drawn, which block it adds into, and whether it shows only when not nil. */
   rows: Array<{ key: string; label: string; kind: OpRowKind; group: 'head' | 'gross' | 'expense' | 'expense_total' | 'result'; optional?: boolean }>;
   perMonth: Array<{ month: string; rows: Partial<Record<string, OpCells>>; dos: OpCells }>;
+  /** What every row but the results is made of: what a figure opens. */
+  lines: OpLine[];
   income: Array<{ lineId: string; billNo: string; billDate: string; debtorName: string; description: string | null; accountCode: string; accountName: string | null; amountSen: number; month: string; key: string; region: OpRegion }>;
   manpower: Array<{ lineId: string; day: string; accountCode: string; accountName: string | null; notes: string | null; amountSen: number; row: string; region: OpRegion | null; cells: OpCells }>;
   spreads: Array<{
@@ -81,7 +102,40 @@ export type DepartmentView = {
   tree: Record<DeptBlock, DeptNode[]>;
 };
 
+/** One line behind a figure of All, a department's P&L or G&A: a ledger line, or the stock
+    engine's opening / closing stock. `sen` in the figure's sign. */
+export type DeptEntry = {
+  id: string; month: string; day: string | null; accountCode: string; accountName: string | null;
+  ref: string | null; text: string | null; dept: DeptKey; team: GaTeam | null; sen: number;
+  source: 'ledger' | 'stock_opening' | 'stock_closing' | 'rest';
+};
+export type DeptLines = { lines: DeptEntry[]; totalSen: number };
+/** Which figure: the view, its column's department or months, the block and the accounts
+    (a code, or team:<TEAM> on G&A) under the row. */
+export type DeptLinesAsk =
+  | { view: 'all'; block: DeptBlock; dept: DeptKey | null; from: string; to: string; keys: string[] }
+  | { view: 'dept'; d: Department; block: DeptBlock; from: string; to: string; keys: string[] }
+  | { view: 'ga'; from: string; to: string; keys: string[] };
+
 const KEY = ['acc-events', 'departments'] as const;
+
+export const deptLinesQuery = (ask: DeptLinesAsk): string => {
+  const q = new URLSearchParams({ view: ask.view, from: ask.from, to: ask.to });
+  if (ask.view !== 'ga') q.set('block', ask.block);
+  if (ask.view === 'all' && ask.dept) q.set('dept', ask.dept);
+  if (ask.view === 'dept') q.set('d', ask.d);
+  q.set('keys', ask.keys.join(','));
+  return q.toString();
+};
+/** The lines behind one figure, read when it is opened. */
+export function useDepartmentLines(ask: DeptLinesAsk) {
+  const qs = deptLinesQuery(ask);
+  return useQuery({
+    queryKey: [...KEY, 'lines', qs],
+    queryFn: () => authedFetch<DeptLines>(`/acc-events/departments/lines?${qs}`),
+    staleTime: 30_000,
+  });
+}
 
 export function useDepartmentPlan() {
   return useQuery({

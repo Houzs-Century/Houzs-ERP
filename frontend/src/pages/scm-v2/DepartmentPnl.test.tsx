@@ -13,7 +13,12 @@
        the surplus; its rate saved;
      • Operation: the owner's sheet by region with a % of DO beside; the rows in his
        words; the warehouse insurance spread, its months saved;
-     • the department switch lives in the URL. */
+     • the department switch lives in the URL;
+     • a figure opens the lines behind it (owner 2026-11-20: 「我希望这里点开也能看」):
+       the Operation sheet's from the report (the fixture's `lines`, derived from its
+       own rows and lists so that each row is its lines added up), totalled to the
+       figure; All, Exhibition and G&A read theirs for the figure's column; the
+       results that add up rows open nothing. */
 
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
@@ -30,9 +35,18 @@ vi.mock('../../vendor/scm/lib/authed-fetch', () => ({
 
 import { DepartmentPnlTab } from './DepartmentPnl';
 
+/* What a figure of All, Exhibition or G&A reads when opened: made-up lines. */
+const LINES = {
+  lines: [
+    { id: 'g1', month: '2026-09', day: '2026-09-30', accountCode: '900-S100', accountName: 'STAFF SALARIES & OVERTIME', ref: 'JE-1', text: 'FINANCE - SALARY - SEP2026', dept: 'ga', team: 'FINANCE', sen: 820_000, source: 'ledger' },
+    { id: 'g2', month: '2026-10', day: '2026-10-31', accountCode: '900-S100', accountName: 'STAFF SALARIES & OVERTIME', ref: 'JE-2', text: 'FINANCE - SALARY - OCT2026', dept: 'ga', team: 'FINANCE', sen: 820_000, source: 'ledger' },
+  ],
+  totalSen: 1_640_000,
+};
 fetchMock.mockImplementation(async (path: string, init?: RequestInit) => {
   if (init?.method === 'PUT') return { ok: true };
   if (path === '/acc-events/departments/plan') return fixture.plan;
+  if (path.startsWith('/acc-events/departments/lines?')) return LINES;
   if (path.startsWith('/acc-events/departments/dept?d=exhibition&')) return fixture.exhibition;
   const view = /\/acc-events\/departments\/(all|ga|operation)\?/.exec(path)?.[1] as 'all' | 'ga' | 'operation' | undefined;
   if (!view) throw new Error(`unexpected ${path}`);
@@ -127,5 +141,77 @@ describe('Operation', () => {
     fireEvent.change(months, { target: { value: '6' } });
     fireEvent.click(within(spreads).getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(putOf('/acc-events/logistics/spread')).toEqual([{ lineId: expect.any(String), months: 6 }]));
+  });
+});
+
+describe('A figure opens the lines behind it', () => {
+  const linesAsked = () => fetchMock.mock.calls.map(([p]) => String(p)).filter((p) => p.startsWith('/acc-events/departments/lines?')).map((p) => Object.fromEntries(new URLSearchParams(p.split('?')[1])));
+  const rowOf = (table: HTMLElement, label: string) => within(table).getAllByText(label)[0]!.closest('tr')!;
+
+  test("Operation: a row's figure opens its lines in that column, totalled to the figure; the results open nothing", async () => {
+    draw('&dv=operation');
+    const table = await screen.findByRole('table', { name: 'Department P&L, Operation' });
+    /* Rental Warehouse in KL over Sep and Oct: two ledger lines of 27,500.00. */
+    fireEvent.click(within(rowOf(table, 'Rental Warehouse')).getByRole('button', { name: '55,000.00' }));
+    const rental = await screen.findByRole('region', { name: 'Lines of Rental Warehouse' });
+    expect(within(rental).getByText(/Sep 2026 – Oct 2026 · KL · 2 lines/)).toBeTruthy();
+    expect(within(rental).getAllByText('27,500.00')).toHaveLength(2);
+    expect(within(rental).getByText('55,000.00')).toBeTruthy();
+    expect(within(rental).getByRole('link', { name: /Open in General ledger/ }).getAttribute('href')).toContain('accounts=900-R005');
+    fireEvent.click(within(rental).getByRole('button', { name: 'Close the lines' }));
+    expect(screen.queryByRole('region', { name: 'Lines of Rental Warehouse' })).toBeNull();
+    /* A salary line naming no region: its KL share, the whole line said. */
+    fireEvent.click(within(rowOf(table, 'Warehouse Manpower - Logistic')).getByRole('button', { name: '14,534.17' }));
+    const pay = await screen.findByRole('region', { name: 'Lines of Warehouse Manpower - Logistic' });
+    expect(within(pay).getAllByText('DO-value share of the line 10,000.00')).toHaveLength(2);
+    expect(within(pay).getByText('14,534.17')).toBeTruthy();
+    /* What only adds up the rows above opens nothing. */
+    for (const label of ['Gross Profit / (Loss)', 'Net Profit / (Loss)', 'Net Profit / (Loss) After Logistics & Setup/Dismantle']) {
+      expect(within(rowOf(table, label)).queryAllByRole('button')).toHaveLength(0);
+    }
+    /* The 7% income opens how it was worked out. */
+    fireEvent.click(within(rowOf(table, '7% Income from Delivery Order')).getAllByRole('button')[0]!);
+    const income = await screen.findByRole('region', { name: 'Lines of 7% Income from Delivery Order' });
+    expect(within(income).getByText('7% of the DO value 450,000.00')).toBeTruthy();
+  });
+
+  test("Operation: Total Warehouse Expenses opens every warehouse line, each with its row", async () => {
+    draw('&dv=operation');
+    const table = await screen.findByRole('table', { name: 'Department P&L, Operation' });
+    fireEvent.click(within(rowOf(table, 'Total Warehouse Expenses')).getByRole('button', { name: '198,631.90' }));
+    const all = await screen.findByRole('region', { name: 'Lines of Total Warehouse Expenses' });
+    expect(within(all).getByRole('columnheader', { name: /Row/ })).toBeTruthy();
+    expect(within(all).getAllByText('Insurance Warehouse').length).toBeGreaterThan(0);
+    expect(within(all).getByText('198,631.90')).toBeTruthy();
+  });
+
+  test("G&A: an expense reads its lines for the column's months; the share and the surplus open nothing", async () => {
+    draw('&dv=ga');
+    const table = await screen.findByRole('table', { name: 'Department P&L, G&A' });
+    fireEvent.click(within(rowOf(table, 'Finance team · salary, EPF, SOCSO, EIS, allowance')).getByRole('button', { name: '16,400.00' }));
+    const panel = await screen.findByRole('region', { name: 'Lines of Finance team · salary, EPF, SOCSO, EIS, allowance' });
+    expect(await within(panel).findByText('FINANCE - SALARY - OCT2026')).toBeTruthy();
+    expect(within(panel).getByText('16,400.00')).toBeTruthy();
+    expect(linesAsked().at(-1)).toEqual({ view: 'ga', from: '2026-09-01', to: '2026-10-31', keys: 'team:FINANCE' });
+    for (const label of ['Performance sales', 'G&A share (8% of Performance sales)', 'SURPLUS / (DEFICIT)']) {
+      expect(within(rowOf(table, label)).queryAllByRole('button')).toHaveLength(0);
+    }
+  });
+
+  test("All: a department's figure reads that department's part of the account; Exhibition its own", async () => {
+    draw();
+    const table = await screen.findByRole('table', { name: 'Department P&L, all departments' });
+    fireEvent.click(within(rowOf(table, '900-S100 · STAFF SALARIES & OVERTIME')).getByRole('button', { name: '53,400.00' }));
+    await screen.findByRole('region', { name: 'Lines of 900-S100 · STAFF SALARIES & OVERTIME' });
+    expect(linesAsked().at(-1)).toEqual({ view: 'all', from: '2026-09-01', to: '2026-10-31', block: 'expenses', dept: 'ga', keys: '900-S100' });
+    expect(within(rowOf(table, 'NET PROFIT / (LOSS)')).queryAllByRole('button')).toHaveLength(0);
+  });
+
+  test('Exhibition: a figure reads the department\'s lines', async () => {
+    draw('&dv=exhibition');
+    const table = await screen.findByRole('table', { name: 'Department P&L, Exhibition' });
+    fireEvent.click(within(rowOf(table, '900-R032 · RENTAL - EXHIBITION')).getByRole('button', { name: '990,000.00' }));
+    await screen.findByRole('region', { name: 'Lines of 900-R032 · RENTAL - EXHIBITION' });
+    expect(linesAsked().at(-1)).toEqual({ view: 'dept', from: '2026-09-01', to: '2026-10-31', block: 'expenses', d: 'exhibition', keys: '900-R032' });
   });
 });
