@@ -139,7 +139,7 @@ const bedTier = (r: FabricTrackingRow): FabricTier | null => r.bedframe_price_ti
 const FABRIC_COLUMNS: GridColumn<FabricTrackingRow>[] = [
   {
     key: 'code',
-    label: 'Code',
+    label: 'Internal Code',
     width: 150,
     accessor: (r) => <span className={styles.codeChip}>{r.fabric_code}</span>,
     // fabric_code is OUR internal code (e.g. BF-01); the supplier's EXTERNAL
