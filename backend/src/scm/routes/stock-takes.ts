@@ -458,13 +458,21 @@ export const getStockTakeDetailHandler = async (c: any) => {
      take's forward + reversal rows net to zero, so showing them would mislead. */
   let adjustments: Array<Record<string, unknown>> = [];
   if (take.status === 'POSTED') {
-    const { data: movs } = await sb.from('inventory_movements')
+    const { data: movs, error: movsErr } = await sb.from('inventory_movements')
       .select('item_code, product_name, variant_key, qty, unit_cost_sen')
       .eq('source_doc_type', 'STOCK_TAKE')
       .eq('source_doc_id', id);
-    adjustments = ((movs as Array<Record<string, unknown>>) ?? [])
-      .filter((m) => Number(m.qty ?? 0) !== 0)
-      .sort((a, b) => String(a.item_code).localeCompare(String(b.item_code)));
+    /* Bind the error rather than discard it (audit:swallowed-reads): this is a
+       display-only enhancement, so a failed read degrades to "no adjustments
+       shown" — never an empty list mistaken for "this take booked nothing". */
+    if (movsErr) {
+      // eslint-disable-next-line no-console
+      console.error('[stock-takes] adjustments read failed:', (movsErr as { message?: unknown }).message ?? movsErr);
+    } else {
+      adjustments = ((movs as Array<Record<string, unknown>>) ?? [])
+        .filter((m) => Number(m.qty ?? 0) !== 0)
+        .sort((a, b) => String(a.item_code).localeCompare(String(b.item_code)));
+    }
   }
 
   return c.json({
