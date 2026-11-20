@@ -50,7 +50,7 @@ import { yymmFor } from '../../services/documentRefs';
 import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
-import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
+import { mintMonthlyDocNo, insertWithDocNoRetry, docMonthTag } from '../lib/doc-no';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
@@ -457,6 +457,10 @@ export const getStockTakeDetailHandler = async (c: any) => {
      POSTED: an OPEN / PENDING take booked nothing, and a CANCELLED (reversed)
      take's forward + reversal rows net to zero, so showing them would mislead. */
   let adjustments: Array<Record<string, unknown>> = [];
+  /* The formal Stock Adjustment document this take booked (owner 2026-11-20) —
+     the take links to it instead of a stock card. null for a take posted before
+     this feature, or until a backfill mints one. */
+  let adjustment: { id: string; adjustment_no: string } | null = null;
   if (take.status === 'POSTED') {
     const { data: movs, error: movsErr } = await sb.from('inventory_movements')
       .select('item_code, product_name, variant_key, qty, unit_cost_sen')
@@ -473,12 +477,22 @@ export const getStockTakeDetailHandler = async (c: any) => {
         .filter((m) => Number(m.qty ?? 0) !== 0)
         .sort((a, b) => String(a.item_code).localeCompare(String(b.item_code)));
     }
+    const { data: sa, error: saErr } = await scopeToCompany(
+      sb.from('stock_adjustments').select('id, adjustment_no').eq('source_stock_take_id', id), c,
+    ).maybeSingle();
+    if (saErr) {
+      // eslint-disable-next-line no-console
+      console.error('[stock-takes] linked adjustment read failed:', (saErr as { message?: unknown }).message ?? saErr);
+    } else if (sa) {
+      adjustment = sa as unknown as { id: string; adjustment_no: string };
+    }
   }
 
   return c.json({
     take: headerRes.data,
     lines,
     adjustments,
+    adjustment,
     viewer: {
       isAssignee: callerStaffId != null && assigneesOf(take).includes(callerStaffId),
       canSupervise,
@@ -1187,6 +1201,18 @@ stockTakes.patch('/:id/reverse', async (c) => {
     if (!insErr) await reconcileUncostedAfterIn(sb, reverseRows, reverserStaffId);
   }
 
+  /* Drop the mirror Stock Adjustment document (owner 2026-11-20): it recorded
+     this take's variance, which is now reversed, so it must not keep standing in
+     the Stock Adjustments list. It holds no movements of its own, so deleting it
+     touches no stock; lines cascade on the header. Best-effort. */
+  const { error: saDelErr } = await scopeToCompanyId(
+    sb.from('stock_adjustments').delete().eq('source_stock_take_id', id), co.companyId,
+  );
+  if (saDelErr) {
+    // eslint-disable-next-line no-console
+    console.error('[stock-takes] mirror adjustment delete on reverse failed:', (saDelErr as { message?: unknown }).message ?? saDelErr);
+  }
+
   /* POSTED is the prior status by construction — the .eq('status','POSTED')
      gate on the flip above is what let this call proceed. The reversed quantity
      is recorded as a signed total so the history says how much stock moved back,
@@ -1420,6 +1446,70 @@ const computeStockTakePosting = async (
 // computeStockTakePosting, write the stock effects. Used by both the direct
 // post (OPEN → POSTED) and the supervisor approval (PENDING_APPROVAL → POSTED);
 // `fromStatus` and `auditAction` carry the difference into the audit row.
+/* Mirror Stock Adjustment (owner 2026-11-20). A posted take's variance already
+   moved stock as ADJUSTMENT movements (source STOCK_TAKE). This ALSO records a
+   formal Stock Adjustment DOCUMENT (SA number, scm.stock_adjustments) so the
+   correction shows in the Stock Adjustments list and the take links to it
+   instead of a stock card. It writes NO movements — stock moves exactly once,
+   through the take — so it carries no risk to the ledger. The document is
+   read-only (its edit is refused while source_stock_take_id is set, which would
+   otherwise double-move) and is deleted when the take is reversed. Best-effort:
+   a failure never fails the post (the movements are the truth); a backfill can
+   mint a missing one later. */
+const createMirrorAdjustment = async (
+  sb: any, c: any, header: PostingHeader,
+  adjustmentRows: ReadonlyArray<Record<string, unknown>>, performedBy: string,
+): Promise<{ id: string; adjustment_no: string } | null> => {
+  if (adjustmentRows.length === 0) return null;
+  try {
+    const prefix = `${companyDocPrefix(c)}SA-${docMonthTag(null)}`;
+    const { data, error } = await insertWithDocNoRetry<{ id: string; adjustment_no: string }>(
+      () => mintMonthlyDocNo(sb, 'stock_adjustments', 'adjustment_no', prefix),
+      (adjustmentNo) => sb.from('stock_adjustments')
+        .insert({
+          adjustment_no:        adjustmentNo,
+          company_id:           activeCompanyId(c),  // multi-company: the only boundary
+          warehouse_id:         header.warehouse_id,
+          notes:                `Auto-created from stock take ${header.take_no}`,
+          created_by:           performedBy,
+          source_stock_take_id: header.id,
+        })
+        .select('id, adjustment_no').single(),
+    );
+    if (error || !data) {
+      // eslint-disable-next-line no-console
+      console.error('[stock-takes] mirror adjustment header failed:', (error as { message?: unknown } | null)?.message ?? 'no header');
+      return null;
+    }
+    const sa = data as unknown as { id: string; adjustment_no: string };
+    const lines = adjustmentRows.map((r, i) => ({
+      stock_adjustment_id: sa.id,
+      line_no:       i + 1,
+      item_code:     r.item_code,
+      product_name:  r.product_name ?? null,
+      variant_key:   r.variant_key ?? '',
+      qty:           r.qty,
+      unit_cost_sen: r.unit_cost_sen ?? null,
+      reason_code:   'COUNT',
+      notes:         `Stock take ${header.take_no}`,
+    }));
+    const { error: lErr } = await sb.from('stock_adjustment_lines').insert(stampCompany(lines, c));
+    if (lErr) {
+      // A header with no lines reads as an empty adjustment; drop it (lines cascade
+      // on the header, so nothing orphans) and leave the take with no mirror.
+      await sb.from('stock_adjustments').delete().eq('id', sa.id);
+      // eslint-disable-next-line no-console
+      console.error('[stock-takes] mirror adjustment lines failed:', lErr.message);
+      return null;
+    }
+    return sa;
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('[stock-takes] mirror adjustment failed:', e instanceof Error ? e.message : String(e));
+    return null;
+  }
+};
+
 const writePostingEffects = async (
   sb: any, c: any, co: { companyId: number }, header: PostingHeader, plan: PostingPlan,
   opts: { performedBy: string; fromStatus: 'OPEN' | 'PENDING_APPROVAL'; auditAction: 'POST' | 'APPROVE' },
@@ -1441,6 +1531,14 @@ const writePostingEffects = async (
        post, and the shortfall is retried on the next IN. */
     if (!mErr) await reconcileUncostedAfterIn(sb, adjustmentRows, opts.performedBy);
   }
+
+  /* Record the formal Stock Adjustment document for this variance (owner
+     2026-11-20) — ONLY when the movements actually landed, so a document never
+     claims a correction the ledger does not hold. No movements are written here;
+     stock moved once, above. */
+  const mirror = movementErrors.length === 0
+    ? await createMirrorAdjustment(sb, c, header, adjustmentRows, opts.performedBy)
+    : null;
 
   /* The variance that actually hit stock, per SKU — keyed by product code for
      the same reason the line PATCH is. This is the moment a count becomes the
@@ -1493,6 +1591,10 @@ const writePostingEffects = async (
     racksMoved: racks.moved,
     racksSkipped: racks.skippedCodes.length ? racks.skippedCodes : undefined,
     rackError: racks.error ?? undefined,
+    /* The Stock Adjustment document this post booked (null when nothing moved or
+       the record failed) — the take detail links to it. */
+    adjustmentId: mirror?.id,
+    adjustmentNo: mirror?.adjustment_no,
   };
 };
 

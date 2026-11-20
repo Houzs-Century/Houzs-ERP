@@ -9,7 +9,7 @@
 
 import { useCallback, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { History, Pencil, X } from 'lucide-react';
+import { History, Pencil, X, ClipboardList } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { adjustmentReasonLabel, fmtDateTime, fmtQty } from '@2990s/shared';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
@@ -71,15 +71,37 @@ export const StockAdjustmentDetail = () => {
             <Button variant="ghost" size="md" onClick={() => setHistoryOpen(true)}>
               <History {...ICON} /> History
             </Button>
-            <Button variant="primary" size="md" onClick={() => navigate(`/scm/stock-adjustments/${doc.id}/edit`)}>
-              <Pencil {...ICON} /> Edit
-            </Button>
+            {/* A stock-take mirror adjustment (owner 2026-11-20) is read-only —
+                its stock moved through the take, so there is no Edit; offer a
+                jump to the take instead. */}
+            {doc.source_stock_take_id ? (
+              <Button variant="primary" size="md" onClick={() => navigate(`/scm/stock-takes/${doc.source_stock_take_id}`)}>
+                <ClipboardList {...ICON} /> View stock take
+              </Button>
+            ) : (
+              <Button variant="primary" size="md" onClick={() => navigate(`/scm/stock-adjustments/${doc.id}/edit`)}>
+                <Pencil {...ICON} /> Edit
+              </Button>
+            )}
             <Button variant="ghost" size="md" onClick={() => navigate('/scm/stock-adjustments')}>
               <X {...ICON} /> Close
             </Button>
           </div>
         }
       />
+
+      {/* From-stock-take marker (owner 2026-11-20): this adjustment mirrors a
+          posted count and is read-only; the count is corrected on the take. */}
+      {doc.source_stock_take_id && (
+        <section className={styles.card} style={{ borderLeft: '3px solid var(--c-accent-bright, #d69e2e)' }}>
+          <div className={styles.cardBody} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 'var(--fs-13)' }}>
+            <ClipboardList size={16} strokeWidth={1.9} style={{ color: '#8a5a00', flexShrink: 0 }} />
+            <span style={{ color: 'var(--fg-muted)' }}>
+              Auto-created from a stock take — read-only. Correct the count on the stock take (undo it to unwind the variance).
+            </span>
+          </div>
+        </section>
+      )}
 
       <section className={styles.card}>
         <div className={styles.cardHeader}>
