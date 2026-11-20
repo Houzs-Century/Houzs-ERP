@@ -11,6 +11,8 @@ Built from `scm.scan_jobs` joined to `scm.so_scan_samples`. No new tracking. Out
 - Awaiting review: SO sample still `EXTRACTED` (also a confirmed SO edited only in fields the AI does not read); GR/PI waiting in the check queue (`review_state = 'pending'`).
 - Imported: GR/PI with a document. Accuracy is not recorded for them: GR marks every posted scan `ACCEPTED`, an edited PI writes nothing.
 
+- Fields read right (SO): per reviewed slip, filled fields the person did not change (`scm/lib/scan-field-accuracy.ts`). Blank on both sides is not counted; a missed or extra line counts each of its fields. Only slips with a draft baseline or created from `LEARNING_POOL_CLEAN_SINCE`; older ones count edits the pipeline made.
+
 Gotchas:
 - Time = job `created_at` to `updated_at`. A retried job includes the 3 minute stall.
 - "Clear failed" hard-deletes error jobs, so cleared failures are not counted.

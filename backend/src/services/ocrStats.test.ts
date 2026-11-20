@@ -16,6 +16,7 @@ const row = (over: Partial<ScanRow>): ScanRow => ({
   corrected: null,
   draft_baseline: null,
   so_missing: false,
+  has_baseline: false,
   slip_image_key: null,
   ...over,
 });
@@ -118,5 +119,23 @@ describe("buildOcrReport", () => {
     const corrected = row({ id: "a", sample_status: "CONFIRMED", extracted: slip("A"), corrected: slip("B"), slip_image_key: "scan-slips/s1" });
     const failed = row({ id: "b", status: "error", error: "boom" });
     expect(buildOcrReport("2026-10", "m", [corrected, failed]).problems.map((p) => p.slipImageKey)).toEqual(["scan-slips/s1", null]);
+  });
+
+  it("scores fields only on scans whose edits are recorded exactly", () => {
+    const after = "2026-11-20T01:00:00.000Z";
+    const rows = [
+      row({ id: "clean", created_at: after, extracted: slip("A") }),
+      row({ id: "fixed", created_at: after, sample_status: "CONFIRMED", extracted: slip("A"), corrected: slip("B") }),
+      row({ id: "baseline", has_baseline: true, sample_status: "CONFIRMED", extracted: slip("A"), corrected: slip("A", 2) }),
+      row({ id: "old", sample_status: "CONFIRMED", extracted: slip("A"), corrected: slip("B", 1, { customerName: "X" }) }),
+    ];
+    const r = buildOcrReport("2026-11", "m", rows);
+    // 4 fields each (name, phone, code, qty); 1 change on "fixed", 1 on "baseline"; "old" left out.
+    expect(r.docTypes[0].fieldAccuracy).toEqual({ correct: 10, total: 12, scans: 3 });
+    expect(r.problems.map((p) => [p.id, p.fieldAccuracy])).toEqual([
+      ["fixed", { correct: 3, total: 4 }],
+      ["baseline", { correct: 3, total: 4 }],
+      ["old", null],
+    ]);
   });
 });

@@ -30,6 +30,8 @@ type DocTypeStats = {
   corrected: number;
   imported: number;
   accuracy: { clean: number; reviewed: number } | null;
+  /** SO only: fields read right / fields on the slip, over scans whose edits are recorded exactly. */
+  fieldAccuracy: { correct: number; total: number; scans: number } | null;
   avgSec: number | null;
   p90Sec: number | null;
 };
@@ -43,6 +45,8 @@ type ProblemScan = {
   detail: string | null;
   /** Before/after per changed field; null for scans with no draft snapshot. */
   changes: FieldChange[] | null;
+  /** Corrected sales slips only; null for scans from before edits were recorded exactly. */
+  fieldAccuracy: { correct: number; total: number } | null;
   /** The slip photo the scan read; null when none was kept. */
   slipImageKey: string | null;
 };
@@ -53,6 +57,8 @@ export type OcrReport = {
   fieldMisses: { reviewed: number; fields: Array<{ field: string; count: number }> };
   problems: ProblemScan[];
 };
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 /** Fewer reviewed scans than this is not enough to judge. */
 const MIN_SAMPLE = 5;
@@ -84,6 +90,22 @@ const DOC_COLUMNS: Column<DocTypeStats>[] = [
       ),
   },
   {
+    key: "fieldAccuracy", label: "Fields read right", align: "right",
+    getValue: (r) => (r.fieldAccuracy?.total ? r.fieldAccuracy.correct / r.fieldAccuracy.total : -1),
+    render: (r) =>
+      !r.fieldAccuracy ? (
+        <span className="text-ink-muted" title="Edits to this document are not recorded, so accuracy cannot be measured">not recorded</span>
+      ) : r.fieldAccuracy.total === 0 ? (
+        "—"
+      ) : (
+        <span className="font-semibold text-ink" title={`${r.fieldAccuracy.correct} of ${r.fieldAccuracy.total} fields, over ${plural(r.fieldAccuracy.scans, "reviewed slip")}`}>
+          {pct(r.fieldAccuracy.correct, r.fieldAccuracy.total)}
+          {r.fieldAccuracy.scans < MIN_SAMPLE ? " *" : ""}{" "}
+          <span className="font-normal text-ink-muted">{r.fieldAccuracy.correct}/{r.fieldAccuracy.total}</span>
+        </span>
+      ),
+  },
+  {
     key: "failed", label: "Failed", align: "right", getValue: (r) => r.failed,
     render: (r) => <span className={r.failed > 0 ? "font-semibold text-err" : undefined}>{share(r.failed, r.scans)}</span>,
   },
@@ -97,13 +119,16 @@ const DOC_COLUMNS: Column<DocTypeStats>[] = [
   { key: "p90", label: "Slowest 10%", align: "right", getValue: (r) => r.p90Sec ?? -1, render: (r) => secs(r.p90Sec) },
 ];
 
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const scanTime = (at: string) =>
   new Date(at).toLocaleString("en-MY", { timeZone: "Asia/Kuala_Lumpur", dateStyle: "medium", timeStyle: "short" });
 
-function problemSummary({ outcome, changes, detail }: ProblemScan): string {
+const fieldsRight = ({ fieldAccuracy: fa }: ProblemScan): string =>
+  fa?.total ? `${pct(fa.correct, fa.total)} of fields right (${fa.correct}/${fa.total})` : "";
+
+function problemSummary(scan: ProblemScan): string {
+  const { outcome, changes, detail } = scan;
   if (outcome !== "corrected") return detail ?? "No reason was recorded";
-  if (changes?.length) return plural(changes.length, "change");
+  if (changes?.length) return [plural(changes.length, "change"), fieldsRight(scan)].filter(Boolean).join(" · ");
   const fields = detail ? detail.split(", ") : [];
   return fields.length ? `${plural(fields.length, "field")} changed: ${detail}` : "Changed, no detail recorded";
 }
@@ -149,7 +174,7 @@ function SlipPreviewDrawer({ scan, docNo, onClose }: { scan: ProblemScan; docNo:
       maxWidth={1600}
       ariaLabel={`Slip check for ${docNo}`}
       title={docNo}
-      subtitle={`${outcomeLabel(scan)} · scanned ${scanTime(scan.at)}`}
+      subtitle={[outcomeLabel(scan), fieldsRight(scan), `scanned ${scanTime(scan.at)}`].filter(Boolean).join(" · ")}
       headerActions={
         <Link to={salesOrderPath(docNo)} className="rounded-md border border-white/40 px-3 py-1.5 text-[12.5px] font-semibold text-white">
           Open sales order
@@ -289,6 +314,8 @@ export function OcrDashboard() {
               <div className={cardTitle}>Scans by document · {monthLabel(r.month)}</div>
               <div className={cardNote}>
                 Every scan this month, including failed ones. Accuracy = sales slips confirmed with no edits, out of those reviewed.
+                Fields read right = fields the person did not change, out of every filled field on those slips (a missed or extra line counts each of its fields);
+                only slips confirmed since 17 Nov 2026, when edits started being recorded exactly.
                 Supplier documents: Failed = the read itself broke; Needs review = read, but no document could be made (e.g. no matching PO or goods receipt);
                 Awaiting review = waiting in the check queue; Discarded = removed from the check queue.
                 * = fewer than {MIN_SAMPLE} reviewed, not enough to judge. Model: {r.model} (the same for every scan; it is not saved per scan).
