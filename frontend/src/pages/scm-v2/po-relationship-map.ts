@@ -88,31 +88,32 @@ export function buildPoChainNodes(
         : nodes.length === 1
           ? 'Tap to open'
           : 'Tap to list';
-  // A floating SO that is ALSO stored (another SKU's raise-link) shows once.
-  const floatOnly = floatingSos.filter((d) => !soLabels.includes(d));
-  const allSo = [...soLabels, ...floatOnly];
-  const purelyFloating = soLabels.length === 0 && floatOnly.length > 0;
+  /* The order MRP gives this PO's goods to NOW is the answer; the order it was
+     raised for is only a reference (owner 2026-11-19: a PO is a PO - our map
+     had it the wrong way round). So MRP's SOs lead the slot and paint it done;
+     with no MRP pairing the raise-links stand alone, as before. */
+  const assigned = floatingSos;
+  const raisedOnly = soLabels.filter((d) => !assigned.includes(d));
+  const allSo = assigned.length > 0 ? [...assigned, ...raisedOnly] : soLabels;
   return [
     {
       type: 'Sales Order',
-      doc: docCell(allSo, 'sales orders', 'Not linked'),
+      doc: docCell(assigned.length > 0 ? assigned : soLabels, 'sales orders', 'Not linked'),
       meta:
         allSo.length === 0
           ? 'Stock buy — no source SO'
           : !gates.canOpenSo
             ? 'Sales document'
-            : purelyFloating
-              ? allSo.length === 1
-                ? 'Live MRP pairing — tap'
-                : 'Live MRP pairings — tap'
+            : assigned.length > 0
+              ? raisedOnly.length > 0
+                ? `Assigned by MRP · raised for ${raisedOnly.length === 1 ? raisedOnly[0] : `${raisedOnly.length} others`} — tap`
+                : 'Assigned by MRP — tap'
               : allSo.length === 1
-                ? 'Tap to open'
-                : 'Tap to list',
-      // Only a STORED link paints the slot done/green; a floating pairing is
-      // a live fact, not a record — it renders dashed via `float`.
-      state: soLabels.length > 0 ? 'done' : 'pending',
+                ? 'Raised for — tap to open'
+                : 'Raised for — tap to list',
+      state: allSo.length > 0 ? 'done' : 'pending',
       actionable: allSo.length > 0,
-      float: purelyFloating,
+      float: false,
     },
     {
       type: 'Purchase Order',
@@ -288,16 +289,23 @@ export function usePoRelationshipMap(header: PoRelationshipHeader | null): {
           });
           return false;
         }
-        /* Stored rows first (graph so-nodes navigate by doc_no — their id;
-           note tokens are the doc numbers verbatim), then the floating
-           pairings, each row saying what it is — live, never a stored link. */
+        /* MRP's orders first - where the goods are going now - then the orders
+           the PO was raised for that MRP has since moved them away from (owner
+           2026-11-19). Graph so-nodes navigate by doc_no (their id); note tokens
+           are the doc numbers verbatim. */
         const storedRows = soNodes.length > 0
-          ? soNodes.map((so) => ({ id: so.id, label: so.label, sub: so.status as string | null }))
-          : noteSos.map((doc) => ({ id: doc, label: doc, sub: null as string | null }));
-        const floatRows = floatOnlySos.map((doc) => ({
-          id: doc, label: `${doc} ~`, sub: 'Live MRP pairing — may change' as string | null,
+          ? soNodes.map((so) => ({ id: so.id, label: so.label }))
+          : noteSos.map((doc) => ({ id: doc, label: doc }));
+        const raisedFor = new Set(storedRows.map((r) => r.label));
+        const mrpRows = floatingSos.map((doc) => ({
+          id: doc, label: doc,
+          sub: (raisedFor.has(doc) ? 'Assigned by MRP · raised for it too' : 'Assigned by MRP now') as string | null,
         }));
-        const rows = [...storedRows, ...floatRows];
+        const refRows = storedRows.filter((r) => !floatingSos.includes(r.label)).map((r) => ({
+          id: r.id, label: r.label,
+          sub: (floatingSos.length > 0 ? 'Raised for it · MRP gave the goods to another order' : 'Raised for it') as string | null,
+        }));
+        const rows = [...mrpRows, ...refRows];
         if (rows.length === 1) {
           openDoc(`/scm/sales-orders/${encodeURIComponent(rows[0]!.id)}`);
           return true;
@@ -307,12 +315,10 @@ export function usePoRelationshipMap(header: PoRelationshipHeader | null): {
            it. Graph so-nodes and note tokens are both doc numbers, so both route
            the same way. */
         openChoice({
-          title: floatRows.length === 0
-            ? 'Raised from more than one sales order'
-            : 'Paired with more than one sales order',
-          intro: floatRows.length === 0
-            ? 'This PO covers several Sales Orders. Pick one to open it.'
-            : 'Plain rows are stored raise-links; "~" rows are the live MRP pairing and may change on the next view. Pick one to open it.',
+          title: mrpRows.length === 0 ? 'Raised for more than one sales order' : 'Sales orders for this PO',
+          intro: mrpRows.length === 0
+            ? 'This PO was raised for several Sales Orders. Pick one to open it.'
+            : '"Assigned by MRP" is where the goods are going now; "Raised for it" is the order the PO was first bought for. Pick one to open it.',
           docs: rows.map((d) => ({ ...d, to: `/scm/sales-orders/${encodeURIComponent(d.id)}` })),
         });
         return false;
