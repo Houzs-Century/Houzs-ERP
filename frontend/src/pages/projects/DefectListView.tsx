@@ -268,8 +268,8 @@ export function DefectListView() {
           message={showAll ? "No defects" : "No open defects"}
           description={
             showAll
-              ? "No defect photos have been uploaded on any project yet."
-              : "Every defect has been marked Done. Switch to Semua to see the closed ones."
+              ? "No defect photos uploaded yet."
+              : "Switch to Semua to include defects that are already closed."
           }
         />
       ) : (
