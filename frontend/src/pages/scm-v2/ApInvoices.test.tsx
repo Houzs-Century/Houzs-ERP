@@ -228,6 +228,18 @@ describe('both kinds on one list', () => {
     expect((listingAsync.mock.calls[1]![0] as unknown[]).length).toBe(1);
     expect(listingAsync.mock.calls[1]![1]).toEqual({ showing: 'All kinds · 400-H004 · HOOKKA INDUSTRIES SDN. BHD. · Any status' });
   });
+
+  test('a total row under the list follows the filters (Mika, Houzs accounts)', async () => {
+    draw();
+    const foot = (key: string) => document.querySelector(`tfoot [data-total-key="${key}"]`)?.textContent;
+    expect(foot('total')).toBe('RM 7,200.00');
+    /* The draft owes nothing yet; the purchase invoice still owes RM 2,000. */
+    expect(foot('outstanding')).toBe('RM 2,000.00');
+    fireEvent.focus(screen.getByLabelText('Filter by supplier'));
+    fireEvent.mouseDown(screen.getByText('400-H004 · HOOKKA INDUSTRIES SDN. BHD.'));
+    await waitFor(() => expect(foot('total')).toBe('RM 3,000.00'));
+    expect(foot('number')).toBe('Total · 1 row');
+  });
 });
 
 describe('raising an AP invoice', () => {

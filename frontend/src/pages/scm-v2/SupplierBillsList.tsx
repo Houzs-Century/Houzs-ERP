@@ -26,7 +26,7 @@ import { fmtDateOrDash, fmtSen, todayMY } from '../../vendor/shared/format';
 import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
 import {
   billKindWord, billTag, chipLabel, chipsOf, controlWord, daysLate, fromApRow, fromNote, inChip, inKind, isOpen, kindTabLabel, lifeOf,
-  matchesBill, ofSupplier, signedSen, sortBills, type BillChip, type BillKindTab, type BillRow, type BillTone,
+  matchesBill, ofSupplier, signedSen, sortBills, totalByCurrency, type BillChip, type BillKindTab, type BillRow, type BillTone,
 } from './supplier-bills';
 import { billPrintDocOf, useSupplierBillsPrint } from './useSupplierBillsPrint';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
@@ -208,13 +208,16 @@ export function SupplierBillsList({ apRows, apLoading, apError, can, onAct, onPr
     /* When we plan to pay it (step 7) — shown on what is still owed. */
     { key: 'planned', label: 'Planned', render: (r) => (r.planned ? fmtDateOrDash(r.planned) : '—'), getValue: (r) => r.planned, exportFormat: 'date' },
     {
-      key: 'total', label: 'Total', align: 'right', defaultHidden: true, render: (r) => <span className={mo.money}>{fmtSen(r.totalSen)}</span>,
+      key: 'total', label: 'Total', align: 'right', render: (r) => <span className={mo.money}>{fmtSen(r.totalSen)}</span>,
       getValue: (r) => r.totalSen, exportValue: (r) => r.totalSen / 100, exportFormat: 'money',
+      /* A credit note takes off what we owe, as on the tick bar and Print listing. */
+      total: (rows) => totalByCurrency(rows, signedSen),
     },
     {
       key: 'outstanding', label: 'Outstanding', align: 'right',
       render: (r) => (r.outstandingSen == null ? '' : <span className={mo.money}>{fmtSen(r.outstandingSen)}</span>),
       getValue: (r) => r.outstandingSen, exportValue: (r) => (r.outstandingSen == null ? null : r.outstandingSen / 100), exportFormat: 'money',
+      total: (rows) => totalByCurrency(rows, (r) => r.outstandingSen),
     },
     {
       key: 'status', label: 'Status',
