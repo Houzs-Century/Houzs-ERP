@@ -167,3 +167,43 @@ describe("EventPnlTable — three layers", () => {
     expect(onForecast).not.toHaveBeenCalled();
   });
 });
+
+describe("EventPnlTable - every Forecast at once, one Save (owner 2026-11-20)", () => {
+  it("Edit all forecasts opens a box per line; Save all sends only the changed lines", async () => {
+    const onForecast = vi.fn().mockResolvedValue(undefined);
+    render(<EventPnlTable pnl={FUTURE} editable={() => undefined} busyCategory={null} books={new Set()} layers={LAYERS} onForecast={onForecast} />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit all forecasts" }));
+    fireEvent.change(screen.getByLabelText("Commission forecast"), { target: { value: "14000" } });
+    fireEvent.change(screen.getByLabelText("Setup forecast"), { target: { value: "5,000" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save all" }));
+    await waitFor(() => expect(onForecast).toHaveBeenCalledTimes(2));
+    expect(onForecast).toHaveBeenCalledWith("commission", 14000);
+    expect(onForecast).toHaveBeenCalledWith("setup", 5000);
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Save all" })).toBeNull());
+  });
+
+  it("a bad amount stops the save and names the line; a failed line is reported", async () => {
+    const onForecast = vi.fn().mockRejectedValue(new Error("forbidden"));
+    render(<EventPnlTable pnl={FUTURE} editable={() => undefined} busyCategory={null} books={new Set()} layers={LAYERS} onForecast={onForecast} />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit all forecasts" }));
+    fireEvent.change(screen.getByLabelText("Commission forecast"), { target: { value: "abc" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save all" }));
+    expect(screen.getByRole("alert").textContent).toMatch(/Commission/);
+    expect(onForecast).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("Commission forecast"), { target: { value: "100" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save all" }));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/Not saved - Commission: forbidden/));
+  });
+});
+
+describe("EventPnlTable - a saved Forecast shows at once (owner 2026-11-20)", () => {
+  it("the label shows the new Forecast before the page has re-read the project", async () => {
+    const onForecast = vi.fn().mockResolvedValue(undefined);
+    render(<EventPnlTable pnl={FUTURE} editable={() => undefined} busyCategory={null} books={new Set()} layers={LAYERS} onForecast={onForecast} />);
+    const row = screen.getByText("Setup").closest("tr") as HTMLTableRowElement;
+    fireEvent.click(within(row).getByRole("button", { name: /Forecast/ }));
+    fireEvent.change(within(row).getByLabelText("Forecast amount"), { target: { value: "4321" } });
+    fireEvent.click(within(row).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(within(row).getByRole("button", { name: /Forecast RM 4,321/ })).toBeTruthy());
+  });
+});

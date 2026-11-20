@@ -256,6 +256,8 @@ export type PlanningStop = {
   plate: string | null;
   /** The stop's own snapshot: the DO's or SO's total when it was scheduled. */
   revenue_sen: string | number | null;
+  /** The DP job's own sales amount ("Delivery (no SO)"), sen; null when none. */
+  dp_sales_sen?: string | number | null;
   customer_name: string | null;
   stop_dp_no: string | null;
   do_number: string | null;
@@ -322,7 +324,8 @@ export function planningRowOf(s: PlanningStop, who: (id: string | null) => Seat)
   const [d1, d2, h1, h2] = [who(s.d1), who(s.d2), who(s.h1), who(s.h2)];
   const isCase = s.assr_case_id != null;
   const caseLoc = isCase ? assrBoardLocation(s.case_addr3, s.case_addr4, s.case_so_state, s.case_so_postcode, { postcode: s.case_own_postcode, state: s.case_own_state }) : null;
-  const amount = s.local_total_sen ?? (isCase ? 0 : s.revenue_sen);
+  /* A delivery with no SO carries its own amount on the DP job (owner 2026-11-20). */
+  const amount = s.local_total_sen ?? (isCase ? 0 : s.dp_sales_sen ?? s.revenue_sen);
   const jobType = (isCase ? CASE_LEG_KIND[ASSR_LEG_BY_STOP[s.stop_type] ?? ""] : undefined) ?? STOP_KIND[s.stop_type] ?? "NONE";
   return {
     source: "PLANNING",
@@ -580,12 +583,14 @@ const doRunCandidates = (companyId: number) => sql`
 export async function planningRows(db: Db, companyId: number, month: string, people: ReadonlyArray<Person>): Promise<SourceRow[]> {
   const { first, last } = tripMonthBounds(month);
   const [stops, projects, dos] = await Promise.all([
+    // company-scope: trips and trip_stops are both joined on company_id = ${companyId} (the JOIN below).
     db.execute<PlanningStop>(sql`
     SELECT s.id::text AS stop_id, s.do_id::text AS do_id, s.stop_type::text AS stop_type, t.id::text AS trip_id, t.trip_date::text AS trip_date, t.trip_no,
            l.plate, s.revenue_sen, s.customer_name, s.dp_no AS stop_dp_no,
            d.do_number, d.so_doc_no, d.status::text AS do_status, d.local_total_sen,
            COALESCE(NULLIF(d.state, ''), d.customer_state) AS do_state, d.postcode AS do_postcode,
            dp.state AS dp_state, dp.postcode AS dp_postcode, dp.dp_no, dp.project_id::text AS project_id,
+           dp.sales_amount_sen AS dp_sales_sen,
            et.slug AS event_slug, et.name AS event_name,
            s.assr_case_id, ac.assr_no, ac.addr3 AS case_addr3, ac.addr4 AS case_addr4,
            so.customer_state AS case_so_state, so.postcode AS case_so_postcode,

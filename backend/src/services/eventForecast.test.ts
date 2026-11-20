@@ -125,6 +125,28 @@ describe('layerPnl — precedence per line: Actual, then Forecast, then Last eve
     expect(own.lines.commission).toMatchObject({ amount: 1234, source: 'forecast' });
   });
 
+  it('no last event: a forecast Sales is priced by the brand rate card (owner 2026-11-20)', () => {
+    /* RATE: transport 5%, merchandise 2%, commission 10%. */
+    const l = layerPnl({ col: EMPTY, booksRows: new Set(), forecast: { sales: 100000 }, lastEvent: null, useLastEvent: true });
+    expect(l.lines.commission).toMatchObject({ amount: 10000, source: 'forecast' });
+    expect(l.lines.merchandise).toMatchObject({ amount: 2000, source: 'forecast' });
+    expect(l.lines.transport_fee).toMatchObject({ amount: 5000, source: 'forecast' });
+    /* Fixed costs are not priced from sales. */
+    expect(l.lines.setup).toMatchObject({ amount: 0, source: 'actual' });
+    /* No rate card: nothing to price by. */
+    const none = layerPnl({ col: col([], null, null), booksRows: new Set(), forecast: { sales: 100000 }, lastEvent: null, useLastEvent: true });
+    expect(none.lines.commission).toMatchObject({ amount: 0, source: 'actual' });
+  });
+
+  it('the Project Maintenance % wins over the last event ratio; with no % the ratio is used', () => {
+    /* A last event that paid 20% commission; the brand's rate card says 10%. */
+    const last20 = { ...lastEventValues(LAST, new Set()), commission: 20000 };
+    const l = layerPnl({ col: EMPTY, booksRows: new Set(), forecast: { sales: 50000 }, lastEvent: last20, useLastEvent: true });
+    expect(l.lines.commission).toMatchObject({ amount: 5000, source: 'forecast' });
+    const noRate = layerPnl({ col: col([], null, null), booksRows: new Set(), forecast: { sales: 50000 }, lastEvent: last20, useLastEvent: true });
+    expect(noRate.lines.commission).toMatchObject({ amount: 10000, source: 'forecast' });
+  });
+
   it('a row the books fill is actual even at zero', () => {
     const l = layerPnl({ col: EMPTY, booksRows: new Set(['rental']), forecast: { rental: 9000 }, lastEvent: lastValues, useLastEvent: true });
     expect(l.lines.rental).toMatchObject({ amount: 0, source: 'actual' });
