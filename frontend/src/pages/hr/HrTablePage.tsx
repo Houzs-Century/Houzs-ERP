@@ -29,8 +29,16 @@ export function Tag({ tone, children }: { tone: "ok" | "warn" | "bad" | "info" |
   };
   return <span className={cx("rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide", cls[tone])}>{children}</span>;
 }
-export function Bar({ pct, tone = "bg-primary" }: { pct: number; tone?: string }) {
-  return <div className="h-1.5 w-20 overflow-hidden rounded-full bg-surface-2"><div className={cx("h-full rounded-full", tone)} style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} /></div>;
+export function Bar({ pct, tone = "bg-primary", w = "w-20" }: { pct: number; tone?: string; w?: string }) {
+  return <div className={cx("h-1.5 overflow-hidden rounded-full bg-surface-2", w)}><div className={cx("h-full rounded-full", tone)} style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} /></div>;
+}
+
+/** A span on the 06:00-22:00 day scale (shift hours, overtime window). */
+export function TimeSpan({ startMin, endMin, tone = "bg-primary" }: { startMin: number; endMin: number; tone?: string }) {
+  const S = 360, E = 1320, span = E - S;
+  const left = ((startMin - S) / span) * 100;
+  const width = ((endMin - startMin) / span) * 100;
+  return <div className="relative h-2 w-full min-w-[90px] rounded-full bg-surface-2"><div className={cx("absolute top-0 h-2 rounded-full", tone)} style={{ left: `${left}%`, width: `${width}%` }} /></div>;
 }
 
 export type HrStat = { label: string; value: (show: boolean) => ReactNode; sub: ReactNode; bar: string };
