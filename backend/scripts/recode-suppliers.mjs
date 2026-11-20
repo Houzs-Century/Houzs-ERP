@@ -16,7 +16,11 @@
        of the supplier's lines on the old control;
      • scm.acc_credit_notes.party_code of the supplier's own notes;
      • public.assr_cases / assr_supplier_returns / assr_supplier_tokens
-       creditor_code (after-sales returns name the supplier by code);
+       creditor_code (after-sales returns name the supplier by code), and the
+       supplier's row in public.creditors, the AutoCount creditor copy several
+       after-sales screens read the supplier's NAME from by code (supplier
+       portal, quality, returns print, service cost) — moved with the cases so
+       a case on the new code still finds its name;
      • scm.payment_voucher_lines that debit the old control for this supplier,
        so a draft voucher still posts (wrong_ap_control) and a posted one
        reads like its journal;
@@ -24,8 +28,11 @@
    Nothing else moves: amounts, dates, other accounts, names.
 
    Refused before any write: a pair whose old code is not exactly one supplier
-   of COMPANY, a new code already in use there, a target control missing from
-   the chart, and a MAP that chains or swaps codes (lib/supplier-recode.mjs).
+   of COMPANY, a new code already in use there or anywhere in public.creditors
+   (its key is the code alone), a target control missing from the chart, a
+   voucher journal of the supplier with a control line that carries no party
+   (it would stay behind unseen), a credit note of the supplier on some other
+   code, and a MAP that chains or swaps codes (lib/supplier-recode.mjs).
 
    MODE=plan (default) prints, per code, how many rows each step touches and
    writes nothing. MODE=apply needs CONFIRM="MOVE SUPPLIER CODES WITH THEIR
@@ -90,12 +97,26 @@ async function survey(db, pair, controls) {
   if (sup.length !== 1) return { ok: false, reason: `${pair.oldCode}: ${sup.length} suppliers of company ${CO} carry it, expected exactly 1` };
   const taken = await db`SELECT 1 FROM scm.suppliers WHERE company_id = ${CO} AND code = ${pair.newCode}`;
   if (taken.length) return { ok: false, reason: `${pair.newCode} is already a supplier code in company ${CO}` };
+  const takenCopy = await db`SELECT 1 FROM public.creditors WHERE creditor_code = ${pair.newCode}`;
+  if (takenCopy.length) return { ok: false, reason: `${pair.newCode} is already a creditor in public.creditors, which after-sales screens read names from` };
   const move = controlMove(pair.oldCode, pair.newCode, controls);
   if (move) {
     const acct = await db`SELECT 1 FROM scm.accounts WHERE company_id = ${CO} AND account_code = ${move.to}`;
     if (!acct.length) return { ok: false, reason: `${move.to} is not in company ${CO}'s chart` };
   }
   const id = sup[0].id;
+  const [unseen] = await db`
+    SELECT COUNT(*)::int AS n
+      FROM scm.journal_entry_lines l
+      JOIN scm.journal_entries e ON e.id = l.journal_entry_id AND e.company_id = l.company_id
+      JOIN scm.payment_vouchers v ON v.pv_number = e.source_doc_no AND v.company_id = e.company_id
+     WHERE l.company_id = ${CO} AND v.supplier_id = ${id} AND l.party_code IS NULL
+       AND l.account_code IN (${controls.AP}, ${controls.AP_OTHER})`;
+  if (unseen.n) return { ok: false, reason: `${pair.oldCode}: ${unseen.n} control line(s) on its voucher journals carry no party code and would stay on the old control` };
+  const [stray] = await db`
+    SELECT COUNT(*)::int AS n FROM scm.acc_credit_notes
+     WHERE company_id = ${CO} AND supplier_id = ${id} AND party_code IS DISTINCT FROM ${pair.oldCode}`;
+  if (stray.n) return { ok: false, reason: `${pair.oldCode}: ${stray.n} of its credit notes carry another code` };
   const [lines] = await db`
     SELECT COUNT(*)::int AS n,
            COUNT(*) FILTER (WHERE account_code = ${move ? move.from : ''})::int AS on_old
@@ -114,6 +135,8 @@ async function survey(db, pair, controls) {
     SELECT COUNT(*)::int AS n FROM public.assr_supplier_tokens t
       JOIN public.assr_cases a ON a.id = t.assr_id
      WHERE a.company_id = ${CO} AND t.creditor_code = ${pair.oldCode}`;
+  const [copy] = await db`
+    SELECT COUNT(*)::int AS n FROM public.creditors WHERE company_id = ${CO} AND creditor_code = ${pair.oldCode}`;
   const [pvLines] = move ? await db`
     SELECT COUNT(*)::int AS n,
            COUNT(*) FILTER (WHERE UPPER(v.status::text) NOT IN ('POSTED', 'CANCELLED'))::int AS open
@@ -123,7 +146,7 @@ async function survey(db, pair, controls) {
   const sums = await partyControlSums(db, pair.oldCode, controls);
   return {
     ok: true, id, move, sums,
-    counts: { lines: lines.n, onOld: lines.on_old, notes: notes.n, cases: cases.n, returns: returns.n, tokens: tokens.n, pvLines: pvLines.n, pvOpen: pvLines.open },
+    counts: { lines: lines.n, onOld: lines.on_old, notes: notes.n, cases: cases.n, returns: returns.n, tokens: tokens.n, copy: copy.n, pvLines: pvLines.n, pvOpen: pvLines.open },
   };
 }
 
@@ -142,7 +165,7 @@ try {
   }
   for (const p of plan) {
     const c = p.counts;
-    note(`${p.oldCode} -> ${p.newCode}: ${c.lines} ledger line(s), ${p.move ? `${c.onOld} move ${p.move.from} -> ${p.move.to}` : 'same control'}; credit notes ${c.notes}; after-sales cases ${c.cases}, returns ${c.returns}, links ${c.tokens}; voucher lines ${c.pvLines} (${c.pvOpen} on unposted vouchers)`);
+    note(`${p.oldCode} -> ${p.newCode}: ${c.lines} ledger line(s), ${p.move ? `${c.onOld} move ${p.move.from} -> ${p.move.to}` : 'same control'}; credit notes ${c.notes}; after-sales cases ${c.cases}, returns ${c.returns}, links ${c.tokens}, creditor copy ${c.copy}; voucher lines ${c.pvLines} (${c.pvOpen} on unposted vouchers)`);
   }
   const before = await controlTotals(sql, controls);
 
@@ -167,6 +190,8 @@ try {
         await tx`UPDATE public.assr_supplier_tokens t SET creditor_code = ${p.newCode}
                    FROM public.assr_cases a WHERE a.id = t.assr_id AND a.company_id = ${CO} AND t.creditor_code = ${p.oldCode}`;
         await tx`UPDATE public.assr_cases SET creditor_code = ${p.newCode} WHERE company_id = ${CO} AND creditor_code = ${p.oldCode}`;
+        await tx`UPDATE public.creditors SET creditor_code = ${p.newCode}, updated_at = now()
+                  WHERE company_id = ${CO} AND creditor_code = ${p.oldCode}`;
         if (p.move) {
           await tx`UPDATE scm.payment_voucher_lines l SET debit_account_code = ${p.move.to}
                      FROM scm.payment_vouchers v
@@ -191,11 +216,15 @@ try {
           SELECT (SELECT COUNT(*) FROM scm.journal_entry_lines WHERE company_id = ${CO} AND party_type = 'SUPPLIER' AND party_code = ${p.oldCode})::int AS lines,
                  (SELECT COUNT(*) FROM scm.journal_entry_lines WHERE company_id = ${CO} AND party_type = 'SUPPLIER' AND party_code = ${p.newCode})::int AS moved,
                  (SELECT COUNT(*) FROM scm.acc_credit_notes WHERE company_id = ${CO} AND supplier_id = ${p.id} AND party_code IS DISTINCT FROM ${p.newCode})::int AS notes,
-                 (SELECT COUNT(*) FROM public.assr_cases WHERE company_id = ${CO} AND creditor_code = ${p.oldCode})::int AS cases`;
+                 (SELECT COUNT(*) FROM public.assr_cases WHERE company_id = ${CO} AND creditor_code = ${p.oldCode})::int AS cases,
+                 (SELECT COUNT(*) FROM public.creditors WHERE company_id = ${CO} AND creditor_code = ${p.oldCode})::int AS copy_old,
+                 (SELECT company_name FROM public.creditors WHERE company_id = ${CO} AND creditor_code = ${p.newCode}) AS copy_name`;
         if (left.lines) problems.push(`${p.oldCode}: ${left.lines} ledger line(s) still carry the old code`);
         if (left.moved !== p.counts.lines) problems.push(`${p.newCode}: ${left.moved} ledger line(s) carry the new code, expected ${p.counts.lines}`);
         if (left.notes) problems.push(`${p.newCode}: ${left.notes} of its credit notes do not carry the new code`);
         if (left.cases) problems.push(`${p.oldCode}: ${left.cases} after-sales case(s) still name the old code`);
+        if (left.copy_old) problems.push(`${p.oldCode}: public.creditors still holds the old code`);
+        if (p.counts.copy && typeof left.copy_name !== 'string') problems.push(`${p.newCode}: public.creditors has no row on the new code`);
         const after = await partyControlSums(fresh, p.newCode, controls);
         const total = (o) => o[controls.AP] + o[controls.AP_OTHER];
         if (total(after) !== total(p.sums)) problems.push(`${p.newCode}: its ledger balance changed`);
