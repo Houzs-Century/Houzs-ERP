@@ -242,8 +242,8 @@
     },
     {
       "check": "D1",
-      "key": "COLORCODE,COLOURCODE,FABRICCODE,FABRICCOLOR|backend/src/scm/lib/fabric-supplier-code.ts backend/src/scm/shared/so-variant-rule.ts frontend/src/vendor/shared/so-variant-rule.ts",
-      "why": "A KEY-ALIAS list — the several spellings one attribute arrives under from AutoCount, forms and OCR. Adding a spelling in one reader and not another is a real risk, but the sets are readers of the same data, not two answers to one question. 3 homes: FABRIC_CODE_KEYS."
+      "key": "COLORCODE,COLOURCODE,FABRICCODE,FABRICCOLOR|backend/src/scm/shared/so-variant-rule.ts backend/src/scm/shared/variant-summary.ts frontend/src/vendor/shared/so-variant-rule.ts frontend/src/vendor/shared/variant-summary.ts",
+      "why": "A KEY-ALIAS list — the several spellings one attribute arrives under from AutoCount, forms and OCR. Adding a spelling in one reader and not another is a real risk, but the sets are readers of the same data, not two answers to one question. FABRIC_CODE_KEYS moved from lib/fabric-supplier-code.ts into shared/variant-summary.ts (and its vendored twin) so the supplier-code stamp and buildVariantSummary read one chain (2990-0067)."
     },
     {
       "check": "D1",
@@ -507,8 +507,8 @@
     },
     {
       "check": "D1",
-      "key": "CANCELLED,OPEN,POSTED|backend/src/scm/routes/stock-takes.ts frontend/src/vendor/scm/lib/status-pill.ts",
-      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: VALID_STATUS, STOCK_TAKE. Cost of divergence is a blank chip, not a wrong number."
+      "key": "CANCELLED,OPEN,PENDING_APPROVAL,POSTED|backend/src/scm/routes/stock-takes.ts frontend/src/vendor/scm/lib/status-pill.ts",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: VALID_STATUS, STOCK_TAKE. PENDING_APPROVAL added 2026-11-20 (over-limit counts await a supervisor). Cost of divergence is a blank chip, not a wrong number."
     },
     {
       "check": "D1",

@@ -142,9 +142,12 @@ const STOCK_TRANSFER: Record<string, Entry> = {
   CANCELLED: { label: 'Cancelled', tone: 'danger' },
 };
 const STOCK_TAKE: Record<string, Entry> = {
-  OPEN:      { label: 'Open',      tone: 'neutral' },
-  POSTED:    { label: 'Confirmed', tone: 'success' },
-  CANCELLED: { label: 'Cancelled', tone: 'danger' },
+  OPEN:             { label: 'Open',             tone: 'neutral' },
+  /* Owner 2026-11-20: an over-limit count a non-supervisor submitted, waiting
+     for a stock-take supervisor to approve it into POSTED (or reject to OPEN). */
+  PENDING_APPROVAL: { label: 'Pending Approval', tone: 'pending' },
+  POSTED:           { label: 'Confirmed',        tone: 'success' },
+  CANCELLED:        { label: 'Cancelled',        tone: 'danger' },
 };
 
 // SO amendment / revision workflow (Phase 1-C). Two-gate state machine:

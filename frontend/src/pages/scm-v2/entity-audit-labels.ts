@@ -82,12 +82,15 @@ export const GRN_AUDIT_LABELS: AuditLabelDictionary = {
 /* ── Stock Take — routes/stock-takes.ts ───────────────────────────────────── */
 
 const STOCK_TAKE_ACTIONS: Record<string, string> = {
-  CREATE:  'Created stock take',
-  UPDATE:  'Updated counts',
-  POST:    'Posted stock take',
-  CANCEL:  'Cancelled stock take',
-  REVERSE: 'Reversed posting',
-  DELETE:  'Deleted stock take',
+  CREATE:              'Created stock take',
+  UPDATE:              'Updated counts',
+  POST:                'Posted stock take',
+  SUBMIT_FOR_APPROVAL: 'Sent for approval',
+  APPROVE:             'Approved and posted',
+  REJECT:              'Returned for recount',
+  CANCEL:              'Cancelled stock take',
+  REVERSE:             'Reversed posting',
+  DELETE:              'Deleted stock take',
 };
 
 const STOCK_TAKE_FIELDS: Record<string, string> = {
