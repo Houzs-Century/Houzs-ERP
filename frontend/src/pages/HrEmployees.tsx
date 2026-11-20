@@ -13,6 +13,7 @@ import { HrPageHeader, hrPrimaryBtn, hrSecondaryBtn } from "./hr/HrPageHeader";
 import { OverviewPage } from "./hr/OverviewPage";
 import { EmployeeMasterPage } from "./hr/EmployeeMasterPage";
 import { AttendancePage } from "./hr/AttendancePage";
+import { OtRequestsPage } from "./hr/OtRequestsPage";
 import { EmployeeEditModal } from "./hr/EmployeeEditModal";
 import type { Emp } from "./hr/hrSampleData";
 import { EmployeeMasterTab } from "./hr/EmployeeMasterTab";
@@ -87,18 +88,6 @@ const HEADER: Record<Tab, { title: string; description: string }> = {
   },
 };
 
-/** Stage placeholder for pages built in a later stage of the redesign. */
-function ComingSoon({ title }: { title: string }) {
-  return (
-    <div className="flex flex-1 items-center justify-center p-10 text-center text-[13px] text-ink-muted">
-      <div>
-        <div className="text-[15px] font-semibold text-ink">{title}</div>
-        <div className="mt-1">This screen is part of the HR redesign and lands in a later stage.</div>
-      </div>
-    </div>
-  );
-}
-
 export function HrEmployees() {
   const [params, setParams] = useSearchParams();
   const [modalEmp, setModalEmp] = useState<Emp | null>(null);
@@ -160,7 +149,14 @@ export function HrEmployees() {
         ) : active === "attendance" ? (
           <AttendancePage onPickEmployee={setModalEmp} />
         ) : active === "ot-requests" ? (
-          <ComingSoon title="OT Requests" />
+          <>
+            <HrPageHeader
+              title="OT Requests"
+              subtitle="Overtime submitted by employees or supervisors, approved before it reaches payroll"
+              actions={<><button type="button" className={hrSecondaryBtn}>Export</button><button type="button" className={hrPrimaryBtn}>+ New OT request</button></>}
+            />
+            <OtRequestsPage />
+          </>
         ) : (
           <div className="px-6 py-4">
             <PageHeader eyebrow="HR · Employees & Attendance" title={head.title} description={head.description} />
