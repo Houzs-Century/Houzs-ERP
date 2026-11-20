@@ -3,7 +3,7 @@
    order, and a credit note taking off what we owe on the listing. */
 
 import { describe, expect, test } from 'vitest';
-import { billTag, inChip, listingRowOf, matchesBill, sortBills, type BillRow } from './supplier-bills';
+import { billTag, inChip, listingRowOf, matchesBill, sortBills, totalByCurrency, type BillRow } from './supplier-bills';
 
 const TODAY = '2026-11-03';
 const bill = (over: Partial<BillRow>): BillRow => ({
@@ -68,5 +68,19 @@ describe('the planned payment date (step 7)', () => {
     const b = bill({ key: 'b', number: 'B', due: '2026-11-20', planned: null });
     expect(sortBills([a, b], 'unpaid').map((r) => r.number)).toEqual(['B', 'A']);
     expect(inChip(bill({ due: '2026-11-01', planned: '2026-11-30' }), 'overdue', TODAY)).toBe(true);
+  });
+});
+
+describe('the footer total', () => {
+  test('adds the rows per currency, a credit note taking off, a missing figure skipped', () => {
+    const rows = [
+      bill({ totalSen: 10_000, outstandingSen: 4_000 }),
+      bill({ key: 'API-2', totalSen: 5_050, outstandingSen: null, status: 'DRAFT' }),
+      bill({ key: 'SCN-1', kind: 'SCN', totalSen: 2_000, outstandingSen: null, unusedSen: 2_000 }),
+      bill({ key: 'API-3', currency: 'USD', totalSen: 123_456, outstandingSen: 123_456 }),
+    ];
+    expect(totalByCurrency(rows, (r) => (r.kind === 'SCN' ? -r.totalSen : r.totalSen))).toBe('RM 130.50 · USD 1,234.56');
+    expect(totalByCurrency(rows, (r) => r.outstandingSen)).toBe('RM 40.00 · USD 1,234.56');
+    expect(totalByCurrency([], (r) => r.totalSen)).toBe('');
   });
 });
