@@ -25,7 +25,7 @@
 // ----------------------------------------------------------------------------
 
 import type { FieldChange } from './so-audit';
-import { buildVariantSummary } from '../shared/variant-summary';
+import { buildVariantSummary, withoutFabricSupplierCode } from '../shared/variant-summary';
 
 /** Money columns that are PURE functions of qty / unit price / discount / cost —
  *  all of which are reported in their own right. Listing them too would put five
@@ -104,8 +104,8 @@ export function soLineFieldChanges(
      line and must not vanish just because it does not print. */
   if (updates['variants'] !== undefined) {
     const group = String((updates['item_group'] ?? prevRow['item_group']) ?? '');
-    const before = (prevRow['variants'] ?? null) as Record<string, unknown> | null;
-    const after = (updates['variants'] ?? null) as Record<string, unknown> | null;
+    const before = stampless(prevRow['variants']);
+    const after = stampless(updates['variants']);
     const beforeSummary = buildVariantSummary(group, before) || '';
     const afterSummary = buildVariantSummary(group, after) || '';
     if (beforeSummary !== afterSummary) {
@@ -122,3 +122,7 @@ export function soLineFieldChanges(
 
   return out;
 }
+
+// A saved supplier-code stamp is display only; a re-stamp on save is not an edit.
+const stampless = (v: unknown): Record<string, unknown> | null =>
+  v && typeof v === 'object' ? withoutFabricSupplierCode(v as Record<string, unknown>) : null;

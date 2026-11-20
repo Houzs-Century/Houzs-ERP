@@ -56,7 +56,7 @@ export type DriftLine = {
    banner on a PO nobody re-specced (2990-PO-2608-020, owner 2026-09-09). Strip
    them from BOTH sides before building either summary, so the compare and the
    message it produces are about the SPEC and nothing else. */
-const DISPLAY_ONLY_VARIANT_KEYS = ['fabricSupplierCode'] as const;
+const DISPLAY_ONLY_VARIANT_KEYS = ['fabricSupplierCode', 'fabricSupplierCodeOf'] as const;
 
 function specOf(line: DriftLine): string {
   const v = line.variants ?? null;
