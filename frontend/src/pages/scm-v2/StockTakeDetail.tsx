@@ -30,7 +30,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { History, Save, X, Trash2, Send, Ban, AlertTriangle, Search, Wand2, Undo2, ChevronRight, ChevronDown, EyeOff, Rows3, List, Printer, Pencil, Plus, Camera, Download } from 'lucide-react';
+import { History, Save, X, Trash2, Send, Ban, AlertTriangle, Search, Wand2, Undo2, ChevronRight, ChevronDown, EyeOff, Rows3, List, Printer, Pencil, Plus, Camera, Download, Check, CornerUpLeft, ExternalLink } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
@@ -41,6 +41,8 @@ import {
   useStockTakeDetail,
   useUpdateStockTakeLines,
   usePostStockTake,
+  useApproveStockTake,
+  useRejectStockTake,
   useCancelStockTake,
   useReverseStockTake,
   useDeleteStockTake,
@@ -170,6 +172,8 @@ export const StockTakeDetail = () => {
   const detail = useStockTakeDetail(id ?? null);
   const update = useUpdateStockTakeLines();
   const post    = usePostStockTake();
+  const approve = useApproveStockTake();
+  const reject  = useRejectStockTake();
   const cancel  = useCancelStockTake();
   const reverse = useReverseStockTake();
   const del     = useDeleteStockTake();
@@ -247,6 +251,9 @@ export const StockTakeDetail = () => {
   const status: StockTakeStatus | undefined = detail.data?.take.status;
   const isDraft  = status === 'OPEN';      // local var name kept for diff minimization; refers to OPEN state
   const isPosted = status === 'POSTED';
+  /* Approval lane (owner 2026-11-20): an over-limit count a non-supervisor
+     submitted, waiting for a supervisor to approve (→ POSTED) or return (→ OPEN). */
+  const isPendingApproval = status === 'PENDING_APPROVAL';
 
   /* Server-decided viewer facts (backend GET /:id). The fallback only matters
      against an older worker that omits `viewer` — behave exactly as before
@@ -493,13 +500,22 @@ export const StockTakeDetail = () => {
         `Estimated gain / loss: ${fmtSignedRM(totals.valueNetSen)}`;
     const proceed = await askConfirm({
       title: 'Post this stock take?',
-      body: `${summary}\n\nOne ADJUSTMENT movement will be written per non-zero-variance line. Untouched lines (no counted qty) are skipped.`,
+      body: `${summary}\n\nOne ADJUSTMENT movement will be written per non-zero-variance line. Untouched lines (no counted qty) are skipped.\n\nIf any line is over the posting limit, the count is sent to a stock-take supervisor to approve instead.`,
       confirmLabel: 'Post',
     });
     if (!proceed) return;
     post.mutate(id, {
       onSuccess: (res) => {
         detail.refetch();
+        /* Over the limit and the caller is not a supervisor: nothing posted —
+           the count is now waiting for a supervisor to approve it. */
+        if (res.pendingApproval) {
+          void notify({
+            title: 'Sent for approval',
+            body: `${res.message ?? 'Some lines are over the posting limit.'}\n\nNothing has moved yet — a stock-take supervisor will approve or return this count.`,
+          });
+          return;
+        }
         if (res.movementErrors && res.movementErrors.length > 0) {
           notify({
             title: 'Stock take posted, but adjustment write failed',
@@ -515,6 +531,50 @@ export const StockTakeDetail = () => {
         }
       },
       onError: (err) => notify({ title: 'Post failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' }),
+    });
+  };
+
+  /* Supervisor approves a pending over-limit count — books the ADJUSTMENT
+     movements now, exactly as a direct post would have. */
+  const onApprove = async () => {
+    if (!id) return;
+    const proceed = await askConfirm({
+      title: 'Approve and post this count?',
+      body: 'The variance will be booked now — one ADJUSTMENT movement per non-zero-variance line. This is the same as posting it yourself.',
+      confirmLabel: 'Approve & post',
+    });
+    if (!proceed) return;
+    approve.mutate(id, {
+      onSuccess: (res) => {
+        void detail.refetch();
+        if (res.movementErrors && res.movementErrors.length > 0) {
+          void notify({
+            title: 'Approved, but adjustment write failed',
+            body: `${res.movementErrors.join('\n')}\n\nFix manually via Stock Adjustments.`,
+            tone: 'error',
+          });
+        } else {
+          void notify({ title: 'Approved', body: `${res.movementsWritten} adjustment movement${res.movementsWritten === 1 ? '' : 's'} written.` });
+        }
+      },
+      onError: (err) => notify({ title: 'Approve failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' }),
+    });
+  };
+
+  /* Supervisor returns a pending count to OPEN for a recount. No stock moved
+     while it waited, so nothing is reversed. */
+  const onReject = async () => {
+    if (!id) return;
+    const proceed = await askConfirm({
+      title: 'Return this count for a recount?',
+      body: 'It goes back to Open so the counts can be edited and re-submitted. No stock has moved, so nothing is reversed.',
+      confirmLabel: 'Return to Open',
+      danger: true,
+    });
+    if (!proceed) return;
+    reject.mutate(id, {
+      onSuccess: () => { void detail.refetch(); void notify({ title: 'Returned', body: 'The count is Open again for editing.' }); },
+      onError: (err) => notify({ title: 'Return failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' }),
     });
   };
 
@@ -594,6 +654,7 @@ export const StockTakeDetail = () => {
   }
 
   const t = detail.data.take;
+  const adjustments = detail.data.adjustments ?? [];
 
   return (
     <div className="space-y-4">
@@ -639,6 +700,18 @@ export const StockTakeDetail = () => {
                   </Button>
                 </>
               )}
+              {/* Approval lane: a supervisor signs off (or returns) an over-limit
+                  count. Only a supervisor sees these — the submitter waits. */}
+              {isPendingApproval && viewer.canSupervise && (
+                <>
+                  <Button variant="ghost" size="md" onClick={onReject} disabled={reject.isPending || approve.isPending}>
+                    <CornerUpLeft {...ICON} /> {reject.isPending ? 'Returning…' : 'Return to Open'}
+                  </Button>
+                  <Button variant="primary" size="md" onClick={onApprove} disabled={approve.isPending || reject.isPending}>
+                    <Check {...ICON} /> {approve.isPending ? 'Approving…' : 'Approve & post'}
+                  </Button>
+                </>
+              )}
               {isPosted && (
                 <Button variant="ghost" size="md" onClick={onReverse} disabled={reverse.isPending}>
                   <Undo2 {...ICON} /> {reverse.isPending ? 'Undoing…' : 'Undo'}
@@ -653,6 +726,28 @@ export const StockTakeDetail = () => {
           </>
         }
       />
+
+      {/* ── Pending approval banner (owner 2026-11-20) ──────────────── */}
+      {isPendingApproval && (
+        <section className={styles.card} style={{ borderLeft: '3px solid var(--c-accent-bright, #d69e2e)' }}>
+          <div className={styles.cardBody} style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+            <AlertTriangle size={18} strokeWidth={1.9} style={{ color: '#8a5a00', flexShrink: 0, marginTop: 2 }} />
+            <div style={{ fontSize: 'var(--fs-13)', lineHeight: 1.5 }}>
+              <div style={{ fontWeight: 600, color: 'var(--c-ink)' }}>Waiting for a supervisor to approve</div>
+              <div style={{ color: 'var(--fg-muted)', marginTop: 2 }}>
+                {t.submitted_by ? `Submitted by ${actorNameOf(t.submitted_by)}` : 'Submitted'}
+                {t.submitted_at ? ` · ${fmtDateTime(t.submitted_at)}` : ''}
+                {' — one or more lines are over the posting limit, so no stock has moved yet.'}
+              </div>
+              <div style={{ color: 'var(--fg-muted)', marginTop: 4 }}>
+                {viewer.canSupervise
+                  ? 'Approve & post to book the variance, or Return to Open to send it back for a recount.'
+                  : 'A stock-take supervisor will approve or return it.'}
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* ── Header card ─────────────────────────────────────────────── */}
       <section className={styles.card}>
@@ -807,6 +902,58 @@ export const StockTakeDetail = () => {
           </div>
         </div>
       </section>
+
+      {/* ── Adjustments booked (owner 2026-11-20) ───────────────────────
+          A POSTED take's variance is booked as ADJUSTMENT movements. List them
+          here and link each SKU to its stock card — where the same movement
+          links back, so "where did this come from / go to" is one click either
+          way. Shown only when there is at least one real movement. */}
+      {isPosted && adjustments.length > 0 && (
+        <section className={styles.card}>
+          <div className={styles.cardHeader}>
+            <h2 className={styles.cardTitle}>
+              Adjustments booked
+              <span style={{ marginLeft: 8, fontSize: 'var(--fs-12)', color: 'var(--fg-muted)', fontWeight: 400 }}>
+                {adjustments.length} SKU{adjustments.length === 1 ? '' : 's'} · each links to its stock card
+              </span>
+            </h2>
+          </div>
+          <div className={styles.cardBody}>
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              {adjustments.map((a) => {
+                const variant = (a.variant_key ?? '').trim();
+                return (
+                  <div
+                    key={`${a.item_code}:${a.variant_key ?? ''}`}
+                    style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 'var(--fs-13)', padding: '7px 0', borderBottom: '1px solid var(--line)' }}
+                  >
+                    <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, minWidth: 54, textAlign: 'right', color: a.qty < 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--c-secondary-a, #2F5D4F)' }}>
+                      {a.qty > 0 ? '+' : ''}{fmtQty(a.qty)}
+                    </span>
+                    <span style={{ flex: 1, minWidth: 0, display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 8 }}>
+                      <span style={{ color: 'var(--c-ink)' }}>{a.product_name ?? a.item_code}</span>
+                      <span style={{ color: 'var(--fg-muted)', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-12)' }}>
+                        {a.item_code}{variant ? ` · ${variant}` : ''}
+                      </span>
+                    </span>
+                    {a.unit_cost_sen != null && a.unit_cost_sen > 0 && (
+                      <span style={{ color: 'var(--fg-muted)', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-12)', whiteSpace: 'nowrap' }}>
+                        @ {fmtSen(a.unit_cost_sen)}
+                      </span>
+                    )}
+                    <Link
+                      to={`/scm/inventory/stock-card/${encodeURIComponent(a.item_code)}?warehouseId=${encodeURIComponent(t.warehouse_id)}`}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--c-burnt, #a6471e)', textDecoration: 'none', fontSize: 'var(--fs-12)', whiteSpace: 'nowrap' }}
+                    >
+                      Stock card <ExternalLink size={12} strokeWidth={1.9} />
+                    </Link>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* ── Lines ───────────────────────────────────────────────────── */}
       {/* overflow: clip, not the card's hidden — `hidden` makes the card a
