@@ -3,7 +3,7 @@
    colleague's. */
 import { describe, expect, it } from "vitest";
 import { departmentIdsOf, isManagement, syncState } from "./mail-access-parts";
-import { colleagueMailboxes, levelGroup, levelLabel, ownDepartmentMailboxes, planAccessSave } from "./mail-access-levels";
+import { isRedundantGrant, colleagueMailboxes, levelGroup, levelLabel, ownDepartmentMailboxes, planAccessSave } from "./mail-access-levels";
 import { reachTagOf } from "./MailCenter/mail-sidebar";
 import type { Department, TeamMember } from "../types";
 import type { MailAddress } from "./MailCenter/mail-actions";
@@ -40,6 +40,14 @@ describe("mail access on the Org Chart", () => {
     const addresses = [own("me", 1), own("ops-mate", 2), own("sales-mate", 3), own("other", 4), { ...box(2), id: "ops" }, { ...box(5), id: "far" }];
     expect(colleagueMailboxes(elvis, users, addresses).map((a) => a.id)).toEqual(["ops-mate", "sales-mate"]);
     expect(ownDepartmentMailboxes(elvis, addresses).map((a) => a.id)).toEqual(["ops"]);
+  });
+
+  it("a grant to their own mailbox or own department mailbox is not shown as extra", () => {
+    const sales = { id: 4, department_id: 1, department_ids: [1] } as TeamMember;
+    expect(isRedundantGrant({ ...box(1), id: "sales" }, sales)).toBe(true);
+    expect(isRedundantGrant({ ...box(2), id: "ops" }, sales)).toBe(false);
+    expect(isRedundantGrant({ id: "me", address: "me@x.com", label: "", active: true, assignedUserId: 4 } as MailAddress, sales)).toBe(true);
+    expect(isRedundantGrant({ id: "mate", address: "mate@x.com", label: "", active: true, assignedUserId: 5 } as MailAddress, sales)).toBe(false);
   });
 
   it("Save sends only differences, and leaving L2 clears its department ticks", () => {
