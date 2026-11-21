@@ -141,6 +141,8 @@ type SoHeader = {
   /* Authoritative received-to-date rollup stamped by GET /:docNo (ledger +
      legacy header deposit). Falls back to summing `payments` when absent. */
   paid_sen_total?: number | null;
+  /* The part of paid_sen_total outside the payments ledger (a legacy header deposit), stamped by GET /:docNo. */
+  paid_outside_ledger_sen?: number | null;
   /* POS handover customer signature (data-URL or bare base64 PNG). */
   signature_b64?: string | null;
   /* Owner 2026-07 — brand letterhead. Stamped by GET /:docNo (SOFA→ZANOTTI,
@@ -758,13 +760,11 @@ export async function renderSalesOrderInto(
 
     // ── Totals: SUBTOTAL / PAID TO DATE / TOTAL / BALANCE DUE ─────────
     /* POS-printout parity: the SO model has no separate subtotal — the grand
-       total stands in (add-ons ride inside the line totals). Paid-to-date
-       prefers the authoritative paid_sen_total stamped by GET /:docNo
-       (ledger + legacy header deposit), falling back to summing the rows. */
+       total stands in (add-ons ride inside the line totals). Paid-to-date is
+       the rows printed above plus any legacy deposit outside the ledger
+       (soPdfPaidSen). */
     const subtotalSen = header.local_total_sen;
-    const paidSen = typeof header.paid_sen_total === 'number'
-      ? header.paid_sen_total
-      : payments.reduce((sum, p) => sum + (p.amount_sen || 0), 0);
+    const paidSen = soPdfPaidSen(header, payments);
     /* SIGNED (owner 2026-08-16) — over-collection is allowed, so the print must
        not floor the excess away and quietly tell the customer he is square when
        the business is holding RM 250 of his money. Negative flips the LABEL
@@ -887,6 +887,20 @@ export async function renderSalesOrderInto(
 /* Single SO → its own file (or print / preview). EXACT same signature and
    behaviour as before the renderSalesOrderInto extraction — single-doc output
    is byte-identical to the pre-refactor generator. */
+/** "Paid to date" on the SO print: the rows listed under PAYMENTS RECEIVED
+    plus the part of the paid total outside both (a legacy header deposit), so the figure always agrees with the rows
+    printed beside it. Taking the header's paid_sen_total whole let a cached header disagree with freshly read rows
+    (both payments listed, "Paid to date" from before the second). Without the split (an older server, a consignment
+    order) it falls back to the header total, then to the rows. */
+export function soPdfPaidSen(
+  header: Pick<SoHeader, 'paid_sen_total' | 'paid_outside_ledger_sen'>,
+  payments: ReadonlyArray<Pick<SoPayment, 'amount_sen'>>,
+): number {
+  const rows = payments.reduce((sum, p) => sum + (p.amount_sen || 0), 0);
+  if (typeof header.paid_outside_ledger_sen === 'number') return header.paid_outside_ledger_sen + rows;
+  return typeof header.paid_sen_total === 'number' ? header.paid_sen_total : rows;
+}
+
 export async function generateSalesOrderPdf(
   header: SoHeader,
   items: SoItem[],

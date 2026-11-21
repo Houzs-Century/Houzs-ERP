@@ -63,9 +63,11 @@ export async function patrolOrderFulfilment(env: Env): Promise<OfPatrolResult> {
 
   const soRes = await db
     .prepare(
+      /* paid_sen from the SO list's view (the payments ledger): the stored mfg_sales_orders.paid_sen is 0 on every
+         order created in the ERP and frozen at import on migrated ones, so the release check misread what was paid. */
       `SELECT doc_no, status, on_hold, debtor_name, email, address1, postcode,
-              customer_delivery_date, local_total_sen, paid_sen
-         FROM scm.mfg_sales_orders WHERE status IN ${PIPELINE} LIMIT 1000`,
+              customer_delivery_date, local_total_sen, paid_total_sen AS paid_sen
+         FROM scm.mfg_sales_orders_with_payment_totals WHERE status IN ${PIPELINE} LIMIT 1000`,
     )
     .all<SoRow>();
   const sos = soRes.results ?? [];

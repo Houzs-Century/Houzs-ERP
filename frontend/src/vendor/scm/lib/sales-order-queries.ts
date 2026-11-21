@@ -402,6 +402,19 @@ export const invalidateSoLists = (qc: ReturnType<typeof useQueryClient>) => {
   qc.invalidateQueries({ queryKey: ['mfg-sales-orders-paged'] });
 };
 
+/* A payment moved: the lists and the payments ledger above, AND the order's own detail, which carries the server's
+   paid_sen_total and is a sibling of ['mfg-sales-orders'], not under it. Left alone it kept the old figure, so the SO
+   PDF listed both payments but printed "Paid to date" from before the second. The money panel reads its own key, and
+   an order payment also moves how the order's money spreads over its invoices. */
+export const invalidateSoPaymentMoved = (qc: ReturnType<typeof useQueryClient>, docNo: string) => {
+  invalidateSoLists(qc);
+  void qc.invalidateQueries({ queryKey: ['mfg-sales-order-detail', docNo] });
+  void qc.invalidateQueries({ queryKey: ['so-money', docNo] });
+  void qc.invalidateQueries({ queryKey: ['sales-invoices'] });
+  void qc.invalidateQueries({ queryKey: ['sales-invoices-paged'] });
+  void qc.invalidateQueries({ queryKey: ['sales-invoice-detail'] });
+};
+
 /* `idempotencyKey` is OPTIONAL and must be destructured OUT of the body — the
    rest-spread would otherwise post it as an SO field. Pass one per ORDER intent
    (see lib/idempotency.ts): the middleware then replays the first response —
@@ -798,8 +811,8 @@ export const useAddSalesOrderPayment = () => {
     // The ['mfg-sales-orders'] root prefix-covers this SO's payments ledger and
     // header sub-queries; the paged list carries the paid / outstanding
     // aggregates a payment moves.
-    onSuccess: () => {
-      invalidateSoLists(qc);
+    onSuccess: (_data, vars) => {
+      invalidateSoPaymentMoved(qc, vars.docNo);
     },
   });
 };
@@ -818,8 +831,8 @@ export const useEditSalesOrderPayment = () => {
     // The ['mfg-sales-orders'] root prefix-covers this SO's payments ledger and
     // header sub-queries; the paged list carries the paid / outstanding
     // aggregates a payment moves.
-    onSuccess: () => {
-      invalidateSoLists(qc);
+    onSuccess: (_data, vars) => {
+      invalidateSoPaymentMoved(qc, vars.docNo);
     },
   });
 };
@@ -844,7 +857,7 @@ export const useAttachSalesOrderPaymentSlip = () => {
          this the ledger refetches but the cell keeps showing the old (or no)
          image until that key's staleTime elapses. */
       qc.invalidateQueries({ queryKey: ['payment-slip', vars.id] });
-      invalidateSoLists(qc);
+      invalidateSoPaymentMoved(qc, vars.docNo);
     },
   });
 };
@@ -863,8 +876,8 @@ export const useDeleteSalesOrderPayment = () => {
     // The ['mfg-sales-orders'] root prefix-covers this SO's payments ledger and
     // header sub-queries; the paged list carries the paid / outstanding
     // aggregates a payment moves.
-    onSuccess: () => {
-      invalidateSoLists(qc);
+    onSuccess: (_data, vars) => {
+      invalidateSoPaymentMoved(qc, vars.docNo);
     },
   });
 };
