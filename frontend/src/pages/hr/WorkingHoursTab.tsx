@@ -7,17 +7,18 @@ import { useMemo, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../../api/client";
-import { DataTable, type Column } from "../../components/DataTable";
 import { ResizableDrawer } from "../../components/ResizableDrawer";
 import { useToast } from "../../hooks/useToast";
 import { formatDate } from "../../lib/utils";
 import { todayMY } from "../../vendor/shared/format";
 import { DateField } from "../../vendor/scm/components/DateField";
-import { Field, Pill, errText, ghostBtn, inputCls, primaryBtn } from "../pos-admin/posAdminUi";
+import { Field, errText, ghostBtn, inputCls, primaryBtn } from "../pos-admin/posAdminUi";
+import { hrPrimaryBtn } from "./HrPageHeader";
+import { HrTablePage, Tag, type HrCol } from "./HrTablePage";
 import { HR, useWorkingHours, type HoursEntry, type WorkDay, type WorkingHoursResponse } from "./hrApi";
 
 type Line = {
-  key: string;
+  id: string;
   employeeId: number;
   empNo: string;
   name: string;
@@ -31,11 +32,11 @@ type Line = {
 const h2 = (n: number) => (Math.round(n * 100) / 100).toString();
 
 function chip(l: Line) {
-  if (l.logged <= 0) return <Pill tone="muted">No hours</Pill>;
-  if (l.logged > l.hoursPerDay + 0.001) return <Pill tone="warn">{h2(l.logged)}h · OT</Pill>;
+  if (l.logged <= 0) return <Tag tone="muted">No hours</Tag>;
+  if (l.logged > l.hoursPerDay + 0.001) return <Tag tone="warn">{h2(l.logged)}h · OT</Tag>;
   const base = l.day?.punchHours ?? l.logged;
-  if (base < l.hoursPerDay - 0.001) return <Pill tone="bad">{h2(l.logged)}h · short</Pill>;
-  return <Pill tone="ok">{h2(l.logged)}h</Pill>;
+  if (base < l.hoursPerDay - 0.001) return <Tag tone="bad">{h2(l.logged)}h · short</Tag>;
+  return <Tag tone="ok">{h2(l.logged)}h</Tag>;
 }
 
 export function WorkingHoursTab() {
@@ -68,7 +69,7 @@ export function WorkingHoursTab() {
       let l = map.get(k);
       if (!l) {
         const e = emp.get(employeeId);
-        l = { key: k, employeeId, empNo: e?.empNo ?? "", name: e?.name ?? "", workDate, hoursPerDay: e?.hoursPerDay ?? 9, day: null, entries: [], logged: 0 };
+        l = { id: k, employeeId, empNo: e?.empNo ?? "", name: e?.name ?? "", workDate, hoursPerDay: e?.hoursPerDay ?? 9, day: null, entries: [], logged: 0 };
         map.set(k, l);
       }
       return l;
@@ -84,92 +85,45 @@ export function WorkingHoursTab() {
 
   const totals = useMemo(() => ({ logged: lines.reduce((s, l) => s + l.logged, 0), days: lines.filter((l) => l.logged > 0).length }), [lines]);
 
-  const columns: Column<Line>[] = [
-    { key: "date", label: "Date", filterType: "date", dateValue: (l) => l.workDate, getValue: (l) => l.workDate, render: (l) => <span className="font-mono">{formatDate(l.workDate)}</span> },
-    { key: "empNo", label: "Emp No", getValue: (l) => l.empNo, render: (l) => <span className="font-mono text-[11px] font-semibold text-accent">{l.empNo}</span> },
-    { key: "name", label: "Name", getValue: (l) => l.name, render: (l) => l.name },
-    {
-      key: "punch",
-      label: "Punch",
-      getValue: (l) => l.day?.clockIn ?? "",
-      render: (l) =>
-        l.day?.clockIn ? (
-          <span className="font-mono text-[11px]">
-            {l.day.clockIn} to {l.day.clockOut ?? "..."}
-            {l.day.outSource === "AUTO" && <span className="ml-1 text-amber-800 dark:text-amber-300">(no punch-out)</span>}
-          </span>
-        ) : (
-          <span className="text-ink-muted">--</span>
-        ),
-    },
-    {
-      key: "punchHours",
-      label: "Punch Hours",
-      align: "right",
-      description: "Regular + OT hours the punch gives, lunch taken off, on the pay rules of that day.",
-      getValue: (l) => l.day?.punchHours ?? 0,
-      render: (l) => (l.day?.punchHours != null ? <span className="font-mono">{h2(l.day.punchHours)}</span> : null),
-    },
-    {
-      key: "logged",
-      label: "Logged",
-      description: "The hours pay reads. OT = more than the employee's hours / day; short = the punch gave less.",
-      getValue: (l) => l.logged,
-      render: chip,
-    },
-    {
-      key: "split",
-      label: "Department",
-      getValue: (l) => l.entries.map((e) => (e.departmentId != null ? deptName.get(e.departmentId) ?? "" : "")).join(", "),
-      render: (l) =>
-        l.entries.length ? (
-          <span className="text-[11px]">
-            {l.entries.map((e) => (
-              <span key={e.id} className="mr-2 whitespace-nowrap">
-                {e.departmentId != null ? deptName.get(e.departmentId) ?? "?" : "No department"} {h2(e.hours)}h
-                {e.source === "MANUAL" && <span className="ml-0.5 text-[9px] font-bold text-sky-700 dark:text-sky-300">HR</span>}
-              </span>
-            ))}
-          </span>
-        ) : (
-          <span className="text-ink-muted">--</span>
-        ),
-    },
-    { key: "notes", label: "Notes", defaultHidden: true, getValue: (l) => l.entries.map((e) => e.notes ?? "").filter(Boolean).join("; "), render: (l) => <span className="text-[11px]">{l.entries.map((e) => e.notes ?? "").filter(Boolean).join("; ")}</span> },
+  const columns: HrCol<Line>[] = [
+    { key: "date", label: "Date", render: (l) => <span className="font-mono">{formatDate(l.workDate)}</span> },
+    { key: "emp", label: "Employee", render: (l) => <span><span className="font-mono text-[11px] font-semibold text-accent">{l.empNo}</span> <span className="text-ink">{l.name}</span></span> },
+    { key: "punch", label: "Punch", render: (l) => (l.day?.clockIn ? <span className="font-mono text-[11px]">{l.day.clockIn} to {l.day.clockOut ?? "…"}{l.day.outSource === "AUTO" && <span className="ml-1 text-warning-text">(no out)</span>}</span> : <span className="text-ink-muted">—</span>) },
+    { key: "punchHours", label: "Punch hrs", align: "right", render: (l) => (l.day?.punchHours != null ? <span className="font-mono">{h2(l.day.punchHours)}</span> : <span className="text-ink-soft">—</span>) },
+    { key: "logged", label: "Logged", render: chip },
+    { key: "split", label: "Department", render: (l) => (l.entries.length ? <span className="text-[11px] text-ink-secondary">{l.entries.map((e) => <span key={e.id} className="mr-2 whitespace-nowrap">{e.departmentId != null ? deptName.get(e.departmentId) ?? "?" : "No dept"} {h2(e.hours)}h{e.source === "MANUAL" && <span className="ml-0.5 text-[9px] font-bold text-learning">HR</span>}</span>)}</span> : <span className="text-ink-muted">—</span>) },
   ];
+  const otDays = lines.filter((l) => l.logged > l.hoursPerDay + 0.001).length;
+  const shortDays = lines.filter((l) => l.logged > 0 && (l.day?.punchHours ?? l.logged) < l.hoursPerDay - 0.001).length;
 
   return (
-    <div>
-      <div className="mb-2 flex flex-wrap items-end gap-2">
-        <Field label="From" className="w-36">
-          <DateField fullWidth value={from} onChange={(iso) => iso && setRange(iso, iso > to ? iso : to)} aria-label="From date" />
-        </Field>
-        <Field label="To" className="w-36">
-          <DateField fullWidth value={to} onChange={(iso) => iso && setRange(iso < from ? iso : from, iso)} aria-label="To date" />
-        </Field>
-        {data && (
-          <span className="pb-2 text-[11px] text-ink-secondary">
-            {totals.days} days logged · {h2(totals.logged)} hours
+    <>
+      <HrTablePage<Line>
+        title="Working Hours"
+        subtitle="Hours worked per employee, per day"
+        actions={data?.canManage ? <button type="button" className={hrPrimaryBtn} onClick={() => setAdding(true)}>+ Log hours</button> : undefined}
+        stats={[
+          { label: "Days logged", value: () => totals.days, sub: `${formatDate(from)} – ${formatDate(to)}`, bar: "bg-primary" },
+          { label: "Hours logged", value: () => h2(totals.logged), sub: "regular + OT", bar: "bg-synced" },
+          { label: "OT days", value: () => otDays, sub: "over the standard day", bar: "bg-accent" },
+          { label: "Short days", value: () => shortDays, sub: "under the standard day", bar: "bg-time" },
+        ]}
+        toolbarExtra={
+          <span className="flex items-center gap-1">
+            <span className="w-[120px]"><DateField value={from} onChange={(iso) => iso && setRange(iso, iso > to ? iso : to)} aria-label="From date" /></span>
+            <span className="text-ink-muted">–</span>
+            <span className="w-[120px]"><DateField value={to} onChange={(iso) => iso && setRange(iso < from ? iso : from, iso)} aria-label="To date" /></span>
           </span>
-        )}
-        {data?.canManage && (
-          <span className="ml-auto pb-1">
-            <button type="button" className={primaryBtn} onClick={() => setAdding(true)}>
-              <Plus size={11} /> Log hours
-            </button>
-          </span>
-        )}
-      </div>
-      <DataTable<Line>
-        tableId="hr-working-hours"
+        }
+        rows={lines}
         columns={columns}
-        rows={data ? lines : null}
-        loading={q.loading}
+        searchOf={(l) => `${l.name} ${l.empNo}`}
+        searchPlaceholder="Search employee"
+        loading={q.loading && !data}
         error={q.error}
         emptyLabel="No punches or hours in this range."
-        getRowKey={(l) => l.key}
         onRowClick={data?.canManage ? (l) => setOpen({ employeeId: l.employeeId, workDate: l.workDate }) : undefined}
-        exportName={`working-hours-${from}-${to}`}
+        footer={() => <><span className="font-semibold text-ink">{totals.days}</span> days · {h2(totals.logged)} h</>}
       />
       {data && open && (
         <DayHoursDrawer
@@ -194,7 +148,7 @@ export function WorkingHoursTab() {
           }}
         />
       )}
-    </div>
+    </>
   );
 }
 
