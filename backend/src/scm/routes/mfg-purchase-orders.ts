@@ -785,10 +785,34 @@ async function poLineReceipts(
   return out;
 }
 
+const PO_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** A PO route parameter as the PO's id: a uuid as it is, otherwise looked up as the PO number in this company. */
+export async function resolvePoId(
+  raw: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a supabase-js builder, untyped like the other scm readers
+  scope: (q: any) => any,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PostgREST client
+  supabase: any,
+): Promise<{ ok: true; id: string } | { ok: false; status: 404 | 500; body: Record<string, unknown> }> {
+  const value = raw.trim();
+  if (PO_UUID_RE.test(value)) return { ok: true, id: value };
+  const notFound = { ok: false as const, status: 404 as const, body: { error: 'not_found', message: `Purchase order ${value || '(blank)'} was not found.` } };
+  if (!value || value.length > 64) return notFound;
+  const { data, error } = await scope(supabase.from('purchase_orders').select('id').eq('po_number', value)).limit(1).maybeSingle();
+  if (error) return { ok: false, status: 500, body: { error: 'load_failed', reason: String((error as { message?: unknown }).message ?? error) } };
+  const id = (data as { id?: string } | null)?.id;
+  return id ? { ok: true, id } : notFound;
+}
+
 // ── Detail ────────────────────────────────────────────────────────────
 mfgPurchaseOrders.get('/:id', async (c) => {
-  const id = c.req.param('id');
   const supabase = c.get('supabase');
+  /* A typed or pasted link names the PO by its number (/scm/purchase-orders/HC-PO-2611-104); the id column is a uuid,
+     so comparing the number with it was a Postgres cast error and an error page. */
+  const resolved = await resolvePoId(c.req.param('id'), (q) => scopeToCompany(q, c), supabase);
+  if (!resolved.ok) return c.json(resolved.body, resolved.status);
+  const id = resolved.id;
 
   /* Perf (go-live) — the downstream-lock GRN count is independent of the
      header + items load, so fold it into the same parallel batch instead of a
