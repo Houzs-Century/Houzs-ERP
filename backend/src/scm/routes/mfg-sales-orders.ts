@@ -4826,7 +4826,8 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     : (await enqueueSoCreate(sb, { companyId, docNo, createdBy: c.get('houzsUser')?.id ?? null })).problems;
   lap('so-ac-queue');
 
-  return c.json({ docNo, ...(acNotSent.length ? { acNotSent } : {}), ...(paymentErrors.length ? { paymentErrors } : {}) }, 201);
+  const created = { docNo, ...(acNotSent.length ? { acNotSent } : {}) };
+  return c.json({ ...created, ...(paymentErrors.length ? { paymentErrors } : {}) }, 201);
 }
 
 /* HTTP route — auth (router-level supabaseAuth) + the real Hono context wired
