@@ -43,7 +43,8 @@ const NOTES: CreditNote[] = [
   },
 ];
 const createMutate = vi.fn(async (body: unknown) => ({ ok: true, note: { ...NOTES[0]!, id: 'n3', note_number: '2990-CN-2609-002', ...(body as object) } }));
-const postMutate = vi.fn(async () => ({ ok: true, jeNo: '2990-JE-2609-0008', status: 'posted' }));
+const postMutate = vi.fn(async (_id?: string) => ({ ok: true, jeNo: '2990-JE-2609-0008', status: 'posted' }));
+const updateMutate = vi.fn(async (_body: unknown) => ({ ok: true }));
 const cancelMutate = vi.fn(async () => ({ ok: true }));
 /* Scan supplier CN (owner 2026-10-01): the reader's answer for Diglant's display-discount note. */
 const SCAN = {
@@ -118,7 +119,7 @@ vi.mock('../../vendor/scm/lib/credit-note-queries', async (importOriginal) => ({
   }),
   useSetCreditNoteAllocations: () => ({ mutate: setMutate, isPending: false, isError: false, error: null, data: undefined }),
   useCreateCreditNote: () => ({ mutateAsync: createMutate, isPending: false, isError: false, error: null }),
-  useUpdateCreditNote: () => ({ mutateAsync: vi.fn(), isPending: false, isError: false, error: null }),
+  useUpdateCreditNote: () => ({ mutateAsync: updateMutate, isPending: false, isError: false, error: null }),
   usePostCreditNote: () => ({ mutate: postMutate, mutateAsync: postMutate, isPending: false, isError: false, isSuccess: false, error: null }),
   useCancelCreditNote: () => ({ mutate: cancelMutate, isPending: false, isError: false, error: null }),
   useScanSupplierCreditNote: () => ({ mutateAsync: scanMutate, isPending: false }),
@@ -341,6 +342,30 @@ describe('Scan supplier CN', () => {
       lines: [{ accountCode: '610-0001', amountSen: 32_499 }, { accountCode: '610-0001', amountSen: 32_501 }],
     });
     await waitFor(() => expect(uploadMutate).toHaveBeenCalledWith({ noteId: 'n3', file: { name: 'DGPSC26000263.pdf', mime: 'application/pdf', dataBase64: 'b64:DGPSC26000263.pdf' } }));
+  });
+
+  /* Symptom: Save & post whose post failed, then Save again, re-sent the create under the same key: the server
+     replayed the first note and the scanned pages were attached a second time; with any field changed it was refused
+     as a reused key. Fix: the form remembers the created note and the next Save updates and posts that one. */
+  test('Save & post whose post fails leaves a draft; Save & post again updates and posts that draft, no second create or upload', async () => {
+    createMutate.mockClear(); uploadMutate.mockClear(); updateMutate.mockClear(); postMutate.mockClear();
+    postMutate.mockImplementationOnce(async () => { throw new Error('ledger busy'); });
+    render(<MemoryRouter><ConfirmProvider><CreditNotes side="AP" /></ConfirmProvider></MemoryRouter>);
+    const page = new File(['%PDF'], 'DGPSC26000263.pdf', { type: 'application/pdf' });
+    fireEvent.change(screen.getByLabelText('Supplier credit note pages'), { target: { files: [page] } });
+    await screen.findByLabelText('What the credit note reads');
+    fireEvent.click(screen.getByText('Save & post'));
+    await waitFor(() => expect(postMutate).toHaveBeenCalledTimes(1));
+    expect(createMutate).toHaveBeenCalledTimes(1);
+    expect(uploadMutate).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('The note is saved as a draft. Saving again updates that draft - no second note is made.')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Reason'), { target: { value: 'Display discount, corrected' } });
+    fireEvent.click(screen.getByText('Save & post'));
+    await waitFor(() => expect(postMutate).toHaveBeenCalledTimes(2));
+    expect(createMutate).toHaveBeenCalledTimes(1);
+    expect(uploadMutate).toHaveBeenCalledTimes(1);
+    expect(updateMutate).toHaveBeenCalledWith(expect.objectContaining({ id: 'n3', reason: 'Display discount, corrected' }));
+    expect(postMutate).toHaveBeenLastCalledWith('n3');
   });
 
   test('unticking the named invoice keeps the credit with the supplier — the invoice on the paper stays its reference', async () => {
