@@ -1,12 +1,12 @@
 /* runScmPgCommand for route tests over an in-memory fake client: runs the command on the same client and, when it
    answers non-2xx or throws, puts every table back as it was - the transaction's rollback. The fake client must
-   expose its tables as `__tables`. The real commit and rollback are runScmPgCommand's own (sql.begin). */
+   expose its tables as `__tables` (or `tables`, as fakeSb does). The real commit and rollback are runScmPgCommand's own (sql.begin). */
 type Row = Record<string, unknown>;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a Hono context and a fake PostgREST client, as in the route tests
 export async function fakeRunScmPgCommand(c: any, cmd: (sb: any) => Promise<Response>): Promise<Response> {
   const sb = c.get('supabase');
-  const tables = sb.__tables as Record<string, Row[]> | undefined;
+  const tables = (sb.__tables ?? sb.tables) as Record<string, Row[]> | undefined;
   if (!tables) return cmd(sb);
   const snapshot = JSON.parse(JSON.stringify(tables)) as Record<string, Row[]>;
   const rollback = () => {
