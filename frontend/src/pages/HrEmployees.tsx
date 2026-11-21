@@ -1,16 +1,11 @@
-/* HR > Employees & Attendance (HC-0125) — redesign shell wired to the real API
- * (phase: API wiring, step 1). The resizable grouped sidebar (HrSubnav) and the
- * full-bleed layout stay; the pages that HR uses every day are the new design on
- * real data — Overview, Employee Master, Attendance, OT Requests — and the
- * twelve calc/settings pages keep their existing, fully working screens inside
- * the new shell until each is re-skinned (step 2). The URL carries the page in
- * ?tab.
+/* HR > Employees & Attendance (HC-0125) — the redesign, wired to the real API.
+ * A resizable grouped sidebar (HrSubnav) and a full-bleed layout; every page is
+ * the new design on real data. The URL carries the page in ?tab.
  *
  * OT Requests is gated on hr.ot.confirm: the nav item is hidden and the page is
  * not mounted without it (the server re-checks every review). Employee add/edit
  * reuses the working EmployeeDrawer and the two bulk modals; a save invalidates
  * the shared /api/hr/employees cache so every page refreshes. */
-import type { ReactNode } from "react";
 import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
@@ -21,53 +16,26 @@ import { HrPageHeader } from "./hr/HrPageHeader";
 import { OverviewPage } from "./hr/OverviewPage";
 import { EmployeeMasterPage } from "./hr/EmployeeMasterPage";
 import { OtRequestsPage } from "./hr/OtRequestsPage";
+import { PublicHolidaysPage } from "./hr/PublicHolidaysPage";
+import { AdvancesPage } from "./hr/AdvancesPage";
+import { AllowancesPage } from "./hr/AllowancesPage";
+import { AttendancePage } from "./hr/AttendancePage";
 import { EmployeeDrawer } from "./hr/EmployeeDrawer";
 import { AddFromAccountsModal } from "./hr/AddFromAccountsModal";
 import { ImportEmployeesModal } from "./hr/ImportEmployeesModal";
 import type { Employee } from "./hr/hrApi";
-// Existing, fully working calc/settings screens — mounted in the new shell
-// until each is re-skinned to the new design (step 2).
-import { AttendanceTab } from "./hr/AttendanceTab";
+// The calc/settings screens, now re-skinned to the new design, rendered directly.
 import { ShiftsTab } from "./hr/ShiftsTab";
 import { PunchSitesTab } from "./hr/PunchSitesTab";
 import { WorkingHoursTab } from "./hr/WorkingHoursTab";
-import { PublicHolidaysTab } from "./hr/PublicHolidaysTab";
 import { PayrollTab } from "./hr/PayrollTab";
 import { PayRulesTab } from "./hr/PayRulesTab";
 import { TripPayTab } from "./hr/TripPayTab";
-import { AllowancesTab } from "./hr/AllowancesTab";
-import { AdvancesTab } from "./hr/AdvancesTab";
 import { PenaltiesTab } from "./hr/PenaltiesTab";
 import { LaborCostTab } from "./hr/LaborCostTab";
 import { KpiTab } from "./hr/KpiTab";
 
 const NAV_KEYS = new Set(HR_NAV.map((n) => n.key));
-
-/** A not-yet-re-skinned page: the new header over the existing working screen. */
-function LegacyPage({ title, subtitle, children }: { title: string; subtitle: string; children: ReactNode }) {
-  return (
-    <>
-      <HrPageHeader title={title} subtitle={subtitle} />
-      <div className="px-6 py-4">{children}</div>
-    </>
-  );
-}
-
-const LEGACY: Record<string, { title: string; subtitle: string; el: ReactNode }> = {
-  attendance: { title: "Attendance", subtitle: "Daily punches — view and correct", el: <AttendanceTab /> },
-  shifts: { title: "Shifts", subtitle: "Per-employee shift groups for lateness and overtime", el: <ShiftsTab /> },
-  sites: { title: "Punch Sites", subtitle: "Where a phone punch counts as on site", el: <PunchSitesTab /> },
-  hours: { title: "Working Hours", subtitle: "Hours worked per employee", el: <WorkingHoursTab /> },
-  holidays: { title: "Public Holidays", subtitle: "Days nobody is docked for not working", el: <PublicHolidaysTab /> },
-  payroll: { title: "Payroll", subtitle: "The month's payslips", el: <PayrollTab /> },
-  "pay-rules": { title: "Pay Rules", subtitle: "Shift, lateness, overtime and statutory rates", el: <PayRulesTab /> },
-  "trip-pay": { title: "Trip Pay", subtitle: "Driver commission and trip allowances", el: <TripPayTab /> },
-  allowances: { title: "Allowances", subtitle: "Leadership, transport, KPI and attendance allowances", el: <AllowancesTab /> },
-  advances: { title: "Advances", subtitle: "Cash given ahead of payday, recovered in full", el: <AdvancesTab /> },
-  penalties: { title: "Penalty", subtitle: "Deductions for incidents, approved by someone other than who raised it", el: <PenaltiesTab /> },
-  labor: { title: "Labor Cost", subtitle: "A month's logged hours priced the way payroll prices them", el: <LaborCostTab /> },
-  kpi: { title: "KPI", subtitle: "Monthly scorecard and allowance tier", el: <KpiTab /> },
-};
 
 export function HrEmployees() {
   const { can } = useAuth();
@@ -114,10 +82,34 @@ export function HrEmployees() {
             <OtRequestsPage />
           </>
         );
-      default: {
-        const l = LEGACY[active] as { title: string; subtitle: string; el: ReactNode } | undefined;
-        return l ? <LegacyPage title={l.title} subtitle={l.subtitle}>{l.el}</LegacyPage> : null;
-      }
+      case "holidays":
+        return <PublicHolidaysPage />;
+      case "advances":
+        return <AdvancesPage />;
+      case "allowances":
+        return <AllowancesPage />;
+      case "penalties":
+        return <PenaltiesTab />;
+      case "sites":
+        return <PunchSitesTab />;
+      case "hours":
+        return <WorkingHoursTab />;
+      case "labor":
+        return <LaborCostTab />;
+      case "shifts":
+        return <ShiftsTab />;
+      case "kpi":
+        return <KpiTab />;
+      case "pay-rules":
+        return <PayRulesTab />;
+      case "payroll":
+        return <PayrollTab />;
+      case "trip-pay":
+        return <TripPayTab />;
+      case "attendance":
+        return <AttendancePage />;
+      default:
+        return null;
     }
   })();
 

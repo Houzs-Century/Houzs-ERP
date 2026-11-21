@@ -10,6 +10,7 @@ import { fmtSen } from "../../vendor/shared/format";
 import { DateField } from "../../vendor/scm/components/DateField";
 import { DEFAULT_PAY_RULES, hhmmToMin, minToHhmm, normalizePayRules, payRulesProblem, type PayRulesConfig } from "../../vendor/shared/hr-pay-rules";
 import { Empty, Field, Toggle, errText, ghostBtn, inputCls, primaryBtn } from "../pos-admin/posAdminUi";
+import { HrPageHeader, hrPrimaryBtn } from "./HrPageHeader";
 import { HR, useEmployees, usePayRules } from "./hrApi";
 import { todayMyt } from "../../vendor/scm/lib/dates";
 
@@ -210,9 +211,15 @@ export function PayRulesTab() {
   );
 
   return (
-    <div className="space-y-4">
-      {rules.error && <div className="rounded-md border border-err/40 bg-err/5 p-2 text-[11px] text-err">{rules.error}</div>}
-      <div className="rounded-md border border-border bg-surface p-3">
+    <>
+      <HrPageHeader
+        title="Pay Rules"
+        subtitle="Shift, lateness, overtime and statutory rates; a change is scheduled from a date"
+        actions={canManage && !draft ? <button type="button" className={hrPrimaryBtn} onClick={() => setDraft(draftOf(inForce))}>Schedule a change</button> : undefined}
+      />
+      <div className="thin-scroll flex min-h-0 flex-1 flex-col gap-4 overflow-auto px-6 py-4">
+      {rules.error && <div className="rounded-xl border border-err/40 bg-err-bg p-3 text-[12px] text-err">{rules.error}</div>}
+      <div className="rounded-xl border border-border bg-surface p-4">
         <p className="mb-3 text-[10.5px] font-bold uppercase tracking-brand text-ink-muted">In force today{today ? `, ${formatDate(today)}` : ""}</p>
         <Summary r={inForce} />
         <p className="mt-3 border-t border-border-subtle pt-2 text-[11px] text-ink-secondary">
@@ -221,15 +228,8 @@ export function PayRulesTab() {
         </p>
       </div>
 
-      <div className="rounded-md border border-border bg-surface p-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-[10.5px] font-bold uppercase tracking-brand text-ink-muted">Scheduled changes</p>
-          {canManage && !draft && (
-            <button type="button" className={primaryBtn} onClick={() => setDraft(draftOf(inForce))}>
-              Schedule a change
-            </button>
-          )}
-        </div>
+      <div className="rounded-xl border border-border bg-surface p-4">
+        <p className="mb-2 text-[10.5px] font-bold uppercase tracking-brand text-ink-muted">Scheduled changes</p>
         {rules.data && versions.length === 0 && !draft && <Empty>No changes scheduled. The built-in defaults above apply.</Empty>}
         {versions.length > 0 && (
           <ul className="mt-2 space-y-1">
@@ -337,6 +337,7 @@ export function PayRulesTab() {
           </div>
         )}
       </div>
-    </div>
+      </div>
+    </>
   );
 }

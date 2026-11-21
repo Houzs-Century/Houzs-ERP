@@ -18,6 +18,7 @@ import { fmtSen, todayMY } from "../../vendor/shared/format";
 import { DateField } from "../../vendor/scm/components/DateField";
 import { TRIP_EVENT_LABEL, TRIP_EVENT_TYPES, TRIP_JOB_LABEL, TRIP_JOB_TYPES, isFairJob, tripMonthOf, type TripEventType, type TripJobType } from "../../vendor/shared/hr-trip-pay";
 import { Field, Pill, errText, ghostBtn, inputCls, primaryBtn } from "../pos-admin/posAdminUi";
+import { HrPageHeader } from "./HrPageHeader";
 import { HR, rmFromSen, senFromRm, useTripPay, type TripPersonPay, type TripRowOut } from "./hrApi";
 import { TripRatesDrawer } from "./TripRatesDrawer";
 
@@ -33,12 +34,15 @@ export function eventTripText(r: Pick<TripRowOut, "jobType" | "eventType" | "pay
   return `${ev} · ${r.pay.tripOfDay === 2 ? "2nd" : "1st"} trip${r.pay.sameJob ? " (same job)" : ""}`;
 }
 
-function Kpi({ label, value, sub }: { label: string; value: string; sub?: string }) {
+function Kpi({ label, value, sub, bar = "bg-accent" }: { label: string; value: string; sub?: string; bar?: string }) {
   return (
-    <div className="rounded-md border border-border bg-surface px-3 py-2">
-      <div className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">{label}</div>
-      <div className="mt-0.5 font-mono text-[15px] font-semibold text-ink">{value}</div>
-      {sub && <div className="text-[10.5px] text-ink-muted">{sub}</div>}
+    <div className="flex flex-col overflow-hidden rounded-xl border border-border bg-surface">
+      <div className={`h-[3px] w-full ${bar}`} />
+      <div className="px-3.5 py-3">
+        <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-muted">{label}</div>
+        <div className="mt-1 font-money text-[20px] font-bold leading-none text-ink">{value}</div>
+        {sub && <div className="mt-1.5 text-[11px] text-ink-muted">{sub}</div>}
+      </div>
     </div>
   );
 }
@@ -246,7 +250,9 @@ export function TripPayTab() {
 
   const people = useMemo(() => d?.people ?? [], [d]);
   return (
-    <div className="space-y-3">
+    <>
+      <HrPageHeader title="Trip Pay" subtitle="Driver commission and crew allowances for the trip month (23rd to 22nd)" />
+      <div className="thin-scroll flex min-h-0 flex-1 flex-col gap-3 overflow-auto px-6 py-4">
       <div className="flex flex-wrap items-end gap-2">
         <Field label="Trip month" className="w-40">
           <input type="month" className={inputCls} value={month} onChange={(e) => e.target.value && setMonth(e.target.value)} />
@@ -357,7 +363,8 @@ export function TripPayTab() {
       {editing && d && <RowDrawer row={editing === "new" ? null : editing} month={month} first={d.first} last={d.last} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); q.reload(); }} />}
       {person && d && <PersonDrawer p={person} month={month} canEdit={canEdit} onClose={() => setPerson(null)} onSaved={() => { setPerson(null); q.reload(); }} />}
       {rates && <TripRatesDrawer onClose={() => setRates(false)} onSaved={() => q.reload()} />}
-    </div>
+      </div>
+    </>
   );
 }
 
