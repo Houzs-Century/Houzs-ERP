@@ -2311,9 +2311,8 @@ export const SalesOrderDetail = () => {
                     /* Variants are mandatory only once a Processing Date is set
                        (matches this page's Save gate + the backend), so the ` *`
                        marker + red ring stay off on a no-date draft (owner
-                       2026-07-14). No Default leg-height seed on a saved line: it made an untouched sofa line dirty, so a
-                       header-only save rewrote its options and logged audit rows. */
-                    variantsRequired={requireVariants} lineDateLocked={!requireVariants} specLockedReason={null} seedSofaLegDefault={false}
+                       2026-07-14). */
+                    variantsRequired={requireVariants} lineDateLocked={!requireVariants} specLockedReason={null} seedSofaLegDefault={true}
                     attachOptions={attachOptionsById[it.id] ?? null}
                   />
                 </div>
