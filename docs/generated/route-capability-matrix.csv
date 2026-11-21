@@ -390,7 +390,9 @@ GET,/api/mail-center/threads,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO
 GET,/api/mail-center/threads/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/mail-center.ts
 PATCH,/api/mail-center/threads/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mail-center.ts
 POST,/api/mail-center/threads/:id/reply,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mail-center.ts
+POST,/api/mail-center/threads/:id/replying,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mail-reply-guard.ts
 GET,/api/mail-center/visibility,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/mail-personal.ts
+GET,/api/mail-center/waiting-count,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/mail-reply-guard.ts
 GET,/api/memos,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/memos.ts
 POST,/api/memos,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/memos.ts
 GET,/api/memos/:id/file,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/memos.ts

@@ -61,6 +61,17 @@ import {
   chipStyle,
 } from "./mail-labels";
 import { ComposeDialog } from "./Compose";
+import { firstInvalid, parseRecipients } from "./mail-recipients";
+import {
+  AlreadyRepliedBox,
+  alreadyRepliedFrom,
+  ReplyRecipients,
+  ReplyingNowBanner,
+  replyAllCc,
+  useReplyingHeartbeat,
+  type AlreadyReplied,
+  type ReplyingPerson,
+} from "./mail-reply-parts";
 import { PickedAttachmentChip } from "./PickedAttachmentChip";
 import { EMAIL_FRAME_SANDBOX_MEASURABLE, emailSrcDoc } from "./mail-email-frame";
 import {
@@ -118,6 +129,8 @@ type MailMessage = {
   attachments?: MailAttachment[];
   acks?: AckState[];
   ackRequestId?: string | null;
+  /** Who in the ERP sent an outbound message. */
+  sentByName?: string;
 };
 
 type MailThread = {
@@ -138,6 +151,8 @@ type ThreadDetail = {
   thread: MailThread;
   readers?: ThreadReaders;
   messages: MailMessage[];
+  /** Colleagues writing a reply right now (not me). */
+  replying?: ReplyingPerson[];
 };
 
 type MailAddress = {
@@ -227,11 +242,13 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
   const messages = data?.messages ?? [];
 
   const [replyText, setReplyText] = useState("");
-  /* Reply-all. Off by default: replying to everyone who was Cc'd is sometimes
-     right and sometimes an embarrassment, so it is a deliberate choice each
-     time rather than a remembered preference. The backend rebuilds the list
-     from the newest inbound message's To + Cc, minus our own mailbox. */
-  const [replyAll, setReplyAll] = useState(false);
+  /* To / Cc / Bcc are editable (owner 2026-11-21). To starts as the customer;
+     "Reply all" is a deliberate click that fills Cc, never a remembered default. */
+  const [toEdit, setToEdit] = useState<string | null>(null);
+  const [cc, setCc] = useState("");
+  const [bcc, setBcc] = useState("");
+  const [showCopies, setShowCopies] = useState(false);
+  const [alreadyReplied, setAlreadyReplied] = useState<AlreadyReplied | null>(null);
   const [needsAck, setNeedsAck] = useState(false);
   const [sending, setSending] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState(false);
@@ -259,6 +276,23 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
     threadMailbox ||
     activeAddresses[0]?.address ||
     "";
+
+  const to = toEdit ?? thread?.counterpartyEmail ?? "";
+  const ours = activeAddresses.map((a) => a.address);
+  const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+  const allCc = replyAllCc(lastMessage, to, ours);
+  const replyAllOffer = parseRecipients(allCc).filter(
+    (a) => !parseRecipients(cc).some((c) => c.toLowerCase() === a.toLowerCase()),
+  ).length;
+  const badRecipient = firstInvalid(to) ?? firstInvalid(cc) ?? firstInvalid(bcc);
+  useReplyingHeartbeat(id ?? null, replyText.trim().length > 0);
+  // The thread re-reads every 20 s while open, so a colleague's reply or
+  // "is writing" shows up without a refresh (polling, not sockets).
+  useEffect(() => {
+    if (!url) return;
+    const t = setInterval(reload, 20_000);
+    return () => clearInterval(t);
+  }, [url, reload]);
 
   const starred = thread?.starred ?? false;
   const trashed = thread?.trashedAt != null;
@@ -390,27 +424,46 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
 
   const totalAttachBytes = files.reduce((sum, f) => sum + f.size, 0);
 
-  async function handleSend() {
+  function clearReply() {
+    setReplyText("");
+    setToEdit(null);
+    setCc("");
+    setBcc("");
+    setShowCopies(false);
+    setAlreadyReplied(null);
+  }
+
+  async function handleSend(force: boolean) {
     if (!url || sending) return;
     const text = replyText.trim();
-    if (!text) return;
+    if (!text || badRecipient || parseRecipients(to).length === 0) return;
     setSending(true);
     try {
       const res = await api.post<{ queued?: boolean }>(`${url}/reply`, {
         text,
-        ...(replyAll ? { replyAll: true } : {}),
+        to: parseRecipients(to),
+        cc: parseRecipients(cc),
+        bcc: parseRecipients(bcc),
+        // The newest message I have seen: a colleague's reply after it stops mine.
+        afterMessageId: lastMessage?.id ?? null,
+        force,
         ...(needsAck ? { needsAck: true } : {}),
         ...(replyFrom ? { fromAddress: replyFrom } : {}),
         ...(files.length > 0 ? { attachments: attachmentPayload(files) } : {}),
       });
-      setReplyText("");
-      setReplyAll(false);
+      clearReply();
       setNeedsAck(false);
       setFiles([]);
       setAttachError(null);
       toast.success(sentToast(res.queued, "Reply sent."));
       reload();
     } catch (e: any) {
+      const hit = alreadyRepliedFrom(e);
+      if (hit) {
+        setAlreadyReplied(hit);
+        reload();
+        return;
+      }
       toast.error(
         e?.message
           ? String(e.message).replace(/^\d+:\s*/, "")
@@ -693,6 +746,11 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
                         <div className="min-w-0">
                           <div className="flex items-center gap-1.5">
                             <span className="truncate text-sm font-semibold text-ink">{senderName}</span>
+                            {outbound && m.sentByName && (
+                              <span className="shrink-0 rounded bg-surface-dim px-1.5 py-0.5 text-[10px] font-semibold text-ink-secondary">
+                                Replied by {m.sentByName}
+                              </span>
+                            )}
                             {outbound ? (
                               <ArrowUpRight className="h-3.5 w-3.5 shrink-0 text-accent" />
                             ) : (
@@ -781,10 +839,28 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
                   <Send className="h-3.5 w-3.5 text-accent" />
                   <p className="text-sm font-semibold text-ink">Reply</p>
                 </div>
-                <span className="text-xs text-ink-muted">
-                  To {thread.counterpartyName || thread.counterpartyEmail || "(unknown sender)"}
-                </span>
+                {thread.assignedToName && (
+                  <span className="text-xs text-ink-muted">Handled by {thread.assignedToName}</span>
+                )}
               </div>
+              <ReplyingNowBanner people={data.replying ?? []} />
+              <ReplyRecipients
+                to={to}
+                cc={cc}
+                bcc={bcc}
+                showCopies={showCopies}
+                disabled={sending}
+                replyAllOffer={replyAllOffer}
+                invalid={badRecipient}
+                onTo={setToEdit}
+                onCc={setCc}
+                onBcc={setBcc}
+                onShowCopies={() => setShowCopies(true)}
+                onReplyAll={() => {
+                  setShowCopies(true);
+                  setCc((prev) => [prev, allCc].filter((v) => v.trim()).join(", "));
+                }}
+              />
               <div className="flex flex-wrap items-center gap-2">
                 <label className="text-xs font-medium text-ink-muted">From</label>
                 {activeAddresses.length > 1 ? (
@@ -839,6 +915,15 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
                 </div>
               )}
               {attachError && <p className="text-[11px] text-err">{attachError}</p>}
+              {alreadyReplied && (
+                <AlreadyRepliedBox
+                  hit={alreadyReplied}
+                  now={Date.now()}
+                  busy={sending}
+                  onSendAnyway={() => void handleSend(true)}
+                  onDiscard={clearReply}
+                />
+              )}
 
               <div className="flex items-center justify-between gap-2">
                 <p className="text-[11px] text-ink-muted">
@@ -862,21 +947,6 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
                     <Paperclip className="h-4 w-4" />
                     Attach
                   </button>
-                  {/* Reply-all. Until now a reply went to ONE address and there
-                      was no way to add anyone — an email that Cc'd three people
-                      was answered to one of them, silently. */}
-                  <label
-                    title="Also reply to everyone who was on the last message, except this mailbox"
-                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-[12px] font-semibold text-ink-secondary hover:text-ink"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={replyAll}
-                      disabled={sending}
-                      onChange={(e) => setReplyAll(e.target.checked)}
-                    />
-                    Reply all
-                  </label>
                   <label
                     title={NEEDS_ACK_HINT}
                     className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-[12px] font-semibold text-ink-secondary hover:text-ink"
@@ -890,12 +960,12 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
                     Needs acknowledgement
                   </label>
                   <button
-                    disabled={sending || !replyText.trim()}
-                    onClick={handleSend}
+                    disabled={sending || !replyText.trim() || !!badRecipient || !to.trim() || alreadyReplied != null}
+                    onClick={() => void handleSend(false)}
                     className="inline-flex items-center gap-1.5 rounded-md border border-primary bg-primary px-3 py-1.5 text-[12px] font-bold text-white hover:bg-primary-ink disabled:opacity-50"
                   >
                     {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                    {replyAll ? "Send to all" : "Send reply"}
+                    Send reply
                   </button>
                 </div>
               </div>

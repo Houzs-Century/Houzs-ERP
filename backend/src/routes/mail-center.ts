@@ -22,6 +22,7 @@
 //
 // Timestamp columns are TEXT, written via new Date().toISOString() (per mig 0008).
 // ---------------------------------------------------------------------------
+import { afterReplySent, replyConflict, replyingOn } from "./mail-reply-guard";
 import { afterGrantChange, departmentIdsOf, departmentMailboxes, isInManagement, LEVEL_NAME, recordAccessChange } from "../lib/mail-access";
 import { Hono } from "hono";
 import type { Context } from "hono";
@@ -978,6 +979,7 @@ app.get("/threads/:id", async (c) => {
   return c.json({
     thread: { ...rowToThread(thread), unread: false },
     readers: await threadReaders(c.env.DB, thread, activeCompanyId(c) ?? null),
+    replying: await replyingOn(c.env.DB, id, me),
     messages: mappedMsgs.map((m) => ({
       ...m,
       attachments: attByMsg.get(m.id) ?? [],
@@ -1864,6 +1866,8 @@ app.post("/threads/:id/reply", async (c) => {
     bcc?: string | string[];
     attachments?: Array<{ filename: string; contentBase64: string }>;
     needsAck?: boolean;
+    afterMessageId?: string | null; // newest message seen; `force` sends past a newer colleague reply
+    force?: boolean;
   };
   const body: ReplyBody = await c.req
     .json<ReplyBody>()
@@ -1894,6 +1898,8 @@ app.post("/threads/:id/reply", async (c) => {
     return c.json({ error: "Thread not found" }, 404);
   }
 
+  const clash = body.force ? null : await replyConflict(c.env.DB, id, body.afterMessageId ?? null, scope.userId);
+  if (clash) return c.json({ code: "already_replied", ...clash, error: `${clash.by} already replied.` }, 409);
   const mailbox = (thread.mailbox_address ?? "").trim();
 
   /* WHO THE REPLY GOES TO.
@@ -2036,6 +2042,7 @@ app.post("/threads/:id/reply", async (c) => {
     .run();
 
   if (scope.userId != null) await setThreadRead(c.env.DB, id, scope.userId, true);
+  await afterReplySent(c, id, thread.assigned_to_user_id ?? null, userId, fromName);
   if (ackPeople.length) await requestAcks(c.env, messageId, ackPeople, { subject, senderName: fromName });
   return c.json({ ok: true, messageId, queued: result.status !== "sent" });
 });
