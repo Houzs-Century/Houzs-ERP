@@ -1,8 +1,8 @@
 /* HR · Attendance (step-2 re-skin). Today's status as four cards, then the
  * whole month as a grid (sticky employee column + day header), built from the
- * working-hours range read (present / absent / leave / rest per day) and the
- * attendance day read for today. Per-day "late" is shown in today's cards; the
- * month grid marks it in a later pass (needs a per-day lateMin month read). */
+ * working-hours range read (present / late / absent / leave / rest per day) and
+ * the attendance day read for today. Lateness comes from each day's lateMin on
+ * the working-hours read, shown in today's cards and marked in the month grid. */
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { HrPageHeader } from "./HrPageHeader";
@@ -27,7 +27,7 @@ const shiftMonth = (month: string, by: number): string => {
   return `${Math.floor(idx / 12)}-${pad2((idx % 12) + 1)}`;
 };
 
-type Cell = "present" | "absent" | "leave" | "rest" | "notin" | "future";
+type Cell = "present" | "late" | "absent" | "leave" | "rest" | "notin" | "future";
 const LEAVE_STATUSES = new Set(["MEDICAL_LEAVE", "ANNUAL_LEAVE", "UNPAID_LEAVE"]);
 function cellOf(day: WorkDay | undefined, future: boolean): Cell {
   if (future) return "future";
@@ -35,10 +35,11 @@ function cellOf(day: WorkDay | undefined, future: boolean): Cell {
   if (day.status === "REST_DAY") return "rest";
   if (LEAVE_STATUSES.has(day.status)) return "leave";
   if (day.status === "ABSENT") return "absent";
-  return "present";
+  return day.lateMin > 0 ? "late" : "present";
 }
 const CELL: Record<Cell, { bg: string; letter: string; color: string }> = {
   present: { bg: "bg-synced-bg", letter: "", color: "" },
+  late: { bg: "bg-time/15", letter: "L", color: "text-time" },
   absent: { bg: "bg-err-bg", letter: "A", color: "text-err" },
   leave: { bg: "bg-surface-dim", letter: "V", color: "text-ink-muted" },
   rest: { bg: "", letter: "·", color: "text-ink-soft" },
@@ -86,15 +87,15 @@ export function AttendancePage() {
   const dayList = Array.from({ length: days }, (_, i) => i + 1);
 
   const totalsOf = (empId: number) => {
-    let pres = 0, abs = 0, lv = 0;
+    let pres = 0, late = 0, abs = 0, lv = 0;
     for (const d of dayList) {
       const future = isCurrentMonth && d > todayDay;
       const c = cellOf(byDay.get(`${empId}-${month}-${pad2(d)}`), future);
-      if (c === "present") pres++;
+      if (c === "present" || c === "late") { pres++; if (c === "late") late++; }
       else if (c === "absent") abs++;
       else if (c === "leave") lv++;
     }
-    return { pres, abs, lv };
+    return { pres, late, abs, lv };
   };
 
   return (
@@ -129,7 +130,7 @@ export function AttendancePage() {
               <button type="button" disabled={isCurrentMonth} onClick={() => setMonth(shiftMonth(month, 1))} className="flex h-7 w-7 items-center justify-center rounded-md text-ink-muted hover:bg-surface-2 disabled:opacity-40">›</button>
             </div>
             <div className="ml-auto flex items-center gap-3 text-[11px] text-ink-muted">
-              <Legend bg="bg-synced-bg" label="Present" /><Legend bg="bg-err-bg" label="Absent" /><Legend bg="bg-surface-dim" label="Leave" /><Legend bg="bg-surface-2" label="No punch" />
+              <Legend bg="bg-synced-bg" label="Present" /><Legend bg="bg-time/15" label="Late" /><Legend bg="bg-err-bg" label="Absent" /><Legend bg="bg-surface-dim" label="Leave" /><Legend bg="bg-surface-2" label="No punch" />
             </div>
           </div>
 
@@ -150,7 +151,7 @@ export function AttendancePage() {
                         </th>
                       );
                     })}
-                    {["PRES", "ABS", "LV"].map((t) => <th key={t} className="sticky top-0 z-20 min-w-[34px] border-b border-l border-border-subtle bg-surface-2 px-1 py-1.5 text-center text-[9px] font-bold text-ink-muted">{t}</th>)}
+                    {["PRES", "LATE", "ABS", "LV"].map((t) => <th key={t} className="sticky top-0 z-20 min-w-[34px] border-b border-l border-border-subtle bg-surface-2 px-1 py-1.5 text-center text-[9px] font-bold text-ink-muted">{t}</th>)}
                   </tr>
                 </thead>
                 <tbody>
@@ -176,6 +177,7 @@ export function AttendancePage() {
                           );
                         })}
                         <td className="border-b border-l border-border-subtle text-center font-semibold text-synced">{t.pres}</td>
+                        <td className="border-b border-border-subtle text-center font-semibold text-time">{t.late}</td>
                         <td className="border-b border-border-subtle text-center font-semibold text-err">{t.abs}</td>
                         <td className="border-b border-border-subtle text-center font-semibold text-ink-muted">{t.lv}</td>
                       </tr>
