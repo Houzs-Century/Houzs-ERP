@@ -75,7 +75,7 @@ function Erp({ r }: { r: Row }) {
 function StatCard({ label, value, sub, bar, active, onClick }: { label: string; value: ReactNode; sub: string; bar: string; active?: boolean; onClick?: () => void }) {
   const Tag = onClick ? "button" : "div";
   return (
-    <Tag type={onClick ? "button" : undefined} onClick={onClick} className={cx("flex min-w-[150px] flex-col overflow-hidden rounded-xl border bg-surface text-left", active ? "border-primary ring-1 ring-primary" : "border-border", onClick && "hover:border-primary/50")}>
+    <Tag type={onClick ? "button" : undefined} onClick={onClick} className={cx("flex min-w-0 flex-col overflow-hidden rounded-xl border bg-surface text-left", active ? "border-primary ring-1 ring-primary" : "border-border", onClick && "hover:border-primary/50")}>
       <div className={cx("h-[3px] w-full", bar)} />
       <div className="px-3.5 py-3">
         <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-muted">{label}</div>
@@ -180,7 +180,7 @@ export function EmployeeMasterPage({
       />
 
       <div className="flex flex-col gap-3 px-6 py-4">
-        <div className="flex gap-3 overflow-x-auto pb-1">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
           <StatCard label="Active employees" value={emp.data ? total : "—"} sub={emp.data ? "in the company" : "loading"} bar="bg-primary" />
           <StatCard label="Punched in today" value={<span>{dash(punchedIn)} / {total}</span>} sub={attReady ? `${notIn} not in · ${onLeave} on leave` : "loading today"} bar="bg-synced" active={filter === "punched"} onClick={() => toggleFilter("punched")} />
           <StatCard label="No ERP account" value={emp.data ? notLinked : "—"} sub="cannot punch in" bar="bg-time" active={filter === "notlinked"} onClick={() => toggleFilter("notlinked")} />
