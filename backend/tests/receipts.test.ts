@@ -8,7 +8,14 @@
 
 import { Hono } from 'hono';
 import { SCM_SYSTEM_STAFF_ID } from '../src/scm/middleware/auth';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
+import { fakeRunScmPgCommand } from './lib/fake-scm-command';
+
+/* The edit commits inside one PG transaction; here on the fake, with its rollback. */
+vi.mock('../src/scm/lib/pg-supabase-transaction', async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
+  runScmPgCommand: fakeRunScmPgCommand,
+}));
 import { receipts } from '../src/scm/routes/receipts';
 
 type Row = Record<string, any>;
@@ -30,6 +37,7 @@ class FakeQuery {
   update(p: Row) { this.op = 'update'; this.patch = p; return this; }
   delete() { this.op = 'delete'; return this; }
   eq(col: string, val: unknown) { this.preds.push((r) => String(r[col]) === String(val)); return this; }
+  neq(col: string, val: unknown) { this.preds.push((r) => String(r[col]) !== String(val)); return this; }
   gte(col: string, val: unknown) { this.preds.push((r) => String(r[col]) >= String(val)); return this; }
   lt(col: string, val: unknown) { this.preds.push((r) => String(r[col]) < String(val)); return this; }
   in(col: string, vals: unknown[]) {
@@ -70,6 +78,7 @@ function harness(tables: Record<string, Row[]>) {
   const counters = new Map<string, number>();
   app.use('*', async (c, next) => {
     c.set('supabase' as never, {
+      __tables: tables,
       from: (t: string) => new FakeQuery((tables[t] ||= []), t),
       schema(_s: string) { return this; },
       rpc: async (fn: string, args: Row) => {
@@ -357,5 +366,34 @@ describe('edit and re-post (owner 2026-09-07: 收钱的日期错了 → 做 b)',
     const afterVoid = await patch(app, `/${row.id}`, { receiptDate: '2026-08-01' });
     expect(afterVoid.status).toBe(409);
     expect((await afterVoid.json() as { error: string }).error).toBe('receipt_cancelled');
+  });
+});
+
+/* Ported from Conts-ERP #1137 (D4). Fails on the code before the fix.
+   Symptom: a receipt edit whose re-post failed kept the new lines and total and the old journal reversed, with none
+   re-posted. Cause: header, lines, contra and re-post committed one by one. Fix: one transaction (runScmPgCommand). */
+describe('a receipt edit that fails part-way changes nothing', () => {
+  test('the re-post fails: the old lines, total and journal all stand', async () => {
+    const tables = baseTables();
+    const app = harness(tables);
+    const res = await post(app, '/', { payerName: 'ALLIANZ', bankAccountCode: '310-0010', lines: [{ creditAccountCode: '700-0000', amountSen: 500 }] });
+    expect(res.status, await res.clone().text()).toBe(201);
+    const id = tables.acc_receipts[0]!.id;
+    let armed = true;
+    tables.journal_entry_lines = new Proxy(tables.journal_entry_lines!, {
+      get(target, prop, recv) {
+        if (prop === 'push' && armed) { armed = false; throw new Error('connection reset'); }
+        return Reflect.get(target, prop, recv);
+      },
+    });
+    const edit = await app.request(`/${id}`, {
+      method: 'PATCH', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ lines: [{ creditAccountCode: '700-0000', amountSen: 700 }, { creditAccountCode: '700-0000', amountSen: 300 }] }),
+    });
+    expect(edit.ok).toBe(false);
+    expect(tables.acc_receipts.find((r) => r.id === id)!).toMatchObject({ total_sen: 500 });
+    expect(tables.acc_receipt_lines!.filter((l) => l.receipt_id === id)).toHaveLength(1);
+    expect(tables.journal_entries!.filter((j) => j.source_type === 'RCT' && !j.reversed)).toHaveLength(1);
+    expect(tables.journal_entries!.filter((j) => j.source_type === 'RCT_REVERSAL')).toHaveLength(0);
   });
 });

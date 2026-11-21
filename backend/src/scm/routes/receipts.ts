@@ -17,6 +17,7 @@
 // ----------------------------------------------------------------------------
 
 import { Hono } from 'hono';
+import { runScmPgCommand } from '../lib/pg-supabase-transaction';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { supabaseAuth } from '../middleware/auth';
 import { companyDocPrefix, requireActiveCompanyId, scopeToCompany } from '../lib/companyScope';
@@ -373,46 +374,53 @@ export const updateReceiptHandler = async (c: any): Promise<Response> => {
   }
   const totalSen = lines.reduce((s, l) => s + l.amountSen, 0);
 
-  const { error: upErr } = await sb.from('acc_receipts').update({
-    /* The coercion sits at the write (tests/dateWriteCoercion.test.ts): a
-       missing or unreadable date keeps the receipt's own. */
-    payer_name: payer, receipt_date: dateOrNull(body.receiptDate) ?? oldDate, bank_account_code: bank, total_sen: totalSen, notes,
-  }).eq('company_id', coId).eq('id', receipt.id);
-  if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
-  if (body.lines !== undefined) {
-    await sb.from('acc_receipt_lines').delete().eq('company_id', coId).eq('receipt_id', receipt.id);
-    const { error: lineErr } = await sb.from('acc_receipt_lines').insert(lines.map((l, i) => ({
-      company_id: coId, receipt_id: receipt.id, line_no: i + 1,
-      description: l.description, credit_account_code: l.code, amount_sen: l.amountSen,
-    })));
-    if (lineErr) return c.json({ error: 'save_failed', reason: lineErr.message }, 500);
-  }
+  /* The header, the lines and the ledger re-post commit together or not at all. Each used to commit on its own: a
+     failure part-way left a receipt whose lines, total and journal disagreed (lines deleted, or the old journal
+     reversed with no new one). */
+  return runScmPgCommand(c, async (tx) => {
+    const { data: upd, error: upErr } = await tx.from('acc_receipts').update({
+      /* The coercion sits at the write (tests/dateWriteCoercion.test.ts): a
+         missing or unreadable date keeps the receipt's own. */
+      payer_name: payer, receipt_date: dateOrNull(body.receiptDate) ?? oldDate, bank_account_code: bank, total_sen: totalSen, notes,
+    }).eq('company_id', coId).eq('id', receipt.id).neq('status', 'CANCELLED').select('id');
+    if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
+    if (((upd ?? []) as unknown[]).length === 0) return c.json({ error: 'receipt_cancelled', message: `${receipt.receipt_number} was voided while you were editing it. Reload.` }, 409);
+    if (body.lines !== undefined) {
+      const { error: delErr } = await tx.from('acc_receipt_lines').delete().eq('company_id', coId).eq('receipt_id', receipt.id);
+      if (delErr) return c.json({ error: 'save_failed', reason: delErr.message }, 500);
+      const { error: lineErr } = await tx.from('acc_receipt_lines').insert(lines.map((l, i) => ({
+        company_id: coId, receipt_id: receipt.id, line_no: i + 1,
+        description: l.description, credit_account_code: l.code, amount_sen: l.amountSen,
+      })));
+      if (lineErr) return c.json({ error: 'save_failed', reason: lineErr.message }, 500);
+    }
 
-  /* The re-post: contra the entry the old receipt wrote, then book it as it
-     now reads — through the one gate, so numbering and the one-active-entry
-     rule hold exactly as on the first post. */
-  const rev = await reverseJournal(sb, {
-    companyId: coId,
-    sourceType: 'RCT',
-    sourceDocNo: receipt.receipt_number,
-    narration: (orig) => `Reversal of ${orig.je_no} — receipt ${receipt.receipt_number} edited`,
-    entryDate: oldDate,
+    /* The re-post: contra the entry the old receipt wrote, then book it as it
+       now reads — through the one gate, so numbering and the one-active-entry
+       rule hold exactly as on the first post. */
+    const rev = await reverseJournal(tx, {
+      companyId: coId,
+      sourceType: 'RCT',
+      sourceDocNo: receipt.receipt_number,
+      narration: (orig) => `Reversal of ${orig.je_no} — receipt ${receipt.receipt_number} edited`,
+      entryDate: oldDate,
+    });
+    if (!rev.ok) return c.json({ error: 'reverse_failed', status: rev.status, reason: (rev as { reason?: string }).reason ?? rev.status }, 500);
+    const ruleLines: RuleLine[] = [
+      { accountCode: bank, debitSen: totalSen, creditSen: 0, partyType: null, partyCode: null, partyName: payer, notes: `Receipt ${receipt.receipt_number} — ${payer}` },
+      ...lines.map((l) => ({ accountCode: l.code, debitSen: 0, creditSen: l.amountSen, partyType: null, partyCode: null, partyName: null, notes: l.description ?? receipt.receipt_number })),
+    ];
+    const r = await postJournal(tx, {
+      companyId: coId,
+      entryDate: receiptDate,
+      sourceType: 'RCT',
+      sourceDocNo: receipt.receipt_number,
+      narration: `Receipt ${receipt.receipt_number} — ${payer} — edited`,
+      lines: ruleLines,
+    });
+    if (!r.ok) return c.json({ error: 'post_failed', status: r.status, reason: (r as { reason?: string }).reason ?? r.status }, 500);
+    return c.json({ ok: true, reposted: true, jeNo: r.jeNo, receipt: { id: receipt.id, receiptNumber: receipt.receipt_number, totalSen, receiptDate } });
   });
-  if (!rev.ok) return c.json({ error: 'reverse_failed', status: rev.status, reason: (rev as { reason?: string }).reason ?? rev.status }, 500);
-  const ruleLines: RuleLine[] = [
-    { accountCode: bank, debitSen: totalSen, creditSen: 0, partyType: null, partyCode: null, partyName: payer, notes: `Receipt ${receipt.receipt_number} — ${payer}` },
-    ...lines.map((l) => ({ accountCode: l.code, debitSen: 0, creditSen: l.amountSen, partyType: null, partyCode: null, partyName: null, notes: l.description ?? receipt.receipt_number })),
-  ];
-  const r = await postJournal(sb, {
-    companyId: coId,
-    entryDate: receiptDate,
-    sourceType: 'RCT',
-    sourceDocNo: receipt.receipt_number,
-    narration: `Receipt ${receipt.receipt_number} — ${payer} — edited`,
-    lines: ruleLines,
-  });
-  if (!r.ok) return c.json({ error: 'post_failed', status: r.status, reason: (r as { reason?: string }).reason ?? r.status }, 500);
-  return c.json({ ok: true, reposted: true, jeNo: r.jeNo, receipt: { id: receipt.id, receiptNumber: receipt.receipt_number, totalSen, receiptDate } });
 };
 
 /* ── Router ───────────────────────────────────────────────────────────────── */

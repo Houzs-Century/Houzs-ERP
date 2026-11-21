@@ -14,7 +14,14 @@
 
 import { Hono } from 'hono';
 import { SCM_SYSTEM_STAFF_ID } from '../src/scm/middleware/auth';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
+import { fakeRunScmPgCommand } from './lib/fake-scm-command';
+
+/* The AP bill edit commits inside one PG transaction; here on the fake, with its rollback. */
+vi.mock('../src/scm/lib/pg-supabase-transaction', async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
+  runScmPgCommand: fakeRunScmPgCommand,
+}));
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
 import { computePiSettlement } from '../src/scm/lib/pi-settlement';
 import { apInvoices } from '../src/scm/routes/ap-invoices';
