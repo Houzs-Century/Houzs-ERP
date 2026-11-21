@@ -1,18 +1,10 @@
 // ---------------------------------------------------------------------------
 // Mail Center admin — the "Mailboxes" tab inside User Management (Team.tsx).
 //
-// Three regions, mirroring Hookka's "Mailbox Access" tab but built on Houzs
-// primitives (api client, useQuery, useToast, useDialog — no window.*):
-//
-//   A. Address list + "New mailbox" modal — assign an address to a PERSON
-//      (a user) or a DEPARTMENT (a shared mailbox, by dept NAME). Edit a row to
-//      reassign / relabel / toggle active.
-//   B. Access matrix — users × shared mailboxes, checkboxes, Edit→Save (no
-//      naked edits): the draft diffs against the server then fires POST/DELETE
-//      /access per change.
-//   C. View-level column — per-user personal / department / company, part of
-//      the SAME Edit→Save draft, with an optimistic savedLevels guard so a
-//      stale read-after-write doesn't snap the select back.
+// Three subpages (owner 2026-11-21), ?mail= in the URL:
+//   Mailboxes        - the address list, "New mailbox", edit a row.
+//   Gmail connection - newest mail each mailbox has received.
+//   Access           - each person's level and ticks (mail-access-levels.tsx).
 //
 // Gated by the parent on can("mail_center.manage"); the backend re-checks
 // isMailAdmin on every endpoint. userId is a NUMBER in Houzs (users.id serial);
@@ -42,46 +34,28 @@ import { api } from "../api/client";
 import { useBranding } from "../hooks/useBranding";
 import { cn } from "../lib/utils";
 import type { TeamMember, Department } from "../types";
+import { useSearchParams } from "react-router-dom";
 import {
   fetchAddresses,
   createAddress,
   patchAddress,
-  fetchAccess,
-  grantAccess,
-  revokeAccess,
-  fetchScopeLevels,
-  setScopeLevel,
   type MailAddress,
-  type MailScopeLevel,
-  DEFAULT_MAIL_SCOPE_LEVEL,
 } from "./MailCenter/mail-actions";
-import {
-  AccessChangeLog,
-  AccessLegend,
-  AutoTick,
-  OrgChartCell,
-  PersonalShares,
-  autoReason,
-  effectiveLevel,
-  isManagement,
-} from "./mail-access-parts";
+import { AccessChangeLog, MailboxConnection } from "./mail-access-parts";
+import { AccessLevels } from "./mail-access-levels";
+
+/* Three subpages (owner 2026-11-21); the open one is in the URL (?mail=). */
+const SUBPAGES = [
+  { id: "mailboxes", title: "Mailboxes" },
+  { id: "connection", title: "Gmail connection" },
+  { id: "access", title: "Access" },
+] as const;
+type Subpage = (typeof SUBPAGES)[number]["id"];
 
 const inputCls =
   "h-10 w-full rounded-md border border-border bg-surface px-3 text-[13px] text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-60";
 const labelCls =
   "mb-1.5 block text-[10px] font-semibold uppercase tracking-brand text-ink-muted";
-
-const SCOPE_LEVELS: { value: MailScopeLevel; label: string }[] = [
-  { value: "personal", label: "L1 · Own" },
-  { value: "department", label: "L2 · Department mailbox" },
-  { value: "department_all", label: "L3 · Whole department" },
-  { value: "company", label: "L4 · Company" },
-];
-
-// A grant key for the draft Map — `${addressId}::${userId}`.
-function grantKey(addressId: string, userId: number): string {
-  return `${addressId}::${userId}`;
-}
 
 export function MailboxesTab() {
   // ── Data ──────────────────────────────────────────────────────────────
@@ -109,13 +83,40 @@ export function MailboxesTab() {
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<MailAddress | null>(null);
 
+  const [params, setParams] = useSearchParams();
+  const sub: Subpage = SUBPAGES.some((p) => p.id === params.get("mail")) ? (params.get("mail") as Subpage) : "mailboxes";
+  function openSub(key: Subpage) {
+    const next = new URLSearchParams(params);
+    if (key === "mailboxes") next.delete("mail");
+    else next.set("mail", key);
+    setParams(next, { replace: true });
+  }
+
   function reloadAddresses() {
     addressesQ.reload();
   }
 
   return (
-    <div className="space-y-8">
-      {/* Region A — address list */}
+    <div className="space-y-6">
+      <div role="tablist" aria-label="Mail Center" className="flex flex-wrap gap-1 border-b border-border">
+        {SUBPAGES.map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            role="tab"
+            aria-selected={sub === p.id}
+            onClick={() => openSub(p.id)}
+            className={cn(
+              "-mb-px border-b-2 px-3 py-2 text-[12.5px] font-semibold transition-colors",
+              sub === p.id ? "border-primary text-ink" : "border-transparent text-ink-muted hover:text-ink",
+            )}
+          >
+            {p.title}
+          </button>
+        ))}
+      </div>
+
+      {sub === "mailboxes" && (
       <section>
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <span className="h-px w-5 bg-accent" />
@@ -198,17 +199,21 @@ export function MailboxesTab() {
           />
         )}
       </section>
+      )}
 
-      {/* Region B + C — access matrix + view levels */}
-      <AccessMatrix
-        addresses={addresses}
-        users={users}
-        departments={deptsQ.data?.departments ?? []}
-        loading={
-          addressesQ.loading || membersQ.loading
-        }
-      />
-      <AccessChangeLog />
+      {sub === "connection" && <MailboxConnection />}
+
+      {sub === "access" && (
+        <>
+          <AccessLevels
+            addresses={addresses}
+            users={users}
+            departments={deptsQ.data?.departments ?? []}
+            loading={addressesQ.loading || membersQ.loading}
+          />
+          <AccessChangeLog />
+        </>
+      )}
 
       {creating && (
         <NewMailboxModal
@@ -683,417 +688,5 @@ function EditMailboxPanel({
         </div>
       </PanelSection>
     </Panel>
-  );
-}
-
-// ── Region B + C: access matrix (users × shared mailboxes) + view levels ───
-// Row (user) windowing: past this many rows the matrix mounts only the user
-// rows scrolled into view (mirrors DataTable's tbody windowing) so an
-// O(users × mailboxes) checkbox grid doesn't put every row in the DOM at once.
-// No-op below the threshold, so a normal-sized team renders byte-identically.
-const MATRIX_ROW_THRESHOLD = 40;
-const MATRIX_ROW_OVERSCAN = 10;
-const MATRIX_ROW_ESTIMATE = 41; // px; corrected at runtime from a real row
-
-function AccessMatrix({
-  addresses,
-  users,
-  departments,
-  loading,
-}: {
-  addresses: MailAddress[];
-  users: TeamMember[];
-  departments: Department[];
-  loading: boolean;
-}) {
-  const toast = useToast();
-  const dialog = useDialog();
-
-  const accessQ = useQuery<{ addressId: string; userId: number }[]>("mailboxes-access", () =>
-    fetchAccess(),
-  );
-  const levelsQ = useQuery<{ userId: number; level: MailScopeLevel }[]>("mailboxes-scope-levels", () =>
-    fetchScopeLevels(),
-  );
-
-  // Shared mailboxes = active addresses with NO assigned user (department / role
-  // mailboxes). A user's OWN personal mailbox isn't a column here.
-  const sharedMailboxes = useMemo(
-    () =>
-      addresses.filter((a) => a.active && a.assignedUserId == null),
-    [addresses],
-  );
-
-  // Colleagues' own mailboxes, shareable for cover / handover (owner 2026-11-21).
-  const personalMailboxes = useMemo(
-    () => addresses.filter((a) => a.active && a.assignedUserId != null),
-    [addresses],
-  );
-
-  // Server grant set, as keys.
-  const serverGrants = useMemo(() => {
-    const s = new Set<string>();
-    for (const g of accessQ.data ?? []) s.add(grantKey(g.addressId, g.userId));
-    return s;
-  }, [accessQ.data]);
-
-  // Server levels, by user. Absent ⇒ DEFAULT_MAIL_SCOPE_LEVEL.
-  const serverLevels = useMemo(() => {
-    const m = new Map<number, MailScopeLevel>();
-    for (const l of levelsQ.data ?? []) m.set(l.userId, l.level);
-    return m;
-  }, [levelsQ.data]);
-
-  // Optimistic overlay so a stale read-after-write doesn't snap the select back
-  // (the documented "set Company → Save → jumps to Personal" bug).
-  const [savedLevels, setSavedLevels] = useState<Map<number, MailScopeLevel>>(
-    new Map(),
-  );
-  function levelOf(userId: number): MailScopeLevel {
-    return savedLevels.get(userId) ?? serverLevels.get(userId) ?? DEFAULT_MAIL_SCOPE_LEVEL;
-  }
-
-  // ── Edit→Save draft (no naked edits) ──────────────────────────────────
-  const [editMode, setEditMode] = useState(false);
-  const [busy, setBusy] = useState(false);
-  // Draft grant set (keys) + draft levels, seeded from server on entering edit.
-  const [draftGrants, setDraftGrants] = useState<Set<string>>(new Set());
-  const [draftLevels, setDraftLevels] = useState<Map<number, MailScopeLevel>>(
-    new Map(),
-  );
-
-  function enterEdit() {
-    setDraftGrants(new Set(serverGrants));
-    const lv = new Map<number, MailScopeLevel>();
-    for (const u of users) lv.set(u.id, levelOf(u.id));
-    setDraftLevels(lv);
-    setEditMode(true);
-  }
-  function cancelEdit() {
-    setEditMode(false);
-    setDraftGrants(new Set());
-    setDraftLevels(new Map());
-  }
-
-  function toggleGrant(addressId: string, userId: number) {
-    const k = grantKey(addressId, userId);
-    setDraftGrants((prev) => {
-      const next = new Set(prev);
-      next.has(k) ? next.delete(k) : next.add(k);
-      return next;
-    });
-  }
-  function setDraftLevel(userId: number, level: MailScopeLevel) {
-    setDraftLevels((prev) => {
-      const next = new Map(prev);
-      next.set(userId, level);
-      return next;
-    });
-  }
-
-  async function save() {
-    // Diff draft ↔ server for grants.
-    const toGrant: { addressId: string; userId: number }[] = [];
-    const toRevoke: { addressId: string; userId: number }[] = [];
-    for (const mb of [...sharedMailboxes, ...personalMailboxes]) {
-      for (const u of users) {
-        const k = grantKey(mb.id, u.id);
-        const want = draftGrants.has(k);
-        const have = serverGrants.has(k);
-        if (want && !have) toGrant.push({ addressId: mb.id, userId: u.id });
-        if (!want && have) toRevoke.push({ addressId: mb.id, userId: u.id });
-      }
-    }
-    // Diff levels.
-    const levelChanges: { userId: number; level: MailScopeLevel }[] = [];
-    for (const u of users) {
-      const want = draftLevels.get(u.id) ?? DEFAULT_MAIL_SCOPE_LEVEL;
-      const have = levelOf(u.id);
-      if (want !== have) levelChanges.push({ userId: u.id, level: want });
-    }
-
-    if (
-      toGrant.length === 0 &&
-      toRevoke.length === 0 &&
-      levelChanges.length === 0
-    ) {
-      setEditMode(false);
-      return;
-    }
-
-    const changeCount = toGrant.length + toRevoke.length + levelChanges.length;
-    if (
-      !(await dialog.confirm({
-        title: "Save mailbox access?",
-        message: `Apply ${changeCount} change${changeCount === 1 ? "" : "s"} to shared-mailbox access and view levels?`,
-        confirmLabel: "Save",
-      }))
-    )
-      return;
-
-    setBusy(true);
-    try {
-      const ops: Promise<unknown>[] = [
-        ...toGrant.map((g) => grantAccess(g.addressId, g.userId)),
-        ...toRevoke.map((g) => revokeAccess(g.addressId, g.userId)),
-        ...levelChanges.map((l) => setScopeLevel(l.userId, l.level)),
-      ];
-      const results = await Promise.allSettled(ops);
-      const failed = results.filter((r) => r.status === "rejected").length;
-      // Optimistically remember the levels we just set so the select doesn't
-      // snap back on the stale GET.
-      if (levelChanges.length) {
-        setSavedLevels((prev) => {
-          const next = new Map(prev);
-          for (const l of levelChanges) next.set(l.userId, l.level);
-          return next;
-        });
-      }
-      if (failed === 0) {
-        toast.success(`Saved ${changeCount} change${changeCount === 1 ? "" : "s"}`);
-      } else {
-        toast.error(`Saved with ${failed} failure(s) — re-check the matrix`);
-      }
-      setEditMode(false);
-      accessQ.reload();
-      levelsQ.reload();
-    } catch (e: any) {
-      toast.error(e?.message || "Save failed");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const granted = (addressId: string, userId: number): boolean => {
-    const k = grantKey(addressId, userId);
-    return editMode ? draftGrants.has(k) : serverGrants.has(k);
-  };
-  const userLevel = (userId: number): MailScopeLevel =>
-    editMode ? draftLevels.get(userId) ?? DEFAULT_MAIL_SCOPE_LEVEL : levelOf(userId);
-
-  // ── Row windowing (page-scroll-preserving) ────────────────────────────────
-  // A capturing window scroll listener catches scroll from any ancestor; the
-  // tbody is measured against the viewport and only the visible slice of user
-  // rows renders, bracketed by two spacer <tr>s that reserve the off-screen
-  // height. Checkbox / select state lives in React state (draftGrants /
-  // draftLevels, keyed by ids), so a windowed row that scrolls out and back
-  // renders with identical checked state + onChange — no DOM state is lost.
-  const matrixReady = !loading && !accessQ.loading && !levelsQ.loading;
-  const canVirtualize = matrixReady && users.length > MATRIX_ROW_THRESHOLD;
-  const totalCols = 4 + sharedMailboxes.length; // Member + Org Chart + View level + mailboxes + personal
-  const tbodyRef = useRef<HTMLTableSectionElement>(null);
-  const rowHeightRef = useRef(MATRIX_ROW_ESTIMATE);
-  const [winRange, setWinRange] = useState<{ start: number; end: number }>({
-    start: 0,
-    end: MATRIX_ROW_THRESHOLD * 2,
-  });
-  useEffect(() => {
-    if (!canVirtualize) return;
-    let raf = 0;
-    const measure = () => {
-      raf = 0;
-      const el = tbodyRef.current;
-      if (!el) return;
-      const firstRow = el.querySelector<HTMLElement>("tr[data-vrow]");
-      if (firstRow && firstRow.offsetHeight > 0)
-        rowHeightRef.current = firstRow.offsetHeight;
-      const rh = rowHeightRef.current || MATRIX_ROW_ESTIMATE;
-      const top = el.getBoundingClientRect().top;
-      const first = Math.max(0, Math.floor(-top / rh) - MATRIX_ROW_OVERSCAN);
-      const count = Math.ceil(window.innerHeight / rh) + MATRIX_ROW_OVERSCAN * 2;
-      const last = Math.min(users.length, first + count);
-      setWinRange((prev) =>
-        prev.start === first && prev.end === last ? prev : { start: first, end: last },
-      );
-    };
-    const onScroll = () => {
-      if (!raf) raf = requestAnimationFrame(measure);
-    };
-    measure();
-    window.addEventListener("scroll", onScroll, { capture: true, passive: true });
-    window.addEventListener("resize", onScroll);
-    return () => {
-      window.removeEventListener("scroll", onScroll, true);
-      window.removeEventListener("resize", onScroll);
-      if (raf) cancelAnimationFrame(raf);
-    };
-  }, [canVirtualize, users.length]);
-  const vStart = canVirtualize ? winRange.start : 0;
-  const vEnd = canVirtualize ? Math.min(users.length, winRange.end) : users.length;
-
-  return (
-    <section>
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <span className="h-px w-5 bg-accent" />
-        <h2 className="text-[10px] font-bold uppercase tracking-brand text-accent">
-          Shared mailbox access &amp; view levels
-        </h2>
-        <div className="ml-auto flex items-center gap-2">
-          {editMode ? (
-            <>
-              <button
-                type="button"
-                onClick={cancelEdit}
-                disabled={busy}
-                className="rounded-md border border-border bg-surface px-2.5 py-1 text-[11px] font-semibold text-ink-secondary hover:text-ink disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={save}
-                disabled={busy}
-                className="inline-flex items-center gap-1.5 rounded-md border border-primary bg-primary px-2.5 py-1 text-[11px] font-bold text-white hover:bg-primary-ink disabled:opacity-50"
-              >
-                {busy ? (
-                  <Loader2 size={12} className="animate-spin" />
-                ) : (
-                  <Check size={12} />
-                )}
-                Save
-              </button>
-            </>
-          ) : (
-            <Button
-              variant="ghost"
-              icon={<Pencil size={13} />}
-              onClick={enterEdit}
-              disabled={users.length === 0}
-            >
-              Edit access
-            </Button>
-          )}
-        </div>
-      </div>
-
-      {loading || accessQ.loading || levelsQ.loading ? (
-        <ListSkeleton rows={5} />
-      ) : users.length === 0 ? (
-        <EmptyState compact message="No active members to grant access to." />
-      ) : (
-        <div className="overflow-x-auto rounded-md border border-border bg-surface shadow-stone">
-          <table className="w-full text-left">
-            <thead>
-              <tr className="border-b-2 border-border bg-surface-dim text-[10px] font-bold uppercase tracking-brand text-ink">
-                <th className="sticky left-0 z-10 bg-surface-dim px-4 py-2.5">
-                  Member
-                </th>
-                <th className="px-4 py-2.5">Org Chart</th>
-                <th className="px-4 py-2.5">View level</th>
-                <th className="px-4 py-2.5">Colleagues&apos; mailboxes shared</th>
-                {sharedMailboxes.map((mb) => (
-                  <th
-                    key={mb.id}
-                    className="px-3 py-2.5 text-center"
-                    title={mb.address}
-                  >
-                    <div className="font-semibold normal-case text-ink-secondary">
-                      {mb.label || mb.address.split("@")[0]}
-                    </div>
-                    <div className="font-normal normal-case text-ink-muted">
-                      {mb.address}
-                    </div>
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody ref={tbodyRef}>
-              {canVirtualize && vStart > 0 && (
-                <tr aria-hidden>
-                  <td
-                    colSpan={totalCols}
-                    style={{ height: vStart * rowHeightRef.current, padding: 0, border: 0 }}
-                  />
-                </tr>
-              )}
-              {users.slice(vStart, vEnd).map((u) => (
-                <tr
-                  key={u.id}
-                  data-vrow=""
-                  className="border-b border-border-subtle last:border-b-0"
-                >
-                  <td className="sticky left-0 z-10 bg-surface px-4 py-2.5 text-[12.5px] font-semibold text-ink">
-                    {u.name || u.email}
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <OrgChartCell u={u} departments={departments} />
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-2.5">
-                    {isManagement(u, departments) ? (
-                      <Badge tone="accent" size="xs">L4 · Company (Management)</Badge>
-                    ) : editMode ? (
-                      <select
-                        value={userLevel(u.id)}
-                        onChange={(e) =>
-                          setDraftLevel(u.id, e.target.value as MailScopeLevel)
-                        }
-                        disabled={busy}
-                        className="h-8 cursor-pointer rounded-md border border-border bg-surface px-2 text-[11.5px] text-ink outline-none hover:border-accent/50 focus:border-primary"
-                      >
-                        {SCOPE_LEVELS.map((l) => (
-                          <option key={l.value} value={l.value}>
-                            {l.label}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <Badge tone="neutral" size="xs">
-                        {SCOPE_LEVELS.find((l) => l.value === userLevel(u.id))
-                          ?.label ?? userLevel(u.id)}
-                      </Badge>
-                    )}
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <PersonalShares
-                      shared={personalMailboxes.filter((a) => granted(a.id, u.id))}
-                      options={personalMailboxes.filter((a) => a.assignedUserId !== u.id && !granted(a.id, u.id))}
-                      editing={editMode && !busy}
-                      onAdd={(id) => toggleGrant(id, u.id)}
-                      onRemove={(id) => toggleGrant(id, u.id)}
-                    />
-                  </td>
-                  {sharedMailboxes.map((mb) => {
-                    const on = granted(mb.id, u.id);
-                    const auto = autoReason(mb, u, effectiveLevel(u, departments, userLevel(u.id)));
-                    return (
-                      <td key={mb.id} className="px-3 py-2.5 text-center">
-                        {auto ? <AutoTick reason={auto} /> : <input
-                          type="checkbox"
-                          checked={on}
-                          disabled={!editMode || busy}
-                          onChange={() => toggleGrant(mb.id, u.id)}
-                          aria-label={`${u.name || u.email} access to ${mb.address}`}
-                          className="h-4 w-4 cursor-pointer accent-[#a16a2e] disabled:cursor-default disabled:opacity-60"
-                        />}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-              {canVirtualize && vEnd < users.length && (
-                <tr aria-hidden>
-                  <td
-                    colSpan={totalCols}
-                    style={{
-                      height: (users.length - vEnd) * rowHeightRef.current,
-                      padding: 0,
-                      border: 0,
-                    }}
-                  />
-                </tr>
-              )}
-            </tbody>
-          </table>
-          <AccessLegend />
-          {sharedMailboxes.length === 0 && (
-            <div className="px-4 py-6 text-center text-[12px] text-ink-muted">
-              No shared (department) mailboxes yet. Create one above with "Assign
-              to → Department" to grant per-member access here. View levels still
-              apply.
-            </div>
-          )}
-        </div>
-      )}
-    </section>
   );
 }

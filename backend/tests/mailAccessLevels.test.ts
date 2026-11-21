@@ -11,7 +11,7 @@ const liveEnv = { ...env, RESEND_API_KEY: "re_test_key" } as unknown as Env;
 const SALES = 211001;
 const OPS = 211002;
 const MGMT = 211003;
-const TABLES = ["email_address_access", "email_addresses", "mail_user_scope", "user_departments", "mail_access_changes"];
+const TABLES = ["email_address_access", "email_addresses", "mail_user_scope", "user_departments", "mail_access_changes", "mail_scope_departments", "email_threads"];
 let readerRole = 0;
 let adminRole = 0;
 const made: number[] = [];
@@ -80,6 +80,8 @@ beforeAll(async () => {
     `CREATE TABLE IF NOT EXISTS mail_user_scope (user_id INTEGER PRIMARY KEY, level TEXT NOT NULL DEFAULT 'personal', created_at TEXT)`,
     `CREATE TABLE IF NOT EXISTS user_departments (user_id INTEGER NOT NULL, department_id INTEGER NOT NULL, created_at TEXT, PRIMARY KEY (user_id, department_id))`,
     `CREATE TABLE IF NOT EXISTS mail_access_changes (id TEXT PRIMARY KEY, company_id INTEGER, changed_at TEXT NOT NULL DEFAULT (datetime('now')), by_user_id INTEGER, user_id INTEGER NOT NULL, change TEXT NOT NULL)`,
+    `CREATE TABLE IF NOT EXISTS mail_scope_departments (user_id INTEGER NOT NULL, department_id INTEGER NOT NULL, company_id INTEGER, created_at TEXT, created_by INTEGER, PRIMARY KEY (user_id, department_id))`,
+    `CREATE TABLE IF NOT EXISTS email_threads (id TEXT PRIMARY KEY, mailbox_address TEXT, subject TEXT, counterparty_email TEXT, counterparty_name TEXT, status TEXT NOT NULL DEFAULT 'open', assigned_to_user_id INTEGER, assigned_to_name TEXT, last_message_at TEXT, last_direction TEXT, last_snippet TEXT, message_count INTEGER NOT NULL DEFAULT 0, unread INTEGER NOT NULL DEFAULT 1, starred INTEGER NOT NULL DEFAULT 0, labels TEXT, trashed_at TEXT, last_inbound_at TEXT, created_at TEXT, company_id INTEGER NOT NULL DEFAULT 1)`,
     `INSERT OR REPLACE INTO departments (id, name) VALUES (${SALES}, 'Aclsales'), (${OPS}, 'Aclops'), (${MGMT}, 'Management')`,
   ]) {
     await env.DB.prepare(statement).run();
@@ -171,9 +173,58 @@ describe("sharing is logged", () => {
     expect(cv.mailboxes.find((m) => m.address === "acl-owner@houzscentury.com")?.reach).toBe("granted");
 
     const changes = (await (await call(token, "/api/mail-center/access/changes")).json()) as Array<{ by: string; who: string; change: string }>;
-    expect(changes.map((c) => c.change).sort()).toEqual(["set level to L3 · Whole department", "shared acl-owner@houzscentury.com"]);
+    expect(changes.map((c) => c.change).sort()).toEqual(["set level to L2 · Department", "shared acl-owner@houzscentury.com"]);
     expect(changes.every((c) => c.by === "Acl Admin" && c.who === "Acl Cover")).toBe(true);
 
     expect((await call(token, "/api/mail-center/scope-level", "PUT", { userId: cover, level: "everything" })).status).toBe(400);
+  });
+});
+
+describe("L2 Department opens ticked departments wholly (owner 2026-11-21)", () => {
+  test("a ticked department adds its mailbox and every member's own; unticking closes it and both are logged", async () => {
+    const admin = await user("Acl Admin2", adminRole, OPS);
+    const lead = await user("Acl Lead", readerRole, SALES);
+    const opsMate = await user("Acl OpsMate", readerRole, OPS);
+    await mailbox("acl-sales@houzscentury.com", null, SALES);
+    await mailbox("acl-ops@houzscentury.com", null, OPS);
+    await mailbox("acl-opsmate@houzscentury.com", opsMate, null);
+    const token = await session(admin);
+    expect((await call(token, "/api/mail-center/scope-level", "PUT", { userId: lead, level: "department_all" })).status).toBe(200);
+
+    const before = await visible(await session(lead));
+    expect(before.mailboxes.map((m) => m.address)).toEqual(["acl-sales@houzscentury.com"]);
+
+    expect((await call(token, "/api/mail-center/scope-departments", "PUT", { userId: lead, departmentIds: [OPS] })).status).toBe(200);
+    const rows = (await (await call(token, "/api/mail-center/scope-departments")).json()) as Array<{ userId: number; departmentId: number }>;
+    expect(rows).toEqual([{ userId: lead, departmentId: OPS }]);
+    const opened = await visible(await session(lead));
+    expect(opened.mailboxes.map((m) => m.address).sort()).toEqual([
+      "acl-ops@houzscentury.com",
+      "acl-opsmate@houzscentury.com",
+      "acl-sales@houzscentury.com",
+    ]);
+
+    // L1 ignores the ticked departments.
+    await level(lead, "department");
+    expect((await visible(await session(lead))).mailboxes.map((m) => m.address)).toEqual(["acl-sales@houzscentury.com"]);
+
+    expect((await call(token, "/api/mail-center/scope-departments", "PUT", { userId: lead, departmentIds: [] })).status).toBe(200);
+    const log = (await (await call(token, "/api/mail-center/access/changes")).json()) as Array<{ change: string }>;
+    expect(log.map((c) => c.change)).toEqual(expect.arrayContaining(["opened Aclops", "closed Aclops"]));
+
+    const reader = await session(lead);
+    expect((await call(reader, "/api/mail-center/scope-departments", "PUT", { userId: lead, departmentIds: [OPS] })).status).toBe(403);
+  });
+
+  test("sync-status gives each mailbox its newest received mail and thread count", async () => {
+    const admin = await user("Acl Admin3", adminRole, OPS);
+    await mailbox("acl-ops@houzscentury.com", null, OPS);
+    await mailbox("acl-quiet@houzscentury.com", null, SALES);
+    await env.DB.prepare(`INSERT INTO email_threads (id, mailbox_address, last_inbound_at) VALUES ('t1', 'ACL-ops@houzscentury.com', '2026-11-20T01:00:00Z'), ('t2', 'acl-ops@houzscentury.com', '2026-11-21T02:00:00Z')`).run();
+    const res = await call(await session(admin), "/api/mail-center/sync-status");
+    expect(res.status).toBe(200);
+    const rows = (await res.json()) as Array<{ address: string; lastInboundAt: string | null; threads: number }>;
+    expect(rows.find((r) => r.address === "acl-ops@houzscentury.com")).toMatchObject({ lastInboundAt: "2026-11-21T02:00:00Z", threads: 2 });
+    expect(rows.find((r) => r.address === "acl-quiet@houzscentury.com")).toMatchObject({ lastInboundAt: null, threads: 0 });
   });
 });

@@ -392,3 +392,18 @@ export function setScopeLevel(
 ): Promise<unknown> {
   return api.put("/api/mail-center/scope-level", { userId, level });
 }
+
+// L2 people: the OTHER departments ticked for them (owner 2026-11-21).
+export function fetchScopeDepartments(): Promise<{ userId: number; departmentId: number }[]> {
+  return api.get<{ userId: number; departmentId: number }[]>("/api/mail-center/scope-departments");
+}
+
+export function setScopeDepartments(userId: number, departmentIds: number[]): Promise<unknown> {
+  return api.put("/api/mail-center/scope-departments", { userId, departmentIds });
+}
+
+export type MailboxSync = { address: string; pending: boolean; lastInboundAt: string | null; threads: number };
+
+export function fetchSyncStatus(): Promise<MailboxSync[]> {
+  return api.get<MailboxSync[]>("/api/mail-center/sync-status");
+}

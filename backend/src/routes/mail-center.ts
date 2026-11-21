@@ -23,7 +23,7 @@
 // Timestamp columns are TEXT, written via new Date().toISOString() (per mig 0008).
 // ---------------------------------------------------------------------------
 import { afterReplySent, replyConflict, replyingOn } from "./mail-reply-guard";
-import { afterGrantChange, departmentIdsOf, departmentMailboxes, isInManagement, LEVEL_NAME, recordAccessChange } from "../lib/mail-access";
+import { afterGrantChange, departmentIdsOf, extraScopeDepartments, departmentMailboxes, isInManagement, LEVEL_NAME, recordAccessChange } from "../lib/mail-access";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { Env } from "../types";
@@ -604,8 +604,7 @@ function rowToLabel(r: LabelRow) {
 //   • 'department' — the personal set PLUS every active department mailbox
 //                    (no owner) linked to the caller's Org Chart department
 //                    (email_addresses.department_id = users.department_id).
-//   • 'department_all' — 'department' PLUS the own mailboxes of everyone in
-//                    those departments (a manager, owner 2026-11-21).
+//   • 'department_all' — 'department' PLUS everyone's own mailbox in those and the ticked (mail_scope_departments) departments.
 //   • 'company'    — every active mailbox. A member of the Management
 //                    department always gets it (lib/mail-access.ts).
 // Departments are the primary one plus every user_departments row.
@@ -687,12 +686,11 @@ export async function getMailScope(c: Context<{ Bindings: Env }>): Promise<{
     .all<{ address: string }>();
   const addresses = (own.results ?? []).map((r) => r.address);
 
-  // 'department' / 'department_all' — the department mailboxes of every Org
-  // Chart department the caller is in (matched by id), and for
-  // 'department_all' those departments' colleagues' own mailboxes too.
+  // Department mailboxes of the caller's departments; 'department_all' also opens colleagues' own and the ticked departments.
   if (level === "department" || level === "department_all") {
-    if (departmentIds.length > 0) {
-      addresses.push(...(await departmentMailboxes(c.env.DB, departmentIds, level === "department_all", coSql)));
+    if (departmentIds.length > 0 || level === "department_all") {
+      const whole = level === "department_all" ? await extraScopeDepartments(c.env.DB, userId, departmentIds) : departmentIds;
+      addresses.push(...(await departmentMailboxes(c.env.DB, whole, level === "department_all", coSql)));
     } else {
       level = "personal";
     }
