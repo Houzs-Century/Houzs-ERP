@@ -49,15 +49,21 @@ export type AnchorRect = {
  * default here would silently give every new caller the state picker's ten-row
  * box (CLAUDE.md — "a default is a decision nobody reviews").
  *
+ * `visible` is the band of the viewport the operator can actually SEE, when
+ * that is less than all of it — see `visibleBand`. Room is measured against
+ * the band; the `bottom` edge stays measured from `viewportHeight`, because a
+ * fixed box is placed against the layout viewport, keyboard or not.
+ *
  * Pure, so the flip and the clamp are testable without a DOM.
  */
 export function measureAnchoredPanel(
   anchor: AnchorRect,
   viewportHeight: number,
   maxHeight: number,
+  visible: { top: number; bottom: number } = { top: 0, bottom: viewportHeight },
 ): AnchoredPanelPos {
-  const below = viewportHeight - anchor.bottom - PANEL_GAP - VIEWPORT_MARGIN;
-  const above = anchor.top - PANEL_GAP - VIEWPORT_MARGIN;
+  const below = visible.bottom - anchor.bottom - PANEL_GAP - VIEWPORT_MARGIN;
+  const above = anchor.top - visible.top - PANEL_GAP - VIEWPORT_MARGIN;
   // Flip up only when below cannot hold the list AND above holds more of it.
   const flipUp = below < Math.min(maxHeight, above);
   return {
@@ -107,6 +113,18 @@ export function useFixedWidthPanel(
   );
 }
 
+/* The part of the layout viewport the operator can see. On a phone the
+   on-screen keyboard does NOT shrink window.innerHeight — it only shrinks the
+   VISUAL viewport, and the field may sit anywhere inside it. Measured against
+   innerHeight, a City field just above the keyboard had "500px below", so its
+   list opened downward, behind the keyboard: nothing showed while typing, and
+   the typed word was dropped on blur (HC-0170, iPhone, Edit Sales Order). */
+export function visibleBand(): { top: number; bottom: number } {
+  const vv = window.visualViewport;
+  if (!vv) return { top: 0, bottom: window.innerHeight };
+  return { top: vv.offsetTop, bottom: vv.offsetTop + vv.height };
+}
+
 function samePos(a: AnchoredPanelPos | null, b: AnchoredPanelPos): boolean {
   return (
     a !== null &&
@@ -146,15 +164,22 @@ export function useAnchoredPanel(
     const update = () => {
       const el = anchorRef.current;
       if (!el) return;
-      const next = measureAnchoredPanel(el.getBoundingClientRect(), window.innerHeight, maxHeight);
+      const next = measureAnchoredPanel(el.getBoundingClientRect(), window.innerHeight, maxHeight, visibleBand());
       setPos((prev) => (samePos(prev, next) ? prev : next));
     };
     update();
     window.addEventListener('scroll', update, true);
     window.addEventListener('resize', update);
+    // The keyboard slides up AFTER focus opened the panel, and moving the
+    // visual viewport fires neither window event.
+    const vv = window.visualViewport;
+    vv?.addEventListener('resize', update);
+    vv?.addEventListener('scroll', update);
     return () => {
       window.removeEventListener('scroll', update, true);
       window.removeEventListener('resize', update);
+      vv?.removeEventListener('resize', update);
+      vv?.removeEventListener('scroll', update);
     };
   }, [anchorRef, open, maxHeight]);
 
