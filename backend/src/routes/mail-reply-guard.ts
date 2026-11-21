@@ -56,7 +56,11 @@ export async function replyConflict(
 /** After my reply: I am no longer writing, and an unassigned email becomes mine. */
 export async function afterReplySent(c: C, threadId: string, assigned: number | null, me: number | null, name: string | null): Promise<void> {
   if (me == null) return;
-  await c.env.DB.prepare(`DELETE FROM mail_thread_replying WHERE thread_id = ? AND user_id = ?`).bind(threadId, me).run();
+  // Best effort: the reply is already sent, and a stale mark expires on its own in 90 s.
+  await c.env.DB.prepare(`DELETE FROM mail_thread_replying WHERE thread_id = ? AND user_id = ?`)
+    .bind(threadId, me)
+    .run()
+    .catch((e: unknown) => console.warn("[mail] could not clear replying mark", e));
   if (assigned != null) return;
   await c.env.DB.prepare(
     `UPDATE email_threads SET assigned_to_user_id = ?, assigned_to_name = ? WHERE id = ? AND assigned_to_user_id IS NULL${activeCompanySql(c)}`,
