@@ -52,7 +52,7 @@ const RULES: Rule[] = [
   // ── Money on the document ────────────────────────────────────────────────
   {
     group: COLUMN_GROUPS.amounts,
-    any: /\b(net|gross|fee|merchant|acquirer|statement|method|symbol|inclusive|others?|amount|total|subtotal|tax|discount|disc|paid|balance|deposit|refund|refunded|credit|debit|price|rate|currency|curr|value|revenue|sales|income|outstanding|owed|payment|billed|invoice|invoiced|rental|rent|due|overdue|aging|age|bucket|finances|account|merchandise|mattress|sofa|bedframe|accessories|specials|salary|basic|ot pay|absence|advance|penalty|statutory|epf|socso|eis|pcb|ot x|allowances?|backpay|charges|cash)\b|_sen\b|\(rm\)/,
+    any: /\b(net|gross|fee|merchant|acquirer|statement|method|symbol|inclusive|others?|amount|total|subtotal|tax|discount|disc|paid|balance|deposit|refund|refunded|credit|debit|price|rate|currency|curr|value|revenue|sales|income|outstanding|owed|payment|billed|invoice|invoiced|rental|rent|due|overdue|aging|age|bucket|finances|account|merchandise|mattress|sofa|bedframe|accessories|specials|salary|basic|ot pay|absence|advance|penalty|statutory|epf|socso|eis|pcb|ot x|allowances?|backpay|charges|cash|deductions?)\b|_sen\b|\(rm\)/,
   },
   // ── Getting it made, moved and delivered ─────────────────────────────────
   {
@@ -72,8 +72,10 @@ const RULES: Rule[] = [
   // ── Staff, roles, the org ────────────────────────────────────────────────
   {
     group: COLUMN_GROUPS.people,
-    any: /\b(approval|level 1|level 2|recipients|last login|people|audience|salesperson|agent|pic|assignee|assigned|owner|approver|requested by|created by|invited|member|role|position|department|division|reports to|direct reports|joined|last seen|presence|team|organizer|in house|outsourced|lead|by|nationality|clock in|clock out|punch|logged|late|hours|ot)\b/,
+    any: /\b(approval|level 1|level 2|recipients|last login|people|audience|salesperson|agent|pic|assignee|assigned|owner|approver|requested by|created by|invited|member|role|position|department|division|reports to|direct reports|joined|last seen|presence|team|organizer|in house|outsourced|lead|by|nationality|clock in|clock out|punch|logged|late|hours|ot|employee|score|grade|kpi|scorecard)\b/,
   },
+  // ── Hours worked (Working Hours summary): days, regular, worked ───────────
+  { group: COLUMN_GROUPS.people, any: /\b(days|regular|worked)\b/ },
   // ── The document itself ──────────────────────────────────────────────────
   {
     group: COLUMN_GROUPS.basic,
