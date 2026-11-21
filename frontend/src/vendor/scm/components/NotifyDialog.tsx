@@ -62,7 +62,7 @@ export const NotifyDialog = ({ title, body, okLabel = 'OK', tone, onClose }: Not
   <div style={backdrop} onClick={onClose} role="presentation">
     <div style={card} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
       <h2 style={tone === 'error' ? titleErrStyle : titleStyle}>{title}</h2>
-      {body != null && <p style={bodyStyle}>{body}</p>}
+      {body != null && <div style={bodyStyle}>{body}</div>}
       <div style={actions}>
         <button type="button" style={primaryBtn} onClick={onClose} autoFocus>{okLabel}</button>
       </div>
