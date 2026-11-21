@@ -932,6 +932,7 @@ export const NAV_TABS: NavTab[] = [
     label: "Mail Center",
     icon: Mail,
     anyPerm: ["mail_center.read"],
+    badge: "mail-waiting",
   },
 
   // ── Announcements — office-wide notices + read receipts (ported from Hookka).

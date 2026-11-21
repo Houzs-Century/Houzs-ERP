@@ -121,6 +121,7 @@ import mailCenter from "./routes/mail-center";
 import mailInbound from "./routes/mail-inbound";
 import mailAcks from "./routes/mail-acks";
 import mailAccessLog from "./routes/mail-access-log";
+import mailReplyGuard from "./routes/mail-reply-guard";
 import mailPersonal from "./routes/mail-personal";
 // 2990 → Houzs LIVE SO mirror receiver. PRE-AUTH (secret-guarded, called by the
 // 2990 DB via pg_net, no user JWT) — mounted at the top level, outside /api/scm.
@@ -640,6 +641,7 @@ app.route("/api/inbox", inbox);
 // route is mounted above, before the auth gate, and is not shadowed by this.
 app.route("/api/mail-center", mailAcks);
 app.route("/api/mail-center", mailAccessLog);
+app.route("/api/mail-center", mailReplyGuard);
 app.route("/api/mail-center", mailPersonal);
 app.route("/api/mail-center", mailCenter);
 // Announcements — the banner GET, the LIST GET and the ack POST are open to

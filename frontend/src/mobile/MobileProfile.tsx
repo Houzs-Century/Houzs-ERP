@@ -48,7 +48,7 @@ import {
   useMobileLang,
   useT,
 } from "./mobileI18n";
-import { useItSupportUnread } from "../hooks/useAmendmentApprovals";
+import { useItSupportUnread, useMailWaiting } from "../hooks/useAmendmentApprovals";
 import "./mobile.css";
 
 /* ------------------------------------------------------------------ *
@@ -226,6 +226,7 @@ export function MobileProfile({ onLogout, orgItems, onOpenOrg }: {
   const annUnread = useAnnouncementUnread();
   // IT has replied on a request the person has not opened yet (IT Support row).
   const itUnread = useItSupportUnread();
+  const mailWaiting = useMailWaiting();
 
   // Salesperson MTD scoreboard (Orders MTD / Sales MTD) — the caller's OWN
   // sales orders this Malaysia-calendar month, from the SCM backend.
@@ -406,7 +407,7 @@ export function MobileProfile({ onLogout, orgItems, onOpenOrg }: {
             <div className="card" style={{ overflow: "hidden" }}>
               {(orgItems ?? []).map((it, i) => (
                 <Item key={it.to} icon={orgIconOf(it.to)} label={it.label} onClick={() => onOpenOrg(it.to, it.label)} first={i === 0}
-                  badge={it.to === "/announcements" ? annUnread : it.to === "/it-support" ? itUnread : undefined} />
+                  badge={it.to === "/announcements" ? annUnread : it.to === "/it-support" ? itUnread : it.to === "/mail-center" ? mailWaiting : undefined} />
               ))}
             </div>
           </>

@@ -40,6 +40,7 @@ import {
 import { parseRecipients, firstInvalid, addRecipients } from "../pages/MailCenter/mail-recipients";
 import { RecipientPicker } from "../pages/MailCenter/RecipientPicker";
 import { RecipientSuggestInput } from "../pages/MailCenter/RecipientSuggestInput";
+import { agoLabel, alreadyRepliedFrom, replyAllCc, useReplyingHeartbeat, type AlreadyReplied, type ReplyingPerson } from "../pages/MailCenter/mail-reply-parts";
 import { EMAIL_FRAME_SANDBOX_MEASURABLE, emailSrcDoc } from "../pages/MailCenter/mail-email-frame";
 import { MobileMessageAcks, MobileNeedsAck, MobilePendingAcks, MobileReadBy } from "./MobileMailAcks";
 import type { AckState, ThreadReaders } from "../pages/MailCenter/mail-acks";
@@ -141,9 +142,10 @@ type Message = {
   attachments?: Attachment[];
   acks?: AckState[];
   ackRequestId?: string | null;
+  sentByName?: string;
 };
 
-type ThreadDetail = { thread: Thread; readers?: ThreadReaders; messages: Message[] };
+type ThreadDetail = { thread: Thread; readers?: ThreadReaders; messages: Message[]; replying?: ReplyingPerson[] };
 
 // A colleague a thread can be handed to. Shape as GET /api/users serves it.
 type UserOption = { id: string | number; name?: string; email?: string };
@@ -726,6 +728,11 @@ function MailThread({
 
   const thread = data?.thread;
   const messages = data?.messages ?? [];
+  // Re-read every 20 s while open: a colleague's reply or "is writing" shows up.
+  useEffect(() => {
+    const t = setInterval(reload, 20_000);
+    return () => clearInterval(t);
+  }, [reload]);
 
   // Reply / reply-all reuse the same in-thread reply endpoint. Forward starts a
   // new conversation (compose) with a prefilled subject/body.
@@ -734,6 +741,8 @@ function MailThread({
       <MailReply
         thread={thread}
         replyAll={composeFor.mode === "replyall"}
+        messages={messages}
+        replying={data?.replying ?? []}
         onClose={clearCompose}
         onSent={() => {
           clearCompose();
@@ -1222,12 +1231,16 @@ function AttachmentChip({ a }: { a: Attachment }) {
 function MailReply({
   thread,
   replyAll,
+  messages,
+  replying,
   onClose,
   onSent,
   addresses,
 }: {
   thread: Thread | undefined;
   replyAll: boolean;
+  messages: Message[];
+  replying: ReplyingPerson[];
   onClose: () => void;
   onSent: () => void;
   addresses: MailAddress[];
@@ -1239,26 +1252,49 @@ function MailReply({
   const [attachError, setAttachError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [needsAck, setNeedsAck] = useState(false);
+  const last = messages.length > 0 ? messages[messages.length - 1] : null;
+  const ours = addresses.map((a) => a.address);
+  /* Editable To / Cc / Bcc (owner 2026-11-21); "Reply all" starts Cc filled. */
+  const [to, setTo] = useState(thread?.counterpartyEmail ?? "");
+  const [cc, setCc] = useState(() => (replyAll ? replyAllCc(last, thread?.counterpartyEmail ?? "", ours) : ""));
+  const [bcc, setBcc] = useState("");
+  const [showCopies, setShowCopies] = useState(replyAll);
+  const [clash, setClash] = useState<AlreadyReplied | null>(null);
+  useReplyingHeartbeat(thread?.id ?? null, text.trim().length > 0);
   const subject = /^re:/i.test(thread?.subject ?? "") ? thread?.subject ?? "" : `Re: ${thread?.subject ?? ""}`;
 
-  const send = async () => {
+  const send = async (force: boolean) => {
     if (!thread) return;
     if (!text.trim()) {
       toast.error("Message body is empty.");
+      return;
+    }
+    const bad = firstInvalid(to) ?? firstInvalid(cc) ?? firstInvalid(bcc);
+    if (bad || parseRecipients(to).length === 0) {
+      toast.error(bad ? `Not a valid email address: ${bad}` : "Enter a recipient.");
       return;
     }
     setSending(true);
     try {
       const res = await api.post<{ queued?: boolean }>(`/api/mail-center/threads/${thread.id}/reply`, {
         text: text.trim(),
-        ...(replyAll ? { replyAll: true } : {}),
+        to: parseRecipients(to),
+        cc: parseRecipients(cc),
+        bcc: parseRecipients(bcc),
+        afterMessageId: last?.id ?? null,
+        force,
         ...(needsAck ? { needsAck: true } : {}),
         fromAddress: from || undefined,
         ...(files.length > 0 ? { attachments: attachmentPayload(files) } : {}),
       });
-      toast.success(sentToast(res.queued, replyAll ? "Reply sent to everyone." : "Reply sent."));
+      toast.success(sentToast(res.queued, "Reply sent."));
       onSent();
     } catch (e) {
+      const hit = alreadyRepliedFrom(e);
+      if (hit) {
+        setClash(hit);
+        return;
+      }
       toast.error(e instanceof Error ? e.message : "Couldn't send reply.");
     } finally {
       setSending(false);
@@ -1266,11 +1302,43 @@ function MailReply({
   };
 
   return (
-    <ComposeShell title={replyAll ? "Reply all" : "Reply"} onClose={onClose} onSend={send} sending={sending}>
+    <ComposeShell title={replyAll ? "Reply all" : "Reply"} onClose={onClose} onSend={() => void send(false)} sending={sending || clash != null}>
+      {replying.length > 0 && (
+        <div role="status" style={{ background: "var(--warn-bg, #f8ecd9)", color: "var(--warn, #9a5a12)", borderRadius: 10, padding: "10px 12px", fontSize: 13 }}>
+          <b>{replying.map((p) => p.name).join(", ")}</b> {replying.length === 1 ? "is" : "are"} writing a reply to this conversation now. Check with them before you reply too.
+        </div>
+      )}
+      {clash && (
+        <div role="alert" style={{ border: "1px solid var(--err, #a3392b)", borderRadius: 10, padding: "10px 12px", fontSize: 13 }}>
+          <b>{clash.by}</b> replied {agoLabel(clash.at, Date.now())}, while you were writing. <b>Yours has not been sent.</b>
+          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            <button type="button" className="btn-ghost" style={{ flex: 1 }} disabled={sending} onClick={onClose}>Discard mine</button>
+            <button type="button" className="btn" style={{ flex: 1 }} disabled={sending} onClick={() => void send(true)}>Send mine too</button>
+          </div>
+        </div>
+      )}
       <label className="fld">
         <span className="fld-l">To</span>
-        <input className="fld-i" value={thread?.counterpartyName || thread?.counterpartyEmail || "—"} disabled readOnly />
+        <RecipientSuggestInput inputClassName="fld-i" value={to} onChange={setTo} placeholder="name@example.com" disabled={sending} invalid={false} />
       </label>
+      {!showCopies ? (
+        <div style={{ display: "flex", gap: 8 }}>
+          <button type="button" onClick={() => setShowCopies(true)} className="tinybtn" style={{ borderStyle: "dashed" }}>
+            Cc / Bcc
+          </button>
+        </div>
+      ) : (
+        <>
+          <label className="fld">
+            <span className="fld-l">Cc</span>
+            <RecipientSuggestInput inputClassName="fld-i" value={cc} onChange={setCc} placeholder="cc@example.com" disabled={sending} invalid={false} />
+          </label>
+          <label className="fld">
+            <span className="fld-l">Bcc</span>
+            <RecipientSuggestInput inputClassName="fld-i" value={bcc} onChange={setBcc} placeholder="bcc@example.com" disabled={sending} invalid={false} />
+          </label>
+        </>
+      )}
       <FromPicker addresses={addresses} value={from} onChange={setFrom} />
       <label className="fld">
         <span className="fld-l">Subject</span>

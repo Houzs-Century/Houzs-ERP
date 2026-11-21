@@ -66,7 +66,7 @@ interface PendingCountResponse {
 /** The badge sources a nav entry can name. Mirrored by NavTab["badge"]. */
 export type ApprovalBadgeSource =
   | "amendment-approvals" | "po-amendment-approvals" | "payment-backdate-approvals" | "payment-requests-waiting" | "it-support-replies"
-  | "fair-links-to-settle" | "product-request-approvals" | "finance-todo";
+  | "fair-links-to-settle" | "product-request-approvals" | "finance-todo" | "mail-waiting";
 
 /** What the count is, in the entry's tooltip ("Payment Requests · 3 waiting for Finance"). */
 export const BADGE_MEANING: Record<ApprovalBadgeSource, string> = {
@@ -78,6 +78,7 @@ export const BADGE_MEANING: Record<ApprovalBadgeSource, string> = {
   "fair-links-to-settle": "orders with no fair",
   "product-request-approvals": "awaiting your approval",
   "finance-todo": "waiting on you",
+  "mail-waiting": "customer emails waiting for your reply",
 };
 
 /** How often the sidebar counts are re-read while the tab is visible. */
@@ -98,6 +99,7 @@ const SOURCES: Record<ApprovalBadgeSource, { key: readonly string[]; path: strin
   "fair-links-to-settle": { key: FAIR_LINKS_TO_SETTLE_KEY, path: FAIR_LINKS_TO_SETTLE_PATH },
   "product-request-approvals": { key: PRODUCT_REQUEST_APPROVALS_KEY, path: "/api/scm/product-requests/pending-count" },
   "finance-todo": { key: FINANCE_TODO_COUNT_KEY, path: FINANCE_TODO_COUNT_PATH },
+  "mail-waiting": { key: ["mail-waiting-count"], path: "/api/mail-center/waiting-count" },
 };
 
 /** Sidebar order; also the order of the combined request's `sources`. */
@@ -179,6 +181,9 @@ export function useApprovalBadgeCounts(): Record<ApprovalBadgeSource, number> {
     "product-request-approvals": enabled && can("scm.product_request.approve"),
     /* Finance only — the people who work its To do. */
     "finance-todo": enabled && (can("scm.payment_voucher.create") || can("scm.payment_voucher.post")),
+    /* Owner 2026-11-21: a customer email waiting on me (assigned to me, or in my
+       own mailbox) shows on Mail Center. */
+    "mail-waiting": enabled && can("mail_center.read"),
   };
   const sources = SOURCE_ORDER.filter((s) => wanted[s]);
   const sourcesParam = sources.join(",");
@@ -238,6 +243,7 @@ export function useApprovalBadgeCounts(): Record<ApprovalBadgeSource, number> {
       ownPoll,
     ),
     "finance-todo": usePendingCount("finance-todo", wanted["finance-todo"] && batchSettled, ownPoll),
+    "mail-waiting": usePendingCount("mail-waiting", wanted["mail-waiting"] && batchSettled, ownPoll),
   };
 }
 
@@ -246,6 +252,12 @@ export function useItSupportUnread(): number {
   const { user } = useAuth();
   const connected = useItSupportConnected();
   return usePendingCount("it-support-replies", !!user?.id && connected, BADGE_POLL_MS);
+}
+
+/** Customer emails waiting on me, for the phone's Profile > Mail Center row (owner 2026-11-21). */
+export function useMailWaiting(): number {
+  const { user, can } = useAuth();
+  return usePendingCount("mail-waiting", !!user?.id && can("mail_center.read"), BADGE_POLL_MS);
 }
 
 /** Re-read the IT Support count now: a request was just opened, which marks it seen on the hub. */

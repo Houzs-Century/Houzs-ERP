@@ -30,6 +30,7 @@ export const BADGE_COUNT_PATHS = {
   "fair-links-to-settle": "/api/scm/mfg-sales-orders/fair-pending/count",
   "product-request-approvals": "/api/scm/product-requests/pending-count",
   "finance-todo": "/api/scm/accounting/todo/count",
+  "mail-waiting": "/api/mail-center/waiting-count",
 } as const;
 
 export type BadgeSource = keyof typeof BADGE_COUNT_PATHS;
