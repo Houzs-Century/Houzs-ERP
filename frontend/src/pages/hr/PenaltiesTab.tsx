@@ -7,14 +7,15 @@
 import { useMemo, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { api } from "../../api/client";
-import { DataTable, type Column } from "../../components/DataTable";
 import { ResizableDrawer } from "../../components/ResizableDrawer";
 import { useDialog } from "../../hooks/useDialog";
 import { useToast } from "../../hooks/useToast";
 import { formatDate } from "../../lib/utils";
 import { fmtSen, todayMY } from "../../vendor/shared/format";
 import { DateField } from "../../vendor/scm/components/DateField";
-import { Field, Pill, dangerBtn, errText, ghostBtn, inputCls, primaryBtn } from "../pos-admin/posAdminUi";
+import { Field, dangerBtn, errText, ghostBtn, inputCls, primaryBtn } from "../pos-admin/posAdminUi";
+import { hrPrimaryBtn } from "./HrPageHeader";
+import { HrTablePage, Tag, mask, type HrCol } from "./HrTablePage";
 import { HR, rmFromSen, senFromRm, useEmployees, usePenalties, type Penalty } from "./hrApi";
 
 const STATUS: Record<Penalty["status"], { label: string; tone: "muted" | "warn" | "info" | "ok" }> = {
@@ -24,38 +25,50 @@ const STATUS: Record<Penalty["status"], { label: string; tone: "muted" | "warn" 
   POSTED: { label: "In payslip", tone: "ok" },
 };
 
+const total = (p: Penalty) => p.lines.reduce((s, l) => s + l.amountSen, 0);
+
 export function PenaltiesTab() {
   const q = usePenalties();
   const [open, setOpen] = useState<Penalty | "new" | null>(null);
   const rows = q.data?.penalties ?? [];
-  const columns: Column<Penalty>[] = [
-    { key: "no", label: "No", getValue: (p) => p.penaltyNo, render: (p) => <span className="font-mono text-[11px] font-semibold text-accent">{p.penaltyNo}</span> },
-    { key: "date", label: "Date", getValue: (p) => p.date, render: (p) => <span className="font-mono">{formatDate(p.date)}</span> },
-    { key: "reference", label: "Reference", getValue: (p) => p.reference ?? "", render: (p) => p.reference ?? "" },
-    { key: "reason", label: "Reason", getValue: (p) => p.reason, render: (p) => p.reason },
-    { key: "who", label: "Who", getValue: (p) => p.lines.map((l) => l.name).join(", "), render: (p) => <span className="text-[11px]">{p.lines.map((l) => `${l.empNo} ${fmtSen(l.amountSen)}`).join(", ")}</span> },
-    { key: "total", label: "Total", align: "right", getValue: (p) => p.lines.reduce((s, l) => s + l.amountSen, 0), render: (p) => <span className="font-mono">{fmtSen(p.lines.reduce((s, l) => s + l.amountSen, 0))}</span> },
-    { key: "period", label: "Payroll Month", getValue: (p) => p.lines[0]?.payrollPeriod ?? "", render: (p) => p.lines[0]?.payrollPeriod ?? "" },
-    { key: "status", label: "Status", getValue: (p) => STATUS[p.status].label, render: (p) => <Pill tone={STATUS[p.status].tone}>{STATUS[p.status].label}</Pill> },
+  const canManage = q.data?.canManage ?? false;
+  const waiting = rows.filter((p) => p.status === "PENDING_APPROVAL").length;
+  const posted = rows.filter((p) => p.status === "POSTED").length;
+  const monthTotal = rows.reduce((s, p) => s + total(p), 0);
+
+  const columns: HrCol<Penalty>[] = [
+    { key: "no", label: "No", render: (p) => <span className="font-mono text-[11px] font-semibold text-accent">{p.penaltyNo}</span> },
+    { key: "date", label: "Date", render: (p) => <span className="font-mono">{formatDate(p.date)}</span> },
+    { key: "reference", label: "Reference", render: (p) => <span className="text-ink-secondary">{p.reference || "—"}</span> },
+    { key: "reason", label: "Reason", render: (p) => p.reason },
+    { key: "who", label: "Who pays", render: (p) => <span className="text-[11px] text-ink-secondary">{p.lines.map((l) => l.empNo).join(", ")}</span> },
+    { key: "total", label: "Total", align: "right", render: (p, show) => <span className="font-money text-err">-{mask(fmtSen(total(p)), show)}</span> },
+    { key: "period", label: "Payroll", render: (p) => <span className="text-ink-secondary">{p.lines.at(0)?.payrollPeriod ?? "—"}</span> },
+    { key: "status", label: "Status", render: (p) => <Tag tone={STATUS[p.status].tone}>{STATUS[p.status].label}</Tag> },
   ];
+
   return (
-    <div className="space-y-3">
-      {q.data?.canManage && (
-        <div className="flex justify-end">
-          <button type="button" className={primaryBtn} onClick={() => setOpen("new")}>
-            <Plus size={11} /> New penalty
-          </button>
-        </div>
-      )}
-      <DataTable<Penalty>
-        tableId="hr-penalties"
+    <>
+      <HrTablePage<Penalty>
+        title="Penalty"
+        subtitle="Deductions for incidents, approved by someone other than who raised it"
+        actions={canManage ? <button type="button" className={hrPrimaryBtn} onClick={() => setOpen("new")}><Plus size={11} /> New penalty</button> : undefined}
+        stats={[
+          { label: "Penalties", value: () => rows.length, sub: "on record", bar: "bg-primary" },
+          { label: "Waiting approval", value: () => waiting, sub: "need a second person", bar: "bg-time" },
+          { label: "In a payslip", value: () => posted, sub: "deducted", bar: "bg-synced" },
+          { label: "Total", value: (s) => <span className="font-money text-err">-{mask(fmtSen(monthTotal), s)}</span>, sub: "to deduct", bar: "bg-err" },
+        ]}
+        moneyToggle
+        rows={rows}
         columns={columns}
-        rows={q.data ? rows : null}
-        loading={q.loading}
+        searchOf={(p) => `${p.penaltyNo} ${p.reason} ${p.reference ?? ""} ${p.lines.map((l) => l.name).join(" ")}`}
+        searchPlaceholder="Search penalty or reason"
+        loading={q.loading && !q.data}
         error={q.error}
         emptyLabel="No penalties."
-        getRowKey={(p) => p.id}
         onRowClick={(p) => setOpen(p)}
+        footer={(s) => <>total <span className="font-money font-semibold text-err">-{mask(fmtSen(monthTotal), s)}</span></>}
       />
       {open && q.data && (
         <PenaltyDrawer
@@ -70,7 +83,7 @@ export function PenaltiesTab() {
           }}
         />
       )}
-    </div>
+    </>
   );
 }
 

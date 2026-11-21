@@ -15,6 +15,7 @@ import { formatDate } from "../../lib/utils";
 import { fmtSen, todayMY } from "../../vendor/shared/format";
 import { pcbHasFigure } from "../../vendor/shared/hr-pcb";
 import { Field, Pill, errText, ghostBtn, inputCls, primaryBtn } from "../pos-admin/posAdminUi";
+import { HrPageHeader } from "./HrPageHeader";
 import { HR, usePayroll, type Payslip } from "./hrApi";
 import { generatePayslipPdf } from "./payslipPdf";
 
@@ -23,12 +24,15 @@ const statusPill = (s: Payslip["status"] | "ESTIMATE") =>
   s === "PAID" ? <Pill tone="ok">Paid</Pill> : s === "APPROVED" ? <Pill tone="info">Approved</Pill> : s === "DRAFT" ? <Pill tone="warn">Draft</Pill> : <Pill tone="muted">Estimate</Pill>;
 const pcbCell = (s: Payslip) => (s.pcbStatus === "DISABLED" ? <span className="text-ink-muted">--</span> : pcbHasFigure(s.pcbStatus) ? fmtSen(s.pcbSen) : <span title="Tax profile incomplete" className="text-amber-800 dark:text-amber-300">not computed</span>);
 
-function Kpi({ label, value, sub }: { label: string; value: string; sub?: string }) {
+function Kpi({ label, value, sub, bar = "bg-primary" }: { label: string; value: string; sub?: string; bar?: string }) {
   return (
-    <div className="rounded-md border border-border bg-surface px-3 py-2">
-      <div className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">{label}</div>
-      <div className="mt-0.5 font-mono text-[15px] font-semibold text-ink">{value}</div>
-      {sub && <div className="text-[10.5px] text-ink-muted">{sub}</div>}
+    <div className="flex flex-col overflow-hidden rounded-xl border border-border bg-surface">
+      <div className={`h-[3px] w-full ${bar}`} />
+      <div className="px-3.5 py-3">
+        <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-muted">{label}</div>
+        <div className="mt-1 font-money text-[20px] font-bold leading-none text-ink">{value}</div>
+        {sub && <div className="mt-1.5 text-[11px] text-ink-muted">{sub}</div>}
+      </div>
     </div>
   );
 }
@@ -138,7 +142,9 @@ export function PayrollTab() {
   ];
 
   return (
-    <div className="space-y-3">
+    <>
+      <HrPageHeader title="Payroll" subtitle="The month's payslips — from the hours, docks, salaries, advances and penalties" />
+      <div className="thin-scroll flex min-h-0 flex-1 flex-col gap-3 overflow-auto px-6 py-4">
       <div className="flex flex-wrap items-end gap-2">
         <Field label="Month" className="w-40">
           <input type="month" className={inputCls} value={period} max={today.slice(0, 7)} onChange={(e) => e.target.value && setPeriod(e.target.value)} />
@@ -209,7 +215,8 @@ export function PayrollTab() {
         exportName={`payroll-${period}`}
       />
       {open && <SlipDrawer slip={open} projected={!!d?.projected} onClose={() => setOpen(null)} />}
-    </div>
+      </div>
+    </>
   );
 }
 

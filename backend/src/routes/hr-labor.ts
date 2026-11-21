@@ -27,7 +27,7 @@ import { todayMyt } from "../scm/lib/my-time";
 import { hasPermission } from "../services/permissions";
 import { audit } from "../services/audit";
 import { minutesFromWorkDate, workClock } from "../scm/shared/hr-attendance";
-import { punchDayHours, rulesForEmployeeHours } from "../scm/shared/hr-labor";
+import { punchDayHours, punchLateMinutes, rulesForEmployeeHours } from "../scm/shared/hr-labor";
 import { asDate } from "./lib/hr-attendance-view";
 import { payRulesResolver } from "./lib/hr-attendance-store";
 import { shiftRulesResolver } from "./lib/hr-shift-store";
@@ -124,6 +124,8 @@ hrLabor.get("/working-hours", async (c) => {
       const sr = shift.rulesFor(d.work_date, d.employee_id);
       const rules = shift.hasGroup(d.employee_id) ? sr : rulesForEmployeeHours(sr, hoursPerDay.get(d.employee_id) ?? 9);
       const punchHours = inMin != null && outMin != null ? punchDayHours(inMin, outMin, rules, cfg.brokenPunchCreditsFullDay).hours : null;
+      // Lateness for the month grid; the clock-out does not affect it, so an open day still reads late.
+      const lateMin = inMin != null ? punchLateMinutes(inMin, outMin ?? inMin, rules) : 0;
       return {
         attendanceId: d.id,
         employeeId: d.employee_id,
@@ -133,6 +135,7 @@ hrLabor.get("/working-hours", async (c) => {
         clockOut: outMin != null ? workClock(outMin) : null,
         outSource: d.out_source,
         punchHours,
+        lateMin,
       };
     }),
     entries: entries.map((e) => ({

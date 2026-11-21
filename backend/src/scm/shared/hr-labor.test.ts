@@ -3,7 +3,7 @@
 import { describe, expect, test } from "vitest";
 import { DEFAULT_PAY_RULES } from "./hr-pay-rules";
 import { toAttendanceRules } from "./hr-attendance";
-import { countWorkingDays, dayEntryCostsSen, dayTypedOt, isWorkingDay, punchDayHours, punchShortfallHours, rulesForEmployeeHours, type CostEmployee } from "./hr-labor";
+import { countWorkingDays, dayEntryCostsSen, dayTypedOt, isWorkingDay, punchDayHours, punchLateMinutes, punchShortfallHours, rulesForEmployeeHours, type CostEmployee } from "./hr-labor";
 
 const rules = toAttendanceRules(DEFAULT_PAY_RULES);
 const none = new Set<string>();
@@ -45,6 +45,19 @@ describe("a punch's dock", () => {
   });
   test("a broken punch never docks", () => {
     expect(punchShortfallHours(1081, 1082, rules)).toBe(0);
+  });
+});
+
+describe("a punch's lateness", () => {
+  const grace = rules.lateGraceMin;
+  test("on time is never late; within the grace is none; past it counts in full from shift start", () => {
+    expect(punchLateMinutes(rules.startMin, 1080, rules)).toBe(0);
+    expect(punchLateMinutes(rules.startMin + grace, 1080, rules)).toBe(0);
+    expect(punchLateMinutes(rules.startMin + grace + 1, 1080, rules)).toBe(grace + 1);
+  });
+  test("the clock-out does not change lateness, so an open day still reads late", () => {
+    const inMin = rules.startMin + grace + 10;
+    expect(punchLateMinutes(inMin, inMin, rules)).toBe(grace + 10);
   });
 });
 

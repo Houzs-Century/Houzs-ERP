@@ -381,6 +381,40 @@ describe('posting mints a mirror Stock Adjustment document (owner 2026-11-20)', 
   });
 });
 
+describe('cost_required refusal is short and names the SKU (owner 2026-11-20)', () => {
+  test('a positive variance with no cost basis refuses 422, names the item, stays under the 200-char client filter', async () => {
+    const t = takeFixture();           // CODY counted 12 vs live 10 -> +2 found
+    t.inventory_lots = [];             // ... but no priced lot, so no cost basis
+    const res = await jsonReq(harness(t).app, '/stock-takes/st-1/post', 'PATCH');
+    expect(res.status).toBe(422);
+    const body = await res.json() as Row;
+    expect(body.error).toBe('cost_required');
+    expect(body.itemCodes).toEqual(['CODY']);
+    // The operator must see WHICH item, and the sentence must survive the client's
+    // isPlain filter (authed-fetch.ts: < 200 chars) instead of being genericised.
+    expect(String(body.message)).toContain('CODY');
+    expect(String(body.message).length).toBeLessThan(200);
+    expect(t.inventory_movements).toHaveLength(0);
+  });
+
+  test('many costless SKUs are capped so the sentence stays short', async () => {
+    const t = takeFixture();
+    t.stock_take_lines = Array.from({ length: 6 }, (_, i) => ({
+      id: `ln-${i}`, stock_take_id: 'st-1',
+      item_code: `VERY LONG MATTRESS MODEL NAME NUMBER ${i} (QUEEN)`,
+      product_name: `Mattress ${i}`, variant_key: '', system_qty: 0, counted_qty: 1, variance: 1, notes: null,
+    }));
+    t.inventory_balances = [];
+    t.inventory_lots = [];
+    const res = await jsonReq(harness(t).app, '/stock-takes/st-1/post', 'PATCH');
+    expect(res.status).toBe(422);
+    const body = await res.json() as Row;
+    expect(body.itemCodes).toHaveLength(6);           // full set still carried
+    expect(String(body.message)).toMatch(/and \d+ more/); // the rest are summarised
+    expect(String(body.message).length).toBeLessThan(200);
+  });
+});
+
 describe('blind counts — server-side stripping', () => {
   test('a blind OPEN take hides system_qty and variance from a non-supervisor', async () => {
     const t = takeFixture({ blind: true });
