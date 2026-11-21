@@ -107,6 +107,7 @@ export function AttendancePage() {
   const isCurrentMonth = month === today.slice(0, 7);
   const todayDay = Number(today.slice(8, 10));
   const dayList = Array.from({ length: days }, (_, i) => i + 1);
+  const isWeekend = (day: number) => { const dow = new Date(Date.UTC(y, m - 1, day)).getUTCDay(); return dow === 0 || dow === 6; };
 
   const totalsOf = (empId: number) => {
     let pres = 0, late = 0, abs = 0, lv = 0;
@@ -201,7 +202,7 @@ export function AttendancePage() {
                     {dayList.map((d) => {
                       const isToday = isCurrentMonth && d === todayDay;
                       return (
-                        <th key={d} className={cx("sticky top-0 z-20 min-w-[26px] border-b border-border-subtle px-0 py-1 text-center font-semibold", isToday ? "bg-primary-soft" : "bg-surface")}>
+                        <th key={d} className={cx("sticky top-0 z-20 min-w-[26px] border-b border-border-subtle px-0 py-1 text-center font-semibold", isToday ? "bg-primary-soft" : isWeekend(d) ? "bg-surface-dim" : "bg-surface")}>
                           <div className="text-[9px] text-ink-muted">{weekdayLetter(y, m, d)}</div>
                           <div className={cx("text-[10px]", isToday ? "text-primary-ink" : "text-ink-secondary")}>{d}</div>
                         </th>
@@ -228,7 +229,7 @@ export function AttendancePage() {
                           const s = CELL[c];
                           const editable = canManage && !future;
                           return (
-                            <td key={d} className={cx("border-b border-r border-border-subtle p-0.5 text-center", isToday && "bg-primary-soft/30")}>
+                            <td key={d} className={cx("border-b border-r border-border-subtle p-0.5 text-center", isToday ? "bg-primary-soft/30" : isWeekend(d) && "bg-surface-dim/50")}>
                               {editable ? (
                                 <button type="button" onClick={() => openCell(e.id, d)} aria-label={`${e.name} ${month}-${pad2(d)}`} className={cx("mx-auto flex h-6 w-6 items-center justify-center rounded text-[9px] font-bold hover:ring-1 hover:ring-primary", s.bg, s.color)}>{s.letter}</button>
                               ) : (
