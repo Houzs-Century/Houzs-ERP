@@ -143,6 +143,7 @@ export type WorkDay = {
   clockOut: string | null;
   outSource: "PHONE" | "MANUAL" | "AUTO" | null;
   punchHours: number | null;
+  lateMin: number;
 };
 export type HoursEntry = { id: number; attendanceId: number; employeeId: number; workDate: string; departmentId: number | null; hours: number; source: "AUTO" | "MANUAL"; notes: string | null };
 export type WorkingHoursResponse = {

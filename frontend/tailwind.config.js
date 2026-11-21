@@ -7,7 +7,7 @@ export default {
   // Semantic utilities the design-system docs (conventions header)
   // enumerate for the claude.ai/design agent — keep them in the
   // compiled CSS even when no in-repo component happens to use them.
-  safelist: ["bg-err-bg", "bg-synced-bg", "font-body"],
+  safelist: ["bg-err-bg", "bg-synced-bg", "bg-time/15", "font-body"],
   theme: {
     extend: {
       colors: {
