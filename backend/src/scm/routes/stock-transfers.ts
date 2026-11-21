@@ -157,8 +157,32 @@ stockTransfers.get('/:id', async (c) => {
   if (headerRes.error) return c.json({ error: 'load_failed', reason: headerRes.error.message }, 500);
   if (!headerRes.data) return c.json({ error: 'not_found' }, 404);
 
-  return c.json({ transfer: headerRes.data, lines: linesRes.data ?? [] });
+  /* A cancelled transfer whose stock is not back (a bucket of its own movements does not net to zero) offers
+     Finish cancel, which re-runs the reversal. */
+  let stockNotBack = false;
+  if (String((headerRes.data as { status?: string }).status ?? '').toUpperCase() === 'CANCELLED') {
+    const { data: movs, error: movsErr } = await db.unscoped(
+      'library hand-off: the movements are read by this document id, which the company-scoped header read above proved is ours',
+    ).from('inventory_movements').select('movement_type, warehouse_id, item_code, variant_key, batch_no, qty')
+      .eq('source_doc_type', 'STOCK_TRANSFER').eq('source_doc_id', id);
+    if (movsErr) return c.json({ error: 'load_failed', reason: movsErr.message }, 500);
+    stockNotBack = transferStockNotBack(movs as unknown as TransferMovementRow[]);
+  }
+  return c.json({ transfer: headerRes.data, lines: linesRes.data ?? [], stockNotBack });
 });
+
+type TransferMovementRow = { movement_type: string; warehouse_id: string; item_code: string; variant_key: string | null; batch_no?: string | null; qty: number };
+
+/** Some (warehouse, item, variant, batch) bucket of the transfer's own IN/OUT rows does not net to zero. */
+export function transferStockNotBack(movs: TransferMovementRow[]): boolean {
+  const net = new Map<string, number>();
+  for (const m of movs) {
+    if (m.movement_type !== 'IN' && m.movement_type !== 'OUT') continue;
+    const k = `${m.warehouse_id}::${m.item_code}::${m.variant_key ?? ''}::${m.batch_no ?? ''}`;
+    net.set(k, (net.get(k) ?? 0) + (m.movement_type === 'IN' ? Number(m.qty) : -Number(m.qty)));
+  }
+  return [...net.values()].some((v) => v !== 0);
+}
 
 // ── Edit ──────────────────────────────────────────────────────────────
 // Two independent things a body can carry:
@@ -331,7 +355,9 @@ stockTransfers.patch('/:id', async (c) => {
     const rev = await reverseMovements(db.unscoped(
       'library hand-off: reverseMovements resolves the rows to reverse from this document id, which the company-scoped read above already proved is ours',
     ), 'STOCK_TRANSFER', id, user?.id ?? null);
-    if (rev.failed > 0) {
+    /* ok:false with failed:0 is a reversal that could not read what to reverse; carrying on would apply the
+       transfer a second time on top of movements that were never taken back. */
+    if (!rev.ok || rev.failed > 0) {
       return c.json({ error: 'reversal_incomplete', reason: rev.reason ?? 'partial reversal', reversal: rev }, 500);
     }
 
@@ -758,7 +784,34 @@ stockTransfers.patch('/:id/cancel', async (c) => {
     .eq('id', id).neq('status', 'CANCELLED')
     .select('id, status, cancelled_at').maybeSingle();
   if (error) return c.json({ error: 'cancel_failed', reason: error.message }, 500);
-  if (!data)  return c.json({ error: 'already_cancelled' }, 409);
+  if (!data) {
+    /* Already CANCELLED: finish the stock reversal if an earlier cancel left it short. reverseMovements nets each
+       bucket first and touches only what is not yet square, so on a transfer whose stock did come back this moves
+       nothing. Before, this answered 409 and a failed reversal could never be re-run. */
+    if (String(beforeTransfer?.status ?? '').toUpperCase() !== 'CANCELLED') return c.json({ error: 'already_cancelled' }, 409);
+    const again = await reverseMovements(db.unscoped(
+      'library hand-off: reverseMovements resolves the rows to reverse from this document id, which the company-scoped read above already proved is ours',
+    ), 'STOCK_TRANSFER', id, user.id);
+    const stillShort = !again.ok || again.failed > 0;
+    if (again.reversed > 0 || stillShort) {
+      await recordEntityAudit(db.unscoped(
+        'library hand-off: the audit writer takes the raw client and is told the company explicitly as companyId',
+      ), {
+        entityType: 'STOCK_TRANSFER', entityId: id, entityDocNo: beforeTransfer?.transfer_no ?? null,
+        action: 'CANCEL', actor: c.get('houzsUser'), companyId: beforeTransfer?.company_id ?? null, statusSnapshot: 'CANCELLED',
+        note: stillShort
+          ? `Stock reversal retried, still INCOMPLETE — ${again.failed} failed: ${again.reason ?? 'partial reversal'}`
+          : `Stock reversal finished on retry — ${again.reversed} movement(s) reversed`,
+        fieldChanges: compactChanges([fieldChange('movementsReversed', null, again.reversed), fieldChange('movementsFailed', null, again.failed)]),
+      });
+    }
+    return c.json({
+      transfer: { id, status: 'CANCELLED' },
+      resumed: true,
+      reversal: { reversed: again.reversed, skipped: again.skipped, failed: again.failed },
+      reversalErrors: stillShort ? [again.reason ?? 'partial reversal'] : undefined,
+    });
+  }
 
   // Reverse the paired OUT/IN movements this transfer wrote. Best-effort,
   // mirroring the post path: a failed reversal row is logged + reported, it
@@ -766,6 +819,8 @@ stockTransfers.patch('/:id/cancel', async (c) => {
   const rev = await reverseMovements(db.unscoped(
     'library hand-off: reverseMovements resolves the rows to reverse from this document id, which the company-scoped flip directly above already proved is ours',
   ), 'STOCK_TRANSFER', id, user?.id ?? null);
+  // ok:false with failed:0 means the reversal could not even read its movements: the stock did not come back either.
+  const revIncomplete = !rev.ok || rev.failed > 0;
 
   /* One row covering the cancel AND its stock reversal — unlike the PV cancel,
      which splits them, because here the reversal has no independent identity (no
@@ -782,7 +837,7 @@ stockTransfers.patch('/:id/cancel', async (c) => {
     actor: c.get('houzsUser'),
     companyId: beforeTransfer?.company_id ?? null,
     statusSnapshot: 'CANCELLED',
-    note: rev.failed > 0
+    note: revIncomplete
       ? `Stock reversal INCOMPLETE — ${rev.failed} failed: ${rev.reason ?? 'partial reversal'}`
       : undefined,
     fieldChanges: compactChanges([
@@ -805,7 +860,9 @@ stockTransfers.patch('/:id/cancel', async (c) => {
   return c.json({
     transfer: data,
     reversal: { reversed: rev.reversed, skipped: rev.skipped, failed: rev.failed },
-    reversalErrors: rev.failed > 0 ? (rev.reason ?? 'partial reversal') : undefined,
+    /* A list, like every other in-band failure field: the screen spreads it into lines, and a bare string came out
+       one character per line. */
+    reversalErrors: revIncomplete ? [rev.reason ?? 'partial reversal'] : undefined,
   });
 });
 
