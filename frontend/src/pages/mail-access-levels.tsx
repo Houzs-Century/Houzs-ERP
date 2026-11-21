@@ -70,6 +70,13 @@ export function ownDepartmentMailboxes(u: TeamMember, addresses: MailAddress[]):
   return addresses.filter((a) => a.active && a.assignedUserId == null && a.departmentId != null && mine.has(a.departmentId));
 }
 
+/** A grant the person already has without it (their own mailbox, or a department
+ *  mailbox of their own departments). Older data carries many; they are not shown. */
+export function isRedundantGrant(a: MailAddress, u: TeamMember): boolean {
+  if (a.assignedUserId === u.id) return true;
+  return a.assignedUserId == null && a.departmentId != null && departmentIdsOf(u).includes(a.departmentId);
+}
+
 export type AccessDraft = { level: MailScopeLevel; grants: Set<string>; departments: Set<number> };
 
 export type AccessPlan = {
@@ -160,7 +167,9 @@ export function AccessLevels({
               const mgmt = isManagement(u, departments);
               const level = levelOf(u.id);
               const group = mgmt ? "company" : levelGroup(level);
-              const grants = [...grantsOf(u.id)].map((id) => byId.get(id)).filter((a): a is MailAddress => !!a);
+              const grants = [...grantsOf(u.id)]
+                .map((id) => byId.get(id))
+                .filter((a): a is MailAddress => !!a && !isRedundantGrant(a, u));
               return (
                 <tr key={u.id} className="border-b border-border-subtle last:border-b-0">
                   <td className="px-4 py-2.5 text-[12.5px] font-semibold text-ink">{u.name || u.email}</td>
@@ -294,7 +303,7 @@ export function AccessEditPanel({
   const earlier = [...grants, ...before.grants]
     .filter((id, i, all) => all.indexOf(id) === i && !colleagues.some((c) => c.id === id))
     .map((id) => addresses.find((a) => a.id === id))
-    .filter((a): a is MailAddress => !!a);
+    .filter((a): a is MailAddress => !!a && !isRedundantGrant(a, u));
   const plan = planAccessSave(before, { level, grants, departments: depts });
   const dirty = plan.level != null || plan.grant.length + plan.revoke.length > 0 || plan.departments != null;
 
