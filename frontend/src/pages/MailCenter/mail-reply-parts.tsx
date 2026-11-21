@@ -57,7 +57,10 @@ export function useReplyingHeartbeat(threadId: string | null, drafting: boolean)
     if (!threadId) return;
     const beat = (on: boolean) => {
       sent.current = on;
-      void api.post(`/api/mail-center/threads/${threadId}/replying`, { drafting: on }).catch(() => {});
+      // Best effort: a missed beat only hides the "is writing" note for a moment.
+      api.post(`/api/mail-center/threads/${threadId}/replying`, { drafting: on }).catch((e: unknown) => {
+        console.warn("[mail] replying heartbeat failed", e);
+      });
     };
     if (!drafting) {
       if (sent.current) beat(false);
