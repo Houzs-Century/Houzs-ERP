@@ -557,39 +557,55 @@ export async function mirrorConvertedRowBestEffort(sb: any, row: Record<string, 
 
 /** After a Customer Refund voucher on an order posts: the refund's mirror,
     dated the voucher. Idempotent on the voucher's id. `null` is an invoice
-    refund or a voucher naming no order, and is silent. */
+    refund or a voucher naming no order, and is silent.
+    Returns the failure as a sentence (null when written or nothing to write): the voucher post hands it to the screen,
+    and Post pressed again writes the missing row (D14, #1126). Before, a miss here was only logged, so the order kept
+    showing the refunded money as still paid. */
 export async function mirrorRefundBestEffort(
   sb: any, p: { companyId: number; pvId: string; pvNumber: string; voucherDate: string; soDocNo: string; amountSen: number; actor: string | null } | null,
-): Promise<void> {
-  if (!p || !(p.amountSen > 0)) return;
+): Promise<string | null> {
+  if (!p || !(p.amountSen > 0)) return null;
+  const failed = (why: string): string => `${p.soDocNo} does not yet show the ${p.pvNumber} refund in its payments (${why}). Press Post again to finish.`;
   try {
     const seen = await mirrorExists(sb, { refund_pv_id: p.pvId });
-    if (seen !== false) return;
+    if (seen === true) return null;
+    if (seen === null) return failed('its payments could not be read');
     const out = await recordSoPaymentRow(sb, {
       docNo: p.soDocNo, paidAt: p.voucherDate || todayMyt(), method: CONVERTED_METHOD, amountSen: -p.amountSen,
       refundPvId: p.pvId, accountSheet: `Refund ${p.pvNumber}`, note: `Refunded by ${p.pvNumber}`, slipKey: null,
       createdBy: null, actorName: p.actor, auditSource: 'automation', auditNote: `Refund voucher ${p.pvNumber} posted`,
     });
-    if (out.errorMessage) mirrorLog(`refund ${p.pvNumber}: ${p.soDocNo}'s mirror not written —`, out.errorMessage);
+    if (out.errorMessage) {
+      mirrorLog(`refund ${p.pvNumber}: ${p.soDocNo}'s mirror not written —`, out.errorMessage);
+      return failed(out.errorMessage);
+    }
+    return null;
   } catch (e) {
     mirrorLog(`refund ${p.pvNumber}: mirror hook threw:`, e);
+    return failed(e instanceof Error ? e.message : String(e));
   }
 }
 
 /** The mirror rows following a deleted converted row or a cancelled refund
     voucher: deleted, with the audit line, the AutoCount balance and the
-    invoice roll a hand delete gets. */
+    invoice roll a hand delete gets. Returns what was NOT removed, as sentences (empty = done), so a voucher cancel
+    can say so and finish it when pressed again (D14, #1126). */
 export async function removeMirrorRowsBestEffort(
   sb: any, p: { companyId: number | null; match: { mirror_of_payment_id: string } | { refund_pv_id: string }; why: string },
-): Promise<void> {
+): Promise<string[]> {
+  const missed: string[] = [];
   try {
     let q = sb.from('mfg_sales_order_payments').select('id, so_doc_no, paid_at, method, amount_sen');
     for (const [k, v] of Object.entries(p.match)) q = q.eq(k, v);
     const { data, error } = await q;
-    if (error) { mirrorLog('mirror lookup failed:', error.message); return; }
+    if (error) { mirrorLog('mirror lookup failed:', error.message); return [`The order's mirror payment row could not be read (${error.message}).`]; }
     for (const m of (data ?? []) as Array<{ id: string; so_doc_no: string; paid_at: string; method: string; amount_sen: number }>) {
       const { error: delErr } = await sb.from('mfg_sales_order_payments').delete().eq('id', m.id);
-      if (delErr) { mirrorLog(`mirror ${m.id} on ${m.so_doc_no} not removed —`, delErr.message); continue; }
+      if (delErr) {
+        mirrorLog(`mirror ${m.id} on ${m.so_doc_no} not removed —`, delErr.message);
+        missed.push(`${m.so_doc_no} still shows money as gone that is back (${delErr.message}).`);
+        continue;
+      }
       await recordSoAudit(sb, {
         docNo: m.so_doc_no, action: 'DELETE_PAYMENT', actorId: null, actorName: null, paymentId: m.id, source: 'automation', note: p.why,
         fieldChanges: [
@@ -601,5 +617,7 @@ export async function removeMirrorRowsBestEffort(
     }
   } catch (e) {
     mirrorLog('mirror removal threw:', e);
+    missed.push(`The order's mirror payment row was not removed (${e instanceof Error ? e.message : String(e)}).`);
   }
+  return missed;
 }

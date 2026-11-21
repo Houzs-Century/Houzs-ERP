@@ -17,6 +17,7 @@ import { SCM_SYSTEM_STAFF_ID } from '../src/scm/middleware/auth';
 import { describe, expect, test } from 'vitest';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
 import { computePiSettlement } from '../src/scm/lib/pi-settlement';
+import { withPvAllocationRpcs } from './lib/pv-allocation-rpc-fake';
 import { apInvoices } from '../src/scm/routes/ap-invoices';
 import { buildAllocations, postPaymentVoucherHandler, cancelPaymentVoucherHandler } from '../src/scm/routes/payment-vouchers';
 
@@ -365,7 +366,7 @@ describe('an AP Payment allocation may name an AP invoice', () => {
       c.set('supabase' as never, {
         from: (t: string) => new FakeQuery((tables[t] ||= []), t),
         schema(_s: string) { return this; },
-        rpc: async (fn: string, args: Row) => {
+        rpc: withPvAllocationRpcs(tables, async (fn: string, args: Row) => {
           if (fn === 'entity_audit_writable') return { data: true, error: null };
           if (fn === 'settle_api_paid_sen') {
             const inv = (tables.ap_invoices ?? []).find((p) => p.id === args.p_id);
@@ -381,7 +382,7 @@ describe('an AP Payment allocation may name an AP invoice', () => {
             return { data: n, error: null };
           }
           return { data: null, error: { message: `unexpected rpc ${fn}` } };
-        },
+        }),
       } as never);
       c.set('companyId' as never, 1 as never);
       c.set('user' as never, { id: 'u1' } as never);

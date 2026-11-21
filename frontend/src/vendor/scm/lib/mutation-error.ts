@@ -76,6 +76,10 @@ export type InBandFailure = {
   movementErrors?: string[] | null;
   cancelErrors?: string[] | null;
   reversalErrors?: string[] | null;
+  /** Payment voucher post / approve / cancel: a money step that did not finish (an invoice not settled or not
+   *  unwound, a journal not reversed, an order's refund row not written). Each is resumable: pressing the same
+   *  button again finishes it without repeating the rest. */
+  settleErrors?: string[] | null;
   /** GRN post: the receipt and its stock stand, the PO's received qty was not recounted (grns.ts postGrnAndRollup). */
   recountError?: string | null;
 };
@@ -97,6 +101,12 @@ export const inBandFailureText = (res: InBandFailure | undefined | void): string
     parts.push(
       `${stock.join('\n')}\n\n` +
       'The document is saved. Stock was NOT adjusted for this change — tell IT so the ledger can be repaired.',
+    );
+  }
+  if (res?.settleErrors?.length) {
+    parts.push(
+      `${res.settleErrors.join('\n')}\n\n` +
+      'Nothing was lost: press the same button again and it finishes these steps without repeating the rest.',
     );
   }
   if (res?.recountError) {

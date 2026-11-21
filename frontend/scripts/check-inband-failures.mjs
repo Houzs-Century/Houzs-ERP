@@ -63,6 +63,7 @@ const FIELDS = [
   "movementErrors",
   "cancelErrors",
   "reversalErrors",
+  "settleErrors",
   "recountError",
 ];
 

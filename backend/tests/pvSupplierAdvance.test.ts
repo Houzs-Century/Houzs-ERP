@@ -17,6 +17,7 @@
  */
 import { Hono } from 'hono';
 import { describe, expect, test } from 'vitest';
+import { withPvAllocationRpcs } from './lib/pv-allocation-rpc-fake';
 import { computePiSettlement } from '../src/scm/lib/pi-settlement';
 import {
   postPaymentVoucherHandler, cancelPaymentVoucherHandler,
@@ -78,7 +79,7 @@ function harness(tables: Record<string, Row[]>) {
     c.set('supabase' as never, {
       from: (t: string) => new FakeQuery((tables[t] ||= []), t),
       schema(_s: string) { return this; },
-      rpc: async (fn: string, args: Row) => {
+      rpc: withPvAllocationRpcs(tables, async (fn: string, args: Row) => {
         if (fn === 'entity_audit_writable') return { data: true, error: null };
         if (fn === 'settle_pi_paid_sen') {
           const pi = (tables.purchase_invoices ?? []).find((p) => p.id === args.p_pi_id);
@@ -120,7 +121,7 @@ function harness(tables: Record<string, Row[]>) {
           return { data: n, error: null };
         }
         return { data: null, error: { message: `unexpected rpc ${fn}` } };
-      },
+      }),
     } as never);
     c.set('companyId' as never, CO as never);
     c.set('user' as never, { id: 'u1' } as never);
@@ -378,5 +379,81 @@ describe("editing a supplier payment keeps its control line (docs/bugs/0649)", (
     });
     expect(bad.status).toBe(400);
     expect((await bad.json() as { error: string }).error).toBe('control_account_locked');
+  });
+});
+
+/* Ported from Conts-ERP #1137 (D1 / D2 / D12). Each test fails on the code before the fix.
+   Symptom: a voucher whose post died after its journal, pressed Post again, answered "already posted" and never
+   marked its invoices paid; a cancel whose invoice unwind failed answered OK and Cancel again did nothing; an
+   invoice's clamped money vanished from the supplier advance. Fix: settle_pv_allocation / unsettle_pv_allocation
+   (once per allocation), finishPostedVoucher / finishCancelledVoucher run again on a retry, advance from applied_sen. */
+const failNextInvoiceRead = (t: Record<string, Row[]>) => {
+  let armed = true;
+  t.purchase_invoices = new Proxy(t.purchase_invoices!, {
+    get(target, prop, recv) {
+      if (prop === 'find' && armed) { armed = false; throw new Error('connection reset'); }
+      return Reflect.get(target, prop, recv);
+    },
+  });
+};
+
+describe('a voucher post or cancel that dies part-way is finished by pressing it again', () => {
+  test('Post again settles the invoice the first post missed, and records the advance once', async () => {
+    const t = world();
+    failNextInvoiceRead(t);
+    const first = await post(harness(t));
+    expect(first.status).toBe(200);
+    const b1 = await first.json() as Row;
+    expect(b1.settleErrors?.[0]).toMatch(/was not settled/);
+    expect(t.purchase_invoices.find((p) => p.id === 'pi-1')!.paid_sen).toBe(0);
+    /* No advance while an allocation is open: it would be booked as advance AND settled on the retry. */
+    expect(t.acc_supplier_advances).toHaveLength(0);
+    expect(t.payment_vouchers[0]!.status).toBe('POSTED');
+    const jes = t.journal_entries.length;
+
+    const again = await post(harness(t));
+    expect(again.status).toBe(200);
+    const b2 = await again.json() as Row;
+    expect(b2.alreadyPosted).toBe(true);
+    expect(b2.settleErrors).toBeUndefined();
+    expect(t.purchase_invoices.find((p) => p.id === 'pi-1')!.paid_sen).toBe(200_000);
+    expect(t.acc_supplier_advances).toHaveLength(1);
+    expect(t.acc_supplier_advances[0]!.amount_sen).toBe(300_000);
+    expect(t.journal_entries.length).toBe(jes);
+
+    /* A third press changes nothing. */
+    await post(harness(t));
+    expect(t.purchase_invoices.find((p) => p.id === 'pi-1')!.paid_sen).toBe(200_000);
+    expect(t.acc_supplier_advances).toHaveLength(1);
+  });
+
+  test('Cancel again unwinds the invoice the first cancel could not, and says so the first time', async () => {
+    const t = world({ totalSen: 200_000, allocSen: 200_000 });
+    await post(harness(t));
+    expect(t.purchase_invoices.find((p) => p.id === 'pi-1')!.paid_sen).toBe(200_000);
+    failNextInvoiceRead(t);
+    const first = await harness(t).request('/payment-vouchers/pv-1/cancel', { method: 'POST' });
+    expect(first.status).toBe(200);
+    expect(((await first.json()) as Row).settleErrors?.[0]).toMatch(/still shows/);
+    expect(t.purchase_invoices.find((p) => p.id === 'pi-1')!.paid_sen).toBe(200_000);
+
+    const again = await harness(t).request('/payment-vouchers/pv-1/cancel', { method: 'POST' });
+    expect(again.status).toBe(200);
+    expect(((await again.json()) as Row).settleErrors).toBeUndefined();
+    expect(t.purchase_invoices.find((p) => p.id === 'pi-1')!.paid_sen).toBe(0);
+    expect(t.pv_allocations[0]!.applied_sen).toBe(0);
+    /* A third press takes nothing off twice. */
+    await harness(t).request('/payment-vouchers/pv-1/cancel', { method: 'POST' });
+    expect(t.purchase_invoices.find((p) => p.id === 'pi-1')!.paid_sen).toBe(0);
+  });
+
+  test('money an invoice refused (the clamp) stays in AP as the advance, not lost', async () => {
+    /* RM 2,500 allocated to an invoice that owes RM 2,000: RM 500 refused. Voucher RM 5,000. */
+    const t = world({ allocSen: 250_000 });
+    const res = await post(harness(t));
+    const body = await res.json() as Row;
+    expect(t.purchase_invoices.find((p) => p.id === 'pi-1')!.paid_sen).toBe(200_000);
+    expect(body.advanceSen).toBe(300_000);
+    expect(t.acc_supplier_advances[0]!.amount_sen).toBe(300_000);
   });
 });
