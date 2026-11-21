@@ -151,7 +151,9 @@ export type NewLorry = {
 
 export type FleetFilter = 'all' | 'internal' | 'outsourced';
 
-export function useLorries(opts?: { includeInactive?: boolean; fleet?: FleetFilter }) {
+/** `enabled: false` for a reader without the Fleet area (scmAreaGuard
+ *  scm.transportation.drivers), who could only get a 403. */
+export function useLorries(opts?: { includeInactive?: boolean; fleet?: FleetFilter; enabled?: boolean }) {
   const fleet = opts?.fleet ?? 'all';
   return useQuery({
     queryKey: ['lorries', opts?.includeInactive ?? false, fleet],
@@ -164,6 +166,7 @@ export function useLorries(opts?: { includeInactive?: boolean; fleet?: FleetFilt
         `/lorries${qs ? `?${qs}` : ''}`,
       ).then((r) => r.lorries);
     },
+    enabled: opts?.enabled ?? true,
     staleTime: 60_000,
   });
 }
