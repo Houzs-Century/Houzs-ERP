@@ -28,6 +28,6 @@ describe('SO create: deposit after lines, and a failed deposit is said', () => {
   test('a failed deposit row reaches the response', () => {
     const between = src.slice(splitDeposit, src.indexOf('/* ── FAIR LINK (owner 2026-09-13)', splitDeposit));
     expect((between.match(/paymentErrors\.push\(/g) ?? []).length).toBe(2);
-    expect(src).toContain('return c.json({ ...created, ...(paymentErrors.length ? { paymentErrors } : {}) }, 201);');
+    expect(src).toContain('if (paymentErrors.length) return c.json({ docNo, ...(acNotSent.length ? { acNotSent } : {}), paymentErrors }, 201);');
   });
 });
