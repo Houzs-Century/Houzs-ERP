@@ -198,11 +198,13 @@ function harness(perms: readonly string[] = [GL_PERM]) {
       { id: 'si-pay-1', company_id: CO, sales_invoice_id: 'inv-1', paid_at: '2026-09-12', amount_sen: 200000, method: 'transfer', merchant_provider: null, online_type: 'Bank Transfer', approval_code: null, collected_by: 'st-1' },
     ],
     mfg_sales_orders: [
-      { company_id: CO, doc_no: 'SO-A', debtor_name: 'Chong Hui Wen', status: 'CONFIRMED', salesperson_id: 'st-1' },
+      { company_id: CO, doc_no: 'SO-A', debtor_name: 'Chong Hui Wen', status: 'CONFIRMED', salesperson_id: 'st-1', ref: null, customer_so_no: 'CSO-0001' },
       { company_id: CO, doc_no: 'SO-B', debtor_name: 'Poon How kei', status: 'CONFIRMED', salesperson_id: null },
       { company_id: CO, doc_no: 'SO-X', debtor_name: 'Gone', status: 'CANCELLED', salesperson_id: null },
+      /* The other company's order of the same number: never this company's row. */
+      { company_id: 1, doc_no: 'SO-B', debtor_name: 'Other Company', status: 'CONFIRMED', salesperson_id: null, ref: 'OTHER-REF', customer_so_no: 'OTHER-CSO' },
     ],
-    sales_invoices: [{ id: 'inv-1', company_id: CO, invoice_number: 'SI-2609-001', debtor_name: 'Acme' }],
+    sales_invoices: [{ id: 'inv-1', company_id: CO, invoice_number: 'SI-2609-001', debtor_name: 'Acme', ref: 'INV-REF-1', customer_so_no: null }],
     staff: [{ id: 'st-1', name: 'Nico' }, { id: 'st-2', name: 'Esther' }],
     acc_acquirers: [
       { company_id: CO, display_name: 'GHL', is_active: true },
@@ -352,5 +354,18 @@ describe('GET /unmatched-payments', () => {
     expect(byId['p-card-confirm']).toMatchObject({ collectedByName: 'Esther', salespersonName: 'Nico' });
     expect(byId['p-card-waiting']).toMatchObject({ collectedByName: null });
     expect(byId['si-pay-1']).toMatchObject({ collectedByName: 'Nico' });
+  });
+
+  /* Owner 2026-11-20 (帮我在这里把订单的 ref no. 拉出来): each row carries its document's
+     Ref No. pair raw — the order's, or the invoice's own — read inside this company only. */
+  test('carries the Ref No. of the order, or of the invoice itself; none keyed, none sent', async () => {
+    const { app } = harness();
+    const body = await (await app.request('/unmatched-payments?from=2026-09-01&to=2026-09-30')).json() as any;
+    const byId = Object.fromEntries((body.rows as any[]).map((r) => [r.paymentId, r]));
+    expect(byId['p-card-confirm']).toMatchObject({ docNo: 'SO-A', ref: null, customer_so_no: 'CSO-0001' });
+    expect(byId['p-tr-unbooked']).toMatchObject({ docNo: 'SO-A', ref: null, customer_so_no: 'CSO-0001' });
+    expect(byId['si-pay-1']).toMatchObject({ source: 'SIPAY', docNo: 'SI-2609-001', ref: 'INV-REF-1', customer_so_no: null });
+    /* SO-B keys none here; the other company's SO-B does, and stays theirs. */
+    expect(byId['p-card-waiting']).toMatchObject({ docNo: 'SO-B', customerName: 'Poon How kei', ref: null, customer_so_no: null });
   });
 });
