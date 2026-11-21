@@ -33,7 +33,12 @@
                  so a salesperson's new order never waits behind the re-sends.
                  A row a live save had already queued is left as it is.
      normal      the rows stay as the triggers wrote them, ahead of later saves.
-   The portal receives the same payloads either way.
+     hold        the rows THAT transaction created are marked skipped with a
+                 note, so nothing is sent: the ERP is corrected and sending is
+                 a separate decision (owner 2026-11-21). The hourly self-heal
+                 re-queues only orders never delivered, so it leaves them; a
+                 later save or payment of an order sends it as it then stands.
+   The portal receives the same payloads with background or normal.
 
    MODE=plan (default) prints counts and doc numbers, never money (this
    repository is public), and writes nothing. MODE=apply needs
@@ -46,7 +51,7 @@
    revenue - cost and its basis = margin / revenue.
 
    Env: DATABASE_URL (required); COMPANY (optional, one company id; default
-   every company); PORTAL_LANE (background | normal, required on apply);
+   every company); PORTAL_LANE (hold | background | normal, required on apply);
    CHUNK (orders per transaction, default 200); LIST_LIMIT (doc numbers shown).
 
    REVERSAL: each order's audit row (scm.mfg_so_audit_log, source
@@ -82,8 +87,8 @@ if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
   bad(`MODE=apply requires CONFIRM="${CONFIRM_PHRASE}"`);
   process.exit(2);
 }
-if (APPLY && !['background', 'normal'].includes(LANE)) {
-  bad('MODE=apply requires PORTAL_LANE=background or PORTAL_LANE=normal (where the portal re-sends wait)');
+if (APPLY && !['hold', 'background', 'normal'].includes(LANE)) {
+  bad('MODE=apply requires PORTAL_LANE=hold, background or normal (whether and how the portal re-sends go)');
   process.exit(2);
 }
 
@@ -103,7 +108,7 @@ function printPlan(co, read, p) {
   note(`===== Company ${co} =====`);
   note(`orders read: ${read.headers.length}; to correct: ${p.todo.length} (revenue filled from the order total: ${filled}; margin or margin basis only: ${headerOnly}; line margins only: ${linesOnly})`);
   note(`lines read: ${lineCount}; line margins to correct: ${lines}`);
-  note(`Venture Portal: every order corrected is queued again: ${p.todo.length} (${BANDS.map((b) => `${b}: ${byBand.get(b) ?? 0}`).join('; ')})`);
+  note(`Venture Portal: the triggers queue every order corrected: ${p.todo.length} (${BANDS.map((b) => `${b}: ${byBand.get(b) ?? 0}`).join('; ')}); PORTAL_LANE decides whether they are sent`);
   note(`left as they are (DRAFT or CANCELLED) though off: ${p.leftAlone}`);
   note(`refused: ${p.refused.length}`);
   p.refused.slice(0, LIST_LIMIT).forEach((r) => note(`  REFUSED ${r.doc}: ${r.why}`));
@@ -125,7 +130,7 @@ async function main() {
     printPlan(co, read, p);
   }
   if (!APPLY) {
-    note(`PLAN ONLY: nothing written. Re-run with MODE=apply CONFIRM="${CONFIRM_PHRASE}" PORTAL_LANE=background|normal.`);
+    note(`PLAN ONLY: nothing written. Re-run with MODE=apply CONFIRM="${CONFIRM_PHRASE}" PORTAL_LANE=hold|background|normal.`);
     await sql.end({ timeout: 5 });
     return;
   }
@@ -134,12 +139,12 @@ async function main() {
   for (const co of companies) {
     const { todo } = plans.get(co);
     const done = [];
-    let lines = 0, heads = 0, laned = 0, failedChunks = 0;
+    let lines = 0, heads = 0, laned = 0, held = 0, failedChunks = 0;
     for (let i = 0; i < todo.length; i += CHUNK) {
       try {
         const r = await sql.begin((tx) => writeMarginChunk(tx, co, todo.slice(i, i + CHUNK), LANE));
         done.push(...r.audited);
-        lines += r.lines; heads += r.heads; laned += r.laned;
+        lines += r.lines; heads += r.heads; laned += r.laned; held += r.held;
       } catch (e) {
         failedChunks++;
         bad(`  company ${co} chunk ${i / CHUNK + 1}: rolled back, nothing of it written: ${e instanceof Error ? e.message : String(e)}`);
@@ -147,7 +152,7 @@ async function main() {
     }
     written.set(co, done);
     const partial = done.filter((a) => !a.complete).length;
-    note(`APPLIED company ${co}: orders written ${done.length} of ${todo.length} (${partial} only partly: edited since the plan); lines ${lines}; headers ${heads}; portal rows moved to the reconcile lane ${laned}; chunks rolled back ${failedChunks}`);
+    note(`APPLIED company ${co}: orders written ${done.length} of ${todo.length} (${partial} only partly: edited since the plan); lines ${lines}; headers ${heads}; portal rows moved to the reconcile lane ${laned}; portal rows held back ${held}; chunks rolled back ${failedChunks}`);
     if (failedChunks) process.exitCode = 1;
   }
   await sql.end({ timeout: 5 });

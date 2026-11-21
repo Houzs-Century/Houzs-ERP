@@ -7,7 +7,7 @@
  */
 import postgres, { type Sql } from 'postgres';
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
-import { planCompanyMargins, readOrderMargins, writeMarginChunk } from '../scripts/lib/so-margin-repair.mjs';
+import { PORTAL_HOLD_NOTE, planCompanyMargins, readOrderMargins, writeMarginChunk } from '../scripts/lib/so-margin-repair.mjs';
 
 const url = process.env.TEST_DATABASE_URL ?? '';
 const describePg = url ? describe : describe.skip;
@@ -41,7 +41,7 @@ async function schema(db: Sql) {
     );
     CREATE TABLE scm.venture_portal_outbox (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(), doc_no text NOT NULL, op text NOT NULL,
-      status text NOT NULL DEFAULT 'pending', attempts integer NOT NULL DEFAULT 0,
+      status text NOT NULL DEFAULT 'pending', attempts integer NOT NULL DEFAULT 0, last_error text,
       created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
       revision integer NOT NULL DEFAULT 0
     );
@@ -161,6 +161,25 @@ describePg('repair-so-margin-fields SQL on real Postgres', () => {
 
     // RE-RUN: nothing left to plan.
     expect(planCompanyMargins(await readOrderMargins(sql, 1), LEFT_ALONE).todo).toEqual([]);
+  });
+
+  // Owner 2026-11-21: fix the ERP first; whether to send is a separate decision.
+  test('hold corrects the ERP and sends nothing: the repair\'s own queue rows are skipped with a note', async () => {
+    const plan = planCompanyMargins(await readOrderMargins(sql, 1), LEFT_ALONE);
+    const r = await sql.begin((tx) => writeMarginChunk(tx, 1, plan.todo, 'hold'));
+    expect({ lines: r.lines, heads: r.heads, held: r.held, laned: r.laned }).toEqual({ lines: 3, heads: 2, held: 1, laned: 0 });
+    const [h] = await sql`SELECT total_revenue_sen, total_margin_sen, margin_pct_basis FROM scm.mfg_sales_orders WHERE doc_no = 'HC-SO-000001'`;
+    expect([h.total_revenue_sen, h.total_margin_sen, h.margin_pct_basis]).toEqual([100000, 53000, 5300]);
+    const rows = await sql`SELECT doc_no, op, status, last_error FROM scm.venture_portal_outbox ORDER BY doc_no`;
+    expect(rows.map((q) => [q.doc_no, q.status, q.last_error])).toEqual([
+      ['HC-SO-000001', 'skipped', PORTAL_HOLD_NOTE],
+      // Queued by a live save before the repair: it sends the order as it stands, as any save does.
+      ['HC-SO-2609-013', 'pending', null],
+    ]);
+    // A later save of the held order queues it again, as always.
+    await sql`UPDATE scm.mfg_sales_order_items SET line_cost_sen = 41000, line_margin_sen = 59000 WHERE id = ${L(1)}`;
+    const [again] = await sql`SELECT count(*)::int AS n FROM scm.venture_portal_outbox WHERE doc_no = 'HC-SO-000001' AND status = 'pending'`;
+    expect(again.n).toBe(1);
   });
 
   test('the normal lane leaves the queue rows as the triggers wrote them', async () => {

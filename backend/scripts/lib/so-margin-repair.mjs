@@ -4,6 +4,7 @@
 import { planOrderMargins } from './so-margin.mjs';
 
 export const MARGIN_REPAIR_SOURCE = 'script:repair-so-margin-fields';
+export const PORTAL_HOLD_NOTE = 'held back: margin repair (repair-so-margin-fields), the owner decides separately whether to send';
 const AUDIT_NOTE = 'Margin fields put where a save writes them: line margin = line total - line cost; revenue = order total; margin = revenue - cost; margin % = margin / revenue. No cost or price changed.';
 
 /** Every header and line of one company, as the plan reads them. */
@@ -44,8 +45,10 @@ const complete = (o, heads, lines) => (!o.plan.header || heads.has(o.h.doc_no)) 
 /**
  * Write one chunk of planned orders on `tx` (a transaction the caller holds).
  * Every UPDATE is guarded on the values the plan read, so a row edited since is
- * left alone. One audit row per order that changed. With lane 'background',
- * the portal queue rows THIS transaction created move to the reconcile lane.
+ * left alone. One audit row per order that changed. The portal queue rows
+ * THIS transaction created: lane 'hold' marks them skipped with a note, so
+ * nothing is sent (owner 2026-11-21: fix the ERP first, sending is a separate
+ * decision); 'background' moves them to the reconcile lane; 'normal' leaves them.
  */
 export async function writeMarginChunk(tx, co, chunk, lane) {
   const lineRows = chunk.flatMap((o) => o.plan.lines);
@@ -104,15 +107,22 @@ export async function writeMarginChunk(tx, co, chunk, lane) {
   // company-scope: the outbox has no company column; its rows are addressed by
   // the doc numbers this chunk just wrote, and only rows this transaction made
   // (created_at = now(), the transaction's own start). A row a live save queued
-  // earlier keeps its lane.
-  let laned = 0;
-  if (lane === 'background' && audited.length) {
+  // earlier is left as it is and sends the order as it stands, as any save does.
+  let laned = 0, held = 0;
+  const docs = audited.map((a) => a.o.h.doc_no);
+  if (lane === 'background' && docs.length) {
     const moved = await tx`
       UPDATE scm.venture_portal_outbox SET op = 'RECONCILE'
-       WHERE status = 'pending' AND created_at = now() AND op <> 'RECONCILE'
-         AND doc_no = ANY(${audited.map((a) => a.o.h.doc_no)}::text[])
+       WHERE status = 'pending' AND created_at = now() AND op <> 'RECONCILE' AND doc_no = ANY(${docs}::text[])
       RETURNING doc_no`;
     laned = moved.length;
   }
-  return { audited, laned, lines: wroteLines.size, heads: wroteHeads.size };
+  if (lane === 'hold' && docs.length) {
+    const kept = await tx`
+      UPDATE scm.venture_portal_outbox SET status = 'skipped', last_error = ${PORTAL_HOLD_NOTE}, updated_at = now()
+       WHERE status = 'pending' AND created_at = now() AND doc_no = ANY(${docs}::text[])
+      RETURNING doc_no`;
+    held = kept.length;
+  }
+  return { audited, laned, held, lines: wroteLines.size, heads: wroteHeads.size };
 }
