@@ -36,6 +36,8 @@ export function ShiftsTab() {
 
   const rows = drafts ?? (q.data ? q.data.groups.map(toDraft) : []);
   const setRow = (i: number, patch: Partial<Draft>) => setDrafts(rows.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+  const groups = q.data?.groups ?? [];
+  const assignees = q.data?.employees ?? [];
 
   async function save(d: Draft) {
     const startMin = hhmmToMin(d.start);
@@ -146,7 +148,7 @@ export function ShiftsTab() {
                     </tr>
                   </thead>
                   <tbody>
-                    {q.data.employees.map((e: ShiftGroupAssignee) => (
+                    {assignees.map((e: ShiftGroupAssignee) => (
                       <tr key={e.id} className="hover:bg-row-hover">
                         <td className="border-b border-border-subtle px-4 py-2 font-mono text-[11px] font-semibold text-accent">{e.empNo}</td>
                         <td className="border-b border-border-subtle px-3 py-2 text-ink">{e.name}</td>
@@ -154,7 +156,7 @@ export function ShiftsTab() {
                           {canManage ? (
                             <select className={cx(inp, "w-56")} value={e.shiftGroupId ?? ""} onChange={(ev) => void assign(e.id, ev.target.value ? Number(ev.target.value) : null)}>
                               <option value="">— global shift —</option>
-                              {q.data.groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+                              {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
                             </select>
                           ) : (
                             <span className="text-ink-secondary">{groupName(e.shiftGroupId) || "global shift"}</span>
@@ -162,7 +164,7 @@ export function ShiftsTab() {
                         </td>
                       </tr>
                     ))}
-                    {q.data.employees.length === 0 && <tr><td colSpan={3} className="px-4 py-8 text-center text-[12px] text-ink-muted">No employees.</td></tr>}
+                    {assignees.length === 0 && <tr><td colSpan={3} className="px-4 py-8 text-center text-[12px] text-ink-muted">No employees.</td></tr>}
                   </tbody>
                 </table>
               </div>
