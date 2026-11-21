@@ -1604,11 +1604,19 @@ const writePostingEffects = async (
    invent a cost. Nothing was flipped yet, so there is no status to revert. */
 const costRequiredBody = (costlessSkus: string[]) => {
   const skus = [...new Set(costlessSkus)];
-  return {
-    error: 'cost_required',
-    message: `These items have no known cost yet, so they can't be added at RM0: ${skus.join(', ')}. Enter an initial unit cost (a costed stock adjustment or a GRN) for them, then post the count again.`,
-    itemCodes: skus,
-  };
+  /* Keep the sentence SHORT so the client shows it rather than the generic
+     "some details weren't accepted" — the operator must see WHICH items have no
+     cost. authed-fetch.ts `isPlain` drops any refusal >= 200 chars, and the old
+     message listed every SKU (owner saw the generic line on a 97-line mattress
+     count, 2026-11-20). So list the fewest names that stay under the cap — two,
+     then one, then one truncated — with "and N more" for the rest; the full set
+     still rides in `itemCodes`. */
+  const say = (list: string) => `No cost on record for ${list}. Give them a cost first (a costed stock adjustment or a GRN), then post again.`;
+  const more = (n: number) => (n > 0 ? ` and ${n} more` : '');
+  let message = say(skus.slice(0, 2).join(', ') + more(Math.max(0, skus.length - 2)));
+  if (message.length >= 200) message = say(skus[0] + more(skus.length - 1));
+  if (message.length >= 200) message = say(`${skus[0].slice(0, 60)}…${more(skus.length - 1)}`);
+  return { error: 'cost_required', message, itemCodes: skus };
 };
 
 // ── Post OPEN → POSTED, or OPEN → PENDING_APPROVAL ────────────────────
