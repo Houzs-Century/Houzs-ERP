@@ -444,6 +444,15 @@ export const pgTransactionSupabase = (sql: Sql) => ({
         return { data: null, error: { message: e instanceof Error ? e.message : String(e) } };
       }
     }
+    if (name === 'fn_retire_do_stock_cycle') {
+      /* The atomic ship retires a reverted DO's returned cycle before it deducts again (lib/do-stock-cycle.ts). */
+      try {
+        const rows = await sql.unsafe('SELECT scm.fn_retire_do_stock_cycle($1::uuid) AS n', [args.p_do_id] as never[]);
+        return { data: (rows as Array<{ n?: number }>)[0]?.n ?? 0, error: null };
+      } catch (e) {
+        return { data: null, error: { message: e instanceof Error ? e.message : String(e) } };
+      }
+    }
     throw new Error(`Unsupported SCM transaction RPC: ${name}`);
   },
 });
