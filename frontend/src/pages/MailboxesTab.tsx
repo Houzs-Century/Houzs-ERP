@@ -46,11 +46,11 @@ import { AccessLevels } from "./mail-access-levels";
 
 /* Three subpages (owner 2026-11-21); the open one is in the URL (?mail=). */
 const SUBPAGES = [
-  { key: "mailboxes", label: "Mailboxes" },
-  { key: "connection", label: "Gmail connection" },
-  { key: "access", label: "Access" },
+  { id: "mailboxes", title: "Mailboxes" },
+  { id: "connection", title: "Gmail connection" },
+  { id: "access", title: "Access" },
 ] as const;
-type Subpage = (typeof SUBPAGES)[number]["key"];
+type Subpage = (typeof SUBPAGES)[number]["id"];
 
 const inputCls =
   "h-10 w-full rounded-md border border-border bg-surface px-3 text-[13px] text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-60";
@@ -84,7 +84,7 @@ export function MailboxesTab() {
   const [editing, setEditing] = useState<MailAddress | null>(null);
 
   const [params, setParams] = useSearchParams();
-  const sub: Subpage = SUBPAGES.some((p) => p.key === params.get("mail")) ? (params.get("mail") as Subpage) : "mailboxes";
+  const sub: Subpage = SUBPAGES.some((p) => p.id === params.get("mail")) ? (params.get("mail") as Subpage) : "mailboxes";
   function openSub(key: Subpage) {
     const next = new URLSearchParams(params);
     if (key === "mailboxes") next.delete("mail");
@@ -101,17 +101,17 @@ export function MailboxesTab() {
       <div role="tablist" aria-label="Mail Center" className="flex flex-wrap gap-1 border-b border-border">
         {SUBPAGES.map((p) => (
           <button
-            key={p.key}
+            key={p.id}
             type="button"
             role="tab"
-            aria-selected={sub === p.key}
-            onClick={() => openSub(p.key)}
+            aria-selected={sub === p.id}
+            onClick={() => openSub(p.id)}
             className={cn(
               "-mb-px border-b-2 px-3 py-2 text-[12.5px] font-semibold transition-colors",
-              sub === p.key ? "border-primary text-ink" : "border-transparent text-ink-muted hover:text-ink",
+              sub === p.id ? "border-primary text-ink" : "border-transparent text-ink-muted hover:text-ink",
             )}
           >
-            {p.label}
+            {p.title}
           </button>
         ))}
       </div>
