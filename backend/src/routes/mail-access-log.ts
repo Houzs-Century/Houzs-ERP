@@ -38,6 +38,7 @@ const DENIED = "You do not have permission to manage the Mail Center.";
 app.get("/scope-departments", async (c) => {
   if (!isMailAdmin(c.get("user"))) return c.json({ error: DENIED }, 403);
   c.header("Cache-Control", "no-store");
+  // company-scope: users and departments are shared masters, like mail_user_scope; the mailboxes they open are company-filtered.
   const res = await c.env.DB.prepare(`SELECT user_id, department_id FROM mail_scope_departments`).all<{
     user_id: number;
     department_id: number;
@@ -56,6 +57,7 @@ app.put("/scope-departments", async (c) => {
     return c.json({ error: "userId and departmentIds are required" }, 400);
   }
   const want = [...new Set(body.departmentIds.map(Number).filter((n) => Number.isInteger(n)))];
+  // company-scope: per-person ticks over shared masters (see GET above).
   const before = await c.env.DB.prepare(`SELECT department_id FROM mail_scope_departments WHERE user_id = ?`)
     .bind(userId)
     .all<{ department_id: number }>();
