@@ -74,6 +74,8 @@ const RULES: Rule[] = [
     group: COLUMN_GROUPS.people,
     any: /\b(approval|level 1|level 2|recipients|last login|people|audience|salesperson|agent|pic|assignee|assigned|owner|approver|requested by|created by|invited|member|role|position|department|division|reports to|direct reports|joined|last seen|presence|team|organizer|in house|outsourced|lead|by|nationality|clock in|clock out|punch|logged|late|hours|ot|employee|score|grade|kpi|scorecard)\b/,
   },
+  // ── Hours worked (Working Hours summary): days, regular, worked ───────────
+  { group: COLUMN_GROUPS.people, any: /\b(days|regular|worked)\b/ },
   // ── The document itself ──────────────────────────────────────────────────
   {
     group: COLUMN_GROUPS.basic,
