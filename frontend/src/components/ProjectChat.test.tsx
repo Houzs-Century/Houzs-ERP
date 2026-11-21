@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProjectChat, type ActivityRow } from "./ProjectChat";
 
@@ -171,5 +171,48 @@ describe("ProjectChat polling", () => {
 
     expect(screen.queryByText("Stale project")).toBeNull();
     expect(screen.getByText("Current project")).toBeTruthy();
+  });
+
+  it("shows a Sending bubble the moment Send is tapped, and clears it when the poll brings the note back", async () => {
+    // Owner 2026-11-19: "after salesman taip and click send or save, tak ada
+    // show that sales report already inside". Desktop used to clear the
+    // textarea and rely on the 3s poller — so for up to 3s nothing visibly
+    // changed and the sender thought the paste was lost.
+    const postResponse = deferred<{ ok: boolean }>();
+    const pollAfterSend = deferred<{ data: ActivityRow[] }>();
+    apiGet
+      .mockResolvedValueOnce({ data: [] })
+      .mockImplementationOnce(() => pollAfterSend.promise)
+      .mockResolvedValue({ data: [] });
+    apiPost.mockImplementation((path: string) =>
+      path.endsWith("/notes") ? postResponse.promise : Promise.resolve({ ok: true }),
+    );
+
+    render(<ProjectChat projectId={1} canPost={true} toast={toast as never} />);
+    await flushPromises();
+    expect(screen.getByText("No messages yet.")).toBeTruthy();
+
+    fireEvent.change(screen.getByPlaceholderText("Message…"), {
+      target: { value: "13/11 - RM35,315" },
+    });
+    fireEvent.click(screen.getByTitle(/Send \(Enter\)/));
+
+    expect(screen.getByText(/Sending…/)).toBeTruthy();
+    expect(screen.queryByText("No messages yet.")).toBeNull();
+
+    postResponse.resolve({ ok: true });
+    await flushPromises();
+    await act(async () => {
+      vi.advanceTimersByTime(3000);
+      await Promise.resolve();
+    });
+    pollAfterSend.resolve({
+      data: [row(42, "13/11 - RM35,315", "2026-11-19T00:00:00.000Z")],
+    });
+    await flushPromises();
+
+    expect(screen.queryByText(/Sending…/)).toBeNull();
+    const bubbles = screen.getAllByText("13/11 - RM35,315");
+    expect(bubbles.length).toBe(1);
   });
 });
