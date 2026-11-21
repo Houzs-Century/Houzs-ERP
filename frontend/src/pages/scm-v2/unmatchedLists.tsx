@@ -13,6 +13,7 @@
 
 import { Link } from 'react-router-dom';
 import type { Column } from '../../components/DataTable';
+import { customerRefOf } from '../../lib/customer-ref';
 import { fmtDate } from '../../vendor/shared/format';
 import { danger, fmt, good, softText } from './settlement-ui';
 import styles from './Suppliers.module.css';
@@ -234,6 +235,9 @@ export function withSameMoney(
 export const PAYMENT_COLUMNS: Column<PaymentRow>[] = [
   { key: 'paidOn', label: 'Paid on', render: (r) => fmtDate(r.paidOn), getValue: (r) => r.paidOn, exportFormat: 'date' },
   { key: 'document', label: 'Document', render: (r) => docLink(r.source, r.docNo), getValue: (r) => r.docNo },
+  /* The order's Ref No. — the paper order number keyed on it (owner 2026-11-20: 把订单的 ref no.
+     拉出来) — as the order's own screen reads it; an invoice's own. */
+  { key: 'refNo', label: 'Ref No.', render: (r) => customerRefOf(r) || '—', getValue: (r) => customerRefOf(r) },
   { key: 'customer', label: 'Customer', render: (r) => r.customerName ?? '—', getValue: (r) => r.customerName ?? '' },
   /* Owner 2026-11-09 (sales person 应该不太对，应该是collected by 的人): who took the money,
      off the payment itself — the one to ask about it. The order's salesperson stays a
