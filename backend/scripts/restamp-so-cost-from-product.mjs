@@ -23,8 +23,9 @@
             the grid holds when it has no price there, or with no height the one the SKU, model or all sofas sell at most -> base_price_sen
             -> cost_price_sen. A set a combo covers costs its set price (below).
      other  base_price_sen -> cost_price_sen
-   line_cost = unit x qty; then the header's category aggregates + total_cost +
-   margin (revenue - cost) are recomputed.
+   line_cost = unit x qty and line margin = line total - line cost; then the
+   header's category aggregates + total_cost + margin (revenue - cost) + margin
+   basis (margin / revenue, lib/so-margin.mjs) are recomputed, as a save writes them.
 
    A SOFA SET (lib/so-line-unit-cost.mjs wholeSetCosts), on every order. Owner's
    rule 2026-11-19: a set costs the set price that stood on its ORDER DATE (one
@@ -46,14 +47,16 @@
    CONFIRM="I HAVE REVIEWED THE DRY-RUN", writes one SO per short transaction
    prints every touched line id + header doc_no for reversal,
    then RE-READS on a fresh connection and asserts no target line still reads 0
-   where its product has a cost.
+   where its product has a cost, and that every line and header it wrote
+   carries the margin and margin basis a save would give it.
 
    REVERSAL: the printed lines/headers were all 0 before (a set's moved
    lines: their audit row's "from"), so restore with
-     UPDATE scm.mfg_sales_order_items SET unit_cost_sen=0, line_cost_sen=0 WHERE id IN (<printed ids>);
+     UPDATE scm.mfg_sales_order_items SET unit_cost_sen=0, line_cost_sen=0, line_margin_sen=total_sen WHERE id IN (<printed ids>);
      UPDATE scm.mfg_sales_orders SET mattress_sofa_cost_sen=0, bedframe_cost_sen=0,
        accessories_cost_sen=0, service_cost_sen=0, others_cost_sen=0, total_cost_sen=0,
-       total_margin_sen=total_revenue_sen WHERE doc_no IN (<printed doc_nos>);
+       total_margin_sen=total_revenue_sen,
+       margin_pct_basis=CASE WHEN total_revenue_sen > 0 THEN 10000 ELSE 0 END WHERE doc_no IN (<printed doc_nos>);
 
    Env: DATABASE_URL (required); COMPANY (optional, default = every company with
    zero-cost SO lines); LIST_LIMIT (touched doc_nos to print in plan, default 40).
@@ -64,6 +67,7 @@ import "./lib/public-log-guard.mjs";
 import postgres from 'postgres';
 import { masterSetRows, ownCostOn, unitCostSen, usualHeights, wholeSetCosts } from './lib/so-line-unit-cost.mjs';
 import { isoDay } from './lib/sofa-combo-set-cost.mjs';
+import { headerMarginOff, marginPctBasis } from './lib/so-margin.mjs';
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error('need DATABASE_URL'); process.exit(2); }
@@ -95,6 +99,9 @@ async function main() {
 
   const touchedLineIds = [];
   const touchedDocNos = [];
+  // What the apply really wrote, per company, for the fresh-connection margin check.
+  const written = new Map();
+  const wrote = (co) => written.get(co) ?? written.set(co, { lines: [], docs: [] }).get(co);
   let grandStamp = 0, grandNoCost = 0, grandHeaders = 0, grandMarginDrop = 0;
 
   for (const co of companies) {
@@ -138,7 +145,7 @@ async function main() {
     // out at 30 min. AutoCount is disconnected, so the deadlock guard that forced
     // per-SO transactions is no longer needed.
     const wIds = [], wUc = [], wLc = [];
-    const hDoc = [], hMs = [], hBf = [], hAcc = [], hSvc = [], hOth = [], hTot = [], hMar = [];
+    const hDoc = [], hMs = [], hBf = [], hAcc = [], hSvc = [], hOth = [], hTot = [], hMar = [], hPct = [];
     const setOrders = []; // sofa sets costed at their set price: written per order, below
 
     // Read every line for the affected orders in ONE query, grouped by doc_no —
@@ -202,7 +209,8 @@ async function main() {
         if (headerChanged) {
           hDoc.push(so.doc_no); hMs.push(plan.agg.mattress_sofa); hBf.push(plan.agg.bedframe);
           hAcc.push(plan.agg.accessories); hSvc.push(plan.agg.service); hOth.push(plan.agg.others);
-          hTot.push(total); hMar.push((Number(so.total_revenue_sen) || 0) - total);
+          const revenue = Number(so.total_revenue_sen) || 0;
+          hTot.push(total); hMar.push(revenue - total); hPct.push(marginPctBasis(revenue - total, revenue));
         }
       }
     }
@@ -210,16 +218,18 @@ async function main() {
     if (APPLY && wIds.length > 0) {
       // Bulk line stamp — one statement for the whole company. The
       // coalesce(...)=0 guard keeps it idempotent and never overwrites a real cost.
-      await sql`UPDATE scm.mfg_sales_order_items AS t
-                SET unit_cost_sen = d.uc, line_cost_sen = d.lc
+      const hit = await sql`UPDATE scm.mfg_sales_order_items AS t
+                SET unit_cost_sen = d.uc, line_cost_sen = d.lc, line_margin_sen = t.total_sen - d.lc
                 FROM unnest(${wIds}::uuid[], ${wUc}::bigint[], ${wLc}::bigint[]) AS d(id, uc, lc)
-                WHERE t.id = d.id AND coalesce(t.unit_cost_sen,0) = 0`;
+                WHERE t.id = d.id AND t.company_id = ${co} AND coalesce(t.unit_cost_sen,0) = 0
+                RETURNING t.id::text`;
+      for (const r of hit) wrote(co).lines.push(r.id);
     }
     for (const o of APPLY ? setOrders : []) {
       try {
         await sql.begin(async (tx) => {
           for (const w of o.plan.lineWrites) {
-            const hit = await tx`UPDATE scm.mfg_sales_order_items SET unit_cost_sen = ${w.uc}, line_cost_sen = ${w.lc}
+            const hit = await tx`UPDATE scm.mfg_sales_order_items SET unit_cost_sen = ${w.uc}, line_cost_sen = ${w.lc}, line_margin_sen = total_sen - ${w.lc}
                                   WHERE id = ${w.id} AND company_id = ${co} AND coalesce(unit_cost_sen,0) = 0 RETURNING id`;
             if (!hit.length) throw new Error(`line ${w.code} changed since the plan`);
           }
@@ -230,10 +240,11 @@ async function main() {
             if (!hit.length) throw new Error(`line ${m.code} changed since the plan`);
           }
           const a = o.plan.agg;
+          const revenue = Number(o.so.total_revenue_sen) || 0;
           const head = await tx`UPDATE scm.mfg_sales_orders SET
                                    mattress_sofa_cost_sen = ${a.mattress_sofa}, bedframe_cost_sen = ${a.bedframe}, accessories_cost_sen = ${a.accessories},
                                    service_cost_sen = ${a.service}, others_cost_sen = ${a.others}, total_cost_sen = ${o.total},
-                                   total_margin_sen = ${(Number(o.so.total_revenue_sen) || 0) - o.total}, updated_at = now()
+                                   total_margin_sen = ${revenue - o.total}, margin_pct_basis = ${marginPctBasis(revenue - o.total, revenue)}, updated_at = now()
                                  WHERE doc_no = ${o.so.doc_no} AND company_id = ${co} AND total_cost_sen = ${o.oldTotal} RETURNING doc_no`;
           if (!head.length) throw new Error('header changed since the plan');
           await tx`INSERT INTO scm.mfg_so_audit_log (so_doc_no, company_id, action, actor_name_snapshot, field_changes, status_snapshot, source, note)
@@ -242,17 +253,21 @@ async function main() {
                            ${o.so.status}, 'script:restamp-so-cost-from-product',
                            ${'Cost filled at the prices of the order date: the sofa set costs the set price that stood that day (none then: each piece its own cost of that day); a piece at RM 0 is not costed on top of a set price'})`;
         });
+        for (const w of [...o.plan.lineWrites, ...o.moves]) wrote(co).lines.push(w.id);
+        wrote(co).docs.push(o.so.doc_no);
       } catch (e) {
         bad(`  SKIP ${o.so.doc_no}: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
     if (APPLY && hDoc.length > 0) {
-      await sql`UPDATE scm.mfg_sales_orders AS t SET
+      const hit = await sql`UPDATE scm.mfg_sales_orders AS t SET
                   mattress_sofa_cost_sen = d.ms, bedframe_cost_sen = d.bf, accessories_cost_sen = d.acc,
                   service_cost_sen = d.svc, others_cost_sen = d.oth, total_cost_sen = d.tot,
-                  total_margin_sen = d.mar, updated_at = ${now}
-                FROM unnest(${hDoc}::text[], ${hMs}::bigint[], ${hBf}::bigint[], ${hAcc}::bigint[], ${hSvc}::bigint[], ${hOth}::bigint[], ${hTot}::bigint[], ${hMar}::bigint[]) AS d(doc_no, ms, bf, acc, svc, oth, tot, mar)
-                WHERE t.doc_no = d.doc_no AND t.company_id = ${co}`;
+                  total_margin_sen = d.mar, margin_pct_basis = d.pct, updated_at = ${now}
+                FROM unnest(${hDoc}::text[], ${hMs}::bigint[], ${hBf}::bigint[], ${hAcc}::bigint[], ${hSvc}::bigint[], ${hOth}::bigint[], ${hTot}::bigint[], ${hMar}::bigint[], ${hPct}::int[]) AS d(doc_no, ms, bf, acc, svc, oth, tot, mar, pct)
+                WHERE t.doc_no = d.doc_no AND t.company_id = ${co}
+                RETURNING t.doc_no`;
+      for (const r of hit) wrote(co).docs.push(r.doc_no);
     }
 
     note(`===== Company ${co} =====`);
@@ -278,7 +293,7 @@ async function main() {
   // Fresh-connection invariant: no line still reads 0 where its product has a cost.
   await sql.end();
   const check = postgres(DSN, { ssl: 'require', prepare: false, max: 1 });
-  let remaining = 0;
+  let remaining = 0, marginOff = 0;
   for (const co of companies) {
     const prods = await check`SELECT code, category, base_price_sen, cost_price_sen, seat_height_prices
                               FROM scm.mfg_products WHERE company_id = ${co}`;
@@ -291,10 +306,23 @@ async function main() {
     const zeros = await check`SELECT id, item_code, variants FROM scm.mfg_sales_order_items
                               WHERE company_id = ${co} AND coalesce(unit_cost_sen,0) = 0`;
     for (const z of zeros) if (unitCostSen(prodBy.get(z.item_code), z.variants, usual) > 0) remaining++;
+    // Every line and header it wrote carries the margin a save would give it.
+    const w = written.get(co) ?? { lines: [], docs: [] };
+    if (w.lines.length > 0) {
+      const [off] = await check`SELECT count(*)::int AS n FROM scm.mfg_sales_order_items
+                                WHERE company_id = ${co} AND id = ANY(${w.lines}::uuid[]) AND line_margin_sen <> total_sen - line_cost_sen`;
+      marginOff += off.n;
+    }
+    if (w.docs.length > 0) {
+      const heads = await check`SELECT total_revenue_sen, total_cost_sen, total_margin_sen, margin_pct_basis
+                                FROM scm.mfg_sales_orders WHERE company_id = ${co} AND doc_no = ANY(${w.docs})`;
+      marginOff += heads.filter(headerMarginOff).length + (w.docs.length - heads.length);
+    }
   }
   await check.end();
   if (remaining > 0) { bad(`INVARIANT FAILED: ${remaining} line(s) still read 0 though their product has a cost.`); process.exit(1); }
-  note(`Invariant holds on a fresh connection: every fillable line now carries a cost.`);
+  if (marginOff > 0) { bad(`INVARIANT FAILED: ${marginOff} written line(s)/header(s) do not carry margin = revenue - cost and its margin basis.`); process.exit(1); }
+  note(`Invariant holds on a fresh connection: every fillable line now carries a cost, and every line and header written carries its margin and margin basis.`);
 }
 
 main().catch((e) => { bad(e instanceof Error ? e.message : String(e)); process.exit(1); });

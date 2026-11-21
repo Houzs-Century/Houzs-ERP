@@ -7012,7 +7012,7 @@ mfgSalesOrders.patch('/:docNo', patchMfgSalesOrderHeaderHandler);
 // so-revision.ts already wraps this path in.
 export async function recomputeTotals(sb: any, docNo: string, c: any) {
   const { data: items, error: itemsErr } = await sb.from('mfg_sales_order_items')
-    .select('id, item_code, item_group, variants, qty, total_sen, line_cost_sen')
+    .select('id, item_code, item_group, variants, qty, total_sen, line_cost_sen, line_margin_sen')
     .eq('doc_no', docNo).eq('cancelled', false);
   /* A failed READ is not an empty SO — and `?? []` cannot tell them apart.
      supabase-js resolves a failed select to { data: null, error } and does NOT
@@ -7031,7 +7031,7 @@ export async function recomputeTotals(sb: any, docNo: string, c: any) {
     console.error('[so-recompute] item read failed — header left unchanged:', docNo, itemsErr.message);
     return;
   }
-  type Row = { id: string; item_code: string; item_group: string; variants: Record<string, unknown> | null; qty: number; total_sen: number; line_cost_sen: number };
+  type Row = { id: string; item_code: string; item_group: string; variants: Record<string, unknown> | null; qty: number; total_sen: number; line_cost_sen: number; line_margin_sen: number | null };
   const rows = (items ?? []) as Row[];
 
   /* ── Master sofa-combo COST spread: lib/sofa-combo-cost-spread.ts ────────── */
@@ -7086,10 +7086,11 @@ export async function recomputeTotals(sb: any, docNo: string, c: any) {
         if (newLineCost === undefined) continue;
         const q = Math.max(1, m.qty || 1);
         m.line_cost_sen = newLineCost; // mutate in place so the rollup below sees it
+        m.line_margin_sen = (m.total_sen || 0) - newLineCost;
         const { error: spreadErr } = await sb.from('mfg_sales_order_items').update({
           line_cost_sen:   newLineCost,
           unit_cost_sen:   Math.round(newLineCost / q),
-          line_margin_sen: (m.total_sen || 0) - newLineCost,
+          line_margin_sen: m.line_margin_sen,
         }).eq('id', m.id);
         /* The in-memory mutation above already fed this cost to the roll-up,
            so a failed line write would have the header assert a cost its own
@@ -7106,6 +7107,28 @@ export async function recomputeTotals(sb: any, docNo: string, c: any) {
           return;
         }
       }
+    }
+  }
+
+  /* Every line's margin follows its cost, not only the spread's above: the
+     nightly cost fill and the AutoCount import stamped line costs without it,
+     so a line kept its full price as margin until that line itself was edited
+     (HC-SO-2609-013). Only a line whose margin is off is written. The header
+     below reads no line margin, so a failed write is logged and leaves just
+     that line as it was. */
+  for (const it of rows) {
+    const margin = (it.total_sen || 0) - (it.line_cost_sen || 0);
+    if (Number(it.line_margin_sen) === margin) continue;
+    const { error: marginErr } = await scopeToCompany(
+      sb.from('mfg_sales_order_items').update({ line_margin_sen: margin }).eq('id', it.id),
+      c,
+    );
+    if (marginErr) {
+      if (sb?.__atomicCommand === true) {
+        throw new Error(`SO line margin update failed: ${marginErr.message}`);
+      }
+      /* eslint-disable-next-line no-console */
+      console.error('[so-recompute] line margin update failed — that line left stale:', docNo, it.id, marginErr.message);
     }
   }
 
