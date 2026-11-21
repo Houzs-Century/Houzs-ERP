@@ -12,7 +12,14 @@
 
 import { Hono } from 'hono';
 import { SCM_SYSTEM_STAFF_ID } from '../src/scm/middleware/auth';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
+import { fakeRunScmPgCommand } from './lib/fake-scm-command';
+
+/* The receipt post and the bill edit commit inside one PG transaction; here on the fake, with its rollback. */
+vi.mock('../src/scm/lib/pg-supabase-transaction', async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
+  runScmPgCommand: fakeRunScmPgCommand,
+}));
 import { otherDebtors } from '../src/scm/routes/other-debtors';
 
 type Row = Record<string, any>;
@@ -52,6 +59,7 @@ class FakeQuery {
   update(p: Row) { this.op = 'update'; this.patch = p; return this; }
   delete() { this.op = 'delete'; return this; }
   eq(col: string, val: unknown) { this.preds.push((r) => String(r[col]) === String(val)); return this; }
+  neq(col: string, val: unknown) { this.preds.push((r) => String(r[col]) !== String(val)); return this; }
   in(col: string, vals: unknown[]) {
     const s = new Set((vals ?? []).map(String));
     this.preds.push((r) => s.has(String(r[col])));
@@ -97,6 +105,7 @@ function harness(tables: Record<string, Row[]>, perms: string[] = ['*']) {
   const counters = new Map<string, number>();
   app.use('*', async (c, next) => {
     c.set('supabase' as never, {
+      __tables: tables,
       from: (t: string) => new FakeQuery((tables[t] ||= []), t),
       schema(_s: string) { return this; },
       rpc: async (fn: string, args: Row) => {
@@ -933,5 +942,102 @@ describe('a debit note to an other debtor is a bill of its own kind', () => {
     expect(plain.billNumber).toMatch(/ODB-2609-001$/);
     const bad = await post(app, '/d1/bills', { billDate: '2026-09-03', docKind: 'XX', lines: [{ creditAccountCode: '700-0000', amountSen: 100 }] });
     expect(bad.status).toBe(400);
+  });
+});
+
+/* Ported from Conts-ERP #1137 (D3). Both fail on the code before the fix.
+   Symptom: approving an other-debtor receipt that died part-way, then approving again, added the money to the bills
+   a second time (the journal answered already_posted and the knock-offs ran again); and editing a PAID bill's total
+   upwards kept it PAID. Fix: the post claims POSTED first and runs in one transaction; the bill edit re-derives its
+   status inside one. */
+describe('a receipt posts whole or not at all; a bill edit re-derives its status', () => {
+  const raise = async (app: Hono, allocations: Array<{ billId: string; amountSen: number }>) => {
+    const res = await post(app, '/d1/receipts', { receiptDate: '2026-09-03', bankAccountCode: '310-0010', allocations });
+    expect(res.status, await res.clone().text()).toBe(201);
+    const id = (await res.json() as { receipt: { id: string } }).receipt.id;
+    expect((await post(app, `/receipts/${id}/submit`)).status).toBe(200);
+    expect((await post(app, `/receipts/${id}/check`)).status).toBe(200);
+    return id;
+  };
+
+  test('an approve that dies on the second bill rolls back the first, and the retry adds the money once', async () => {
+    const tables = baseTables();
+    const app = harness(tables);
+    const a = await makeBill(app, tables);
+    const b = await makeBill(app, tables);
+    const idA = tables.acc_debtor_bills.find((x) => x.bill_number === a.billNumber)!.id;
+    const idB = tables.acc_debtor_bills.find((x) => x.bill_number === b.billNumber)!.id;
+    const receiptId = await raise(app, [{ billId: idA, amountSen: 20000 }, { billId: idB, amountSen: 10000 }]);
+
+    /* The second bill's write fails once. */
+    const at = tables.acc_debtor_bills.findIndex((x) => x.id === idB);
+    let armed = true;
+    tables.acc_debtor_bills[at] = new Proxy(tables.acc_debtor_bills[at]!, {
+      set(target, prop, value) {
+        if (armed && prop === 'received_sen') { armed = false; throw new Error('connection reset'); }
+        return Reflect.set(target, prop, value);
+      },
+    });
+    const first = await post(app, `/receipts/${receiptId}/approve`);
+    expect(first.status).toBe(500);
+    const bill = (id: string) => tables.acc_debtor_bills.find((x) => x.id === id)!;
+    expect(bill(idA).received_sen ?? 0).toBe(0);
+    expect(tables.journal_entries.filter((j) => j.source_type === 'ODR')).toHaveLength(0);
+    expect(tables.acc_debtor_receipts.find((x) => x.id === receiptId)!.status).not.toBe('POSTED');
+
+    const again = await post(app, `/receipts/${receiptId}/approve`);
+    expect(again.status, await again.clone().text()).toBe(200);
+    expect(bill(idA).received_sen).toBe(20000);
+    expect(bill(idB).received_sen).toBe(10000);
+    expect(tables.journal_entries.filter((j) => j.source_type === 'ODR')).toHaveLength(1);
+    /* And a third press is refused, never a second knock-off. */
+    expect((await post(app, `/receipts/${receiptId}/approve`)).status).toBe(409);
+    expect(bill(idA).received_sen).toBe(20000);
+  });
+
+  test('a void that dies on its second bill rolls back whole; the retry takes the money off once', async () => {
+    const tables = baseTables();
+    const app = harness(tables);
+    const ma = await makeBill(app, tables, [30000]);
+    const mb = await makeBill(app, tables, [30000]);
+    const idA = tables.acc_debtor_bills.find((x) => x.bill_number === ma.billNumber)!.id;
+    const idB = tables.acc_debtor_bills.find((x) => x.bill_number === mb.billNumber)!.id;
+    const earlier = await raise(app, [{ billId: idA, amountSen: 5000 }]);
+    expect((await post(app, `/receipts/${earlier}/approve`)).status).toBe(200);
+    const receiptId = await raise(app, [{ billId: idA, amountSen: 12000 }, { billId: idB, amountSen: 1000 }]);
+    expect((await post(app, `/receipts/${receiptId}/approve`)).status).toBe(200);
+    const bill = (id: string) => tables.acc_debtor_bills.find((x) => x.id === id)!;
+    expect(bill(idA).received_sen).toBe(17000);
+    const at = tables.acc_debtor_bills.findIndex((x) => x.id === idB);
+    let armed = true;
+    tables.acc_debtor_bills[at] = new Proxy(tables.acc_debtor_bills[at]!, {
+      set(target, prop, value) {
+        if (armed && prop === 'received_sen') { armed = false; throw new Error('connection reset'); }
+        return Reflect.set(target, prop, value);
+      },
+    });
+    expect((await post(app, `/receipts/${receiptId}/void`)).status).toBe(500);
+    expect((await post(app, `/receipts/${receiptId}/void`)).status).toBe(200);
+    /* The earlier receipt's 5,000 stays on bill A. */
+    expect(bill(idA).received_sen).toBe(5000);
+    expect(bill(idB).received_sen).toBe(0);
+    expect((await post(app, `/receipts/${receiptId}/void`)).status).toBe(409);
+  });
+
+  test('a PAID bill edited above what was received owes again', async () => {
+    const tables = baseTables();
+    const app = harness(tables);
+    const made = await makeBill(app, tables, [30000]);
+    const id = tables.acc_debtor_bills.find((x) => x.bill_number === made.billNumber)!.id;
+    const receiptId = await raise(app, [{ billId: id, amountSen: 30000 }]);
+    expect((await post(app, `/receipts/${receiptId}/approve`)).status).toBe(200);
+    expect(tables.acc_debtor_bills.find((x) => x.id === id)!.status).toBe('PAID');
+
+    const res = await app.request(`/bills/${id}`, {
+      method: 'PATCH', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ lines: [{ description: 'more', creditAccountCode: '700-0000', amountSen: 45000 }] }),
+    });
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect(tables.acc_debtor_bills.find((x) => x.id === id)!).toMatchObject({ total_sen: 45000, status: 'POSTED' });
   });
 });
