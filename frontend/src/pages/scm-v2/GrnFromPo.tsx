@@ -479,6 +479,9 @@ export const GrnFromPo = () => {
     // the GRN's edit page where the new lines now appear.
     if (appendToGrn) {
       setAppending(true);
+      /* The lines that landed are unticked when a later one fails, so pressing again appends only the rest. Before,
+         a retry added every line again on top of the ones already in the receipt. */
+      const landed: string[] = [];
       try {
         for (const r of out) {
           await addGrnItem.mutateAsync({
@@ -493,13 +496,24 @@ export const GrnFromPo = () => {
             unitPriceSen:      r.unitPriceSen,
             deliveryDate:        r.deliveryDate ?? undefined,
           });
+          landed.push(r.poItemId);
         }
         navigate(`/scm/grns/${appendToGrn}?edit=1`);
       } catch (e) {
         setAppending(false);
+        if (landed.length > 0) {
+          setPicks((prev) => {
+            const next = { ...prev };
+            for (const poItemId of landed) delete next[poItemId];
+            return next;
+          });
+        }
+        const why = e instanceof Error ? e.message : "Couldn't append the picked lines to this GRN.";
         setDialog({
           title: 'Add failed',
-          body: e instanceof Error ? e.message : "Couldn't append the picked lines to this GRN.",
+          body: landed.length > 0
+            ? `${landed.length} of ${out.length} lines were added to the receipt and are no longer ticked. The rest were not: ${why} Press again to add only those.`
+            : why,
         });
       }
       return;
