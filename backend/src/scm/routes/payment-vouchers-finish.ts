@@ -116,8 +116,10 @@ export async function finishPostedVoucher(
          is logged and stepped over, as the settle failure above is. */
       if (settled.appliedSen > 0) {
         try {
-          const { data: piRaw } = await sb.from('purchase_invoices')
+          const { data: piRaw, error: piErr } = await sb.from('purchase_invoices')
             .select('id, invoice_number, currency, exchange_rate, grn_id').eq('id', a.pi_id).maybeSingle();
+          /* Into the catch below: logged, and the rate work for this invoice is skipped, never read as "no invoice". */
+          if (piErr) throw new Error(`invoice read failed: ${String(piErr.message)}`);
           const piRow = piRaw as {
             id: string; invoice_number: string | null; currency: string | null;
             exchange_rate: string | number | null; grn_id: string | null;
@@ -363,8 +365,9 @@ export async function finishCancelledVoucher(
            rate, but reading first keeps this notice about the state the operator was
            looking at when they pressed Cancel. */
         try {
-          const { data: piRaw } = await sb.from('purchase_invoices')
+          const { data: piRaw, error: piErr } = await sb.from('purchase_invoices')
             .select('invoice_number, currency, exchange_rate').eq('id', a.pi_id).maybeSingle();
+          if (piErr) throw new Error(`invoice read failed: ${String(piErr.message)}`);
           const piRow = piRaw as { invoice_number: string | null; currency: string | null; exchange_rate: string | number | null } | null;
           if (piRow && isRateRetainedFromPv({
             pvCurrency: head.currency,

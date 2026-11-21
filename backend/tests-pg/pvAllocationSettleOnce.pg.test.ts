@@ -120,7 +120,7 @@ describePg('a payment voucher settles and unwinds each invoice exactly once', ()
                       VALUES (1, 'sup-1', '${PV}', 'PV-1', 100000)`);
     const want = (pi: string) => sql.unsafe(
       'SELECT * FROM scm.apply_supplier_advance($1::uuid, 1, $2::jsonb)',
-      [PV, JSON.stringify([{ pi_id: pi, amount_sen: 100000 }])] as never[],
+      [PV, sql.json([{ pi_id: pi, amount_sen: 100000 }])] as never[],
     ).then(() => 'ok', (e: { code?: string }) => e.code ?? 'error');
     const outcomes = await Promise.all([want(PI), want(PI2)]);
     expect(outcomes.sort()).toEqual(['P0415', 'ok']);
