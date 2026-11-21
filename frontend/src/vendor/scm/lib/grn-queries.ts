@@ -185,6 +185,13 @@ export const useGrnDetails = (ids: string[]) => useQueries({
    2026-07-17 (fix/doc-idempotency). A duplicate GRN books stock IN twice and
    rolls the PO's received qty up twice — the on-hand lie the owner would only
    meet at a stock count. */
+/* A receipt moves the PO's received qty and status, read under the PO's own keys: without this "Back to PO" showed
+   the old received qty until the page was reopened. */
+const invalidateGrnPoSide = (qc: ReturnType<typeof useQueryClient>) => {
+  void qc.invalidateQueries({ queryKey: ['mfg-purchase-orders'] });
+  void qc.invalidateQueries({ queryKey: ['mfg-purchase-order-detail'] });
+  void qc.invalidateQueries({ queryKey: ['inventory'] });
+};
 export const useCreateGrn = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -193,7 +200,10 @@ export const useCreateGrn = () => {
          failures ride in the 201 body (grn-create-outcome.ts reads them). */
       authedFetch<{ id: string; grnNumber: string } & InBandFailure>(`/grns`,
         idempotentInit(idempotencyKey, { method: 'POST', body: JSON.stringify(body) })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['grns'] }),
+    onSuccess: () => {
+      invalidateGrnPoSide(qc);
+      return qc.invalidateQueries({ queryKey: ['grns'] });
+    },
   });
 };
 /* Confirm a DRAFT GRN → POSTED (PATCH /grns/:id/post). This is the commit
@@ -215,6 +225,7 @@ export const usePostGrn = () => {
          warehouse". `useCancelGrn` below has read its `cancelErrors` since
          2026-08-13 for exactly this reason. */
       reportInBandFailure('GRN posted, but not everything was recorded', data);
+      invalidateGrnPoSide(qc);
       qc.invalidateQueries({ queryKey: ['grn-detail', id] });
       qc.invalidateQueries({ queryKey: ['grns'] });
       qc.invalidateQueries({ queryKey: ['inventory'] });
@@ -258,10 +269,13 @@ export const useAddGrnItem = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ grnId, ...body }: { grnId: string } & Record<string, unknown>) =>
-      authedFetch<{ item: any }>(`/grns/${grnId}/items`, {
+      authedFetch<{ item: any } & InBandFailure>(`/grns/${grnId}/items`, {
         method: 'POST', body: JSON.stringify(body),
       }),
-    onSuccess: (_, vars) => {
+    onSuccess: (data, vars) => {
+      /* A line added to a posted receipt is saved even when its stock IN or PO recount is refused; that rides in the body. */
+      reportInBandFailure('Line added, but not everything was recorded', data);
+      invalidateGrnPoSide(qc);
       qc.invalidateQueries({ queryKey: ['grn-detail', vars.grnId] });
       qc.invalidateQueries({ queryKey: ['grns'] });
       void qc.invalidateQueries({ queryKey: ['inventory'] });
@@ -273,10 +287,12 @@ export const useUpdateGrnItem = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ grnId, itemId, ...body }: { grnId: string; itemId: string } & Record<string, unknown>) =>
-      authedFetch<{ ok: true }>(`/grns/${grnId}/items/${itemId}`, {
+      authedFetch<{ ok: true } & InBandFailure>(`/grns/${grnId}/items/${itemId}`, {
         method: 'PATCH', body: JSON.stringify(body),
       }),
-    onSuccess: (_, vars) => {
+    onSuccess: (data, vars) => {
+      reportInBandFailure('Line saved, but not everything was recorded', data);
+      invalidateGrnPoSide(qc);
       qc.invalidateQueries({ queryKey: ['grn-detail', vars.grnId] });
       qc.invalidateQueries({ queryKey: ['grns'] });
       void qc.invalidateQueries({ queryKey: ['inventory'] });
@@ -361,6 +377,7 @@ export const useCancelGrn = () => {
          D3) and NOTHING read it until check-inband-failures.mjs counted the
          producers against the readers and found zero. */
       reportInBandFailure('GRN cancelled, but the stock was not reversed', data);
+      invalidateGrnPoSide(qc);
       qc.invalidateQueries({ queryKey: ['grn-detail', id] });
       qc.invalidateQueries({ queryKey: ['grns'] });
       qc.invalidateQueries({ queryKey: ['inventory'] });
