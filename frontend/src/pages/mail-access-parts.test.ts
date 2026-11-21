@@ -2,7 +2,8 @@
    Management reads everything, and the rail tags a mailbox that is shared or a
    colleague's. */
 import { describe, expect, it } from "vitest";
-import { autoReason, departmentIdsOf, effectiveLevel, isManagement } from "./mail-access-parts";
+import { departmentIdsOf, isManagement, syncState } from "./mail-access-parts";
+import { colleagueMailboxes, levelGroup, levelLabel, ownDepartmentMailboxes, planAccessSave } from "./mail-access-levels";
 import { reachTagOf } from "./MailCenter/mail-sidebar";
 import type { Department, TeamMember } from "../types";
 import type { MailAddress } from "./MailCenter/mail-actions";
@@ -21,17 +22,43 @@ describe("mail access on the Org Chart", () => {
 
   it("a Management member always reads the whole company", () => {
     expect(isManagement(member(20), DEPTS)).toBe(true);
-    expect(effectiveLevel(member(20), DEPTS, "personal")).toBe("company");
-    expect(effectiveLevel(member(1), DEPTS, "department")).toBe("department");
+    expect(isManagement(member(1), DEPTS)).toBe(false);
   });
 
-  it("a department mailbox ticks itself for its department from L2 up, never at L1", () => {
-    const elvis = member(2, [2, 1]);
-    expect(autoReason(box(1), elvis, "department")).toBe("department");
-    expect(autoReason(box(1), elvis, "department_all")).toBe("department");
-    expect(autoReason(box(1), elvis, "personal")).toBeNull();
-    expect(autoReason(box(3), elvis, "department")).toBeNull();
-    expect(autoReason(box(3), elvis, "company")).toBe("company");
+  it("three levels; the older own-only setting shows as L1", () => {
+    expect(levelGroup("personal")).toBe("department");
+    expect(levelLabel("department")).toBe("L1 · Personal");
+    expect(levelLabel("department_all")).toBe("L2 · Department");
+    expect(levelLabel("company")).toBe("L3 · Company");
+  });
+
+  it("L1 offers only colleagues who share a department; their department mailbox is included", () => {
+    const u = (id: number, d: number[]) => ({ id, department_id: d[0], department_ids: d, status: "active" }) as TeamMember;
+    const elvis = u(1, [2, 1]);
+    const users = [elvis, u(2, [2]), u(3, [1]), u(4, [5])];
+    const own = (id: string, owner: number) => ({ id, address: `${id}@x.com`, label: "", active: true, assignedUserId: owner }) as MailAddress;
+    const addresses = [own("me", 1), own("ops-mate", 2), own("sales-mate", 3), own("other", 4), { ...box(2), id: "ops" }, { ...box(5), id: "far" }];
+    expect(colleagueMailboxes(elvis, users, addresses).map((a) => a.id)).toEqual(["ops-mate", "sales-mate"]);
+    expect(ownDepartmentMailboxes(elvis, addresses).map((a) => a.id)).toEqual(["ops"]);
+  });
+
+  it("Save sends only differences, and leaving L2 clears its department ticks", () => {
+    const before = { level: "department_all" as const, grants: new Set(["a"]), departments: new Set([3]) };
+    expect(planAccessSave(before, { ...before, departments: new Set([3, 4]) })).toEqual({ level: null, grant: [], revoke: [], departments: [3, 4] });
+    expect(planAccessSave(before, { level: "department", grants: new Set(["a", "b"]), departments: new Set([3]) })).toEqual({
+      level: "department", grant: ["b"], revoke: [], departments: [],
+    });
+    const legacy = { level: "personal" as const, grants: new Set<string>(), departments: new Set<number>() };
+    expect(planAccessSave(legacy, { ...legacy, level: "department" }).level).toBeNull();
+  });
+
+  it("a mailbox is quiet after 3 days without mail, waiting while Google has not added it", () => {
+    const now = Date.parse("2026-11-21T00:00:00Z");
+    const row = (lastInboundAt: string | null, pending = false) => ({ address: "a@x.com", pending, lastInboundAt, threads: 1 });
+    expect(syncState(row("2026-11-20T00:00:00Z"), now)).toBe("live");
+    expect(syncState(row("2026-11-17T00:00:00Z"), now)).toBe("quiet");
+    expect(syncState(row(null), now)).toBe("never");
+    expect(syncState(row(null, true), now)).toBe("waiting");
   });
 
   it("the rail tags a shared mailbox and a colleague's mailbox, not a department mailbox", () => {

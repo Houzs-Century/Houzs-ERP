@@ -383,8 +383,11 @@ POST,/api/mail-center/messages/:id/ack,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,
 GET,/api/mail-center/outbox,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/mail-center.ts
 GET,/api/mail-center/outbox/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/mail-center.ts
 GET,/api/mail-center/recipients/history,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/mail-personal.ts
+GET,/api/mail-center/scope-departments,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/mail-access-log.ts
+PUT,/api/mail-center/scope-departments,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mail-access-log.ts
 PUT,/api/mail-center/scope-level,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mail-center.ts
 GET,/api/mail-center/scope-levels,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/mail-center.ts
+GET,/api/mail-center/sync-status,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/mail-access-log.ts
 POST,/api/mail-center/test-inject,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mail-center.ts
 GET,/api/mail-center/threads,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/mail-center.ts
 GET,/api/mail-center/threads/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/mail-center.ts

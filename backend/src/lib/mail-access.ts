@@ -95,10 +95,10 @@ export async function recordAccessChange(
 }
 
 export const LEVEL_NAME: Record<string, string> = {
-  personal: "L1 · Own",
-  department: "L2 · Department mailbox",
-  department_all: "L3 · Whole department",
-  company: "L4 · Company",
+  personal: "L1 · Personal (no department mailbox)",
+  department: "L1 · Personal",
+  department_all: "L2 · Department",
+  company: "L3 · Company",
 };
 
 /* Every grant is logged, and a colleague's OWN mailbox being opened to someone
@@ -137,4 +137,20 @@ export async function afterGrantChange(
       : `An admin stopped sharing ${mb.address} with ${who}.`,
     source: "mail_access",
   });
+}
+
+/** L2 (department_all): the person's own departments plus the OTHER departments
+ *  an admin ticked for them (mail_scope_departments). */
+export async function extraScopeDepartments(db: Db, userId: number, own: number[]): Promise<number[]> {
+  let extra: number[] = [];
+  try {
+    const res = await db
+      .prepare(`SELECT department_id FROM mail_scope_departments WHERE user_id = ?`)
+      .bind(userId)
+      .all<{ department_id: number }>();
+    extra = res.results.map((r) => Number(r.department_id));
+  } catch (e) {
+    console.warn("mail_scope_departments read failed", e);
+  }
+  return [...new Set([...own, ...extra].filter((n) => Number.isFinite(n)))];
 }
