@@ -56,9 +56,7 @@ function LegacyPage({ title, subtitle, children }: { title: string; subtitle: st
 const LEGACY: Record<string, { title: string; subtitle: string; el: ReactNode }> = {
   attendance: { title: "Attendance", subtitle: "Daily punches — view and correct", el: <AttendanceTab /> },
   payroll: { title: "Payroll", subtitle: "The month's payslips", el: <PayrollTab /> },
-  "pay-rules": { title: "Pay Rules", subtitle: "Shift, lateness, overtime and statutory rates", el: <PayRulesTab /> },
   "trip-pay": { title: "Trip Pay", subtitle: "Driver commission and trip allowances", el: <TripPayTab /> },
-  kpi: { title: "KPI", subtitle: "Monthly scorecard and allowance tier", el: <KpiTab /> },
 };
 
 export function HrEmployees() {
@@ -122,6 +120,10 @@ export function HrEmployees() {
         return <LaborCostTab />;
       case "shifts":
         return <ShiftsTab />;
+      case "kpi":
+        return <KpiTab />;
+      case "pay-rules":
+        return <PayRulesTab />;
       default: {
         const l = LEGACY[active] as { title: string; subtitle: string; el: ReactNode } | undefined;
         return l ? <LegacyPage title={l.title} subtitle={l.subtitle}>{l.el}</LegacyPage> : null;
