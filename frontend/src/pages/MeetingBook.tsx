@@ -105,7 +105,7 @@ export function MeetingBook() {
     </div>
   );
 
-  if (error) return shell(<div className="rounded-2xl border border-border bg-surface p-6"><h1 className="text-[20px] font-bold">This booking link is not active</h1><p className="mt-2 text-ink-secondary">{error} Ask the person who sent it for a new link.</p></div>);
+  if (error) return shell(<div className="rounded-2xl border border-border bg-surface p-6"><h1 className="text-[20px] font-bold">This booking link is not active</h1><p className="mt-2 text-ink-secondary">{/not active/i.test(error) ? "" : `${error} `}Ask the person who sent it for a new link.</p></div>);
 
   if (booking) {
     const room = typeof booking.room === "string" ? { name: booking.room, floor: booking.floor ?? "", location: booking.location ?? "" } : booking.room;
