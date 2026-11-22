@@ -1268,8 +1268,7 @@ export function MobileNewSO({
      read-only — a second amendment can't be raised while one is in flight. */
   const lineEditingBlocked = migratedLocked || lineLocked || (procLocked && !amendmentMode);
   /* DEV-32 — Edit SO after DO, desktop's rule (so-after-do-client): charge lines + the DO-snapshotted customer details reopen; a line shown read-only is never written. */
-  const afterDo = soAfterDoMode(migHeader ?? {}, { can, override: unlockOverride, migrated: migratedLocked }), chargeAdds = lineEditingBlocked && afterDo.on, custLocked = identityLocked && !afterDo.headerOpen;
-  const linesAfterDo = soLinesAfterDoOn(migHeader ?? {}, { can, migrated: migratedLocked }); // Owner 2026-11-21: super admin edits a delivered PRODUCT line's qty / spec
+  const afterDo = soAfterDoMode(migHeader ?? {}, { can, override: unlockOverride, migrated: migratedLocked }), chargeAdds = lineEditingBlocked && afterDo.on, custLocked = identityLocked && !afterDo.headerOpen, linesAfterDo = soLinesAfterDoOn(migHeader ?? {}, { can, migrated: migratedLocked }); // linesAfterDo: super admin edits a delivered PRODUCT line's qty / spec (owner 2026-11-21)
   const afterDoLineIds = new Set(origItems.filter((it) => afterDoEditableLine(afterDo, it) || afterDoProductLineEditable(linesAfterDo, it)).map((it) => it.id)), afterDoSave: AfterDoSave = { mode: afterDo, lineIds: afterDoLineIds, chargeAdds, targetId: afterDoTargetId };
   const roLine = (id: string) => !afterDoLineIds.has(id) && (lineEditingBlocked || frozenItemIds.has(id)), doCopyNotice = (r: unknown) => { const m = afterDoCopyProblem(r); if (m) void notify({ title: "Delivery Order not updated", body: m, tone: "error" }); };
   /* Identity address columns (State/City/Postcode) freeze on the processing
