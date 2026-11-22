@@ -50,7 +50,7 @@ import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { postUnpostedSiPayments, reverseSiPayment } from '../../acc/payments';
 import { insertSiPaymentRow } from '../lib/si-payment-row';
 import { followPaymentRemoval } from '../../acc/receipts';
-import { recomputeSiPaid as recomputePaid, readOrderDepositForInvoice } from '../lib/si-order-deposit';
+import { recomputeSiPaid as recomputePaid, readOrderDepositForInvoice, siStatusFor } from '../lib/si-order-deposit';
 import { invoiceReceipts } from '../lib/si-receipts';
 import { stampSoDates, stampDoNumber, stampOrderDeposit } from '../lib/si-list-stamps';
 import { SI_HEADER_COLS, SI_LIST_SELECT, filterSiList, orderSiList, readSiListFilters } from '../lib/si-list-read';
@@ -1740,10 +1740,12 @@ export const patchSalesInvoiceStatusHandler = async (c: any) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const { data: curRow, error: curErr } = await scopeToCompanyId(sb.from('sales_invoices')
-    .select('status, invoice_number, company_id').eq('id', id), co.companyId).maybeSingle();
+    .select('status, invoice_number, company_id, total_sen, paid_sen, so_doc_no').eq('id', id), co.companyId).maybeSingle();
   if (curErr) return c.json({ error: 'load_failed', reason: curErr.message }, 500);
   if (!curRow) return c.json(NOT_THIS_COMPANY, 404);
   const prevStatus = ((curRow as { status: string }).status ?? '').toUpperCase();
+  // As stored, for the compare-and-set on the status write below.
+  const prevStoredStatus = (curRow as { status: string }).status;
   /* Identity for the audit rows below, read here so every exit path has it
      without a second round-trip. */
   const auditDocNo = (curRow as { invoice_number?: string | null }).invoice_number ?? null;
@@ -1764,6 +1766,28 @@ export const patchSalesInvoiceStatusHandler = async (c: any) => {
       message: siTransitionReject(canonPrev as string, status),
       from: prevStatus, to: status,
     }, 409);
+  }
+
+  /* PAID / PARTIALLY_PAID follow the money, never a click: an invoice could read PAID with nothing received. The
+     money is the invoice's receipts + the order's deposit applied to it + the credit notes knocked off it, the same
+     sum recomputeSiPaid rolls; "Mark paid" records a receipt and writes no status (markPaidPlan.ts). */
+  if ((status === 'PAID' || status === 'PARTIALLY_PAID') && canonPrev !== status && prevStatus !== 'DRAFT' && prevStatus !== 'CANCELLED') {
+    const cur0 = curRow as { total_sen?: number | null; paid_sen?: number | null; so_doc_no?: string | null; company_id?: number | null };
+    const dep = await readOrderDepositForInvoice(sb, { id, so_doc_no: cur0.so_doc_no ?? null, company_id: cur0.company_id ?? co.companyId });
+    if (!dep.ok) return c.json({ error: 'load_failed', reason: dep.reason }, 503);
+    const credited = await siCreditNotesSen(sb, cur0.company_id ?? co.companyId, id);
+    if (credited === null) return c.json({ error: 'load_failed', reason: 'credit notes' }, 503);
+    const settled = Number(cur0.paid_sen ?? 0) + (dep.deposit?.applied_sen ?? 0) + credited;
+    const derived = siStatusFor(prevStatus, Number(cur0.total_sen ?? 0), settled);
+    if (derived !== status) {
+      return c.json({
+        error: 'status_follows_money',
+        message: status === 'PAID'
+          ? 'This invoice is not paid in full yet. Record the payment and it turns Paid by itself.'
+          : 'Part paid follows the payments recorded. Record the payment instead.',
+        settledSen: settled, totalSen: Number(cur0.total_sen ?? 0),
+      }, 409);
+    }
   }
 
   /* ── CONFIRM transition (DRAFT → SENT) ─────────────────────────────────
@@ -1880,15 +1904,19 @@ export const patchSalesInvoiceStatusHandler = async (c: any) => {
     }
     data = updated as typeof data;
   } else {
+    /* Compare-and-set on the status this request read: without it a late request (a slow SENT landing after a
+       cancel) wrote over CANCELLED and brought back an invoice whose revenue was already reversed. */
     const { data: updated, error } = await scopeToCompanyId(sb.from('sales_invoices')
       .update({ status, ...ts })
       .eq('id', id), co.companyId)
+      .eq('status', prevStoredStatus)
       .select('id, status, invoice_number, paid_sen, debtor_code, debtor_name')
-      .single();
+      .maybeSingle();
     if (isDoLineOverInvoiced(error)) {
       return c.json({ error: 'over_remaining', message: 'Cannot reopen — the delivered quantity has since been invoiced elsewhere. The DO lines no longer have room for this invoice.', reason: error?.message }, 409);
     }
     if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
+    if (!updated) return c.json({ error: 'status_changed', reason: 'This invoice just changed. Reload it and try again.' }, 409);
     data = updated as typeof data;
   }
 
