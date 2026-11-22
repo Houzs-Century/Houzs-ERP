@@ -244,7 +244,22 @@ export type PayrollResponse = {
   canManage: boolean;
   canApprove: boolean;
 };
-export type Advance = { id: number; employeeId: number; empNo: string; name: string; date: string; amountSen: number; note: string | null; status: "UNSETTLED" | "SETTLED" };
+export type Advance = {
+  id: number;
+  employeeId: number;
+  empNo: string;
+  name: string;
+  date: string;
+  amountSen: number;
+  /** Per-month deduction in sen, or null for a lump sum (whole amount in its month). */
+  installmentSen: number | null;
+  /** What comes off the slip of the period being viewed. */
+  thisMonthSen: number;
+  /** Still owed after that period's deduction. */
+  remainingSen: number;
+  note: string | null;
+  status: "UNSETTLED" | "SETTLED";
+};
 export type Penalty = {
   id: number;
   penaltyNo: string;
