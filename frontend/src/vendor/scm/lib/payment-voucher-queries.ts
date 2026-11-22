@@ -194,6 +194,14 @@ export const useUpdatePvText = () => {
   });
 };
 
+/* A voucher that posts (or approves and posts) or cancels moves money on the invoices and AP bills it settles, the
+   supplier's advances and reservations, and the bank board, not only on itself. */
+const invalidatePvSettlement = (qc: ReturnType<typeof useQueryClient>) => {
+  for (const k of ['purchase-invoices', 'purchase-invoice-detail', 'ap-invoices', 'ap-invoice', 'supplier-advances', 'pv-reservations', 'daily-bank', 'journal-entries']) {
+    void qc.invalidateQueries({ queryKey: [k] });
+  }
+};
+
 export const usePostPaymentVoucher = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -202,8 +210,8 @@ export const usePostPaymentVoucher = () => {
       void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
       void qc.invalidateQueries({ queryKey: ['finance-todo'] });
       void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', id] });
-      // A post settles linked PIs — refresh the PI list/detail too.
-      void qc.invalidateQueries({ queryKey: ['purchase-invoices'] });
+      // A post settles linked PIs and AP bills: refresh what it settled.
+      invalidatePvSettlement(qc);
     },
   });
 };
@@ -253,7 +261,7 @@ export const useCancelPaymentVoucher = () => {
       void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
       void qc.invalidateQueries({ queryKey: ['finance-todo'] });
       void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', id] });
-      void qc.invalidateQueries({ queryKey: ['purchase-invoices'] });
+      invalidatePvSettlement(qc);
       /* A cancelled voucher puts its request back on Finance's waiting count. */
       void qc.invalidateQueries({ queryKey: ['payment-requests'] });
     },
@@ -272,6 +280,8 @@ const approvalMutation = (path: 'submit' | 'withdraw' | 'check' | 'approve') => 
       void qc.invalidateQueries({ queryKey: ['finance-todo'] });
       void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', id] });
       void qc.invalidateQueries({ queryKey: ['daily-bank'] });
+      // Approve posts the GL and settles invoices in the same request.
+      if (path === 'approve') invalidatePvSettlement(qc);
     },
   });
 };
