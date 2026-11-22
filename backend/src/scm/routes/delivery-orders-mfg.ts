@@ -138,7 +138,7 @@ import { resolveDoLineRacks, racksForDoLine, loadShippedFromRacks } from '../lib
 import { queueDoShippedFromStamp, markDoShippedFromReturned, withShippedFromStamp, DO_RACK_OUT_REASON } from '../lib/do-shipped-from-stamp'; import { rackShipState, retireDoRackCycle, DO_RACK_IN_REASON } from '../lib/do-rack-cycle';
 import { withSoRefDocNos } from '../lib/so-ref-search';
 import { stockTxFor, type StockTx } from '../lib/stock-post-tx'; import { doShipCoreFailure, doShipFailureResponse, keepCreatedDoAsDraft, type DoShipFlip, type DoShipTail } from '../lib/do-ship-atomic';
-import { hasUnreadableLines, unreadableMovementError } from '../lib/failed-read-refusal'; import { readFailure, readFailureError } from '../lib/read-failure'; import { noteResyncReadFailure, revertShipOnUnreadLines } from '../lib/do-read-guards';
+import { hasUnreadableLines, unreadableMovementError } from '../lib/failed-read-refusal'; import { readFailure, readFailureError } from '../lib/read-failure'; import { noteResyncReadFailure, revertShipOnUnreadLines } from '../lib/do-read-guards'; import { reshipAfterRevert } from '../lib/do-stock-cycle';
 import { stepClock, timed } from '../../lib/step-timing';
 
 export const deliveryOrdersMfg = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -1135,7 +1135,12 @@ async function deductInventoryCore(sb: Parameters<typeof writeMovements>[0], del
     .eq('movement_type', 'OUT');
   // Every failed read below refuses (lib/failed-read-refusal.ts): null is not "none".
   if (existingErr) return done([unreadableMovementError('the stock already moved for this DO', existingErr)]);
-  if ((existing ?? 0) > 0) return done([]); // already deducted — no-op
+  if ((existing ?? 0) > 0) {
+    /* An OUT with a revert's reversal beside it is a returned ship, not a live one (lib/do-stock-cycle.ts). */
+    const reship = await reshipAfterRevert(sb, deliveryOrderId);
+    if (reship === 'shipped') return done([]); // already deducted — no-op
+    if (reship !== 'deduct') return done([reship]);
+  }
 
   /* Forward-compat (mig 0057): is_dropship column may not exist yet — retry without it. */
   let doHeaderRes = await sb.from('delivery_orders')
