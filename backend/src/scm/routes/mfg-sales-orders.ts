@@ -7993,11 +7993,21 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
   const leaseBlocked = await requireSoLineWriteLease(sb, docNo, c);
   if (leaseBlocked) return leaseBlocked;
 
+  /* Owner 2026-11-21 — a super admin may edit a non-frozen SERVICE / charge line
+     stuck on a processing-locked / completed order (on no DO, carries no PO), so
+     it skips the processing-date lock below the same way the after-DO paths do. */
+  let superAdminFeeWrite = false;
+  if (!afterDoLine && !afterDoProduct && it.afterDo !== true && hasHouzsPerm(c, SO_EDIT_LINES_AFTER_DO_PERMISSION)) {
+    const { data: ln, error: lnErr } = await scopeSoItemToDocument(sb.from('mfg_sales_order_items').select('item_code, item_group'), docNo, itemId).maybeSingle();
+    const l = lnErr ? null : (ln as { item_code?: string | null; item_group?: string | null } | null); // a failed read -> no bypass (the lock stands)
+    if (l) superAdminFeeWrite = isServiceLine({ itemGroup: l.item_group ?? null, itemCode: l.item_code ?? null });
+  }
+
   /* Owner 2026-06-12 — processing-date lock: no line EDIT once the processing
      day has passed (the locked order is already PO'd to the supplier). The
      after-DO paths are PAST that lock by definition (the goods already shipped),
-     so both skip it. */
-  if (!afterDoLine && !afterDoProduct) {
+     so they skip it; so does the super-admin fee-line edit above. */
+  if (!afterDoLine && !afterDoProduct && !superAdminFeeWrite) {
     const procLock = await soProcessingLockBlocked(sb, docNo);
     if (procLock) return c.json(procLock, 409);
   }
@@ -8525,9 +8535,21 @@ mfgSalesOrders.delete('/:docNo/items/:itemId', async (c) => {
   const leaseBlocked = await requireSoLineWriteLease(sb, docNo, c);
   if (leaseBlocked) return leaseBlocked;
 
+  /* Owner 2026-11-21 — a super admin (scm.so.edit_lines_after_do) may remove a
+     non-frozen SERVICE / charge line that is stuck on a processing-locked or
+     completed order. The freeze gate above already proved it is on no Delivery
+     Order, so there is nothing downstream to follow — it is a plain SO delete. */
+  let superAdminFeeWrite = false;
+  if (hasHouzsPerm(c, SO_EDIT_LINES_AFTER_DO_PERMISSION)) {
+    const { data: ln, error: lnErr } = await scopeSoItemToDocument(sb.from('mfg_sales_order_items').select('item_code, item_group'), docNo, itemId).maybeSingle();
+    const l = lnErr ? null : (ln as { item_code?: string | null; item_group?: string | null } | null); // a failed read -> no bypass (the lock stands)
+    if (l) superAdminFeeWrite = isServiceLine({ itemGroup: l.item_group ?? null, itemCode: l.item_code ?? null });
+  }
+
   /* Owner 2026-06-12 — processing-date lock: no line DELETE once the
-     processing day has passed (the locked order is already PO'd). */
-  {
+     processing day has passed (the locked order is already PO'd). The
+     super-admin fee-line removal above is past it (the charge carries no PO). */
+  if (!superAdminFeeWrite) {
     const procLock = await soProcessingLockBlocked(sb, docNo);
     if (procLock) return c.json(procLock, 409);
   }

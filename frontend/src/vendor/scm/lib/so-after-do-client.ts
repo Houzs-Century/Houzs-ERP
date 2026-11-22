@@ -78,6 +78,17 @@ export function afterDoProductLineEditable(
   return linesOn && soItemFrozen(item) && !afterDoLineAllowed({ itemCode: item.item_code ?? null, itemGroup: item.item_group ?? null });
 }
 
+/** Owner 2026-11-21 — a super admin may also edit or remove a NON-frozen
+ *  SERVICE / charge line stuck on a locked / completed order: it is on no
+ *  Delivery Order, so there is nothing downstream to follow — a plain SO edit /
+ *  delete the server lets past the processing-date lock. */
+export function afterDoFeeLineEditable(
+  linesOn: boolean,
+  item: { downstream_frozen?: unknown; item_code?: string | null; item_group?: string | null },
+): boolean {
+  return linesOn && !soItemFrozen(item) && afterDoLineAllowed({ itemCode: item.item_code ?? null, itemGroup: item.item_group ?? null });
+}
+
 /** What the page knows at Save time. `chargeAdds` = new lines go through the
  *  after-DO road (the order would otherwise refuse them). */
 export type AfterDoSave = { mode: AfterDoMode; lineIds: ReadonlySet<string>; chargeAdds: boolean; targetId: string | null };
