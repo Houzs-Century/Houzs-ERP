@@ -25,6 +25,7 @@ import { partyAddressLines } from '../../../vendor/scm/lib/debtor-party';
 import { fmtDate, fmtSen } from '../../../vendor/shared/format';
 import { useAuth as useHouzsAuth } from '../../../auth/AuthContext';
 import { useToastOptional } from '../../../hooks/useToast';
+import { useIdempotencyKeyFor } from '../../../lib/idempotency';
 import { DataTable, type Column } from '../../../components/DataTable';
 import { AccountCell } from '../JournalEntryCards';
 import { FinanceDocLink } from '../finance/FinanceDocLink';
@@ -85,6 +86,8 @@ export const DebtorBillDoc = () => {
   const accountsQ = useAccounts();
   const debtorsQ = useOtherDebtors();
   const createBill = useCreateDebtorBill();
+  /* The copy form's key: a saved copy opens the new bill, so the next copy gets a fresh key. */
+  const copyKey = useIdempotencyKeyFor(`copy:${id}`);
   const updateBill = useUpdateDebtorBill();
   const cancelBill = useCancelDebtorBill();
   const { can } = useHouzsAuth();
@@ -136,7 +139,7 @@ export const DebtorBillDoc = () => {
         return;
       }
       if (!who) { setFormError('Pick the debtor.'); return; }
-      const res = await createBill.mutateAsync({ debtorId: who, ...values, ...(isDn ? { docKind: 'DN' as const } : {}) });
+      const res = await createBill.mutateAsync({ debtorId: who, idempotencyKey: copyKey, ...values, ...(isDn ? { docKind: 'DN' as const } : {}) });
       toast?.success(`${res.bill.billNumber} posted · ${fmtSen(res.bill.totalSen)}`);
       navigate(res.bill.id ? moneyInDocHref('debtorBill', res.bill.id) : moneyInListOf('debtorBill').href);
     } catch (e) {

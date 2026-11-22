@@ -13,6 +13,7 @@ import {
   postableAccounts, useAccountRoles, useAccounts, useCreateDebtorBill, useOtherDebtors, useUpdateDebtorBill,
 } from '../../../vendor/scm/lib/accounting-queries';
 import { useArBillDetail } from '../../../vendor/scm/lib/ar-invoice-queries';
+import { useIdempotencyKeyFor } from '../../../lib/idempotency';
 import { useToastOptional } from '../../../hooks/useToast';
 import { fmtSen } from '../../../vendor/shared/format';
 import { DebtorBillForm, emptyBillForm, type BillFormSubmit, type BillFormValues } from '../DebtorBillForm';
@@ -54,6 +55,8 @@ export function BillFormPage({ mode, id, debtorId, docKind, backLabel, titleExtr
   const debtorsQ = useOtherDebtors();
   const create = useCreateDebtorBill();
   const update = useUpdateDebtorBill();
+  /* One key per opened form, a fresh one when the screen opens another: a double press posts one bill. */
+  const idemKey = useIdempotencyKeyFor(`${mode}:${id ?? 'new'}:${docKind ?? 'INV'}`);
   const [error, setError] = useState<string | null>(null);
   const accounts = useMemo(() => postableAccounts(accountsQ.data?.accounts ?? []), [accountsQ.data]);
   const accountName = useMemo(() => {
@@ -80,7 +83,7 @@ export function BillFormPage({ mode, id, debtorId, docKind, backLabel, titleExtr
       });
       return;
     }
-    create.mutate({ debtorId: who, ...values, ...(dn ? { docKind: 'DN' as const } : {}) }, {
+    create.mutate({ debtorId: who, idempotencyKey: idemKey, ...values, ...(dn ? { docKind: 'DN' as const } : {}) }, {
       onSuccess: (res) => {
         toast?.success(`${res.bill.billNumber} posted · ${fmtSen(res.bill.totalSen)}`);
         onClose();
