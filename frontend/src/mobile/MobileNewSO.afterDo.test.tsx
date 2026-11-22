@@ -43,7 +43,7 @@ vi.mock("../vendor/scm/components/NotifyDialog", () => ({ useNotify: () => vi.fn
 vi.mock("../vendor/scm/components/ConfirmDialog", () => ({ useConfirm: () => vi.fn(), usePrompt: () => vi.fn() }));
 vi.mock("../vendor/scm/components/PromptDialog", () => ({ usePrompt: () => async () => "customer moved house" }));
 vi.mock("../auth/AuthContext", () => ({
-  useAuth: () => ({ user: { id: 1, name: "Logistics" }, can: (k: string) => k !== "scm.so.edit_after_do" || perms.afterDo }),
+  useAuth: () => ({ user: { id: 1, name: "Logistics" }, can: (k: string) => k === "scm.so.edit_after_do" ? perms.afterDo : k !== "scm.so.edit_lines_after_do" }),
 }));
 vi.mock("../vendor/scm/lib/auth", async (orig) => ({
   ...(await orig<typeof import("../vendor/scm/lib/auth")>()),

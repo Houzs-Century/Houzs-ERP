@@ -99,7 +99,7 @@ import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { passesSoffioReminder } from '../../vendor/scm/lib/soffio-reminder';
 import { SoLockBanner } from './SoLockBanner';
 import { SaveFailedBanner } from './SaveFailedBanner';
-import { soAfterDoMode, soPriceAfterDoOn, afterDoEditableLine, afterDoHeaderFields, afterDoEditFields, afterDoAddFields, afterDoCopyProblem, type AfterDoSave } from '../../vendor/scm/lib/so-after-do-client';
+import { soAfterDoMode, soPriceAfterDoOn, soLinesAfterDoOn, afterDoEditableLine, afterDoProductLineEditable, afterDoHeaderFields, afterDoEditFields, afterDoAddFields, afterDoCopyProblem, type AfterDoSave } from '../../vendor/scm/lib/so-after-do-client';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import { AMENDMENT_APPROVER_LABEL, soAmendmentApprover } from '../../vendor/scm/lib/amendment-approver';
@@ -1628,7 +1628,7 @@ export const SalesOrderDetail = () => {
   const downstreamLocked = soDownstreamHardLocked(header), migratedLocked = soMigratedReadonly(header);
   const isLocked = migratedLocked || isSoLocked(header.status, downstreamLocked, unlockOverride); // migrated is OUTSIDE isSoLocked: Override must not reach it
   const afterDo = soAfterDoMode(header, { can, override: unlockOverride, migrated: migratedLocked }); // DEV-32: Logistics edits charges + customer details after the DO
-  const priceAfterDo = soPriceAfterDoOn(header, { can, migrated: migratedLocked }); // DEV-70: a delivered line's price, through its $ dialog
+  const priceAfterDo = soPriceAfterDoOn(header, { can, migrated: migratedLocked }), linesAfterDo = soLinesAfterDoOn(header, { can, migrated: migratedLocked }); // DEV-70 $ dialog; owner 2026-11-21 super-admin qty/spec inline
   /* The one thing a hard-locked SO still accepts: a new salesperson. Same
      permission the API enforces (mfg-sales-orders.ts PATCH), so the Edit button
      it re-enables can never open an order the server would refuse to save. */
@@ -1679,7 +1679,7 @@ export const SalesOrderDetail = () => {
      Nothing is written directly — submitAmendment routes the diff through the
      approval flow, and the server's line routes still 409 a direct write. */
   const linesLocked = isLocked || (procLockActive && !amendmentMode), chargeAdds = linesLocked && afterDo.on, addLocked = linesLocked && !chargeAdds;
-  afterDoRef.current = { mode: afterDo, lineIds: new Set(items.filter((it) => afterDoEditableLine(afterDo, it)).map((it) => it.id)), chargeAdds, targetId: afterDoTargetId };
+  afterDoRef.current = { mode: afterDo, lineIds: new Set(items.filter((it) => afterDoEditableLine(afterDo, it) || afterDoProductLineEditable(linesAfterDo, it)).map((it) => it.id)), chargeAdds, targetId: afterDoTargetId };
   addLineHandoff.current = { enabled: isEditing && !addLocked, onTrigger: startAddLine };
   /* The raw lock, for the few per-line actions that still write DIRECTLY to the
      server (price override) rather than through the amendment diff — those must
@@ -1976,7 +1976,7 @@ export const SalesOrderDetail = () => {
                 dropdown. The heavy door stays for everything else. */}
             {!isEditing ? (
               <Button variant="primary"
-                onClick={enterEdit} disabled={migratedLocked || (isLocked && !canAttributeOther && !afterDo.on && !priceAfterDo)}>
+                onClick={enterEdit} disabled={migratedLocked || (isLocked && !canAttributeOther && !afterDo.on && !priceAfterDo && !linesAfterDo)}>
                 <Pencil {...ICON} />
                 <span>Edit</span>
               </Button>
@@ -2270,9 +2270,9 @@ export const SalesOrderDetail = () => {
               // A freshly-deleted row drops its draft (removeEditingLine) but
               // lingers in `items` until the re-fetch — skip rendering it.
               if (!editDraft) return null;
-              const cb = rowCallbacks.get(it.id), frozen = soItemFrozen(it), afterDoLine = afterDoEditableLine(afterDo, it);
+              const cb = rowCallbacks.get(it.id), frozen = soItemFrozen(it), afterDoLine = afterDoEditableLine(afterDo, it), afterDoProduct = afterDoProductLineEditable(linesAfterDo, it); // afterDoProduct: super-admin full qty/spec edit
               return (
-                <div key={it.id} style={frozen && !afterDoLine ? FROZEN_LINE_STYLE : undefined} data-frozen={frozen || undefined}>
+                <div key={it.id} style={frozen && !afterDoLine && !afterDoProduct ? FROZEN_LINE_STYLE : undefined} data-frozen={frozen || undefined}>
                   {/* Per-line action — Override price ($). Removal is handled
                       by the SoLineCard's own trash button (onRemove → delete
                       mutation), so it isn't duplicated here. Override is a
@@ -2307,7 +2307,7 @@ export const SalesOrderDetail = () => {
                        their photos defer to after the first save. */
                     docNo={header.doc_no}
                     itemId={it.id}
-                    isEditing={(!linesLocked && !frozen) || afterDoLine} chargeOnly={afterDoLine}
+                    isEditing={(!linesLocked && !frozen) || afterDoLine || afterDoProduct} chargeOnly={afterDoLine}
                     /* Variants are mandatory only once a Processing Date is set
                        (matches this page's Save gate + the backend), so the ` *`
                        marker + red ring stay off on a no-date draft (owner

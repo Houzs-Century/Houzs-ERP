@@ -70,8 +70,13 @@ describe('the phone detail Edit button on a locked order (soEditOpensOnOverride)
   test('a status lock with lines still open opens (Override lifts it, as desktop isSoLocked)', () => {
     expect(soEditOpensOnOverride({ status: 'SHIPPED', downstream_fully_frozen: false }, { can: () => false, migrated: false })).toBe(true);
   });
-  test('never a migrated order, never a fully frozen order with every DO invoiced', () => {
+  test('never a migrated order; a fully frozen all-invoiced order opens only for the super-admin lines key', () => {
     expect(soEditOpensOnOverride({ status: 'SHIPPED', downstream_fully_frozen: false }, { can: canAll, migrated: true })).toBe(false);
-    expect(soEditOpensOnOverride({ status: 'DELIVERED', downstream_fully_frozen: true, after_do_targets: [INVOICED] }, { can: canAll, migrated: false })).toBe(false);
+    const allInvoiced = { status: 'DELIVERED', downstream_fully_frozen: true, after_do_targets: [INVOICED] };
+    // DEV-32 / price persona: an all-invoiced order stays shut on the phone.
+    const noLines = (k: string) => k !== 'scm.so.edit_lines_after_do';
+    expect(soEditOpensOnOverride(allInvoiced, { can: noLines, migrated: false })).toBe(false);
+    // Owner 2026-11-21 — a super admin still opens it to change a delivered line (the invoice follows).
+    expect(soEditOpensOnOverride(allInvoiced, { can: canAll, migrated: false })).toBe(true);
   });
 });

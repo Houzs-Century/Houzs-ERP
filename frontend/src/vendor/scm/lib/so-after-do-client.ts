@@ -8,7 +8,8 @@
 
 import { LOCKED_STATUSES, soDownstreamHardLocked, soItemFrozen } from './so-detail-gates';
 import {
-  SO_EDIT_AFTER_DO_PERMISSION, SO_EDIT_PRICE_AFTER_DO_PERMISSION, afterDoHeaderRefusal, afterDoLineAllowed, type AfterDoTarget,
+  SO_EDIT_AFTER_DO_PERMISSION, SO_EDIT_PRICE_AFTER_DO_PERMISSION, SO_EDIT_LINES_AFTER_DO_PERMISSION,
+  afterDoHeaderRefusal, afterDoLineAllowed, type AfterDoTarget,
 } from '../../shared/so-after-do-edit';
 
 export type AfterDoHeader = {
@@ -48,12 +49,33 @@ export function soPriceAfterDoOn(
     && (header.after_do_targets ?? []).some((t) => !t.returned);
 }
 
+/** Owner 2026-11-21 — `scm.so.edit_lines_after_do` (super admin) reopens the
+ *  QUANTITY and SPECIFICATION of a PRODUCT line a DO carries. No Override: the
+ *  door is the frozen line itself, re-opened inline in the editor. A DO with a
+ *  live Delivery Return stays shut (the server refuses it too). */
+export function soLinesAfterDoOn(
+  header: AfterDoHeader,
+  p: { can: (key: string) => boolean; migrated: boolean },
+): boolean {
+  return p.can(SO_EDIT_LINES_AFTER_DO_PERMISSION) && !p.migrated
+    && (header.after_do_targets ?? []).some((t) => !t.returned);
+}
+
 /** A saved line the mode reopens: a DO already carries it, and it is a charge. */
 export function afterDoEditableLine(
   mode: AfterDoMode,
   item: { downstream_frozen?: unknown; item_code?: string | null; item_group?: string | null },
 ): boolean {
   return mode.on && soItemFrozen(item) && afterDoLineAllowed({ itemCode: item.item_code ?? null, itemGroup: item.item_group ?? null });
+}
+
+/** The super-admin counterpart: a frozen PRODUCT line (never a charge line —
+ *  those are the DEV-32 door) re-opened for a qty / spec change. */
+export function afterDoProductLineEditable(
+  linesOn: boolean,
+  item: { downstream_frozen?: unknown; item_code?: string | null; item_group?: string | null },
+): boolean {
+  return linesOn && soItemFrozen(item) && !afterDoLineAllowed({ itemCode: item.item_code ?? null, itemGroup: item.item_group ?? null });
 }
 
 /** What the page knows at Save time. `chargeAdds` = new lines go through the
@@ -86,5 +108,6 @@ export function soEditOpensOnOverride(
 ): boolean {
   if (p.migrated) return false;
   const statusOnly = LOCKED_STATUSES.includes(String(header.status ?? '').toUpperCase()) && !soDownstreamHardLocked(header);
-  return statusOnly || soAfterDoMode(header, { can: p.can, override: true, migrated: false }).on;
+  return statusOnly || soAfterDoMode(header, { can: p.can, override: true, migrated: false }).on
+    || soLinesAfterDoOn(header, { can: p.can, migrated: false });
 }

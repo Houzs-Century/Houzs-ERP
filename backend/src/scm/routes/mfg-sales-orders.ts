@@ -268,8 +268,9 @@ import {
   isProcessingRemovalOnlyRequest,
 } from '../shared/so-processing-date';
 import { ATTRIBUTE_OTHER_REFUSAL, SO_IDENTITY_LOCK_COLS, changedIdentityLockCols, salespersonReattributed } from '../shared/so-identity-lock';
-import { SO_EDIT_AFTER_DO_PERMISSION, SO_EDIT_PRICE_AFTER_DO_PERMISSION, SO_AFTER_DO_CUSTOMER_COLS, AFTER_DO_INVOICED, AFTER_DO_PRICE_FORBIDDEN, AFTER_DO_PRICE_NOT_DELIVERED, afterDoPriceReturnedRefusal, AFTER_DO_SERVICE_ONLY, afterDoBlockedCols, afterDoFieldsRefusal, afterDoHeaderRefusal, afterDoTargetLockedRefusal, pickAfterDoTarget, type AfterDoTarget } from '../shared/so-after-do-edit';
+import { SO_EDIT_AFTER_DO_PERMISSION, SO_EDIT_PRICE_AFTER_DO_PERMISSION, SO_EDIT_LINES_AFTER_DO_PERMISSION, SO_AFTER_DO_CUSTOMER_COLS, AFTER_DO_INVOICED, AFTER_DO_PRICE_FORBIDDEN, AFTER_DO_PRICE_NOT_DELIVERED, AFTER_DO_LINES_FORBIDDEN, afterDoPriceReturnedRefusal, AFTER_DO_SERVICE_ONLY, afterDoBlockedCols, afterDoFieldsRefusal, afterDoHeaderRefusal, afterDoTargetLockedRefusal, pickAfterDoTarget, type AfterDoTarget } from '../shared/so-after-do-edit';
 import { openAfterDo, readAfterDoTargets, catalogSaysService, copyCustomerDetailsToDos, addChargeLineToDo, readDoLinesOfSoLine, copyChargeLineToDo, copyLinePriceToDos, copyLinePriceToInvoices, type DoLineOfSoLine } from '../lib/so-after-do';
+import { openProductLineAfterDo, afterDoQtyChangeAllowed, propagateLineEditAfterDo, AFTER_DO_LINE_NOT_SETTLED, type AfterDoLineDeps, type OpenProductLineOk } from '../lib/so-after-do-lines';
 /* Variants-vocabulary unification (port of 2990 73aeeb1e, 2026-06-26):
    POS-handover sofa lines speak `depth`/`sofaLegHeight`/`fabricColor`, Backend
    editors read `seatHeight`/`legHeight`/`fabricCode`. canonicalizeVariants
@@ -313,7 +314,7 @@ import { loadNonSellingWarehouses } from '../lib/non-selling-warehouse';
 import { resolveLineCategories } from '../lib/so-readiness-category';
 import { deriveDisplayBrandingRowByDoc } from '../lib/so-display-branding';
 import { mintMonthlyDocNo, insertWithDocNoRetry, companyCodeById } from '../lib/doc-no';
-import { soDeliverableRemaining, soLineDeliveries, computeSoLifecycle, soCurrentDocNo, soLineShippedSources } from './delivery-orders-mfg';
+import { soDeliverableRemaining, soLineDeliveries, computeSoLifecycle, soCurrentDocNo, soLineShippedSources, resyncInventoryForDo, restampDoActualCost } from './delivery-orders-mfg';
 import { soLineReadySourcePos } from '../lib/source-po-trace';
 import { soLineBoundPoNumbers } from '../lib/so-converted-po';
 /* Shared 4-state delivery-planning derivation — the SO list emits planning_state
@@ -7932,10 +7933,30 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown, codeCheck.inactive), 409);
   }
 
+  /* Owner 2026-11-21 — a super admin (scm.so.edit_lines_after_do) may change the
+     QUANTITY or SPECIFICATION of a PRODUCT line a DO carries; the DO line and
+     every live invoice follow, stock re-synced (lib/so-after-do-lines.ts). This
+     runs AHEAD of the DEV-32 charge-line path and claims only product lines, so
+     the charge-line behaviour below is untouched. */
+  let afterDoProduct: (OpenProductLineOk & { companyId: number }) | null = null;
+  if (it.afterDo === true && hasHouzsPerm(c, SO_EDIT_LINES_AFTER_DO_PERMISSION)) {
+    const co = requireActiveCompanyId(c); if (!co.ok) return c.json(co.refusal, 409);
+    const { data: line, error: lineErr } = await scopeSoItemToDocument(sb.from('mfg_sales_order_items').select('item_code'), docNo, itemId).maybeSingle();
+    if (lineErr) return c.json({ error: 'downstream_check_failed', message: 'Could not read the line, so nothing was changed. Try again.' }, 409);
+    if (!line) return c.json({ error: 'not_found' }, 404);
+    const svc = await catalogSaysService(sb, String((line as { item_code?: string | null }).item_code ?? ''), co.companyId);
+    if (svc === null) return c.json({ error: 'downstream_check_failed', message: 'Could not read the product, so nothing was changed. Try again.' }, 409);
+    if (!svc) {
+      const open = await openProductLineAfterDo(sb, true, docNo, itemId, co.companyId, AFTER_DO_LINES_FORBIDDEN);
+      if (!open.ok) return c.json(open.body, open.status);
+      afterDoProduct = { target: open.target, doLine: open.doLine, siLines: open.siLines, siQtyOnDoLine: open.siQtyOnDoLine, companyId: co.companyId };
+    }
+  }
+
   /* DEV-32 — after the DO a permitted caller may edit a CHARGE line its one DO
      line carries; the DO line follows (shared/so-after-do-edit.ts). */
   let afterDoLine: { doLine: DoLineOfSoLine; target: AfterDoTarget; companyId: number } | null = null;
-  if (it.afterDo === true) {
+  if (it.afterDo === true && !afterDoProduct) {
     const co = requireActiveCompanyId(c); if (!co.ok) return c.json(co.refusal, 409);
     const open = await openAfterDo(sb, docNo, hasHouzsPerm(c, SO_EDIT_AFTER_DO_PERMISSION), co.companyId);
     if (!open.ok) return c.json(open.body, open.status);
@@ -7955,9 +7976,11 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
     if (target) afterDoLine = { doLine: doLines[0], target, companyId: co.companyId };
   }
 
-  /* A line a live DO / SI carries is frozen; its siblings are not (owner 2026-09-15, shared/so-line-freeze.ts). */
+  /* A line a live DO / SI carries is frozen; its siblings are not (owner 2026-09-15, shared/so-line-freeze.ts).
+     The DEV-32 charge-line path and the super-admin product path (above) are the
+     two keys that turn a frozen line back on. */
   const lineLock = soLineWriteRefusal(await readSoLineFreeze(sb, docNo), [itemId]);
-  if (lineLock && !(afterDoLine && lineLock.error === 'so_line_frozen')) return c.json(lineLock, 409);
+  if (lineLock && !((afterDoLine || afterDoProduct) && lineLock.error === 'so_line_frozen')) return c.json(lineLock, 409);
 
   /* TBC fill-in (Loo 2026-06-11) — self-scoped selling roles only touch
      their own SO. */
@@ -7971,8 +7994,10 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
   if (leaseBlocked) return leaseBlocked;
 
   /* Owner 2026-06-12 — processing-date lock: no line EDIT once the processing
-     day has passed (the locked order is already PO'd to the supplier). */
-  if (!afterDoLine) {
+     day has passed (the locked order is already PO'd to the supplier). The
+     after-DO paths are PAST that lock by definition (the goods already shipped),
+     so both skip it. */
+  if (!afterDoLine && !afterDoProduct) {
     const procLock = await soProcessingLockBlocked(sb, docNo);
     if (procLock) return c.json(procLock, 409);
   }
@@ -7996,6 +8021,18 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
     itemId,
   ).maybeSingle();
   if (!prev) return c.json({ error: 'not_found' }, 404);
+  /* A QUANTITY change on the super-admin product path is only unambiguous when
+     the ONE DO line carries the whole ordered qty and (if billed) the invoice
+     bills it in full; a split / part-delivered / part-invoiced line is refused.
+     Spec / price changes (qty unchanged) always flow — the DO qty is untouched. */
+  let afterDoSetSiQty: number | null = null;
+  if (afterDoProduct) {
+    const qtyChanging = it.qty !== undefined && Number(it.qty) !== Number(prev.qty);
+    if (qtyChanging && !afterDoQtyChangeAllowed(Number(prev.qty), Number(afterDoProduct.doLine.qty), afterDoProduct.siQtyOnDoLine, afterDoProduct.siLines.length)) {
+      return c.json(AFTER_DO_LINE_NOT_SETTLED, 409);
+    }
+    afterDoSetSiQty = qtyChanging ? Number(it.qty) : null;
+  }
   /* ACTIVE gate on a CHANGED code only (owner 2026-08-08) — a product swap is
      a NEW pick, so the replacement must be ACTIVE like every picker offer;
      re-sending the line's unchanged code (every editor does, on any edit)
@@ -8448,6 +8485,23 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
   if (afterDoLine) {
     const put = await copyChargeLineToDo(sb, { companyId: afterDoLine.companyId, actor: c.get('houzsUser') ?? null, soDocNo: docNo }, itemId, afterDoLine.doLine, afterDoLine.target);
     return c.json({ ok: true, doNumber: afterDoLine.target.do_number, ...(put.ok ? {} : { doCopyFailed: [afterDoLine.target.do_number ?? afterDoLine.target.id], doCopyError: put.reason }) });
+  }
+
+  /* Super-admin product edit — mirror the just-saved SO line onto its DO line,
+     re-sync stock, then re-derive every live invoice (lib/so-after-do-lines.ts). */
+  if (afterDoProduct) {
+    const deps: AfterDoLineDeps = { resyncInventoryForDo, restampDoActualCost, performedBy: user?.id ?? '' };
+    const r = await propagateLineEditAfterDo(
+      sb,
+      { companyId: afterDoProduct.companyId, actor: c.get('houzsUser') ?? null, soDocNo: docNo },
+      { soItemId: itemId, doLine: afterDoProduct.doLine, target: afterDoProduct.target, siLines: afterDoProduct.siLines, setSiQty: afterDoSetSiQty, deps },
+    );
+    return c.json({
+      ok: true,
+      doNumber: afterDoProduct.target.do_number,
+      ...(r.doCopyFailed.length ? { doCopyFailed: r.doCopyFailed } : {}),
+      ...(r.siCopyFailed.length ? { siCopyFailed: r.siCopyFailed } : {}),
+    });
   }
 
   return c.json({ ok: true });
