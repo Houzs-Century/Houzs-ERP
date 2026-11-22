@@ -42,6 +42,7 @@ import { CREDIT_NOTE_HEADER, cancelCreditNote, insertCreditNote, postCreditNote 
 import { refundedByInvoice } from './deposit-refunds';
 import { SO_NOT_AN_ORDER } from '../scm/shared/so-deliverable-states';
 import { fmtSen } from '../scm/shared/format';
+import { chunkIn, paginateAll } from '../scm/lib/paginate-all';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- PostgREST client, untyped throughout the acc layer */
 type Db = any;
@@ -177,21 +178,28 @@ const activeFor = async (sb: Db, paymentId: string): Promise<{ row: DepositInvoi
  * when none is due. Inserts the row, then posts it; a posting refusal leaves
  * the invoice ISSUED with no journal, which the page shows and "Post" heals.
  */
-export async function issueDepositInvoice(sb: Db, p: IssueInput): Promise<IssueResult> {
+export async function issueDepositInvoice(
+  sb: Db,
+  p: IssueInput,
+  /* The caller has just read that no invoice stands for this payment (the edit hook). */
+  knownNone: boolean,
+): Promise<IssueResult> {
   const paymentId = String(p.paymentId).trim();
   const soDocNo = String(p.soDocNo).trim();
   if (!paymentId || !soDocNo) return { ok: false, status: 'read_failed', reason: 'payment id and order are required' };
 
-  const existing = await activeFor(sb, paymentId);
+  /* The order carries the company and the customer — the same read the
+     payment's own posting makes (acc/payments), the same party code. It does
+     not depend on the standing-invoice read, so both go out together. */
+  const [existing, { data: so, error: soErr }] = await Promise.all([
+    knownNone ? Promise.resolve({ row: null, error: null }) : activeFor(sb, paymentId),
+    sb.from('mfg_sales_orders')
+      .select('company_id, debtor_name, customer_id, debtor_code, status')
+      .eq('doc_no', soDocNo)
+      .maybeSingle(),
+  ]);
   if (existing.error) return { ok: false, status: 'read_failed', reason: existing.error };
   if (existing.row) return { ok: true, status: 'already_issued', id: existing.row.id, diNumber: existing.row.di_number, jeNo: existing.row.je_no };
-
-  /* The order carries the company and the customer — the same read the
-     payment's own posting makes (acc/payments), the same party code. */
-  const { data: so, error: soErr } = await sb.from('mfg_sales_orders')
-    .select('company_id, debtor_name, customer_id, debtor_code, status')
-    .eq('doc_no', soDocNo)
-    .maybeSingle();
   if (soErr) return { ok: false, status: 'read_failed', reason: `order: ${soErr.message}` };
   const order = so as { company_id?: number | null; debtor_name?: string | null; customer_id?: string | null; debtor_code?: string | null; status?: string | null } | null;
   if (!order) return { ok: false, status: 'so_not_found', reason: soDocNo };
@@ -199,11 +207,14 @@ export async function issueDepositInvoice(sb: Db, p: IssueInput): Promise<IssueR
   const companyId = order.company_id ?? null;
   if (companyId == null) return { ok: false, status: 'no_company', reason: `${soDocNo} carries no company` };
 
-  const due = await depositInvoiceDue(sb, { companyId, soDocNo, paidAt: p.paidAt, amountSen: p.amountSen });
+  /* The company code is needed only when one is due; it is read alongside rather than after. */
+  const [due, code] = await Promise.all([
+    depositInvoiceDue(sb, { companyId, soDocNo, paidAt: p.paidAt, amountSen: p.amountSen }),
+    companyCodeById(sb, companyId),
+  ]);
   if (!due.ok) return { ok: false, status: 'read_failed', reason: due.reason };
   if (!due.due) return { ok: true, status: 'not_due', why: due.why };
 
-  const code = await companyCodeById(sb, companyId);
   if (!code) return { ok: false, status: 'no_company', reason: `company ${companyId} has no code to number under` };
   const prefix = docPrefixForCode(code);
   const partyCode = customerPartyCode(order.debtor_code, order.customer_id);
@@ -365,7 +376,7 @@ export async function issueDepositInvoiceBestEffort(sb: Db, row: Record<string, 
       amountSen: Number(row.amount_sen),
       method: typeof row.method === 'string' ? row.method : null,
       createdBy: typeof row.created_by === 'string' ? row.created_by : null,
-    });
+    }, false);
     if (!r.ok) log(`${where}: no deposit invoice for payment`, row.id, r.status, r.reason);
     else if (r.status === 'issued' && r.postProblem) log(`${where}: ${r.diNumber} issued but not posted:`, r.postProblem);
   } catch (e) {
@@ -398,7 +409,7 @@ export async function reissueDepositInvoiceBestEffort(
     }
     const r = await issueDepositInvoice(sb, {
       paymentId: p.paymentId, soDocNo: p.docNo, paidAt: p.paidAt, amountSen: p.amountSen, method: p.method ?? null, createdBy: p.actor ?? null,
-    });
+    }, cur.row == null);
     if (!r.ok) log('edit: deposit invoice not re-issued:', p.paymentId, r.status, r.reason);
     else if (r.status === 'issued' && r.postProblem) log(`edit: ${r.diNumber} re-issued but not posted:`, r.postProblem);
   } catch (e) {
@@ -438,50 +449,47 @@ export async function missingDepositInvoices(
   if (!st.ok) return st;
   if (!st.settings.enabled) return { ok: true, enabled: false, payments: [] };
 
-  let q = sb.from('mfg_sales_order_payments')
-    .select('id, so_doc_no, paid_at, amount_sen, method, created_by')
-    .eq('company_id', companyId)
-    .neq('method', 'imported')
-    .order('paid_at', { ascending: true })
-    .limit(2000);
-  if (st.settings.fromDate) q = q.gte('paid_at', st.settings.fromDate);
-  const { data: pays, error: payErr } = await q;
+  /* Paged: PostgREST answers at most 1000 rows, so the old .limit(2000) lost every payment past the 1000th. */
+  const fromDate = st.settings.fromDate;
+  const { data: pays, error: payErr, truncated: payCut } = await paginateAll<MissingPayment>((from, to) => {
+    let q = sb.from('mfg_sales_order_payments')
+      .select('id, so_doc_no, paid_at, amount_sen, method, created_by')
+      .eq('company_id', companyId)
+      .neq('method', 'imported');
+    if (fromDate) q = q.gte('paid_at', fromDate);
+    return q.order('paid_at', { ascending: true }).order('id', { ascending: true }).range(from, to);
+  });
   if (payErr) return { ok: false, reason: `payments: ${payErr.message}` };
+  if (payCut) return { ok: false, reason: 'payments: too many to list in one read; set a later start date' };
   const candidates = ((pays ?? []) as MissingPayment[]).filter((p) => dayOf(p.paid_at) != null && Number(p.amount_sen) > 0);
   if (candidates.length === 0) return { ok: true, enabled: true, payments: [] };
 
-  const { data: dis, error: diErr } = await sb.from('acc_deposit_invoices')
+  const { data: dis, error: diErr, truncated: diCut } = await paginateAll<{ payment_id: string }>((from, to) => sb.from('acc_deposit_invoices')
     .select('payment_id')
     .eq('company_id', companyId)
-    .neq('status', 'CANCELLED');
+    .neq('status', 'CANCELLED')
+    .order('id', { ascending: true })
+    .range(from, to));
   if (diErr) return { ok: false, reason: `deposit invoices: ${diErr.message}` };
+  if (diCut) return { ok: false, reason: 'deposit invoices: too many to read in one pass' };
   const have = new Set(((dis ?? []) as Array<{ payment_id: string }>).map((d) => String(d.payment_id)));
 
   /* The orders that already carry a live invoice, and the orders that are
-     no orders (draft, cancelled) — one read each per 200 orders. */
+     no orders (draft, cancelled): chunked under the URL budget, each chunk
+     paged, both reads together. */
   const docNos = [...new Set(candidates.map((p) => p.so_doc_no))];
   const invoiced = new Set<string>();
   const notLive = new Set<string>();
-  for (let i = 0; i < docNos.length; i += 200) {
-    const { data: orders, error: soErr } = await sb.from('mfg_sales_orders')
-      .select('doc_no, status')
-      .eq('company_id', companyId)
-      .in('doc_no', docNos.slice(i, i + 200));
-    if (soErr) return { ok: false, reason: `orders: ${soErr.message}` };
-    for (const r of (orders ?? []) as Array<{ doc_no: string; status?: string | null }>) {
-      if (NOT_AN_ORDER.has(String(r.status ?? '').toUpperCase())) notLive.add(String(r.doc_no));
-    }
-  }
-  for (let i = 0; i < docNos.length; i += 200) {
-    const { data: sis, error: siErr } = await sb.from('sales_invoices')
-      .select('so_doc_no, status')
-      .eq('company_id', companyId)
-      .in('so_doc_no', docNos.slice(i, i + 200));
-    if (siErr) return { ok: false, reason: `order invoices: ${siErr.message}` };
-    for (const r of (sis ?? []) as Array<{ so_doc_no: string; status?: string | null }>) {
-      if (absorbsOrderDeposit(r.status)) invoiced.add(String(r.so_doc_no));
-    }
-  }
+  const [orders, sis] = await Promise.all([
+    chunkIn<{ doc_no: string; status?: string | null }>(docNos, (batch, from, to) => sb.from('mfg_sales_orders')
+      .select('doc_no, status').eq('company_id', companyId).in('doc_no', batch).order('doc_no', { ascending: true }).range(from, to)),
+    chunkIn<{ so_doc_no: string; status?: string | null }>(docNos, (batch, from, to) => sb.from('sales_invoices')
+      .select('so_doc_no, status').eq('company_id', companyId).in('so_doc_no', batch).order('id', { ascending: true }).range(from, to)),
+  ]);
+  if (orders.error) return { ok: false, reason: `orders: ${orders.error.message}` };
+  if (sis.error) return { ok: false, reason: `order invoices: ${sis.error.message}` };
+  for (const r of orders.data) if (NOT_AN_ORDER.has(String(r.status ?? '').toUpperCase())) notLive.add(String(r.doc_no));
+  for (const r of sis.data) if (absorbsOrderDeposit(r.status)) invoiced.add(String(r.so_doc_no));
   return {
     ok: true, enabled: true,
     payments: candidates.filter((p) => !have.has(String(p.id)) && !invoiced.has(String(p.so_doc_no)) && !notLive.has(String(p.so_doc_no))),
@@ -503,7 +511,7 @@ export async function issueMissingDepositInvoices(
   for (const p of missing.payments) {
     const r = await issueDepositInvoice(sb, {
       paymentId: String(p.id), soDocNo: p.so_doc_no, paidAt: p.paid_at, amountSen: Number(p.amount_sen), method: p.method, createdBy: actor,
-    });
+    }, false);
     if (!r.ok) skipped.push({ paymentId: String(p.id), why: `${r.status}: ${r.reason}` });
     else if (r.status === 'not_due') skipped.push({ paymentId: String(p.id), why: r.why });
     else issued.push(r.diNumber);
