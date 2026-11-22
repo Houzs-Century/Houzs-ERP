@@ -21,7 +21,11 @@ vi.mock('./authed-fetch', () => ({ authedFetch: vi.fn() }));
 vi.mock('./dialog-service', () => ({ serviceNotify: vi.fn(() => Promise.resolve(true)) }));
 
 import { authedFetch } from './authed-fetch';
+import { serviceNotify } from './dialog-service';
 import {
+  useCreateGrn,
+  usePostGrn,
+  useCancelGrn,
   useGrnFromPos,
   useUpdateGrnHeader,
   useAddGrnItem,
@@ -93,5 +97,67 @@ describe("GRN stock-moving mutations invalidate ['inventory']", () => {
     result.current.mutate({ grnId: 'grn-1', itemId: 'gi-1' });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(invalidatedInventory(spy)).toBe(true);
+  });
+});
+
+/* Symptom: "Back to PO" after a receipt showed the old received qty, and a line added or edited on a posted receipt
+   read as clean when its stock write or PO recount was refused.
+   Cause: the hooks refreshed only the GRN keys and read no in-band failure from the line answers.
+   Fix: every receipt write also refreshes the PO keys; line add / edit report movementErrors and recountError. */
+const invalidatedRoot = (spy: { mock: { calls: unknown[][] } }, root: string): boolean =>
+  spy.mock.calls.some((args) => {
+    const f = args[0] as { queryKey?: unknown[] } | undefined;
+    return Array.isArray(f?.queryKey) && f.queryKey[0] === root;
+  });
+
+describe('GRN writes refresh the purchase order they received against', () => {
+  test.each([
+    ['useCreateGrn', () => useCreateGrn(), { id: 'grn-1', grnNumber: 'GRN-1' }, {}],
+    ['usePostGrn', () => usePostGrn(), { grn: {} }, 'grn-1'],
+    ['useCancelGrn', () => useCancelGrn(), { grn: {} }, 'grn-1'],
+    ['useAddGrnItem', () => useAddGrnItem(), { item: { id: 'gi-1' } }, { grnId: 'grn-1', itemCode: 'X' }],
+    ['useUpdateGrnItem', () => useUpdateGrnItem(), { ok: true }, { grnId: 'grn-1', itemId: 'gi-1', qty: 3 }],
+  ] as const)('%s refreshes the PO list and detail', async (_n, hook, answer, vars) => {
+    mockedFetch.mockResolvedValueOnce(answer);
+    const { spy, wrapper } = harness();
+    const { result } = renderHook(hook as () => { mutate: (v: unknown) => void; isSuccess: boolean }, { wrapper });
+    result.current.mutate(vars);
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(invalidatedRoot(spy, 'mfg-purchase-orders')).toBe(true);
+    expect(invalidatedRoot(spy, 'mfg-purchase-order-detail')).toBe(true);
+  });
+});
+
+describe('a posted-receipt line write whose stock was refused says so', () => {
+  test('line add with movementErrors is reported', async () => {
+    vi.mocked(serviceNotify).mockClear();
+    mockedFetch.mockResolvedValueOnce({ item: { id: 'gi-1' }, movementErrors: ['IN X: refused'] });
+    const { wrapper } = harness();
+    const { result } = renderHook(() => useAddGrnItem(), { wrapper });
+    result.current.mutate({ grnId: 'grn-1', itemCode: 'X' });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    await waitFor(() => expect(vi.mocked(serviceNotify)).toHaveBeenCalled());
+    expect(JSON.stringify(vi.mocked(serviceNotify).mock.calls)).toContain('IN X: refused');
+  });
+
+  test('line edit with recountError is reported', async () => {
+    vi.mocked(serviceNotify).mockClear();
+    mockedFetch.mockResolvedValueOnce({ ok: true, recountError: 'po recount timed out' });
+    const { wrapper } = harness();
+    const { result } = renderHook(() => useUpdateGrnItem(), { wrapper });
+    result.current.mutate({ grnId: 'grn-1', itemId: 'gi-1', qty: 3 });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    await waitFor(() => expect(vi.mocked(serviceNotify)).toHaveBeenCalled());
+    expect(JSON.stringify(vi.mocked(serviceNotify).mock.calls)).toContain('po recount timed out');
+  });
+
+  test('a clean line edit says nothing', async () => {
+    vi.mocked(serviceNotify).mockClear();
+    mockedFetch.mockResolvedValueOnce({ ok: true });
+    const { wrapper } = harness();
+    const { result } = renderHook(() => useUpdateGrnItem(), { wrapper });
+    result.current.mutate({ grnId: 'grn-1', itemId: 'gi-1', qty: 3 });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(vi.mocked(serviceNotify)).not.toHaveBeenCalled();
   });
 });
