@@ -35,7 +35,7 @@ The cycle-count document — `scm.stock_takes` + `scm.stock_take_lines`. OPEN (c
 - Every ADJUSTMENT movement (post, reverse, and manual `/inventory/adjustments`) stamps `performed_by` with the caller's real staff uuid — never `c.get('user').id` inside `/api/scm/*` (the pinned system row), except the documented fallback in `stock-takes.ts` for when the staff bridge resolves nobody, which exists only to keep the FK satisfied.
 - Blind-count stripping happens SERVER-side (`system_qty`/`variance` nulled in the response for a non-supervising viewer while OPEN) — the frontend trusts the response's own `viewer` flags and must never re-derive who can see variance.
 - The count warehouse is verified to belong to the caller's company before any SKU is read or snapshotted — a cross-company warehouse id must 404, not silently produce (or leak the SKU list for) a count sheet.
-- Exactly two inline stock-allocation recompute calls exist for this module (post and reverse) — a pinned test counts them; don't add or remove one without updating it.
+- Exactly two stock-allocation recompute calls exist for this module (post and reverse), both after the answer (`recomputeAllocationAfterSave`) — a pinned test counts them; don't add or remove one without updating it.
 
 ## Gotchas
 

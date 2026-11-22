@@ -1238,8 +1238,8 @@ stockTakes.patch('/:id/reverse', async (c) => {
 
   /* Stock changed back — re-walk SO stock allocation (mirrors the post path). */
   try {
-    const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
-    await recomputeSoStockAllocation(sb);
+    const { recomputeAllocationAfterSave } = await import('../lib/stock-allocation-job');
+    await recomputeAllocationAfterSave(sb, 'reverse-stock-take');
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] reverse-stock-take failed:', e); }
 
   return c.json({
@@ -1581,8 +1581,8 @@ const writePostingEffects = async (
      funnel through here); /reverse has the only other. The pinned ledger in
      stockAllocationDurabilityScope.test.ts counts exactly two. */
   try {
-    const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
-    await recomputeSoStockAllocation(sb);
+    const { recomputeAllocationAfterSave } = await import('../lib/stock-allocation-job');
+    await recomputeAllocationAfterSave(sb, 'post-stock-take');
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-stock-take failed:', e); }
 
   return {

@@ -250,8 +250,8 @@ export const revertDeliveryOrderHandler = async (
     }
     // Freed stock — re-walk SO lines so PENDING orders flip back to READY.
     try {
-      const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
-      await recomputeSoStockAllocation(sb);
+      const { recomputeAllocationAfterSave } = await import('../lib/stock-allocation-job');
+      await recomputeAllocationAfterSave(sb, 'do-revert');
     } catch (e) {
       /* eslint-disable-next-line no-console */
       console.error('[do-revert] so-allocation failed:', e);

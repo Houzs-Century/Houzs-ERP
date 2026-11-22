@@ -428,8 +428,8 @@ async function resyncNoteInventory(sb: any, noteId: string, performedBy: string 
      Wired 2026-07-29; before that only a GRN reconciled (COE §2). Best-effort. */
   if (res.ok) await reconcileUncostedAfterIn(sb, writes, performedBy);
   try {
-    const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
-    await recomputeSoStockAllocation(sb);
+    const { recomputeAllocationAfterSave } = await import('../lib/stock-allocation-job');
+    await recomputeAllocationAfterSave(sb, 'consignment-note');
   } catch { /* best-effort */ }
   return res.ok ? [] : [res.reason ?? 'consignment note inventory resync failed'];
 }
