@@ -6,7 +6,7 @@ import { pollEtag, POLLED_LIST_PATHS } from "./middleware/pollEtag";
 import type { Env, ScanQueueMessage } from "./types";
 import { GIT_SHA, resolveBuildSha } from "./build-info";
 import { restKeyClaims, restUrlRef } from "./db/rest-key-claims";
-import { auth, requirePermission, requireAnyPermission, requireScmAccess, requirePageAccessOrSalesView, requirePageAccess } from "./middleware/auth";
+import { auth, requirePermission, requireAnyPermission, requireHrRead, requireScmAccess, requirePageAccessOrSalesView, requirePageAccess } from "./middleware/auth";
 import { TRANSIENT_CONN_RE } from "./db/d1-compat";
 // Ported 2990's SCM modules (furniture supply chain). Talk to the `scm` Postgres
 // schema via supabase-js; namespaced under /api/scm/*, owner-only during the port.
@@ -608,9 +608,11 @@ app.route("/api/project-pos-sales", projectPosSales);
 // one key. NOT under /api/pos — that is the older 2990 tablet-POS auth.
 app.use("/api/pos-admin/*", requirePermission("pos.manage"));
 app.route("/api/pos-admin", posAdmin);
-// HR Employees & Attendance (HC-0125): reads on either key, every write checks
-// hr.employees.manage inside. Salaries, so not under the SCM umbrella.
-app.use("/api/hr/*", requireAnyPermission(["hr.employees.read", "hr.employees.manage"]));
+// HR Employees & Attendance (HC-0125): broad read on either employees key sees
+// everything; a narrow hr.attendance.read reaches only the Attendance reads
+// (default-deny, see requireHrRead). Every write checks hr.employees.manage
+// inside. Salaries, so not under the SCM umbrella.
+app.use("/api/hr/*", requireHrRead);
 app.route("/api/hr", hrEmployees);
 app.route("/api/hr", hrAttendance);
 app.route("/api/hr", hrLabor);
