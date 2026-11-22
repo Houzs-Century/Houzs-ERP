@@ -99,7 +99,7 @@ import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { passesSoffioReminder } from '../../vendor/scm/lib/soffio-reminder';
 import { SoLockBanner } from './SoLockBanner';
 import { SaveFailedBanner } from './SaveFailedBanner';
-import { soAfterDoMode, soPriceAfterDoOn, soLinesAfterDoOn, afterDoEditableLine, afterDoProductLineEditable, afterDoHeaderFields, afterDoEditFields, afterDoAddFields, afterDoCopyProblem, type AfterDoSave } from '../../vendor/scm/lib/so-after-do-client';
+import { soAfterDoMode, soPriceAfterDoOn, soLinesAfterDoOn, afterDoEditableLine, afterDoProductLineEditable, afterDoFeeLineEditable, afterDoHeaderFields, afterDoEditFields, afterDoAddFields, afterDoCopyProblem, type AfterDoSave } from '../../vendor/scm/lib/so-after-do-client';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import { AMENDMENT_APPROVER_LABEL, soAmendmentApprover } from '../../vendor/scm/lib/amendment-approver';
@@ -2270,7 +2270,7 @@ export const SalesOrderDetail = () => {
               // A freshly-deleted row drops its draft (removeEditingLine) but
               // lingers in `items` until the re-fetch — skip rendering it.
               if (!editDraft) return null;
-              const cb = rowCallbacks.get(it.id), frozen = soItemFrozen(it), afterDoLine = afterDoEditableLine(afterDo, it), afterDoProduct = afterDoProductLineEditable(linesAfterDo, it); // afterDoProduct: super-admin full qty/spec edit
+              const cb = rowCallbacks.get(it.id), frozen = soItemFrozen(it), afterDoLine = afterDoEditableLine(afterDo, it), afterDoProduct = afterDoProductLineEditable(linesAfterDo, it), afterDoFee = afterDoFeeLineEditable(linesAfterDo, it); // super-admin: product qty/spec, or a non-frozen fee line on a locked order
               return (
                 <div key={it.id} style={frozen && !afterDoLine && !afterDoProduct ? FROZEN_LINE_STYLE : undefined} data-frozen={frozen || undefined}>
                   {/* Per-line action — Override price ($). Removal is handled
@@ -2301,13 +2301,13 @@ export const SalesOrderDetail = () => {
                     draft={editDraft}
                     onChange={cb?.onChange ?? ((patch) => patchEditingDraft(it.id, patch))}
                     onRemove={cb?.onRemove ?? (() => removeEditingLine(it.id))}
-                    canRemove={!linesLocked && !frozen}
+                    canRemove={(!linesLocked && !frozen) || afterDoFee}
                     /* PR-F (#79) wiring — enable photo upload on already-saved
                        lines. New lines (addingDraft) have no itemId yet so
                        their photos defer to after the first save. */
                     docNo={header.doc_no}
                     itemId={it.id}
-                    isEditing={(!linesLocked && !frozen) || afterDoLine || afterDoProduct} chargeOnly={afterDoLine}
+                    isEditing={(!linesLocked && !frozen) || afterDoLine || afterDoProduct || afterDoFee} chargeOnly={afterDoLine}
                     /* Variants are mandatory only once a Processing Date is set
                        (matches this page's Save gate + the backend), so the ` *`
                        marker + red ring stay off on a no-date draft (owner

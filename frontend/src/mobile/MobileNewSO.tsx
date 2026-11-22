@@ -46,7 +46,7 @@ import { soSaveEndFields, soVersionAfter } from "../vendor/scm/lib/so-save-lease
 import { planAmendmentSubmit, amendmentSubmittedNotice, AMENDMENT_MODE_BANNER, AMENDMENT_NOTHING_TO_SUBMIT, AMENDMENT_REASON_REQUIRED } from "../vendor/scm/lib/so-amendment-submit";
 import { useAmendmentSubmitDialog, RequestProcessingDateRemoval } from "../vendor/scm/components/AmendmentSubmitDialog";
 import { isLocked as isSoLocked, procLockActive, migratedReadonly as soMigratedReadonly, soDownstreamHardLocked, soItemFrozen, type SoDetailGateHeader } from "../vendor/scm/lib/so-detail-gates";
-import { soAfterDoMode, soLinesAfterDoOn, afterDoEditableLine, afterDoProductLineEditable, afterDoHeaderFields, afterDoEditFields, afterDoAddFields, afterDoCopyProblem, type AfterDoHeader, type AfterDoSave } from "../vendor/scm/lib/so-after-do-client"; import { MobileSoLockBanner } from "./MobileSoLockBanner";
+import { soAfterDoMode, soLinesAfterDoOn, afterDoEditableLine, afterDoProductLineEditable, afterDoFeeLineEditable, afterDoHeaderFields, afterDoEditFields, afterDoAddFields, afterDoCopyProblem, type AfterDoHeader, type AfterDoSave } from "../vendor/scm/lib/so-after-do-client"; import { MobileSoLockBanner } from "./MobileSoLockBanner";
 import { FROZEN_LINE_LABEL, FROZEN_LINE_LABEL_STYLE, FROZEN_LINE_STYLE } from "../vendor/scm/lib/so-frozen-line-style";
 import { MigratedReadonlyBanner } from "../vendor/scm/components/MigratedReadonlyBanner";
 import {
@@ -1271,8 +1271,8 @@ export function MobileNewSO({
   const lineEditingBlocked = migratedLocked || lineLocked || (procLocked && !amendmentMode);
   /* DEV-32 — Edit SO after DO, desktop's rule (so-after-do-client): charge lines + the DO-snapshotted customer details reopen; a line shown read-only is never written. */
   const afterDo = soAfterDoMode(migHeader ?? {}, { can, override: unlockOverride, migrated: migratedLocked }), chargeAdds = lineEditingBlocked && afterDo.on, custLocked = identityLocked && !afterDo.headerOpen, linesAfterDo = soLinesAfterDoOn(migHeader ?? {}, { can, migrated: migratedLocked }); // linesAfterDo: super admin edits a delivered PRODUCT line's qty / spec (owner 2026-11-21)
-  const afterDoLineIds = new Set(origItems.filter((it) => afterDoEditableLine(afterDo, it) || afterDoProductLineEditable(linesAfterDo, it)).map((it) => it.id)), afterDoSave: AfterDoSave = { mode: afterDo, lineIds: afterDoLineIds, chargeAdds, targetId: afterDoTargetId };
-  const roLine = (id: string) => !afterDoLineIds.has(id) && (lineEditingBlocked || frozenItemIds.has(id)), doCopyNotice = (r: unknown) => { const m = afterDoCopyProblem(r); if (m) void notify({ title: "Delivery Order not updated", body: m, tone: "error" }); };
+  const afterDoLineIds = new Set(origItems.filter((it) => afterDoEditableLine(afterDo, it) || afterDoProductLineEditable(linesAfterDo, it)).map((it) => it.id)), afterDoSave: AfterDoSave = { mode: afterDo, lineIds: afterDoLineIds, chargeAdds, targetId: afterDoTargetId }, feeIds = new Set(origItems.filter((it) => afterDoFeeLineEditable(linesAfterDo, it)).map((it) => it.id)); // feeIds: super-admin non-frozen charge lines, editable/removable as a plain write
+  const roLine = (id: string) => !afterDoLineIds.has(id) && !feeIds.has(id) && (lineEditingBlocked || frozenItemIds.has(id)), doCopyNotice = (r: unknown) => { const m = afterDoCopyProblem(r); if (m) void notify({ title: "Delivery Order not updated", body: m, tone: "error" }); };
   /* Identity address columns (State/City/Postcode) freeze on the processing
      lock (State drives each line's warehouse → the supplier PO) — EXCEPT in
      amendment mode, where changing them is exactly what an amendment is for, so
@@ -2616,7 +2616,7 @@ export function MobileNewSO({
                           line={l}
                           index={i}
                           pools={pools}
-                          removable={lines.length > 1 && !afterDoLineIds.has(l.itemId)}
+                          removable={lines.length > 1 && (!afterDoLineIds.has(l.itemId) || feeIds.has(l.itemId))}
                           /* Red "missing axis" ring only once a Processing Date
                              is set — matches the backend variants gate + the
                              save block above (owner 2026-07-14). */
@@ -2625,7 +2625,7 @@ export function MobileNewSO({
                           onOpenFabricPicker={() => setFabricPickerFor(l.key)}
                           onOpenSpecialPicker={() => setSpecialPickerFor(l.key)}
                           showPrices={showSpecialPrices}
-                          canEditPrice={canEditPrice || afterDoLineIds.has(l.itemId) || (chargeAdds && !l.itemId)}
+                          canEditPrice={canEditPrice || afterDoLineIds.has(l.itemId) || feeIds.has(l.itemId) || (chargeAdds && !l.itemId)}
                           soDocNo={docNo}
                           onChange={(patch) => patchLine(l.key, patch)}
                           onDdateChange={procDate ? (v) => setLineDdateManual(l.key, v) : null}

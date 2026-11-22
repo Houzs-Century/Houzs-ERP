@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import {
-  afterDoAddFields, afterDoCopyProblem, afterDoEditFields, afterDoEditableLine, afterDoHeaderFields, soAfterDoMode, soEditOpensOnOverride,
+  afterDoAddFields, afterDoCopyProblem, afterDoEditFields, afterDoEditableLine, afterDoProductLineEditable, afterDoFeeLineEditable,
+  afterDoHeaderFields, soAfterDoMode, soEditOpensOnOverride,
   type AfterDoSave,
 } from './so-after-do-client';
 
@@ -58,6 +59,27 @@ describe('what each save carries', () => {
     expect(afterDoCopyProblem({ ok: true, doCopyFailed: ['HC-DO-2610-011'] })).toContain('HC-DO-2610-011');
     expect(afterDoCopyProblem({ ok: true, doCopyFailed: [] })).toBeNull();
     expect(afterDoCopyProblem({ ok: true })).toBeNull();
+  });
+});
+
+describe('the super-admin line doors (owner 2026-11-21)', () => {
+  const svcFrozen = { downstream_frozen: true, item_code: 'SVC-TRANSPORT', item_group: 'service' };
+  const svcLoose = { downstream_frozen: false, item_code: 'TRANSPORTATION CHARGES', item_group: 'service' };
+  const prodFrozen = { downstream_frozen: true, item_code: 'BF-QUEEN', item_group: 'bedframe' };
+  const prodLoose = { downstream_frozen: false, item_code: 'BF-QUEEN', item_group: 'bedframe' };
+
+  test('product door: only a FROZEN product line (on a DO) reopens for qty/spec', () => {
+    expect(afterDoProductLineEditable(true, prodFrozen)).toBe(true);
+    expect(afterDoProductLineEditable(true, prodLoose)).toBe(false); // not on a DO
+    expect(afterDoProductLineEditable(true, svcFrozen)).toBe(false); // a charge line is the DEV-32 door
+    expect(afterDoProductLineEditable(false, prodFrozen)).toBe(false); // no key
+  });
+
+  test('fee door: only a NON-frozen charge line (on no DO) reopens for a plain edit/remove', () => {
+    expect(afterDoFeeLineEditable(true, svcLoose)).toBe(true);
+    expect(afterDoFeeLineEditable(true, svcFrozen)).toBe(false); // on a DO -> the DEV-32 door, not this
+    expect(afterDoFeeLineEditable(true, prodLoose)).toBe(false); // a product line, not a charge
+    expect(afterDoFeeLineEditable(false, svcLoose)).toBe(false); // no key
   });
 });
 
