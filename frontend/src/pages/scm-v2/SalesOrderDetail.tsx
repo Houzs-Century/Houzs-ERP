@@ -1628,8 +1628,7 @@ export const SalesOrderDetail = () => {
   const downstreamLocked = soDownstreamHardLocked(header), migratedLocked = soMigratedReadonly(header);
   const isLocked = migratedLocked || isSoLocked(header.status, downstreamLocked, unlockOverride); // migrated is OUTSIDE isSoLocked: Override must not reach it
   const afterDo = soAfterDoMode(header, { can, override: unlockOverride, migrated: migratedLocked }); // DEV-32: Logistics edits charges + customer details after the DO
-  const priceAfterDo = soPriceAfterDoOn(header, { can, migrated: migratedLocked }); // DEV-70: a delivered line's price, through its $ dialog
-  const linesAfterDo = soLinesAfterDoOn(header, { can, migrated: migratedLocked }); // Owner 2026-11-21: super admin edits a delivered PRODUCT line's qty / spec inline
+  const priceAfterDo = soPriceAfterDoOn(header, { can, migrated: migratedLocked }), linesAfterDo = soLinesAfterDoOn(header, { can, migrated: migratedLocked }); // DEV-70 $ dialog; owner 2026-11-21 super-admin qty/spec inline
   /* The one thing a hard-locked SO still accepts: a new salesperson. Same
      permission the API enforces (mfg-sales-orders.ts PATCH), so the Edit button
      it re-enables can never open an order the server would refuse to save. */
@@ -2271,8 +2270,7 @@ export const SalesOrderDetail = () => {
               // A freshly-deleted row drops its draft (removeEditingLine) but
               // lingers in `items` until the re-fetch — skip rendering it.
               if (!editDraft) return null;
-              const cb = rowCallbacks.get(it.id), frozen = soItemFrozen(it), afterDoLine = afterDoEditableLine(afterDo, it);
-              const afterDoProduct = afterDoProductLineEditable(linesAfterDo, it); // super admin: full qty/spec edit of a delivered product line
+              const cb = rowCallbacks.get(it.id), frozen = soItemFrozen(it), afterDoLine = afterDoEditableLine(afterDo, it), afterDoProduct = afterDoProductLineEditable(linesAfterDo, it); // afterDoProduct: super-admin full qty/spec edit
               return (
                 <div key={it.id} style={frozen && !afterDoLine && !afterDoProduct ? FROZEN_LINE_STYLE : undefined} data-frozen={frozen || undefined}>
                   {/* Per-line action — Override price ($). Removal is handled
