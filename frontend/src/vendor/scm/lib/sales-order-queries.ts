@@ -1,7 +1,7 @@
 // Vendored SLICE of apps/backend/src/lib/flow-queries.ts — ONLY the Sales-Order
 import { appendSoListFilterParams } from './so-list-filter-state';
 import type { SoListFilter } from '../../shared/so-list-filter-model';
-import { writeFailed, writeFailedAs } from './mutation-error';
+import { reportInBandFailure, writeFailed, writeFailedAs, type InBandFailure } from './mutation-error';
 import { resolveCompartmentArtUrl, loadCompartmentArt } from './sofa-compartment-art';
 // read / detail / status / mutation hooks the vendored SO list + detail pages
 // use. The full source module (~2000 lines) carries the entire SO/DO/SI/DR
@@ -429,10 +429,12 @@ export const useCreateMfgSalesOrder = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ idempotencyKey, ...body }: { idempotencyKey?: string } & Record<string, unknown>) =>
-      authedFetch<{ docNo: string; vpBrand?: VpBrandAsk }>(`/mfg-sales-orders`,
+      authedFetch<{ docNo: string; vpBrand?: VpBrandAsk } & InBandFailure>(`/mfg-sales-orders`,
         idempotentInit(idempotencyKey, { method: 'POST', body: JSON.stringify(body) })),
     onSuccess: (res) => {
       invalidateSoLists(qc);
+      /* The order is saved; a deposit it was handed but did not record is said, never dropped (paymentErrors). */
+      reportInBandFailure('Order saved, but a payment was not recorded', res);
       /* A live order whose products name no brand: ask which brand it is for,
          for the Venture Portal (owner 2026-09-27). Not awaited -- the save is
          done, and the question is optional. lib/vp-brand-prompt.ts. */
