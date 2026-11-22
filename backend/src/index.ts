@@ -43,6 +43,8 @@ import notifications from "./routes/notifications";
 import badgeCounts, { setBadgeDispatch } from "./routes/badgeCounts";
 import pushDevices from "./routes/push";
 import itSupport from "./routes/itSupport";
+import meetings, { publicMeetings } from "./routes/meetings";
+import { MEETINGS_DIRECTORY_JOB, pushMeetingsDirectory } from "./services/meetingsDirectory";
 import { sendAiUsageToHub } from "./services/aiUsageHub";
 import { HEALTH_HUB_JOB, sendHealthReportToHub } from "./services/healthHub";
 import { runPushFleetReminders } from "./services/pushFleetReminders";
@@ -453,6 +455,9 @@ app.route("/api/public/contractor-calendar", publicContractorCalendar);
 // own confirmed events, its display floorplan, its own size and total sales,
 // scoped by the token's brand on every read. See routes/publicBrandCalendar.ts.
 app.route("/api/public/brand-calendar", publicBrandCalendar);
+// A meeting-room booking link (no login): free times, book, a guest's own booking by its token.
+// Proxied to the IT Hub as a guest; see routes/meetings.ts.
+app.route("/api/public/meetings", publicMeetings);
 
 app.use("/api/*", auth);
 
@@ -556,6 +561,8 @@ app.route("/api/badge-counts", badgeCounts);
 app.route("/api/push", pushDevices);
 // IT Support: a proxy to the Houzs IT Hub (any signed-in user, own requests only).
 app.route("/api/it-support", itSupport);
+// Meetings: every signed-in user; rooms need meetings.manage_rooms (checked in the router).
+app.route("/api/meetings", meetings);
 app.route("/api/presence", presence);
 // Mounted at the EXACT path BEFORE the projects router so its "/:id" catch-all
 // does not swallow "outstanding-tasks" as an id (owner/admin Reminder view).
@@ -804,6 +811,13 @@ export default {
       // Health report to the IT Hub: live DB, email backlog, jobs, AI failures,
       // measured as the System Health page measures them (services/healthHub.ts).
       // No hub address or key: nothing is sent. A refusal is only logged.
+      // The staff list for the meeting-room hub, once an hour (services/meetingsDirectory.ts).
+      if (new Date(event.scheduledTime).getUTCMinutes() < 5) {
+        ctx.waitUntil(
+          track("meetings-directory", () => pushMeetingsDirectory(env))
+            .catch((e) => console.error(`[cron ${MEETINGS_DIRECTORY_JOB}]`, e))
+        );
+      }
       ctx.waitUntil(
         track("health-hub", () => sendHealthReportToHub(env, event.scheduledTime))
           .then((r) => { if (r.sent && !r.ok) console.log(`[cron ${HEALTH_HUB_JOB}] sent, health is not ok`); })

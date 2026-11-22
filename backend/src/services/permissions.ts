@@ -359,6 +359,10 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: "mail_center.read",   resource: "Mail Center", verb: "read",   label: "View Mail Center", description: "See the Mail Center inbox and work the mailboxes in your scope" },
   { key: "mail_center.manage", resource: "Mail Center", verb: "manage", label: "Manage Mail Center", description: "Create/assign email aliases, the shared-mailbox access matrix, and per-user visibility levels" },
 
+  // Meetings (/api/meetings): every signed-in user books rooms and sees the calendar,
+  // so the page has no gate. Only adding and changing rooms, and the change log, need this.
+  { key: "meetings.manage_rooms", resource: "Meetings", verb: "manage", label: "Manage meeting rooms", description: "Add and change meeting rooms (seats, hours, rules, closed dates) and see the meetings change log" },
+
   // Announcements — office posts every logged-in user sees as a top-of-screen
   // banner. announcements.read gates the list page + read-receipt visibility;
   // announcements.write gates create / edit / hide / remind / delete. The

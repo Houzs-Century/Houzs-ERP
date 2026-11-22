@@ -272,7 +272,7 @@
     },
     {
       "check": "D1",
-      "key": "FRI,MON,SAT,SUN,THU,TUE,WED|frontend/src/mobile/MobileCalendar.tsx frontend/src/pages/ServiceCases.tsx frontend/src/pages/projects/ProjectsCalendarView.tsx",
+      "key": "FRI,MON,SAT,SUN,THU,TUE,WED|frontend/src/lib/meetings.ts frontend/src/mobile/MobileCalendar.tsx frontend/src/pages/ServiceCases.tsx frontend/src/pages/projects/ProjectsCalendarView.tsx",
       "why": "A CALENDAR/LOCALE vocabulary (months, weekdays, languages) — fixed by the world, not by this business, and it cannot drift into a wrong answer. 3 homes: WEEKDAYS."
     },
     {
@@ -437,7 +437,7 @@
     },
     {
       "check": "D1",
-      "key": "APRIL,AUGUST,DECEMBER,FEBRUARY,JANUARY,JULY,JUNE,MARCH,MAY,NOVEMBER,OCTOBER,SEPTEMBER|backend/src/routes/pos.ts frontend/src/mobile/MobileCalendar.tsx",
+      "key": "APRIL,AUGUST,DECEMBER,FEBRUARY,JANUARY,JULY,JUNE,MARCH,MAY,NOVEMBER,OCTOBER,SEPTEMBER|backend/src/routes/pos.ts frontend/src/lib/meetings.ts frontend/src/mobile/MobileCalendar.tsx",
       "why": "A CALENDAR/LOCALE vocabulary (months, weekdays, languages) — fixed by the world, not by this business, and it cannot drift into a wrong answer. 2 homes: KPI_MONTHS, MONTHS."
     },
     {
