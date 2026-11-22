@@ -28,6 +28,7 @@
 import { QueryClient, MutationCache } from "@tanstack/react-query";
 import { installCrossTabSync, mutationSucceeded, mutationSettled } from "./cross-tab-sync";
 import { installQueryPersist } from "./query-persist";
+import { invalidate as invalidateReadCache, onApiWrite } from "../api/cache";
 
 /* Retry policy — one retry, EXCEPT for a 4xx (2026-07-19, fix/so-maintenance-403).
    The bare `retry: 1` re-sent every failure once, including authorization
@@ -85,6 +86,25 @@ export const queryClient = new QueryClient({
 
 // Listen for other tabs' writes and invalidate our active queries.
 installCrossTabSync(queryClient);
+
+/* A write through api.post/patch/put/del (not a useMutation) cleared only the 15 s read cache of its own resource:
+   a list read through hooks/useQuery kept its old rows until it went stale (30 s), and a read of another resource
+   (a project archived through /api/projects, read back elsewhere) kept its read cache too. Any such write now drops
+   the read cache and marks every hooks/useQuery read stale; only what is on screen refetches. Writes on a timer or
+   on mount that change nothing anyone is reading are left out, or every screen would refetch on each one. */
+const QUIET_WRITES = [
+  /^\/api\/presence/,
+  /^\/api\/projects\/[^/]+\/read(\?|$)/,
+  /^\/api\/mail-center\/threads\/[^/]+\/replying(\?|$)/,
+];
+export function isQuietWrite(path: string): boolean {
+  return QUIET_WRITES.some((r) => r.test(path));
+}
+onApiWrite((path) => {
+  if (isQuietWrite(path)) return;
+  invalidateReadCache("/api");
+  void queryClient.invalidateQueries({ predicate: (q) => q.queryKey[0] === "uq" });
+});
 
 // Persist the SCM document-list queries to localStorage so a COLD open (fresh
 // session / full reload / PWA reopen) renders the last-known list instantly and
