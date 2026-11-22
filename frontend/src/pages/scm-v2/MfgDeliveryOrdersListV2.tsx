@@ -994,7 +994,10 @@ export function MfgDeliveryOrdersListV2() {
     status !== "all" || view !== "table" || search.trim().length > 0 || !!(dateFrom || dateTo);
 
   const onPullToRefresh = async () => {
-    await queryClient.invalidateQueries({ queryKey: ["mfg-delivery-orders"] });
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["mfg-delivery-orders"] }),
+      queryClient.invalidateQueries({ queryKey: ["mfg-delivery-orders-paged"] }),
+    ]);
   };
 
   // Wired actions

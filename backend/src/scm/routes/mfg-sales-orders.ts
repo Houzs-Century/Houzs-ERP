@@ -1094,7 +1094,8 @@ export async function soListMoneyKpis(
   let revenueSen = 0, outstandingSen = 0, paidSen = 0;
   for (const m of fb.data ?? []) {
     revenueSen += m.local_total_sen ?? 0;
-    outstandingSen += m.balance_sen_live ?? m.balance_sen ?? 0;
+    /* Never the stored balance_sen: recomputeTotals writes the gross total into it (shared/so-outstanding.ts). */
+    outstandingSen += m.balance_sen_live ?? (m.local_total_sen ?? 0) - (m.paid_total_sen ?? 0);
     paidSen += m.paid_total_sen ?? 0;
   }
   return { data: { revenueSen, outstandingSen, paidSen }, error: null };
@@ -1776,6 +1777,9 @@ mfgSalesOrders.get('/:docNo', async (c) => {
     // Authoritative received-to-date + remaining balance for the detail page
     // and the customer-facing print (so-doc.ts reads paid_sen_total).
     paid_sen_total: paidSenTotal,
+    /* The part of paid_sen_total that is NOT in the payments ledger (a legacy header deposit). A print that lists
+       the ledger rows adds this to their sum, so its "Paid to date" always agrees with the rows it shows. */
+    paid_outside_ledger_sen: paidSenTotal - paidLedgerSen,
     /* SIGNED (owner 2026-08-16) — negative = over-collected, painted red by the
        detail page, the mobile detail and the SO print. The write-back keeps the
        CLAMPED `soOutstandingSen`: a screen can say "you hold RM 250 of his
@@ -4376,170 +4380,6 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       .eq('upload_session_id', uploadSessionId);
   }
 
-  /* ── SO-SKU spec P2 (D5, migration 0155) — the POS deposit becomes a real
-     payments-ledger row at create, so Paid / Last Payment / Account Sheet /
-     Collected By / Balance derive live instead of sitting dead in the
-     deposit_sen header. is_deposit=true marks it so the list paid-rollup
-     doesn't ALSO add the header column (double count) and Finance can tell
-     deposits from balance payments. Method-scoped fields mirror the manual
-     POST /:docNo/payments route. Best-effort: a ledger failure must never
-     block the order (the header column still carries the deposit). */
-  if (posPayments) {
-    /* Split payment — every validated row, best-effort (the header carries Σ; a ledger hiccup never blocks the order). */
-    const paidAt = dateOrNull(body.paymentDate) ?? todayMyt(); // header coerces the same key; uncoerced here the swallowed insert lost the deposit row
-    for (let i = 0; i < posPayments.length; i++) {
-      const p = posPayments[i]!;
-      const merchantLike = p.method === 'merchant' || p.method === 'installment';
-      const merchantProvider = merchantLike ? (p.merchantProvider ?? null) : null;
-      const installmentMonths = merchantLike
-        && typeof p.installmentMonths === 'number' && p.installmentMonths > 0
-        ? p.installmentMonths : null;
-      const plan = convertPlans.get(i) ?? null;
-      const { data: depRow, error: depErr } = await sb.from('mfg_sales_order_payments').insert({
-        company_id:         companyId, // multi-company: match the SO's company
-        so_doc_no:          docNo,
-        paid_at:            plan ? plan.paidAt : paidAt,
-        method:             p.method,
-        ...(plan ? { converted_from_so_doc_no: plan.fromDocNo } : {}),
-        merchant_provider:  merchantProvider,
-        installment_months: installmentMonths,
-        approval_code:      p.approvalCode ?? null,
-        /* A split row's OWN slip when it sent one, else null — the slip is
-           optional (Owner 2026-08-13). Deliberately NOT falling back to
-           `receiptImageKey`: that key is the single-deposit scan path's proof
-           (below) and stamping it on several split rows would put one photo on
-           payments it does not evidence. */
-        slip_key:           posPaymentSlipKeys![i] ?? (plan ? plan.slipKey : null),
-        /* Account Sheet auto-fill (Loo 2026-06-07) — split rows carry no
-           onlineType, so transfer falls back to 'Bank transfer'. */
-        account_sheet:      plan ? `Converted from ${plan.fromDocNo}` : deriveAccountSheet(p.method, merchantProvider, null),
-        amount_sen:       p.amountSen,
-        /* Who took the money. The fallback was the bridge's pinned system uuid,
-           so an unnamed collector recorded as "System" on the money ledger; the
-           column is a NULLABLE FK to staff (the /payments writer stamps null
-           freely), so the real caller — or an honest blank — is always better.
-           Precedence is unchanged: an explicit salespersonId still wins. */
-        collected_by:       plan ? plan.collectedBy : ((body.salespersonId as string) ?? callerStaffId),
-        created_by:         user.id,
-        is_deposit:         true,
-        note:               plan ? `Converted from ${plan.fromDocNo} at SO create` : 'POS split payment (auto-recorded at SO create)',
-      }).select('id, so_doc_no, paid_at, method, merchant_provider, amount_sen, company_id, converted_from_so_doc_no, created_at, created_by').single();
-      if (depErr) {
-        // eslint-disable-next-line no-console
-        console.error('[so-create] split-payment ledger insert failed:', depErr.message);
-        continue;
-      }
-      await bookSoPaymentBestEffort(sb, depRow, 'split payment at SO create'); // docs/bugs/0652: this row used to skip the gate
-      await linkPaymentScan(sb, { companyId: companyId ?? null, slipKey: posPaymentSlipKeys![i] ?? null, paymentId: String((depRow as { id?: unknown }).id ?? '') }); // HC-0006 T7
-      /* Promote — 'promoted' rows are excluded from the slip reaper (same dance
-         as the SO-create order slip). The UPDATE runs under the caller's RLS
-         (pending_slip_uploads allows the UPLOADER to promote); in this flow the
-         uploader IS the order creator, so it matches. If it ever doesn't (or
-         errors), the row stays 'uploaded' → the reaper would delete the R2
-         object after TTL and the same session would be replayable — so a no-op
-         promote is logged LOUDLY instead of swallowed. Best-effort: the payment
-         row stands either way (slip_key already persisted on it).
-
-         Guarded on the session because the slip is OPTIONAL now (Owner
-         2026-08-13): with no id there is nothing to promote, and an unguarded
-         `.eq('upload_session_id', null)` is a filter nobody wrote on purpose.
-         The AUDIT below still runs — a slip-less payment is just as much a
-         payment. */
-      if (p.uploadSessionId) {
-        const { data: promoted, error: promoteErr } = await sb
-          .from('pending_slip_uploads')
-          .update({ status: 'promoted', promoted_at: new Date().toISOString() })
-          .eq('upload_session_id', p.uploadSessionId)
-          .select('upload_session_id');
-        if (promoteErr || !promoted || promoted.length === 0) {
-          // eslint-disable-next-line no-console
-          console.error(
-            `[so-create] slip promote FAILED for session ${p.uploadSessionId} on ${docNo}: `
-            + (promoteErr?.message ?? 'no row matched (RLS uploader mismatch?)')
-            + ' — slip will be reaped after TTL; replay window open until then.',
-          );
-        }
-      }
-      await recordSoAudit(sb, {
-        docNo,
-        action: 'ADD_PAYMENT',
-        actorId: user.id,
-        actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
-        source: 'automation',
-        note: 'Auto: POS split payment recorded at SO create',
-        paymentId: String((depRow as { id?: unknown } | null)?.id ?? '') || null,
-        fieldChanges: [
-          { field: 'paidAt',      from: null, to: paidAt },
-          { field: 'method',      from: null, to: p.method },
-          { field: 'amountSen', from: null, to: p.amountSen },
-          ...(merchantProvider ? [{ field: 'merchantProvider', from: null, to: merchantProvider } satisfies FieldChange] : []),
-          ...(installmentMonths ? [{ field: 'installmentMonths', from: null, to: installmentMonths } satisfies FieldChange] : []),
-          ...(p.approvalCode ? [{ field: 'approvalCode', from: null, to: p.approvalCode } satisfies FieldChange] : []),
-        ],
-      });
-    }
-  } else {
-    const depositSen = typeof body.depositSen === 'number' ? body.depositSen : 0;
-    /* Whitelist — the ledger's method vocabulary is closed; an arbitrary
-       string must not reach Finance reports. Unknown method → header-only
-       (the deposit still shows via the legacy fallback), no ledger row. */
-    const VALID_METHODS = new Set(['cash', 'merchant', 'transfer', 'installment']);
-    const rawMethod = typeof body.paymentMethod === 'string' ? body.paymentMethod.trim() : '';
-    const depositMethod = VALID_METHODS.has(rawMethod) ? rawMethod : null;
-    if (depositSen > 0 && depositMethod) {
-      /* 'installment' is a merchant transaction with a term — both keep the
-         provider/months fields (prod uses both method values). */
-      const merchantLike = depositMethod === 'merchant' || depositMethod === 'installment';
-      const merchantProvider = merchantLike ? ((body.merchantProvider as string) ?? null) : null;
-      const installmentMonths = merchantLike
-        && typeof body.installmentMonths === 'number' && body.installmentMonths > 0
-        ? body.installmentMonths : null;
-      const paidAt = dateOrNull(body.paymentDate) ?? todayMyt(); // same as the split-payment row above
-      const { data: depRow, error: depErr } = await sb.from('mfg_sales_order_payments').insert({
-        company_id:         companyId, // multi-company: match the SO's company
-        so_doc_no:          docNo,
-        paid_at:            paidAt,
-        method:             depositMethod,
-        merchant_provider:  merchantProvider,
-        installment_months: installmentMonths,
-        approval_code:      (body.approvalCode as string) ?? null,
-        slip_key:           slipKey ?? receiptImageKey,        // handover slip, else the scanned receipt = the deposit's proof
-        /* Account Sheet auto-fill (Loo 2026-06-07). */
-        account_sheet:      deriveAccountSheet(depositMethod, merchantProvider, null),
-        amount_sen:       depositSen,
-        // Same as the split-payment row above: never the pin on the money ledger.
-        collected_by:       (body.salespersonId as string) ?? callerStaffId,
-        created_by:         user.id,
-        is_deposit:         true,
-        note:               'POS deposit (auto-recorded at SO create)',
-      }).select('id, so_doc_no, paid_at, method, merchant_provider, amount_sen, company_id').single();
-      if (depErr) {
-        // eslint-disable-next-line no-console
-        console.error('[so-create] deposit ledger insert failed:', depErr.message);
-      } else {
-        await bookSoPaymentBestEffort(sb, depRow, 'deposit at SO create'); // docs/bugs/0652: this row used to skip the gate
-        await linkPaymentScan(sb, { companyId: companyId ?? null, slipKey, paymentId: String((depRow as { id?: unknown }).id ?? '') }); // HC-0006 T7
-        await recordSoAudit(sb, {
-          docNo,
-          action: 'ADD_PAYMENT',
-          actorId: user.id,
-          actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
-          source: 'automation',
-          note: 'Auto: POS deposit recorded at SO create',
-          paymentId: String((depRow as { id?: unknown } | null)?.id ?? '') || null,
-          fieldChanges: [
-            { field: 'paidAt',      from: null, to: paidAt },
-            { field: 'method',      from: null, to: depositMethod },
-            { field: 'amountSen', from: null, to: depositSen },
-            ...(merchantProvider ? [{ field: 'merchantProvider', from: null, to: merchantProvider } satisfies FieldChange] : []),
-            ...(body.approvalCode ? [{ field: 'approvalCode', from: null, to: body.approvalCode as string } satisfies FieldChange] : []),
-          ],
-        });
-      }
-    }
-  }
-
-  lap('so-payments');
   /* Task 5 — mint the one-shot SKUs (gated + collision-safe). Runs BEFORE the
      item insert: buildOneShotMints mutates each accumulated row's item_code to
      the minted code, and the insert below spreads those rows. Uses a service-
@@ -4640,6 +4480,177 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     await recomputeTotals(sb, docNo, c);
   }
   lap('so-items-write');
+
+  /* The deposit rows are written only once the order and its lines are in. Written before the lines, a create whose
+     line insert failed deleted the order but left the deposit row's journal standing; and a deposit row that failed
+     was only logged while the order read as saved. A miss is returned as paymentErrors for the screen to say. */
+  const paymentErrors: string[] = [];
+  /* ── SO-SKU spec P2 (D5, migration 0155) — the POS deposit becomes a real
+     payments-ledger row at create, so Paid / Last Payment / Account Sheet /
+     Collected By / Balance derive live instead of sitting dead in the
+     deposit_sen header. is_deposit=true marks it so the list paid-rollup
+     doesn't ALSO add the header column (double count) and Finance can tell
+     deposits from balance payments. Method-scoped fields mirror the manual
+     POST /:docNo/payments route. Best-effort: a ledger failure must never
+     block the order (the header column still carries the deposit). */
+  if (posPayments) {
+    /* Split payment — every validated row, best-effort (the header carries Σ; a ledger hiccup never blocks the order). */
+    const paidAt = dateOrNull(body.paymentDate) ?? todayMyt(); // header coerces the same key; uncoerced here the swallowed insert lost the deposit row
+    for (let i = 0; i < posPayments.length; i++) {
+      const p = posPayments[i]!;
+      const merchantLike = p.method === 'merchant' || p.method === 'installment';
+      const merchantProvider = merchantLike ? (p.merchantProvider ?? null) : null;
+      const installmentMonths = merchantLike
+        && typeof p.installmentMonths === 'number' && p.installmentMonths > 0
+        ? p.installmentMonths : null;
+      const plan = convertPlans.get(i) ?? null;
+      const { data: depRow, error: depErr } = await sb.from('mfg_sales_order_payments').insert({
+        company_id:         companyId, // multi-company: match the SO's company
+        so_doc_no:          docNo,
+        paid_at:            plan ? plan.paidAt : paidAt,
+        method:             p.method,
+        ...(plan ? { converted_from_so_doc_no: plan.fromDocNo } : {}),
+        merchant_provider:  merchantProvider,
+        installment_months: installmentMonths,
+        approval_code:      p.approvalCode ?? null,
+        /* A split row's OWN slip when it sent one, else null — the slip is
+           optional (Owner 2026-08-13). Deliberately NOT falling back to
+           `receiptImageKey`: that key is the single-deposit scan path's proof
+           (below) and stamping it on several split rows would put one photo on
+           payments it does not evidence. */
+        slip_key:           posPaymentSlipKeys![i] ?? (plan ? plan.slipKey : null),
+        /* Account Sheet auto-fill (Loo 2026-06-07) — split rows carry no
+           onlineType, so transfer falls back to 'Bank transfer'. */
+        account_sheet:      plan ? `Converted from ${plan.fromDocNo}` : deriveAccountSheet(p.method, merchantProvider, null),
+        amount_sen:       p.amountSen,
+        /* Who took the money. The fallback was the bridge's pinned system uuid,
+           so an unnamed collector recorded as "System" on the money ledger; the
+           column is a NULLABLE FK to staff (the /payments writer stamps null
+           freely), so the real caller — or an honest blank — is always better.
+           Precedence is unchanged: an explicit salespersonId still wins. */
+        collected_by:       plan ? plan.collectedBy : ((body.salespersonId as string) ?? callerStaffId),
+        created_by:         user.id,
+        is_deposit:         true,
+        note:               plan ? `Converted from ${plan.fromDocNo} at SO create` : 'POS split payment (auto-recorded at SO create)',
+      }).select('id, so_doc_no, paid_at, method, merchant_provider, amount_sen, company_id, converted_from_so_doc_no, created_at, created_by').single();
+      if (depErr) {
+        // eslint-disable-next-line no-console
+        console.error('[so-create] split-payment ledger insert failed:', depErr.message);
+        paymentErrors.push(`A payment of ${fmtSen(p.amountSen)} (${p.method}) was NOT recorded: ${depErr.message}. Add it on the order's Payments tab.`);
+        continue;
+      }
+      await bookSoPaymentBestEffort(sb, depRow, 'split payment at SO create'); // docs/bugs/0652: this row used to skip the gate
+      await linkPaymentScan(sb, { companyId: companyId ?? null, slipKey: posPaymentSlipKeys![i] ?? null, paymentId: String((depRow as { id?: unknown }).id ?? '') }); // HC-0006 T7
+      /* Promote — 'promoted' rows are excluded from the slip reaper (same dance
+         as the SO-create order slip). The UPDATE runs under the caller's RLS
+         (pending_slip_uploads allows the UPLOADER to promote); in this flow the
+         uploader IS the order creator, so it matches. If it ever doesn't (or
+         errors), the row stays 'uploaded' → the reaper would delete the R2
+         object after TTL and the same session would be replayable — so a no-op
+         promote is logged LOUDLY instead of swallowed. Best-effort: the payment
+         row stands either way (slip_key already persisted on it).
+
+         Guarded on the session because the slip is OPTIONAL now (Owner
+         2026-08-13): with no id there is nothing to promote, and an unguarded
+         `.eq('upload_session_id', null)` is a filter nobody wrote on purpose.
+         The AUDIT below still runs — a slip-less payment is just as much a
+         payment. */
+      if (p.uploadSessionId) {
+        const { data: promoted, error: promoteErr } = await sb
+          .from('pending_slip_uploads')
+          .update({ status: 'promoted', promoted_at: new Date().toISOString() })
+          .eq('upload_session_id', p.uploadSessionId)
+          .select('upload_session_id');
+        if (promoteErr || !promoted || promoted.length === 0) {
+          // eslint-disable-next-line no-console
+          console.error(
+            `[so-create] slip promote FAILED for session ${p.uploadSessionId} on ${docNo}: `
+            + (promoteErr?.message ?? 'no row matched (RLS uploader mismatch?)')
+            + ' — slip will be reaped after TTL; replay window open until then.',
+          );
+        }
+      }
+      await recordSoAudit(sb, {
+        docNo,
+        action: 'ADD_PAYMENT',
+        actorId: user.id,
+        actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
+        source: 'automation',
+        note: 'Auto: POS split payment recorded at SO create',
+        paymentId: String((depRow as { id?: unknown } | null)?.id ?? '') || null,
+        fieldChanges: [
+          { field: 'paidAt',      from: null, to: paidAt },
+          { field: 'method',      from: null, to: p.method },
+          { field: 'amountSen', from: null, to: p.amountSen },
+          ...(merchantProvider ? [{ field: 'merchantProvider', from: null, to: merchantProvider } satisfies FieldChange] : []),
+          ...(installmentMonths ? [{ field: 'installmentMonths', from: null, to: installmentMonths } satisfies FieldChange] : []),
+          ...(p.approvalCode ? [{ field: 'approvalCode', from: null, to: p.approvalCode } satisfies FieldChange] : []),
+        ],
+      });
+    }
+  } else {
+    const depositSen = typeof body.depositSen === 'number' ? body.depositSen : 0;
+    /* Whitelist — the ledger's method vocabulary is closed; an arbitrary
+       string must not reach Finance reports. Unknown method → header-only
+       (the deposit still shows via the legacy fallback), no ledger row. */
+    const VALID_METHODS = new Set(['cash', 'merchant', 'transfer', 'installment']);
+    const rawMethod = typeof body.paymentMethod === 'string' ? body.paymentMethod.trim() : '';
+    const depositMethod = VALID_METHODS.has(rawMethod) ? rawMethod : null;
+    if (depositSen > 0 && depositMethod) {
+      /* 'installment' is a merchant transaction with a term — both keep the
+         provider/months fields (prod uses both method values). */
+      const merchantLike = depositMethod === 'merchant' || depositMethod === 'installment';
+      const merchantProvider = merchantLike ? ((body.merchantProvider as string) ?? null) : null;
+      const installmentMonths = merchantLike
+        && typeof body.installmentMonths === 'number' && body.installmentMonths > 0
+        ? body.installmentMonths : null;
+      const paidAt = dateOrNull(body.paymentDate) ?? todayMyt(); // same as the split-payment row above
+      const { data: depRow, error: depErr } = await sb.from('mfg_sales_order_payments').insert({
+        company_id:         companyId, // multi-company: match the SO's company
+        so_doc_no:          docNo,
+        paid_at:            paidAt,
+        method:             depositMethod,
+        merchant_provider:  merchantProvider,
+        installment_months: installmentMonths,
+        approval_code:      (body.approvalCode as string) ?? null,
+        slip_key:           slipKey ?? receiptImageKey,        // handover slip, else the scanned receipt = the deposit's proof
+        /* Account Sheet auto-fill (Loo 2026-06-07). */
+        account_sheet:      deriveAccountSheet(depositMethod, merchantProvider, null),
+        amount_sen:       depositSen,
+        // Same as the split-payment row above: never the pin on the money ledger.
+        collected_by:       (body.salespersonId as string) ?? callerStaffId,
+        created_by:         user.id,
+        is_deposit:         true,
+        note:               'POS deposit (auto-recorded at SO create)',
+      }).select('id, so_doc_no, paid_at, method, merchant_provider, amount_sen, company_id').single();
+      if (depErr) {
+        // eslint-disable-next-line no-console
+        console.error('[so-create] deposit ledger insert failed:', depErr.message);
+        paymentErrors.push(`The deposit of ${fmtSen(depositSen)} (${depositMethod}) was NOT recorded: ${depErr.message}. Add it on the order's Payments tab.`);
+      } else {
+        await bookSoPaymentBestEffort(sb, depRow, 'deposit at SO create'); // docs/bugs/0652: this row used to skip the gate
+        await linkPaymentScan(sb, { companyId: companyId ?? null, slipKey, paymentId: String((depRow as { id?: unknown }).id ?? '') }); // HC-0006 T7
+        await recordSoAudit(sb, {
+          docNo,
+          action: 'ADD_PAYMENT',
+          actorId: user.id,
+          actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
+          source: 'automation',
+          note: 'Auto: POS deposit recorded at SO create',
+          paymentId: String((depRow as { id?: unknown } | null)?.id ?? '') || null,
+          fieldChanges: [
+            { field: 'paidAt',      from: null, to: paidAt },
+            { field: 'method',      from: null, to: depositMethod },
+            { field: 'amountSen', from: null, to: depositSen },
+            ...(merchantProvider ? [{ field: 'merchantProvider', from: null, to: merchantProvider } satisfies FieldChange] : []),
+            ...(body.approvalCode ? [{ field: 'approvalCode', from: null, to: body.approvalCode as string } satisfies FieldChange] : []),
+          ],
+        });
+      }
+    }
+  }
+
+  lap('so-payments');
 
   /* ── FAIR LINK (owner 2026-09-13) ─────────────────────────────────────────
      Which EXHIBITION this sale belongs to, not just where it was written. The
@@ -4819,6 +4830,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     : (await enqueueSoCreate(sb, { companyId, docNo, createdBy: c.get('houzsUser')?.id ?? null })).problems;
   lap('so-ac-queue');
 
+  if (paymentErrors.length) return c.json({ docNo, ...(acNotSent.length ? { acNotSent } : {}), paymentErrors }, 201);
   return c.json({ docNo, ...(acNotSent.length ? { acNotSent } : {}) }, 201);
 }
 

@@ -55,7 +55,8 @@ describe('POST /so-handover/apply respects the migrated-SO lock', () => {
 
   it('refuses BEFORE the update, not after it', () => {
     const lockAt = src.indexOf('const lock = await migratedSoReadonlyState');
-    const updateAt = src.indexOf("sb.from('mfg_sales_orders').update(updates)");
+    /* tx: the batch runs in one transaction (soHandoverBatchAtomic.test.ts). */
+    const updateAt = src.indexOf("tx.from('mfg_sales_orders').update(updates)");
     expect(lockAt).toBeGreaterThan(-1);
     expect(updateAt).toBeGreaterThan(-1);
     expect(lockAt).toBeLessThan(updateAt);

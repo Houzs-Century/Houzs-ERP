@@ -306,6 +306,8 @@ export type StockTransferLine = {
 export type StockTransferDetail = {
   transfer: StockTransferRow;
   lines: StockTransferLine[];
+  /** CANCELLED, but its own movements do not net to zero: Finish cancel moves the rest back. */
+  stockNotBack?: boolean;
 };
 
 export type StockTransferListFilters = {

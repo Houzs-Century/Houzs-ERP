@@ -31,7 +31,7 @@ import { activeCompanyId, stampCompany, scopeToCompany,
 import { canWriteScmConfig, canViewScmProductCost } from '../lib/houzs-perms';
 import { PRODUCT_FINANCE_KEYS } from '../lib/finance-keys';
 import { todayMyt } from '../lib/my-time';
-import { chunkIn } from '../lib/paginate-all';
+import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { baseKeyOf, deleteThumbFor, putOptionalThumb } from '../../services/photoThumbs';
 import type { Env, Variables } from '../env';
 import { pgrestIn } from '../lib/pgrest-in-list';
@@ -214,11 +214,14 @@ export const listProductModelsHandler = async (c: Context<{ Bindings: Env; Varia
   const supabase = c.get('supabase');
   const category = c.req.query('category');
 
-  let q = scopeToCompany(supabase.from('product_models').select(COLS), c).order('category').order('model_code');
-  if (category && (CATEGORIES as readonly string[]).includes(category)) {
-    q = q.eq('category', category);
-  }
-  const { data, error } = await q;
+  /* Paged: one PostgREST read stops at 1,000 rows, so the supplier "Pick Model" list would silently drop every Model
+     sorting after the first 1,000 once the catalogue passes that (Conts hit it at 1,927). `id` makes the order total. */
+  const inCategory = category && (CATEGORIES as readonly string[]).includes(category) ? category : null;
+  const { data, error } = await paginateAll((from, to) => {
+    let q = scopeToCompany(supabase.from('product_models').select(COLS), c).order('category').order('model_code').order('id');
+    if (inCategory) q = q.eq('category', inCategory);
+    return q.range(from, to);
+  });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   const rows = (data ?? []) as Array<Record<string, unknown> & { id: string }>;
 

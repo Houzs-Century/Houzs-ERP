@@ -189,20 +189,17 @@ describe('soListMoneyKpis — fallback (aggregate unavailable) preserves the num
     expect(stats.rangeReads).toBeGreaterThanOrEqual(1);
   });
 
-  test('view lacks balance_sen_live → fallback uses balance_sen per row', async () => {
-    // Rows with NO balance_sen_live key model the absent computed column: in
-    // prod the aggregate would 500 on `balance_sen_live.sum()` and we fall
-    // through to this path, which reads balance_sen. `?? balance_sen` must
-    // carry it.
+  test('view lacks balance_sen_live → fallback is total − paid, never the stored balance_sen', async () => {
+    // Rows with NO balance_sen_live key model the absent computed column. The stored balance_sen is the gross total
+    // on every edited order (recomputeTotals), so the fallback works it out from the view's paid instead.
     const noLive = FIXTURE.map(({ balance_sen_live: _drop, ...r }) => r);
     const stats: Stats = { aggReads: 0, rangeReads: 0 };
     const opts = { company: 1 };
     const res = await soListMoneyKpis(makeSb(noLive, stats, false), filtersFor(opts));
-    expect(res.data).toEqual(oldReduce(noLive.filter(predFor(opts))));
-    // outstanding here is driven by balance_sen, so it equals revenue (gross)
     const scoped = noLive.filter(predFor(opts));
-    const gross = scoped.reduce((s, r) => s + r.balance_sen, 0);
-    expect(res.data!.outstandingSen).toBe(gross);
+    const expected = scoped.reduce((s, r) => s + (r.local_total_sen ?? 0) - (r.paid_total_sen ?? 0), 0);
+    expect(res.data!.outstandingSen).toBe(expected);
+    expect(expected).not.toBe(scoped.reduce((s, r) => s + r.balance_sen, 0));
   });
 });
 

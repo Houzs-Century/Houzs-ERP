@@ -884,6 +884,16 @@ export const SalesOrderDetail = () => {
      resolve; any failure surfaces inline and keeps the user in edit mode so
      nothing is silently lost. */
   const [savingOrder, setSavingOrder] = useState(false);
+  /* Held from the Save click until that save settles (saveNow below): savingOrder is only set after the validate
+     dry-run, so a double click sent the whole save twice and the button stayed live while validate ran. */
+  const savePressRef = useRef(false);
+  const [savePressed, setSavePressed] = useState(false);
+  const saveNow = () => {
+    if (savePressRef.current) return;
+    savePressRef.current = true;
+    setSavePressed(true);
+    void (amendmentMode ? submitAmendment : saveEdit)().finally(() => { savePressRef.current = false; setSavePressed(false); });
+  };
   const saveEdit = async () => {
     const handle = customerCardRef.current;
     if (!handle || !header) return;
@@ -982,8 +992,9 @@ export const SalesOrderDetail = () => {
        editor therefore stops at 409 before any line PATCH/POST. Each staged
        ADD carries its OWN Idempotency-Key across retries. runSoLineWrites owns
        the stage order and the settling rules — see so-add-lines.ts for why the
-       ADDs go one at a time and why every stage now reports which line. */
-    reserveHeader
+       ADDs go one at a time and why every stage now reports which line.
+       Awaited, so the Save press stays held until the whole chain settles. */
+    await reserveHeader
       .then(() => runSoLineWrites({
         deletes: deleteEntries.map((it) => ({
           label: it.item_code || 'A removed line',
@@ -1982,15 +1993,15 @@ export const SalesOrderDetail = () => {
                     SUBMITS AN AMENDMENT instead of writing the lines directly. */}
                 {amendmentMode ? (
                   <Button variant="primary"
-                    onClick={() => { void submitAmendment(); }} disabled={migratedLocked || savingOrder || createAmendment.isPending}>
+                    onClick={saveNow} disabled={migratedLocked || savePressed || savingOrder || createAmendment.isPending}>
                     <Save {...ICON} />
-                    <span>{savingOrder || createAmendment.isPending ? 'Submitting…' : 'Submit amendment request'}</span>
+                    <span>{savePressed || savingOrder || createAmendment.isPending ? 'Submitting…' : 'Submit amendment request'}</span>
                   </Button>
                 ) : (
                   <Button variant="primary"
-                    onClick={() => { void saveEdit(); }} disabled={migratedLocked || updateHeader.isPending || savingOrder}>
+                    onClick={saveNow} disabled={migratedLocked || savePressed || updateHeader.isPending || savingOrder}>
                     <Save {...ICON} />
-                    <span>{updateHeader.isPending || savingOrder ? 'Saving…' : 'Save'}</span>
+                    <span>{savePressed || updateHeader.isPending || savingOrder ? 'Saving…' : 'Save'}</span>
                   </Button>
                 )}
               </>
@@ -2009,7 +2020,7 @@ export const SalesOrderDetail = () => {
           className={styles.bannerWarn}
           saving={savingOrder}
           onReview={() => setHistoryOpen(true)}
-          onProceed={() => { if (adoptServerVersion()) void (amendmentMode ? submitAmendment : saveEdit)(); }}
+          onProceed={() => { if (adoptServerVersion()) saveNow(); }}
         />
       )}
 

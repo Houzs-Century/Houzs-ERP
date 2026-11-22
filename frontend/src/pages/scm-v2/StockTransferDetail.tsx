@@ -474,6 +474,16 @@ export const StockTransferDetail = () => {
                   <Ban {...ICON} /> {cancel.isPending ? 'Cancelling…' : 'Cancel'}
                 </Button>
               )}
+              {status === 'CANCELLED' && detail.data.stockNotBack && (
+                <Button variant="primary" size="md" disabled={cancel.isPending}
+                  title="The cancel did not move all the stock back; this moves the rest"
+                  onClick={() => id && cancel.mutate(id, {
+                    onSuccess: () => detail.refetch(),
+                    onError: (err) => notify({ title: 'Finish cancel failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' }),
+                  })}>
+                  <Ban {...ICON} /> {cancel.isPending ? 'Moving stock back…' : 'Finish cancel'}
+                </Button>
+              )}
               <Button variant="ghost" size="md" onClick={() => navigate('/scm/stock-transfers')}>
                 <X {...ICON} /> Close
               </Button>

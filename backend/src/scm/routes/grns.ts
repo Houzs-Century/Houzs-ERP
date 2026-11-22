@@ -2689,6 +2689,9 @@ grns.patch('/:id', async (c) => {
 /* ── POST /:id/items — add one grn_item. qty maps to qty_received. ── */
 grns.post('/:id/items', async (c) => {
   const grnId = c.req.param('id');
+  /* The line is saved either way; a refused stock IN or PO recount must be said, not dropped. */
+  const addMovementErrors: string[] = [];
+  let addRecountError: string | undefined;
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return refuseWithoutWriting(c, { error: 'invalid_json' }, 400); }
   if (!it.itemCode) return refuseWithoutWriting(c, { error: 'item_code_required' }, 400);
@@ -2897,7 +2900,10 @@ grns.post('/:id/items', async (c) => {
   // picker) and its stock never enters inventory — yet DELETE still writes an
   // OUT to reverse it, driving inventory negative. Mirror postGrnAndRollup for
   // this one line so add/edit/delete all converge. Best-effort throughout.
-  try { await recomputePoReceived(sb, [addedPoiId]); } catch { /* best-effort */ }
+  try {
+    const recount = await recomputePoReceived(sb, [addedPoiId]);
+    if (!recount.ok) addRecountError = recount.reason ?? 'unknown';
+  } catch (e) { addRecountError = e instanceof Error ? e.message : String(e); }
   // The PO rollup still runs (received_qty is paperwork); the IN does not.
   if (qtyReceived > 0 && !migratedNoStock) {
     try {
@@ -2913,7 +2919,7 @@ grns.post('/:id/items', async (c) => {
         const addedPoItemId = (it.purchaseOrderItemId as string) ?? null;
         const batchByItem = await resolvePoBatchByItem(sb, [addedPoItemId]);
         const addedKey = await bk.stockBucketKeyOne(sb, activeCompanyId(c) ?? null, { item_code: String(it.itemCode), item_group: (it.itemGroup as string) ?? null, variants: it.variants ?? null, warehouse_id: warehouseId });
-        await writeMovements(sb, [{
+        const wrote = await writeMovements(sb, [{
           movement_type: 'IN' as const,
           warehouse_id: warehouseId,
           item_code: String(it.itemCode),
@@ -2928,6 +2934,7 @@ grns.post('/:id/items', async (c) => {
           performed_by: user.id,
           notes: 'GRN line added — receipt',
         }], activeCompanyId(c));
+        if (!wrote.ok) addMovementErrors.push(`IN ${String(it.itemCode)}: ${wrote.reason ?? 'unknown'}`);
         /* Oversell retro-cost (0154) — a line added to a POSTED GRN opens a lot
            outside postGrnAndRollup, so it needs the same reconcile the post does.
            Wired 2026-07-29 (COE §2). Best-effort. */
@@ -2943,17 +2950,22 @@ grns.post('/:id/items', async (c) => {
           const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
           await recomputeSoStockAllocation(sb);
         } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-grn-line-add failed:', e); }
+      } else {
+        addMovementErrors.push(`IN ${String(it.itemCode)}: no warehouse to receive into`);
       }
-    } catch { /* best-effort */ }
+    } catch (e) { addMovementErrors.push(`stock IN threw: ${e instanceof Error ? e.message : String(e)}`); }
   }
   } // end non-DRAFT line-add rollup/movement guard
   await queueAcGrnEdit(c, sb, grnId, [], ((data as { id?: unknown } | null)?.id ? [String((data as { id?: unknown }).id)] : []));
-  return c.json({ item: data }, 201);
+  return c.json({ item: data, movementErrors: addMovementErrors.length ? addMovementErrors : undefined, recountError: addRecountError }, 201);
 });
 
 /* ── PATCH /:id/items/:itemId — partial line update. qty → qty_received. ── */
 grns.patch('/:id/items/:itemId', async (c) => {
   const grnId = c.req.param('id'); const itemId = c.req.param('itemId');
+  /* The line is saved either way; a refused stock write or PO recount must be said, not dropped. */
+  const editMovementErrors: string[] = [];
+  let editRecountError: string | undefined;
   // company-scope: prove the parent GRN. Editing a line re-costs it and rolls
   // the PO's received_qty back up — both are writes on the other company's data
   // if the parent is not ours.
@@ -3225,7 +3237,8 @@ grns.patch('/:id/items/:itemId', async (c) => {
     }
     if (movements.length > 0) {
       try {
-        await writeMovements(sb, movements, activeCompanyId(c));
+        const wrote = await writeMovements(sb, movements, activeCompanyId(c));
+        if (!wrote.ok) editMovementErrors.push(`stock ${wrote.reason ?? 'unknown'}`);
         /* Oversell retro-cost (0154) — a line edit that RAISES the accepted qty
            (or moves it to a new variant bucket) opens a lot, so a prior "ship
            anyway" DO that went out at RM0 here can now be costed from it. Wired
@@ -3235,7 +3248,7 @@ grns.patch('/:id/items/:itemId', async (c) => {
           const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
           await recomputeSoStockAllocation(sb);
         } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-grn-line-edit failed:', e); }
-      } catch { /* best-effort */ }
+      } catch (e) { editMovementErrors.push(`stock write threw: ${e instanceof Error ? e.message : String(e)}`); }
     }
   }
 
@@ -3246,7 +3259,10 @@ grns.patch('/:id/items/:itemId', async (c) => {
      row). */
   if (!isDraftGrn) {
     // Editing qty_accepted changes how much the PO counts as received — recount it.
-    try { await recomputePoReceived(sb, [(prev as { purchase_order_item_id: string | null }).purchase_order_item_id]); } catch { /* best-effort */ }
+    try {
+      const recount = await recomputePoReceived(sb, [(prev as { purchase_order_item_id: string | null }).purchase_order_item_id]);
+      if (!recount.ok) editRecountError = recount.reason ?? 'unknown';
+    } catch (e) { editRecountError = e instanceof Error ? e.message : String(e); }
     // Costing B — when the GR price (or its variant bucket) was corrected and no PI
     // has superseded it yet, re-cost this GRN's lots → consumptions → movements →
     // DO → SI so a shipped order's margin reflects the fix in real time.
@@ -3255,7 +3271,7 @@ grns.patch('/:id/items/:itemId', async (c) => {
     if (priceChanged || bucketChanged) await recostFromGrn(sb, grnId);
   }
   await queueAcGrnEdit(c, sb, grnId);
-  return c.json({ ok: true });
+  return c.json({ ok: true, movementErrors: editMovementErrors.length ? editMovementErrors : undefined, recountError: editRecountError });
 });
 
 // Rack is physical placement only — no stock/money, so not behind the PI/PR child-lock.
