@@ -19,7 +19,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { idempotentInit } from '../../../lib/idempotency';
 import { serviceNotify } from './dialog-service';
-import { writeFailed, writeFailedAs } from './mutation-error';
+import { writeFailed, writeFailedAs, reportInBandFailure, type InBandFailure } from './mutation-error';
 
 // Re-export the DO-side prefill hook the New-DR page pulls from this module in
 // the source (it lives in the vendored DO slice — single source of truth).
@@ -58,9 +58,11 @@ export const useCreateDeliveryReturn = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ idempotencyKey, ...body }: { idempotencyKey?: string } & Record<string, unknown>) =>
-      authedFetch<{ id: string; returnNumber: string }>(`/delivery-returns`,
+      authedFetch<{ id: string; returnNumber: string } & InBandFailure>(`/delivery-returns`,
         idempotentInit(idempotencyKey, { method: 'POST', body: JSON.stringify(body) })),
-    onSuccess: () => {
+    onSuccess: (data) => {
+      // The return is saved even when its stock IN is refused; that comes back in the body, not as an error.
+      reportInBandFailure('Delivery return saved, but the stock was not received back', data);
       qc.invalidateQueries({ queryKey: ['delivery-returns'] });
       /* A return increases stock on create — refresh inventory queries so the
          on-hand drilldown reflects the IN. */
@@ -91,10 +93,11 @@ export const useConvertDoToDeliveryReturn = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: { picks: Array<{ doItemId: string; qty: number; condition?: string }> }) =>
-      authedFetch<{ id: string; returnNumber: string; lineCount: number }>(
+      authedFetch<{ id: string; returnNumber: string; lineCount: number } & InBandFailure>(
         `/delivery-returns/from-do`, { method: 'POST', body: JSON.stringify(body) },
       ),
-    onSuccess: () => {
+    onSuccess: (data) => {
+      reportInBandFailure('Delivery return saved, but the stock was not received back', data);
       qc.invalidateQueries({ queryKey: ['delivery-returns'] });
       qc.invalidateQueries({ queryKey: ['inventory'] });
       /* Picker must refetch so returned DO lines drop off the list. Both
@@ -129,10 +132,11 @@ export const useUpdateDeliveryReturnStatus = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, status }: { id: string; status: string }) =>
-      authedFetch<{ deliveryReturn: unknown }>(`/delivery-returns/${id}/status`, {
+      authedFetch<{ deliveryReturn: unknown } & InBandFailure>(`/delivery-returns/${id}/status`, {
         method: 'PATCH', body: JSON.stringify({ status }),
       }),
-    onSuccess: (_, vars) => {
+    onSuccess: (data, vars) => {
+      reportInBandFailure('Status saved, but the stock was not adjusted', data);
       qc.invalidateQueries({ queryKey: ['delivery-returns'] });
       qc.invalidateQueries({ queryKey: ['delivery-return-detail', vars.id] });
       /* Cancel reverses the inventory increase (negative ADJUSTMENT) — refresh
@@ -151,12 +155,15 @@ export const useAddDeliveryReturnItem = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, ...item }: { id: string } & Record<string, unknown>) =>
-      authedFetch<{ item: unknown }>(`/delivery-returns/${id}/items`, {
+      authedFetch<{ item: unknown } & InBandFailure>(`/delivery-returns/${id}/items`, {
         method: 'POST', body: JSON.stringify(item),
       }),
-    onSuccess: (_, vars) => {
+    onSuccess: (data, vars) => {
+      /* A line change on a received return re-syncs its stock; a refused re-sync comes back in the body. */
+      reportInBandFailure('Line saved, but the stock was not adjusted', data);
       qc.invalidateQueries({ queryKey: ['delivery-return-detail', vars.id] });
       qc.invalidateQueries({ queryKey: ['delivery-returns'] });
+      void qc.invalidateQueries({ queryKey: ['inventory'] });
     },
     onError: writeFailedAs('Line not added'),
   });
@@ -166,12 +173,15 @@ export const useUpdateDeliveryReturnItem = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, itemId, ...item }: { id: string; itemId: string } & Record<string, unknown>) =>
-      authedFetch<{ ok: boolean }>(`/delivery-returns/${id}/items/${itemId}`, {
+      authedFetch<{ ok: boolean } & InBandFailure>(`/delivery-returns/${id}/items/${itemId}`, {
         method: 'PATCH', body: JSON.stringify(item),
       }),
-    onSuccess: (_, vars) => {
+    onSuccess: (data, vars) => {
+      /* A line change on a received return re-syncs its stock; a refused re-sync comes back in the body. */
+      reportInBandFailure('Line saved, but the stock was not adjusted', data);
       qc.invalidateQueries({ queryKey: ['delivery-return-detail', vars.id] });
       qc.invalidateQueries({ queryKey: ['delivery-returns'] });
+      void qc.invalidateQueries({ queryKey: ['inventory'] });
     },
     onError: writeFailed,
   });
@@ -181,10 +191,13 @@ export const useDeleteDeliveryReturnItem = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, itemId }: { id: string; itemId: string }) =>
-      authedFetch<void>(`/delivery-returns/${id}/items/${itemId}`, { method: 'DELETE' }),
-    onSuccess: (_, vars) => {
+      authedFetch<InBandFailure | undefined>(`/delivery-returns/${id}/items/${itemId}`, { method: 'DELETE' }),
+    onSuccess: (data, vars) => {
+      /* A line change on a received return re-syncs its stock; a refused re-sync comes back in the body. */
+      reportInBandFailure('Line saved, but the stock was not adjusted', data);
       qc.invalidateQueries({ queryKey: ['delivery-return-detail', vars.id] });
       qc.invalidateQueries({ queryKey: ['delivery-returns'] });
+      void qc.invalidateQueries({ queryKey: ['inventory'] });
     },
     onError: writeFailedAs('Line not deleted'),
   });
