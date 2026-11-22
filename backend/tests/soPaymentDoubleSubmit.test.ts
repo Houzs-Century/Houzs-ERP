@@ -23,6 +23,7 @@ import { shiftIsoDay } from '../src/scm/shared/payment-slip-date';
 import { mfgSalesOrders } from '../src/scm/routes/mfg-sales-orders';
 import { salesInvoices } from '../src/scm/routes/sales-invoices';
 import { receipts } from '../src/scm/routes/receipts';
+import { otherDebtors } from '../src/scm/routes/other-debtors';
 import type { Env } from '../src/types';
 import { claimStore } from './lib/idempotency-claim-store';
 
@@ -32,6 +33,7 @@ const TODAY = todayMyt();
 
 const CHART: Row[] = [
   { company_id: CO, account_code: '300-0000', account_name: 'ACCOUNT RECEIVEABLE', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: false },
+  { company_id: CO, account_code: '305-0000', account_name: 'OTHER DEBTORS', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: false },
   { company_id: CO, account_code: '320-0000', account_name: 'CASH IN HAND', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: true },
   { company_id: CO, account_code: '509-0000', account_name: 'DEPOSIT PAY BY CUSTOMER', account_type: 'INCOME', parent_code: null, is_active: true, acc_money: false },
 ];
@@ -42,6 +44,8 @@ function harness(mount: (app: Hono<{ Bindings: Env }>) => void) {
     acc_account_roles: [], acc_bank_letters: [], acc_numbering: [], acc_company_settings: [],
     acc_deposit_invoices: [], acc_official_receipts: [], acc_credit_notes: [], acc_credit_note_lines: [],
     acc_receipts: [], acc_receipt_lines: [],
+    acc_debtors: [{ id: 'deb-1', company_id: CO, name: 'Tan Trading', is_active: true }],
+    acc_debtor_bills: [], acc_debtor_bill_lines: [],
     companies: [{ id: CO, code: 'HOUZS' }],
     customer_credits: [], entity_audit_log: [], journal_entries: [], journal_entry_lines: [],
     mfg_sales_orders: [{
@@ -170,6 +174,20 @@ describe('the same release on the other money-in creates', () => {
     expect(store.rows).toHaveLength(0);
   });
 
+  it('a refused other-debtor bill frees the key, and the corrected bill posts once', async () => {
+    const store = claimStore();
+    const { app, tables } = harness((a) => { a.route('/other-debtors', otherDebtors as never); });
+    const refused = await post(app, store.env, '/other-debtors/deb-1/bills', { lines: [] });
+    expect(refused.status).toBe(400);
+    expect(store.rows).toHaveLength(0);
+    const bill = { lines: [{ description: 'Rental', creditAccountCode: '509-0000', amountSen: 10_000 }] };
+    const first = await post(app, store.env, '/other-debtors/deb-1/bills', bill);
+    const again = await post(app, store.env, '/other-debtors/deb-1/bills', bill);
+    expect(first.status).toBe(201);
+    expect(again.status).toBe(201);
+    expect(tables.acc_debtor_bills).toHaveLength(1);
+  });
+
   /* The mark must be taken back BEFORE the first write, or a failure after a
      write would release a key whose retry books the money a second time. */
   const src = (f: string) => readFileSync(new URL(`../src/scm/routes/${f}`, import.meta.url), 'utf8');
@@ -185,5 +203,6 @@ describe('the same release on the other money-in creates', () => {
     marksBefore('sales-invoices.ts', "salesInvoices.post('/:id/payments', noWriteUntilMarked, postSalesInvoicePaymentHandler)", 'postSalesInvoicePaymentHandler', 'await insertSiPaymentRow(');
     marksBefore('receipts.ts', "receipts.post('/', noWriteUntilMarked, createReceiptHandler)", 'createReceiptHandler', 'await mintMonthlyDocNo(');
     marksBefore('other-debtors.ts', "otherDebtors.post('/:id/receipts', noWriteUntilMarked, createDebtorReceiptHandler)", 'createDebtorReceiptHandler', 'await mintMonthlyDocNo(');
+    marksBefore('other-debtors.ts', "otherDebtors.post('/:id/bills', noWriteUntilMarked, createDebtorBillHandler)", 'createDebtorBillHandler', 'await mintMonthlyDocNo(');
   });
 });

@@ -490,13 +490,14 @@ export const useUpdateDebtor = () => {
 export const useCreateDebtorBill = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ debtorId, ...body }: {
-      debtorId: string; billDate?: string; notes?: string;
+    /* `idempotencyKey`: one per opened form (lib/idempotency.ts), so a double press posts one bill. */
+    mutationFn: ({ debtorId, idempotencyKey, ...body }: {
+      debtorId: string; idempotencyKey: string | null; billDate?: string; notes?: string;
       lines: Array<{ description?: string; creditAccountCode?: string; amountSen: number }>;
       /** 'DN': a debit note to the debtor — a bill of its own kind, series {co}ODN- (2026-10-28). */
       docKind?: 'INV' | 'DN';
     }) => authedFetch<{ ok: boolean; bill: { id?: string; billNumber: string; totalSen: number } }>(
-      `/other-debtors/${debtorId}/bills`, { method: 'POST', body: JSON.stringify(body) },
+      `/other-debtors/${debtorId}/bills`, idempotentInit(idempotencyKey ?? undefined, { method: 'POST', body: JSON.stringify(body) }),
     ),
     onSuccess: () => invalidateDebtors(qc),
   });

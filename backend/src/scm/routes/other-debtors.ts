@@ -384,6 +384,8 @@ export const createDebtorBillHandler = async (c: any): Promise<Response> => {
   const totalSen = lines.reduce((s, l) => s + l.amountSen, 0);
 
   const sb = c.get('supabase');
+  /* Every refusal above only read, so it released the form's Idempotency-Key. */
+  writesFromHere(c);
   const billNumber = await mintMonthlyDocNo(sb, 'acc_debtor_bills', 'bill_number', `${companyDocPrefix(c)}${docKind === 'DN' ? 'ODN' : 'ODB'}-${docMonthTag(billDate)}`);
   const { data: bill, error: insErr } = await sb.from('acc_debtor_bills').insert({
     company_id: coId,
@@ -1027,7 +1029,7 @@ otherDebtors.get('/', listDebtorsHandler);
 otherDebtors.post('/', createDebtorHandler);
 otherDebtors.get('/:id', debtorDetailHandler);
 otherDebtors.patch('/:id', updateDebtorHandler);
-otherDebtors.post('/:id/bills', createDebtorBillHandler);
+otherDebtors.post('/:id/bills', noWriteUntilMarked, createDebtorBillHandler);
 otherDebtors.post('/bills/:billId/cancel', cancelDebtorBillHandler);
 otherDebtors.patch('/bills/:billId', updateDebtorBillHandler);
 otherDebtors.post('/:id/receipts', noWriteUntilMarked, createDebtorReceiptHandler);
