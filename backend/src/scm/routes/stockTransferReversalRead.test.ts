@@ -107,8 +107,10 @@ describe('stock transfer: a cancel whose stock did not come back can be finished
     expect(((await first.json()) as { reversalErrors?: string[] }).reversalErrors?.length).toBe(1);
     expect(sb.tables.stock_transfers[0]!.status).toBe('CANCELLED');
 
-    /* The read works again. The detail offers the finish, and Cancel again moves the stock back. */
+    /* The read works again, a minute later (the cancel's lease has run out). The detail offers the finish, and
+       Cancel again moves the stock back. */
     delete missing.inventory_movements;
+    sb.tables.stock_transfers[0]!.cancelled_at = new Date(Date.now() - 2 * 60_000).toISOString();
     const detail = await app().request('/st-1');
     expect(((await detail.json()) as { stockNotBack?: boolean }).stockNotBack).toBe(true);
     const again = await app().request('/st-1/cancel', { method: 'PATCH' });
@@ -119,5 +121,58 @@ describe('stock transfer: a cancel whose stock did not come back can be finished
     expect(body.reversalErrors).toBeUndefined();
     const after = await app().request('/st-1');
     expect(((await after.json()) as { stockNotBack?: boolean }).stockNotBack).toBe(false);
+  });
+});
+
+/* Symptom: two Finish cancel presses at the same instant could both move the stock back (stock reversed twice).
+   Cause: each read the movements before either wrote, so both saw the stock still out.
+   Fix: a Finish cancel claims the transfer with a compare-and-set on cancelled_at; only one claim matches. */
+describe('stock transfer: only one Finish cancel runs at a time', () => {
+  function cancelledShort(cancelledAt: string) {
+    return Object.assign(fakeSb({
+      stock_transfers: [{
+        id: 'st-1', transfer_no: 'HC-ST-2609-006', status: 'CANCELLED', company_id: 1,
+        from_warehouse_id: 'wh-1', to_warehouse_id: 'wh-2', transfer_date: '2026-09-01',
+        notes: null, posted_at: '2026-09-01T00:00:00Z', cancelled_at: cancelledAt, created_at: '2026-09-01T00:00:00Z', created_by: null,
+      }],
+      stock_transfer_lines: [],
+      inventory_movements: [
+        { id: 'm-out', movement_type: 'OUT', warehouse_id: 'wh-1', item_code: 'SKU-1', variant_key: '', qty: 2, source_doc_type: 'STOCK_TRANSFER', source_doc_id: 'st-1', source_doc_no: 'HC-ST-2609-006', company_id: 1 },
+        { id: 'm-in', movement_type: 'IN', warehouse_id: 'wh-2', item_code: 'SKU-1', variant_key: '', qty: 2, unit_cost_sen: 100, source_doc_type: 'STOCK_TRANSFER', source_doc_id: 'st-1', source_doc_no: 'HC-ST-2609-006', company_id: 1 },
+      ],
+      entity_audit_log: [], app_config: [],
+    }), { rpc: async () => ({ data: true, error: null }) });
+  }
+  const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
+
+  it('two presses at the same instant: one moves the stock back, the other is refused', async () => {
+    sb = cancelledShort(minutesAgo(5));
+    const [a, b] = await Promise.all([
+      app().request('/st-1/cancel', { method: 'PATCH' }),
+      app().request('/st-1/cancel', { method: 'PATCH' }),
+    ]);
+    expect([a.status, b.status].sort()).toEqual([200, 409]);
+    const refused = (a.status === 409 ? a : b);
+    expect(await refused.json()).toMatchObject({ error: 'cancel_in_progress' });
+    expect(sb.tables.inventory_movements).toHaveLength(4);
+    const detail = await app().request('/st-1');
+    expect(((await detail.json()) as { stockNotBack?: boolean }).stockNotBack).toBe(false);
+  });
+
+  it('a press while a cancel stamped under a minute ago may still be running is refused and moves nothing', async () => {
+    sb = cancelledShort(new Date().toISOString());
+    const res = await app().request('/st-1/cancel', { method: 'PATCH' });
+    expect(res.status).toBe(409);
+    expect(sb.tables.inventory_movements).toHaveLength(2);
+  });
+
+  it('a press after the reversal finished claims again and moves nothing more', async () => {
+    sb = cancelledShort(minutesAgo(5));
+    expect((await app().request('/st-1/cancel', { method: 'PATCH' })).status).toBe(200);
+    sb.tables.stock_transfers[0]!.cancelled_at = minutesAgo(2);
+    const again = await app().request('/st-1/cancel', { method: 'PATCH' });
+    expect(again.status).toBe(200);
+    expect(((await again.json()) as { reversal?: { reversed: number } }).reversal?.reversed).toBe(0);
+    expect(sb.tables.inventory_movements).toHaveLength(4);
   });
 });
