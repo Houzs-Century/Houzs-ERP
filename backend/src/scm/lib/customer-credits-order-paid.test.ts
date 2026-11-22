@@ -80,7 +80,7 @@ function world(over: Partial<World> = {}): World {
 const ARGS = { debtorCode: 'CUST-1', debtorName: 'Alice', siId: 'si-1', siNumber: 'HC-SI-2611-001', remainingDueSen: 50_000, createdBy: 'staff-1' };
 
 describe('applyCustomerCreditToSi — the order\'s money settles the invoice first', () => {
-  test('an invoice whose order is already fully paid spends no credit', async () => {
+  test('an invoice whose order collected its whole total spends no credit', async () => {
     const w = world({ orderPaymentsSen: [20_000, 30_000] });
     const res = await applyCustomerCreditToSi(fakeSb(w), ARGS);
     expect(res).toEqual({ applied: 0, reason: 'settled_by_order' });
