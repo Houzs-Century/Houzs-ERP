@@ -69,6 +69,7 @@ if (canonicalTarget) window.location.replace(canonicalTarget);
 const LeaveGuardBridge = lazy(() => import("./components/LeaveGuardBridge").then((m) => ({ default: m.LeaveGuardBridge })));
 const SurveyPublic = lazy(() => import("./pages/SurveyPublic").then((m) => ({ default: m.SurveyPublic })));
 const PortalApp = lazy(() => import("./portal/PortalApp").then((m) => ({ default: m.PortalApp })));
+const MeetingBook = lazy(() => import("./pages/MeetingBook").then((m) => ({ default: m.MeetingBook })));
 const PublicDoScan = lazy(() => import("./pages/PublicDoScan").then((m) => ({ default: m.PublicDoScan })));
 const PublicDoScanBasket = lazy(() => import("./pages/PublicDoScanBasket").then((m) => ({ default: m.PublicDoScanBasketPage })));
 const ResetPassword = lazy(() => import("./pages/ResetPassword").then((m) => ({ default: m.ResetPassword })));
@@ -221,6 +222,14 @@ function RootApp() {
     return (
       <LazySlot resetKey={`public:${surface}`} fallback={<PublicFallback />}>
         <ContractorCalendar />
+      </LazySlot>
+    );
+  }
+  if (surface === "book") {
+    /* A meeting-room booking link: the guest has no account, so it is outside AuthGate like /c/. */
+    return (
+      <LazySlot resetKey={`public:${surface}`} fallback={<PublicFallback />}>
+        <MeetingBook />
       </LazySlot>
     );
   }

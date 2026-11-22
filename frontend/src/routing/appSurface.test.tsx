@@ -36,6 +36,8 @@ describe("app surface routing", () => {
     ["/reset/token", "reset"],
     ["/invite/token", "invite"],
     ["/privacy", "privacy"],
+    /* A meeting-room booking link: a guest with no account, so outside the staff tree. */
+    ["/book/hc-0123456789", "book"],
     ["/", "staff"],
     ["/scm/sales-orders", "staff"],
     /* /d alone is NOT the scan surface — only /d/<something>. A bare /d would

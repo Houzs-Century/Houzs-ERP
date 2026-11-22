@@ -65,6 +65,7 @@ import {
   MapPinned,
   Megaphone,
   LifeBuoy,
+  CalendarDays,
   History,
   CalendarOff,
   type LucideIcon, Landmark, CreditCard, Banknote, Receipt, Server, Sparkles, ScanLine, ListChecks } from "lucide-react";
@@ -1082,6 +1083,14 @@ export const NAV_TABS: NavTab[] = [
   // session — backend routes/itSupport.ts), so a permission here would only be
   // a way to lock someone out of asking for help. The row is dropped at render
   // where this environment is not connected to the IT Hub (see visibleTabs).
+  // No gate: every signed-in user books meeting rooms and sees the shared calendar
+  // (backend routes/meetings.ts). Dropped with IT Support where the IT Hub is not connected.
+  {
+    section: "system",
+    to: "/meetings",
+    label: "Meetings",
+    icon: CalendarDays,
+  },
   {
     section: "system",
     to: "/it-support",

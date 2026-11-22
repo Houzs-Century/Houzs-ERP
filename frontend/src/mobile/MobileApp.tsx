@@ -83,6 +83,7 @@ const MobileAutoCountSync = lazy(() => import("./MobileAutoCountSync").then((m) 
 const MobileVenturePortalFeed = lazy(() => import("./MobileVenturePortalFeed").then((m) => ({ default: m.MobileVenturePortalFeed })));
 const MobileChangeLog = lazy(() => import("./MobileChangeLog").then((m) => ({ default: m.MobileChangeLog })));
 const MobileItSupport = lazy(() => import("./MobileItSupport").then((m) => ({ default: m.MobileItSupport })));
+const MobileMeetings = lazy(() => import("./MobileMeetings").then((m) => ({ default: m.MobileMeetings })));
 // SO Maintenance is the SAME desktop page (/scm/sales-orders/maintenance) — the
 // director-only State→Warehouse / Localities / SO-dropdown CRUD surface. Mobile
 // has no route table, so the vendored desktop page is mounted directly inside
@@ -169,6 +170,7 @@ type Screen =
   | { t: "announcements" }
   | { t: "inbox" }
   | { t: "it-support" }
+  | { t: "meetings" }
   /* A real mobile destination this user's position may not open. Reached only
      by URL — the menu never renders a row the user can't use. */
   | { t: "locked"; label: string }
@@ -200,6 +202,7 @@ export function destinationScreen(to: string, label: string): DestinationTarget 
   if (path === "/mail-center") return { t: "mail" };
   if (path === "/announcements") return { t: "announcements" };
   if (path === "/it-support") return { t: "it-support" };
+  if (path === "/meetings") return { t: "meetings" };
   if (path === "/activity-inbox") return { t: "inbox" };
   if (path === "/roles") return { t: "roles" };
   if (path === "/titles") return { t: "titles" };
@@ -540,6 +543,8 @@ export const PROFILE_ORG_ITEMS: MobileMenuItem[] = [
      also dropped where this environment is not connected to the IT Hub, as on
      desktop; the screen stays reachable by its URL and says so itself. */
   { to: "/it-support", label: "IT Support" },
+  /* Meetings: every signed-in user (rooms are shared); dropped with IT Support where the IT Hub is not connected. */
+  { to: "/meetings", label: "Meetings" },
   /* Team destinations follow the desktop redesign's NAV_TABS rows
      (?tab=directory / ?tab=departments2) so each mobile row keeps its exact
      query-bearing gate; the screens themselves stay the classic mobile
@@ -1106,6 +1111,7 @@ function MobileAppInner() {
   else if (screen.t === "titles") overlay = can("users.read") ? <MobileTitles onBack={back} /> : <TabLocked title="Titles" />;
   else if (screen.t === "announcements") overlay = <MobileAnnouncements onBack={back} />;
   else if (screen.t === "it-support") overlay = <MobileItSupport onBack={back} />;
+  else if (screen.t === "meetings") overlay = <MobileMeetings onBack={back} />;
   else if (screen.t === "inbox") overlay = <MobileInbox onBack={back} onOpen={(n) => { const doc = (n as { doc_no?: string }).doc_no; if (doc) setScreen({ t: "so-detail", docNo: doc }); }} />;
   else if (screen.t === "locked") overlay = <UrlLocked label={screen.label} onHome={leaveUrlDeadEnd} />;
   else if (screen.t === "desktop-only") overlay = <DesktopOnly path={screen.path} onHome={leaveUrlDeadEnd} />;

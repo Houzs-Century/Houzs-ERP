@@ -50,6 +50,7 @@ One line per open item: what — waiting on — since. Delete the line when it i
 - Old service cases have no Postcode / City / State of their own yet (new table `assr_case_address`, empty at migration; readers fall back to the linked SO as before). Run `backfill-assr-case-address.mjs` on production through "Run a backend script on production": plan first, read the refusals, then apply — owner — 2026-11-17
 
 ## Waiting on others
+- Meetings email and WhatsApp: invitations and reminders reach people only as ERP notifications until Gmail (Google setup for the company mailboxes) and Houzs Connect WhatsApp templates are connected; then add per-ERP sending and Meet/Zoom link creation — Google admin — 2026-11-23
 - PR #5448 (service case Operation Dept): staging already ran its `20261110T1300` / `T1400` files; if they merge under new numbers, add the two old names to `backend/scripts/lib/migration-retirements.mjs` — Laphii1206 — 2026-11-11
 - Accountant: start date for the customer receipt (OR) write-back — 2026-09-14
 - Office: Remark 2 run in AutoCount for receipts after 2026-09-10 18:25 — 2026-09-15
