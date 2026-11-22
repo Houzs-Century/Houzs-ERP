@@ -270,7 +270,7 @@ import {
 import { ATTRIBUTE_OTHER_REFUSAL, SO_IDENTITY_LOCK_COLS, changedIdentityLockCols, salespersonReattributed } from '../shared/so-identity-lock';
 import { SO_EDIT_AFTER_DO_PERMISSION, SO_EDIT_PRICE_AFTER_DO_PERMISSION, SO_EDIT_LINES_AFTER_DO_PERMISSION, SO_AFTER_DO_CUSTOMER_COLS, AFTER_DO_INVOICED, AFTER_DO_PRICE_FORBIDDEN, AFTER_DO_PRICE_NOT_DELIVERED, AFTER_DO_LINES_FORBIDDEN, afterDoPriceReturnedRefusal, AFTER_DO_SERVICE_ONLY, afterDoBlockedCols, afterDoFieldsRefusal, afterDoHeaderRefusal, afterDoTargetLockedRefusal, pickAfterDoTarget, type AfterDoTarget } from '../shared/so-after-do-edit';
 import { openAfterDo, readAfterDoTargets, catalogSaysService, copyCustomerDetailsToDos, addChargeLineToDo, readDoLinesOfSoLine, copyChargeLineToDo, copyLinePriceToDos, copyLinePriceToInvoices, type DoLineOfSoLine } from '../lib/so-after-do';
-import { openProductLineAfterDo, afterDoQtyChangeAllowed, propagateLineEditAfterDo, AFTER_DO_LINE_NOT_SETTLED, type AfterDoLineDeps, type OpenProductLineOk } from '../lib/so-after-do-lines';
+import { openProductLineAfterDo, openProductLineRemove, afterDoQtyChangeAllowed, propagateLineEditAfterDo, propagateLineRemoveAfterDo, AFTER_DO_LINE_NOT_SETTLED, type AfterDoLineDeps, type OpenProductLineOk } from '../lib/so-after-do-lines';
 /* Variants-vocabulary unification (port of 2990 73aeeb1e, 2026-06-26):
    POS-handover sofa lines speak `depth`/`sofaLegHeight`/`fabricColor`, Backend
    editors read `seatHeight`/`legHeight`/`fabricCode`. canonicalizeVariants
@@ -8522,7 +8522,15 @@ mfgSalesOrders.delete('/:docNo/items/:itemId', async (c) => {
 
   /* A line a live DO / SI carries cannot be deleted; its siblings can (owner 2026-09-15, shared/so-line-freeze.ts). */
   const lineLock = soLineWriteRefusal(await readSoLineFreeze(sb, docNo), [itemId]);
-  if (lineLock) return c.json(lineLock, 409);
+  /* Owner 2026-11-22 — a super admin may REMOVE a frozen PRODUCT line a DO carries (lib/so-after-do-lines.ts); a charge line is the fee path below. */
+  let afterDoRemove: (OpenProductLineOk & { companyId: number }) | null = null;
+  if (lineLock && lineLock.error === 'so_line_frozen' && hasHouzsPerm(c, SO_EDIT_LINES_AFTER_DO_PERMISSION)) {
+    const co = requireActiveCompanyId(c); if (!co.ok) return c.json(co.refusal, 409);
+    const g = await openProductLineRemove(sb, docNo, itemId, co.companyId, AFTER_DO_LINES_FORBIDDEN);
+    if (!g.ok) return c.json(g.body, g.status);
+    if (!g.skip) afterDoRemove = { target: g.target, doLine: g.doLine, siLines: g.siLines, siQtyOnDoLine: g.siQtyOnDoLine, companyId: co.companyId };
+  }
+  if (lineLock && !afterDoRemove) return c.json(lineLock, 409);
 
   /* TBC fill-in (Loo 2026-06-11) — self-scoped selling roles only touch
      their own SO. */
@@ -8546,10 +8554,10 @@ mfgSalesOrders.delete('/:docNo/items/:itemId', async (c) => {
     if (l) superAdminFeeWrite = isServiceLine({ itemGroup: l.item_group ?? null, itemCode: l.item_code ?? null });
   }
 
-  /* Owner 2026-06-12 — processing-date lock: no line DELETE once the
-     processing day has passed (the locked order is already PO'd). The
-     super-admin fee-line removal above is past it (the charge carries no PO). */
-  if (!superAdminFeeWrite) {
+  /* Owner 2026-06-12 — processing-date lock: no line DELETE once the processing
+     day has passed. The super-admin fee / product removals are past it (the
+     charge carries no PO; the product line already shipped). */
+  if (!superAdminFeeWrite && !afterDoRemove) {
     const procLock = await soProcessingLockBlocked(sb, docNo);
     if (procLock) return c.json(procLock, 409);
   }
@@ -8582,6 +8590,14 @@ mfgSalesOrders.delete('/:docNo/items/:itemId', async (c) => {
   /* Deleting the only transport fee line of a Sabah & co. order takes the fee off. */
   const feeRefusal = await transportFeeEditRefusal(c, sb, docNo, { kind: 'line', itemId, after: null });
   if (feeRefusal) return feeRefusal;
+
+  /* Super-admin product-line removal — invoice + DO lines go (stock returns) BEFORE the SO line; a refusal leaves the SO line untouched. */
+  if (afterDoRemove) {
+    const deps: AfterDoLineDeps = { resyncInventoryForDo, restampDoActualCost, performedBy: user?.id ?? '' };
+    const who = { companyId: afterDoRemove.companyId, actor: c.get('houzsUser') ?? null, soDocNo: docNo };
+    const r = await propagateLineRemoveAfterDo(sb, who, { doLine: afterDoRemove.doLine, target: afterDoRemove.target, siLines: afterDoRemove.siLines, deps });
+    if (!r.ok) return c.json(r.body, r.status);
+  }
 
   const { error } = await scopeSoItemToDocument(
     sb.from('mfg_sales_order_items').delete(),

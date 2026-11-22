@@ -22,8 +22,8 @@ vi.mock("../../vendor/scm/lib/sales-order-queries", async (orig) => ({
 }));
 vi.mock("../../vendor/scm/components/SoLineCard", async (orig) => ({
   ...(await orig<typeof import("../../vendor/scm/components/SoLineCard")>()),
-  SoLineCard: (p: { itemId?: string; isEditing?: boolean; chargeOnly?: boolean }) => (
-    <div data-testid={`card-${p.itemId ?? "new"}`} data-editing={String(p.isEditing)} data-charge={String(!!p.chargeOnly)} />
+  SoLineCard: (p: { itemId?: string; isEditing?: boolean; chargeOnly?: boolean; canRemove?: boolean }) => (
+    <div data-testid={`card-${p.itemId ?? "new"}`} data-editing={String(p.isEditing)} data-charge={String(!!p.chargeOnly)} data-removable={String(!!p.canRemove)} />
   ),
 }));
 vi.mock("../../hooks/useBreadcrumbs", () => ({ useSetBreadcrumbs: () => undefined }));
@@ -107,6 +107,7 @@ describe("with the super-admin lines permission", () => {
     const c = bedCard()!;
     expect(c.getAttribute("data-editing")).toBe("true");
     expect(c.getAttribute("data-charge")).toBe("false");
+    expect(c.getAttribute("data-removable")).toBe("true"); // super admin can also remove the delivered product line
   });
 
   it("still editable when the DO already has an invoice — the invoice follows", () => {
@@ -125,5 +126,6 @@ describe("without the permission", () => {
     perms.lines = false;
     mount();
     expect(bedCard()!.getAttribute("data-editing")).toBe("false");
+    expect(bedCard()!.getAttribute("data-removable")).toBe("false");
   });
 });
