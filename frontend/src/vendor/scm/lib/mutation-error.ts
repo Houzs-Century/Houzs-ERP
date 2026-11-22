@@ -78,6 +78,8 @@ export type InBandFailure = {
   reversalErrors?: string[] | null;
   /** GRN post: the receipt and its stock stand, the PO's received qty was not recounted (grns.ts postGrnAndRollup). */
   recountError?: string | null;
+  /** SO create: the order and its lines are in, a payment it was handed was not recorded (mfg-sales-orders.ts). */
+  paymentErrors?: string[] | null;
 };
 
 /**
@@ -103,6 +105,12 @@ export const inBandFailureText = (res: InBandFailure | undefined | void): string
     parts.push(
       `The purchase order's received quantity was NOT updated (${res.recountError}). ` +
       'The receipt is saved, but the PO may still show these goods as outstanding — tell IT so it can be recounted.',
+    );
+  }
+  if (res?.paymentErrors?.length) {
+    parts.push(
+      `${res.paymentErrors.join('\n')}\n\n` +
+      'The order is saved. Do not create it again - add the payment on the order instead.',
     );
   }
   return parts.length ? parts.join('\n\n') : null;

@@ -66,4 +66,22 @@ describe('GET /product-models — sku_count', () => {
     const out = ((await (await app.request('/product-models')).json()) as { models: Array<{ sku_count: number; active_sku_count: number }> }).models;
     expect(out[0]).toMatchObject({ sku_count: 4, active_sku_count: 0 });
   });
+
+  /* The Model list itself was one unpaged read: past 1,000 Models the supplier "Pick Model" list silently lost
+     every Model sorting after the first 1,000 (Conts #1118). */
+  test('every Model comes back when there are more than 1000', async () => {
+    const models: Row[] = [];
+    for (let i = 0; i < 1200; i++) models.push({ id: `m${i}`, company_id: 1, model_code: `M${String(i).padStart(4, '0')}`, name: `M${i}`, category: 'SOFA' });
+    const app = new Hono();
+    app.use('*', async (c, next) => {
+      c.set('supabase' as never, { from: (t: string) => new Q(t === 'product_models' ? models : []) } as never);
+      c.set('companyId' as never, 1 as never);
+      c.set('allowedCompanyIds' as never, [1] as never);
+      await next();
+    });
+    app.get('/product-models', listProductModelsHandler as never);
+    const out = ((await (await app.request('/product-models')).json()) as { models: Array<{ id: string }> }).models;
+    expect(out).toHaveLength(1200);
+    expect(out.some((m) => m.id === 'm1199')).toBe(true);
+  });
 });

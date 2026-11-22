@@ -590,6 +590,12 @@ export const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, inline = f
      button stays off between the steps too, where `create.isPending` alone had
      already turned back to false while the pages were still uploading. */
   const [saving, setSaving] = useState(false);
+  /* The note this form already created. When the post after it fails, the form stays open on a saved draft; the
+     next Save must update that draft (and post it), never send the create again - a replay attaches the scanned
+     pages twice, and a create with any field changed is refused as a reused key. */
+  const [createdId, setCreatedId] = useState<string | null>(null);
+  const locked = mode === 'edit' || createdId != null;
+  const savedId = mode === 'edit' ? id : createdId ?? undefined;
   const leaves = useMemo(() => leafAccounts(accountsQ.data?.accounts ?? []), [accountsQ.data]);
   const totalSen = v.lines.reduce((s, l) => { const p = lineSen(l); return s + (p.ok ? p.sen : 0); }, 0);
   const badAmount = amountProblem(v.lines);
@@ -626,20 +632,21 @@ export const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, inline = f
     setSaving(true);
     try {
       const body = bodyOf(v);
-      let noteId = id ?? '';
+      let noteId = id ?? createdId ?? '';
       let number: string | null = null;
-      if (mode === 'new') {
+      if (mode === 'new' && !createdId) {
         const r = await create.mutateAsync({ ...body, idempotencyKey: idemKey });
         noteId = r.note.id;
         number = r.note.note_number;
+        setCreatedId(noteId);
         /* The scanned pages go with the note they became. */
         for (const f of scanFiles ?? []) {
           try {
             await uploadFile.mutateAsync({ noteId, file: { name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) } });
           } catch (e) { setAttachError(`${f.name} did not attach — ${errText(e)}`); }
         }
-      } else if (id) {
-        await update.mutateAsync({ id, noteDate: body.noteDate, reason: body.reason, sourceDocNo: body.sourceDocNo, lines: body.lines, ...(body.allocations ? { allocations: body.allocations } : {}) });
+      } else if (noteId) {
+        await update.mutateAsync({ id: noteId, noteDate: body.noteDate, reason: body.reason, sourceDocNo: body.sourceDocNo, lines: body.lines, ...(body.allocations ? { allocations: body.allocations } : {}) });
       }
       if (postAfter && noteId) await post.mutateAsync(noteId);
       onSaved(noteId, { number, posted: postAfter });
@@ -661,23 +668,23 @@ export const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, inline = f
           {!inline && (
             <Field label="Kind">
               {/* Switching kind drops the ticks — they were another party's documents. */}
-              <select value={v.kind} onChange={(e) => setV({ ...v, kind: e.target.value as NoteKind, knockOff: {} })} disabled={mode === 'edit'} aria-label="Kind" style={input}>
+              <select value={v.kind} onChange={(e) => setV({ ...v, kind: e.target.value as NoteKind, knockOff: {} })} disabled={locked} aria-label="Kind" style={input}>
                 {(kinds.includes(v.kind) ? kinds : [v.kind, ...kinds]).map((k) => <option key={k} value={k}>{KIND_OPTION[k]}</option>)}
               </select>
             </Field>
           )}
           <Field label="Date"><DateField value={v.noteDate} onChange={(d) => setV({ ...v, noteDate: d })} aria-label="Note date" /></Field>
           {v.kind === 'SCN' ? (
-            <SupplierField value={v.supplierId} disabled={mode === 'edit'} onChange={(s) => setV({ ...v, supplierId: s, knockOff: s === v.supplierId ? v.knockOff : {} })} />
+            <SupplierField value={v.supplierId} disabled={locked} onChange={(s) => setV({ ...v, supplierId: s, knockOff: s === v.supplierId ? v.knockOff : {} })} />
           ) : v.kind === 'OCN' ? (
-            <DebtorField value={v.debtorId ?? ''} disabled={mode === 'edit'} onChange={(d) => setV({ ...v, debtorId: d, knockOff: d === v.debtorId ? v.knockOff : {} })} />
+            <DebtorField value={v.debtorId ?? ''} disabled={locked} onChange={(d) => setV({ ...v, debtorId: d, knockOff: d === v.debtorId ? v.knockOff : {} })} />
           ) : (
             <>
               <Field label="Sales order (the customer comes from it)">
-                <input value={v.soDocNo} onChange={(e) => setV({ ...v, soDocNo: e.target.value, knockOff: {} })} placeholder="2990-SO-2607-019" aria-label="Sales order" style={input} disabled={mode === 'edit' || fromReturn} />
+                <input value={v.soDocNo} onChange={(e) => setV({ ...v, soDocNo: e.target.value, knockOff: {} })} placeholder="2990-SO-2607-019" aria-label="Sales order" style={input} disabled={locked || fromReturn} />
               </Field>
               <Field label="or customer name">
-                <input data-upper value={v.partyName} onChange={(e) => setV({ ...v, partyName: e.target.value, knockOff: {} })} placeholder="when there is no order" aria-label="Customer name" style={input} disabled={mode === 'edit' || fromReturn || v.soDocNo.trim() !== ''} />
+                <input data-upper value={v.partyName} onChange={(e) => setV({ ...v, partyName: e.target.value, knockOff: {} })} placeholder="when there is no order" aria-label="Customer name" style={input} disabled={locked || fromReturn || v.soDocNo.trim() !== ''} />
               </Field>
             </>
           )}
@@ -735,13 +742,13 @@ export const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, inline = f
         {badAmount && <div role="alert" style={{ color: danger, fontSize: 'var(--fs-13)' }}>{badAmount}</div>}
 
         {knocksOff(v.kind) && (
-          <FormKnockOff who={whoOf(v.kind)} partyId={partyId} noteId={mode === 'edit' ? id : undefined} totalSen={totalSen}
+          <FormKnockOff who={whoOf(v.kind)} partyId={partyId} noteId={savedId} totalSen={totalSen}
             pick={v.knockOff ?? {}} onChange={(knockOff) => setV((p) => ({ ...p, knockOff }))} />
         )}
         {/* A customer's credit knocks off the customer's sales invoices — the sales order's customer, else the name. */}
         {v.kind === 'CN' && (
           <FormKnockOff who="customer" partyId={v.soDocNo.trim() || v.partyName.trim()} by={v.soDocNo.trim() ? 'so' : 'name'}
-            partyName={v.soDocNo.trim() && mode !== 'edit' ? null : v.partyName} noteId={mode === 'edit' ? id : undefined} totalSen={totalSen}
+            partyName={v.soDocNo.trim() && mode !== 'edit' ? null : v.partyName} noteId={savedId} totalSen={totalSen}
             pick={v.knockOff ?? {}} onChange={(knockOff) => setV((p) => ({ ...p, knockOff }))} />
         )}
         {v.kind === 'OCN' && !accountsNamed && <div style={soft}>Pick an account on every line — an other debtor's credit note has no default account.</div>}
@@ -754,6 +761,7 @@ export const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, inline = f
         </div>
         {failed != null && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>{errText(failed)}</div>}
         {attachError && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>{attachError}</div>}
+        {createdId && mode === 'new' && <div style={{ fontSize: 'var(--fs-13)' }}>The note is saved as a draft. Saving again updates that draft - no second note is made.</div>}
       </div>
   );
   if (inline) return body;

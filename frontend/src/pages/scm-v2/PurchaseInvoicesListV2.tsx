@@ -761,7 +761,10 @@ export function PurchaseInvoicesListV2() {
     status !== "all" || view !== "table" || search.trim().length > 0;
 
   const onPullToRefresh = async () => {
-    await queryClient.invalidateQueries({ queryKey: ["purchase-invoices"] });
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["purchase-invoices"] }),
+      queryClient.invalidateQueries({ queryKey: ["purchase-invoices-paged"] }),
+    ]);
   };
 
   /* The ONE Export (owner 2026-09-15): every invoice the list's tab + search +

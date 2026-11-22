@@ -1,19 +1,36 @@
-/* HR · Attendance (step-2 re-skin). Today's status as four cards, then the
- * whole month as a grid (sticky employee column + day header), built from the
+/* HR · Attendance (v3 design). Today's status as four cards, then the whole
+ * month as a grid (sticky employee column + day header), built from the
  * working-hours range read (present / late / absent / leave / rest per day) and
  * the attendance day read for today. Lateness comes from each day's lateMin on
- * the working-hours read, shown in today's cards and marked in the month grid. */
+ * the working-hours read, shown in today's cards and marked in the month grid.
+ * "Record attendance" and clicking a day open a form to set / correct that day
+ * (status + clock-in / out); Export downloads the month grid as CSV. */
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { HrPageHeader } from "./HrPageHeader";
+import { api } from "../../api/client";
+import { useToast } from "../../hooks/useToast";
+import { DateField } from "../../vendor/scm/components/DateField";
+import { errText, inputCls, ghostBtn, primaryBtn } from "../pos-admin/posAdminUi";
+import { HrPageHeader, hrPrimaryBtn, hrSecondaryBtn } from "./HrPageHeader";
 import { avatarColor, initials } from "./hrAvatar";
 import { punchOf, type PunchState } from "./attendanceToday";
-import { useAttendance, useWorkingHours, type WorkDay } from "./hrApi";
+import { HR, useAttendance, useWorkingHours, type WorkDay } from "./hrApi";
 import { todayMY } from "../../vendor/shared/format";
 
 const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(" ");
 const WD = ["S", "M", "T", "W", "T", "F", "S"];
 const pad2 = (n: number) => String(n).padStart(2, "0");
+
+const STATUSES: { value: string; label: string }[] = [
+  { value: "PRESENT", label: "Present" },
+  { value: "HALF_DAY", label: "Half day" },
+  { value: "ABSENT", label: "Absent" },
+  { value: "ANNUAL_LEAVE", label: "Annual leave" },
+  { value: "MEDICAL_LEAVE", label: "Medical leave" },
+  { value: "UNPAID_LEAVE", label: "Unpaid leave" },
+  { value: "REST_DAY", label: "Rest day" },
+];
+const hasTimes = (s: string) => s === "PRESENT" || s === "HALF_DAY";
 
 function monthBounds(month: string): { y: number; m: number; days: number } {
   const [y, m] = month.split("-").map(Number);
@@ -58,6 +75,8 @@ function Avatar({ name, size = 24 }: { name: string; size?: number }) {
   return <span className={cx("inline-flex shrink-0 items-center justify-center rounded-full font-semibold text-white", avatarColor(name))} style={{ width: size, height: size, fontSize: size * 0.38 }} title={name}>{initials(name)}</span>;
 }
 
+type EditInit = { employeeId: number | null; date: string; status: string; clockIn: string; clockOut: string };
+
 export function AttendancePage() {
   const today = todayMY().slice(0, 10);
   const [params, setParams] = useSearchParams();
@@ -70,6 +89,9 @@ export function AttendancePage() {
   const to = last < today ? last : today;
   const grid = useWorkingHours(first, to < first ? first : to);
   const att = useAttendance(today);
+  const [edit, setEdit] = useState<EditInit | null>(null);
+
+  const canManage = grid.data?.canManage ?? false;
 
   // Today's four status cards, from the attendance day read.
   const todayRows = useMemo(() => (att.data?.rows ?? []).map((r) => ({ name: r.employee.name, state: punchOf(r.day).state })), [att.data]);
@@ -85,6 +107,7 @@ export function AttendancePage() {
   const isCurrentMonth = month === today.slice(0, 7);
   const todayDay = Number(today.slice(8, 10));
   const dayList = Array.from({ length: days }, (_, i) => i + 1);
+  const isWeekend = (day: number) => { const dow = new Date(Date.UTC(y, m - 1, day)).getUTCDay(); return dow === 0 || dow === 6; };
 
   const totalsOf = (empId: number) => {
     let pres = 0, late = 0, abs = 0, lv = 0;
@@ -98,9 +121,43 @@ export function AttendancePage() {
     return { pres, late, abs, lv };
   };
 
+  const openCell = (empId: number, d: number) => {
+    const date = `${month}-${pad2(d)}`;
+    const wd = byDay.get(`${empId}-${date}`);
+    setEdit({ employeeId: empId, date, status: wd?.status ?? "PRESENT", clockIn: wd?.clockIn ?? "", clockOut: wd?.clockOut ?? "" });
+  };
+
+  const exportCsv = () => {
+    const head = ["Emp No", "Employee", ...dayList.map((d) => String(d))].join(",");
+    const lines = employees.map((e) => {
+      const cells = dayList.map((d) => {
+        const future = isCurrentMonth && d > todayDay;
+        const c = cellOf(byDay.get(`${e.id}-${month}-${pad2(d)}`), future);
+        return c === "present" ? "P" : c === "late" ? "L" : c === "absent" ? "A" : c === "leave" ? "V" : c === "rest" ? "R" : "";
+      });
+      return [e.empNo, `"${e.name}"`, ...cells].join(",");
+    });
+    const blob = new Blob([[head, ...lines].join("\n")], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `attendance-${month}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <>
-      <HrPageHeader title="Attendance" subtitle="Today at the top, the whole month below" />
+      <HrPageHeader
+        title="Attendance"
+        subtitle="Today at the top, the whole month below"
+        actions={
+          <span className="flex gap-2">
+            <button type="button" className={hrSecondaryBtn} onClick={exportCsv} disabled={!grid.data}>Export</button>
+            {canManage && <button type="button" className={hrPrimaryBtn} onClick={() => setEdit({ employeeId: null, date: today, status: "PRESENT", clockIn: "", clockOut: "" })}>Record attendance</button>}
+          </span>
+        }
+      />
       <div className="flex min-h-0 flex-1 flex-col gap-3 px-6 py-4">
         {/* today's status cards */}
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -145,7 +202,7 @@ export function AttendancePage() {
                     {dayList.map((d) => {
                       const isToday = isCurrentMonth && d === todayDay;
                       return (
-                        <th key={d} className={cx("sticky top-0 z-20 min-w-[26px] border-b border-border-subtle px-0 py-1 text-center font-semibold", isToday ? "bg-primary-soft" : "bg-surface")}>
+                        <th key={d} className={cx("sticky top-0 z-20 min-w-[26px] border-b border-border-subtle px-0 py-1 text-center font-semibold", isToday ? "bg-primary-soft" : isWeekend(d) ? "bg-surface-dim" : "bg-surface")}>
                           <div className="text-[9px] text-ink-muted">{weekdayLetter(y, m, d)}</div>
                           <div className={cx("text-[10px]", isToday ? "text-primary-ink" : "text-ink-secondary")}>{d}</div>
                         </th>
@@ -170,9 +227,14 @@ export function AttendancePage() {
                           const isToday = isCurrentMonth && d === todayDay;
                           const c = cellOf(byDay.get(`${e.id}-${month}-${pad2(d)}`), future);
                           const s = CELL[c];
+                          const editable = canManage && !future;
                           return (
-                            <td key={d} className={cx("border-b border-r border-border-subtle p-0.5 text-center", isToday && "bg-primary-soft/30")}>
-                              <div className={cx("mx-auto flex h-6 w-6 items-center justify-center rounded text-[9px] font-bold", s.bg, s.color)}>{s.letter}</div>
+                            <td key={d} className={cx("border-b border-r border-border-subtle p-0.5 text-center", isToday ? "bg-primary-soft/30" : isWeekend(d) && "bg-surface-dim/50")}>
+                              {editable ? (
+                                <button type="button" onClick={() => openCell(e.id, d)} aria-label={`${e.name} ${month}-${pad2(d)}`} className={cx("mx-auto flex h-6 w-6 items-center justify-center rounded text-[9px] font-bold hover:ring-1 hover:ring-primary", s.bg, s.color)}>{s.letter}</button>
+                              ) : (
+                                <div className={cx("mx-auto flex h-6 w-6 items-center justify-center rounded text-[9px] font-bold", s.bg, s.color)}>{s.letter}</div>
+                              )}
                             </td>
                           );
                         })}
@@ -190,10 +252,82 @@ export function AttendancePage() {
           </div>
         </div>
       </div>
+      {edit && grid.data && (
+        <RecordModal
+          employees={grid.data.employees.map((e) => ({ id: e.id, empNo: e.empNo, name: e.name }))}
+          init={edit}
+          maxDate={today}
+          onClose={() => setEdit(null)}
+          onSaved={() => { setEdit(null); grid.reload(); att.reload(); }}
+        />
+      )}
     </>
   );
 }
 
 function Legend({ bg, label }: { bg: string; label: string }) {
   return <span className="flex items-center gap-1"><span className={cx("h-3 w-3 rounded-sm border border-border-subtle", bg)} />{label}</span>;
+}
+
+function RecordModal({ employees, init, maxDate, onClose, onSaved }: { employees: { id: number; empNo: string; name: string }[]; init: EditInit; maxDate: string; onClose: () => void; onSaved: () => void }) {
+  const toast = useToast();
+  const [employeeId, setEmployeeId] = useState<number | null>(init.employeeId);
+  const [date, setDate] = useState(init.date);
+  const [status, setStatus] = useState(init.status);
+  const [clockIn, setClockIn] = useState(init.clockIn);
+  const [clockOut, setClockOut] = useState(init.clockOut);
+  const [notes, setNotes] = useState("");
+  const [busy, setBusy] = useState(false);
+  const lbl = "mb-1 block text-[10px] font-semibold uppercase tracking-wide text-ink-muted";
+
+  async function save() {
+    if (employeeId == null) { toast.error("Pick the employee."); return; }
+    if (hasTimes(status) && status === "PRESENT" && !clockIn) { toast.error("Present needs a clock-in time."); return; }
+    setBusy(true);
+    try {
+      await api.put(`${HR}/attendance`, { employeeId, date, status, clockIn: hasTimes(status) ? clockIn : "", clockOut: hasTimes(status) ? clockOut : "", notes });
+      toast.success("Attendance saved");
+      onSaved();
+    } catch (e) {
+      toast.error(errText(e, "Could not save the attendance."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-ink/40 p-4" onMouseDown={onClose}>
+      <div className="my-10 w-full max-w-[440px] rounded-2xl bg-surface shadow-[0_24px_64px_-16px_rgba(17,20,15,.35)]" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="border-b border-border-subtle px-5 py-3">
+          <h3 className="text-[15px] font-bold text-ink">Record attendance</h3>
+          <p className="text-[11.5px] text-ink-muted">Set or correct a day. A time you change becomes a manual correction.</p>
+        </div>
+        <div className="flex flex-col gap-3 px-5 py-4">
+          <label className="block"><span className={lbl}>Employee</span>
+            <select className={inputCls} value={employeeId ?? ""} disabled={init.employeeId != null} onChange={(e) => setEmployeeId(e.target.value ? Number(e.target.value) : null)}>
+              <option value="">--</option>
+              {employees.map((e) => <option key={e.id} value={e.id}>{e.empNo} {e.name}</option>)}
+            </select>
+          </label>
+          <label className="block"><span className={lbl}>Day</span><DateField fullWidth value={date} max={maxDate} onChange={(iso) => iso && setDate(iso)} aria-label="Day" /></label>
+          <label className="block"><span className={lbl}>Status</span>
+            <select className={inputCls} value={status} onChange={(e) => setStatus(e.target.value)}>
+              {STATUSES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+            </select>
+          </label>
+          {hasTimes(status) && (
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block"><span className={lbl}>Clock in</span><input type="time" className={inputCls} value={clockIn} onChange={(e) => setClockIn(e.target.value)} /></label>
+              <label className="block"><span className={lbl}>Clock out</span><input type="time" className={inputCls} value={clockOut} onChange={(e) => setClockOut(e.target.value)} /></label>
+            </div>
+          )}
+          <label className="block"><span className={lbl}>Note (optional)</span><input className={inputCls} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. forgot to punch, on MC" /></label>
+        </div>
+        <div className="flex justify-end gap-2 border-t border-border-subtle px-5 py-3">
+          <button type="button" className={ghostBtn} onClick={onClose}>Cancel</button>
+          <button type="button" className={primaryBtn} disabled={busy} onClick={() => void save()}>Save</button>
+        </div>
+      </div>
+    </div>
+  );
 }
