@@ -36,8 +36,15 @@
    entry points have it. Converting the rest still means moving each route onto
    `runScmPgCommand` first.
 
-   THIRTY-ONE of those thirty-two are `await`ed inline, so the operator's
-   request pays for the whole global sweep. ONE — the SO header PATCH — is
+   2026-11-22 (port of Conts D16): every best-effort trigger now answers the
+   save first, through `deferAllocationRecompute` (routes holding `c`) or
+   `recomputeAllocationAfterSave` (helpers holding only a db client); the only
+   inline sweep left is the manual "Re-allocate stock" endpoint, which returns
+   the sweep's result. The history below explains what deferring does and does
+   not buy.
+
+   THIRTY-ONE of those thirty-two were `await`ed inline, so the operator's
+   request paid for the whole global sweep. ONE — the SO header PATCH — was
    DEFERRED via `deferAllocationRecompute` below. Deferred is NOT a durability
    upgrade: same call, same crash window, just moved off the response path. If
    anything it is harder to reason about, because the operator has already been
@@ -57,6 +64,7 @@ import type { Env } from '../env';
 import { recomputeSoStockAllocation } from './so-stock-allocation';
 import { enqueueStockAllocationRecompute } from './stock-allocation-queue';
 import { deferScmAfterCommit } from './pg-supabase-transaction';
+import { afterResponse } from '../../lib/after-response';
 
 const JOB_KEY = 'GLOBAL';
 const LEASE_MS = 4 * 60_000;
@@ -282,7 +290,7 @@ export async function drainStockAllocationRecompute(env: Env): Promise<Allocatio
  * can never surface as an unhandled rejection that fails the whole invocation.
  */
 export function deferAllocationRecompute(c: any, sb: any, where: string): void {
-  const sweep = recomputeSoStockAllocation(sb).then(
+  const sweep = sweepThenCatchUp(sb).then(
     () => undefined,
     (error: unknown) => {
       // eslint-disable-next-line no-console
@@ -293,6 +301,50 @@ export function deferAllocationRecompute(c: any, sb: any, where: string): void {
      just runs — already `.catch`ed, so it cannot break the test run. */
   try { c.executionCtx.waitUntil(sweep); }
   catch { /* non-Workers runtime — let the floating promise run */ }
+}
+
+type QueueDb = Parameters<typeof drainStockAllocationRecomputeWithClient>[0];
+
+/**
+ * The same deferral for code that holds only a db client (helpers called from
+ * many routes, e.g. grn-post-tail). Inside a request it hands the sweep to the
+ * request's waitUntil through lib/after-response and returns at once; outside
+ * one (cron, scripts, unit tests) it runs the sweep inline as before. Failures
+ * are logged, never thrown — the same contract as the inline callers had.
+ */
+export async function recomputeAllocationAfterSave(sb: QueueDb, where: string): Promise<void> {
+  await afterResponse(`so-allocation ${where}`, () => sweepThenCatchUp(sb));
+}
+
+/* COALESCING. A save whose sweep loses the single-flight lock to a running one
+   leaves the one GLOBAL retry row (recomputeSoStockAllocation's own enqueue)
+   and stops. The sweep that held the lock drains that row as soon as it ends,
+   so a burst of saves costs the running sweep plus one more, finished within
+   the same waitUntil instead of at the next five-minute cron tick. */
+async function sweepThenCatchUp(sb: QueueDb): Promise<void> {
+  const result = await recomputeSoStockAllocation(sb);
+  if (result.queuedForRetry !== undefined) return;
+  const drained = await drainCoalesced(sb);
+  if (!drained.completed && !drained.deferred && !drained.deadLettered && drained.reason) {
+    // eslint-disable-next-line no-console
+    console.error('[so-allocation] catch-up drain failed:', drained.reason);
+  }
+}
+
+/* Saves that land while a drain's sweep runs each write a new request_token, so
+   that drain ends in new_work_arrived; draining again covers them. Bounded so a
+   constant stream of saves cannot hold one request's waitUntil open; the row
+   stays PENDING for the cron. */
+const MAX_DRAIN_PASSES = 4;
+export async function drainCoalesced(
+  sb: QueueDb,
+  drain: (sb: QueueDb) => Promise<AllocationDrainResult> = drainStockAllocationRecomputeWithClient,
+): Promise<AllocationDrainResult> {
+  let result = await drain(sb);
+  for (let pass = 1; pass < MAX_DRAIN_PASSES && result.reason === 'new_work_arrived'; pass += 1) {
+    result = await drain(sb);
+  }
+  return result;
 }
 
 /** Queue transactionally, then make one after-commit attempt for low latency. */

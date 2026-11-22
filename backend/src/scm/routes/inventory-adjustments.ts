@@ -38,7 +38,7 @@
 import { Hono, type Context } from 'hono';
 import { resolveForcedUnitCostSen, type LotCostRow } from '../shared';
 import { supabaseAuth } from '../middleware/auth';
-import { recomputeSoStockAllocation } from '../lib/so-stock-allocation';
+import { recomputeAllocationAfterSave } from '../lib/stock-allocation-job';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { activeCompanyId, requireActiveCompanyId, companyDocPrefix, NOT_THIS_COMPANY } from '../lib/companyScope';
 import { resolveIncreaseKeys } from '../lib/stock-bucket-key';
@@ -331,7 +331,7 @@ inventoryAdjustments.post('/', async (c) => {
 
   /* Every stock-mutating path re-walks the SO allocation (audit 2026-06-10
      #12): a write-off must un-READY lines whose stock just vanished. */
-  try { await recomputeSoStockAllocation(c.get('supabase')); } catch { /* best-effort */ }
+  try { await recomputeAllocationAfterSave(c.get('supabase'), 'post-adjustment'); } catch { /* best-effort */ }
   return c.json({ id: header.id, adjustmentNo: header.adjustment_no }, 201);
 });
 
@@ -508,7 +508,7 @@ inventoryAdjustments.patch('/:id', async (c) => {
   });
 
   if (movements.length) {
-    try { await recomputeSoStockAllocation(c.get('supabase')); } catch { /* best-effort */ }
+    try { await recomputeAllocationAfterSave(c.get('supabase'), 'post-adjustment-edit'); } catch { /* best-effort */ }
   }
 
   const { data: after } = await db.from('stock_adjustments', companyScope(c)).select(HEADER).eq('id', id).maybeSingle();

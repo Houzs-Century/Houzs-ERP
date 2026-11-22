@@ -567,10 +567,10 @@ export async function writeTransferMovements(
      warehouses anyway so the totals don't change. Still re-walk in case any
      row failed (partial transfer) and the bucket has actually shifted. */
   try {
-    const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
-    await recomputeSoStockAllocation(db.unscoped(
+    const { recomputeAllocationAfterSave } = await import('../lib/stock-allocation-job');
+    await recomputeAllocationAfterSave(db.unscoped(
       'library hand-off: the B2C allocation walker is a system-wide recompute across both companies by design',
-    ));
+    ), 'post-transfer');
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-transfer failed:', e); }
   return movementErrors;
 }
@@ -886,10 +886,10 @@ stockTransfers.patch('/:id/cancel', async (c) => {
   // Net-zero across warehouses again — re-walk B2C stock allocation in case a
   // partial reversal actually shifted a bucket.
   try {
-    const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
-    await recomputeSoStockAllocation(db.unscoped(
+    const { recomputeAllocationAfterSave } = await import('../lib/stock-allocation-job');
+    await recomputeAllocationAfterSave(db.unscoped(
       'library hand-off: the B2C allocation walker is a system-wide recompute across both companies by design',
-    ));
+    ), 'post-transfer-cancel');
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-cancel failed:', e); }
 
   return c.json({

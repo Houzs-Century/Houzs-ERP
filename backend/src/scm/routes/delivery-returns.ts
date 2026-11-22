@@ -196,8 +196,8 @@ async function afterDrResync(sb: any, deliveryReturnId: string, written: DrStock
     await reconcileUncostedAfterIn(sb, written, performedBy);
     /* Returned-stock level changed → re-walk SO allocation. Best-effort. */
     try {
-      const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
-      await recomputeSoStockAllocation(sb);
+      const { recomputeAllocationAfterSave } = await import('../lib/stock-allocation-job');
+      await recomputeAllocationAfterSave(sb, 'post-dr-resync');
     } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-dr-resync failed:', e); }
   }
   /* DR 3B — the return qty changed, so the SO's NET delivered changed too:
@@ -862,8 +862,8 @@ export const createDeliveryReturnHandler = async (c: Context<{ Bindings: Env; Va
   /* B2C SO auto-allocation — returned goods re-enter stock; another customer's
      pending SO might now be fulfillable. Best-effort. */
   try {
-    const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
-    await recomputeSoStockAllocation(sb);
+    const { recomputeAllocationAfterSave } = await import('../lib/stock-allocation-job');
+    await recomputeAllocationAfterSave(sb, 'post-dr');
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-dr failed:', e); }
 
   /* DR 3B (Wei Siang 2026-06-01) — returned goods mean the SO is no longer
@@ -1570,8 +1570,8 @@ export const patchDeliveryReturnStatusHandler = async (c: any) => {
     /* DR cancel pulled stock back out → other READY SOs that relied on it may
        now regress to PENDING. Re-walk allocation. Best-effort. */
     try {
-      const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
-      await recomputeSoStockAllocation(sb);
+      const { recomputeAllocationAfterSave } = await import('../lib/stock-allocation-job');
+      await recomputeAllocationAfterSave(sb, 'post-dr-cancel');
     } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-dr-cancel failed:', e); }
   }
 

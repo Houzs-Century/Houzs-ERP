@@ -280,8 +280,8 @@ async function resyncReceiveInventory(sb: any, receiveId: string, performedBy: s
      Best-effort — never fails the receive. */
   if (res.ok) await reconcileUncostedAfterIn(sb, writes, performedBy);
   try {
-    const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
-    await recomputeSoStockAllocation(sb);
+    const { recomputeAllocationAfterSave } = await import('../lib/stock-allocation-job');
+    await recomputeAllocationAfterSave(sb, 'purchase-consignment-receive');
   } catch { /* best-effort */ }
   return res.ok ? [] : [res.reason ?? 'PC receive inventory resync failed'];
 }

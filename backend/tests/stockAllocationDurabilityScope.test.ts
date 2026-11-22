@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest';
 import consignmentLoaner from '../src/scm/lib/consignment-loaner.ts?raw';
 import consignmentNotes from '../src/scm/routes/consignment-notes.ts?raw';
 import consignmentReturns from '../src/scm/routes/consignment-returns.ts?raw';
+import deliveryOrderRevert from '../src/scm/routes/delivery-order-revert.ts?raw';
 import deliveryOrdersMfg from '../src/scm/routes/delivery-orders-mfg.ts?raw';
 import deliveryReturns from '../src/scm/routes/delivery-returns.ts?raw';
 import grns from '../src/scm/routes/grns.ts?raw';
@@ -84,18 +85,21 @@ const mfgSalesOrders = soRouterSource();
 const INLINE = 'await recomputeSoStockAllocation(';
 const DURABLE = 'await scheduleStockAllocationAfterCommand(';
 const DEFERRED = 'deferAllocationRecompute(';
+/* 2026-11-22 (port of Conts D16): the same deferral reached from code that holds
+   only a db client, through lib/after-response; inline outside a request. */
+const AFTER_SAVE = 'recomputeAllocationAfterSave(';
 
 const count = (source: string, needle: string) => source.split(needle).length - 1;
 
 /** Every module that triggers an allocation recompute, with its exact split. */
 const LEDGER: Array<{
-  module: string; source: string; inline: number; durable: number; deferred: number;
+  module: string; source: string; inline: number; durable: number; deferred: number; afterSave: number;
 }> = [
-  { module: 'lib/consignment-loaner.ts', source: consignmentLoaner, inline: 2, durable: 0, deferred: 0 },
-  { module: 'routes/consignment-notes.ts', source: consignmentNotes, inline: 1, durable: 0, deferred: 0 },
-  { module: 'routes/consignment-returns.ts', source: consignmentReturns, inline: 1, durable: 0, deferred: 0 },
-  { module: 'routes/delivery-orders-mfg.ts', source: deliveryOrdersMfg, inline: 3, durable: 0, deferred: 0 },
-  { module: 'routes/delivery-returns.ts', source: deliveryReturns, inline: 3, durable: 0, deferred: 0 },
+  { module: 'lib/consignment-loaner.ts', source: consignmentLoaner, inline: 0, durable: 0, deferred: 0, afterSave: 2 },
+  { module: 'routes/consignment-notes.ts', source: consignmentNotes, inline: 0, durable: 0, deferred: 0, afterSave: 1 },
+  { module: 'routes/consignment-returns.ts', source: consignmentReturns, inline: 0, durable: 0, deferred: 0, afterSave: 1 },
+  { module: 'routes/delivery-orders-mfg.ts', source: deliveryOrdersMfg, inline: 0, durable: 0, deferred: 0, afterSave: 3 },
+  { module: 'routes/delivery-returns.ts', source: deliveryReturns, inline: 0, durable: 0, deferred: 0, afterSave: 3 },
   /* grns.ts moved 6 -> 5 inline and 0 -> 1 durable on 2026-08-20: the line
      DELETE now runs inside runScmPgCommand, so its queue row commits with the
      stock reversal.
@@ -104,14 +108,14 @@ const LEDGER: Array<{
      commit together. Four GRN routes remain (header PATCH, line add, line edit,
      and the create paths), with postGrnHandler deliberately last.
      docs/ALLOCATION-DURABILITY-PLAN.md. */
-  { module: 'routes/grns.ts', source: grns, inline: 3, durable: 2, deferred: 0 },
+  { module: 'routes/grns.ts', source: grns, inline: 0, durable: 2, deferred: 0, afterSave: 3 },
   /* 2026-11-10: the GRN post's recompute moved, unchanged and still inline, into
      the post's after-commit tail (GRN_POST_MODE, lib/stock-post-tx.ts). */
-  { module: 'lib/grn-post-tail.ts', source: grnPostTail, inline: 1, durable: 0, deferred: 0 },
+  { module: 'lib/grn-post-tail.ts', source: grnPostTail, inline: 0, durable: 0, deferred: 0, afterSave: 1 },
   /* inventory-adjustments.ts went 1 -> 2 inline on 2026-10-07 (BUG-66): the
      adjustment became an editable document, and an edit that changes a
      bucket's net moves stock, so it re-walks the allocation like the create. */
-  { module: 'routes/inventory-adjustments.ts', source: inventoryAdjustments, inline: 2, durable: 0, deferred: 0 },
+  { module: 'routes/inventory-adjustments.ts', source: inventoryAdjustments, inline: 0, durable: 0, deferred: 0, afterSave: 2 },
   /* mfg-sales-orders.ts moved 7 -> 3 inline and 1 -> 5 deferred on 2026-09-11:
      the SO line ADD (sofa + non-sofa branches), EDIT and DELETE routes now defer
      the global sweep under ctx.waitUntil instead of awaiting it. Each had blocked
@@ -124,41 +128,52 @@ const LEDGER: Array<{
      read into the SO router family) now sweeps, because a held order gets no
      stock. It also writes a queue row first, but outside any transaction, so it
      is a REPAIR REQUEST for the cron and is counted as deferred, not durable. */
-  { module: 'routes/mfg-sales-orders.ts', source: mfgSalesOrders, inline: 3, durable: 3, deferred: 6 },
-  { module: 'routes/purchase-consignment-receives.ts', source: purchaseConsignmentReceives, inline: 1, durable: 0, deferred: 0 },
-  { module: 'routes/purchase-consignment-returns.ts', source: purchaseConsignmentReturns, inline: 1, durable: 0, deferred: 0 },
-  { module: 'routes/purchase-returns.ts', source: purchaseReturns, inline: 3, durable: 0, deferred: 0 },
-  { module: 'routes/so-amendments.ts', source: soAmendments, inline: 0, durable: 1, deferred: 0 },
-  { module: 'routes/stock-takes.ts', source: stockTakes, inline: 2, durable: 0, deferred: 0 },
-  { module: 'routes/stock-transfers.ts', source: stockTransfers, inline: 2, durable: 0, deferred: 0 },
+  { module: 'routes/mfg-sales-orders.ts', source: mfgSalesOrders, inline: 1, durable: 3, deferred: 6, afterSave: 2 },
+  { module: 'routes/purchase-consignment-receives.ts', source: purchaseConsignmentReceives, inline: 0, durable: 0, deferred: 0, afterSave: 1 },
+  { module: 'routes/purchase-consignment-returns.ts', source: purchaseConsignmentReturns, inline: 0, durable: 0, deferred: 0, afterSave: 1 },
+  { module: 'routes/purchase-returns.ts', source: purchaseReturns, inline: 0, durable: 0, deferred: 0, afterSave: 3 },
+  /* 2026-11-22 (port of Conts D16): every best-effort trigger answers the save
+     first; the one inline call left is the manual "Re-allocate stock" endpoint,
+     which returns the sweep's result. DO revert joins the ledger (it always
+     re-walked; it was simply never listed). */
+  { module: 'routes/delivery-order-revert.ts', source: deliveryOrderRevert, inline: 0, durable: 0, deferred: 0, afterSave: 1 },
+  { module: 'routes/so-amendments.ts', source: soAmendments, inline: 0, durable: 1, deferred: 0, afterSave: 0 },
+  { module: 'routes/stock-takes.ts', source: stockTakes, inline: 0, durable: 0, deferred: 0, afterSave: 2 },
+  { module: 'routes/stock-transfers.ts', source: stockTransfers, inline: 0, durable: 0, deferred: 0, afterSave: 2 },
 ];
 
 describe('durable allocation coverage is stated honestly', () => {
   for (const entry of LEDGER) {
-    test(`${entry.module}: ${entry.durable} durable / ${entry.inline} inline / ${entry.deferred} deferred`, () => {
+    test(`${entry.module}: ${entry.durable} durable / ${entry.inline} inline / ${entry.deferred} deferred / ${entry.afterSave} after save`, () => {
       expect(count(entry.source, INLINE), `${entry.module} inline recompute call count changed`)
         .toBe(entry.inline);
       expect(count(entry.source, DURABLE), `${entry.module} durable enqueue count changed`)
         .toBe(entry.durable);
       expect(count(entry.source, DEFERRED), `${entry.module} deferred recompute count changed`)
         .toBe(entry.deferred);
+      expect(count(entry.source, AFTER_SAVE), `${entry.module} after-save recompute count changed`)
+        .toBe(entry.afterSave);
     });
   }
 
-  test('the totals match the documented scope: 6 durable of 40 triggers', () => {
+  test('the totals match the documented scope: 6 durable of 41 triggers', () => {
     const durable = LEDGER.reduce((sum, entry) => sum + entry.durable, 0);
     const inline = LEDGER.reduce((sum, entry) => sum + entry.inline, 0);
     const deferred = LEDGER.reduce((sum, entry) => sum + entry.deferred, 0);
+    const afterSave = LEDGER.reduce((sum, entry) => sum + entry.afterSave, 0);
     expect(durable).toBe(6);
-    expect(inline).toBe(28);
+    expect(inline).toBe(1);
     expect(deferred).toBe(6);
+    expect(afterSave).toBe(28);
     /* The trigger count is unchanged: deferring the four SO line routes
        (2026-09-11) moved them between columns, it did not remove them. 32 are
        still best-effort (27 inline + 5 deferred). The stock-adjustment edit
        (2026-10-07) added one inline trigger: 33 best-effort, 39 in all. The SO
-       hold / release (2026-11-10) added one deferred trigger: 34 and 40. */
-    expect(inline + deferred).toBe(34);
-    expect(durable + inline + deferred).toBe(40);
+       hold / release (2026-11-10) added one deferred trigger: 34 and 40.
+       2026-11-22: 27 inline moved to after-save, and the DO revert (always a
+       trigger, never listed) joined: 1 inline + 6 deferred + 28 after save. */
+    expect(inline + deferred + afterSave).toBe(35);
+    expect(durable + inline + deferred + afterSave).toBe(41);
   });
 
   test('the code says out loud that the other triggers are still best-effort', () => {

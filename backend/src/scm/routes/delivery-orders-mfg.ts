@@ -1280,8 +1280,8 @@ async function runDoShipTail(sb: Parameters<typeof writeMovements>[0], tail: DoS
     /* B2C SO auto-allocation — stock just went out; other PENDING/READY SOs
        might lose their claim. Best-effort. */
     try {
-      const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
-      await recomputeSoStockAllocation(sb);
+      const { recomputeAllocationAfterSave } = await import('../lib/stock-allocation-job');
+      await recomputeAllocationAfterSave(sb, 'post-do-ship');
     } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-do-ship failed:', e); }
   }
   /* Lock each line's PO(s) and rack(s) onto it after the response (lib/do-shipped-from-stamp.ts, write-once). */
@@ -1811,8 +1811,8 @@ export async function resyncInventoryForDo(sb: any, deliveryOrderId: string, per
     await queueDoShippedFromStamp(sb, deliveryOrderId, (doHeader as { company_id?: number | null }).company_id ?? null); // a line added after the ship locks its own PO
     /* Resync changed stock — re-walk SO allocation. Best-effort. */
     try {
-      const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
-      await recomputeSoStockAllocation(sb);
+      const { recomputeAllocationAfterSave } = await import('../lib/stock-allocation-job');
+      await recomputeAllocationAfterSave(sb, 'post-do-line-change');
     } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-do-resync failed:', e); }
   }
 }
@@ -5322,8 +5322,8 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
     } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-sync] post-do-cancel failed:', e); }
     /* DO cancel freed stock — re-walk SO lines so PENDING orders flip back to READY. Best-effort. */
     try {
-      const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
-      await recomputeSoStockAllocation(sb);
+      const { recomputeAllocationAfterSave } = await import('../lib/stock-allocation-job');
+      await recomputeAllocationAfterSave(sb, 'post-do-cancel');
     } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-do-cancel failed:', e); }
     /* ERP -> AutoCount cancel. Reached only past doHasDownstream (checked above),
        so this can never ask AutoCount to cancel an invoiced delivery. */

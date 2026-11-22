@@ -329,7 +329,7 @@ import { deferScmAfterCommit, runScmPgCommand } from '../lib/pg-supabase-transac
 import {
   applySoCancelVouchers, planSoCancelVouchers, soCancelVoucherAuditChanges,
 } from '../lib/so-cancel-vouchers';
-import { deferAllocationRecompute, scheduleStockAllocationAfterCommand } from '../lib/stock-allocation-job';
+import { deferAllocationRecompute, recomputeAllocationAfterSave, scheduleStockAllocationAfterCommand } from '../lib/stock-allocation-job';
 import { pgrestIn } from '../lib/pgrest-in-list';
 import { skuCategoryResolver } from '../lib/sku-category';
 import { fmtSen } from '../shared/format';
@@ -4813,7 +4813,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      sweep repairs anything else. */
   lap('so-followers');
   if ((body as { asDraft?: unknown }).asDraft !== true) {
-    try { await recomputeSoStockAllocation(sb); }
+    try { await recomputeAllocationAfterSave(sb, 'post-so-create'); }
     catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-create failed:', e); }
   }
   lap('so-alloc');
@@ -5460,7 +5460,7 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
      the queue (its claim releases); terminal statuses (SHIPPED/DELIVERED/…)
      also drop it out. Other PENDING SOs may move into READY. Best-effort. */
   lap('status-scan-note');
-  try { await recomputeSoStockAllocation(sb); }
+  try { await recomputeAllocationAfterSave(sb, 'post-so-status'); }
   catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-status failed:', e); }
   lap('status-alloc');
 

@@ -2583,8 +2583,8 @@ grns.patch('/:id', async (c) => {
              prior shorts (COE §2). Best-effort. */
           await reconcileUncostedAfterIn(sb, movements, user?.id ?? null);
           try {
-            const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
-            await recomputeSoStockAllocation(sb);
+            const { recomputeAllocationAfterSave } = await import('../lib/stock-allocation-job');
+            await recomputeAllocationAfterSave(sb, 'post-grn-relocate');
           } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-grn-relocate failed:', e); }
         } catch (e) {
           return c.json({ error: 'relocate_failed', reason: e instanceof Error ? e.message : String(e) }, 500);
@@ -2947,8 +2947,8 @@ grns.post('/:id/items', async (c) => {
         }], user.id);
         /* New stock landed → re-walk SO allocation. */
         try {
-          const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
-          await recomputeSoStockAllocation(sb);
+          const { recomputeAllocationAfterSave } = await import('../lib/stock-allocation-job');
+          await recomputeAllocationAfterSave(sb, 'post-grn-line-add');
         } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-grn-line-add failed:', e); }
       } else {
         addMovementErrors.push(`IN ${String(it.itemCode)}: no warehouse to receive into`);
@@ -3258,8 +3258,8 @@ grns.patch('/:id/items/:itemId', async (c) => {
            2026-07-29 (COE §2). Reversing OUTs are filtered out. Best-effort. */
         await reconcileUncostedAfterIn(sb, movements, user.id);
         try {
-          const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
-          await recomputeSoStockAllocation(sb);
+          const { recomputeAllocationAfterSave } = await import('../lib/stock-allocation-job');
+          await recomputeAllocationAfterSave(sb, 'post-grn-line-edit');
         } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-grn-line-edit failed:', e); }
       } catch (e) { editMovementErrors.push(`stock write threw: ${e instanceof Error ? e.message : String(e)}`); }
     }
