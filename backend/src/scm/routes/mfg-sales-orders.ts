@@ -8527,8 +8527,8 @@ mfgSalesOrders.delete('/:docNo/items/:itemId', async (c) => {
   if (lineLock && lineLock.error === 'so_line_frozen' && hasHouzsPerm(c, SO_EDIT_LINES_AFTER_DO_PERMISSION)) {
     const co = requireActiveCompanyId(c); if (!co.ok) return c.json(co.refusal, 409);
     const g = await openProductLineRemove(sb, docNo, itemId, co.companyId, AFTER_DO_LINES_FORBIDDEN);
-    if (!g.ok) return c.json(g.body, g.status);
-    if (!g.skip) afterDoRemove = { target: g.target, doLine: g.doLine, siLines: g.siLines, siQtyOnDoLine: g.siQtyOnDoLine, companyId: co.companyId };
+    // A gate that cannot open a clean after-DO removal (split, no DO, returned, a service line, an unreadable downstream) leaves the line frozen exactly as before — the so_line_frozen refusal below stands. Only an opened PRODUCT line turns the freeze off.
+    if (g.ok && !g.skip) afterDoRemove = { target: g.target, doLine: g.doLine, siLines: g.siLines, siQtyOnDoLine: g.siQtyOnDoLine, companyId: co.companyId };
   }
   if (lineLock && !afterDoRemove) return c.json(lineLock, 409);
 
