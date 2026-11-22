@@ -126,20 +126,20 @@ describe('the birth of a deposit invoice', () => {
 
   test('a payment before the start day, and one on an order that already carries a live invoice, get none — each for its own reason', async () => {
     const { sb } = harness({ settings: [ON] });
-    const early = await issueDepositInvoice(sb, { paymentId: 'p-old', soDocNo: '2990-SO-2609-001', paidAt: '2026-08-30', amountSen: 100_000 });
+    const early = await issueDepositInvoice(sb, { paymentId: 'p-old', soDocNo: '2990-SO-2609-001', paidAt: '2026-08-30', amountSen: 100_000 }, false);
     expect(early).toEqual({ ok: true, status: 'not_due', why: 'before_start' });
-    const invoiced = await issueDepositInvoice(sb, { paymentId: 'p-bal', soDocNo: '2990-SO-2607-019', paidAt: '2026-09-05', amountSen: 400_000 });
+    const invoiced = await issueDepositInvoice(sb, { paymentId: 'p-bal', soDocNo: '2990-SO-2607-019', paidAt: '2026-09-05', amountSen: 400_000 }, false);
     expect(invoiced).toEqual({ ok: true, status: 'not_due', why: 'invoice_exists' });
     /* A cancelled invoice is no invoice: the order is back to deposits. */
     (sb.tables.sales_invoices as Row[])[0]!.status = 'CANCELLED';
-    const again = await issueDepositInvoice(sb, { paymentId: 'p-bal', soDocNo: '2990-SO-2607-019', paidAt: '2026-09-05', amountSen: 400_000 });
+    const again = await issueDepositInvoice(sb, { paymentId: 'p-bal', soDocNo: '2990-SO-2607-019', paidAt: '2026-09-05', amountSen: 400_000 }, false);
     expect(again).toMatchObject({ ok: true, status: 'issued', diNumber: '2990-DI-2609-001' });
     expect(dis(sb)).toHaveLength(1);
   });
 
   test('a payment on a cancelled order earns no deposit invoice — at the hook and in the backlog (docs/bugs/0832)', async () => {
     const { app, sb } = harness({ settings: [ON], payments: [payment('p-1'), payment('p-x', { so_doc_no: '2990-SO-2609-009' })] });
-    const refund = await issueDepositInvoice(sb, { paymentId: 'p-x', soDocNo: '2990-SO-2609-009', paidAt: '2026-09-05', amountSen: 100_000 });
+    const refund = await issueDepositInvoice(sb, { paymentId: 'p-x', soDocNo: '2990-SO-2609-009', paidAt: '2026-09-05', amountSen: 100_000 }, false);
     expect(refund).toEqual({ ok: true, status: 'not_due', why: 'order_not_live' });
     await bookSoPaymentBestEffort(sb, payment('p-x', { so_doc_no: '2990-SO-2609-009' }), 'payment');
     expect(dis(sb)).toHaveLength(0);
@@ -151,8 +151,8 @@ describe('the birth of a deposit invoice', () => {
 
   test('issuing twice for one payment finds the standing invoice: one row, one journal', async () => {
     const { sb } = harness({ settings: [ON] });
-    const first = await issueDepositInvoice(sb, { paymentId: 'p-1', soDocNo: '2990-SO-2609-001', paidAt: '2026-09-05', amountSen: 100_000 });
-    const second = await issueDepositInvoice(sb, { paymentId: 'p-1', soDocNo: '2990-SO-2609-001', paidAt: '2026-09-05', amountSen: 100_000 });
+    const first = await issueDepositInvoice(sb, { paymentId: 'p-1', soDocNo: '2990-SO-2609-001', paidAt: '2026-09-05', amountSen: 100_000 }, false);
+    const second = await issueDepositInvoice(sb, { paymentId: 'p-1', soDocNo: '2990-SO-2609-001', paidAt: '2026-09-05', amountSen: 100_000 }, false);
     expect(first).toMatchObject({ ok: true, status: 'issued', diNumber: '2990-DI-2609-001' });
     expect(second).toMatchObject({ ok: true, status: 'already_issued', diNumber: '2990-DI-2609-001' });
     expect(dis(sb)).toHaveLength(1);
