@@ -38,6 +38,7 @@
 // ----------------------------------------------------------------------------
 
 import { Hono } from 'hono';
+import { runScmPgCommand } from '../lib/pg-supabase-transaction';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { activeCompanyId, companyDocPrefix, requireActiveCompanyId, scopeToCompany } from '../lib/companyScope';
 import { docMonthTag, mintMonthlyDocNo } from '../lib/doc-no';
@@ -389,12 +390,6 @@ export const updateApInvoiceHandler = async (c: any): Promise<Response> => {
     }
     const eventErr = await unknownEventRefusal(c, built.lines.map((l) => l.projectId));
     if (eventErr) return eventErr;
-    await sb.from('ap_invoice_lines').delete().eq('company_id', co.companyId).eq('invoice_id', inv.id);
-    const { error: lineErr } = await sb.from('ap_invoice_lines').insert(built.lines.map((l, i) => ({
-      company_id: co.companyId, invoice_id: inv.id, line_no: i + 1,
-      description: l.description, debit_account_code: l.code, amount_sen: l.amountSen, project_id: l.projectId,
-    })));
-    if (lineErr) return c.json({ error: 'save_failed', reason: lineErr.message }, 500);
     patch.total_sen = built.total;
     rebuilt = built;
   }
@@ -402,39 +397,58 @@ export const updateApInvoiceHandler = async (c: any): Promise<Response> => {
     const newTotal = rebuilt ? rebuilt.total : Number(inv.total_sen ?? 0);
     patch.status = newTotal <= paid ? 'PAID' : paid > 0 ? 'PARTIALLY_PAID' : 'POSTED';
   }
-  const { data, error } = await sb.from('ap_invoices').update(patch).eq('company_id', co.companyId).eq('id', inv.id).select(HEADER).maybeSingle();
-  if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
-  if (!posted) return c.json({ ok: true, invoice: data });
+  /* The lines, the header and the ledger re-post commit together or not at all. Each used to commit on its own: a
+     failure part-way left a bill whose lines, total and journal disagreed (lines deleted, or the old journal reversed
+     with no new one), and nothing put it right. */
+  return runScmPgCommand(c, async (tx) => {
+    if (rebuilt) {
+      const { error: delErr } = await tx.from('ap_invoice_lines').delete().eq('company_id', co.companyId).eq('invoice_id', inv.id);
+      if (delErr) return c.json({ error: 'save_failed', reason: delErr.message }, 500);
+      const { error: lineErr } = await tx.from('ap_invoice_lines').insert(rebuilt.lines.map((l, i) => ({
+        company_id: co.companyId, invoice_id: inv.id, line_no: i + 1,
+        description: l.description, debit_account_code: l.code, amount_sen: l.amountSen, project_id: l.projectId,
+      })));
+      if (lineErr) return c.json({ error: 'save_failed', reason: lineErr.message }, 500);
+    }
+    /* Compare-and-set on what the checks above read: a voucher settling this bill, or a cancel, since then makes the
+       edit refuse rather than write a status and total worked out from a stale paid figure. */
+    const { data, error } = await tx.from('ap_invoices').update(patch)
+      .eq('company_id', co.companyId).eq('id', inv.id).eq('paid_sen', paid).neq('status', 'CANCELLED')
+      .select(HEADER).maybeSingle();
+    if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
+    if (!data) return c.json({ error: 'changed', message: `${String(inv.invoice_number)} was paid or cancelled while you were editing it. Reload and try again.` }, 409);
+    if (!posted) return c.json({ ok: true, invoice: data });
 
-  /* The re-post: contra the entry the old bill wrote, then book the bill as
-     it now reads — through the one gate, so numbering and the one-active-
-     entry rule hold exactly as on the first post. */
-  const after = (data ?? inv) as Row;
-  const rev = await reverseJournal(sb, {
-    sourceType: 'API',
-    sourceDocNo: String(inv.invoice_number),
-    companyId: co.companyId,
-    narration: (orig) => `Reversal of ${orig.je_no} — ${paperOf(inv)} ${inv.invoice_number} edited`,
-    entryDate: oldDate,
+    /* The re-post: contra the entry the old bill wrote, then book the bill as
+       it now reads — through the one gate, so numbering and the one-active-
+       entry rule hold exactly as on the first post. */
+    const after = (data ?? inv) as Row;
+    const rev = await reverseJournal(tx, {
+      sourceType: 'API',
+      sourceDocNo: String(inv.invoice_number),
+      companyId: co.companyId,
+      narration: (orig) => `Reversal of ${orig.je_no} — ${paperOf(inv)} ${inv.invoice_number} edited`,
+      entryDate: oldDate,
+    });
+    if (!rev.ok) return c.json({ error: 'reverse_failed', status: rev.status, reason: (rev as { reason?: string }).reason ?? rev.status }, 500);
+    const sup = await loadSupplier(c, String(after.supplier_id));
+    if ('resp' in sup) return sup.resp;
+    const { data: lineRows, error: lErr } = await scopeToCompany(tx.from('ap_invoice_lines').select(LINE).eq('invoice_id', inv.id), c).order('line_no');
+    if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
+    const lines = (lineRows ?? []) as Array<{ description: string | null; debit_account_code: string; amount_sen: number; project_id?: number | null }>;
+    const roles = await resolveRoles(tx, co.companyId);
+    const je = await postJournal(tx, {
+      companyId: co.companyId,
+      entryDate: String(after.invoice_date),
+      sourceType: 'API',
+      sourceDocNo: String(inv.invoice_number),
+      narration: `${paperOf(inv)} ${inv.invoice_number} — ${sup.supplier.name ?? sup.supplier.code ?? 'supplier'}${after.supplier_invoice_ref ? ` (${after.supplier_invoice_ref})` : ''} — edited`,
+      lines: apInvoiceLines(roles, { invoice_number: String(inv.invoice_number) }, sup.supplier,
+        lines.map((l) => ({ accountCode: l.debit_account_code, myrSen: Number(l.amount_sen), description: l.description, projectId: l.project_id ?? null }))),
+    });
+    if (!je.ok) return c.json({ error: 'post_failed', status: je.status, reason: (je as { reason?: string }).reason ?? je.status }, 500);
+    return c.json({ ok: true, invoice: after, reposted: true, jeNo: je.jeNo });
   });
-  if (!rev.ok) return c.json({ error: 'reverse_failed', status: rev.status, reason: (rev as { reason?: string }).reason ?? rev.status }, 500);
-  const sup = await loadSupplier(c, String(after.supplier_id));
-  if ('resp' in sup) return sup.resp;
-  const { data: lineRows, error: lErr } = await scopeToCompany(sb.from('ap_invoice_lines').select(LINE).eq('invoice_id', inv.id), c).order('line_no');
-  if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
-  const lines = (lineRows ?? []) as Array<{ description: string | null; debit_account_code: string; amount_sen: number; project_id?: number | null }>;
-  const roles = await resolveRoles(sb, co.companyId);
-  const je = await postJournal(sb, {
-    companyId: co.companyId,
-    entryDate: String(after.invoice_date),
-    sourceType: 'API',
-    sourceDocNo: String(inv.invoice_number),
-    narration: `${paperOf(inv)} ${inv.invoice_number} — ${sup.supplier.name ?? sup.supplier.code ?? 'supplier'}${after.supplier_invoice_ref ? ` (${after.supplier_invoice_ref})` : ''} — edited`,
-    lines: apInvoiceLines(roles, { invoice_number: String(inv.invoice_number) }, sup.supplier,
-      lines.map((l) => ({ accountCode: l.debit_account_code, myrSen: Number(l.amount_sen), description: l.description, projectId: l.project_id ?? null }))),
-  });
-  if (!je.ok) return c.json({ error: 'post_failed', status: je.status, reason: (je as { reason?: string }).reason ?? je.status }, 500);
-  return c.json({ ok: true, invoice: after, reposted: true, jeNo: je.jeNo });
 };
 
 /* ── POST /:id/post — into the ledger, once ──────────────────────────────── */
