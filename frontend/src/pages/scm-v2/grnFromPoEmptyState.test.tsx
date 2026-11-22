@@ -193,3 +193,32 @@ describe("GRN-from-PO picker: the server's scope block names the cause", () => {
     expect(screen.getByText(/does NOT mean there is nothing left to receive/)).toBeTruthy();
   });
 });
+
+/* Symptom: retrying "GRN from PO" after a partial failure added the landed lines again.
+   Cause: each line is its own request and the landed ones stayed ticked.
+   Fix: landed lines are unticked and the dialog says how many went in. Fails before the fix. */
+describe("GRN-from-PO append: a partial failure is not added twice", () => {
+  it("unticks the lines that landed, so pressing again appends only the rest", async () => {
+    const { fireEvent, waitFor } = await import("@testing-library/react");
+    const mutateAsync = vi.fn()
+      .mockResolvedValueOnce({ item: { id: "gi-1" } })
+      .mockRejectedValueOnce(new Error("connection reset"))
+      .mockResolvedValue({ item: { id: "gi-2" } });
+    grnDetail.mockReturnValue({ data: { grn: { id: "grn-9", grn_number: "GRN-9", supplier_id: "sup-1", warehouse_id: "wh-1" } }, isLoading: false, isError: false });
+    addGrnItem.mockReturnValue({ mutateAsync, isPending: false });
+    outstandingPoItems.mockReturnValue(loaded([
+      poLine({ poItemId: "poi-1", itemCode: "SOFA-A", unitPriceSen: 100 }),
+      poLine({ poItemId: "poi-2", itemCode: "SOFA-B", unitPriceSen: 100 }),
+    ]));
+    at(`${convertToLink("poToGrn", "po-1")}&appendToGrn=grn-9`);
+
+    /* Scoped to one PO, the picker ticks every outstanding line itself. */
+    fireEvent.click(screen.getByRole("button", { name: /Add 2 lines to GRN/ }));
+    await waitFor(() => expect(screen.getByText(/1 of 2 lines were added/)).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: /Add 1 line to GRN/ }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(3));
+    expect(mutateAsync.mock.calls.map((c) => (c[0] as { purchaseOrderItemId: string }).purchaseOrderItemId))
+      .toEqual(["poi-1", "poi-2", "poi-2"]);
+  });
+});
