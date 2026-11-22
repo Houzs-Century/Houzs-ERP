@@ -35,6 +35,7 @@ const { updateAsync, approveAsync, idle, DETAIL, FILES } = vi.hoisted(() => {
   const approveAsync = vi.fn(async (_id: string) => ({ ok: true }));
   return { updateAsync, approveAsync, idle, DETAIL, FILES };
 });
+const finishPostMutate = vi.fn();
 /* 欠正式单 (item 3): Finance's marks and the requester's upload — stubbed. */
 const markOfficial = vi.fn();
 const uploadOfficialAsync = vi.fn(async (_b: unknown) => ({ ok: true, received: [{ kind: 'PV', number: 'HC-PV-2610-001' }], note: null as string | null }));
@@ -50,6 +51,7 @@ vi.mock('../../vendor/scm/lib/payment-voucher-queries', async (importOriginal) =
   useUpdatePaymentVoucher: () => ({ mutateAsync: updateAsync, isPending: false }),
   useCancelPaymentVoucher: idle, useSubmitPaymentVoucher: idle, useWithdrawPaymentVoucher: idle,
   useCheckPaymentVoucher: idle, useApprovePaymentVoucher: () => ({ mutateAsync: approveAsync, isPending: false }), useRejectPaymentVoucher: idle,
+  usePostPaymentVoucher: () => ({ mutate: finishPostMutate, isPending: false }),
   useApplyAdvance: idle, useUploadPvFile: idle, useDeletePvFile: idle, useUpdatePvText: idle,
   useSupplierAdvances: () => ({ data: { advances: [], totalRemainingSen: 0 }, isLoading: false }),
   usePvFiles: () => ({ data: { files: FILES }, isLoading: false, refetch: async () => ({ data: { files: FILES } }) }),
@@ -147,6 +149,35 @@ describe('a voucher whose posting failed after approval', () => {
     unmount();
     at({ status: 'POSTED', approved_at: MARK });
     expect(screen.queryByRole('button', { name: 'Retry posting' })).toBeNull();
+  });
+});
+
+/* Ported from Conts-ERP #1137 (D1). A posted voucher whose invoice was never settled offers Finish posting, which
+   presses Post again (the server finishes what the first post left). Fails before the fix: no such button. */
+describe('a posted voucher that did not finish its settlement', () => {
+  afterEach(() => {
+    Object.assign(DETAIL.paymentVoucher, { status: 'DRAFT' });
+    delete (DETAIL as Record<string, unknown>).unfinished;
+    finishPostMutate.mockClear();
+  });
+  test('offers Finish posting, which posts again; a finished one does not', () => {
+    Object.assign(DETAIL.paymentVoucher, { status: 'POSTED' });
+    (DETAIL as Record<string, unknown>).unfinished = 'post';
+    const { unmount } = render(
+      <MemoryRouter initialEntries={['/scm/payment-vouchers/pv-9']}>
+        <Routes><Route path="/scm/payment-vouchers/:id" element={<PaymentVoucherDetail />} /></Routes>
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Finish posting' }));
+    expect(finishPostMutate).toHaveBeenCalledWith('pv-9', expect.anything());
+    unmount();
+    (DETAIL as Record<string, unknown>).unfinished = null;
+    render(
+      <MemoryRouter initialEntries={['/scm/payment-vouchers/pv-9']}>
+        <Routes><Route path="/scm/payment-vouchers/:id" element={<PaymentVoucherDetail />} /></Routes>
+      </MemoryRouter>,
+    );
+    expect(screen.queryByRole('button', { name: 'Finish posting' })).toBeNull();
   });
 });
 

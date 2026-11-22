@@ -20,6 +20,7 @@ import {
 import { idempotentInit } from '../../../lib/idempotency';
 import type { EventSuggestion } from './event-queries';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
+import { reportInBandFailure, type InBandFailure } from './mutation-error';
 import { runAiRead, runOneAiRead, type AiReadStage } from './ai-read-job';
 
 // baseQuery is a custom-hook factory — only ever called from use* hooks below.
@@ -205,8 +206,9 @@ const invalidatePvSettlement = (qc: ReturnType<typeof useQueryClient>) => {
 export const usePostPaymentVoucher = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => authedFetch<{ ok: true; jeNo?: string }>(`/payment-vouchers/${id}/post`, { method: 'POST' }),
-    onSuccess: (_d, id) => {
+    mutationFn: (id: string) => authedFetch<{ ok: true; jeNo?: string } & InBandFailure>(`/payment-vouchers/${id}/post`, { method: 'POST' }),
+    onSuccess: (d, id) => {
+      reportInBandFailure('Voucher posted, but not every step finished', d);
       void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
       void qc.invalidateQueries({ queryKey: ['finance-todo'] });
       void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', id] });
@@ -256,8 +258,9 @@ export const useApplyAdvance = () => {
 export const useCancelPaymentVoucher = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => authedFetch(`/payment-vouchers/${id}/cancel`, { method: 'POST' }),
-    onSuccess: (_d, id) => {
+    mutationFn: (id: string) => authedFetch<InBandFailure>(`/payment-vouchers/${id}/cancel`, { method: 'POST' }),
+    onSuccess: (d, id) => {
+      reportInBandFailure('Voucher cancelled, but not every step finished', d);
       void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
       void qc.invalidateQueries({ queryKey: ['finance-todo'] });
       void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', id] });
@@ -274,8 +277,10 @@ export const useCancelPaymentVoucher = () => {
 const approvalMutation = (path: 'submit' | 'withdraw' | 'check' | 'approve') => () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => authedFetch(`/payment-vouchers/${id}/${path}`, { method: 'POST' }),
-    onSuccess: (_d, id) => {
+    mutationFn: (id: string) => authedFetch<InBandFailure>(`/payment-vouchers/${id}/${path}`, { method: 'POST' }),
+    onSuccess: (d, id) => {
+      /* Approve posts the voucher in the same request (approval IS the posting). */
+      if (path === 'approve') reportInBandFailure('Voucher posted, but not every step finished', d);
       void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
       void qc.invalidateQueries({ queryKey: ['finance-todo'] });
       void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', id] });
