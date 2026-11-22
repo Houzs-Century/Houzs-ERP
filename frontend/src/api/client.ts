@@ -441,6 +441,10 @@ async function handleResponse<T>(
 // how this whole perf campaign started). Pure observability, no behaviour change.
 const SLOW_FETCH_MS = 800;
 
+/** Wait on a keyed save's idempotency_in_flight answer (same values as vendor/scm/lib/authed-fetch.ts). */
+const IN_FLIGHT_POLL_MS = 1000;
+const IN_FLIGHT_MAX_WAIT_MS = 60_000;
+
 /* A request that spans time the tab spent hidden is not evidence of a slow
    server: the browser throttles and freezes background tabs, so its timer reads
    minutes for an answer that took milliseconds (production logged 600-960 s
@@ -466,6 +470,8 @@ async function request<T>(path: string, opts?: RequestInit): Promise<T> {
   // Whether THIS request carried an idempotency key decides what we may honestly
   // tell the operator when it times out — see the two messages below.
   const hasIdemKey = new Headers(opts?.headers).has("Idempotency-Key");
+  /* How long this keyed save has waited on the server's idempotency_in_flight answer. */
+  let inFlightWaited = 0;
 
   for (let attempt = 0; ; attempt++) {
     const ctrl = new AbortController();
@@ -514,6 +520,14 @@ async function request<T>(path: string, opts?: RequestInit): Promise<T> {
       // HTTP answer (500, 4xx) is a real result — surfaced as-is so genuine
       // errors fail fast and are never masked.
       if (e instanceof HttpError) {
+        /* The same save pressed twice: the first is still running under this key, and its answer replays once it
+           has one, so wait for it instead of reporting a failure. */
+        if (e.status === 409 && hasIdemKey && inFlightWaited < IN_FLIGHT_MAX_WAIT_MS && e.rawBody.includes('"idempotency_in_flight"')) {
+          await abortableDelay(IN_FLIGHT_POLL_MS, opts?.signal);
+          inFlightWaited += IN_FLIGHT_POLL_MS;
+          attempt--;
+          continue;
+        }
         if (e.status === 503 && method === "GET" && attempt < retries) {
           await abortableDelay(600 + attempt * 1200, opts?.signal);
           continue;
