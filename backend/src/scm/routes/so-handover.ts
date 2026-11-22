@@ -27,6 +27,7 @@
 // it enumerates another salesperson's order book.
 // ----------------------------------------------------------------------------
 import { Hono } from 'hono';
+import { deferScmAfterCommit, runScmPgCommand } from '../lib/pg-supabase-transaction';
 import { supabaseAuth } from '../middleware/auth';
 import { requireActiveCompanyId, scopeToCompanyId } from '../lib/companyScope';
 import { paginateAll } from '../lib/paginate-all';
@@ -313,87 +314,99 @@ soHandover.post('/apply', async (c) => {
   const toName = await readStaffAgentName(sb as never, toStaffId);
 
   const user = c.get('user') as { id?: string; user_metadata?: { name?: string } } | undefined;
-  const moved: Array<{ docNo: string }> = [];
-  const skipped: Array<{ docNo: string; reason: string }> = [];
+  /* The whole batch in one transaction: every order's move and its audit row commit together, or none do. A batch
+     that hits a failed write part-way used to leave some orders moved and the rest not. Orders skipped for a reason
+     (locked, no longer this rep's) are still reported per order. The AutoCount queue entries go after the commit,
+     like every other Houzs write-back: a queue hiccup must not undo a move the operator is told succeeded. */
+  return runScmPgCommand(c, async (tx) => {
+    const moved: Array<{ docNo: string }> = [];
+    const skipped: Array<{ docNo: string; reason: string }> = [];
 
-  for (const docNo of docNos) {
-    const { data: beforeRow, error: readError } = await scopeToCompanyId(
-      sb.from('mfg_sales_orders').select('doc_no, salesperson_id, agent, status, linked_ac_docno').eq('doc_no', docNo),
-      co.companyId,
-    ).maybeSingle();
-    /* A FAILED read and an order that is genuinely not here are different
-       facts, and only one of them is the operator's to act on. Reporting a
-       dropped connection as "Not found in this company" would send them looking
-       for a company mix-up that never happened. */
-    if (readError) { skipped.push({ docNo, reason: `Could not be read: ${readError.message}` }); continue; }
-    if (!beforeRow) { skipped.push({ docNo, reason: 'Not found in this company.' }); continue; }
-    const before = beforeRow as unknown as Record<string, unknown>;
+    for (const docNo of docNos) {
+      const { data: beforeRow, error: readError } = await scopeToCompanyId(
+        tx.from('mfg_sales_orders').select('doc_no, salesperson_id, agent, status, linked_ac_docno').eq('doc_no', docNo),
+        co.companyId,
+      ).maybeSingle();
+      /* A FAILED read and an order that is genuinely not here are different
+         facts, and only one of them is the operator's to act on. Reporting a
+         dropped connection as "Not found in this company" would send them looking
+         for a company mix-up that never happened. Inside the transaction a failed
+         read also stops the batch: nothing after it could commit. */
+      if (readError) return c.json({ error: 'handover_failed', message: `${docNo} could not be read, so no order in this batch was moved. Please try again.`, reason: readError.message }, 500);
+      if (!beforeRow) { skipped.push({ docNo, reason: 'Not found in this company.' }); continue; }
+      const before = beforeRow as unknown as Record<string, unknown>;
 
-    /* MIGRATED ORDERS ARE READ-ONLY WHILE THE LOCK IS ON, here too. The
-       `isMigrated` argument is REQUIRED and `boolean | null`: this route has the
-       answer for free off the row it just read (`linked_ac_docno` is the
-       import's own stamp, and the predicate is soIsMigrated's), so it says so
-       rather than letting the decision inherit a default. The refusal goes into
-       `skipped` with the lock's own sentence, which is the only reason this is
-       safe to add: a handover that silently dropped an order is exactly the
-       failure this route's per-order report exists to prevent. */
-    /* `docNo` as well, since 2026-09-08: in CORRECTNESS mode the decision is
-       per document and the sentence has to name the one it is about, so this
-       route hands over the document it is looking at rather than letting the
-       refusal speak about the class. Everything else here is unchanged - the
-       refusal still lands in `skipped` with the lock's own sentence. */
-    const lock = await migratedSoReadonlyState(c, docNo, before.linked_ac_docno != null);
-    if (lock.locked) {
-      skipped.push({ docNo, reason: lock.reason ?? 'This order came from AutoCount and is view-only for now.' });
-      continue;
+      /* MIGRATED ORDERS ARE READ-ONLY WHILE THE LOCK IS ON, here too. The
+         `isMigrated` argument is REQUIRED and `boolean | null`: this route has the
+         answer for free off the row it just read (`linked_ac_docno` is the
+         import's own stamp, and the predicate is soIsMigrated's), so it says so
+         rather than letting the decision inherit a default. The refusal goes into
+         `skipped` with the lock's own sentence, which is the only reason this is
+         safe to add: a handover that silently dropped an order is exactly the
+         failure this route's per-order report exists to prevent. */
+      /* `docNo` as well, since 2026-09-08: in CORRECTNESS mode the decision is
+         per document and the sentence has to name the one it is about, so this
+         route hands over the document it is looking at rather than letting the
+         refusal speak about the class. Everything else here is unchanged - the
+         refusal still lands in `skipped` with the lock's own sentence. */
+      const lock = await migratedSoReadonlyState(c, docNo, before.linked_ac_docno != null);
+      if (lock.locked) {
+        skipped.push({ docNo, reason: lock.reason ?? 'This order came from AutoCount and is view-only for now.' });
+        continue;
+      }
+
+      /* The preview may be stale. Only move what still belongs to the person the
+         operator chose — never someone else's order that happened to be listed. */
+      if ((before.salesperson_id as string | null) !== fromStaffId) {
+        skipped.push({ docNo, reason: 'No longer attributed to that salesperson.' });
+        continue;
+      }
+
+      const updates: Record<string, unknown> = { salesperson_id: toStaffId };
+      if (toName) updates.agent = toName;
+      /* Compare-and-set on the rep read above: an order someone else moved meanwhile is skipped, not taken back. A
+         failed write rolls the whole batch back (inside a transaction nothing after it could commit anyway). */
+      const { data: movedRow, error } = await scopeToCompanyId(
+        tx.from('mfg_sales_orders').update(updates).eq('doc_no', docNo),
+        co.companyId,
+      ).eq('salesperson_id', fromStaffId).select('doc_no').maybeSingle();
+      if (error) return c.json({ error: 'handover_failed', message: `${docNo} could not be moved, so no order in this batch was moved. Please try again.`, reason: error.message }, 500);
+      if (!movedRow) { skipped.push({ docNo, reason: 'No longer attributed to that salesperson.' }); continue; }
+
+      const fieldChanges: FieldChange[] = [
+        { field: 'salespersonId', from: fromStaffId, to: toStaffId },
+        ...(toName && toName !== (before.agent as string | null)
+          ? [{ field: 'agent', from: (before.agent as string | null) ?? null, to: toName }]
+          : []),
+      ];
+      await recordSoAudit(tx as unknown as Parameters<typeof recordSoAudit>[0], {
+        docNo,
+        action: 'UPDATE_DETAILS',
+        actorId: user?.id ?? null,
+        actorName: user?.user_metadata?.name ?? null,
+        fieldChanges,
+        statusSnapshot: (before.status as string | null) ?? null,
+        note: 'Salesperson handover',
+      });
+
+      /* ERP -> AutoCount, one per order that actually moved — `agent` is a real
+         AutoCount field, so an account book left naming the departed rep is the
+         same bug one layer down. Inside the loop and after every `continue`, so a
+         skipped order queues nothing. */
+      deferScmAfterCommit(c, async () => {
+        await enqueueEdit(sb as never, {
+          companyId: co.companyId,
+          docType: 'SO',
+          docNo,
+          touchedFields: ['agent'],
+          createdBy: c.get('houzsUser')?.id ?? null,
+        });
+      });
+      moved.push({ docNo });
     }
 
-    /* The preview may be stale. Only move what still belongs to the person the
-       operator chose — never someone else's order that happened to be listed. */
-    if ((before.salesperson_id as string | null) !== fromStaffId) {
-      skipped.push({ docNo, reason: 'No longer attributed to that salesperson.' });
-      continue;
-    }
-
-    const updates: Record<string, unknown> = { salesperson_id: toStaffId };
-    if (toName) updates.agent = toName;
-    const { error } = await scopeToCompanyId(
-      sb.from('mfg_sales_orders').update(updates).eq('doc_no', docNo),
-      co.companyId,
-    );
-    if (error) { skipped.push({ docNo, reason: error.message }); continue; }
-
-    const fieldChanges: FieldChange[] = [
-      { field: 'salespersonId', from: fromStaffId, to: toStaffId },
-      ...(toName && toName !== (before.agent as string | null)
-        ? [{ field: 'agent', from: (before.agent as string | null) ?? null, to: toName }]
-        : []),
-    ];
-    await recordSoAudit(sb, {
-      docNo,
-      action: 'UPDATE_DETAILS',
-      actorId: user?.id ?? null,
-      actorName: user?.user_metadata?.name ?? null,
-      fieldChanges,
-      statusSnapshot: (before.status as string | null) ?? null,
-      note: 'Salesperson handover',
-    });
-
-    /* ERP -> AutoCount, one per order that actually moved — `agent` is a real
-       AutoCount field, so an account book left naming the departed rep is the
-       same bug one layer down. Inside the loop and after every `continue`, so a
-       skipped order queues nothing. */
-    await enqueueEdit(sb as never, {
-      companyId: co.companyId,
-      docType: 'SO',
-      docNo,
-      touchedFields: ['agent'],
-      createdBy: c.get('houzsUser')?.id ?? null,
-    });
-    moved.push({ docNo });
-  }
-
-  return c.json({ fromStaffId, toStaffId, moved, skipped });
+    return c.json({ fromStaffId, toStaffId, moved, skipped });
+  });
 });
 
 /* POST /share — grant (or withdraw) ACCESS on a batch, without touching who the
