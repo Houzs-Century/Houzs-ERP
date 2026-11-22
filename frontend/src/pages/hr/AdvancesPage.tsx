@@ -13,7 +13,7 @@ import { DateField } from "../../vendor/scm/components/DateField";
 import { errText } from "../pos-admin/posAdminUi";
 import { hrPrimaryBtn, hrSecondaryBtn } from "./HrPageHeader";
 import { HrTablePage, Tag, mask, type HrCol } from "./HrTablePage";
-import { HR, senFromRm, useAdvances, useEmployees, type Advance } from "./hrApi";
+import { HR, rmFromSen, senFromRm, useAdvances, useEmployees, type Advance } from "./hrApi";
 
 const monthInput = "h-8 rounded-md border border-border bg-surface-2 px-2 text-[12px] text-ink focus:border-primary focus:outline-none";
 
@@ -31,8 +31,8 @@ export function AdvancesPage() {
     next && setParams((x) => { const n = new URLSearchParams(x); n.set("period", next); return n; }, { replace: true });
 
   const rows = useMemo(() => q.data?.advances ?? [], [q.data]);
-  const unsettled = rows.filter((a) => a.status === "UNSETTLED");
-  const outstanding = unsettled.reduce((s, a) => s + a.amountSen, 0);
+  const toDeduct = rows.reduce((s, a) => s + a.thisMonthSen, 0);
+  const owing = rows.reduce((s, a) => s + a.remainingSen, 0);
 
   async function remove(a: Advance) {
     if (!(await dialog.confirm({ title: `Remove ${a.empNo}'s ${fmtSen(a.amountSen)} advance?`, confirmLabel: "Remove", tone: "danger" }))) return;
@@ -49,8 +49,11 @@ export function AdvancesPage() {
     { key: "date", label: "Date", render: (a) => <span className="font-mono">{formatDate(a.date)}</span> },
     { key: "emp", label: "Employee", render: (a) => <span><span className="font-mono text-[11px] font-semibold text-accent">{a.empNo}</span> <span className="text-ink">{a.name}</span></span> },
     { key: "amount", label: "Amount", align: "right", render: (a, show) => <span className="font-money text-ink">{mask(fmtSen(a.amountSen), show)}</span> },
+    { key: "schedule", label: "Repayment", align: "right", render: (a, show) => (a.installmentSen == null ? <span className="text-ink-muted">Lump sum</span> : <span className="font-money text-ink-secondary">{mask(fmtSen(a.installmentSen), show)}<span className="text-ink-muted">/mo</span></span>) },
+    { key: "thismonth", label: "This month", align: "right", render: (a, show) => <span className="font-money text-ink">{mask(fmtSen(a.thisMonthSen), show)}</span> },
+    { key: "remaining", label: "Remaining", align: "right", render: (a, show) => (a.remainingSen > 0 ? <span className="font-money text-ink-secondary">{mask(fmtSen(a.remainingSen), show)}</span> : <span className="text-ink-muted">—</span>) },
     { key: "note", label: "Note", render: (a) => <span className="text-ink-secondary">{a.note || "—"}</span> },
-    { key: "status", label: "Status", render: (a) => (a.status === "SETTLED" ? <Tag tone="ok">Settled</Tag> : <Tag tone="warn">To deduct</Tag>) },
+    { key: "status", label: "Status", render: (a) => (a.remainingSen > 0 ? <Tag tone="info">Repaying</Tag> : a.status === "SETTLED" ? <Tag tone="ok">Settled</Tag> : a.thisMonthSen > 0 ? <Tag tone="warn">To deduct</Tag> : <Tag tone="ok">Settled</Tag>) },
     { key: "actions", label: "", align: "right", render: (a) => (canManage && a.status === "UNSETTLED" ? <button type="button" onClick={() => void remove(a)} className="rounded-md border border-border bg-surface px-2.5 py-1 text-[11px] font-semibold text-ink-secondary hover:border-err/40 hover:text-err">Remove</button> : null) },
   ];
 
@@ -61,10 +64,10 @@ export function AdvancesPage() {
         subtitle="Cash given ahead of payday, recovered in full"
         actions={canManage ? <button type="button" className={hrPrimaryBtn} onClick={() => setRecording(true)}>+ Record advance</button> : undefined}
         stats={[
-          { label: "Outstanding", value: (s) => <span className="font-money">{mask(fmtSen(outstanding), s)}</span>, sub: "to deduct this month", bar: "bg-time" },
-          { label: "Unsettled", value: () => unsettled.length, sub: "not yet recovered", bar: "bg-primary" },
-          { label: "This month", value: () => rows.length, sub: "advances given", bar: "bg-synced" },
-          { label: "Total given", value: (s) => <span className="font-money">{mask(fmtSen(q.data?.totalSen ?? 0), s)}</span>, sub: "this month", bar: "bg-accent" },
+          { label: "This month", value: (s) => <span className="font-money">{mask(fmtSen(toDeduct), s)}</span>, sub: "to deduct from pay", bar: "bg-time" },
+          { label: "Outstanding", value: (s) => <span className="font-money">{mask(fmtSen(owing), s)}</span>, sub: "owed after this month", bar: "bg-primary" },
+          { label: "Advances", value: () => rows.length, sub: "on this month's slip", bar: "bg-synced" },
+          { label: "Total given", value: (s) => <span className="font-money">{mask(fmtSen(q.data?.totalSen ?? 0), s)}</span>, sub: "full value shown", bar: "bg-accent" },
         ]}
         moneyToggle
         toolbarExtra={<input type="month" value={period} onChange={(e) => setPeriod(e.target.value)} className={monthInput} />}
@@ -75,11 +78,28 @@ export function AdvancesPage() {
         loading={q.loading && !q.data}
         error={q.error}
         emptyLabel="No advances given this month."
-        footer={(s) => <>outstanding <span className="font-money font-semibold text-ink">{mask(fmtSen(outstanding), s)}</span></>}
+        footer={(s) => <>to deduct this month <span className="font-money font-semibold text-ink">{mask(fmtSen(toDeduct), s)}</span></>}
       />
       {recording && <RecordAdvanceModal period={period} onClose={() => setRecording(false)} onDone={() => { setRecording(false); q.reload(); }} />}
     </>
   );
+}
+
+export type RepayMode = "lump" | "split" | "fixed";
+
+/** The per-month deduction the chosen mode implies, in sen (null = lump sum),
+ * or a string error when the inputs are not yet valid. Mirrors the server. */
+export function installmentFromInputs(mode: RepayMode, amountSen: number, months: string, monthly: string): number | null | string {
+  if (mode === "lump") return null;
+  if (mode === "split") {
+    const n = Number(months);
+    if (!Number.isInteger(n) || n < 1) return "Enter how many months (1 or more).";
+    return Math.ceil(amountSen / n);
+  }
+  const perMonth = senFromRm(monthly);
+  if (!(perMonth > 0)) return "Enter the monthly repayment.";
+  if (perMonth > amountSen) return "The monthly repayment can't be more than the advance.";
+  return perMonth;
 }
 
 function RecordAdvanceModal({ period, onClose, onDone }: { period: string; onClose: () => void; onDone: () => void }) {
@@ -88,17 +108,28 @@ function RecordAdvanceModal({ period, onClose, onDone }: { period: string; onClo
   const [employeeId, setEmployeeId] = useState("");
   const [date, setDate] = useState(`${period}-01` <= todayMY() ? todayMY() : `${period}-01`);
   const [amount, setAmount] = useState("");
+  const [mode, setMode] = useState<RepayMode>("lump");
+  const [months, setMonths] = useState("");
+  const [monthly, setMonthly] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const active = useMemo(() => (employees.data?.employees ?? []).filter((e) => e.status === "ACTIVE"), [employees.data]);
 
+  const amountSen = senFromRm(amount);
+  const installment = installmentFromInputs(mode, amountSen, months, monthly);
+  // A preview of the schedule once both the amount and a valid plan are in.
+  const preview =
+    mode === "lump" || !(amountSen > 0) || typeof installment === "string" || installment == null
+      ? null
+      : `RM ${rmFromSen(installment)}/month · about ${Math.ceil(amountSen / installment)} month${Math.ceil(amountSen / installment) === 1 ? "" : "s"}`;
+
   async function save() {
-    const amountSen = senFromRm(amount);
     if (!employeeId) { toast.error("Pick the employee."); return; }
     if (!(amountSen > 0)) { toast.error("The amount must be more than RM 0.00."); return; }
+    if (typeof installment === "string") { toast.error(installment); return; }
     setBusy(true);
     try {
-      await api.post(`${HR}/advances`, { employeeId: Number(employeeId), date, amountSen, note });
+      await api.post(`${HR}/advances`, { employeeId: Number(employeeId), date, amountSen, installmentSen: installment, note });
       toast.success("Advance recorded");
       onDone();
     } catch (e) {
@@ -108,6 +139,8 @@ function RecordAdvanceModal({ period, onClose, onDone }: { period: string; onClo
   }
 
   const fieldCls = "h-9 w-full rounded-md border border-border bg-surface-2 px-2.5 text-[12.5px] text-ink focus:border-primary focus:outline-none";
+  const modeBtn = (m: RepayMode, label: string) =>
+    <button type="button" onClick={() => setMode(m)} className={`h-8 flex-1 rounded-md border px-2 text-[11.5px] font-semibold ${mode === m ? "border-primary bg-primary/10 text-primary" : "border-border bg-surface-2 text-ink-secondary hover:border-primary/40"}`}>{label}</button>;
   return (
     <div className="fixed inset-0 z-[80] flex items-start justify-center overflow-y-auto p-6" style={{ background: "rgba(17,20,15,.42)" }} onMouseDown={onClose}>
       <div className="my-10 w-full max-w-[440px] animate-rise rounded-2xl bg-surface shadow-[0_24px_64px_-16px_rgba(17,20,15,.35)]" onMouseDown={(e) => e.stopPropagation()}>
@@ -129,6 +162,25 @@ function RecordAdvanceModal({ period, onClose, onDone }: { period: string; onClo
             <label className="block"><span className="mb-1 block text-[11px] text-ink-muted">Amount (RM)</span>
               <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" className={fieldCls} />
             </label>
+          </div>
+          <div className="block">
+            <span className="mb-1 block text-[11px] text-ink-muted">Repayment</span>
+            <div className="flex gap-2">
+              {modeBtn("lump", "Lump sum")}
+              {modeBtn("split", "Split N months")}
+              {modeBtn("fixed", "Fixed / month")}
+            </div>
+            {mode === "split" && (
+              <label className="mt-2 block"><span className="mb-1 block text-[11px] text-ink-muted">Number of months</span>
+                <input value={months} onChange={(e) => setMonths(e.target.value)} inputMode="numeric" placeholder="e.g. 5" className={fieldCls} />
+              </label>
+            )}
+            {mode === "fixed" && (
+              <label className="mt-2 block"><span className="mb-1 block text-[11px] text-ink-muted">Deduct each month (RM)</span>
+                <input value={monthly} onChange={(e) => setMonthly(e.target.value)} inputMode="decimal" placeholder="e.g. 200.00" className={fieldCls} />
+              </label>
+            )}
+            <p className="mt-1.5 text-[11px] text-ink-muted">{mode === "lump" ? "Whole amount comes off the slip of the month it was given." : preview ?? "Enter the amount and a plan to preview the schedule."}</p>
           </div>
           <label className="block"><span className="mb-1 block text-[11px] text-ink-muted">Note</span>
             <input value={note} onChange={(e) => setNote(e.target.value)} className={fieldCls} />
