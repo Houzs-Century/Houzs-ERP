@@ -62,6 +62,6 @@ describe("MeetingBook", () => {
     render(<MeetingBook />);
     expect(await screen.findByText("This booking link is not active")).toBeTruthy();
     // The hub's own sentence repeats the heading; it is shown once, not twice.
-    expect((document.body.textContent ?? "").match(/not active/gi)?.length).toBe(1);
+    expect(document.body.textContent.match(/not active/gi)?.length).toBe(1);
   });
 });
