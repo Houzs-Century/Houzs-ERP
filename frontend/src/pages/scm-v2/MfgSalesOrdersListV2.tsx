@@ -116,6 +116,7 @@ import { formatPhone } from "@2990s/shared/phone";
 import { customerRefOf } from '../../lib/customer-ref';
 import { soStreetTail } from '../../vendor/scm/lib/order-address';
 import { todayMyt } from "../../vendor/scm/lib/dates";
+import { soListBalanceSen, soListPaidSen } from "../../vendor/scm/lib/so-list-balance";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 // Minimal row shape the listing needs. The full SoRow (in MfgSalesOrdersList
@@ -516,9 +517,7 @@ function DetailDrawer({
       ? items.reduce((sum, l) => sum + (l.total_sen ?? (l.qty ?? 0) * (l.unit_price_sen ?? 0)), 0)
       : row?.local_total_sen ?? 0;
   const totalSen = subtotalSen;
-  // Ledger-derived paid (Σ payments); the stored paid_sen is a deprecated
-  // column no writer maintains, kept only as the absent-view fallback.
-  const paidSen = row?.paid_total_sen ?? row?.paid_sen ?? 0;
+  const paidSen = soListPaidSen(row); // the view paid (payments ledger), never the stored paid_sen
   const outstandingSen = totalSen - paidSen;
 
   return (
@@ -1196,8 +1195,8 @@ export function MfgSalesOrdersListV2() {
     // columns the server now sums, so both paths agree.
     for (const r of rows) {
       revenueSen += r.local_total_sen ?? 0;
-      outstandingSen += r.balance_sen_live ?? r.balance_sen ?? 0;
-      paidSen += r.paid_total_sen ?? r.paid_sen ?? 0;
+      outstandingSen += soListBalanceSen(r);
+      paidSen += soListPaidSen(r);
     }
     return { revenueSen, outstandingSen, paidSen, fullSet: false };
   }, [aggregates, rows]);
@@ -1772,7 +1771,7 @@ export function MfgSalesOrdersListV2() {
       },
     },
     approvalCodeColumn, // docs/bugs/0909 — its own module: this file may only shrink
-    moneyColumn<SoRow, SoListLine>({ key: "paid", group: "Amounts", label: "Paid", width: "110px", defaultHidden: true, sen: (r) => r.paid_total_sen ?? r.paid_sen ?? 0 }),
+    moneyColumn<SoRow, SoListLine>({ key: "paid", group: "Amounts", label: "Paid", width: "110px", defaultHidden: true, sen: (r) => soListPaidSen(r) }),
     {
       key: "balance",
       group: "Amounts",
@@ -1781,20 +1780,20 @@ export function MfgSalesOrdersListV2() {
       align: "right",
       defaultHidden: true,
       disableSort: true,
-      getValue: (r) => r.balance_sen_live ?? r.balance_sen, // `?? 0` was dead: balance_sen is `number`, never nullish
-      exportValue: (r) => senToRinggit(r.balance_sen_live ?? r.balance_sen, 2),
+      getValue: (r) => soListBalanceSen(r),
+      exportValue: (r) => senToRinggit(soListBalanceSen(r), 2),
       exportFormat: "money",
       render: (r) => ( // negative = over-collected → text-err, the app's negative-money convention (owner 2026-08-16)
         <span
           className={cn(
             "font-money text-[13px]",
-            (r.balance_sen_live ?? r.balance_sen) < 0
+            soListBalanceSen(r) < 0
               ? "text-err"
-              : isDeliveredOwing(r.balance_sen_live ?? r.balance_sen, r.delivery_state ?? null) ? OWING_CLASS : "text-ink",
+              : isDeliveredOwing(soListBalanceSen(r), r.delivery_state ?? null) ? OWING_CLASS : "text-ink",
           )}
-          title={isDeliveredOwing(r.balance_sen_live ?? r.balance_sen, r.delivery_state ?? null) ? "Delivered, still owing" : undefined}
+          title={isDeliveredOwing(soListBalanceSen(r), r.delivery_state ?? null) ? "Delivered, still owing" : undefined}
         >
-          {fmtRm(r.balance_sen_live ?? r.balance_sen)}
+          {fmtRm(soListBalanceSen(r))}
         </span>
       ),
     },
