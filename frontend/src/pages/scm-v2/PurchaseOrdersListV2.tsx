@@ -1009,7 +1009,10 @@ export function PurchaseOrdersListV2() {
     status !== "all" || view !== "table" || search.trim().length > 0;
 
   const onPullToRefresh = async () => {
-    await queryClient.invalidateQueries({ queryKey: ["mfg-purchase-orders"] });
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["mfg-purchase-orders"] }),
+      queryClient.invalidateQueries({ queryKey: ["mfg-purchase-orders-paged"] }),
+    ]);
   };
 
   /* The ONE Export (owner 2026-09-15): every order the list's tab + search +

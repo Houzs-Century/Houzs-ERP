@@ -52,7 +52,7 @@ type HoldDocSpec = {
 
 const DOCS: Record<HoldDocType, HoldDocSpec> = {
   so:  { base: 'mfg-sales-orders',   label: 'sales order',           invalidate: ['mfg-sales-orders', 'mfg-sales-order-detail', 'so-detail'] },
-  po:  { base: 'purchase-orders',    label: 'purchase order',        invalidate: ['purchase-orders', 'purchase-order-detail'] },
+  po:  { base: 'purchase-orders',    label: 'purchase order',        invalidate: ['mfg-purchase-orders', 'mfg-purchase-order-detail'] },
   grn: { base: 'grns',               label: 'goods received note',   invalidate: ['grns', 'grn-detail'] },
   pi:  { base: 'purchase-invoices',  label: 'purchase invoice',      invalidate: ['purchase-invoices', 'purchase-invoice-detail'] },
   do:  { base: 'delivery-orders-mfg', label: 'delivery order',       invalidate: ['mfg-delivery-orders', 'mfg-delivery-order-detail'] },
