@@ -171,6 +171,39 @@ stockTransfers.get('/:id', async (c) => {
   return c.json({ transfer: headerRes.data, lines: linesRes.data ?? [], stockNotBack });
 });
 
+/* How long a cancel's stock reversal holds the transfer. A reversal writes one row per bucket and finishes in
+   seconds; the margin covers a slow one. */
+export const TRANSFER_REVERSAL_LEASE_MS = 60_000;
+
+/**
+ * Only one stock reversal may run per cancelled transfer. reverseMovements nets what is already back, but two
+ * runs that read before either writes both see the stock still out and both move it back. cancelled_at is the
+ * lease: the cancel's own flip stamps it, and a Finish cancel claims the transfer by moving it forward with a
+ * compare-and-set on the value it read. A second press at the same instant matches no row; a press while a
+ * reversal stamped under a minute ago may still be running is refused too. So cancelled_at reads as when the
+ * cancel last ran.
+ */
+async function claimTransferReversal(
+  db: ReturnType<typeof scmDb>, companyId: number, id: string,
+): Promise<{ ok: true } | { ok: false; status: 409 | 500; body: { error: string; message: string } }> {
+  const busy = {
+    ok: false as const, status: 409 as const,
+    body: { error: 'cancel_in_progress', message: 'This transfer\'s stock is being moved back by another cancel right now. Wait a minute, open it again, and press Finish cancel only if it is still offered.' },
+  };
+  const { data: cur, error: curErr } = await db.from('stock_transfers', companyIdScope(companyId))
+    .select('status, cancelled_at').eq('id', id).maybeSingle();
+  if (curErr) return { ok: false, status: 500, body: { error: 'cancel_failed', message: `Could not read the transfer: ${curErr.message}` } };
+  const prev = (cur as { status?: string; cancelled_at?: string | null } | null)?.cancelled_at ?? null;
+  const prevMs = prev ? Date.parse(prev) : NaN;
+  if (Number.isFinite(prevMs) && Date.now() - prevMs < TRANSFER_REVERSAL_LEASE_MS) return busy;
+  const flip = db.from('stock_transfers', companyIdScope(companyId))
+    .update({ cancelled_at: new Date().toISOString() }).eq('id', id).eq('status', 'CANCELLED');
+  const { data: won, error: wonErr } = await (prev ? flip.eq('cancelled_at', prev) : flip.is('cancelled_at', null))
+    .select('id').maybeSingle();
+  if (wonErr) return { ok: false, status: 500, body: { error: 'cancel_failed', message: `Could not claim the transfer: ${wonErr.message}` } };
+  return won ? { ok: true } : busy;
+}
+
 type TransferMovementRow = { movement_type: string; warehouse_id: string; item_code: string; variant_key: string | null; batch_no?: string | null; qty: number };
 
 /** Some (warehouse, item, variant, batch) bucket of the transfer's own IN/OUT rows does not net to zero. */
@@ -789,6 +822,8 @@ stockTransfers.patch('/:id/cancel', async (c) => {
        bucket first and touches only what is not yet square, so on a transfer whose stock did come back this moves
        nothing. Before, this answered 409 and a failed reversal could never be re-run. */
     if (String(beforeTransfer?.status ?? '').toUpperCase() !== 'CANCELLED') return c.json({ error: 'already_cancelled' }, 409);
+    const claim = await claimTransferReversal(db, co.companyId, id);
+    if (!claim.ok) return c.json(claim.body, claim.status);
     const again = await reverseMovements(db.unscoped(
       'library hand-off: reverseMovements resolves the rows to reverse from this document id, which the company-scoped read above already proved is ours',
     ), 'STOCK_TRANSFER', id, user.id);
