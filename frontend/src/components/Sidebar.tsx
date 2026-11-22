@@ -912,11 +912,12 @@ export const NAV_TABS: NavTab[] = [
     // Commission page itself (per-button), not here: they grant an action
     // inside the module, never admittance to it. Neither is usable without
     // scm.hr.read anyway, since the API refuses to show the period first.
-    anyPerm: ["*", "scm.hr.read", "scm.hr.manage", "hr.employees.read", "hr.employees.manage"],
+    anyPerm: ["*", "scm.hr.read", "scm.hr.manage", "hr.employees.read", "hr.employees.manage", "hr.attendance.read", "hr.ot.confirm"],
     children: [
       // Employees & Attendance (HC-0125): its own flat keys, payroll is granted
-      // to different people than commission.
-      { to: "/hr/employees", label: "Employees & Attendance", icon: Users, anyPerm: ["*", "hr.employees.read", "hr.employees.manage"] },
+      // to different people than commission. hr.attendance.read / hr.ot.confirm
+      // open it to the Attendance / OT tabs alone (see HrEmployees narrow mode).
+      { to: "/hr/employees", label: "Employees & Attendance", icon: Users, anyPerm: ["*", "hr.employees.read", "hr.employees.manage", "hr.attendance.read", "hr.ot.confirm"] },
       { to: "/scm/hr/commission", label: "Commission", icon: DollarSign, anyPerm: ["*", "scm.hr.read", "scm.hr.manage"] },
       // Settings is an EDITOR — read-only holders are not shown a page whose
       // every control the API would reject (2990 bounces them to the report).

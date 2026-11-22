@@ -298,6 +298,11 @@ export const PERMISSIONS: PermissionDef[] = [
   // Its own key so a floor / warehouse supervisor can sign off OT without the
   // full hr.employees.manage pay-editing rights. Confirmed OT is what payroll pays.
   { key: "hr.ot.confirm", resource: "HR", verb: "approve", label: "Confirm overtime", description: "See and confirm or reject the overtime that workers report on the phone; confirmed overtime is what payroll pays" },
+  // Attendance-only view. Opens Employees & Attendance to the Attendance (and,
+  // with hr.ot.confirm, OT) tabs ALONE — the daily punches and working hours,
+  // never salary, pay, the employee master or payroll. For an attendance / OT
+  // supervisor who must see who clocked in but not what anyone is paid.
+  { key: "hr.attendance.read", resource: "HR", verb: "read", label: "View attendance only", description: "See the daily attendance punches and working hours in Employees & Attendance — not salary, pay, the employee master or payroll" },
 
   // AutoCount write-back queue (scm.autocount_outbox, mig 0277) — the READ of
   // what the ERP has told the licensed account book and what came back. It is a
