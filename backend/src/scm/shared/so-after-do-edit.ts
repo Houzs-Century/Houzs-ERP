@@ -29,12 +29,26 @@
  * and so does every live Sales Invoice line billing those DO lines, issued or
  * not: its totals, paid status and revenue entry are re-derived (Nico,
  * 2026-10-13, option B). Not through a DO with a live Delivery Return, never on
- * an order invoiced without a DO. */
+ * an order invoiced without a DO.
+ *
+ * Owner 2026-11-21: the widest door, and super-admin only. A caller holding
+ * `scm.so.edit_lines_after_do` may change the QUANTITY and SPECIFICATION
+ * (item code / variants) of a PRODUCT line a live Delivery Order carries, and
+ * add or remove product lines. The change flows onto the DO line (stock
+ * re-synced through the DO's own edit-after-ship machinery) and onto every live
+ * Sales Invoice line billing it (totals, paid status and revenue entry
+ * re-derived), issued or not — the same in-place re-derivation DEV-70 uses, now
+ * with stock. A qty/spec edit or a remove is allowed only on a line a SINGLE
+ * live DO line carries in full (the whole ordered qty delivered on one DO); a
+ * split or partly delivered line is refused (handle each DO, or the outstanding
+ * part, first). Still never through a DO with a live Delivery Return, and never
+ * on an order invoiced without a DO. */
 
 import { isServiceLine } from './service-sku';
 
 export const SO_EDIT_AFTER_DO_PERMISSION = 'scm.so.edit_after_do';
 export const SO_EDIT_PRICE_AFTER_DO_PERMISSION = 'scm.so.edit_price_after_do';
+export const SO_EDIT_LINES_AFTER_DO_PERMISSION = 'scm.so.edit_lines_after_do';
 
 /** SO header column -> the Delivery Order column it is copied into (null = the
  *  DO has no such column; the SO change still saves). address3/4 fold into the
@@ -88,6 +102,20 @@ export function afterDoPriceReturnedRefusal(doNumbers: ReadonlyArray<string>): A
 export const AFTER_DO_PRICE_NOT_DELIVERED: AfterDoRefusal = {
   error: 'after_do_price_not_on_do',
   message: 'No open Delivery Order carries this line. Change its price with Edit instead.',
+};
+
+export const AFTER_DO_LINES_FORBIDDEN: AfterDoRefusal = {
+  error: 'forbidden_edit_lines_after_do',
+  message: 'Changing a line\'s quantity or specification, or adding/removing a line, after its Delivery Order needs the "Edit SO line items after DO" permission (super admin).',
+};
+
+/** A qty/spec edit (or a remove) after the DO is allowed only on a product line
+ *  a SINGLE live DO line carries IN FULL — the whole ordered qty on one DO. A
+ *  split line, or one still partly undelivered, is refused: the right place is
+ *  each Delivery Order, or the outstanding part first. */
+export const AFTER_DO_LINE_NOT_SETTLED: AfterDoRefusal = {
+  error: 'after_do_line_not_settled',
+  message: 'This line is split across Delivery Orders or not fully delivered, so its quantity and specification cannot be changed here. Change each Delivery Order directly, or settle the outstanding part first.',
 };
 
 export const AFTER_DO_SERVICE_ONLY: AfterDoRefusal = {

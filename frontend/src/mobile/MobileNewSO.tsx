@@ -45,7 +45,7 @@ import { soSaveEndFields, soVersionAfter } from "../vendor/scm/lib/so-save-lease
 import { planAmendmentSubmit, amendmentSubmittedNotice, AMENDMENT_MODE_BANNER, AMENDMENT_NOTHING_TO_SUBMIT, AMENDMENT_REASON_REQUIRED } from "../vendor/scm/lib/so-amendment-submit";
 import { useAmendmentSubmitDialog, RequestProcessingDateRemoval } from "../vendor/scm/components/AmendmentSubmitDialog";
 import { isLocked as isSoLocked, procLockActive, migratedReadonly as soMigratedReadonly, soDownstreamHardLocked, soItemFrozen, type SoDetailGateHeader } from "../vendor/scm/lib/so-detail-gates";
-import { soAfterDoMode, afterDoEditableLine, afterDoHeaderFields, afterDoEditFields, afterDoAddFields, afterDoCopyProblem, type AfterDoHeader, type AfterDoSave } from "../vendor/scm/lib/so-after-do-client"; import { MobileSoLockBanner } from "./MobileSoLockBanner";
+import { soAfterDoMode, soLinesAfterDoOn, afterDoEditableLine, afterDoProductLineEditable, afterDoHeaderFields, afterDoEditFields, afterDoAddFields, afterDoCopyProblem, type AfterDoHeader, type AfterDoSave } from "../vendor/scm/lib/so-after-do-client"; import { MobileSoLockBanner } from "./MobileSoLockBanner";
 import { FROZEN_LINE_LABEL, FROZEN_LINE_LABEL_STYLE, FROZEN_LINE_STYLE } from "../vendor/scm/lib/so-frozen-line-style";
 import { MigratedReadonlyBanner } from "../vendor/scm/components/MigratedReadonlyBanner";
 import {
@@ -1269,7 +1269,8 @@ export function MobileNewSO({
   const lineEditingBlocked = migratedLocked || lineLocked || (procLocked && !amendmentMode);
   /* DEV-32 — Edit SO after DO, desktop's rule (so-after-do-client): charge lines + the DO-snapshotted customer details reopen; a line shown read-only is never written. */
   const afterDo = soAfterDoMode(migHeader ?? {}, { can, override: unlockOverride, migrated: migratedLocked }), chargeAdds = lineEditingBlocked && afterDo.on, custLocked = identityLocked && !afterDo.headerOpen;
-  const afterDoLineIds = new Set(origItems.filter((it) => afterDoEditableLine(afterDo, it)).map((it) => it.id)), afterDoSave: AfterDoSave = { mode: afterDo, lineIds: afterDoLineIds, chargeAdds, targetId: afterDoTargetId };
+  const linesAfterDo = soLinesAfterDoOn(migHeader ?? {}, { can, migrated: migratedLocked }); // Owner 2026-11-21: super admin edits a delivered PRODUCT line's qty / spec
+  const afterDoLineIds = new Set(origItems.filter((it) => afterDoEditableLine(afterDo, it) || afterDoProductLineEditable(linesAfterDo, it)).map((it) => it.id)), afterDoSave: AfterDoSave = { mode: afterDo, lineIds: afterDoLineIds, chargeAdds, targetId: afterDoTargetId };
   const roLine = (id: string) => !afterDoLineIds.has(id) && (lineEditingBlocked || frozenItemIds.has(id)), doCopyNotice = (r: unknown) => { const m = afterDoCopyProblem(r); if (m) void notify({ title: "Delivery Order not updated", body: m, tone: "error" }); };
   /* Identity address columns (State/City/Postcode) freeze on the processing
      lock (State drives each line's warehouse → the supplier PO) — EXCEPT in
@@ -2080,7 +2081,7 @@ export function MobileNewSO({
         const liveIds = new Set(lines.map((l) => l.itemId).filter(Boolean));
         const snapById = new Map(origItems.map((s) => [s.id, s]));
         const hasStagedPhotos = lines.some((line) => line.photoFiles.length > 0);
-        const hasDirectLineChanges = (!lineEditingBlocked || chargeAdds) && (
+        const hasDirectLineChanges = (!lineEditingBlocked || chargeAdds || linesAfterDo) && (
           origItems.some((snap) => !liveIds.has(snap.id))
           || lines.some((l) => !l.itemId || (snapById.get(l.itemId) ? lineChanged(l, snapById.get(l.itemId)!) : true))
           || hasStagedPhotos
@@ -2102,7 +2103,7 @@ export function MobileNewSO({
         /* FIX D2/D3 — skip line mutations + photo staging when line editing is
            blocked (shipped/has-children OR processing-date-locked); the backend
            rejects them 409 so_locked_processing anyway. */
-        if (!lineEditingBlocked || chargeAdds) {
+        if (!lineEditingBlocked || chargeAdds || linesAfterDo) {
           if (leaseToken) {
             const failures = await applyLineDiff(docNo, leaseToken);
             if (failures.length > 0) {
@@ -2575,7 +2576,7 @@ export function MobileNewSO({
                     <span>{AMENDMENT_MODE_BANNER}</span>
                   </div>
                 )}
-                {lineEditingBlocked && !chargeAdds ? (
+                {lineEditingBlocked && !chargeAdds && !linesAfterDo ? (
                   <>
                     {lines.length ? lines.map((l) => (
                       <div key={l.key} style={roItemBox}>
