@@ -135,7 +135,7 @@ import { advanceSoGeneration } from '../lib/so-generation';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange } from '../lib/entity-audit';
 import { markIdempotencyNoWrite } from '../../middleware/idempotency';
 import { resolveDoLineRacks, racksForDoLine, loadShippedFromRacks } from '../lib/do-line-racks';
-import { queueDoShippedFromStamp, markDoShippedFromReturned, withShippedFromStamp, DO_RACK_OUT_REASON } from '../lib/do-shipped-from-stamp';
+import { queueDoShippedFromStamp, markDoShippedFromReturned, withShippedFromStamp, DO_RACK_OUT_REASON } from '../lib/do-shipped-from-stamp'; import { rackShipState, retireDoRackCycle, DO_RACK_IN_REASON } from '../lib/do-rack-cycle';
 import { withSoRefDocNos } from '../lib/so-ref-search';
 import { stockTxFor, type StockTx } from '../lib/stock-post-tx'; import { doShipCoreFailure, doShipFailureResponse, keepCreatedDoAsDraft, type DoShipFlip, type DoShipTail } from '../lib/do-ship-atomic';
 import { hasUnreadableLines, unreadableMovementError } from '../lib/failed-read-refusal'; import { readFailure, readFailureError } from '../lib/read-failure'; import { noteResyncReadFailure, revertShipOnUnreadLines } from '../lib/do-read-guards';
@@ -1313,7 +1313,7 @@ async function shipCreatedDoAtomically(tx: StockTx, sb: Parameters<typeof writeM
 // per DO regardless of which UI path dispatched. Best-effort throughout — the
 // separate rack ledger must never break the FIFO stock OUT.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function stockOutDoLinesFromRacks(
+export async function stockOutDoLinesFromRacks(
   sb: any,
   deliveryOrderId: string,
   doNo: string,
@@ -1322,11 +1322,11 @@ async function stockOutDoLinesFromRacks(
   items: Array<Record<string, unknown>>,
   companyId: number | null,
 ): Promise<void> {
-  const RACK_REASON = DO_RACK_OUT_REASON; // Idempotency — this DO already logged its rack stock-out?
-  const { count: already } = await sb.from('warehouse_rack_movements')
-    .select('id', { head: true, count: 'exact' })
-    .eq('movement_type', 'STOCK_OUT').eq('source_doc_no', doNo).eq('reason', RACK_REASON);
-  if ((already ?? 0) > 0) return;
+  const RACK_REASON = DO_RACK_OUT_REASON;
+  /* Idempotency: a live rack stock-out on file is a no-op; one a revert put back is retired first (lib/do-rack-cycle.ts). */
+  const state = await rackShipState(sb, doNo, companyId);
+  if (state === 'already_out') return;
+  if (state !== 'stock_out') { /* eslint-disable-next-line no-console */ console.error(`[do-rack] ${doNo}: racks not touched:`, state); return; }
 
   const companyCol = companyId != null ? { company_id: companyId } : {};
   /* Every rack read/write below FILTERS on the companyId stamped above: the rack is caller-supplied and the predicate is the only boundary (docs/bugs/0497-*.md). */
@@ -1431,7 +1431,7 @@ async function refreshRackStatusInline(sb: any, rackId: string): Promise<void> {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function returnDoRacksOnCancel(sb: any, deliveryOrderId: string, doNo: string, performedBy: string, companyId: number | null, why: 'revert' | 'cancel'): Promise<void> {
   await markDoShippedFromReturned(sb, deliveryOrderId, companyId, why);
-  const OUT_REASON = DO_RACK_OUT_REASON, IN_REASON = 'DO cancelled';
+  const OUT_REASON = DO_RACK_OUT_REASON, IN_REASON = DO_RACK_IN_REASON;
   const { count: alreadyBack } = await sb.from('warehouse_rack_movements')
     .select('id', { head: true, count: 'exact' })
     .eq('movement_type', 'STOCK_IN').eq('source_doc_no', doNo).eq('reason', IN_REASON);
@@ -1476,6 +1476,12 @@ export async function returnDoRacksOnCancel(sb: any, deliveryOrderId: string, do
     });
   }
   for (const rackId of touchedRacks) await refreshRackStatusInline(sb, rackId);
+  /* A Draft DO reads as never racked out, so its next ship takes the goods off again (lib/do-rack-cycle.ts). */
+  if (why === 'revert') {
+    const err = await retireDoRackCycle(sb, doNo, companyId);
+    /* eslint-disable-next-line no-console */
+    if (err) console.error(`[do-rack] ${doNo}: returned cycle not retired (the next ship retires it):`, err);
+  }
 }
 
 /* ── resyncInventoryForDo (Commander 2026-05-30, TASK #24) ────────────────────

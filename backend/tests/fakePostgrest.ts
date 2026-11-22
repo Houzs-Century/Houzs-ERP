@@ -124,6 +124,7 @@ export function makeFakePostgrest(
     const orders: string[] = [];
     let range: [number, number] | null = null;
     let single = false;
+    let headCount = false;
     let settled = false;
 
     const applyTop = (rows: Row[]): Row[] => rows.filter((r) => filters.every((f) => {
@@ -193,6 +194,7 @@ export function makeFakePostgrest(
         out = [...out].sort((a, b) => String(a[o] ?? '').localeCompare(String(b[o] ?? '')));
       }
       if (range) out = out.slice(range[0], range[1] + 1);
+      if (headCount) return { data: null, error: null, count: out.length };
       return { data: single ? (out[0] ?? null) : out, error: null };
     };
 
@@ -205,7 +207,11 @@ export function makeFakePostgrest(
         }
         return (...args: unknown[]) => {
           switch (prop) {
-            case 'select': cols = String(args[0] ?? '*'); return builder;
+            case 'select':
+              cols = String(args[0] ?? '*');
+              /* `{ head: true, count: 'exact' }` answers the row count and no rows, as PostgREST does. */
+              headCount = (args[1] as { head?: boolean } | undefined)?.head === true;
+              return builder;
             case 'update': mode = 'update'; payload = args[0] as Row; return builder;
             case 'insert': mode = 'insert'; inserted = (Array.isArray(args[0]) ? args[0] : [args[0]]) as Row[]; return builder;
             case 'upsert': mode = 'insert'; inserted = (Array.isArray(args[0]) ? args[0] : [args[0]]) as Row[]; return builder;
