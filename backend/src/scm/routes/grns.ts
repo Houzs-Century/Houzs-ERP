@@ -3008,7 +3008,7 @@ grns.patch('/:id/items/:itemId', async (c) => {
      business-logic only (not in GRN_LINE_AUDIT_FIELDS — variants render into the
      audited description2). */
   const { data: prevRow } = await sb.from('grn_items')
-    .select(GRN_LINE_AUDIT_SELECT + ', variants, purchase_order_item_id')
+    .select(GRN_LINE_AUDIT_SELECT + ', variants, purchase_order_item_id, version')
     .eq('id', itemId).maybeSingle();
   if (!prevRow) return refuseWithoutWriting(c, { error: 'not_found' }, 404);
   /* Cast through `unknown`: a concatenated-string .select() infers as
@@ -3162,7 +3162,20 @@ grns.patch('/:id/items/:itemId', async (c) => {
   const pf = await assertAuditWritable(sb, { entityType: 'GRN', entityId: grnId, action: 'UPDATE', companyId: activeCompanyId(c) });
   if (!pf.ok) return refuseWithoutWriting(c, auditUnavailableBody(), 409);
 
-  const { error } = await scopeToCompanyId(sb.from('grn_items').update(coerceEmptyDates(updates)).eq('id', itemId), co.companyId);
+  /* Compare-and-set on the version and the qty this edit's stock delta was computed from. Two people editing one
+     line both read qty 10; one saves 6 (OUT 4), the other 8 (OUT 2): both used to write and both stock moves landed,
+     so the shelf lost 6 while the line said 8. Now the second save matches no row, moves no stock, and is told to
+     reload. Other grn_items writers leave version alone, which is why qty_accepted is compared too. */
+  const storedVersion = (prev as { version?: number | null }).version;
+  if (storedVersion != null) updates.version = Number(storedVersion) + 1;
+  const storedAccepted = (prev as { qty_accepted: number | null }).qty_accepted;
+  let lineWrite = sb.from('grn_items').update(coerceEmptyDates(updates)).eq('id', itemId);
+  lineWrite = storedAccepted == null ? lineWrite.is('qty_accepted', null) : lineWrite.eq('qty_accepted', storedAccepted);
+  if (storedVersion != null) lineWrite = lineWrite.eq('version', Number(storedVersion));
+  const { data: claimedLine, error } = await scopeToCompanyId(lineWrite, co.companyId).select('id');
+  if (!error && ((claimedLine as unknown[] | null) ?? []).length === 0) {
+    return refuseWithoutWriting(c, { error: 'line_changed', message: 'Someone else changed this line while you were editing it. Reload to see their change, then edit again.' }, 409);
+  }
   if (isPoLineOverReceived(error)) return c.json({ error: 'qty_exceeds_remaining', poItemId: (prev as { purchase_order_item_id: string | null }).purchase_order_item_id, requested: qtyReceived, reason: error?.message }, 409);
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
 
