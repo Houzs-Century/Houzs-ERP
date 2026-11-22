@@ -2,6 +2,7 @@
 // month a penalty lands in.
 import { describe, expect, test } from "vitest";
 import { DEFAULT_PAY_RULES } from "../../scm/shared/hr-pay-rules";
+import { advanceInstallmentForMonth } from "../../scm/shared/hr-advance-installment";
 import { buildPayslip, onPayroll, penaltyPeriod, type PayslipEmployee } from "./hr-payslip";
 
 const emp: PayslipEmployee = {
@@ -106,6 +107,40 @@ describe("buildPayslip", () => {
     expect(s.grossSen).toBe(s.pay.grossSen + 66010 + 40000 + 20000);
     expect(s.netSen).toBe(s.grossSen - 15000);
     expect(buildPayslip(base).pay.absentDays).toBe(2);
+  });
+
+  test("an installment advance deducts the per-month amount, not the full advance", () => {
+    // RM600 advance given September, repaid RM200/month. This is exactly how
+    // the store feeds buildPayslip: it maps each advance through
+    // advanceInstallmentForMonth(advanceMonth, installmentSen, amountSen, period)
+    // and passes only the per-month share. In November only RM200 comes off.
+    const advanceMonth = "2026-09";
+    const amountSen = 60000;
+    const installmentSen = 20000;
+    const forMonth = (period: string) => {
+      const sen = advanceInstallmentForMonth(advanceMonth, installmentSen, amountSen, period);
+      return buildPayslip({
+        employee: emp,
+        period,
+        salaryHistory: [{ effectiveFrom: "2025-01-01", basicSalarySen: 260000 }],
+        days: fullMonth(),
+        holidays: new Set<string>(),
+        absenceThroughDay: 30,
+        shortHours: 0,
+        rulesOn: () => DEFAULT_PAY_RULES,
+        advances: sen > 0 ? [{ date: "2026-09-10", amountSen: sen }] : [],
+        penaltySen: 0,
+        ytd: { remunerationSen: 0, epfSen: 0, pcbSen: 0 },
+        confirmedOtHoursByDate: null,
+      });
+    };
+    expect(forMonth("2026-09").advanceSen).toBe(20000);
+    expect(forMonth("2026-10").advanceSen).toBe(20000);
+    expect(forMonth("2026-11").advanceSen).toBe(20000);
+    expect(forMonth("2026-12").advanceSen).toBe(0); // repaid after three months
+    // The three deductions recover the whole advance, never more.
+    const total = ["2026-09", "2026-10", "2026-11", "2026-12"].reduce((s, p) => s + forMonth(p).advanceSen, 0);
+    expect(total).toBe(amountSen);
   });
 
   test("EPF is worked out on salary plus commission (Nico 2026-10-23)", () => {

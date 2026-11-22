@@ -678,7 +678,10 @@ export function GoodsReceivedListV2() {
   const filtersActive = status !== "all" || view !== "table" || search.trim().length > 0;
 
   const onPullToRefresh = async () => {
-    await queryClient.invalidateQueries({ queryKey: ["grns"] });
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["grns"] }),
+      queryClient.invalidateQueries({ queryKey: ["grns-paged"] }),
+    ]);
   };
 
   /* The ONE Export (owner 2026-09-15): every receipt the list's tab + search +

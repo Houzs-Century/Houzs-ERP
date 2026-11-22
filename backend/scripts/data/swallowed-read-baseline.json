@@ -330,7 +330,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/payment-vouchers.ts": {
-      "reads": 9,
+      "reads": 5,
       "catches": 0
     },
     "backend/src/scm/routes/po-amendments.ts": {

@@ -189,6 +189,76 @@ export const grnItemToEditLine = (it: OutstandingGrnItem, qty: number): EditLine
   priceTouched:   true,
 });
 
+/* The drafts after the saved items changed under an open editor: a draft of a line that still exists keeps what was
+   typed, a draft not saved yet stays, a draft of a deleted line goes, and a saved line no draft names is added. */
+export function mergeEditLines(prev: EditLine[], items: PiItemRow[]): EditLine[] {
+  if (prev.length === 0) return items.map(draftFromItem);
+  const live = new Set(items.map((it) => it.id));
+  const kept = prev.filter((d) => !d.itemId || live.has(d.itemId));
+  const named = new Set(kept.map((d) => d.itemId).filter((x): x is string => !!x));
+  return [...kept, ...items.filter((it) => !named.has(it.id)).map(draftFromItem)];
+}
+
+/* Single Save's line half (T12), out of the component so a retry can be tested: a line with no itemId is added, a
+   saved line that changed is updated. Each added line's id goes back into the draft through `saved`. */
+export async function saveEditLines(
+  piId: string,
+  editLines: EditLine[],
+  items: PiItemRow[],
+  api: {
+    add: (body: { id: string } & Record<string, unknown>) => Promise<unknown>;
+    update: (body: { id: string; itemId: string } & Record<string, unknown>) => Promise<unknown>;
+    saved: (rid: string, itemId: string) => void;
+  },
+): Promise<void> {
+  const byId = new Map(items.map((it) => [it.id, it]));
+  for (const d of editLines) {
+    if (!d.itemId) {
+      // New line — free-entry (grnItemId undefined) or GRN-transferred
+      // (set by addGrnLines above); the server caps/consumes either way.
+      const added = await api.add({
+        id: piId,
+        grnItemId:      d.grnItemId,
+        materialKind:   d.materialKind,
+        itemCode:   d.itemCode,
+        materialName:   d.materialName || d.itemCode,
+        qty:            d.qty,
+        unitPriceSen: d.unitPriceSen,
+        discountSen:  d.discountSen ?? 0,
+        bindingId:      d.bindingId,
+        itemGroup:      d.category,
+        variants:       Object.keys(d.variants).length ? d.variants : undefined,
+      });
+      /* The draft now names the saved line, so a Save pressed again after a later line failed updates it instead
+         of adding it a second time. */
+      const addedId = (added as { item?: { id?: string } } | undefined)?.item?.id;
+      if (addedId) api.saved(d.rid, addedId);
+      continue;
+    }
+    const it = byId.get(d.itemId);
+    if (!it) continue;
+    const changed =
+      d.itemCode !== it.item_code ||
+      (d.materialName || d.itemCode) !== it.material_name ||
+      (d.category ?? '') !== (it.item_group ?? '') ||
+      d.qty !== it.qty ||
+      d.unitPriceSen !== it.unit_price_sen ||
+      (d.discountSen ?? 0) !== (it.discount_sen ?? 0) ||
+      JSON.stringify(d.variants ?? {}) !== JSON.stringify((it.variants as Record<string, unknown> | null) ?? {});
+    if (!changed) continue;
+    await api.update({
+      id: piId, itemId: d.itemId,
+      itemCode:   d.itemCode,
+      materialName:   d.materialName || d.itemCode,
+      qty:            d.qty,
+      unitPriceSen: d.unitPriceSen,
+      discountSen:  d.discountSen ?? 0,
+      itemGroup:      d.category,
+      variants:       d.variants ?? {},
+    });
+  }
+}
+
 export const PurchaseInvoiceDetail = () => {
   const { id } = useParams<{ id: string }>();
   /* "Add line" from the detail page. At the TOP with the other hooks: this
@@ -286,11 +356,12 @@ export const PurchaseInvoiceDetail = () => {
   }, [isLocked, isEditing]);
 
   /* Seed/clear the whole-line drafts (T12) — entering Edit populates a PoLineCard
-     draft for EVERY current line; leaving Edit wipes them. Re-seeds whenever the
-     underlying items change (e.g. after a Save re-fetch). */
+     draft for EVERY current line; leaving Edit wipes them. When the items change
+     while editing (a Save's re-fetch, a deleted line) the drafts are merged, never
+     replaced: a Save that failed part-way keeps the lines it had not saved yet. */
   useEffect(() => {
     if (!isEditing) { setEditLines([]); return; }
-    setEditLines(items.map(draftFromItem));
+    setEditLines((prev) => mergeEditLines(prev, items));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEditing, items]);
 
@@ -513,48 +584,11 @@ export const PurchaseInvoiceDetail = () => {
       if (headerDraft) {
         await updateHeader.mutateAsync({ id: pi.id, ...(headerDraft as Record<string, unknown>) });
       }
-      const byId = new Map(items.map((it) => [it.id, it]));
-      for (const d of editLines) {
-        if (!d.itemId) {
-          // New line — free-entry (grnItemId undefined) or GRN-transferred
-          // (set by addGrnLines above); the server caps/consumes either way.
-          await addItem.mutateAsync({
-            id: pi.id,
-            grnItemId:      d.grnItemId,
-            materialKind:   d.materialKind,
-            itemCode:   d.itemCode,
-            materialName:   d.materialName || d.itemCode,
-            qty:            d.qty,
-            unitPriceSen: d.unitPriceSen,
-            discountSen:  d.discountSen ?? 0,
-            bindingId:      d.bindingId,
-            itemGroup:      d.category,
-            variants:       Object.keys(d.variants).length ? d.variants : undefined,
-          });
-          continue;
-        }
-        const it = byId.get(d.itemId);
-        if (!it) continue;
-        const changed =
-          d.itemCode !== it.item_code ||
-          (d.materialName || d.itemCode) !== it.material_name ||
-          (d.category ?? '') !== (it.item_group ?? '') ||
-          d.qty !== it.qty ||
-          d.unitPriceSen !== it.unit_price_sen ||
-          (d.discountSen ?? 0) !== (it.discount_sen ?? 0) ||
-          JSON.stringify(d.variants ?? {}) !== JSON.stringify((it.variants as Record<string, unknown> | null) ?? {});
-        if (!changed) continue;
-        await updateItem.mutateAsync({
-          id: pi.id, itemId: d.itemId,
-          itemCode:   d.itemCode,
-          materialName:   d.materialName || d.itemCode,
-          qty:            d.qty,
-          unitPriceSen: d.unitPriceSen,
-          discountSen:  d.discountSen ?? 0,
-          itemGroup:      d.category,
-          variants:       d.variants ?? {},
-        });
-      }
+      await saveEditLines(pi.id, editLines, items, {
+        add: (b) => addItem.mutateAsync(b),
+        update: (b) => updateItem.mutateAsync(b),
+        saved: (rid, itemId) => patchLine(rid, { itemId }),
+      });
       setIsEditing(false);
       setHeaderDraft(null);
       setEditLines([]);

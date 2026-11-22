@@ -54,12 +54,9 @@ import { postJournal, reverseJournal } from '../../acc/engine';
 import { apControlRole, pvLines, pvBankChargeLines, customerRefundLines, resolveRoles, PV_BANK_CHARGE_ACCOUNT } from '../../acc/rules';
 import { checkExpenseLeaf } from '../../acc/charge-account';
 import { customerPartyCode } from '../../acc/payments';
-import { refundSourceHandler, refundCreateGuard, refundOwnControl, bookRefundCredit, refundHookInput } from '../lib/pv-refund';
-import { refundDepositInvoicesBestEffort, releaseRefundNotesBestEffort } from '../../acc/deposit-refunds';
-import { mirrorRefundBestEffort, removeMirrorRowsBestEffort } from '../lib/so-payment-row';
+import { refundSourceHandler, refundCreateGuard, refundOwnControl } from '../lib/pv-refund';
 import { CASH_SERIES_LETTER } from '../../acc/receipts';
 import { matchBankLinesNamingVoucher } from './accounting-bank';
-import { settleApInvoicePaidSen } from '../lib/ap-invoice-settlement';
 import { allocationHeadroomBreach, pendingReservationsHandler } from '../lib/pv-reservations';
 import { uploadPvFileHandler, listPvFilesHandler, streamPvFileHandler, deletePvFileHandler, printPvBundleHandler } from './pv-files';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
@@ -69,7 +66,7 @@ import { normalizeCurrency, normalizeExchangeRate, masterRateForCurrency } from 
 import { todayMyt } from '../lib/my-time';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChange, assertAuditWritable, auditUnavailableBody } from '../lib/entity-audit';
 import { pvCanEdit, pvCanPrepare, pvCanCheck, pvCanApprove, pvCanReject, pvCanWithdraw, pvCanPost, type PvApprovalShape } from '../lib/pv-approval';
-import { settlePiPaidSen } from '../lib/pi-settlement';
+import { finishPostedVoucher, finishCancelledVoucher } from './payment-vouchers-finish';
 import { normalizeVendor } from '../../acc/bill-extract';
 import { extractBillsHandler, splitPdfHandler, enqueueBillReadsHandler, pollBillReadsHandler } from './pv-extract';
 import { HEADER, SUPPLIER_EMBED, journalNumbers, listPaymentVouchersHandler } from './payment-vouchers-list';
@@ -85,8 +82,6 @@ import { pvBillFields, pvBillUpdates } from '../lib/bill-matches';
 import { officialActor, officialOwedFields, officialOwedUpdates } from '../lib/official-doc';
 import { pvEventAccountRefusal } from '../lib/event-accounts';
 import { requireLeafAccount } from './accounting-chart';
-import { planPvRateAdoption, isRateRetainedFromPv, roundRate6 } from '../lib/pv-rate-adoption';
-import { recostFromGrn } from '../lib/recost';
 import { fmtSen } from '../shared/format';
 
 export const paymentVouchers = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -416,7 +411,7 @@ paymentVouchers.get('/:id', async (c) => {
     /* PV→PI settlement (0202) — the PIs this PV applies to, joined for the PI
        number + the live total/paid so the detail page can show "Apply to PI". */
     scopeToCompany(sb.from('pv_allocations')
-      .select('id, amount_sen, pi:purchase_invoices(id, invoice_number, supplier_invoice_ref, currency, total_sen, paid_sen, status), api:ap_invoices(id, invoice_number, supplier_invoice_ref, currency, total_sen, paid_sen, status)')
+      .select('id, amount_sen, applied_sen, settled_at, pi:purchase_invoices(id, invoice_number, supplier_invoice_ref, currency, total_sen, paid_sen, status), api:ap_invoices(id, invoice_number, supplier_invoice_ref, currency, total_sen, paid_sen, status)')
       .eq('pv_id', id), c),
   ]);
   if (h.error) return c.json({ error: 'load_failed', reason: h.error.message }, 500);
@@ -425,7 +420,7 @@ paymentVouchers.get('/:id', async (c) => {
      a row settles a purchase invoice OR an AP invoice; `kind` says which. */
   type Inv = { id: string; invoice_number: string; supplier_invoice_ref: string | null; currency: string | null; total_sen: number; paid_sen: number; status: string };
   const allocations = ((a.data ?? []) as Array<{
-    id: string; amount_sen: number;
+    id: string; amount_sen: number; applied_sen?: number | null; settled_at?: string | null;
     pi: Inv | Inv[] | null;
     api?: Inv | Inv[] | null;
   }>).map((row) => {
@@ -435,6 +430,8 @@ paymentVouchers.get('/:id', async (c) => {
     return {
       id: row.id,
       amountSen: Number(row.amount_sen ?? 0),
+      /* What the invoice actually took when the voucher posted (the clamp may refuse part); null until settled. */
+      appliedSen: row.settled_at ? Number(row.applied_sen ?? 0) : null,
       kind: pi ? 'PI' : api ? 'API' : null,
       piId: pi?.id ?? null,
       apInvoiceId: api?.id ?? null,
@@ -451,7 +448,23 @@ paymentVouchers.get('/:id', async (c) => {
   if (!jn.ok) return c.json({ error: 'load_failed', reason: jn.reason }, 500);
   const described = await describeVouchers(sb, c, [h.data as Record<string, unknown> & { id: string }]);
   if (!described.ok) return c.json({ error: 'load_failed', reason: described.reason }, 500);
-  return c.json({ paymentVoucher: { ...h.data, ...described.byId.get(id), je_no: jn.byPv.get(String((h.data as { pv_number: string }).pv_number)) ?? null }, lines: i.data ?? [], allocations });
+  /* A post or cancel that did not finish: the page offers the button that finishes it. A posted supplier payment
+     with an allocation never settled, or a cancelled voucher still carrying an applied allocation or a journal that
+     was not reversed. */
+  const head = h.data as { status?: string; purpose?: string | null; pv_number?: string };
+  const rawAllocs = (a.data ?? []) as Array<{ applied_sen?: number | null; settled_at?: string | null }>;
+  let unfinished: 'post' | 'cancel' | null = null;
+  if (head.status === 'POSTED' && normalizePurpose(head.purpose ?? null) === 'SUPPLIER_PAYMENT' && rawAllocs.some((r) => !r.settled_at)) unfinished = 'post';
+  if (head.status === 'CANCELLED') {
+    if (rawAllocs.some((r) => Number(r.applied_sen ?? 0) > 0)) unfinished = 'cancel';
+    else if (head.pv_number) {
+      const { data: liveJe, error: liveErr } = await scopeToCompany(sb.from('journal_entries')
+        .select('id').eq('source_type', 'PV').eq('source_doc_no', head.pv_number).or('reversed.is.null,reversed.eq.false'), c).limit(1);
+      if (liveErr) return c.json({ error: 'load_failed', reason: liveErr.message }, 500);
+      if (((liveJe ?? []) as unknown[]).length > 0) unfinished = 'cancel';
+    }
+  }
+  return c.json({ paymentVoucher: { ...h.data, ...described.byId.get(id), je_no: jn.byPv.get(String((h.data as { pv_number: string }).pv_number)) ?? null }, lines: i.data ?? [], allocations, unfinished });
 });
 
 /* ────────────────────────────────────────────────────────────────────────
@@ -1059,11 +1072,17 @@ export const postPaymentVoucherHandler = async (c: any) => {
   const active = ((existingRows ?? []) as Array<{ id: string; je_no: string; reversed: boolean | null }>).find((r) => !r.reversed);
   if (active) {
     if (pv.status !== 'POSTED') {
-      await scopeToCompanyId(sb.from('payment_vouchers')
+      const { error: flipErr } = await scopeToCompanyId(sb.from('payment_vouchers')
         .update({ status: 'POSTED', posted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-        .eq('id', id), co.companyId);
+        .eq('id', id), co.companyId).neq('status', 'CANCELLED');
+      if (flipErr) return c.json({ error: 'post_failed', message: `The journal is in, but the voucher could not be marked posted: ${flipErr.message}. Press Post again.` }, 500);
     }
-    return c.json({ ok: true, alreadyPosted: true, jeNo: active.je_no, jeId: active.id });
+    /* A post that died after its journal resumes here. Every step of finishPostedVoucher is idempotent - each
+       allocation settles once (settled_at), the advance is UNIQUE per voucher, the refund hooks key on the voucher -
+       so pressing Post again finishes what the first press left, instead of answering "already posted" over invoices
+       that were never settled. */
+    const finished = await finishPostedVoucher(c, sb, pvRaw as Record<string, unknown>, { id, companyId: pv.company_id ?? null, postedTotalSen: null, refund: isRefund(pv.purpose), supplierPayment: normalizePurpose(pv.purpose) === 'SUPPLIER_PAYMENT', actor: approvalActor(c) });
+    return c.json({ ok: true, alreadyPosted: true, jeNo: active.je_no, jeId: active.id, ...finished });
   }
 
   /* PHASE 3 GATE — the one door money leaves through. Placed AFTER the
@@ -1138,13 +1157,14 @@ export const postPaymentVoucherHandler = async (c: any) => {
   }
   const je = { id: r.jeId, je_no: r.jeNo };
 
-  await sb.from('payment_vouchers').update({
+  /* Checked, and the posting stops here on a miss: the journal is in, and Post pressed again resumes through the
+     already-posted branch above, which finishes every step below. */
+  const { error: flipErr } = await sb.from('payment_vouchers').update({
     status: 'POSTED', posted_at: new Date().toISOString(), updated_at: new Date().toISOString(),
-  }).eq('id', id);
-  if (isRefund(pv.purpose)) await bookRefundCredit(sb, { ...pv, debtor_code: refundPv.debtor_code ?? null }, 'refund');
-  /* The deposit-invoice half of a refund (docs/bugs/0860): a credit note per invoice it draws on. */
-  await refundDepositInvoicesBestEffort(sb, refundHookInput({ ...pv, ...refundPv, id, company_id: companyId }, totalSen, approvalActor(c)));
-  await mirrorRefundBestEffort(sb, refundHookInput({ ...pv, ...refundPv, id, company_id: companyId }, totalSen, approvalActor(c)));
+  }).eq('id', id).neq('status', 'CANCELLED');
+  if (flipErr) {
+    return c.json({ error: 'post_failed', message: `Journal ${je.je_no} is in, but the voucher could not be marked posted: ${flipErr.message}. Press Post again to finish.` }, 500);
+  }
 
   /* The money-out event. Recorded here rather than after the PI settlement loop
      below so a settlement hiccup cannot cost us the record that the GL was
@@ -1172,249 +1192,8 @@ export const postPaymentVoucherHandler = async (c: any) => {
      would have (owner 2026-11-10: 直接配那张 PV，不管差几天). */
   await matchVoucherOnBankBestEffort(sb, companyId, pv.pv_number, pv.credit_account_code, approvalActor(c));
 
-  /* PV→PI settlement (migration 0202) — a SUPPLIER_PAYMENT PV decrements each
-     linked PI's paid_sen at FACE VALUE. Runs EXACTLY ONCE (the active-JE
-     idempotency guard above early-returns on a re-post). Cap each allocation at
-     the PI's remaining outstanding. Best-effort. FREIGHT / OTHER settle nothing. */
-  const overAllocated: string[] = [];
-  /* "The payment defines the FX rate" (owner, 2026-07-30) — see lib/pv-rate-adoption.
-     rateAdopted names the invoices whose un-rated foreign rate this payment filled
-     in (and whose GRN was therefore re-costed); rateMismatch names the ones that
-     already carried a DIFFERENT deliberate rate and were LEFT ALONE. Both are
-     handed back to the caller for the same reason overAllocated is: they are money
-     facts an operator has to be able to see, not implementation detail. */
-  const rateAdopted: string[] = [];
-  const rateMismatch: string[] = [];
-  if (normalizePurpose(pv.purpose) === 'SUPPLIER_PAYMENT') {
-    const { data: allocs } = await sb.from('pv_allocations')
-      .select('id, pi_id, ap_invoice_id, amount_sen').eq('pv_id', id);
-    for (const a of (allocs ?? []) as Array<{ id: string; pi_id: string | null; ap_invoice_id: string | null; amount_sen: number }>) {
-      const want = Math.max(0, Number(a.amount_sen ?? 0));
-      if (want <= 0) continue;
-      /* An AP INVOICE row (the non-stock supplier bill) settles through its
-         own twin of the clamp; nothing below (FX adoption, GRN re-cost) is
-         about it — a bill for rent carries no stock. */
-      if (a.ap_invoice_id) {
-        const settledApi = await settleApInvoicePaidSen(sb, a.ap_invoice_id, want);
-        await sb.from('pv_allocations').update({ applied_sen: settledApi.appliedSen }).eq('id', a.id);
-        if (settledApi.clampedSen > 0) overAllocated.push(`AP invoice ${a.ap_invoice_id}: ${fmtSen(settledApi.clampedSen)} refused`);
-        continue;
-      }
-      if (!a.pi_id) continue;
-      /* The full allocation goes to settlePiPaidSen and the CAP is applied by
-         the database, at write time, against the row as it then stands. This
-         used to read the PI here, compute `outstanding = total - paid`, and cap
-         the allocation itself — a cap that a second voucher settling the same
-         invoice made stale before this one wrote, so both applied their full
-         share and the invoice ended up paid twice over. The DRAFT/CANCELLED
-         skip moved into the same call for the same reason: it was a separate
-         read of a value that could change underneath it. */
-      const settled = await settlePiPaidSen(sb, a.pi_id, want);
-      /* Record EXACTLY what was applied — not what was asked for. A later
-         cancel reverses this figure, so recording the request after the
-         database clamped it smaller would un-apply money that never moved,
-         swapping an over-payment for an under-payment. */
-      await sb.from('pv_allocations').update({ applied_sen: settled.appliedSen }).eq('id', a.id);
-
-      /* A clamp is a real event, not an implementation detail: somebody tried
-         to pay a supplier more than the invoice asks for, and the difference
-         did NOT go onto the invoice. Absorbing that silently would replace the
-         over-payment lie with a "your voucher settled in full" lie, so it is
-         logged and handed back to the caller. The voucher itself stays POSTED —
-         the GL entry above is correct and already committed, and the money did
-         leave; what is in question is only how much of it this invoice
-         absorbed. */
-      if (settled.clampedSen > 0) {
-        /* eslint-disable-next-line no-console */
-        console.error('[pv-settle-pi] allocation exceeded the invoice outstanding — clamped:',
-          pv.pv_number, 'pi', a.pi_id, 'requested', want, 'applied', settled.appliedSen);
-        overAllocated.push(`${a.pi_id}: asked ${fmtSen(want)}, applied ${fmtSen(settled.appliedSen)}`);
-      }
-      if (!settled.ok) {
-        /* eslint-disable-next-line no-console */
-        console.error('[pv-settle-pi] settlement failed — PI left unsettled:', pv.pv_number, 'pi', a.pi_id, settled.reason);
-      }
-
-      /* ── THE PAYMENT DEFINES THE FX RATE (owner-approved, 2026-07-30) ────────
-         The knock-off is the moment the true MYR-per-foreign-unit figure becomes
-         known, so it is the moment an un-rated foreign invoice gets its rate and
-         its GRN gets re-costed. The whole decision is in planPvRateAdoption, which
-         is pure — see lib/pv-rate-adoption.ts for the table and the reasoning.
-
-         BEST-EFFORT BY CONTRACT, and this is not a preference. By the time we are
-         here the journal entry is committed and the money has left the bank; there
-         is no transaction to roll back into and nothing about a costing refresh
-         justifies 500-ing a payment that already happened. So every failure below
-         is logged and stepped over, exactly as the settle failure above is. */
-      if (settled.appliedSen > 0) {
-        try {
-          const { data: piRaw } = await sb.from('purchase_invoices')
-            .select('id, invoice_number, currency, exchange_rate, grn_id').eq('id', a.pi_id).maybeSingle();
-          const piRow = piRaw as {
-            id: string; invoice_number: string | null; currency: string | null;
-            exchange_rate: string | number | null; grn_id: string | null;
-          } | null;
-          if (piRow) {
-            const plan = planPvRateAdoption({
-              appliedSen: settled.appliedSen,
-              pvCurrency: pv.currency,
-              pvExchangeRate: pv.exchange_rate,
-              pi: {
-                piId: piRow.id,
-                docNo: piRow.invoice_number,
-                currency: piRow.currency,
-                exchangeRate: piRow.exchange_rate,
-                grnId: piRow.grn_id,
-              },
-            });
-            const piLabel = piRow.invoice_number ?? a.pi_id;
-
-            if (plan.action === 'adopt') {
-              const { error: rateErr } = await sb.from('purchase_invoices')
-                .update({ exchange_rate: plan.rate, updated_at: new Date().toISOString() })
-                .eq('id', a.pi_id);
-              if (rateErr) {
-                /* eslint-disable-next-line no-console */
-                console.error('[pv-fx-rate] rate adoption write failed — invoice left un-rated:',
-                  pv.pv_number, 'pi', piLabel, rateErr.message);
-              } else {
-                rateAdopted.push(`${piLabel}: rate ${plan.oldRate} -> ${plan.rate} (from ${pv.pv_number})`);
-                /* Audited against the PURCHASE INVOICE, not the voucher: the invoice
-                   is the row that changed, so this is where "who changed this PI's
-                   rate and on what evidence" belongs. The note carries the voucher
-                   number — the evidence itself. NOTE: the PI detail page does not
-                   mount EntityHistoryPanel yet (only GRN / PV / stock take / stock
-                   transfer do), so this row is correct by data model but not yet
-                   READABLE — which is why the voucher-side summary row below exists
-                   as well. A PI History drawer is the obvious follow-up. */
-                await recordEntityAudit(sb, {
-                  entityType: 'PURCHASE_INVOICE',
-                  entityId: a.pi_id,
-                  entityDocNo: piRow.invoice_number ?? null,
-                  action: 'UPDATE',
-                  actor: c.get('houzsUser'),
-                  companyId,
-                  note: `Exchange rate adopted from payment voucher ${pv.pv_number}`,
-                  fieldChanges: compactChanges([
-                    fieldChange('exchangeRate', plan.oldRate, plan.rate),
-                    fieldChange('currency', null, normalizeCurrency(piRow.currency)),
-                    fieldChange('rateSourcePv', null, pv.pv_number),
-                    fieldChange('appliedSen', null, settled.appliedSen),
-                  ]),
-                });
-                /* Re-cost the GRN this invoice bills so the corrected rate reaches
-                   the FIFO lot and cascades to consumptions / DO lines / SI lines.
-                   Its own try/catch: recostFromGrn is best-effort internally, but a
-                   throw here must not escape into the payment's response. */
-                if (plan.grnId) {
-                  try {
-                    await recostFromGrn(sb, plan.grnId);
-                  } catch (e) {
-                    /* eslint-disable-next-line no-console */
-                    console.error('[pv-fx-rate] recost after rate adoption failed — rate stored, lots stale:',
-                      pv.pv_number, 'pi', piLabel, 'grn', plan.grnId, e);
-                  }
-                }
-              }
-            } else if (plan.action === 'report_mismatch') {
-              /* The invoice carries a rate somebody entered on purpose that
-                 disagrees with what was actually paid. Overwriting it is a policy
-                 call the owner has not made, and a partial payment at a second rate
-                 is legitimate — so the invoice is left exactly as it is, and the
-                 disagreement is surfaced instead of resolved. */
-              /* eslint-disable-next-line no-console */
-              console.error('[pv-fx-rate] invoice rate differs from the payment rate — invoice LEFT UNCHANGED:',
-                pv.pv_number, 'pi', piLabel, 'invoice rate', plan.piRate, 'payment rate', plan.pvRate);
-              rateMismatch.push(`${piLabel}: invoice rate ${plan.piRate}, payment rate ${plan.pvRate} — invoice rate kept`);
-            }
-          }
-        } catch (e) {
-          /* eslint-disable-next-line no-console */
-          console.error('[pv-fx-rate] rate adoption skipped after an unexpected failure — payment stands:',
-            pv.pv_number, 'pi', a.pi_id, e);
-        }
-      }
-    }
-  }
-
-  /* A SECOND audit row, on the VOUCHER this time, summarising the rate work.
-     Not a duplicate of the per-invoice rows above, and needed for a practical
-     reason: the Purchase Invoice detail page has no History drawer yet (only GRN,
-     PV, stock take and stock transfer mount EntityHistoryPanel), so the invoice-side
-     rows are recorded correctly but not yet READABLE. The voucher's own History is
-     where the owner will look, and "this payment set the rate on PI-x" belongs there
-     regardless — the voucher is the evidence. Written after the loop because it
-     summarises it; the POST row above is untouched so a settlement hiccup can still
-     never cost us the record that the GL posted. */
-  if (rateAdopted.length > 0 || rateMismatch.length > 0) {
-    await recordEntityAudit(sb, {
-      entityType: 'PAYMENT_VOUCHER',
-      entityId: id,
-      entityDocNo: pv.pv_number,
-      action: 'UPDATE',
-      actor: c.get('houzsUser'),
-      companyId,
-      statusSnapshot: 'POSTED',
-      note: 'Exchange rate propagated from this payment to the invoices it settled',
-      fieldChanges: compactChanges([
-        fieldChange('currency', null, normalizeCurrency(pv.currency)),
-        fieldChange('exchangeRate', null, roundRate6(pv.exchange_rate)),
-        fieldChange('fxRateAdoptedOnPi', null, rateAdopted.length > 0 ? rateAdopted.join('; ') : null),
-        fieldChange('fxRateMismatchOnPi', null, rateMismatch.length > 0 ? rateMismatch.join('; ') : null),
-      ]),
-    });
-  }
-
-  /* ── 预付挂在 supplier (the owner, 2026-08-30) ─────────────────────────────
-     Whatever this supplier voucher paid BEYOND its allocations is an advance:
-     the GL already debited the whole amount into AP, so the supplier's ledger
-     runs ahead — record by how much, on the voucher that did it. Written
-     AFTER the GL and the settles because it is bookkeeping about them; the
-     UNIQUE(pv_id) makes a re-post echo harmless. */
-  let advanceSen = 0;
-  {
-    const supplierId = (pvRaw as { supplier_id?: string | null }).supplier_id ?? null;
-    if (normalizePurpose(pv.purpose) === 'SUPPLIER_PAYMENT' && supplierId) {
-      const { data: allocRows, error: alErr } = await sb.from('pv_allocations')
-        .select('amount_sen').eq('pv_id', id).eq('from_advance', false);
-      if (alErr) {
-        /* eslint-disable-next-line no-console */
-        console.error('[pv-advance] allocation read failed — advance NOT recorded:', pv.pv_number, alErr.message);
-      } else {
-        const allocatedSen = ((allocRows ?? []) as Array<{ amount_sen: number }>)
-          .reduce((s, r) => s + Number(r.amount_sen || 0), 0);
-        advanceSen = Math.max(0, Number(pv.total_sen) - allocatedSen);
-        if (advanceSen > 0) {
-          const { error: advErr } = await sb.from('acc_supplier_advances').insert({
-            company_id: companyId, supplier_id: supplierId,
-            pv_id: id, pv_number: pv.pv_number, amount_sen: advanceSen, applied_sen: 0,
-          });
-          const dup = advErr && (String(advErr.code ?? '') === '23505' || /duplicate key/i.test(String(advErr.message ?? '')));
-          if (advErr && !dup) {
-            /* eslint-disable-next-line no-console */
-            console.error('[pv-advance] advance NOT recorded:', pv.pv_number, advErr.message);
-            advanceSen = 0;
-          } else if (!dup) {
-            await recordEntityAudit(sb, {
-              entityType: 'PAYMENT_VOUCHER', entityId: id, entityDocNo: pv.pv_number,
-              action: 'UPDATE', actor: c.get('houzsUser'), companyId,
-              statusSnapshot: 'POSTED',
-              note: `Paid ${fmtSen(advanceSen)} ahead of any invoice — recorded as this supplier's advance, to knock off against invoices to come`,
-              fieldChanges: compactChanges([fieldChange('supplierAdvanceSen', null, advanceSen)]),
-            });
-          }
-        }
-      }
-    }
-  }
-
-  return c.json({
-    ok: true, jeNo: je.je_no, jeId: je.id, totalSen,
-    ...(advanceSen > 0 ? { advanceSen } : {}),
-    ...(overAllocated.length > 0 ? { overAllocated } : {}),
-    ...(rateAdopted.length > 0 ? { rateAdopted } : {}),
-    ...(rateMismatch.length > 0 ? { rateMismatch } : {}),
-  });
+  const finished = await finishPostedVoucher(c, sb, pvRaw as Record<string, unknown>, { id, companyId, postedTotalSen: totalSen, refund: isRefund(pv.purpose), supplierPayment: normalizePurpose(pv.purpose) === 'SUPPLIER_PAYMENT', actor: approvalActor(c) });
+  return c.json({ ok: true, jeNo: je.je_no, jeId: je.id, totalSen, ...finished });
 };
 paymentVouchers.post('/:id/post', postPaymentVoucherHandler);
 
@@ -1635,8 +1414,13 @@ export const cancelPaymentVoucherHandler = async (c: any) => {
     currency: string | null; exchange_rate: string | number | null; company_id: number | null;
     total_sen: number; payee_name: string; debtor_code?: string | null;
   };
-  // Idempotent — already cancelled, echo back.
-  if (head.status === 'CANCELLED') return c.json({ paymentVoucher: { id, status: 'CANCELLED' } });
+  /* Already cancelled: finish what an earlier cancel left. This used to echo success, so a cancel whose ledger
+     reversal or invoice unwind had failed could never be completed - the voucher read CANCELLED while its journal
+     stood and its invoices still showed paid. Every step is idempotent, so a cancel that did finish changes nothing. */
+  if (head.status === 'CANCELLED') {
+    const finished = await finishCancelledVoucher(c, sb, head, { id, companyId: co.companyId, resumed: true, refund: isRefund(head.purpose), supplierPayment: normalizePurpose(head.purpose) === 'SUPPLIER_PAYMENT', actor: approvalActor(c), reverse: reversePvAccounting });
+    return c.json({ paymentVoucher: { id, status: 'CANCELLED' }, ...finished });
+  }
 
   /* An advance that has been SPENT pins its voucher: the knock-offs settled
      real invoices with this voucher's money, and cancelling would reverse a
@@ -1679,7 +1463,11 @@ export const cancelPaymentVoucherHandler = async (c: any) => {
   const cancelled = data as { id: string; status: string; pv_number: string };
 
   /* The (unspent — the guard above) advance goes with its voucher. */
-  await sb.from('acc_supplier_advances').delete().eq('pv_id', id).eq('applied_sen', 0);
+  const { error: advDelErr } = await sb.from('acc_supplier_advances').delete().eq('pv_id', id).eq('applied_sen', 0);
+  if (advDelErr) {
+    /* eslint-disable-next-line no-console */
+    console.error('[pv-advance] cancelled voucher kept its unspent advance:', cancelled.pv_number, advDelErr.message);
+  }
 
   /* Recorded immediately after the ATOMIC flip won the race, so exactly one
      CANCEL row is ever written for a voucher — the losing concurrent call
@@ -1694,124 +1482,10 @@ export const cancelPaymentVoucherHandler = async (c: any) => {
     fieldChanges: statusChange(head.status, 'CANCELLED'),
   });
 
-  // Reverse the GL post if one exists. Best-effort (audit-DLQ): a reversal
-  // failure never un-cancels the voucher; the contra is idempotent.
-  const rev = await reversePvAccounting(sb, cancelled.pv_number);
-  if (rev.ok && isRefund(head.purpose)) await bookRefundCredit(sb, head, 'reversal');
-  if (rev.ok && isRefund(head.purpose)) await releaseRefundNotesBestEffort(sb, { companyId: co.companyId, pvId: id, pvNumber: cancelled.pv_number, actor: approvalActor(c) });
-  if (rev.ok && isRefund(head.purpose)) await removeMirrorRowsBestEffort(sb, { companyId: co.companyId, match: { refund_pv_id: id }, why: `refund voucher ${cancelled.pv_number} cancelled` });
-  if (!rev.ok) {
-    // eslint-disable-next-line no-console
-    console.error(`[pv-accounting] reversal failed for ${cancelled.pv_number}:`, rev.status, rev.reason);
-  }
-  /* A SEPARATE row from the CANCEL above, not a duplicate of it: the cancel is a
-     document-status event, this is a LEDGER event with its own JE number, and a
-     cancel whose reversal failed must be distinguishable from one whose
-     reversal landed. `rev.status` carries which of the two happened. */
-  await recordEntityAudit(sb, {
-    entityType: 'PAYMENT_VOUCHER',
-    entityId: id,
-    entityDocNo: cancelled.pv_number,
-    action: 'REVERSE',
-    actor: c.get('houzsUser'),
-    statusSnapshot: 'CANCELLED',
-    note: rev.ok ? `GL reversal: ${rev.status}` : `GL reversal FAILED: ${rev.status} — ${rev.reason ?? 'no reason given'}`,
-    fieldChanges: compactChanges([
-      fieldChange('reversalJeNo', null, rev.jeNo ?? null),
-      fieldChange('reversalOk', null, rev.ok),
-    ]),
-  });
-
-  /* PV→PI settlement reversal (0202) — un-apply what this PV settled. Decrement
-     each linked PI's paid_sen by the EXACT applied_sen recorded at post.
-     Only a SUPPLIER_PAYMENT PV ever moved paid_sen. Best-effort. */
-  /* FX-RATE RETENTION on cancel (2026-07-30) — the invoices still carrying the rate
-     this voucher established, named so the History panel says so out loud. See
-     lib/pv-rate-adoption.ts (isRateRetainedFromPv) for WHY the rate and the re-cost
-     are deliberately NOT reverted: the only value to revert to is 1, which is the
-     R2 mis-cost itself, so "undoing" it would knowingly push a 1:1 foreign basis
-     back through every lot, DO and SI the recost had corrected. */
-  const fxRateRetained: string[] = [];
-  if (normalizePurpose(head.purpose) === 'SUPPLIER_PAYMENT') {
-    const { data: allocs } = await sb.from('pv_allocations')
-      .select('id, pi_id, ap_invoice_id, applied_sen').eq('pv_id', id);
-    for (const a of (allocs ?? []) as Array<{ id: string; pi_id: string | null; ap_invoice_id: string | null; applied_sen: number }>) {
-      const applied = Math.max(0, Number(a.applied_sen ?? 0));
-      if (applied <= 0) continue;
-      /* An AP invoice unwinds by exactly what was applied — no FX story. */
-      if (a.ap_invoice_id) {
-        await settleApInvoicePaidSen(sb, a.ap_invoice_id, -applied);
-        continue;
-      }
-      if (!a.pi_id) continue;
-
-      /* Read BEFORE the reversal: the settle moves paid_sen and status, never the
-         rate, but reading first keeps this notice about the state the operator was
-         looking at when they pressed Cancel. */
-      try {
-        const { data: piRaw } = await sb.from('purchase_invoices')
-          .select('invoice_number, currency, exchange_rate').eq('id', a.pi_id).maybeSingle();
-        const piRow = piRaw as { invoice_number: string | null; currency: string | null; exchange_rate: string | number | null } | null;
-        if (piRow && isRateRetainedFromPv({
-          pvCurrency: head.currency,
-          pvExchangeRate: head.exchange_rate,
-          piCurrency: piRow.currency,
-          piExchangeRate: piRow.exchange_rate,
-        })) {
-          const piLabel = piRow.invoice_number ?? a.pi_id;
-          fxRateRetained.push(`${piLabel}: rate ${roundRate6(piRow.exchange_rate)} kept`);
-          /* On the INVOICE's own history, because that is where a reader who saw
-             "rate adopted from PV-xxxx" will go looking when the voucher is
-             cancelled. Silence there reads as "the rate went back". */
-          await recordEntityAudit(sb, {
-            entityType: 'PURCHASE_INVOICE',
-            entityId: a.pi_id,
-            entityDocNo: piRow.invoice_number ?? null,
-            action: 'UPDATE',
-            actor: c.get('houzsUser'),
-            companyId: head.company_id ?? null,
-            note: `Payment voucher ${cancelled.pv_number} cancelled — the exchange rate it established is RETAINED and inventory is not re-costed back`,
-            /* NOT recorded as an exchangeRate from->to pair: nothing moved, and
-               fieldChange collapses an equal pair to null anyway. The point of this
-               row is that the value STAYED, so it is recorded as its own field. */
-            fieldChanges: compactChanges([
-              fieldChange('exchangeRateRetained', null, roundRate6(piRow.exchange_rate)),
-              fieldChange('fxRateRetainedFromPv', null, cancelled.pv_number),
-            ]),
-          });
-        }
-      } catch (e) {
-        /* eslint-disable-next-line no-console */
-        console.error('[pv-fx-rate] retention notice skipped — cancel continues:', cancelled.pv_number, 'pi', a.pi_id, e);
-      }
-
-      const reversed = await settlePiPaidSen(sb, a.pi_id, -applied);
-      /* Only zero the allocation when the reversal actually landed. Clearing it
-         after a failed settle would erase the one record of how much is still
-         sitting on the PI, and no later run could put it back. */
-      if (reversed.ok) {
-        /* A negative clamp means the floor bit: this allocation claimed more had
-           been applied to the PI than the PI was actually carrying, so part of
-           the reversal had nothing to take off. That is a standing disagreement
-           between the allocation and the invoice — the kind of thing the old
-           silent Math.max(0, ...) is why nobody ever noticed. */
-        if (reversed.clampedSen < 0) {
-          /* eslint-disable-next-line no-console */
-          console.error('[pv-settle-pi] reversal exceeded what the invoice was carrying:',
-            cancelled.pv_number, 'pi', a.pi_id, 'recorded', applied, 'reversed', -reversed.appliedSen);
-        }
-        await sb.from('pv_allocations').update({ applied_sen: 0 }).eq('id', a.id);
-      } else {
-        /* eslint-disable-next-line no-console */
-        console.error('[pv-settle-pi] reversal failed — PI still carries this payment:',
-          cancelled.pv_number, 'pi', a.pi_id, 'applied', applied, reversed.reason);
-      }
-    }
-  }
-
+  const finished = await finishCancelledVoucher(c, sb, head, { id, companyId: co.companyId, resumed: false, refund: isRefund(head.purpose), supplierPayment: normalizePurpose(head.purpose) === 'SUPPLIER_PAYMENT', actor: approvalActor(c), reverse: reversePvAccounting });
   return c.json({
     paymentVoucher: { id: cancelled.id, status: cancelled.status },
-    ...(fxRateRetained.length > 0 ? { fxRateRetained } : {}),
+    ...finished,
   });
 };
 paymentVouchers.post('/:id/cancel', cancelPaymentVoucherHandler);
@@ -1895,39 +1569,31 @@ export const applyAdvanceHandler = async (c: any) => {
   const held = await allocationPisOnHold(sb, c, piIds);
   if (held.length > 0) return c.json(ALLOCATION_ON_HOLD(held), 409);
 
-  let appliedSen = 0;
-  const results: Array<{ piId: string | null; apInvoiceId: string | null; askedSen: number; appliedSen: number }> = [];
-  for (const w of wants) {
-    const settled = w.apInvoiceId
-      ? await settleApInvoicePaidSen(sb, w.apInvoiceId, w.amountSen)
-      : await settlePiPaidSen(sb, w.piId, w.amountSen);
-    const got = settled.ok ? settled.appliedSen : 0;
-    appliedSen += got;
-    results.push({ piId: w.piId || null, apInvoiceId: w.apInvoiceId || null, askedSen: w.amountSen, appliedSen: got });
-    if (got > 0) {
-      await sb.from('pv_allocations').insert({
-        company_id: co.companyId, pv_id: id, pi_id: w.piId || null, ap_invoice_id: w.apInvoiceId || null,
-        amount_sen: got, applied_sen: got, from_advance: true,
-      });
+  /* One database call does the whole knock-off: lock the advance, re-check what remains, settle each invoice
+     (clamped), write the from-advance allocations already settled, burn the advance by what landed. Before, the
+     invoices were settled first and the burn was a compare-and-set afterwards: two applies at once both settled their
+     invoices, the second burn missed, and one advance paid two sets of invoices. Now the second waits on the lock and
+     is refused when nothing is left. */
+  const { data: rows, error: applyErr } = await sb.rpc('apply_supplier_advance', {
+    p_pv_id: id,
+    p_company_id: co.companyId,
+    p_wants: wants.map((w) => ({ pi_id: w.piId || null, ap_invoice_id: w.apInvoiceId || null, amount_sen: w.amountSen })),
+  });
+  if (applyErr) {
+    if (String((applyErr as { code?: string }).code ?? '') === 'P0415') {
+      return c.json({ error: 'exceeds_advance', message: `${applyErr.message} Refresh and check the remaining figure.` }, 409);
     }
+    return c.json({ error: 'apply_failed', message: `Nothing was applied: ${applyErr.message}` }, 500);
   }
+  type ApplyRow = { pi_id: string | null; ap_invoice_id: string | null; asked: number; applied: number; remaining: number | null };
+  const all = (Array.isArray(rows) ? rows : []) as ApplyRow[];
+  const summary = all.find((r) => r.remaining != null);
+  const results = all.filter((r) => r.remaining == null).map((r) => ({
+    piId: r.pi_id, apInvoiceId: r.ap_invoice_id, askedSen: Number(r.asked), appliedSen: Number(r.applied),
+  }));
+  const appliedSen = Number(summary?.applied ?? results.reduce((sum, r) => sum + r.appliedSen, 0));
 
-  /* Burn the advance by what actually landed — optimistic, so two concurrent
-     applies cannot both spend the same ringgit: the second one's guard misses
-     and it reports instead of overdrawing. */
   if (appliedSen > 0) {
-    const { data: burned, error: burnErr } = await sb.from('acc_supplier_advances')
-      .update({ applied_sen: Number(adv.applied_sen) + appliedSen, updated_at: new Date().toISOString() })
-      .eq('id', adv.id).eq('applied_sen', adv.applied_sen)
-      .select('id').maybeSingle();
-    if (burnErr || !burned) {
-      /* eslint-disable-next-line no-console */
-      console.error('[pv-advance] burn write missed (concurrent apply?) — invoices settled, advance NOT decremented:', adv.pv_number, burnErr?.message ?? 'row moved');
-      return c.json({
-        error: 'burn_conflict',
-        message: 'The invoices were settled but the advance record was updated by someone else at the same moment — refresh and check the remaining figure before applying more.',
-      }, 409);
-    }
     await recordEntityAudit(sb, {
       entityType: 'PAYMENT_VOUCHER', entityId: id, entityDocNo: adv.pv_number,
       action: 'UPDATE', actor: c.get('houzsUser'), companyId: co.companyId,
@@ -1941,7 +1607,7 @@ export const applyAdvanceHandler = async (c: any) => {
   return c.json({
     ok: true,
     appliedSen,
-    remainingSen: remaining - appliedSen,
+    remainingSen: summary?.remaining != null ? Number(summary.remaining) : remaining - appliedSen,
     results,
   });
 };

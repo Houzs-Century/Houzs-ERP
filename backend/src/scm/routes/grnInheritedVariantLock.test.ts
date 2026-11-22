@@ -28,8 +28,8 @@ const sb = Object.assign(
   fakeSb({
     grns: [{ id: 'grn-1', grn_number: 'GRN-2608-001', status: 'DRAFT', company_id: 1, purchase_order_id: 'po-1', warehouse_id: 'wh-1' }],
     grn_items: [
-      { id: 'li-po', company_id: 1, grn_id: 'grn-1', purchase_order_item_id: 'poi-1', item_code: 'SOFA-A', item_group: 'sofa', variants: SOFA_A, qty_received: 5, qty_accepted: 5, unit_price_sen: 10000, discount_sen: 0, line_total_sen: 50000 },
-      { id: 'li-manual', company_id: 1, grn_id: 'grn-1', purchase_order_item_id: null, item_code: 'SOFA-M', item_group: 'sofa', variants: SOFA_A, qty_received: 2, qty_accepted: 2, unit_price_sen: 10000, discount_sen: 0, line_total_sen: 20000 },
+      { id: 'li-po', company_id: 1, grn_id: 'grn-1', purchase_order_item_id: 'poi-1', item_code: 'SOFA-A', item_group: 'sofa', variants: SOFA_A, qty_received: 5, qty_accepted: 5, unit_price_sen: 10000, discount_sen: 0, line_total_sen: 50000, version: 1 },
+      { id: 'li-manual', company_id: 1, grn_id: 'grn-1', purchase_order_item_id: null, item_code: 'SOFA-M', item_group: 'sofa', variants: SOFA_A, qty_received: 2, qty_accepted: 2, unit_price_sen: 10000, discount_sen: 0, line_total_sen: 20000, version: 1 },
     ],
     purchase_order_items: [{ id: 'poi-1', purchase_order_id: 'po-1', item_code: 'SOFA-A', qty: 5, received_qty: 5 }],
     inventory_balances: [],
@@ -82,5 +82,49 @@ describe('PATCH grn line — inherited-variant lock', () => {
     const res = await patchLine('li-manual', { variants: { seatHeight: '24', fabricCode: 'F-999' } });
     expect(res.status).toBe(200);
     expect((line('li-manual').variants as Record<string, unknown>).seatHeight).toBe('24');
+  });
+});
+
+/* Symptom: two people editing one goods-receipt line left stock wrong (both stock deltas landed).
+   Cause: the PATCH read the line, computed the delta from that read, then wrote with no condition.
+   Fix: compare-and-set on grn_items.version and qty_accepted; the losing save writes nothing and gets 409. */
+describe('PATCH grn line — two editors', () => {
+  it('a save whose line changed after it was read is refused and writes nothing', async () => {
+    const realFrom = sb.from;
+    let fired = false;
+    (sb as { from: unknown }).from = (t: string) => {
+      const q = realFrom(t);
+      if (t === 'grn_items' && !fired) {
+        const sel = q.select;
+        let isPrevRead = false;
+        q.select = (cols?: string, ...rest: unknown[]) => { isPrevRead = String(cols ?? '').includes('purchase_order_item_id, version'); return sel(cols, ...rest); };
+        const read = q.maybeSingle;
+        q.maybeSingle = async () => {
+          const r = await read();
+          if (!isPrevRead) return r;
+          fired = true;
+          /* The other editor's save commits between this read and this write; a copy, as PostgREST hands it. */
+          const copy = { ...r, data: JSON.parse(JSON.stringify(r.data)) };
+          Object.assign(line('li-manual'), { qty_received: 1, qty_accepted: 1, line_total_sen: 10000, version: 2 });
+          return copy;
+        };
+      }
+      return q;
+    };
+    try {
+      const res = await patchLine('li-manual', { qty: 3 });
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({ error: 'line_changed' });
+      expect(line('li-manual')).toMatchObject({ qty_received: 1, qty_accepted: 1, version: 2 });
+    } finally {
+      (sb as { from: unknown }).from = realFrom;
+    }
+  });
+
+  it('a clean save bumps the version', async () => {
+    const before = Number(line('li-manual').version ?? 1);
+    const res = await patchLine('li-manual', { qty: 2 });
+    expect(res.status).toBe(200);
+    expect(line('li-manual')).toMatchObject({ qty_received: 2, version: before + 1 });
   });
 });

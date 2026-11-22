@@ -16,6 +16,7 @@
 
 import { isMissingRpc } from './rpc-missing';
 import { fmtSen } from '../shared/format';
+import { readOrderDeposit } from './si-order-deposit';
 
 export type CreditSourceType =
   | 'SI_CANCEL_REFUND'   // SI was cancelled with paid_sen > 0 → credit equal to paid_sen
@@ -168,12 +169,31 @@ export async function applyCustomerCreditToSi(
      branch below already chose, and for the same reason. */
   const { data: siRow, error: siErr } = await sb
     .from('sales_invoices')
-    .select('migrated_no_stock')
+    .select('migrated_no_stock, so_doc_no, company_id')
     .eq('id', args.siId)
     .maybeSingle();
   if (siErr) return { applied: 0, reason: `migrated_check_failed: ${siErr.message}` };
-  if ((siRow as { migrated_no_stock?: boolean | null } | null)?.migrated_no_stock === true) {
+  const si = siRow as { migrated_no_stock?: boolean | null; so_doc_no?: string | null; company_id?: number | null } | null;
+  if (si?.migrated_no_stock === true) {
     return { applied: 0, reason: 'migrated_source' };
+  }
+
+  /* THE ORDER'S MONEY SETTLES THE INVOICE FIRST. Callers pass total - paid_sen,
+     and paid_sen is only the receipts taken on this invoice: the deposit and
+     payments collected on its sales order are not in it (si-order-deposit). An
+     invoice raised off an order the customer had already paid in full therefore
+     looked fully owed, and the customer's credit was spent on it - production
+     had 13 such applications, every one on an order already paid. Same split
+     and same credit-note offset the invoice's status uses, so the two agree.
+     Guarded here so every caller is covered. A failed read refuses, for the
+     reason the migrated check above does. */
+  let dueSen = args.remainingDueSen;
+  if (si?.so_doc_no) {
+    const dep = await readOrderDeposit(sb, si.so_doc_no, si.company_id ?? null);
+    if (!dep.ok) return { applied: 0, reason: `order_money_read_failed: ${dep.reason}` };
+    if (!dep.credits) return { applied: 0, reason: 'order_money_read_failed: credit notes' };
+    dueSen -= (dep.slices.get(args.siId) ?? 0) + (dep.credits.get(args.siId) ?? 0);
+    if (!(dueSen > 0)) return { applied: 0, reason: 'settled_by_order' };
   }
 
   // Preferred path: one atomic transaction in the DB.
@@ -181,7 +201,7 @@ export async function applyCustomerCreditToSi(
     p_debtor_code: args.debtorCode,
     p_si_id: args.siId,
     p_si_number: args.siNumber,
-    p_remaining_due_sen: Math.round(args.remainingDueSen),
+    p_remaining_due_sen: Math.round(dueSen),
     p_debtor_name: args.debtorName ?? null,
     p_created_by: args.createdBy ?? null,
   });
@@ -202,7 +222,7 @@ export async function applyCustomerCreditToSi(
   }
 
   // The atomic function is not present on this database yet — legacy fallback.
-  return applyCustomerCreditToSiLegacy(sb, args);
+  return applyCustomerCreditToSiLegacy(sb, { ...args, remainingDueSen: dueSen });
 }
 
 /**

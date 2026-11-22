@@ -44,6 +44,7 @@
 import type { Context } from 'hono';
 import type { Env, Variables } from '../env';
 import { reverseInventoryForDo, returnDoRacksOnCancel } from './delivery-orders-mfg';
+import { retireDoStockCycle } from '../lib/do-stock-cycle';
 import { syncSoDeliveredFromDo } from '../lib/so-delivery-sync';
 import { doHasDownstream } from '../lib/downstream-lock';
 import { recordEntityAudit, compactChanges, fieldChange } from '../lib/entity-audit';
@@ -218,10 +219,20 @@ export const revertDeliveryOrderHandler = async (
   const warnings: string[] = [];
   const reversesStock = toStatus === 'DRAFT';
   if (reversesStock) {
+    let reversed = false;
     try {
-      warnings.push(...(await reverseInventoryForDo(sb, id, performedBy)));
+      const w = await reverseInventoryForDo(sb, id, performedBy);
+      warnings.push(...w);
+      reversed = w.length === 0;
     } catch (e) {
       warnings.push(`DO reversal threw: ${e instanceof Error ? e.message : 'unknown'}`);
+    }
+    /* Retire the ship-and-return cycle so this DO reads as never shipped: shipping it again takes the stock out
+       again and a later revert returns only that ship. Only after a clean reversal; the SQL refuses while stock
+       is still out. */
+    if (reversed) {
+      const retireErr = await retireDoStockCycle(sb, id);
+      if (retireErr) warnings.push(`Stock was returned, but shipping this delivery order again will not take it out again: ${retireErr}`);
     }
     // Physical rack stock back (best-effort — never blocks the revert).
     try {

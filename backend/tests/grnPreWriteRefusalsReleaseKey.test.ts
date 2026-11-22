@@ -100,6 +100,8 @@ const RELEASES_PAST_A_WRITE: Record<string, string> = {
     'PATCH /:id/cancel: same reason as the child lock above it; the lines read that failed sits before the status flip and both reversals.',
   'if (consumedLock) return refuseWithoutWriting(c, consumedLock, 409);':
     'PATCH /:id/cancel: same reason as the child lock directly above it.',
+  "return refuseWithoutWriting(c, { error: 'line_changed', message: 'Someone else changed this line while you were editing it. Reload to see their change, then edit again.' }, 409);":
+    'PATCH /:id/items/:itemId: the line UPDATE above is a compare-and-set that matched no row, so it wrote nothing, and no stock moves or audit row come before it.',
 };
 
 describe('grns.ts refusals that precede any write release the idempotency claim', () => {

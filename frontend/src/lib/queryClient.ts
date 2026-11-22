@@ -53,6 +53,13 @@ export function retryUnlessClientError(failureCount: number, error: unknown): bo
   return true;
 }
 
+/* The paged document lists ('grns-paged', 'purchase-invoices-paged', ...) are siblings of their root key, not under
+   it, so a row action that refreshed only ['grns'] left the list row showing its old status until the page was
+   reopened. Any successful write marks every paged list stale; only the one on screen refetches. */
+export function isPagedListKey(key: readonly unknown[]): boolean {
+  return typeof key[0] === "string" && key[0].endsWith("-paged");
+}
+
 export const queryClient = new QueryClient({
   // Cross-tab sync: every successful write tells other open tabs which query
   // keys it invalidated. One central hook in the MutationCache, so no
@@ -60,6 +67,7 @@ export const queryClient = new QueryClient({
   mutationCache: new MutationCache({
     onSuccess: (_data, _vars, _ctx, mutation) => {
       mutationSucceeded(mutation);
+      void queryClient.invalidateQueries({ predicate: (q) => isPagedListKey(q.queryKey) });
     },
     onSettled: (_data, _error, _vars, _ctx, mutation) => {
       mutationSettled(mutation);

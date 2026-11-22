@@ -183,7 +183,8 @@ describe('purchase order: a failed receipts read is an error, not "nothing recei
       grn_items: [{ id: 'gi-1', grn_id: 'g-1', purchase_order_item_id: 'poi-1', qty_accepted: 5, returned_qty: 0, returned_closed_qty: 0 }],
       grns: [{ id: 'g-1', grn_number: 'GRN-1', status: 'POSTED', company_id: CO, purchase_order_id: 'po-1' }],
     };
-    const res = await harness(tables, failOn('grn_items', 'returned_closed_qty')).request('/po/po-1');
+    // By number: the id here is not a uuid, so the route resolves the number first (resolvePoId).
+    const res = await harness(tables, failOn('grn_items', 'returned_closed_qty')).request('/po/PO-1');
     await expectLoadFailed(res, 'po_line_receipts');
   });
 });

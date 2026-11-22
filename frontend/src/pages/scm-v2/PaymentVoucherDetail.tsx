@@ -33,6 +33,7 @@ import {
   useCheckPaymentVoucher,
   useApprovePaymentVoucher,
   useRejectPaymentVoucher,
+  usePostPaymentVoucher,
   usePvFiles, useUploadPvFile, useDeletePvFile, fetchPvFileBlobUrl,
   usePvReservations, NO_RESERVATIONS,
 } from '../../vendor/scm/lib/payment-voucher-queries';
@@ -153,7 +154,10 @@ export const PaymentVoucherDetail = () => {
   const check    = useCheckPaymentVoucher();
   const approve  = useApprovePaymentVoucher();
   const reject   = useRejectPaymentVoucher();
-  const busy   = update.isPending || cancel.isPending
+  const finishPost = usePostPaymentVoucher();
+  /* A post or cancel that did not finish - the server says which; the button below finishes it. */
+  const unfinished = (detailQ.data as { unfinished?: 'post' | 'cancel' | null } | undefined)?.unfinished ?? null;
+  const busy   = update.isPending || cancel.isPending || finishPost.isPending
     || submit.isPending || withdraw.isPending || check.isPending || approve.isPending || reject.isPending;
 
   const canWrite   = can('scm.payment_voucher.write');
@@ -679,6 +683,18 @@ export const PaymentVoucherDetail = () => {
                     <Ban {...ICON} /> Cancel…
                   </Button>
                 )}
+                {unfinished === 'post' && (canApprove || can('scm.payment_voucher.post')) && (
+                  <Button variant="primary" size="md" disabled={busy} title="An invoice this voucher pays was not settled when it posted"
+                    onClick={() => finishPost.mutate(id, { onError: (err) => notify({ title: 'Finish posting failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' }) })}>
+                    <CheckCircle2 {...ICON} /> Finish posting
+                  </Button>
+                )}
+                {unfinished === 'cancel' && canCancel && (
+                  <Button variant="primary" size="md" disabled={busy} title="The cancel did not reverse everything this voucher moved"
+                    onClick={() => cancel.mutate(id, { onError: (err) => notify({ title: 'Finish cancel failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' }) })}>
+                    <Ban {...ICON} /> Finish cancel
+                  </Button>
+                )}
               </>
             ) : (
               <>
@@ -1084,7 +1100,8 @@ export const PaymentVoucherDetail = () => {
                         <td style={{ padding: '6px 8px' }}>
                           {a.status ? <StatusPill docType="pi" status={String(a.status)} /> : '—'}
                         </td>
-                        <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtRm(Number(a.amountSen ?? a.amount_sen ?? 0))}</td>
+                        {/* What the invoice took: the clamp may refuse part of the ask, and the refused part sits in the advance. Before posting it is the ask. */}
+                        <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)' }} title={a.appliedSen != null && Number(a.appliedSen) !== Number(a.amountSen ?? 0) ? `Asked ${fmtRm(Number(a.amountSen ?? 0))}; the invoice took ${fmtRm(Number(a.appliedSen))}` : undefined}>{fmtRm(Number(a.appliedSen ?? a.amountSen ?? a.amount_sen ?? 0))}</td>
                       </tr>
                     );
                   })}

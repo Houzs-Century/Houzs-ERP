@@ -27,6 +27,7 @@ import { todayMyt } from "../scm/lib/my-time";
 import { hasPermission } from "../services/permissions";
 import { audit } from "../services/audit";
 import { computePeriod, lockedPeriods, payslipRow, periodBounds } from "./lib/hr-payroll-store";
+import { advanceInstallmentForMonth, advanceRemainingAfterMonth } from "../scm/shared/hr-advance-installment";
 import { penaltyPeriod, type AllowanceLine } from "./lib/hr-payslip";
 import { mintPenaltyNo } from "./lib/hr-penalty-no";
 import { claimFromCounter } from "../services/documentRefs";
@@ -252,16 +253,39 @@ hrPayroll.get("/advances", async (c) => {
   const period = c.req.query("period") ?? todayMyt().slice(0, 7);
   if (!PERIOD.test(period)) return c.json({ error: "bad_period", message: "Pick a month." }, 400);
   const { first, last } = periodBounds(period);
+  /* Every advance started on or before this month, so an installment advance
+     from an earlier month still shows while it is being repaid. */
   const rows = await getDb(c.env)
     .select({ a: hr_advances, emp_no: hr_employees.emp_no, name: hr_employees.name })
     .from(hr_advances)
     .innerJoin(hr_employees, eq(hr_employees.id, hr_advances.employee_id))
-    .where(and(eq(hr_advances.company_id, co.companyId), gte(hr_advances.advance_date, first), lte(hr_advances.advance_date, last)))
+    .where(and(eq(hr_advances.company_id, co.companyId), lte(hr_advances.advance_date, last)))
     .orderBy(desc(hr_advances.advance_date), asc(hr_employees.emp_no));
+  const advances = rows
+    .map(({ a, emp_no, name }) => {
+      const amountSen = Number(a.amount_sen);
+      const installmentSen = a.installment_sen == null ? null : Number(a.installment_sen);
+      const month = a.advance_date.slice(0, 7);
+      return {
+        id: a.id,
+        employeeId: a.employee_id,
+        empNo: emp_no,
+        name,
+        date: a.advance_date,
+        amountSen,
+        installmentSen,
+        thisMonthSen: advanceInstallmentForMonth(month, installmentSen, amountSen, period),
+        remainingSen: advanceRemainingAfterMonth(month, installmentSen, amountSen, period),
+        note: a.note,
+        status: a.status,
+      };
+    })
+    // Given this month, or still deducting / owing — drop lump sums and finished schedules from earlier months.
+    .filter((r) => (r.date >= first && r.date <= last) || r.thisMonthSen > 0 || r.remainingSen > 0);
   return c.json({
     period,
-    advances: rows.map(({ a, emp_no, name }) => ({ id: a.id, employeeId: a.employee_id, empNo: emp_no, name, date: a.advance_date, amountSen: Number(a.amount_sen), note: a.note, status: a.status })),
-    totalSen: rows.reduce((s, r) => s + Number(r.a.amount_sen), 0),
+    advances,
+    totalSen: advances.reduce((s, r) => s + r.amountSen, 0),
     canManage: canManage(c),
   });
 });
@@ -270,15 +294,24 @@ async function periodLocked(db: Db, companyId: number, ymd: string): Promise<boo
   return (await lockedPeriods(db, companyId)).has(ymd.slice(0, 7));
 }
 
-function parseAdvance(raw: Record<string, unknown>): { employeeId: number; date: string; amountSen: number; note: string | null } | string {
+function parseAdvance(raw: Record<string, unknown>): { employeeId: number; date: string; amountSen: number; installmentSen: number | null; note: string | null } | string {
   const employeeId = Number(raw.employeeId);
   const date = typeof raw.date === "string" ? raw.date : "";
   const amountSen = Number(raw.amountSen);
   if (!Number.isInteger(employeeId) || employeeId <= 0) return "Pick the employee.";
   if (!YMD.test(date)) return "Pick the date the money was given.";
   if (!Number.isInteger(amountSen) || amountSen <= 0) return "The amount must be more than RM 0.00.";
+  // installmentSen: NULL = lump sum (today's behaviour); otherwise a positive
+  // per-month deduction no larger than the advance itself.
+  let installmentSen: number | null = null;
+  if (raw.installmentSen != null) {
+    const n = Number(raw.installmentSen);
+    if (!Number.isInteger(n) || n <= 0) return "The monthly repayment must be more than RM 0.00.";
+    if (n > amountSen) return "The monthly repayment can't be more than the advance.";
+    installmentSen = n;
+  }
   const note = typeof raw.note === "string" && raw.note.trim() ? raw.note.trim().slice(0, 200) : null;
-  return { employeeId, date, amountSen, note };
+  return { employeeId, date, amountSen, installmentSen, note };
 }
 
 hrPayroll.post("/advances", async (c) => {
@@ -293,7 +326,7 @@ hrPayroll.post("/advances", async (c) => {
   if (await periodLocked(db, co.companyId, a.date)) return c.json({ error: "locked", message: `Payroll for ${a.date.slice(0, 7)} is approved; date the advance in an open month.` }, 409);
   const [row] = await db
     .insert(hr_advances)
-    .values({ company_id: co.companyId, employee_id: a.employeeId, advance_date: a.date, amount_sen: a.amountSen, note: a.note, created_by: c.get("user").id })
+    .values({ company_id: co.companyId, employee_id: a.employeeId, advance_date: a.date, amount_sen: a.amountSen, installment_sen: a.installmentSen, note: a.note, created_by: c.get("user").id })
     .returning({ id: hr_advances.id });
   await audit(c, { action: "hr.advance.create", entityType: "hr_employee", entityId: a.employeeId, summary: `${emp.emp_no} advance ${a.date}`, meta: a });
   return c.json({ id: row.id }, 201);
@@ -310,7 +343,7 @@ hrPayroll.patch("/advances/:id", async (c) => {
   if (await periodLocked(db, co.companyId, a.date)) return c.json({ error: "locked", message: `Payroll for ${a.date.slice(0, 7)} is approved.` }, 409);
   const done = await db
     .update(hr_advances)
-    .set({ employee_id: a.employeeId, advance_date: a.date, amount_sen: a.amountSen, note: a.note, updated_at: new Date().toISOString() })
+    .set({ employee_id: a.employeeId, advance_date: a.date, amount_sen: a.amountSen, installment_sen: a.installmentSen, note: a.note, updated_at: new Date().toISOString() })
     .where(and(eq(hr_advances.company_id, co.companyId), eq(hr_advances.id, id), eq(hr_advances.status, "UNSETTLED")))
     .returning({ id: hr_advances.id });
   if (!done.length) return c.json({ error: "settled", message: "Only an unsettled advance can be changed." }, 409);

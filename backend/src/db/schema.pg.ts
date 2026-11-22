@@ -1278,6 +1278,8 @@ export const hr_advances = pgTable("hr_advances", {
   employee_id: bigint("employee_id", { mode: "number" }).notNull(),
   advance_date: date("advance_date", { mode: "string" }).notNull(),
   amount_sen: bigint("amount_sen", { mode: "number" }).notNull(),
+  /** Per-month deduction in sen; NULL = lump sum (whole amount in advance_date's month). */
+  installment_sen: bigint("installment_sen", { mode: "number" }),
   note: text("note"),
   status: text("status").notNull().default("UNSETTLED"),
   settled_period: text("settled_period"),

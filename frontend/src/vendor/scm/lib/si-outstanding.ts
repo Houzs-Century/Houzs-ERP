@@ -71,3 +71,11 @@ export const siSettledSen = (paidSen: number, depositSen: number, creditSen: num
  */
 export const siOutstandingSen = (totalSen: number, paidSen: number, depositSen: number, creditSen: number): number =>
   Math.max(0, (Number.isFinite(totalSen) ? totalSen : 0) - siSettledSen(paidSen, depositSen, creditSen));
+
+/**
+ * A cancelled invoice owes nothing (its receipts became customer credit) and a draft is not issued yet, so neither
+ * counts toward Outstanding or a money card. A cancelled one does not count toward Billed or Paid either.
+ */
+export const siIsCancelled = (status: string | null | undefined): boolean => String(status ?? '').toUpperCase() === 'CANCELLED';
+export const siOwesNothing = (status: string | null | undefined): boolean =>
+  siIsCancelled(status) || String(status ?? '').toUpperCase() === 'DRAFT';

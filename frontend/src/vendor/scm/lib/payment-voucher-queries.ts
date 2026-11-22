@@ -20,6 +20,7 @@ import {
 import { idempotentInit } from '../../../lib/idempotency';
 import type { EventSuggestion } from './event-queries';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
+import { reportInBandFailure, type InBandFailure } from './mutation-error';
 import { runAiRead, runOneAiRead, type AiReadStage } from './ai-read-job';
 
 // baseQuery is a custom-hook factory — only ever called from use* hooks below.
@@ -194,16 +195,25 @@ export const useUpdatePvText = () => {
   });
 };
 
+/* A voucher that posts (or approves and posts) or cancels moves money on the invoices and AP bills it settles, the
+   supplier's advances and reservations, and the bank board, not only on itself. */
+const invalidatePvSettlement = (qc: ReturnType<typeof useQueryClient>) => {
+  for (const k of ['purchase-invoices', 'purchase-invoice-detail', 'ap-invoices', 'ap-invoice', 'supplier-advances', 'pv-reservations', 'daily-bank', 'journal-entries']) {
+    void qc.invalidateQueries({ queryKey: [k] });
+  }
+};
+
 export const usePostPaymentVoucher = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => authedFetch<{ ok: true; jeNo?: string }>(`/payment-vouchers/${id}/post`, { method: 'POST' }),
-    onSuccess: (_d, id) => {
+    mutationFn: (id: string) => authedFetch<{ ok: true; jeNo?: string } & InBandFailure>(`/payment-vouchers/${id}/post`, { method: 'POST' }),
+    onSuccess: (d, id) => {
+      reportInBandFailure('Voucher posted, but not every step finished', d);
       void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
       void qc.invalidateQueries({ queryKey: ['finance-todo'] });
       void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', id] });
-      // A post settles linked PIs — refresh the PI list/detail too.
-      void qc.invalidateQueries({ queryKey: ['purchase-invoices'] });
+      // A post settles linked PIs and AP bills: refresh what it settled.
+      invalidatePvSettlement(qc);
     },
   });
 };
@@ -248,12 +258,13 @@ export const useApplyAdvance = () => {
 export const useCancelPaymentVoucher = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => authedFetch(`/payment-vouchers/${id}/cancel`, { method: 'POST' }),
-    onSuccess: (_d, id) => {
+    mutationFn: (id: string) => authedFetch<InBandFailure>(`/payment-vouchers/${id}/cancel`, { method: 'POST' }),
+    onSuccess: (d, id) => {
+      reportInBandFailure('Voucher cancelled, but not every step finished', d);
       void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
       void qc.invalidateQueries({ queryKey: ['finance-todo'] });
       void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', id] });
-      void qc.invalidateQueries({ queryKey: ['purchase-invoices'] });
+      invalidatePvSettlement(qc);
       /* A cancelled voucher puts its request back on Finance's waiting count. */
       void qc.invalidateQueries({ queryKey: ['payment-requests'] });
     },
@@ -266,12 +277,16 @@ export const useCancelPaymentVoucher = () => {
 const approvalMutation = (path: 'submit' | 'withdraw' | 'check' | 'approve') => () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => authedFetch(`/payment-vouchers/${id}/${path}`, { method: 'POST' }),
-    onSuccess: (_d, id) => {
+    mutationFn: (id: string) => authedFetch<InBandFailure>(`/payment-vouchers/${id}/${path}`, { method: 'POST' }),
+    onSuccess: (d, id) => {
+      /* Approve posts the voucher in the same request (approval IS the posting). */
+      if (path === 'approve') reportInBandFailure('Voucher posted, but not every step finished', d);
       void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
       void qc.invalidateQueries({ queryKey: ['finance-todo'] });
       void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', id] });
       void qc.invalidateQueries({ queryKey: ['daily-bank'] });
+      // Approve posts the GL and settles invoices in the same request.
+      if (path === 'approve') invalidatePvSettlement(qc);
     },
   });
 };
