@@ -356,6 +356,16 @@
       "file": "backend/src/routes/clientErrors.ts",
       "text": "const day = nowIso.slice(0, 10);",
       "why": "Telemetry STORM-COLLAPSE bucket for client error reports (unique key dedup_hash, day, user_id), never shown as a business date; switching it to the Malaysian day would split the current day's counters at deploy for no reader's benefit."
+    },
+    {
+      "file": "frontend/src/lib/meetings.ts",
+      "text": "export const MONTH_NAMES = [\"January\", \"February\", \"March\", \"April\", \"May\", \"June\", \"July\", \"August\", \"September\", \"October\", \"November\", \"December\"];",
+      "why": "The meetings calendar heading names the month the grid shows ('November 2026'), the Google Calendar convention the owner asked for; no date is written as text with it."
+    },
+    {
+      "file": "frontend/src/lib/meetings.ts",
+      "text": "return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, \"0\")}-${String(d.getDate()).padStart(2, \"0\")}`;",
+      "why": "isoDay: the ISO YYYY-MM-DD key for a calendar day (URL ?date=, DateField values, the guest slots query) - storage/API form, never shown to a person."
     }
   ]
 }

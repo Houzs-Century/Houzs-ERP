@@ -19,7 +19,12 @@ type Booking = { code: string; start: string; end: string; cancelled?: boolean; 
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await correlatedFetch(`${apiBase()}/api/public/meetings${path}`, { ...init, headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) } });
-  const body = (await res.json().catch(() => null)) as (T & { error?: string }) | null;
+  let body: (T & { error?: string }) | null = null;
+  try {
+    body = (await res.json()) as T & { error?: string };
+  } catch {
+    // Not JSON (a gateway page): answered below as a failure, never as an empty result.
+  }
   if (!res.ok || !body) throw new Error(body?.error ?? "Something went wrong. Please try again.");
   return body;
 }
@@ -74,7 +79,7 @@ export function MeetingBook() {
     } catch (err) {
       setFormError(err instanceof Error ? err.message : String(err));
       setSlot(null);
-      if (chosen !== null) call<{ slots: Slot[] }>(`/links/${encodeURIComponent(code)}/slots?day=${isoDay(chosen)}`).then((r) => setSlots(r.slots)).catch(() => undefined);
+      if (chosen !== null) call<{ slots: Slot[] }>(`/links/${encodeURIComponent(code)}/slots?day=${isoDay(chosen)}`).then((r) => setSlots(r.slots)).catch(() => setSlots([]));
     } finally {
       setSending(false);
     }

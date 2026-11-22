@@ -137,6 +137,9 @@ export const BROWSER_STORAGE_KEY_REGISTRY: readonly StorageKeyRegistration[] = [
   // Last Mile lorry cards: whether done stops are folded away ("Hide done") — a
   // per-viewer layout preference (true/false), no identity/company data.
   { id: "fleet-day-hide-done", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "fleet-day.hide-done.v1", matches: exact("fleet-day.hide-done.v1") },
+  // Meetings calendar: what the colours mean for this viewer (room / company / me).
+  // A per-device display preference, no identity/company data.
+  { id: "meetings-color-by", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "meetings.colorBy", matches: exact("meetings.colorBy") },
   // The Finance grids' dragged column widths (owner's redesign, batch 6 §1.3:
   // Journal entries, General ledger, Merchant charges, Collection) — an array
   // of px per column. A layout preference; no identity/company data.
@@ -249,6 +252,8 @@ export const PRODUCTION_STORAGE_CALLERS = [
   "mobile/useIsMobile.ts",
   "pages/MailCenter/mail-local.ts",
   "pages/MailCenter/mail-prefs.ts",
+  // Meetings: the "Colours show" choice (meetings.colorBy), a display preference.
+  "pages/Meetings/index.tsx",
   // Projects list scroll memory for detail Back (projects-list-scroll family).
   "pages/Projects.tsx",
   // Project Overview: where the page and its project table were scrolled when a

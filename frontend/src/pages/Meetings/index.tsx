@@ -6,7 +6,7 @@ import { TabStrip } from "../../components/TabStrip";
 import { openLoadedTab } from "../../lib/openLoadedTab";
 import { cn } from "../../lib/utils";
 import {
-  DAY, MONTH_NAMES, addDays, atHour, draftBody, draftFrom, emptyDraft, fmtDayLong, isMeetingsTab, isView, ms, nextStart, peopleOf, readConflict, startOfDay, startOfWeek,
+  DAY, MONTH_NAMES, addDays, atHour, draftBody, draftFrom, emptyDraft, fmtDayLong, isMeetingsTab, isoDay, isView, VIEWS, ms, nextStart, peopleOf, readConflict, startOfDay, startOfWeek,
   companyColor, meetingColor, type Bootstrap, type CalView, type ColorBy, type ConflictReply, type Draft, type GuestLink, type Meeting, type MeetingsTab, type Notice, type Room,
 } from "../../lib/meetings";
 import { ListView, MiniMonth, MonthView, RoomsTimeline, TimeGrid } from "./MeetingsCalendar";
@@ -54,7 +54,7 @@ export function Meetings({ erpName = "Houzs ERP", embedded = false }: { erpName?
       return n;
     }, { replace: true });
   }, [setParams]);
-  const setAnchor = (t: number) => { const d = new Date(t); patch({ date: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}` }); };
+  const setAnchor = (t: number) => patch({ date: isoDay(t) });
 
   const [boot, setBoot] = useState<Bootstrap | null>(null);
   const [bootError, setBootError] = useState<string | null>(null);
@@ -109,7 +109,7 @@ export function Meetings({ erpName = "Houzs ERP", embedded = false }: { erpName?
     if (tab !== "mine") return;
     let live = true;
     fresh<{ meetings: Meeting[]; notifications: Notice[] }>("/api/meetings/mine")
-      .then((r) => { if (!live) return; setMine(r); setMineError(null); if (r.notifications.some((n) => !n.read)) api.post("/api/meetings/notifications/read").catch(() => undefined); })
+      .then((r) => { if (!live) return; setMine(r); setMineError(null); if (r.notifications.some((n) => !n.read)) api.post("/api/meetings/notifications/read").catch((e) => console.warn("[meetings] could not mark notifications read", e)); })
       .catch((e) => live && setMineError(message(e)));
     return () => { live = false; };
   }, [tab, tick]);
@@ -264,7 +264,7 @@ export function Meetings({ erpName = "Houzs ERP", embedded = false }: { erpName?
                 <input aria-label="Search meetings" placeholder="Search meetings, people, rooms" className="h-9 w-56 rounded-full border border-border bg-surface-2 pl-8 pr-3 text-[13px]" value={query} onChange={(e) => { setQuery(e.target.value); if (e.target.value) patch({ view: "list" }); }} />
               </label>
               <div className="flex overflow-hidden rounded-full border border-border" role="group" aria-label="View">
-                {(["day", "week", "month", "rooms", "list"] as const).map((v) => (
+                {VIEWS.map((v) => (
                   <button key={v} type="button" onClick={() => patch({ view: v })} className={cn("h-9 px-3 text-[13px] font-medium capitalize", view === v ? "bg-primary-soft font-semibold text-primary-ink" : "bg-surface text-ink")}>{v}</button>
                 ))}
               </div>

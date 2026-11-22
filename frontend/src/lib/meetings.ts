@@ -229,7 +229,9 @@ export function layoutDay<T extends { start: number; end: number }>(items: T[]):
 }
 
 export type ColorBy = "room" | "company" | "me";
-const COMPANY_COLORS = ["#0b8043", "#e67c00", "#8e24aa", "#3f51b5", "#d81b60", "#039be5", "#616161"];
+/** The colours a room can take; companies reuse them in order (orange first, so Houzs green and the next company differ). */
+export const ROOM_COLORS = ["#0b8043", "#3f51b5", "#f4511e", "#8e24aa", "#039be5", "#d81b60", "#616161", "#e67c00"];
+const COMPANY_COLORS = [0, 7, 3, 1, 5, 4, 6].map((i) => ROOM_COLORS[i]);
 /** A company's colour, stable for its name. */
 export function companyColor(company: string, companies: string[]): string {
   const i = companies.indexOf(company);

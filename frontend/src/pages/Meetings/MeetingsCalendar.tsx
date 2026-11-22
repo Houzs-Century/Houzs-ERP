@@ -43,7 +43,7 @@ export function MiniMonth({ anchor, onPick, week }: { anchor: number; onPick: (d
         </span>
       </div>
       <div className="grid grid-cols-7 justify-items-center gap-0.5 text-[11px]">
-        {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => <span key={i} className="flex h-7 w-7 items-center justify-center text-ink-muted">{d}</span>)}
+        {DAY_NAMES.map((n) => n[0]).map((d, i) => <span key={i} className="flex h-7 w-7 items-center justify-center text-ink-muted">{d}</span>)}
         {cells.map((c) => {
           const inWeek = week && c >= ws && c < ws + 7 * DAY;
           return (
@@ -76,7 +76,7 @@ export function TimeGrid(p: CalProps & {
   const cols = useRef<(HTMLDivElement | null)[]>([]);
   const [drag, setDrag] = useState<Drag>(null);
   useEffect(() => {
-    if (scroller.current) scroller.current.scrollTop = Math.max(0, (new Date().getHours() - GRID_FROM - 1) * HH);
+    if (scroller.current) scroller.current.scrollTop = Math.max(0, (minutesOfDay(Date.now()) / 60 - GRID_FROM - 1) * HH);
   }, []);
   const today = startOfDay(now);
   const yToMin = (el: HTMLElement, y: number) => snapMinutes(GRID_FROM * 60 + ((y - el.getBoundingClientRect().top) / HH) * 60);

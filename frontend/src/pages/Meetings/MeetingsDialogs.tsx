@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Calendar, MapPin, Paperclip, Pencil, Repeat, StickyNote, Trash2, Users, Video, Bell, X } from "lucide-react";
 import { cn } from "../../lib/utils";
+import { DateField } from "../../vendor/scm/components/DateField";
 import {
   DAY, DAY_NAMES, HOUR, MIN, REMINDER_OPTIONS, addDays, atHour, busySentences, directoryTree, fmtDay, fmtDayLong, fmtRange, fmtTime,
   hhmm, inUsualHours, isoDay, minutesOfDay, ms, peopleOf, personLine, personName, remLabel, snapMinutes, startOfDay, withTime,
@@ -178,7 +179,7 @@ export function QuickBook(p: {
             {REPEAT_OPTIONS(d.start).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select>
         </label>
-        {d.repeat !== "none" && <label className={cn(LABEL, "mt-2")}>Repeat until<input type="date" className={CONTROL} value={d.repeatUntil ?? ""} onChange={(e) => setD({ ...d, repeatUntil: e.target.value || null })} /></label>}
+        {d.repeat !== "none" && <label className={cn(LABEL, "mt-2")}>Repeat until<DateField aria-label="Repeat until" fullWidth value={d.repeatUntil ?? ""} onChange={(v) => setD({ ...d, repeatUntil: v || null })} /></label>}
         <div className="mt-2.5">
           <div className={cn(LABEL, "mb-1")}>People</div>
           <div className="mb-1.5 flex flex-wrap gap-1.5">
@@ -349,8 +350,8 @@ export function FindTime({ d, rooms, people, meetings, now, onPick }: { d: Draft
   return (
     <div className="flex flex-col gap-3">
       <div className="grid grid-cols-3 gap-2">
-        <label className={LABEL}>From<input type="date" className={CONTROL} value={from} onChange={(e) => e.target.value && setFrom(e.target.value)} /></label>
-        <label className={LABEL}>To<input type="date" className={CONTROL} value={to} onChange={(e) => e.target.value && setTo(e.target.value)} /></label>
+        <label className={LABEL}>From<DateField aria-label="From" fullWidth value={from} onChange={(v) => { if (v) setFrom(v); }} /></label>
+        <label className={LABEL}>To<DateField aria-label="To" fullWidth value={to} onChange={(v) => { if (v) setTo(v); }} /></label>
         <label className={LABEL}>Length<select className={CONTROL} value={len} onChange={(e) => setLen(Number(e.target.value))}>{[30, 45, 60, 90, 120, 180].map((v) => <option key={v} value={v}>{v < 60 ? `${v} min` : `${v / 60} h`}</option>)}</select></label>
       </div>
       <div className="text-[13px] text-ink-secondary">{who.length} {who.length === 1 ? "person" : "people"} · times when everyone is free and a room with {who.length}+ seats is open.</div>
@@ -433,7 +434,7 @@ export function MeetingEditor(p: {
         <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,460px)]">
           <div className="flex min-w-0 flex-col gap-3.5 p-4">
             <div className="flex flex-wrap items-center gap-2">
-              <input type="date" aria-label="Date" className={cn(CONTROL, "w-auto")} value={day} onChange={(e) => { if (!e.target.value) return; set({ start: withTime(e.target.value, hhmm(d.start)), end: withTime(e.target.value, hhmm(d.end)) }); }} />
+              <DateField aria-label="Date" value={day} onChange={(v) => { if (!v) return; set({ start: withTime(v, hhmm(d.start)), end: withTime(v, hhmm(d.end)) }); }} />
               <input type="time" step={900} aria-label="Start" className={cn(CONTROL, "w-auto")} value={hhmm(d.start)} onChange={(e) => { const s = withTime(day, e.target.value); set({ start: s, end: s + (d.end - d.start) }); }} />
               <span>to</span>
               <input type="time" step={900} aria-label="End" className={cn(CONTROL, "w-auto")} value={hhmm(d.end)} onChange={(e) => { const en = withTime(day, e.target.value); if (en > d.start) set({ end: en }); }} />
@@ -442,7 +443,7 @@ export function MeetingEditor(p: {
                   {REPEAT_OPTIONS(d.start).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                 </select>
               )}
-              {p.isNew && d.repeat !== "none" && <label className="flex items-center gap-1.5 text-[13px]">until<input type="date" className={cn(CONTROL, "w-auto")} value={d.repeatUntil ?? ""} onChange={(e) => set({ repeatUntil: e.target.value || null })} /></label>}
+              {p.isNew && d.repeat !== "none" && <label className="flex items-center gap-1.5 text-[13px]">until<DateField aria-label="Repeat until" value={d.repeatUntil ?? ""} onChange={(v) => set({ repeatUntil: v || null })} /></label>}
               {!p.isNew && d.seriesId && <span className="rounded-full bg-surface-2 px-2.5 py-1 text-[12px] font-semibold">Repeating</span>}
             </div>
             <div className="grid grid-cols-[22px_minmax(0,1fr)] items-start gap-3">

@@ -110,7 +110,14 @@ async function relay(c: Ctx, call: Promise<Response>): Promise<Response> {
   return c.json({ error: UNREACHABLE }, 502);
 }
 
-const json = (c: Ctx) => c.req.json().catch(() => null) as Promise<Record<string, unknown> | null>;
+/** The browser's JSON body, or null when it is not JSON (the route answers 400). */
+async function json(c: Ctx): Promise<Record<string, unknown> | null> {
+  try {
+    return (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
 const jsonInit = (method: string, body: unknown): RequestInit => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body ?? {}) });
 
 // ---- Connected? (the menu row is listed only where this is true) -----------

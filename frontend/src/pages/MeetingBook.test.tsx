@@ -8,10 +8,11 @@ const { fetchMock } = vi.hoisted(() => ({ fetchMock: vi.fn() }));
 vi.mock("../lib/requestCorrelation", () => ({ correlatedFetch: fetchMock }));
 
 import { MeetingBook } from "./MeetingBook";
+import { addDays, atHour, startOfDay } from "../lib/meetings";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 const TOKEN = "a".repeat(64);
-const tomorrow = () => { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(15, 0, 0, 0); return d; };
+const tomorrow = () => new Date(atHour(addDays(startOfDay(Date.now()), 1), 15));
 
 beforeEach(() => {
   fetchMock.mockReset();

@@ -2,15 +2,15 @@ import { useState } from "react";
 import { X } from "lucide-react";
 import { cn } from "../../lib/utils";
 import {
-  DAY_NAMES, addDays, daysLabel, fmtDay, fmtDayLong, fmtTime, guestLinkUrl, isoDay, ms, occupancy, personName, startOfDay, startOfWeek,
+  DAY_NAMES, ROOM_COLORS, addDays, daysLabel, fmtDay, fmtDayLong, fmtTime, guestLinkUrl, isoDay, ms, occupancy, personName, startOfDay, startOfWeek,
   type Closure, type GuestLink, type Meeting, type Notice, type Person, type Room,
 } from "../../lib/meetings";
 import { BTN, CONTROL, LABEL, PRI, Veil, chip, copyText } from "./MeetingsDialogs";
+import { DateField } from "../../vendor/scm/components/DateField";
 
 /* The Meetings page's other subpages: My meetings, Rooms (cards and the edit dialog),
    Guest links, Email and WhatsApp, and the Change log. */
 
-const ROOM_COLORS = ["#0b8043", "#3f51b5", "#f4511e", "#8e24aa", "#039be5", "#d81b60", "#616161", "#e67c00"];
 const EQUIPMENT = ["TV", "Video call", "Whiteboard", "Projector", "Speakerphone"];
 const CARD = "overflow-hidden rounded-2xl border border-border bg-surface";
 
@@ -166,9 +166,9 @@ export function RoomDialog({ initial, locations, futureBookings, saving, error, 
             </div>
           ))}
           <div className="flex flex-wrap items-center gap-2 font-normal normal-case tracking-normal">
-            <input type="date" aria-label="Closed from" className={cn(CONTROL, "w-auto")} value={cl.from} onChange={(e) => setCl({ ...cl, from: e.target.value })} />
+            <DateField aria-label="Closed from" value={cl.from} onChange={(v) => setCl({ ...cl, from: v })} />
             <span className="text-ink">to</span>
-            <input type="date" aria-label="Closed to" className={cn(CONTROL, "w-auto")} value={cl.to} onChange={(e) => setCl({ ...cl, to: e.target.value })} />
+            <DateField aria-label="Closed to" value={cl.to} onChange={(v) => setCl({ ...cl, to: v })} />
             <input aria-label="Reason" className={cn(CONTROL, "w-auto flex-1")} placeholder="Reason" value={cl.reason} onChange={(e) => setCl({ ...cl, reason: e.target.value })} />
             <button type="button" className={cn(BTN, "h-8")} disabled={!cl.from} onClick={() => { setX({ ...x, closures: [...x.closures, { from: cl.from, to: cl.to && cl.to >= cl.from ? cl.to : cl.from, reason: cl.reason }] }); setCl({ from: "", to: "", reason: "" }); }}>Add</button>
           </div>
@@ -248,7 +248,7 @@ export function LinkDialog({ rooms, people, me, saving, error, onClose, onSave }
           <label className={LABEL}>From<select className={CONTROL} value={x.from} onChange={(e) => setX({ ...x, from: Number(e.target.value) })}>{[8, 9, 10, 11, 12, 13, 14].map((h) => <option key={h} value={h}>{h}:00</option>)}</select></label>
           <label className={LABEL}>To<select className={CONTROL} value={x.to} onChange={(e) => setX({ ...x, to: Number(e.target.value) })}>{[12, 13, 14, 15, 16, 17, 18, 19, 20].map((h) => <option key={h} value={h}>{h}:00</option>)}</select></label>
           <label className={LABEL}>Works until
-            {x.until ? <input type="date" className={CONTROL} value={x.until} onChange={(e) => setX({ ...x, until: e.target.value || null })} /> : <span className={cn(CONTROL, "bg-surface-2")}>No end date</span>}
+            {x.until ? <DateField aria-label="Works until" fullWidth value={x.until} onChange={(v) => setX({ ...x, until: v || null })} /> : <span className={cn(CONTROL, "bg-surface-2")}>No end date</span>}
             <span className="flex items-center gap-1.5 font-normal normal-case tracking-normal"><input type="checkbox" checked={!x.until} onChange={(e) => setX({ ...x, until: e.target.checked ? null : isoDay(addDays(Date.now(), 30)) })} />Keep it open with no end date</span>
           </label>
         </div>
