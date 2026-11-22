@@ -247,9 +247,11 @@ export async function propagateLineEditAfterDo(
   if (soErr || !so) return { doCopyFailed: [label], siCopyFailed: siLines.length ? ['(invoice unchanged)'] : [] };
   const soLine = so as SoLineShape;
 
-  const { data: beforeDo } = await scopeToCompanyId(
+  const { data: beforeDo, error: beforeDoErr } = await scopeToCompanyId(
     sb.from('delivery_order_items').select('item_code, qty, unit_price_sen, discount_sen').eq('id', doLine.id), who.companyId,
   ).maybeSingle();
+  // The pre-update snapshot is for the audit's from-values only; a failed read
+  // just leaves them blank (the edit itself still proceeds below).
   const patch = doLinePatchFromSoLine(soLine);
   const { error: doErr } = await scopeToCompanyId(
     sb.from('delivery_order_items').update(patch).eq('id', doLine.id), who.companyId,
@@ -261,7 +263,7 @@ export async function propagateLineEditAfterDo(
   await deps.resyncInventoryForDo(sb, target.id, deps.performedBy);
   await deps.restampDoActualCost(sb, target.id);
   await recomputeDoTotals(sb, target.id);
-  const bp = (beforeDo ?? {}) as Record<string, unknown>;
+  const bp = (beforeDoErr ? {} : (beforeDo ?? {})) as Record<string, unknown>;
   await recordEntityAudit(sb, {
     entityType: 'DELIVERY_ORDER', entityId: target.id, entityDocNo: target.do_number, action: 'UPDATE',
     actor: who.actor, companyId: who.companyId, statusSnapshot: target.status,
@@ -277,10 +279,13 @@ export async function propagateLineEditAfterDo(
   if (siLines.length === 0) return { doCopyFailed, siCopyFailed };
   // The delivered cost the resync/restamp just settled onto the DO line is what
   // the invoice must carry (a spec change moved the cost basis).
-  const { data: costRow } = await scopeToCompanyId(
+  const { data: costRow, error: costErr } = await scopeToCompanyId(
     sb.from('delivery_order_items').select('unit_cost_sen').eq('id', doLine.id), who.companyId,
   ).maybeSingle();
-  const siPatch = { ...patch, unit_cost_sen: Number((costRow as { unit_cost_sen?: number | null } | null)?.unit_cost_sen ?? patch.unit_cost_sen ?? 0) };
+  // On a read failure, fall back to the cost already on the patch rather than
+  // billing a zero cost.
+  const deliveredCost = costErr ? null : (costRow as { unit_cost_sen?: number | null } | null)?.unit_cost_sen;
+  const siPatch = { ...patch, unit_cost_sen: Number(deliveredCost ?? patch.unit_cost_sen ?? 0) };
   const byInvoice = new Map<string, { head: SiLineRow; ids: string[] }>();
   for (const l of siLines) {
     const g = byInvoice.get(l.sales_invoice_id) ?? { head: l, ids: [] };
