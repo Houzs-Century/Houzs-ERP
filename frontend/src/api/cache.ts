@@ -118,6 +118,14 @@ export function clearAll(): void {
  *  both under /api/projects. */
 const ALSO_INVALIDATES: Record<string, string> = { "/api/project-sales-bills": "/api/projects" };
 
+/* Who else hears about a write: lib/queryClient.ts registers here to mark the
+   react-query reads stale, so this module stays free of react-query. */
+const writeListeners = new Set<(path: string) => void>();
+export function onApiWrite(fn: (path: string) => void): () => void {
+  writeListeners.add(fn);
+  return () => { writeListeners.delete(fn); };
+}
+
 /** A mutation on `/api/<resource>/...` invalidates that whole resource. */
 export function invalidateForMutation(path: string): void {
   const m = path.match(/^(\/api\/[^/?]+)/);
@@ -125,4 +133,5 @@ export function invalidateForMutation(path: string): void {
   invalidate(m[1]);
   const also = ALSO_INVALIDATES[m[1]];
   if (also) invalidate(also);
+  for (const fn of writeListeners) fn(path);
 }
