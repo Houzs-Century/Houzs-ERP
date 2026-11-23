@@ -129,6 +129,12 @@ async function main() {
     if (why === 'ok') continue;
     if (why) refuse.push({ ...r, why }); else fix.push(r);
   }
+  /* One OUT is undone by at most one IN. */
+  const perOut = new Map();
+  for (const r of fix) perOut.set(r.out_id, (perOut.get(r.out_id) ?? 0) + 1);
+  for (let k = fix.length - 1; k >= 0; k--) {
+    if (perOut.get(fix[k].out_id) > 1) refuse.push({ ...fix.splice(k, 1)[0], why: 'another IN matches the same stock-out' });
+  }
   note(`\n=== B. VOIDS / RETURNS THAT RE-OPENED MORE THAN WAS TAKEN: ${fix.length} to repair, ${refuse.length} refused ===`);
   for (const r of fix) note(`  FIX    ${r.t} ${r.doc} | ${r.item_code} | IN ${r.qty}, its stock-out took ${r.took} -> lot ${Math.min(Number(r.qty), r.took)}`);
   for (const r of refuse) bad(`  REFUSE ${r.t} ${r.doc} | ${r.item_code} | IN ${r.qty}, took ${r.took} — ${r.why}`);
