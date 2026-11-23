@@ -303,6 +303,11 @@ export const PERMISSIONS: PermissionDef[] = [
   // key so a floor / warehouse supervisor can clear them without the full
   // hr.employees.manage attendance-editing rights.
   { key: "hr.punch.approve", resource: "HR", verb: "approve", label: "Approve make-up punches", description: "See and approve or reject the make-up punches workers file when they forgot to clock in or out; an approval writes that day's attendance" },
+  // A supervisor approves the leave workers apply for on the phone. An approval
+  // stamps those days onto attendance (paid leave not docked, unpaid not paid).
+  // Its own key so a floor / warehouse supervisor can clear leave without the
+  // full hr.employees.manage pay-editing rights.
+  { key: "hr.leave.approve", resource: "HR", verb: "approve", label: "Approve leave", description: "See and approve or reject the leave workers apply for on the phone; an approval marks those days as leave on the attendance" },
   // Attendance-only view. Opens Employees & Attendance to the Attendance (and,
   // with hr.ot.confirm, OT) tabs ALONE — the daily punches and working hours,
   // never salary, pay, the employee master or payroll. For an attendance / OT
