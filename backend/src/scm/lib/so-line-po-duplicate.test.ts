@@ -2,7 +2,7 @@
    2990-PO-2611-044. A line already on a live PO must be named before another
    PO is generated for it. */
 import { describe, expect, test } from 'vitest';
-import { soLinesOnLivePo, soHasPoRefusal } from './so-line-po-duplicate';
+import { soLinesOnLivePo, soHasPoRefusal, soHasPoGate, asksDuplicatePo } from './so-line-po-duplicate';
 
 type Row = Record<string, unknown>;
 
@@ -24,8 +24,8 @@ function fakeSb(rows: Row[], error: { message: string } | null = null) {
 
 const line = (soItemId: string, poNumber: string, status: string): Row => ({ so_item_id: soItemId, po: { po_number: poNumber, status } });
 const so = [
-  { id: 'a', doc_no: '2990-SO-2608-042', item_code: 'XAMMAR-1A(LHF)' },
-  { id: 'b', doc_no: '2990-SO-2608-042', item_code: 'XAMMAR-2A(RHF)' },
+  { id: 'a', doc_no: '2990-SO-2608-042', item_code: 'XAMMAR-1A(LHF)', item_group: 'sofa' },
+  { id: 'b', doc_no: '2990-SO-2608-042', item_code: 'XAMMAR-2A(RHF)', item_group: 'sofa' },
 ];
 
 describe('soLinesOnLivePo', () => {
@@ -50,7 +50,7 @@ describe('soLinesOnLivePo', () => {
 
   test('no SO link reads nothing', async () => {
     const sb = fakeSb([]);
-    expect(await soLinesOnLivePo(sb, [{ id: '', doc_no: 'X', item_code: 'Y' }])).toEqual([]);
+    expect(await soLinesOnLivePo(sb, [{ id: '', doc_no: 'X', item_code: 'Y', item_group: null }])).toEqual([]);
     expect(sb.calls).toHaveLength(0);
   });
 
@@ -71,5 +71,40 @@ describe('soHasPoRefusal', () => {
     ]);
     expect(body).toMatchObject({ error: 'so_has_po', poNumbers: ['2990-PO-2611-036'] });
     expect(body?.reason).toBe('This Sales Order already has PO(s): 2990-PO-2611-036.');
+  });
+});
+
+/* 2990-0070 (Sim, 2026-11-23): 2990 asks only for the custom items named in
+   2990-0065 - bedframe, sofa, dining, mattress sized SP or SK. */
+describe('asksDuplicatePo', () => {
+  const ask2990 = (item_group: string | null, item_code: string) => asksDuplicatePo(2, { item_group, item_code });
+  test.each([
+    ['sofa', 'XAMMAR-1A(LHF)'], ['bedframe', 'BF-01 (Q)'], ['dining', 'AN-DINING LEG'], ['Sofa', 'X'],
+    ['mattress', '2990 ARRUS-FIRM MATT (SK)'], ['mattress', '2990 ARRUS-FIRM MATT (SP)'],
+  ])('2990 asks for %s %s', (g, code) => expect(ask2990(g, code)).toBe(true));
+  test.each([
+    ['mattress', '2990 ARRUS-FIRM MATT (K)'], ['mattress', '2990 ARRUS-FIRM MATT (Q)'], ['mattress', '2990 ARRUS-FIRM MATT (SS)'],
+    ['accessory', 'PILLOW'], ['fabric_accessory', 'SB02'], ['others', 'X'], [null, 'X'],
+  ])('2990 does not ask for %s %s', (g, code) => expect(ask2990(g, code)).toBe(false));
+  test('Houzs (company 1) still asks for every line', () => {
+    expect(asksDuplicatePo(1, { item_group: 'mattress', item_code: 'MAT-Q' })).toBe(true);
+    expect(asksDuplicatePo(1, { item_group: 'accessory', item_code: 'PILLOW' })).toBe(true);
+  });
+});
+
+describe('soHasPoGate', () => {
+  const lines = [
+    { id: 's', doc_no: '2990-SO-2608-031', item_code: '2990 ARRUS-FIRM MATT (K)', item_group: 'mattress' },
+    { id: 'f', doc_no: '2990-SO-2608-042', item_code: 'XAMMAR-1A(LHF)', item_group: 'sofa' },
+  ];
+  const sb = () => fakeSb([line('s', '2990-PO-2611-124', 'SUBMITTED'), line('f', '2990-PO-2611-036', 'SUBMITTED')]);
+  test('2990: a standard mattress already on a PO is not asked about; the sofa still is', async () => {
+    const { refusal } = await soHasPoGate(sb(), 2, lines, undefined);
+    expect(refusal?.poNumbers).toEqual(['2990-PO-2611-036']);
+    expect((await soHasPoGate(sb(), 2, [lines[0]!], undefined)).refusal).toBeNull();
+  });
+  test('company 1: both lines are asked about', async () => {
+    const { refusal } = await soHasPoGate(sb(), 1, lines, undefined);
+    expect(refusal?.poNumbers).toEqual(['2990-PO-2611-036', '2990-PO-2611-124']);
   });
 });

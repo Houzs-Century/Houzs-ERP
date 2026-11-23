@@ -1125,7 +1125,7 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
          with fromMrp) so there is no MRP case to exclude. Pre-write guard: mark
          the idempotency claim no-write so the confirmed replay re-runs instead of
          replaying this 409 (mirrors the short_stock gate). */
-      const dupGate = await soHasPoGate(supabase, soRows, body.confirmDuplicatePo); // 2990-0065; lines confirmed there skip the qty prompt
+      const dupGate = await soHasPoGate(supabase, activeCompanyId(c) ?? null, soRows, body.confirmDuplicatePo); // 2990-0065; lines confirmed there skip the qty prompt
       if (dupGate.refusal) { markIdempotencyNoWrite(c); return c.json(await withMrpAssignments(supabase, c, dupGate.refusal), 409); }
       if (!confirmOverConvert) {
         const offender = findOverConvertOffender(items.filter((it) => !dupGate.confirmed.has(it.soItemId as string)), soRows);
@@ -1716,7 +1716,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
     if (offender) return c.json(soNotOrderableResponse(offender), 409);
   }
 
-  const dupGate = await soHasPoGate(supabase, pickedItems.map((p) => p.row), body.confirmDuplicatePo); // 2990-0065, after the hard caps
+  const dupGate = await soHasPoGate(supabase, activeCompanyId(c) ?? null, pickedItems.map((p) => p.row), body.confirmDuplicatePo); // 2990-0065, after the hard caps
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the HTTP route passes its real Context here; the headless agent never reaches the prompt
   if (dupGate.refusal) return c.json(await withMrpAssignments(supabase, c as unknown as Context<any>, dupGate.refusal), 409);
 
@@ -2973,7 +2973,7 @@ mfgPurchaseOrders.post('/:id/items', async (c) => {
   { const inactive = await poInactivePickRefusal(sb, co.companyId ?? null, [{ materialKind: it.materialKind, itemCode: it.itemCode, soItemId }]); if (inactive) return c.json(inactive, 409); }
   /* Remaining-qty cap — a NEW line contributes nothing to po_qty_picked yet, so
      its own headroom is the raw remainder (ownCurrentQty = 0). */
-  const dupGate = await soHasPoGate(sb, soItemId ? [{ id: soItemId, doc_no: null, item_code: String(it.itemCode ?? '') }] : [], it.confirmDuplicatePo); // 2990-0065
+  const dupGate = await soHasPoGate(sb, co.companyId ?? null, soItemId ? [{ id: soItemId, doc_no: null, item_code: String(it.itemCode ?? ''), item_group: addGroupOf(it) }] : [], it.confirmDuplicatePo); // 2990-0065
   if (dupGate.refusal) { markIdempotencyNoWrite(c); return c.json(await withMrpAssignments(sb, c, dupGate.refusal), 409); }
   if (it.confirmOverConvert !== true) {
     const over = await soLineOverConvertRefusal(sb, soItemId, qty, 0);
