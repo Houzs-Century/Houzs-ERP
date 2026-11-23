@@ -168,4 +168,26 @@ describe('Stock Take detail — round 1', () => {
     fireEvent.change(box, { target: { value: '1a2' } });
     expect(box.value).toBe('12');
   });
+
+  /* Owner 2026-11-23: a found SKU with no cost on record (PILLOW: +2, no lot cost)
+     blocks Post. Its VALUE cell becomes a unit-cost box; typing a cost sends
+     enteredUnitCostSen so Post can value the found lot — no separate adjustment. */
+  test('an uncosted found line gets a cost box; typing a cost sends enteredUnitCostSen on Save', async () => {
+    saveLines.mockClear();
+    draw();
+    const costBox = screen.getByLabelText('Unit cost (RM) for PILLOW') as HTMLInputElement;
+    expect(costBox.type).toBe('text');
+    fireEvent.change(costBox, { target: { value: '12.50' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save Counts/ }));
+    await waitFor(() => expect(saveLines).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'st-1',
+      lines: expect.arrayContaining([expect.objectContaining({ id: 'l3', enteredUnitCostSen: 1250 })]),
+    })));
+  });
+
+  test('a costed line shows its value, not a cost box', () => {
+    draw();
+    // MATT-A carries a lot cost (est_unit_cost_sen), so no hand-entry box.
+    expect(screen.queryByLabelText('Unit cost (RM) for MATT-A')).toBeNull();
+  });
 });

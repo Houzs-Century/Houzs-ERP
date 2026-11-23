@@ -81,7 +81,8 @@ const HEADER =
   'assignee_staff_ids, nonzero_only, submitted_at, submitted_by';
 const LINE =
   'id, stock_take_id, item_code, product_name, variant_key, variant_label, ' +
-  'system_qty, counted_qty, variance, notes, created_at, counted_by, counted_at, added_on_count, rack_id';
+  'system_qty, counted_qty, variance, notes, created_at, counted_by, counted_at, added_on_count, rack_id, ' +
+  'entered_unit_cost_sen';
 
 const VALID_STATUS = new Set(['OPEN', 'PENDING_APPROVAL', 'POSTED', 'CANCELLED']);
 const VALID_SCOPE  = new Set(['ALL', 'CATEGORY', 'CODE_PREFIX', 'NONZERO']);
@@ -657,6 +658,7 @@ export const patchStockTakeLinesHandler = async (c: any) => {
 
   const lines = body.lines as Array<{
     id: string; countedQty?: number | null; notes?: string | null; rackId?: string | null;
+    enteredUnitCostSen?: number | null;
   }> | undefined;
   if (!Array.isArray(lines) || lines.length === 0) {
     return c.json({ error: 'lines_required' }, 400);
@@ -727,6 +729,14 @@ export const patchStockTakeLinesHandler = async (c: any) => {
     }
     if ('notes' in l) patch.notes = l.notes ?? null;
     if ('rackId' in l) patch.rack_id = l.rackId ? l.rackId : null;
+    /* Operator-typed unit cost (sen) for a found line whose SKU has no priced
+       lot — stored verbatim (clamped ≥ 0); Post reads it as a fallback cost
+       basis. Empty / null clears it back to "no cost on the sheet". */
+    if ('enteredUnitCostSen' in l) {
+      const v = l.enteredUnitCostSen;
+      patch.entered_unit_cost_sen =
+        v == null || (v as unknown) === '' ? null : Math.max(0, Math.round(Number(v)));
+    }
     if (Object.keys(patch).length === 0) continue;
 
     const { error } = await sb.from('stock_take_lines')
@@ -1319,11 +1329,12 @@ const computeStockTakePosting = async (
   sb: any, c: any, header: PostingHeader, performedBy: string,
 ): Promise<PostingPlan> => {
   const { data: lines } = await sb.from('stock_take_lines')
-    .select('item_code, product_name, variant_key, counted_qty, notes')
+    .select('item_code, product_name, variant_key, counted_qty, notes, entered_unit_cost_sen')
     .eq('stock_take_id', header.id);
   const counted = ((lines as Array<{
     item_code: string; product_name: string | null;
     variant_key: string | null; counted_qty: number | null; notes: string | null;
+    entered_unit_cost_sen: number | null;
   }>) ?? []).filter((ln) => ln.counted_qty != null);
 
   // Audit 2026-06-20 (#15) — re-read LIVE on-hand per (item_code, variant_key)
@@ -1406,15 +1417,26 @@ const computeStockTakePosting = async (
     const forced = resolveForcedUnitCostSen({
       lots: lotsByKey.get(`${p.ln.item_code} ${p.variantKey}`) ?? [],
     });
+    /* Owner 2026-11-23: a +variance SKU with no priced lot can still post if the
+       counter typed a unit cost on the sheet (entered_unit_cost_sen) — the same
+       basis a costed Stock Adjustment uses, carried on the ADJUSTMENT movement's
+       unit_cost_sen the FIFO trigger already reads. Only a positive entry
+       counts, and it is a FALLBACK: a real lot cost always wins, so this never
+       lets a hand-typed figure override costed stock. A 0 / NULL entry leaves
+       the line costless, so it still refuses — RM0 is never booked. */
+    const enteredSen = typeof p.ln.entered_unit_cost_sen === 'number' && p.ln.entered_unit_cost_sen > 0
+      ? p.ln.entered_unit_cost_sen
+      : null;
+    const basisSen = forced.ok ? forced.unitCostSen : enteredSen;
     thresholdLines.push({
       itemCode: p.ln.item_code,
       adjustment:  p.adjustment,
-      unitCostSen: forced.ok ? forced.unitCostSen : null,
+      unitCostSen: basisSen,
     });
     let unitCostSen = 0;
     if (p.adjustment > 0) {
-      if (!forced.ok) { costlessSkus.push(p.ln.item_code); continue; }
-      unitCostSen = forced.unitCostSen;
+      if (basisSen == null) { costlessSkus.push(p.ln.item_code); continue; }
+      unitCostSen = basisSen;
     }
     adjustmentRows.push({
       movement_type:   'ADJUSTMENT',
