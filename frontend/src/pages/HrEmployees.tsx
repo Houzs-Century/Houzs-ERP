@@ -20,6 +20,7 @@ import { PublicHolidaysPage } from "./hr/PublicHolidaysPage";
 import { AdvancesPage } from "./hr/AdvancesPage";
 import { AllowancesPage } from "./hr/AllowancesPage";
 import { AttendancePage } from "./hr/AttendancePage";
+import { LeavePage } from "./hr/LeavePage";
 import { EmployeeDrawer } from "./hr/EmployeeDrawer";
 import { AddFromAccountsModal } from "./hr/AddFromAccountsModal";
 import { ImportEmployeesModal } from "./hr/ImportEmployeesModal";
@@ -48,6 +49,7 @@ export function HrEmployees() {
   // the employee master, payroll, allowances or anything with pay on it.
   const canFull = can("hr.employees.read") || can("hr.employees.manage");
   const canAttendance = canFull || can("hr.attendance.read");
+  const canLeave = can("hr.leave.approve");
 
   const [editEmp, setEditEmp] = useState<Employee | "new" | null>(null);
   const [bulk, setBulk] = useState<"accounts" | "import" | null>(null);
@@ -57,10 +59,11 @@ export function HrEmployees() {
     const visible = new Set<string>();
     if (canAttendance) visible.add("attendance");
     if (canOt) visible.add("ot-requests");
+    if (canLeave) visible.add("leave");
     return new Set(HR_NAV.filter((n) => !visible.has(n.key)).map((n) => n.key));
   })();
 
-  const fallback = canFull ? "overview" : canAttendance ? "attendance" : "ot-requests";
+  const fallback = canFull ? "overview" : canAttendance ? "attendance" : canOt ? "ot-requests" : canLeave ? "leave" : "overview";
   const raw = params.get("tab");
   let active = raw && NAV_KEYS.has(raw) ? raw : fallback;
   if (active === "ot-requests" && !canOt) active = fallback;
@@ -124,6 +127,8 @@ export function HrEmployees() {
         return <TripPayTab />;
       case "attendance":
         return <AttendancePage />;
+      case "leave":
+        return <LeavePage />;
       default:
         return null;
     }
