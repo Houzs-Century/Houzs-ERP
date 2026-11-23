@@ -2301,7 +2301,7 @@ export const SalesOrderDetail = () => {
                     draft={editDraft}
                     onChange={cb?.onChange ?? ((patch) => patchEditingDraft(it.id, patch))}
                     onRemove={cb?.onRemove ?? (() => removeEditingLine(it.id))}
-                    canRemove={(!linesLocked && !frozen) || afterDoFee}
+                    canRemove={(!linesLocked && !frozen) || afterDoFee || afterDoProduct}
                     /* PR-F (#79) wiring — enable photo upload on already-saved
                        lines. New lines (addingDraft) have no itemId yet so
                        their photos defer to after the first save. */

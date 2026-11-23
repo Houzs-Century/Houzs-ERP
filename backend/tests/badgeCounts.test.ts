@@ -36,6 +36,11 @@ describe("parseBadgeSources", () => {
     expect(parseBadgeSources(undefined)).toEqual([]);
     expect(parseBadgeSources("constructor,__proto__,toString")).toEqual([]);
   });
+
+  it("knows the Meetings count, answered by the hub relay's { count } route", () => {
+    expect(parseBadgeSources("meetings-unread")).toEqual(["meetings-unread"]);
+    expect(BADGE_COUNT_PATHS["meetings-unread"]).toBe("/api/meetings/unread-count");
+  });
 });
 
 describe("readBadgeCount", () => {

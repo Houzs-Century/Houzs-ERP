@@ -71,6 +71,9 @@ export interface ProjectRow {
   // 2026-08-14). Tasks of that section: 'title=status=due' pairs joined by '|',
   // where due is a bare YYYY-MM-DD or empty. Drives the per-project task badges.
   section_tasks_map?: string | null;
+  // Populated only when the Task filter is on: the ticked task(s) status on this
+  // event, 'title=status' pairs joined by '|'. Drives the card's task badge.
+  task_pending_map?: string | null;
 }
 
 export interface SalesAttendee {

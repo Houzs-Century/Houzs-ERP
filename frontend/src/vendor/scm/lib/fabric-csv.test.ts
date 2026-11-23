@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'vitest';
 
 import { parseCsv, parseWorkbook, importErrorDetail } from './fabric-csv';
+import { FABRIC_COLUMNS } from '../components/FabricsTable';
+import { gridColumnToTableColumn } from '../../../components/DataGridCompat';
 
 // Build an .xlsx workbook buffer in memory from an array-of-arrays, so the test
 // exercises the real SheetJS read path parseWorkbook uses (no committed binary
@@ -50,7 +52,7 @@ describe('parseWorkbook — Excel imports the same shape as CSV', () => {
     const { rows, errors } = await parseWorkbook(buf);
 
     expect(rows).toEqual([]);
-    expect(errors).toEqual(['Header must include a fabric_code (or Code) column']);
+    expect(errors).toEqual(['Header must include a fabric_code (or Internal Code) column']);
   });
 
   test('unknown columns are warned, not rejected', async () => {
@@ -82,6 +84,21 @@ describe('the table toolbar export imports back (BUG-88)', () => {
       { fabricCode: 'KN06', series: 'ALTA', fabricDescription: 'ALTA-01 Cream', supplierCode: 'ALTA-01', sofaPriceTier: 'PRICE_2', bedframePriceTier: 'PRICE_2' },
       { fabricCode: 'ONTARIO-00', series: 'ONTARIO', fabricDescription: 'ONTARIO-00', supplierCode: 'ONTARIO-00', sofaPriceTier: 'PRICE_2', bedframePriceTier: 'PRICE_2' },
       { fabricCode: 'MONS-144', series: 'MONS', fabricDescription: 'MONS-144', supplierCode: 'MONS-144', sofaPriceTier: 'PRICE_1', bedframePriceTier: null },
+    ]);
+  });
+
+  // 2990-0069: #5861 renamed "Code" to "Internal Code" and the export stopped importing.
+  // The header comes from the live table columns, so the next rename fails here first.
+  test('the current table export header imports back', () => {
+    const header = FABRIC_COLUMNS.map((c) => gridColumnToTableColumn(c).exportLabel).join(',');
+    const { rows, errors, warnings } = parseCsv(
+      `${header}\r\nWEA-01,WEAVE,WEA-01 Moon Cream,Nicca-01,Price 2,Price 2,Yes,\r\n`,
+    );
+
+    expect(errors).toEqual([]);
+    expect(warnings).toEqual(['Ignoring unknown columns: active, actions']);
+    expect(rows).toEqual([
+      { fabricCode: 'WEA-01', series: 'WEAVE', fabricDescription: 'WEA-01 Moon Cream', supplierCode: 'Nicca-01', sofaPriceTier: 'PRICE_2', bedframePriceTier: 'PRICE_2' },
     ]);
   });
 

@@ -15,9 +15,10 @@ const perms = new Set<string>();
 vi.mock("../auth/AuthContext", () => ({
   useAuth: () => ({ user: { id: 7 }, can: (p: string) => perms.has(p) }),
 }));
-vi.mock("./useItSupportConnected", () => ({ useItSupportConnected: () => false }));
+let hubConnected = false;
+vi.mock("./useItSupportConnected", () => ({ useItSupportConnected: () => hubConnected }));
 
-const { useApprovalBadgeCounts, AMENDMENT_APPROVALS_KEY } = await import("./useAmendmentApprovals");
+const { useApprovalBadgeCounts, useMeetingsUnread, AMENDMENT_APPROVALS_KEY, MEETINGS_UNREAD_KEY } = await import("./useAmendmentApprovals");
 const { resetVisiblePollForTests } = await import("../lib/visiblePoll");
 
 function wrap(client: QueryClient) {
@@ -31,6 +32,7 @@ let client: QueryClient;
 beforeEach(() => {
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   perms.clear();
+  hubConnected = false;
   apiGet.mockReset();
 });
 
@@ -104,5 +106,41 @@ describe("sidebar counts", () => {
     const { result } = renderHook(() => useApprovalBadgeCounts(), { wrapper: wrap(client) });
     await waitFor(() => expect(result.current["amendment-approvals"]).toBe(5));
     expect(result.current["po-amendment-approvals"]).toBe(1);
+  });
+
+  test("Meetings unread joins only where the IT Hub is connected, and the phone shares the key", async () => {
+    hubConnected = true;
+    apiGet.mockImplementation(async (path: string) => {
+      if (path.startsWith("/api/badge-counts")) return { counts: { "amendment-approvals": 0, "po-amendment-approvals": 0, "it-support-replies": 0, "meetings-unread": 120 } };
+      if (path === "/api/meetings/unread-count") return { count: 1 };
+      throw new Error(`unexpected ${path}`);
+    });
+    const { result } = renderHook(() => useApprovalBadgeCounts(), { wrapper: wrap(client) });
+    await waitFor(() => expect(result.current["meetings-unread"]).toBe(120));
+    expect(apiGet).toHaveBeenCalledWith(
+      "/api/badge-counts?sources=amendment-approvals,po-amendment-approvals,it-support-replies,meetings-unread",
+    );
+    expect(client.getQueryData(MEETINGS_UNREAD_KEY)).toEqual({ count: 120 });
+    // Marking them read re-reads the count alone.
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: MEETINGS_UNREAD_KEY });
+    });
+    await waitFor(() => expect(result.current["meetings-unread"]).toBe(1));
+  });
+
+  test("no hub, no Meetings count and no request for it", async () => {
+    apiGet.mockResolvedValue({ counts: {} });
+    const { result } = renderHook(() => useMeetingsUnread(), { wrapper: wrap(client) });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(result.current).toBe(0);
+    expect(apiGet).not.toHaveBeenCalled();
+  });
+
+  test("a failed Meetings read shows no badge", async () => {
+    hubConnected = true;
+    apiGet.mockRejectedValue(Object.assign(new Error("hub down"), { status: 502 }));
+    const { result } = renderHook(() => useMeetingsUnread(), { wrapper: wrap(client) });
+    await waitFor(() => expect(apiGet).toHaveBeenCalledWith("/api/meetings/unread-count"));
+    expect(result.current).toBe(0);
   });
 });

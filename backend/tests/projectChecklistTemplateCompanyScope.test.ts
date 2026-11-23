@@ -91,6 +91,10 @@ beforeAll(async () => {
     "project_checklist_templates",
     "project_checklist_template_sections",
     "project_checklist_template_items",
+    // task-titles-distinct now reads the tasks that EXIST ON EVENTS, scoped by
+    // the project's company — the D1 mirror's projects table predates that
+    // column (pg has carried it since mig 0093), so add it here too.
+    "projects",
   ]) {
     await addCompanyIdColumn(t);
   }
@@ -102,6 +106,9 @@ beforeEach(async () => {
   await env.DB.exec(`DELETE FROM project_checklist_template_items`);
   await env.DB.exec(`DELETE FROM project_checklist_template_sections`);
   await env.DB.exec(`DELETE FROM project_checklist_templates`);
+  // task-titles-distinct reads from events now, so isolate those too.
+  await env.DB.exec(`DELETE FROM project_checklist`);
+  await env.DB.exec(`DELETE FROM projects`);
 
   for (const [tpl, co, label] of [
     [TPL_A, CO_A, "A"],
@@ -124,6 +131,25 @@ beforeEach(async () => {
        VALUES (?, ?, ?, 10, ?, 0, 0, ?)`,
     )
       .bind(tpl + 200, tpl, tpl + 100, `TASK ${label}`, co)
+      .run();
+  }
+
+  // One non-archived event per company, each carrying a "TASK <label>" checklist
+  // row, so GET /task-titles-distinct (now event-sourced) has per-company data
+  // to scope and resolve against each company's template.
+  for (const [prj, co, label] of [
+    [7001, CO_A, "A"],
+    [7002, CO_B, "B"],
+  ] as const) {
+    await env.DB.prepare(
+      `INSERT INTO projects (id, name, company_id) VALUES (?, ?, ?)`,
+    )
+      .bind(prj, `EVENT ${label}`, co)
+      .run();
+    await env.DB.prepare(
+      `INSERT INTO project_checklist (project_id, seq, title) VALUES (?, 10, ?)`,
+    )
+      .bind(prj, `TASK ${label}`)
       .run();
   }
 });

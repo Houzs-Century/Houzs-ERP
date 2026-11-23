@@ -474,12 +474,14 @@
   min-width: 0;
 }
 /* A long line table whose column header stays on screen while the page
-   scrolls (Stock Take count sheet). The page scrolls in <main>, so top: 0 is
-   the top of the content area; the card around it must not be overflow:hidden
-   (that makes the card the scroll box and the header never moves). */
+   scrolls (Stock Take count sheet). The page scrolls in <main>, where the app
+   bar and the page title bar are pinned too; top: 0 parked the header under
+   them, out of sight. --page-header-offset (Layout.tsx) is where they end.
+   The card around it must not be overflow:hidden (that makes the card the
+   scroll box and the header never moves). */
 .stickyHead thead th {
   position: sticky;
-  top: 0;
+  top: var(--page-header-offset, 0px);
   z-index: 2;
 }
 /* The picked variant bucket, in full, under its select (Stock Transfer). */

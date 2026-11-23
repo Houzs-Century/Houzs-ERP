@@ -147,6 +147,14 @@ function extraOf(extras: string | undefined): { extra_sen: number | null; extra_
 
 const validDayMonth = (day: number, month: number): boolean => day >= 1 && day <= 31 && month >= 1 && month <= 12;
 
+/** A section header the floor writes before each day's bills — a date
+ *  followed by a brand or event tag with no amount ("8/11 dunlop spice",
+ *  "9/11 Akemi"). Historically these were counted as "skipped" and showed up
+ *  as a false "N lines don't match the bill format" hint; owner 2026-11-23
+ *  flagged it on the Dunlopillo Pisa Spice paste. The parser quietly
+ *  recognises them now so the hint only fires on real typos. */
+const SECTION_HEADER_RE = /^\s*\d{1,2}\s*\/\s*\d{1,2}\s+[A-Za-z]/;
+
 export function parseSalesReport(text: string | null | undefined): ParsedSalesReport {
   const lines = String(text ?? "").split(/\r?\n/);
   const bills: ParsedBill[] = [];
@@ -158,7 +166,12 @@ export function parseSalesReport(text: string | null | undefined): ParsedSalesRe
      fair's days, never the report's. */
   let lineDate: ParsedSalesReport["date"] = null;
   let headerDate: ParsedSalesReport["date"] = null;
-  let total_sen: number | null = null;
+  /* Collect every Total line the message carries, not just the last. A
+     multi-day summary ("Total: RM87,088" at top, "Total: RM11,088" for
+     8/11, "TOTAL: RM6500" for 9/11) has three; the mismatch check below
+     picks the one that matches the sum of bills, so a valid per-section
+     paste no longer trips the amber warning (owner 2026-11-23). */
+  const total_sens: number[] = [];
 
   for (let i = 0; i < lines.length; i++) {
     const line = i + 1;
@@ -172,7 +185,8 @@ export function parseSalesReport(text: string | null | undefined): ParsedSalesRe
 
     const total = t.match(TOTAL_RE);
     if (total) {
-      total_sen = amountToSen(total[1]!);
+      const sen = amountToSen(total[1]!);
+      if (sen != null) total_sens.push(sen);
       continue;
     }
 
@@ -220,6 +234,10 @@ export function parseSalesReport(text: string | null | undefined): ParsedSalesRe
         headerDate = { day: Number(inside[1]), month: Number(inside[2]) };
       }
     }
+    /* Section header ("8/11 dunlop spice") — a date followed by a brand or
+       event tag with no amount. Silently ignored so the "unknown format"
+       hint doesn't light up for a well-formed multi-day paste. */
+    if (SECTION_HEADER_RE.test(t)) continue;
     skipped.push({ line, text: t });
   }
   const date = lineDate ?? headerDate;
@@ -233,17 +251,28 @@ export function parseSalesReport(text: string | null | undefined): ParsedSalesRe
     );
   }
 
-  if (total_sen != null && bills.length > 0) {
+  /* Pick the Total that MATCHES the sum we can check against (bills first,
+     then days). When one of the collected Totals matches, the message is
+     internally consistent and we pass that number out; otherwise fall back
+     to the last Total line, same as before. A mismatch warning fires only
+     when NO collected Total matches — so a multi-section paste with its
+     own per-day subtotals no longer complains (owner 2026-11-23). */
+  const lastTotal: number | null = total_sens.length > 0 ? total_sens[total_sens.length - 1]! : null;
+  let matchedTotal: number | null = null;
+  if (total_sens.length > 0 && bills.length > 0) {
     const sum = bills.reduce((s, b) => s + b.amount_sen, 0);
-    if (total_sen !== sum) {
-      warnings.push(`The message's Total (RM ${ringgit(total_sen)}) is not the sum of its bills (RM ${ringgit(sum)}).`);
+    matchedTotal = total_sens.find((v) => v === sum) ?? null;
+    if (matchedTotal == null) {
+      warnings.push(`The message's Total (RM ${ringgit(lastTotal!)}) is not the sum of its bills (RM ${ringgit(sum)}).`);
     }
-  } else if (total_sen != null && days.length > 0) {
+  } else if (total_sens.length > 0 && days.length > 0) {
     const sum = days.reduce((s, b) => s + b.amount_sen, 0);
-    if (total_sen !== sum) {
-      warnings.push(`The message's Total (RM ${ringgit(total_sen)}) is not the sum of its days (RM ${ringgit(sum)}).`);
+    matchedTotal = total_sens.find((v) => v === sum) ?? null;
+    if (matchedTotal == null) {
+      warnings.push(`The message's Total (RM ${ringgit(lastTotal!)}) is not the sum of its days (RM ${ringgit(sum)}).`);
     }
   }
+  const total_sen: number | null = matchedTotal ?? lastTotal;
 
   return { date, bills, days, total_sen, skipped, warnings };
 }
