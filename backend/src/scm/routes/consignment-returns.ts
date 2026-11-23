@@ -28,6 +28,7 @@ import { buildVariantSummary } from '../shared';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { defaultWarehouseId, writeMovements, resolveWarehouseLotBatches, resolveWarehouseLotCosts } from '../lib/inventory-movements';
+import { nameTheShipOutsReturned } from '../lib/consignment-return-reversal';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { computeVariantKey, type VariantAttrs } from '../shared';
@@ -278,7 +279,7 @@ async function warehouseCodeMap(
    delta 0 everywhere and writes nothing. Best-effort. */
 async function resyncReturnInventory(sb: any, returnId: string, performedBy: string | null): Promise<string[]> {
   const { data: header } = await sb.from('consignment_delivery_returns')
-    .select('return_number, status, warehouse_id, company_id').eq('id', returnId).maybeSingle();
+    .select('return_number, status, warehouse_id, company_id, consignment_do_id').eq('id', returnId).maybeSingle();
   if (!header) return [];
   const status = ((header as { status: string | null }).status ?? '').toUpperCase();
   const returnNo = (header as { return_number: string }).return_number ?? returnId;
@@ -385,6 +386,7 @@ async function resyncReturnInventory(sb: any, returnId: string, performedBy: str
   }
 
   if (writes.length === 0) return [];
+  await nameTheShipOutsReturned(sb, writes, (header as { consignment_do_id?: string | null }).consignment_do_id ?? null);
   // Multi-company: resync movements inherit the return's company.
   const res = await writeMovements(sb, writes, (header as { company_id?: number | null }).company_id ?? null);
   /* Oversell retro-cost (0154) — a consignment return books goods back onto the

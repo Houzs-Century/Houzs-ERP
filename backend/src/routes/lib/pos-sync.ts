@@ -103,7 +103,9 @@ export function classifyIncoming(sale: IncomingSale, stored: StoredSale | null, 
   return { kind: "duplicate" };
 }
 
-export type MovementRow = { movement_type: "IN" | "OUT"; item_code: string; product_name: string; qty: number; source_doc_type: string; source_doc_no: string; notes: string };
+/** `reverses`: on a void's IN, the document type of the sale OUT it undoes (same receipt number), so the
+ *  booking can name that OUT and the FIFO trigger re-opens only what the sale took (20261123T0100). */
+export type MovementRow = { movement_type: "IN" | "OUT"; item_code: string; product_name: string; qty: number; source_doc_type: string; source_doc_no: string; notes: string; reverses: string | null };
 
 /** OUT for every unit sold (FOC included), IN for every unit returned; the
  *  receipt number is the document the movement is logged against. */
@@ -111,15 +113,15 @@ export function movementsFor(sale: IncomingSale): MovementRow[] {
   const out: MovementRow[] = [];
   const kind = sale.type === "RETURN" ? "POS_RETURN" : "POS_SALE";
   for (const l of sale.lines) {
-    if (l.qty > 0) out.push({ movement_type: "OUT", item_code: l.code, product_name: l.description, qty: l.qty, source_doc_type: kind, source_doc_no: sale.receipt_no, notes: `POS ${sale.type === "RETURN" ? "exchange" : "sale"} ${sale.receipt_no}` });
-    else out.push({ movement_type: "IN", item_code: l.code, product_name: l.description, qty: -l.qty, source_doc_type: kind, source_doc_no: sale.receipt_no, notes: `POS return ${sale.receipt_no}` });
+    if (l.qty > 0) out.push({ movement_type: "OUT", item_code: l.code, product_name: l.description, qty: l.qty, source_doc_type: kind, source_doc_no: sale.receipt_no, notes: `POS ${sale.type === "RETURN" ? "exchange" : "sale"} ${sale.receipt_no}`, reverses: null });
+    else out.push({ movement_type: "IN", item_code: l.code, product_name: l.description, qty: -l.qty, source_doc_type: kind, source_doc_no: sale.receipt_no, notes: `POS return ${sale.receipt_no}`, reverses: null });
   }
   return out;
 }
 
 /** A VOID reverses the receipt: every OUT becomes an IN and vice versa. */
 export function voidMovementsFor(sale: IncomingSale): MovementRow[] {
-  return movementsFor(sale).map((m) => ({ ...m, movement_type: m.movement_type === "OUT" ? "IN" : "OUT", source_doc_type: "POS_VOID", notes: `POS void ${sale.receipt_no}` }));
+  return movementsFor(sale).map((m) => ({ ...m, movement_type: m.movement_type === "OUT" ? "IN" : "OUT", source_doc_type: "POS_VOID", notes: `POS void ${sale.receipt_no}`, reverses: m.movement_type === "OUT" ? m.source_doc_type : null }));
 }
 
 export type BatchResult = { uuid: string; status: "accepted" | "duplicate" | "updated" | "rejected"; reason?: string; stock_warning?: string | null };
