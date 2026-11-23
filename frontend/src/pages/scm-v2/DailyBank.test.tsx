@@ -206,4 +206,11 @@ describe('DailyBank — the original, beside the cash book', () => {
     expect(screen.queryByText(/cash book/i)).toBeNull();
     expect(screen.queryByRole('note')).toBeNull();
   });
+
+  test('its banks keep their card money in transit and their rows as they were', () => {
+    renderAt('?view=accounts');
+    const hlb = screen.getByLabelText('310-0020 CASH AT BANK - HLBB');
+    expect(hlb.textContent).toContain('· In transit · PBB card money, not yet in this bank');
+    expect(hlb.querySelector('[class*="afterStrip"]')!.className).not.toMatch(/afterRuled/);
+  });
 });
