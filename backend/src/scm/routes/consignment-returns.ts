@@ -386,7 +386,7 @@ async function resyncReturnInventory(sb: any, returnId: string, performedBy: str
   }
 
   if (writes.length === 0) return [];
-  await nameTheShipOutsReturned(sb, writes, (header as { consignment_do_id?: string | null }).consignment_do_id ?? null);
+  await nameTheShipOutsReturned(sb, writes, returnId, (header as { consignment_do_id?: string | null }).consignment_do_id ?? null);
   // Multi-company: resync movements inherit the return's company.
   const res = await writeMovements(sb, writes, (header as { company_id?: number | null }).company_id ?? null);
   /* Oversell retro-cost (0154) — a consignment return books goods back onto the

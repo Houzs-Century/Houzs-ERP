@@ -133,10 +133,15 @@ describePg('a void or a return puts back only what its stock-out took', () => {
                 VALUES ('OUT', ${WH}, 'DIVAN-K', 1, 'CS_DO', ${NOTE}, 'HC-CN-1')`;
     const rows = await admin<Record<string, unknown>[]>`SELECT id::text AS id, movement_type::text AS movement_type, item_code, variant_key,
       source_doc_type, source_doc_id::text AS source_doc_id FROM scm.inventory_movements`;
-    const sb = fakeSb({ inventory_movements: rows.map((r) => ({ ...r })) });
+    /* As on production (HC-CRN-2610-001): the header names no note; its line names the note's line. */
+    const sb = fakeSb({
+      inventory_movements: rows.map((r) => ({ ...r })),
+      consignment_delivery_return_items: [{ id: 'ri-1', consignment_delivery_return_id: RET, consignment_do_item_id: 'ni-1' }],
+      consignment_delivery_order_items: [{ id: 'ni-1', consignment_delivery_order_id: NOTE }],
+    });
     const writes: Array<{ movement_type: string; item_code: string; variant_key?: string; reverses_movement_id?: string }> =
       [{ movement_type: 'IN', item_code: 'DIVAN-K', variant_key: '' }];
-    await nameTheShipOutsReturned(sb as never, writes, NOTE);
+    await nameTheShipOutsReturned(sb as never, writes, RET, null);
     await admin`INSERT INTO scm.inventory_movements (movement_type, warehouse_id, item_code, qty, unit_cost_sen, source_doc_type, source_doc_id, source_doc_no, reverses_movement_id)
                 VALUES ('IN', ${WH}, 'DIVAN-K', 1, 5000, 'CS_DR', ${RET}, 'HC-CRN-1', ${writes[0]!.reverses_movement_id ?? null})`;
     expect(await state(admin, 'DIVAN-K')).toEqual({ balance: 0, lots: 0 });
