@@ -2,6 +2,16 @@
   "reviewed": [
     {
       "check": "D1",
+      "key": "APPROVED,PENDING,REJECTED|frontend/src/mobile/MobileLeave.tsx frontend/src/mobile/MobilePunchFix.tsx",
+      "why": "THE PENDING/APPROVED/REJECTED RENDERING of two separate self-service request tabs on the phone (leave and make-up punch): each file's STATUS_TONE / STATUS_TEXT is how it colours and labels its own request rows, not a business rule. The two tabs happen to share the three-value vocabulary; divergence is a chip colour or wording, never a wrong status. MobileOvertime renders the same idea with CONFIRMED, a different set."
+    },
+    {
+      "check": "D2",
+      "key": "CLOCK_IN_AT,CLOCK_OUT_AT,IN_SOURCE,NOTES,OUT_SOURCE,STATUS,UPDATED_AT,UPDATED_BY ~ CLOCK_IN_AT,CLOCK_OUT_AT,IN_SOURCE,OUT_SOURCE,STATUS,UPDATED_AT,UPDATED_BY",
+      "why": "TWO hr_attendance write shapes in attendance.ts, differing by NOTES on purpose: an approved make-up punch (补卡) records the worker's reason as the day's note; an approved leave day carries no note. Both set the same status / clock / source / updated columns the HR correction writes. Divergence is a stored note, never a wrong day."
+    },
+    {
+      "check": "D1",
       "key": "SERVICE_CASES.CREATE,SERVICE_CASES.MANAGE,SERVICE_CASES.WRITE|backend/src/routes/assr.ts frontend/src/vendor/scm/lib/delivery-issue-queries.ts",
       "why": "THE SERVICE-CASE CREATE PERMISSIONS, mirrored across the FE/BE boundary. routes/assr.ts is the ENFORCED gate — requireServiceCaseAccess / requireAnyPermission decide who may open or write a case; delivery-issue-queries.ts SERVICE_CASE_CREATE_PERMS only decides whether the 'Create service case' button shows on the delivery-issue card. They cannot share a module across the boundary. The FE set is narrower than the full server gate (which also admits any company grantee / director), so a divergence can only HIDE the button from someone who may still create the case from the Service Cases page, never grant access. Cost of divergence is a shown or hidden button, never access."
     },
