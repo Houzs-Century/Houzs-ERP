@@ -12,7 +12,7 @@
 // by a range, the figures by a minimum and maximum.
 
 import { DataTable, type Column } from "../../components/DataTable";
-import { fmtDateOrDash, fmtDayMonthRange } from "../../vendor/shared/format";
+import { fmtDateOrDash, fmtDayMonth, isoForExport } from "../../vendor/shared/format";
 import { fmtSenPlain } from "../../vendor/shared/format";
 import { figuresOf, forecastKindOf, pctOf, type OvProject } from "./projectOverviewModel";
 import { projectLines } from "./projectOverviewView";
@@ -22,6 +22,13 @@ export type OverviewRow = { p: OvProject; f: ReturnType<typeof figuresOf> };
 const money = (rm: number): string => (!Number.isFinite(rm) || Math.abs(rm) < 0.005 ? "-" : fmtSenPlain(Math.round(rm * 100)));
 const pct = (x: number | null): string => (x == null ? "-" : x < 0 ? `(${Math.abs(x).toFixed(1)}%)` : `${x.toFixed(1)}%`);
 const sum = (rows: OverviewRow[], pick: (r: OverviewRow) => number) => rows.reduce((s, r) => s + pick(r), 0);
+
+/** A date for the sheet: ISO "2026-11-06", or empty for none. Export is the
+ *  storage shape, not the year-trimmed display one (see format.isoForExport). */
+const dateForExport = (d: string | null | undefined): string => {
+  const v = isoForExport(d ?? "");
+  return v === "" ? "" : String(v);
+};
 
 /* A forecast figure's shading: yellow = the last event's result, teal = a Forecast someone
    typed (owner 2026-11-19). No padding, so the figure keeps the column's width. */
@@ -92,11 +99,17 @@ export const PROJECT_COLUMNS: Column<OverviewRow>[] = [
   { key: "venue", label: "Venue", group: "Project", render: (r) => <span className="whitespace-nowrap">{r.p.venue ?? "-"}</span>, getValue: (r) => r.p.venue ?? "" },
   { key: "state", label: "State", group: "Project", render: (r) => <span className="whitespace-nowrap">{r.p.state ?? "-"}</span>, getValue: (r) => r.p.state ?? "" },
   {
-    key: "dates", label: "Dates", group: "Project", newestFirst: true,
-    render: (r) => <span className="whitespace-nowrap tabular-nums">{r.p.startDate ? fmtDayMonthRange(r.p.startDate, r.p.endDate) : "-"}</span>,
+    key: "dates", label: "Start", exportLabel: "Start date", group: "Project", newestFirst: true,
+    render: (r) => <span className="whitespace-nowrap tabular-nums">{r.p.startDate ? fmtDayMonth(r.p.startDate) : "-"}</span>,
     /* By the day it starts: the funnel's presets and From / To range read it, and its list shows each start day. */
     getValue: (r) => r.p.startDate ?? "", filterLabel: (v) => fmtDateOrDash(v),
-    filterType: "date", sortValue: (r) => r.p.startDate ?? "", dateValue: (r) => r.p.startDate, exportValue: (r) => r.p.startDate ?? "",
+    filterType: "date", sortValue: (r) => r.p.startDate ?? "", dateValue: (r) => r.p.startDate, exportValue: (r) => dateForExport(r.p.startDate),
+  },
+  {
+    key: "endDate", label: "End", exportLabel: "End date", group: "Project", newestFirst: true,
+    render: (r) => <span className="whitespace-nowrap tabular-nums">{r.p.endDate ? fmtDayMonth(r.p.endDate) : "-"}</span>,
+    getValue: (r) => r.p.endDate ?? "", filterLabel: (v) => fmtDateOrDash(v),
+    filterType: "date", sortValue: (r) => r.p.endDate ?? "", dateValue: (r) => r.p.endDate, exportValue: (r) => dateForExport(r.p.endDate),
   },
   amountCol("sales", "Sales", (r) => r.f.sales, "Sales"),
   amountCol("service", "Service", (r) => r.f.serviceRevenue, "Sales"),
