@@ -57,6 +57,7 @@ export const CSV_COLUMNS: CsvColumn[] = [
    whichever button they see first, so that file must import too (BUG-88). */
 const TABLE_EXPORT_HEADERS: Record<string, string> = {
   code:          'fabric_code',
+  internal_code: 'fabric_code', // the column's label since #5861 (2990-0069)
   description:   'fabric_description',
   sofa_tier:     'sofa_price_tier',
   bedframe_tier: 'bedframe_price_tier',
@@ -102,7 +103,7 @@ function parseGridRows(grid: string[][]): ParsedImport {
      labels are aliases (BUG-88). */
   const header = resolveImportHeaders(grid[0] ?? [], CSV_COLUMNS.map((c) => c.csv), TABLE_EXPORT_HEADERS);
   if (!header.includes('fabric_code')) {
-    return { rows: [], errors: ['Header must include a fabric_code (or Code) column'], warnings: [] };
+    return { rows: [], errors: ['Header must include a fabric_code (or Internal Code) column'], warnings: [] };
   }
   const unknown = header.filter((h) => h && !HEADER_TO_API[h]).map(normalizeImportHeader);
   const warnings = unknown.length ? [`Ignoring unknown columns: ${unknown.join(', ')}`] : [];

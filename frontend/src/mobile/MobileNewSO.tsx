@@ -1271,7 +1271,7 @@ export function MobileNewSO({
   const lineEditingBlocked = migratedLocked || lineLocked || (procLocked && !amendmentMode);
   /* DEV-32 — Edit SO after DO, desktop's rule (so-after-do-client): charge lines + the DO-snapshotted customer details reopen; a line shown read-only is never written. */
   const afterDo = soAfterDoMode(migHeader ?? {}, { can, override: unlockOverride, migrated: migratedLocked }), chargeAdds = lineEditingBlocked && afterDo.on, custLocked = identityLocked && !afterDo.headerOpen, linesAfterDo = soLinesAfterDoOn(migHeader ?? {}, { can, migrated: migratedLocked }); // linesAfterDo: super admin edits a delivered PRODUCT line's qty / spec (owner 2026-11-21)
-  const afterDoLineIds = new Set(origItems.filter((it) => afterDoEditableLine(afterDo, it) || afterDoProductLineEditable(linesAfterDo, it)).map((it) => it.id)), afterDoSave: AfterDoSave = { mode: afterDo, lineIds: afterDoLineIds, chargeAdds, targetId: afterDoTargetId }, feeIds = new Set(origItems.filter((it) => afterDoFeeLineEditable(linesAfterDo, it)).map((it) => it.id)); // feeIds: super-admin non-frozen charge lines, editable/removable as a plain write
+  const afterDoLineIds = new Set(origItems.filter((it) => afterDoEditableLine(afterDo, it) || afterDoProductLineEditable(linesAfterDo, it)).map((it) => it.id)), afterDoSave: AfterDoSave = { mode: afterDo, lineIds: afterDoLineIds, chargeAdds, targetId: afterDoTargetId }, feeIds = new Set(origItems.filter((it) => afterDoFeeLineEditable(linesAfterDo, it)).map((it) => it.id)), productIds = new Set(origItems.filter((it) => afterDoProductLineEditable(linesAfterDo, it)).map((it) => it.id)); // feeIds/productIds: super-admin lines that may be removed
   const roLine = (id: string) => !afterDoLineIds.has(id) && !feeIds.has(id) && (lineEditingBlocked || frozenItemIds.has(id)), doCopyNotice = (r: unknown) => { const m = afterDoCopyProblem(r); if (m) void notify({ title: "Delivery Order not updated", body: m, tone: "error" }); };
   /* Identity address columns (State/City/Postcode) freeze on the processing
      lock (State drives each line's warehouse → the supplier PO) — EXCEPT in
@@ -2616,7 +2616,7 @@ export function MobileNewSO({
                           line={l}
                           index={i}
                           pools={pools}
-                          removable={lines.length > 1 && (!afterDoLineIds.has(l.itemId) || feeIds.has(l.itemId))}
+                          removable={lines.length > 1 && (!afterDoLineIds.has(l.itemId) || feeIds.has(l.itemId) || productIds.has(l.itemId))}
                           /* Red "missing axis" ring only once a Processing Date
                              is set — matches the backend variants gate + the
                              save block above (owner 2026-07-14). */

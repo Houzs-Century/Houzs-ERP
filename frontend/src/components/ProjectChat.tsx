@@ -5,7 +5,6 @@ import { useAuth } from "../auth/AuthContext";
 import { useNotifications } from "../hooks/useNotifications";
 import type { useToast } from "../hooks/useToast";
 import { cn, relativeTime } from "../lib/utils";
-import { salesReportFormatIssues } from "../lib/salesReportFormatIssues";
 import { Avatar } from "./Avatar";
 import { useChatSalesReport } from "./projectChatSalesReport";
 
@@ -74,6 +73,14 @@ export function ProjectChat({
   });
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  // Optimistic "Sending…" rows (owner 2026-11-19: "after salesman taip and
+  // click send or save, tak ada show that sales report already inside"). The
+  // desktop chat used to clear the textarea on Send and wait for the 3s
+  // poller to pull the new note back, so for up to ~3 s nothing visibly
+  // changed — same confusion that made Zack resend the same paste five times
+  // on mobile. We now drop a pending bubble into the list the moment Send is
+  // tapped, and clear it as soon as the real note with that text lands.
+  const [pending, setPending] = useState<Array<{ id: string; note: string; at: string }>>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Live-merged message list. Starts from the parent-passed `activity`
@@ -137,6 +144,19 @@ export function ProjectChat({
       return t !== 0 ? t : a.id - b.id;
     });
   }, [liveById]);
+
+  // Clear any pending bubble whose text is now in the server-side list — the
+  // poller found it, so the optimistic placeholder is no longer needed.
+  useEffect(() => {
+    if (pending.length === 0) return;
+    const notesSeen = new Set(
+      messages
+        .filter((m) => m.action === "note" && m.note != null)
+        .map((m) => m.note!.trim()),
+    );
+    const next = pending.filter((p) => !notesSeen.has(p.note.trim()));
+    if (next.length !== pending.length) setPending(next);
+  }, [messages, pending]);
 
   // POST /read when the chat mounts — marks this project as caught up
   // so the notification bell clears its dot. Also ping the notifications
@@ -235,18 +255,28 @@ export function ProjectChat({
   async function send() {
     const note = draft.trim();
     if (!note || sending) return;
+    const localId = `local-${Date.now()}`;
+    const at = new Date().toISOString();
     setSending(true);
+    // Drop the paste into the list now, as a dashed "Sending…" bubble, so
+    // the sender sees it is on its way. Cleared when the real note with the
+    // same text comes back from the poll.
+    setPending((prev) => [...prev, { id: localId, note, at }]);
+    setDraft("");
+    if (inputRef.current) inputRef.current.style.height = "";
+    wasAtBottomRef.current = true;
     try {
       await api.post(`/api/projects/${projectId}/notes`, { note });
-      setDraft("");
-      if (inputRef.current) inputRef.current.style.height = "";
-      wasAtBottomRef.current = true;
       onPosted?.();
       void salesReport.afterSend(note);
       // Mark as read right away — our own send shouldn't light up our bell.
       api.post(`/api/projects/${projectId}/read`, {}).catch(() => {});
       refreshRef.current();
     } catch (e: any) {
+      // Lift the pending bubble, restore the draft so the sender can retry
+      // without re-typing, and tell the toast what went wrong.
+      setPending((prev) => prev.filter((p) => p.id !== localId));
+      setDraft((cur) => cur || note);
       toast.error(e?.message || "Failed to send");
     } finally {
       setSending(false);
@@ -335,7 +365,7 @@ export function ProjectChat({
             Unable to load messages. Retrying…
           </div>
         )}
-        {bootstrapped && messages.length === 0 && (
+        {bootstrapped && messages.length === 0 && pending.length === 0 && (
           <div className="py-10 text-center text-[11px] text-ink-muted">
             No messages yet.
           </div>
@@ -357,6 +387,12 @@ export function ProjectChat({
             <ChatBubble key={a.id} a={a} isMine={isMine} grouped={grouped} footer={salesReport.footerFor(a)} />
           );
         })}
+        {/* Optimistic Sending… rows for this session's un-acked sends. Dashed
+            border + lowered opacity so the sender can see at a glance which
+            bubble is the live one and which one is still in flight. */}
+        {pending.map((p) => (
+          <PendingChatBubble key={p.id} note={p.note} name={me?.name ?? "Me"} />
+        ))}
       </div>
 
       {canPost ? (
@@ -389,6 +425,28 @@ export function ProjectChat({
 }
 
 // ── Chat row components ─────────────────────────────────────
+
+/** A "Sending…" bubble shown in the sender's own chat the moment they tap
+ *  Send, so they see the paste land instead of the textarea just going
+ *  empty. Cleared when the poller brings back a real note with the same
+ *  text. */
+function PendingChatBubble({ note, name }: { note: string; name: string }) {
+  return (
+    <div className="mt-2 flex w-full justify-end gap-2">
+      <div className="flex max-w-[75%] flex-col items-end opacity-70">
+        <div
+          className="whitespace-pre-wrap break-words rounded-2xl rounded-br-sm border border-dashed border-primary/50 bg-accent/80 px-3 py-1.5 text-[12.5px] leading-snug text-white shadow-stone"
+          title="Sending — waiting for the chat to confirm"
+        >
+          {note}
+        </div>
+        <span className="mt-0.5 px-0.5 font-mono text-[9.5px] text-ink-muted">
+          {name} · Sending…
+        </span>
+      </div>
+    </div>
+  );
+}
 
 function ChatSystemRow({ a }: { a: ActivityRow }) {
   return (
@@ -423,37 +481,6 @@ function ChatSystemRow({ a }: { a: ActivityRow }) {
           {relativeTime(a.created_at)}
         </span>
       </div>
-    </div>
-  );
-}
-
-/** Chat format hints — the inline sentence that appears under a sales-report
- *  message when something about the paste can't be tallied (summary-only,
- *  bill lines with no name, total that doesn't add up, or a run of lines the
- *  parser didn't understand). Hidden for regular chat. */
-function FormatHints({ note, align }: { note: string | null; align: "start" | "end" }) {
-  const issues = useMemo(() => salesReportFormatIssues(note), [note]);
-  if (issues.length === 0) return null;
-  return (
-    <div
-      className={cn(
-        "mt-1 flex flex-col gap-0.5",
-        align === "end" ? "items-end" : "items-start",
-      )}
-    >
-      {issues.map((it, i) => (
-        <div
-          key={i}
-          className={cn(
-            "max-w-[90%] rounded-md px-2 py-1 text-[11px] leading-snug ring-1",
-            it.tone === "warn"
-              ? "bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-300 ring-amber-200"
-              : "bg-slate-50 dark:bg-white/5 text-slate-700 dark:text-slate-200 ring-slate-200",
-          )}
-        >
-          {it.message}
-        </div>
-      ))}
     </div>
   );
 }
@@ -513,13 +540,6 @@ function ChatBubble({
         >
           {a.note}
         </div>
-        {/* Format hints under the bubble — owner 2026-11-10: "bagi warning
-            kalau sales person kurang satu format or salah format … option A
-            (keluar dekat bawah mesej)". Only fires when the message LOOKS LIKE
-            a sales report (bills, days or total); a regular chat note gets
-            nothing. The same helper runs on the mobile chat so both surfaces
-            read the paste the same way. */}
-        <FormatHints note={a.note} align={isMine ? "end" : "start"} />
         {footer}
         <span
           className="mt-0.5 px-0.5 font-mono text-[9.5px] text-ink-muted"

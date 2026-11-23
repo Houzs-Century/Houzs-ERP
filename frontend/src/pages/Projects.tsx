@@ -138,7 +138,7 @@ import { ProjectPosSalesSection } from "./projects/ProjectPosSalesSection";
 import { ProjectSalesBillsBlock } from "./projects/ProjectSalesBillsBlock";
 import { useCanViewProjectSales, useProjectSalesBills } from "../hooks/useProjectSalesBills";
 import { fmtRmSen, notOpenedByRepId, type ProjectSalesBillsResponse } from "../lib/projectSalesBills";
-import { DateRangeFilter, MultiSelectFilter, SectionTaskBadges, ImportCsvPanel } from "./projects/ProjectsListParts";
+import { DateRangeFilter, MultiSelectFilter, SectionTaskBadges, TaskPendingBadges, ImportCsvPanel } from "./projects/ProjectsListParts";
 import { ProjectsCalendarView } from "./projects/ProjectsCalendarView";
 export { buildCalendarWindow, buildProjectsCalendarModel } from "./projects/calendarModel";
 import { SPEC_INPUT_CLASS, QuickRentalField, SpecTextField, SpecCell, SpecValue } from "./projects/specFields";
@@ -638,8 +638,6 @@ function ProjectsListView() {
   const setOrganizer = (v: string) => patchParams({ organizer: v, page: "1" });
   const setYear = (v: string) => patchParams({ year: v, page: "1" });
   const setMonth = (v: string) => patchParams({ month: v, page: "1" });
-  const setSection = (v: string) => patchParams({ section: v, page: "1" });
-  const setTaskPending = (v: string) => patchParams({ task: v, page: "1" });
   const setStatus = (v: string) => patchParams({ status: v, page: "1" });
   const setDateRange = (f: string, t: string) => patchParams({ from: f, to: t, page: "1" });
   const setPhase = (v: string) => patchParams({ phase: v, page: "1" });
@@ -881,7 +879,7 @@ function ProjectsListView() {
       // row's task_pending_map ("title=status" pairs joined by "|").
       if (taskPendingList.length) {
         const statusOf = (r: ProjectRow, title: string): string => {
-          const map = String((r as any).task_pending_map ?? "");
+          const map = String(r.task_pending_map ?? "");
           for (const pair of map.split("|")) {
             const i = pair.lastIndexOf("=");
             if (i > 0 && pair.slice(0, i) === title) return pair.slice(i + 1);
@@ -948,18 +946,54 @@ function ProjectsListView() {
     }
     return c;
   }, [taskTitles.data]);
-  // Individual task titles grouped under their section, in checklist order (the
-  // backend already returns them section-ordered), for the task-item dropdown.
-  const taskTitleGroups = useMemo(() => {
-    const bySection = new Map<string, { value: string; label: string }[]>();
+  // One "Task" filter: the checklist SECTION and the individual tasks under it,
+  // in a single dropdown (owner 2026-11-23: "sekali kan je jangan pecah task and
+  // task detail"). A `sec:` value ticks a whole section (the active-section
+  // filter); a `task:` value ticks one task that is still not done
+  // (task_pending). Task titles come from what actually exists on events (see
+  // the task-titles-distinct route), so older sections (e.g. EXPO MAP, where
+  // Blank/Filled Floorplan live) appear after the current template's sections.
+  // The "Other" bucket holds titles no active template defines any more — it is
+  // not a real section, so it gets no "(whole section)" row.
+  const taskFilterGroups = useMemo(() => {
+    const tasksBySection = new Map<string, string[]>();
     for (const t of taskTitles.data?.data ?? []) {
       const sec = t.section ?? "Other";
-      const arr = bySection.get(sec);
-      if (arr) arr.push({ value: t.title, label: t.title });
-      else bySection.set(sec, [{ value: t.title, label: t.title }]);
+      const arr = tasksBySection.get(sec);
+      if (arr) arr.push(t.title);
+      else tasksBySection.set(sec, [t.title]);
     }
-    return [...bySection.entries()].map(([name, options]) => ({ name, options }));
-  }, [taskTitles.data]);
+    const ordered = sectionsList.data?.data ?? [];
+    const seen = new Set(ordered);
+    const sectionNames = [...ordered, ...[...tasksBySection.keys()].filter((s) => !seen.has(s))];
+    const groups: { name: string | null; options: { value: string; label: string; count?: number }[] }[] = [];
+    for (const s of sectionNames) {
+      const taskOpts = (tasksBySection.get(s) ?? []).map((title) => ({ value: `task:${title}`, label: title }));
+      const options =
+        s === "Other"
+          ? taskOpts
+          : [{ value: `sec:${s}`, label: `${s} (whole section)`, count: sectionCounts[s] }, ...taskOpts];
+      if (options.length) groups.push({ name: s, options });
+    }
+    return groups;
+  }, [sectionsList.data, taskTitles.data, sectionCounts]);
+  // The combined selection, each URL param mapped back onto its prefixed value.
+  const taskFilterSelected = useMemo(
+    () => [...sectionList.map((s) => `sec:${s}`), ...taskPendingList.map((t) => `task:${t}`)],
+    [sectionList, taskPendingList],
+  );
+  // Split the ticked values back into the two params and patch BOTH at once —
+  // patching section and task in two calls would clobber (each rebuilds the URL
+  // from the same stale snapshot).
+  const setTaskFilter = (values: string[]) => {
+    const secs: string[] = [];
+    const tasks: string[] = [];
+    for (const v of values) {
+      if (v.startsWith("sec:")) secs.push(v.slice(4));
+      else if (v.startsWith("task:")) tasks.push(v.slice(5));
+    }
+    patchParams({ section: secs.join(","), task: tasks.join(","), page: "1" });
+  };
 
   const columns: Column<ProjectRow>[] = [
     {
@@ -998,6 +1032,11 @@ function ProjectsListView() {
             </span>
             {r.venue && <span className="text-[10px] text-ink-muted">{r.venue}</span>}
             <SectionTaskBadges map={r.section_tasks_map} />
+            {taskPendingList.length > 0 && r.task_pending_map && (
+              <div className="mt-1 flex flex-wrap gap-1">
+                <TaskPendingBadges map={String(r.task_pending_map)} />
+              </div>
+            )}
           </div>
         );
       },
@@ -1385,47 +1424,20 @@ function ProjectsListView() {
           </div>
         ) : (
         <>
-        {/* Task filter — the tasklist-section dropdown; each option carries how
-            many tasks that section holds. Labelled "Status" on 2026-08-14, then
-            "Task" on 2026-08-19 (owner: "the left one change word status to
-            task") because the real project-status chip sits two along and two
-            chips reading "status" was the confusion this rename removes. */}
+        {/* Task filter — ONE dropdown for both the checklist SECTION and the
+            individual tasks under it (owner named it "Task" 2026-08-19; the
+            section and per-task controls were unified here 2026-11-23: "sekali
+            kan je jangan pecah"). Tick a section's "(whole section)" row to
+            filter by active section, or tick individual tasks (3D Design,
+            Display Floor Plan, …) to keep events where that task is not yet
+            done. */}
         <MultiSelectFilter
           placeholder="Task"
-          title="Filter by tasklist section"
-          summary={(n) => `${n} sections`}
-          selected={sectionList}
-          onChange={(next) => setSection(next.join(","))}
-          groups={[
-            {
-              name: null,
-              options: [
-                ...(sectionsList.data?.data ?? []).map((s) => ({
-                  value: s,
-                  label: s,
-                  count: sectionCounts[s],
-                })),
-                { value: "__done", label: "Completed" },
-              ],
-            },
-          ]}
-        />
-        {/* Task-item filter (owner 2026-08-05: "booth layout for display, 3D, 2D
-            … make it drop down. and i can filter which task is not complete
-            yet"). Lists the canonical checklist tasks GROUPED BY SECTION; ticking
-            one keeps events where that task is still not done (task_pending →
-            EXISTS status NOT IN done/na). Separate from the "Task" section
-            dropdown above, which filters by active SECTION. Re-surfaced
-            2026-11-20 — the state/deep-link (?task=) wiring was never removed;
-            only the control had been hidden. */}
-        <MultiSelectFilter
-          placeholder="Task detail"
-          title="Filter by a specific task still not completed"
-          summary={(n) => `${n} tasks`}
-          panelWidth="w-[280px]"
-          selected={taskPendingList}
-          onChange={(next) => setTaskPending(next.join(","))}
-          groups={taskTitleGroups}
+          title="Filter by checklist section or a specific task"
+          panelWidth="w-[300px]"
+          selected={taskFilterSelected}
+          onChange={setTaskFilter}
+          groups={taskFilterGroups}
         />
         <MultiSelectFilter
           placeholder="All brands"
@@ -1629,6 +1641,13 @@ function ProjectsListView() {
                             <Circle size={9} /> {t}
                           </span>
                         ))
+                      ) : taskPendingList.length > 0 && r.task_pending_map ? (
+                        /* A task filter is on: show the ticked task(s) status on
+                           the card (owner 2026-11-23 "ak dah select blank
+                           floorplan kenapa keluar contract je") instead of the
+                           project's current-section chip, which reads as the
+                           wrong thing in a task-chase view. */
+                        <TaskPendingBadges map={String(r.task_pending_map)} />
                       ) : done ? (
                         <span className="inline-flex items-center gap-1 rounded-full border border-synced bg-synced/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-synced">
                           <CheckCircle2 size={10} /> Complete
