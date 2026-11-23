@@ -39,12 +39,14 @@ export type NewHelper = {
   warehouseId?: string | null;
 };
 
-export function useHelpers(opts?: { includeInactive?: boolean }) {
+/** `enabled: false` for a reader without the Fleet area, who could only get a 403. */
+export function useHelpers(opts?: { includeInactive?: boolean; enabled?: boolean }) {
   return useQuery({
     queryKey: ['helpers', opts?.includeInactive ?? false],
     queryFn: () => authedFetch<{ helpers: HelperRow[] }>(
       `/helpers${opts?.includeInactive ? '?active=false' : ''}`,
     ).then((r) => r.helpers),
+    enabled: opts?.enabled ?? true,
     staleTime: 60_000,
   });
 }

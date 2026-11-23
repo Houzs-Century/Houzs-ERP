@@ -87,7 +87,12 @@ async function loadFabricCatalog(): Promise<FabricCatalogRow[]> {
   if (fabricCatalogInflight) return fabricCatalogInflight;
   fabricCatalogInflight = (async () => {
     try {
-      const res = await authedFetch<{ fabrics: FabricCatalogRow[] }>('/fabric-tracking');
+      /* /lite, not the full read: the same three columns this needs, and it is
+         openReadPaths on the guard. The full read is scm.procurement.products,
+         so a purchaser printing a PO without the Products area got a 403
+         (production, 7 days: 190 from 19 users) and internal fabric codes on
+         the supplier's copy. */
+      const res = await authedFetch<{ fabrics: FabricCatalogRow[] }>('/fabric-tracking/lite');
       const rows = res.fabrics ?? [];
       fabricCatalogCache = { at: Date.now(), rows };
       return rows;

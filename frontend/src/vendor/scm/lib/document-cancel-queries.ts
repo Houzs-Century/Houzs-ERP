@@ -21,17 +21,14 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
+import type { ApprovalLevel, CancelDocType, CancelRowDocType } from './document-cancel-keys';
+import { CANCEL_APPROVE_KEY, approveKeysFor } from './document-cancel-keys';
 
-/** The two documents a cancellation REQUEST can sit on — the ones with
- *  `/cancel-request` routes, so the only types the hooks below accept. */
-export type CancelDocType = 'so' | 'po';
+/* The keys and doc types live in a module with no imports, so the sidebar's
+   approval badge can read them without pulling this client into the shell. */
+export { CANCEL_APPROVE_KEY, approveKeysFor, type ApprovalLevel, type CancelDocType, type CancelRowDocType } from './document-cancel-keys';
 
-/** Every document a cancellation ROW can name. The Delivery Order joined on
- *  2026-09-14 (「DO cancel need pop out window for reason」) as a reason-only
- *  document like the Purchase Order: its rows are the EXECUTED record of a
- *  cancel that already ran, and it has NO request routes — which is why it is in
- *  this type and not in CancelDocType, so no hook can be pointed at one. */
-export type CancelRowDocType = CancelDocType | 'do';
+
 
 /** Mirrors scm.document_cancel_requests (mig 20260908T1400; 'DO' allowed since
  *  mig 20260914T1800). */
@@ -77,7 +74,6 @@ export type CancelRequestDetail = {
   needsApproval: boolean;
 };
 
-export type ApprovalLevel = 1 | 2;
 
 /** How many signatures each document needs. ZERO is a real answer: the Purchase
  *  Order takes none since 2026-09-09 (「PO cancelled 不需要审批，只需要 remark 原因
@@ -90,18 +86,6 @@ export const APPROVAL_LEVELS: Record<CancelRowDocType, RequiredSignatures> = { s
 
 export const levelsFor = (docType: CancelRowDocType): RequiredSignatures => APPROVAL_LEVELS[docType];
 
-/** The permission that signs each level. MUST match the server's table
- *  (CANCEL_APPROVE_KEY there) — the screen only decides whether to SHOW a
- *  button; the server's 403 is the real gate. */
-export const CANCEL_APPROVE_KEY: Record<CancelRowDocType, Partial<Record<ApprovalLevel, string>>> = {
-  so: { 1: 'scm.so_cancel.approve_l1', 2: 'scm.so_cancel.approve_l2' },
-  po: {},
-  do: {},
-};
-
-/** Every key that may sign or refuse on this document type. */
-export const approveKeysFor = (docType: CancelRowDocType): string[] =>
-  Object.values(CANCEL_APPROVE_KEY[docType]).filter((k): k is string => typeof k === 'string');
 
 const BASE: Record<CancelDocType, string> = { so: 'mfg-sales-orders', po: 'mfg-purchase-orders' };
 

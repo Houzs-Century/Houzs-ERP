@@ -54,12 +54,14 @@ export type NewDriver = {
   warehouseId?: string | null;
 };
 
-export function useDrivers(opts?: { includeInactive?: boolean }) {
+/** `enabled: false` for a reader without the Fleet area, who could only get a 403. */
+export function useDrivers(opts?: { includeInactive?: boolean; enabled?: boolean }) {
   return useQuery({
     queryKey: ['drivers', opts?.includeInactive ?? false],
     queryFn: () => authedFetch<{ drivers: DriverRow[] }>(
       `/drivers${opts?.includeInactive ? '?active=false' : ''}`,
     ).then((r) => r.drivers),
+    enabled: opts?.enabled ?? true,
     staleTime: 60_000,
   });
 }
