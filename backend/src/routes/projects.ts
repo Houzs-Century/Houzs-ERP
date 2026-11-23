@@ -1302,22 +1302,43 @@ app.get("/sections-distinct", requirePageAccess("projects"), async (c) => {
 
 // Distinct TASK titles for the project-list "task not completed" filter (owner
 // 2026-08-05: "booth layout for display, 3D, 2D, stock out transfer … make it
-// drop down. and i can filter which task is not complete yet"). Read off the
-// active template so the picker lists the canonical tasks in checklist order,
-// grouped by their section — the same source sections-distinct uses.
+// drop down. and i can filter which task is not complete yet"). The pickable
+// titles are every task that ACTUALLY EXISTS on a non-archived event of the
+// active company — NOT just the newest template (owner 2026-11-23: Filled /
+// Blank Floorplan were missing). Several templates are active at once and older
+// events keep their own tasks, so a template-only list hid real pending work
+// (e.g. 180 Filled Floorplan pending). Each title's section + order is resolved
+// from the newest active template that still defines it; a title no template
+// defines any more has a null section (the frontend buckets those under
+// "Other" with no whole-section row).
 app.get("/task-titles-distinct", requirePageAccess("projects"), async (c) => {
   const rows = await c.env.DB.prepare(
-    `SELECT i.title, s.name AS section_name, s.sort_order AS section_order, i.seq
-       FROM project_checklist_template_items i
-       LEFT JOIN project_checklist_template_sections s ON s.id = i.section_id
-      WHERE i.template_id = (
-        SELECT MAX(t.id) FROM project_checklist_templates t
-         WHERE t.active = 1${activeCompanySql(c, "t.company_id")}
-      )
-      ORDER BY s.sort_order, i.seq, i.id`
+    `WITH live_titles AS (
+       SELECT DISTINCT c.title AS title
+         FROM project_checklist c
+         JOIN projects p ON p.id = c.project_id
+        WHERE p.archived_at IS NULL
+          AND COALESCE(c.title, '') <> ''
+          ${activeCompanySql(c, "p.company_id")}
+     ),
+     title_section AS (
+       SELECT i.title AS title, s.name AS section_name,
+              s.sort_order AS section_order, i.seq AS seq,
+              ROW_NUMBER() OVER (
+                PARTITION BY i.title
+                ORDER BY t.id DESC, s.sort_order, i.seq
+              ) AS rn
+         FROM project_checklist_template_items i
+         JOIN project_checklist_templates t ON t.id = i.template_id
+         LEFT JOIN project_checklist_template_sections s ON s.id = i.section_id
+        WHERE t.active = 1${activeCompanySql(c, "t.company_id")}
+     )
+     SELECT lt.title, ts.section_name, ts.section_order, ts.seq
+       FROM live_titles lt
+       LEFT JOIN title_section ts ON ts.title = lt.title AND ts.rn = 1
+      ORDER BY COALESCE(ts.section_order, 9999), COALESCE(ts.seq, 9999), lt.title`
   ).all<{ title: string; section_name: string | null; section_order: number | null; seq: number }>();
-  // De-dupe by title, keeping the first (lowest section/seq) occurrence — a
-  // title can repeat across role variants (e.g. two "Setup Image" rows).
+  // De-dupe by title (live_titles is already DISTINCT, but keep the guard).
   const seen = new Set<string>();
   const data: { title: string; section: string | null }[] = [];
   for (const r of rows.results ?? []) {
