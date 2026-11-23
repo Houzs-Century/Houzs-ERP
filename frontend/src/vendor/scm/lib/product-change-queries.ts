@@ -52,6 +52,10 @@ export type ProductChangeRow = {
   covered: boolean;
   shortfallSen: number;
   lines: ChangedLine[];
+  /** Rebuilt from the order's history: the months before the record went live. */
+  rebuilt: boolean;
+  /** A changed line's cost was not in that history and was taken from the product's own cost. */
+  costEstimated: boolean;
 };
 
 export type ProductChangesData = {

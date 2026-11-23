@@ -32,6 +32,8 @@ export type PcEventRow = {
   cost_before_sen: number | string | null;
   cost_after_sen: number | string | null;
   lines: ChangedLine[] | null;
+  rebuilt: boolean | null;
+  cost_estimated: boolean | null;
 };
 
 export type PcOrder = {
@@ -72,6 +74,10 @@ export type ProductChangeRow = {
   covered: boolean;
   shortfallSen: number;
   lines: ChangedLine[];
+  /** Rebuilt from the order's history (the months before the record went live). */
+  rebuilt: boolean;
+  /** A changed line's cost was not in that history and was taken from the product's own cost. */
+  costEstimated: boolean;
 };
 
 export type ProductChangesData = {
@@ -125,6 +131,8 @@ export function buildProductChanges(input: {
       ...money,
       ...cov,
       lines: [...(e.lines ?? [])],
+      rebuilt: e.rebuilt === true,
+      costEstimated: e.cost_estimated === true,
     });
   }
   rows.sort((a, b) => (a.changeDay !== b.changeDay ? (a.changeDay < b.changeDay ? -1 : 1) : a.docNo.localeCompare(b.docNo)));

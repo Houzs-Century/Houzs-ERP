@@ -196,7 +196,7 @@ export function detailSheet(rows: readonly ProductChangeRow[], from: string, to:
       r.sellingBeforeSen, r.sellingAfterSen, r.sellingDeltaSen,
       r.costBeforeSen, r.costAfterSen, r.costDeltaSen,
       r.sellingBeforeSen - r.costBeforeSen, r.sellingAfterSen - r.costAfterSen, r.marginDeltaSen,
-      r.covered ? 'Covered' : 'Not covered', r.shortfallSen || null,
+      `${r.covered ? 'Covered' : 'Not covered'}${r.costEstimated ? ' (estimated cost)' : ''}`, r.shortfallSen || null,
       r.lines.filter((l) => l.types.length > 0).map(lineText).join('; '),
     ] satisfies SheetValue[],
   }));
@@ -261,4 +261,5 @@ export const CHANGE_NOTES: readonly string[] = [
   'Not covered: the margin fell, because the selling change was smaller than the cost change. Selling same, cost changed: the cost moved with no new price.',
   'The changed part is costed on the change day; unchanged lines keep their order-date cost.',
   'Orders brought over from AutoCount at the cutover are left out unless Include imported orders is on; their rows are marked Imported.',
+  'Changes from before the record went live were rebuilt from each order’s own history. Estimated marks a cost that history did not hold, taken from the product’s own cost.',
 ];

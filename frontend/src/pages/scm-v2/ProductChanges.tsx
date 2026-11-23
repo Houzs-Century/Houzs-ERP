@@ -152,10 +152,16 @@ const DETAIL_COLUMNS: Column<ProductChangeRow>[] = [
     render: (r) => <BeforeAfter before={r.sellingBeforeSen - r.costBeforeSen} after={r.sellingAfterSen - r.costAfterSen} delta={r.marginDeltaSen} bad />,
   },
   {
-    key: 'margin_covered', label: 'Covered', getValue: (r) => (r.covered ? 1 : 0), exportValue: (r) => (r.covered ? 'Covered' : `Not covered · ${fmtSenPlain(r.shortfallSen)}`),
-    render: (r) => (r.covered
-      ? <span className={s.ok}>Covered</span>
-      : <span className={s.flag} title={`Short by ${fmtSenPlain(r.shortfallSen)}`}>Not covered</span>),
+    key: 'margin_covered', label: 'Covered', getValue: (r) => (r.covered ? 1 : 0),
+    exportValue: (r) => `${r.covered ? 'Covered' : `Not covered · ${fmtSenPlain(r.shortfallSen)}`}${r.costEstimated ? ' · estimated cost' : ''}`,
+    render: (r) => (
+      <span className={s.docLine}>
+        {r.covered
+          ? <span className={s.ok}>Covered</span>
+          : <span className={s.flag} title={`Short by ${fmtSenPlain(r.shortfallSen)}`}>Not covered</span>}
+        {r.costEstimated && <span className={s.tag} title="A cost the order's history did not hold, taken from the product's own cost">Estimated</span>}
+      </span>
+    ),
   },
 ];
 
