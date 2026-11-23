@@ -26,10 +26,10 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   return body;
 }
 
-type LinkRoom = { id: number; name: string; seats: number; location: string; floor: string; equipment: string[] };
+type LinkRoom = { id: number; name: string; seats: number; location: string; floor: string; equipment: string[]; openDays?: number[]; openFrom?: number; openTo?: number; maxHours?: number };
 type LinkInfo = { code: string; name: string; maxMinutes?: number; length: number; days: number[]; from: number; to: number; until: string | null; audience?: string; rooms?: LinkRoom[] };
 type Company = { name: string; departments: string[] };
-type DayInfo = { day: string; open: boolean; rooms: { id: number; closed: string | null; busy: { start: string; end: string }[] }[] };
+type DayInfo = { day: string; open: boolean; rooms: { id: number; closed: string | null; from?: number; to?: number; busy: { start: string; end: string }[] }[] };
 type Booking = { code: string; title?: string; people?: number | null; start: string; end: string; cancelled?: boolean; room: string | { name: string; floor: string; location: string } | null; floor?: string | null; location?: string | null };
 
 const MY = 8 * 3600_000;
@@ -78,7 +78,7 @@ export function MeetingBook() {
   }, [code, token]);
 
   const rooms = link?.rooms ?? [];
-  const maxMin = link ? link.maxMinutes ?? link.length : 60;
+  const linkMax = link ? link.maxMinutes ?? link.length : 60;
   const days = useMemo(() => {
     const out: string[] = [];
     if (!link) return out;
@@ -86,7 +86,9 @@ export function MeetingBook() {
       const d = myDay(now + i * DAYMS);
       const wd = new Date(`${d}T12:00:00+08:00`).getUTCDay();
       if (link.until && d > link.until) break;
-      if (link.days.includes(wd) && (i > 0 || myMin(now) < link.to * 60 - 15)) out.push(d);
+      const roomOpen = !link.rooms?.length || link.rooms.some((r) => !r.openDays || r.openDays.includes(wd));
+      const lateToday = i === 0 && myMin(now) >= Math.min(link.to * 60, Math.max(...(link.rooms ?? []).map((r) => (r.openTo ?? 24) * 60), 0) || link.to * 60) - 15;
+      if (link.days.includes(wd) && roomOpen && !lateToday) out.push(d);
     }
     return out;
   }, [link, now]);
@@ -98,12 +100,22 @@ export function MeetingBook() {
   };
   useEffect(() => { if (link && chosen) loadDay(chosen); }, [link, chosen]); // eslint-disable-line react-hooks/exhaustive-deps -- loadDay reads only code
 
-  const open = link ? link.from * 60 : 0;
-  const close = link ? link.to * 60 : 0;
-  const earliest = chosen === myDay(now) ? Math.ceil((myMin(now) + 1) / 15) * 15 : open;
-  const busyOf = (rid: number) => (dayInfo?.rooms.find((r) => r.id === rid)?.busy ?? []).map((b) => [myMin(ms(b.start)), myMin(ms(b.end)) || 1440] as const);
-  const closedOf = (rid: number) => dayInfo?.rooms.find((r) => r.id === rid)?.closed ?? null;
+  // Each room has its own bookable window that day (its opening hours within the link's); the bars share one scale.
+  const dayRoom = (rid: number) => dayInfo?.rooms.find((r) => r.id === rid);
+  const openWins = (dayInfo?.rooms ?? []).filter((r) => !r.closed && r.from !== undefined && r.to !== undefined);
+  const open = openWins.length ? Math.min(...openWins.map((r) => r.from ?? 0)) : link ? Math.max(link.from * 60, 8 * 60) : 0;
+  const close = openWins.length ? Math.max(...openWins.map((r) => r.to ?? 1440)) : link ? Math.min(link.to * 60, 20 * 60) : 0;
+  const earliest = chosen === myDay(now) ? Math.ceil((myMin(now) + 1) / 15) * 15 : 0;
+  const winOf = (rid: number): [number, number] => [Math.max(dayRoom(rid)?.from ?? open, earliest), dayRoom(rid)?.to ?? close];
+  const maxOf = (rid: number | null) => {
+    const r = rooms.find((x) => x.id === rid);
+    return r?.maxHours ? Math.min(linkMax, r.maxHours * 60) : linkMax;
+  };
+  const busyOf = (rid: number) => (dayRoom(rid)?.busy ?? []).map((b) => [myMin(ms(b.start)), myMin(ms(b.end)) || 1440] as const);
+  const closedOf = (rid: number) => dayRoom(rid)?.closed ?? null;
   const room = rooms.find((r) => r.id === roomId) ?? null;
+  const maxMin = maxOf(roomId);
+  const outside = !!room && from !== null && to !== null && (from < winOf(room.id)[0] || to > winOf(room.id)[1]);
 
   const clash = (() => {
     if (!room || from === null || to === null) return null;
@@ -111,10 +123,15 @@ export function MeetingBook() {
     const hit = busy.find(([a, b]) => from < b && a < to);
     if (!hit) return null;
     const len = to - from;
+    const end = winOf(room.id)[1];
     let t = hit[1];
-    while (t + len <= close && busy.some(([a, b]) => t < b && a < t + len)) t += 15;
-    const other = rooms.find((r) => r.id !== room.id && (!r.seats || r.seats >= f.people) && !closedOf(r.id) && !busyOf(r.id).some(([a, b]) => from < b && a < to));
-    return { hit, next: t + len <= close ? t : null, other };
+    while (t + len <= end && busy.some(([a, b]) => t < b && a < t + len)) t += 15;
+    const other = rooms.find((r) => {
+      if (r.id === room.id || (r.seats && r.seats < f.people) || closedOf(r.id)) return false;
+      const [a0, b0] = winOf(r.id);
+      return from >= a0 && to <= b0 && !busyOf(r.id).some(([a, b]) => from < b && a < to);
+    });
+    return { hit, next: t + len <= end ? t : null, other };
   })();
 
   const companyName = f.company === OTHER ? f.otherCompany.trim() : f.company;
@@ -131,23 +148,30 @@ export function MeetingBook() {
   if (!f.title.trim()) missing.push("a meeting title");
   if (room && room.seats && room.seats < f.people) missing.push(`a room for ${f.people} people`);
   if (room && closedOf(room.id)) missing.push("an open room");
+  if (outside) missing.push(`a time inside ${room.name}'s hours (${hm(winOf(room.id)[0])}-${hm(winOf(room.id)[1])})`);
+  if (from !== null && to !== null && to - from > maxMin) missing.push(`at most ${lenLabel(maxMin)}`);
   if (clash) missing.push("a free time");
   const ready = missing.length === 0;
 
+  const firstFree = (rid: number, len: number): number | null => {
+    const busy = busyOf(rid);
+    const [a0, b0] = winOf(rid);
+    let t = Math.ceil(a0 / 30) * 30;
+    while (t + len <= b0 && busy.some(([a, b]) => t < b && a < t + len)) t += 30;
+    return t + len <= b0 ? t : null;
+  };
   const pickRoom = (rid: number) => {
     setRoomId(rid);
-    if (from === null) {
-      // Start at the first free half hour of this room, so a tap is already a usable choice.
-      const busy = busyOf(rid);
-      let t = Math.max(open, Math.ceil(earliest / 30) * 30);
-      const len = Math.min(60, maxMin);
-      while (t + len <= close && busy.some(([a, b]) => t < b && a < t + len)) t += 30;
-      if (t + len <= close) { setFrom(t); setTo(t + len); }
-    }
+    if (closedOf(rid)) return;
+    const [a0, b0] = winOf(rid);
+    // Keep the chosen time when it fits this room; otherwise start at its first free hour, so a tap is a usable choice.
+    if (from !== null && to !== null && from >= a0 && to <= b0 && to - from <= maxOf(rid)) return;
+    const t = firstFree(rid, Math.min(60, maxOf(rid)));
+    if (t !== null) { setFrom(t); setTo(t + Math.min(60, maxOf(rid))); }
   };
 
-  // Drag along a room's bar to choose the time (15-minute steps, at most the link's longest booking).
-  const drag = useRef<{ el: HTMLDivElement; start: number } | null>(null);
+  // Drag along a room's bar to choose the time (15-minute steps, inside the room's hours, at most its longest booking).
+  const drag = useRef<{ el: HTMLDivElement; start: number; rid: number } | null>(null);
   const minAt = (el: HTMLDivElement, x: number) => {
     const r = el.getBoundingClientRect();
     const m = open + ((x - r.left) / r.width) * (close - open);
@@ -155,29 +179,34 @@ export function MeetingBook() {
   };
   const onDown = (rid: number, e: RPointerEvent<HTMLDivElement>) => {
     if (closedOf(rid)) return;
-    const s = Math.max(earliest, Math.min(minAt(e.currentTarget, e.clientX), close - 15));
-    drag.current = { el: e.currentTarget, start: s };
+    const [a0, b0] = winOf(rid);
+    if (b0 - a0 < 15) return;
+    const s = Math.max(a0, Math.min(minAt(e.currentTarget, e.clientX), b0 - 15));
+    drag.current = { el: e.currentTarget, start: s, rid };
     e.currentTarget.setPointerCapture(e.pointerId);
     setRoomId(rid);
     setFrom(s);
-    setTo(Math.min(close, s + Math.min(60, maxMin)));
+    setTo(Math.min(b0, s + Math.min(60, maxOf(rid))));
   };
   const onMove = (e: RPointerEvent<HTMLDivElement>) => {
     const d = drag.current;
     if (!d) return;
+    const [a0, b0] = winOf(d.rid);
+    const mx = maxOf(d.rid);
     const m = minAt(d.el, e.clientX);
-    let a = Math.max(earliest, Math.min(d.start, m));
-    let b = Math.max(d.start + 15, m);
-    if (b - a > maxMin) { if (m < d.start) a = b - maxMin; else b = a + maxMin; }
+    let a = Math.max(a0, Math.min(d.start, m));
+    let b = Math.min(b0, Math.max(d.start + 15, m));
+    if (b - a > mx) { if (m < d.start) a = b - mx; else b = a + mx; }
     setFrom(a);
-    setTo(Math.min(close, b));
+    setTo(b);
   };
   const onUp = () => { drag.current = null; };
 
+  const [lo, hi] = room ? winOf(room.id) : [Math.max(open, earliest), close];
   const fromOptions: number[] = [];
-  for (let m = Math.max(open, earliest); m <= close - 15; m += 15) fromOptions.push(m);
+  for (let m = Math.ceil(lo / 15) * 15; m <= hi - 15; m += 15) fromOptions.push(m);
   const toOptions: number[] = [];
-  if (from !== null) for (let m = from + 15; m <= Math.min(close, from + maxMin); m += 15) toOptions.push(m);
+  if (from !== null) for (let m = from + 15; m <= Math.min(hi, from + maxMin); m += 15) toOptions.push(m);
 
   const book = async () => {
     if (!ready || !room || from === null || to === null || !chosen) return;
@@ -258,12 +287,13 @@ export function MeetingBook() {
   if (!link) return shell(<p className="text-ink-muted">Loading...</p>);
 
   // Whole hours under each bar, at most five of them, always including the opening and closing hour.
-  const hours = link.to - link.from;
-  const stepH = Math.max(1, Math.ceil(hours / 4));
+  const h0 = Math.floor(open / 60);
+  const h1 = Math.ceil(close / 60);
+  const stepH = Math.max(1, Math.ceil((h1 - h0) / 4));
   const ticks: number[] = [];
-  for (let h = link.from; h < link.to; h += stepH) ticks.push(h * 60);
-  if (ticks.length && link.to * 60 - ticks[ticks.length - 1] < stepH * 30) ticks.pop();
-  ticks.push(close);
+  for (let h = h0; h < h1; h += stepH) ticks.push(h * 60);
+  if (ticks.length && h1 * 60 - ticks[ticks.length - 1] < stepH * 30) ticks.pop();
+  ticks.push(h1 * 60);
   const pct = (m: number) => `${((m - open) / (close - open)) * 100}%`;
   const preview: [string, [string, string][]][] = [
     ["Who", [["Company", companyName], ["Department", f.company === OTHER ? (f.otherCompany ? "Visitor" : "") : f.department], ["Name", f.name.trim()], ["Contact", [f.phone.trim(), f.email.trim()].filter(Boolean).join(" · ")]]],
@@ -331,7 +361,8 @@ export function MeetingBook() {
                   const busy = busyOf(r.id);
                   const closed = closedOf(r.id);
                   const small = !!r.seats && r.seats < f.people;
-                  const freeMin = Math.max(0, close - Math.max(open, earliest) - busy.reduce((s, [a, b]) => s + Math.max(0, Math.min(b, close) - Math.max(a, Math.max(open, earliest))), 0));
+                  const [w0, w1] = winOf(r.id);
+                  const freeMin = closed ? 0 : Math.max(0, w1 - w0 - busy.reduce((s, [a, b]) => s + Math.max(0, Math.min(b, w1) - Math.max(a, w0)), 0));
                   const on = roomId === r.id;
                   return (
                     <div key={r.id} role="button" tabIndex={0} aria-pressed={on} aria-label={`${r.name}${r.seats ? `, ${r.seats} seats` : ""}${closed ? ", closed" : ""}`} onClick={() => pickRoom(r.id)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pickRoom(r.id); } }}
@@ -344,10 +375,11 @@ export function MeetingBook() {
                             {small && <b className="text-warning-text"> · too small for {f.people}</b>}
                           </div>
                         </div>
-                        <div className="whitespace-nowrap text-[13px] tabular-nums text-ink-secondary">{closed ? `Closed: ${closed}` : `${lenLabel(freeMin)} free`}</div>
+                        <div className="whitespace-nowrap text-right text-[13px] tabular-nums text-ink-secondary">{closed ? closed : <>{lenLabel(freeMin)} free<span className="block text-[12px] text-ink-muted">open {hm(dayRoom(r.id)?.from ?? open)}-{hm(w1)}</span></>}</div>
                       </div>
                       <div className="relative h-8 touch-none select-none overflow-hidden rounded-lg bg-synced-bg" onPointerDown={(e) => onDown(r.id, e)} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}>
-                        {earliest > open && <div className="absolute inset-y-0 left-0 bg-surface-2" style={{ width: pct(Math.min(close, earliest)) }} title="Already past" />}
+                        {w0 > open && <div className="absolute inset-y-0 left-0 bg-surface-2" style={{ width: pct(Math.min(close, w0)) }} title={w0 === earliest && earliest > (dayRoom(r.id)?.from ?? open) ? "Already past" : "Closed"} />}
+                        {w1 < close && <div className="absolute inset-y-0 right-0 bg-surface-2" style={{ left: pct(Math.max(open, w1)) }} title="Closed" />}
                         {closed && <div className="absolute inset-0 bg-surface-2" />}
                         {busy.map(([a, b]) => (
                           <div key={`${a}-${b}`} className="absolute inset-y-0 flex items-center justify-center bg-ink-muted/35 text-[11px] text-ink-secondary" style={{ left: pct(Math.max(open, a)), width: `calc(${pct(Math.min(close, b))} - ${pct(Math.max(open, a))})` }} title="Booked">{Math.min(close, b) - Math.max(open, a) >= (close - open) / 10 ? "Booked" : ""}</div>
@@ -385,7 +417,7 @@ export function MeetingBook() {
                 </span>
               </div>
             )}
-            <p className="text-[13px] text-ink-muted">Drag along a room's bar to choose the time. Open {hm(open)} to {hm(close)}, up to {lenLabel(maxMin)} per booking. Grey means already booked; you will not see by whom.</p>
+            <p className="text-[13px] text-ink-muted">Drag along a room's bar to choose the time, or use From and To. Each room shows its own opening hours. Darker grey means already booked; you will not see by whom.</p>
           </section>
 
           <section className={CARD}>

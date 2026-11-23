@@ -11,7 +11,7 @@ relays (`backend/src/routes/meetings.ts`) and draws (`frontend/src/pages/Meeting
   dates) and see the Change log. Checked in the router and sent as `X-Can-Manage-Rooms`.
 - Only the organiser, or whoever booked on their behalf, can move, change, start, end or
   cancel a meeting (the hub refuses others with 403).
-- Guests (no login) at `/book/:code` pick the day, the room and the time range; they see when each room is taken, never what or by whom; confirmed at once. A link sets rooms, open days and hours, the longest booking, an end date or none, anyone or staff only, and (optionally) who is told.
+- Guests (no login) at `/book/:code` pick the room, the day and the time range; they see when each room is taken, never what or by whom; confirmed at once. Making a link presets nothing about the booking: every room, within its own opening hours and longest booking (Rooms). The link only has a name (optional), an end date or none, anyone or staff only, and who is told (optional).
 
 ## Booking rules (all enforced by the hub)
 - A person already in a meeting at that time cannot be booked: 409 with who and when, plus
