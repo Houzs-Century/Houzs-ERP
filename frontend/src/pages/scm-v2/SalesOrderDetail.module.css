@@ -473,16 +473,36 @@
   width: auto;
   min-width: 0;
 }
-/* A long line table whose column header stays on screen while the page
-   scrolls (Stock Take count sheet). The page scrolls in <main>, where the app
-   bar and the page title bar are pinned too; top: 0 parked the header under
-   them, out of sight. --page-header-offset (Layout.tsx) is where they end.
-   The card around it must not be overflow:hidden (that makes the card the
-   scroll box and the header never moves). */
+/* Stock Take count sheet: the table scrolls inside .sheetScroll, which
+   useFrozenTableHeader caps and pins under the page header. The header row
+   sticks to the top of that box and the first column to its left, so both
+   stay on screen when the sheet scrolls down or sideways. */
+.sheetScroll {
+  overflow: auto;
+}
 .stickyHead thead th {
   position: sticky;
-  top: var(--page-header-offset, 0px);
+  top: 0;
   z-index: 2;
+}
+/* Each row paints its own background so the pinned first cell can inherit it
+   (a model row is cream) and the cells scrolling under it never show through.
+   The edge is an inset shadow: collapsed borders stop painting on a sticky cell. */
+.freezeFirstCol tbody tr {
+  background: var(--hz-c-surface);
+}
+.freezeFirstCol tbody td:first-child,
+.freezeFirstCol thead th:first-child {
+  position: sticky;
+  left: 0;
+  box-shadow: inset -1px 0 0 var(--hz-c-border);
+}
+.freezeFirstCol tbody td:first-child {
+  background: inherit;
+  z-index: 1;
+}
+.freezeFirstCol thead th:first-child {
+  z-index: 3;
 }
 /* The picked variant bucket, in full, under its select (Stock Transfer). */
 .bucketPicked {
