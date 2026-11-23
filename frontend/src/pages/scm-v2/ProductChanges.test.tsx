@@ -31,7 +31,7 @@ function ev(day: string, seller: string, types: ProductChangeType[], sb: number,
     id: `e${seq}`, docNo: `HC-SO-T${seq}`, soDate: '2026-09-02', customer: `Customer ${seq}`, salesperson: seller, imported: false, changeDay: day, changedAt: null,
     route: 'DIRECT', amendmentNos: [], changedBy: [seller], approvedBy: [], types, bucket: sd !== 0 ? 'SELLING' : 'COST_ONLY',
     sellingBeforeSen: sb, sellingAfterSen: sa, costBeforeSen: cb, costAfterSen: ca, sellingDeltaSen: sd, costDeltaSen: cd, marginDeltaSen: md,
-    covered: md >= 0, shortfallSen: Math.max(0, -md), lines, ...extra,
+    covered: md >= 0, shortfallSen: Math.max(0, -md), lines, rebuilt: false, costEstimated: false, ...extra,
   };
 }
 const ROWS: ProductChangeRow[] = [
@@ -41,7 +41,8 @@ const ROWS: ProductChangeRow[] = [
     { id: 'l3', types: ['sku'], before: side('CODY-(K)', 1, 300000, 120000), after: side('CODY-(Q)', 1, 260000, 104000) },
     { id: 'l4', types: ['new_line'], before: null, after: side('SIDE-TABLE', 1, 0, 8000) },
   ], { route: 'AMENDMENT', amendmentNos: ['HC-SO-T3/A1', 'HC-SO-T3/A2'], approvedBy: ['Kris'] }),
-  ev('2026-10-28', 'Ben', ['height'], 520000, 520000, 210000, 222000, [{ id: 'l5', types: ['height'], before: side('9028-2A(LHF)', 1, 520000, 210000), after: side('9028-2A(LHF)', 1, 520000, 222000) }]),
+  ev('2026-10-28', 'Ben', ['height'], 520000, 520000, 210000, 222000, [{ id: 'l5', types: ['height'], before: side('9028-2A(LHF)', 1, 520000, 210000), after: side('9028-2A(LHF)', 1, 520000, 222000) }],
+    { rebuilt: true, costEstimated: true }),
   ev('2026-11-11', 'Aina', ['sku'], 610000, 549000, 230000, 233500, [{ id: 'l6', types: ['sku'], before: side('ULTRA-(K)', 1, 610000, 230000), after: side('ULTRA-FIRM-(K)', 1, 549000, 233500) }]),
   ev('2026-10-24', 'Ben', ['sku'], 300000, 300000, 100000, 160000, [{ id: 'l7', types: ['sku'], before: side('BEDFRAME KIV', 1, 300000, 100000), after: side('TRION-(K)', 1, 300000, 160000) }],
     { docNo: 'HC-SO-000777', imported: true }),
@@ -78,6 +79,9 @@ describe('Product changes, by month', () => {
     expect(rowOf('HC-SO-T3').querySelector('[title="Short by 1,120.00"]')).toBeTruthy();
     expect(t3).toContain('Amendment A1 + A2');
     expect(rowOf('HC-SO-T2').textContent).toContain('Covered');
+    /* Rebuilt from the order's history with a cost that history did not hold. */
+    expect(rowOf('HC-SO-T4').textContent).toContain('Estimated');
+    expect(rowOf('HC-SO-T3').textContent).not.toContain('Estimated');
   });
 
   test('the buckets and "Not covered only" filter the rows', async () => {

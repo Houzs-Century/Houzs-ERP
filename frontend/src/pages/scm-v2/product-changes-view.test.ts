@@ -18,6 +18,7 @@ const row = (day: string, bucket: ProductChangeRow['bucket'], selling: number, c
     route: 'DIRECT', amendmentNos: [], changedBy: ['Ali'], approvedBy: [], types: ['sku'], bucket,
     sellingBeforeSen: 100_000, sellingAfterSen: 100_000 + selling, costBeforeSen: 50_000, costAfterSen: 50_000 + cost,
     sellingDeltaSen: selling, costDeltaSen: cost, marginDeltaSen: margin, covered: margin >= 0, shortfallSen: Math.max(0, -margin), lines: [],
+    rebuilt: false, costEstimated: false,
     ...extra,
   };
 };
@@ -96,6 +97,10 @@ describe('the exports draw what the screen shows', () => {
     expect(t.rows.every((r) => r.cells.length === t.columns.length)).toBe(true);
     expect(t.rows.map((r) => r.cells[0])).toEqual([null, 'Imported', null]);
     expect(sh.subtitle).toContain('imported orders included');
+  });
+  it('an estimated cost says so in the sheet', () => {
+    const sh = detailSheet([{ ...ROWS[2]!, rebuilt: true, costEstimated: true }], '2026-10-01', '2026-10-31', 'all', false, false);
+    expect(sh.tables[0]!.rows[0]!.cells).toContain('Not covered (estimated cost)');
   });
   it('both sheets lay out as an Excel workbook', () => {
     expect(sheetMatrix(detailSheet(ROWS, '2026-10-01', '2026-10-31', 'COST_ONLY', true, false)).length).toBeGreaterThan(ROWS.length);

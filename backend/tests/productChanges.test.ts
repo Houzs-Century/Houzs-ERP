@@ -33,7 +33,7 @@ function harness(perms: readonly string[] = [PERM]) {
       ev('SO-3', '2026-10-21', null, [100_000, 90_000, 40_000, 40_000]),
       ev('SO-4', '2026-10-22', 'SELLING', [100_000, 80_000, 40_000, 40_000]),
       ev('SO-1', '2026-11-02', 'SELLING', [350_000, 330_000, 150_000, 150_000]),
-      ev('HC-SO-000123', '2026-10-25', 'COST_ONLY', [90_000, 90_000, 30_000, 36_000]),
+      ev('HC-SO-000123', '2026-10-25', 'COST_ONLY', [90_000, 90_000, 30_000, 36_000], { rebuilt: true, cost_estimated: true }),
       ev('SO-9', '2026-10-05', 'SELLING', [1, 2, 3, 4], {}, 1),
     ],
     mfg_sales_orders: [
@@ -81,6 +81,10 @@ describe('GET /accounting/product-changes', () => {
       ['HC-SO-000123', '2026-10-25', 'COST_ONLY', 0, 6_000, -6_000, false, 6_000, 'Mei Ling', true],
     ]);
     expect(r.body.rows[1]).toMatchObject({ route: 'AMENDMENT', amendmentNos: ['SO-2/A1', 'SO-2/A2'], approvedBy: ['Kris'], customer: 'Customer SO-2' });
+    /* A row rebuilt from the order's history says so, and whether a cost in it was estimated. */
+    expect(r.body.rows.map((x: any) => [x.docNo, x.rebuilt, x.costEstimated])).toEqual([
+      ['SO-1', false, false], ['SO-2', false, false], ['HC-SO-000123', true, true],
+    ]);
   });
 
   test('a range adds the months up', async () => {

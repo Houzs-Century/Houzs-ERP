@@ -27,7 +27,7 @@ type Loaded = { ok: true; events: PcEventRow[]; orders: PcOrder[]; staffNames: M
 export async function loadProductChanges(sb: Db, companyId: number, range: { from: string; to: string }): Promise<Loaded> {
   const evs = await paginateAll<PcEventRow>((f, t) =>
     sb.from('so_product_changes')
-      .select('id, so_doc_no, route, change_day, changed_at, changed_by, approved_by, amendment_nos, change_types, bucket, selling_before_sen, selling_after_sen, cost_before_sen, cost_after_sen, lines')
+      .select('id, so_doc_no, route, change_day, changed_at, changed_by, approved_by, amendment_nos, change_types, bucket, selling_before_sen, selling_after_sen, cost_before_sen, cost_after_sen, lines, rebuilt, cost_estimated')
       .eq('company_id', companyId).gte('change_day', range.from).lte('change_day', range.to)
       .not('bucket', 'is', null)
       .order('id').range(f, t));
