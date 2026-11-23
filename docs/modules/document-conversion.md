@@ -13,7 +13,7 @@ Every conversion is a picker page owned by the DESTINATION document; source-side
   - PO -> GRN: `/scm/grns/from-po` (GRN appends with `?appendToGrn=`); PO detail, PO list row, PO list bulk bar.
   - GRN -> PI: `/scm/purchase-invoices/from-grn`. GRN -> PR, PO -> PR and PI -> PR: `/scm/purchase-returns/new` with `grnId` / `poId` / `piId` (no from-grn picker page). PI -> PR draws the receipt lines the invoice bills (`GET /purchase-returns/returnable-pi-lines`).
   - Consignment Order -> Consignment Note: `/scm/consignment-notes/from-order`; CO list/detail "Create Consignment Note" prefills the WHOLE order via `?fromConsignmentOrder=`.
-  - Consignment Note -> Consignment Return: `/scm/consignment-returns/from-note`; CN detail "Create Consignment Return" (`?fromConsignmentNote=`).
+  - Consignment Note -> Consignment Return: `/scm/consignment-returns/from-note`; CN detail "Create Consignment Return" (`?fromConsignmentNote=`). Every return line must name its note line (409 `note_link_required` on create and add-line); no free-entry return.
   - PC Order -> PC Receive: `/scm/purchase-consignment-receives/from-pc-order`; PC Receive -> PC Return: `/scm/purchase-consignment-returns/from-receive` (no source-side button on either).
 - Do not exist: Quotation -> SO (quotes API has no UI), SO -> SI (SIs are built only from DOs via `POST /sales-invoices/from-dos`), SO -> Consignment Note (a CN is free-entry).
 - All ten pickers multi-select at LINE level; most also across several source documents. Picking creates nothing — Continue carries picks to the New-document form.

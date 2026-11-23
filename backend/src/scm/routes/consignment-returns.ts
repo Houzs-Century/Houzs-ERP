@@ -832,7 +832,18 @@ async function checkCrOverRemaining(
   };
 }
 
-consignmentReturns.post('/', async (c) => {
+/* A return line must name the Consignment Note line it brings back (owner 23 Nov 2026). Without that link
+   the stock-back IN cannot name the ship-out it undoes, so a ship-out that took nothing from the lots was
+   returned as a full lot (HC-CRN-2610-001), and nothing bounds the qty. Same rule as the Delivery Return's
+   do_link_required. Existing free-entry lines stay editable; new ones are refused. */
+const noteLineOf = (it: Record<string, unknown>): string | null =>
+  ((it.doItemId ?? it.consignmentDoItemId ?? it.noteItemId) as string | undefined) || null;
+const NOTE_LINK_REQUIRED = {
+  error: 'note_link_required',
+  message: 'Every return line must be picked from a Consignment Note line. Start the return from the note (Consignment Returns > From Consignment Note).',
+};
+
+export const createConsignmentReturnHandler = async (c: any) => {
   /* company-scope: the only by-id write here is the ROLLBACK — the header this
      handler inserted moments earlier is deleted when the child insert fails.
      insertHeader / insertWithDocNoRetry stamp the active company on that row, so
@@ -844,6 +855,12 @@ consignmentReturns.post('/', async (c) => {
   if (!debtorName) return c.json({ error: 'debtor_name_required' }, 400);
   let items = (body.items as Array<Record<string, unknown>> | undefined) ?? [];
   if (!Array.isArray(items) || items.length === 0) return c.json({ error: 'items_required' }, 400);
+  {
+    const free = items.filter((it) => !noteLineOf(it));
+    if (free.length > 0) {
+      return c.json({ ...NOTE_LINK_REQUIRED, lines: free.map((it) => ({ itemCode: (it.itemCode as string) ?? null })) }, 409);
+    }
+  }
 
   const sb = c.get('supabase'); const user = c.get('user');
 
@@ -871,10 +888,8 @@ consignmentReturns.post('/', async (c) => {
     if (!xl.ok) return c.json(xl.body, xl.status);
   }
 
-  /* The "no DO, no Return" hard requirement is still DROPPED vs DR — a
-     consignment return may be free-entry. The over-return guard is NOT: it now
-     bounds every NOTE-LINKED line (owner 2026-08-13). Free-entry lines carry no
-     source to bound them against and pass through, exactly as before. */
+  /* Every line is note-linked (note_link_required above); the over-return guard bounds each one
+     against what the note line has left to return (owner 2026-08-13). */
   {
     const over = await checkCrOverRemaining(sb, c, items);
     if (over) return c.json(over, 409);
@@ -902,7 +917,8 @@ consignmentReturns.post('/', async (c) => {
   const movementErrors = await resyncReturnInventory(sb, h.id, user.id);
 
   return c.json({ id: h.id, returnNumber: h.return_number, movementErrors: movementErrors.length ? movementErrors : undefined }, 201);
-});
+};
+consignmentReturns.post('/', createConsignmentReturnHandler);
 
 // ── Header PATCH (editable fields) ─────────────────────────────────────────
 consignmentReturns.patch('/:id', async (c) => {
@@ -980,16 +996,17 @@ async function returnLineLock(sb: any, id: string): Promise<{ error: string; mes
   return null;
 }
 
-consignmentReturns.post('/:id/items', async (c) => {
+export const addConsignmentReturnItemHandler = async (c: any) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (!it.itemCode) return c.json({ error: 'item_code_required' }, 400);
+  if (!noteLineOf(it)) return c.json(NOTE_LINK_REQUIRED, 409);
   { const lock = await returnLineLock(sb, id); if (lock) return c.json(lock, 409); }
 
-  /* "no DO, no Return" stays dropped; the over-return bound does not. */
+  /* The line is note-linked (checked above); bound it against what the note line has left. */
   {
     const over = await checkCrOverRemaining(sb, c, [it]);
     if (over) return c.json(over, 409);
@@ -1033,7 +1050,8 @@ consignmentReturns.post('/:id/items', async (c) => {
   try { resyncErrs = await resyncReturnInventory(sb, id, user?.id ?? null); }
   catch (e) { resyncErrs = [String((e as Error)?.message ?? 'resync threw')]; }
   return c.json({ item: data, ...(resyncErrs.length ? { movementErrors: resyncErrs } : {}) }, 201);
-});
+};
+consignmentReturns.post('/:id/items', addConsignmentReturnItemHandler);
 
 consignmentReturns.patch('/:id/items/:itemId', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const itemId = c.req.param('itemId');

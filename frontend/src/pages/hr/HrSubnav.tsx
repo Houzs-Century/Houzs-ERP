@@ -54,6 +54,7 @@ export const HR_NAV: Item[] = [
   { key: "sites", label: "Punch Sites", glyph: g("P"), sub: "phone punch locations", group: "people" },
   { key: "attendance", label: "Attendance", glyph: g("A"), sub: "daily punches", group: "time" },
   { key: "ot-requests", label: "OT Requests", glyph: g("OT"), sub: "confirm before payroll", group: "time" },
+  { key: "leave", label: "Leave", glyph: g("LV"), sub: "requests and approvals", group: "time" },
   { key: "hours", label: "Working Hours", glyph: g("W"), sub: "hours per employee", group: "time" },
   { key: "holidays", label: "Public Holidays", glyph: g("PH"), sub: "paid days off", group: "time" },
   { key: "payroll", label: "Payroll", glyph: g("P"), sub: "monthly payslips", group: "pay" },
