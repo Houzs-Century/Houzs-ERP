@@ -58,6 +58,9 @@ const FINANCE_TODO_COUNT_PATH = "/api/scm/accounting/todo/count";
    write (vendor/scm/lib/product-request-queries.ts) moves the badge. */
 export const PRODUCT_REQUEST_APPROVALS_KEY = ["product-requests", "pending-count"] as const;
 const IT_SUPPORT_UNREAD_PATH = "/api/it-support/unread-count";
+/* Meetings: invites, changes and cancellations not yet seen (hub notifications).
+   Opening My meetings marks them read, and that screen refreshes this key. */
+export const MEETINGS_UNREAD_KEY = ["meetings", "unread-count"] as const;
 
 interface PendingCountResponse {
   count: number;
@@ -66,7 +69,7 @@ interface PendingCountResponse {
 /** The badge sources a nav entry can name. Mirrored by NavTab["badge"]. */
 export type ApprovalBadgeSource =
   | "amendment-approvals" | "po-amendment-approvals" | "payment-backdate-approvals" | "payment-requests-waiting" | "it-support-replies"
-  | "fair-links-to-settle" | "product-request-approvals" | "finance-todo" | "mail-waiting";
+  | "fair-links-to-settle" | "product-request-approvals" | "finance-todo" | "mail-waiting" | "meetings-unread";
 
 /** What the count is, in the entry's tooltip ("Payment Requests · 3 waiting for Finance"). */
 export const BADGE_MEANING: Record<ApprovalBadgeSource, string> = {
@@ -79,6 +82,7 @@ export const BADGE_MEANING: Record<ApprovalBadgeSource, string> = {
   "product-request-approvals": "awaiting your approval",
   "finance-todo": "waiting on you",
   "mail-waiting": "customer emails waiting for your reply",
+  "meetings-unread": "new meeting updates",
 };
 
 /** How often the sidebar counts are re-read while the tab is visible. */
@@ -100,6 +104,7 @@ const SOURCES: Record<ApprovalBadgeSource, { key: readonly string[]; path: strin
   "product-request-approvals": { key: PRODUCT_REQUEST_APPROVALS_KEY, path: "/api/scm/product-requests/pending-count" },
   "finance-todo": { key: FINANCE_TODO_COUNT_KEY, path: FINANCE_TODO_COUNT_PATH },
   "mail-waiting": { key: ["mail-waiting-count"], path: "/api/mail-center/waiting-count" },
+  "meetings-unread": { key: MEETINGS_UNREAD_KEY, path: "/api/meetings/unread-count" },
 };
 
 /** Sidebar order; also the order of the combined request's `sources`. */
@@ -184,6 +189,8 @@ export function useApprovalBadgeCounts(): Record<ApprovalBadgeSource, number> {
     /* Owner 2026-11-21: a customer email waiting on me (assigned to me, or in my
        own mailbox) shows on Mail Center. */
     "mail-waiting": enabled && can("mail_center.read"),
+    /* Every signed-in user books rooms; the row (and so the count) exists only where the hub is connected. */
+    "meetings-unread": enabled && itConnected,
   };
   const sources = SOURCE_ORDER.filter((s) => wanted[s]);
   const sourcesParam = sources.join(",");
@@ -244,6 +251,7 @@ export function useApprovalBadgeCounts(): Record<ApprovalBadgeSource, number> {
     ),
     "finance-todo": usePendingCount("finance-todo", wanted["finance-todo"] && batchSettled, ownPoll),
     "mail-waiting": usePendingCount("mail-waiting", wanted["mail-waiting"] && batchSettled, ownPoll),
+    "meetings-unread": usePendingCount("meetings-unread", wanted["meetings-unread"] && batchSettled, ownPoll),
   };
 }
 
@@ -258,6 +266,19 @@ export function useItSupportUnread(): number {
 export function useMailWaiting(): number {
   const { user, can } = useAuth();
   return usePendingCount("mail-waiting", !!user?.id && can("mail_center.read"), BADGE_POLL_MS);
+}
+
+/** Meeting updates not yet seen, for the phone's Profile > Meetings row. Shares the sidebar's query. */
+export function useMeetingsUnread(): number {
+  const { user } = useAuth();
+  const connected = useItSupportConnected();
+  return usePendingCount("meetings-unread", !!user?.id && connected, BADGE_POLL_MS);
+}
+
+/** Re-read the Meetings count now: My meetings was just opened, which marks every update read. */
+export function useRefreshMeetingsUnread(): () => void {
+  const qc = useQueryClient();
+  return useCallback(() => void qc.invalidateQueries({ queryKey: MEETINGS_UNREAD_KEY }), [qc]);
 }
 
 /** Re-read the IT Support count now: a request was just opened, which marks it seen on the hub. */
