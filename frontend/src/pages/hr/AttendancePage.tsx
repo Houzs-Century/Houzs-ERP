@@ -9,8 +9,9 @@ import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../../api/client";
 import { useToast } from "../../hooks/useToast";
+import { useDialog } from "../../hooks/useDialog";
 import { DateField } from "../../vendor/scm/components/DateField";
-import { errText, inputCls, ghostBtn, primaryBtn } from "../pos-admin/posAdminUi";
+import { errText, inputCls, ghostBtn, primaryBtn, dangerBtn } from "../pos-admin/posAdminUi";
 import { HrPageHeader, hrPrimaryBtn, hrSecondaryBtn } from "./HrPageHeader";
 import { avatarColor, initials } from "./hrAvatar";
 import { punchOf, type PunchState } from "./attendanceToday";
@@ -78,7 +79,7 @@ function Avatar({ name, size = 24 }: { name: string; size?: number }) {
   return <span className={cx("inline-flex shrink-0 items-center justify-center rounded-full font-semibold text-white", avatarColor(name))} style={{ width: size, height: size, fontSize: size * 0.38 }} title={name}>{initials(name)}</span>;
 }
 
-type EditInit = { employeeId: number | null; date: string; status: string; clockIn: string; clockOut: string };
+type EditInit = { employeeId: number | null; date: string; status: string; clockIn: string; clockOut: string; attendanceId: number | null };
 
 export function AttendancePage() {
   const today = todayMY().slice(0, 10);
@@ -127,7 +128,7 @@ export function AttendancePage() {
   const openCell = (empId: number, d: number) => {
     const date = `${month}-${pad2(d)}`;
     const wd = byDay.get(`${empId}-${date}`);
-    setEdit({ employeeId: empId, date, status: wd?.status ?? "PRESENT", clockIn: wd?.clockIn ?? "", clockOut: wd?.clockOut ?? "" });
+    setEdit({ employeeId: empId, date, status: wd?.status ?? "PRESENT", clockIn: wd?.clockIn ?? "", clockOut: wd?.clockOut ?? "", attendanceId: wd?.attendanceId ?? null });
   };
 
   const exportCsv = () => {
@@ -157,7 +158,7 @@ export function AttendancePage() {
         actions={
           <span className="flex gap-2">
             <button type="button" className={hrSecondaryBtn} onClick={exportCsv} disabled={!grid.data}>Export</button>
-            {canManage && <button type="button" className={hrPrimaryBtn} onClick={() => setEdit({ employeeId: null, date: today, status: "PRESENT", clockIn: "", clockOut: "" })}>Record attendance</button>}
+            {canManage && <button type="button" className={hrPrimaryBtn} onClick={() => setEdit({ employeeId: null, date: today, status: "PRESENT", clockIn: "", clockOut: "", attendanceId: null })}>Record attendance</button>}
           </span>
         }
       />
@@ -274,6 +275,7 @@ function Legend({ bg, label }: { bg: string; label: string }) {
 
 function RecordModal({ employees, init, maxDate, onClose, onSaved }: { employees: { id: number; empNo: string; name: string }[]; init: EditInit; maxDate: string; onClose: () => void; onSaved: () => void }) {
   const toast = useToast();
+  const dialog = useDialog();
   const [employeeId, setEmployeeId] = useState<number | null>(init.employeeId);
   const [date, setDate] = useState(init.date);
   const [status, setStatus] = useState(init.status);
@@ -293,6 +295,27 @@ function RecordModal({ employees, init, maxDate, onClose, onSaved }: { employees
       onSaved();
     } catch (e) {
       toast.error(errText(e, "Could not save the attendance."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove() {
+    if (init.attendanceId == null) return;
+    const ok = await dialog.confirm({
+      title: "Remove this day's attendance?",
+      message: "The punches, their photos and GPS are removed from this day. Use it for a test punch or a punch on the wrong day.",
+      confirmLabel: "Remove",
+      tone: "danger",
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      await api.del(`${HR}/attendance/${init.attendanceId}`);
+      toast.success("Day removed");
+      onSaved();
+    } catch (e) {
+      toast.error(errText(e, "Could not remove the day."));
     } finally {
       setBusy(false);
     }
@@ -326,7 +349,9 @@ function RecordModal({ employees, init, maxDate, onClose, onSaved }: { employees
           )}
           <label className="block"><span className={lbl}>Note (optional)</span><input className={inputCls} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. forgot to punch, on MC" /></label>
         </div>
-        <div className="flex justify-end gap-2 border-t border-border-subtle px-5 py-3">
+        <div className="flex items-center gap-2 border-t border-border-subtle px-5 py-3">
+          {init.attendanceId != null && <button type="button" className={dangerBtn} disabled={busy} onClick={() => void remove()}>Remove day</button>}
+          <span className="ml-auto" />
           <button type="button" className={ghostBtn} onClick={onClose}>Cancel</button>
           <button type="button" className={primaryBtn} disabled={busy} onClick={() => void save()}>Save</button>
         </div>
