@@ -20,9 +20,6 @@
    RE-RUN: inert. The re-stamp derives the stored cost from the movements; a second run stamps the same values. */
 import './lib/public-log-guard.mjs';
 import postgres from 'postgres';
-import { pgrestShim } from './lib/pgrest-shim.mjs';
-import { restampDoActualCost } from '../src/scm/routes/delivery-orders-mfg.ts';
-import { restampSiFromDo } from '../src/scm/lib/recost.ts';
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error('need DATABASE_URL'); process.exit(2); }
@@ -99,6 +96,10 @@ async function main() {
   const doIds = dos.map((d) => d.id);
   const before = await snapshot(sql, doIds);
 
+  /* Loaded here, not at the top, the way backfill-hard-bound-cost.mjs does: the route module is large. */
+  const { pgrestShim } = await import('./lib/pgrest-shim.mjs');
+  const { restampDoActualCost } = await import('../src/scm/routes/delivery-orders-mfg.ts');
+  const { restampSiFromDo } = await import('../src/scm/lib/recost.ts');
   const ROLLBACK = new Error('plan rollback');
   try {
     await sql.begin(async (tx) => {
