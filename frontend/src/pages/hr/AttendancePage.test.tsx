@@ -3,7 +3,7 @@
  * "?" box, so only real exceptions — late (L), absent (A), leave (V) — and the
  * present dot draw the eye. A past month is used so the test never depends on
  * the run date (no day is "future"). */
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkingHoursResponse, AttendanceResponse, WorkDay } from "./hrApi";
@@ -57,8 +57,10 @@ vi.mock("./hrApi", () => ({
   useAttendance: () => ({ data: ATT, loading: false, fetching: false, placeholder: false, error: null, reload: vi.fn() }),
 }));
 vi.mock("../../hooks/useToast", () => ({ useToast: () => ({ success: vi.fn(), error: vi.fn() }) }));
+vi.mock("../../hooks/useDialog", () => ({ useDialog: () => ({ confirm: () => Promise.resolve(true) }) }));
 
 import { AttendancePage } from "./AttendancePage";
+import { api } from "../../api/client";
 
 afterEach(() => cleanup());
 
@@ -96,5 +98,21 @@ describe("Attendance month grid redesign", () => {
     expect(totalsOf("Faslie Anak")).toEqual(["2", "1", "0", "0"]); // 1 present + 1 late
     expect(totalsOf("Mohd Zaimir")).toEqual(["0", "0", "1", "0"]); // 1 absent
     expect(totalsOf("Abd Khalid")).toEqual(["0", "0", "0", "1"]); // 1 leave
+  });
+
+  it("removes a recorded day through the delete endpoint", async () => {
+    const del = vi.spyOn(api, "del").mockResolvedValue(undefined);
+    show();
+    fireEvent.click(screen.getByRole("button", { name: "Faslie Anak 2020-01-06" })); // a present day with a record
+    fireEvent.click(await screen.findByRole("button", { name: "Remove day" }));
+    await waitFor(() => expect(del).toHaveBeenCalledWith("/api/hr/attendance/106"));
+    del.mockRestore();
+  });
+
+  it("offers no Remove day on a day with no record", () => {
+    show();
+    fireEvent.click(screen.getByRole("button", { name: "Faslie Anak 2020-01-10" })); // no record that day
+    expect(screen.getByRole("heading", { name: "Record attendance" })).toBeTruthy(); // editor is open
+    expect(screen.queryByRole("button", { name: "Remove day" })).toBeNull();
   });
 });

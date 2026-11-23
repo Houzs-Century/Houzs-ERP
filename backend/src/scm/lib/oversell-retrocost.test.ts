@@ -210,7 +210,7 @@ describe('reconcileUncostedOuts — orchestration', () => {
       'user-1',
     );
     expect(sb.calls.filter((c) => c.name === 'fn_reconcile_uncosted_out')).toHaveLength(1);
-    expect(sb.calls[0].args).toMatchObject({ p_warehouse_id: WH, p_item_code: 'P1', p_variant_key: '', p_before_ts: CUTOFF, p_created_by: 'user-1' });
+    expect(sb.calls[0].args).toMatchObject({ p_warehouse_id: WH, p_product_code: 'P1', p_variant_key: '', p_before_ts: CUTOFF, p_created_by: 'user-1' });
     expect(res.reconciled).toBe(4);
     expect(res.affectedDoIds).toEqual(['do-1']); // do-2 (later), cn-1 (not DO), do-3 (other bucket) all excluded
   });
@@ -242,7 +242,7 @@ describe('reconcileUncostedAfterIn — lot-opening filter + failure containment'
   const WH = 'wh-1';
   const bucketsOf = (sb: { calls: Array<{ name: string; args: Record<string, unknown> }> }) =>
     sb.calls.filter((c) => c.name === 'fn_reconcile_uncosted_out')
-      .map((c) => `${c.args.p_warehouse_id}::${c.args.p_item_code}::${c.args.p_variant_key}`);
+      .map((c) => `${c.args.p_warehouse_id}::${c.args.p_product_code}::${c.args.p_variant_key}`);
 
   test('reconciles IN and POSITIVE ADJUSTMENT rows; ignores OUT and NEGATIVE ADJUSTMENT', async () => {
     const sb = fakeSb({ rpc: () => 0, outMovements: [] });
