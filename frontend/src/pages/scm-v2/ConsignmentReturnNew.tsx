@@ -11,9 +11,10 @@
 // The DR-specific wiring is intentionally DROPPED here:
 //   • the ?fromDo / ?fromPicks prefill + DO detail read-back
 //   • the "From Delivery Order" header button + DO-line picker
-//   • the per-line doItemId "every line needs a DO line" requirement
-// A consignment return is always a blank Create form (free-entry lines), so the
-// condition is entered free-hand per line.
+// Every line comes from a Consignment Note line (owner 23 Nov 2026; server 409
+// note_link_required): start from the note (?fromConsignmentNote) or the
+// From-Note picker (?fromPicks). There is no free "Add line"; the condition is
+// entered per line.
 //
 // On Save: POST /consignment-returns (header + items). The backend route
 // `/consignment-returns` mirrors `/delivery-returns` 1:1; numbering is
@@ -25,8 +26,6 @@ import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowRightLeft, ChevronDown, Save, X } from 'lucide-react';
-import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
-import { useAddLineHotkey } from '../../vendor/scm/lib/useAddLineHotkey';
 import { Button } from '@2990s/design-system';
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
@@ -129,7 +128,7 @@ export const ConsignmentReturnNew = () => {
   const [emergencyPhone, setEmergencyPhone] = useState('');
 
   // ── Items ──
-  const [lines, setLines] = useState<DraftLine[]>(() => [newLine()]);
+  const [lines, setLines] = useState<DraftLine[]>(() => []);
 
   // ── Convert-from prefill (seed once when the source note arrives) ──
   const [prefilled, setPrefilled] = useState(false);
@@ -177,6 +176,7 @@ export const ConsignmentReturnNew = () => {
         unitCostSen: Number(it.unit_cost_sen ?? 0),
         variants: (it.variants as Record<string, unknown>) ?? {},
         condition: 'NEW',
+        doItemId: str(it.id) || undefined,
       })));
     }
 
@@ -241,8 +241,6 @@ export const ConsignmentReturnNew = () => {
 
   const updateLine = (rid: string, patch: Partial<SoLineDraft>) =>
     setLines((prev) => prev.map((l) => (l.rid === rid ? { ...l, ...patch } : l)));
-  const addLine = () => setLines((prev) => [...prev, newLine()]);
-  useAddLineHotkey(addLine);
   const dropLine = (rid: string) => setLines((prev) => prev.filter((l) => l.rid !== rid));
 
   const subtotalSen = useMemo(
@@ -256,7 +254,12 @@ export const ConsignmentReturnNew = () => {
     if (!canSave) { notify({ title: 'Customer name is required.', tone: 'error' }); return; }
     const validLines = lines.filter((l) => l.itemCode.trim() && l.qty > 0);
     if (validLines.length === 0) {
-      notify({ title: 'Add at least one item via "Add line".', tone: 'error' });
+      notify({ title: 'Pick the returned items from a Consignment Note.', tone: 'error' });
+      return;
+    }
+    // Server rule (consignment-returns.ts → 409 note_link_required): every line names its note line.
+    if (validLines.some((l) => !l.doItemId)) {
+      void notify({ title: 'Every return line must be picked from a Consignment Note — start from the note.', tone: 'error' });
       return;
     }
 
@@ -544,7 +547,20 @@ export const ConsignmentReturnNew = () => {
               attachOptions={null}
             />
           ))}
-          <AddLineButton variant="block" onClick={addLine} />
+          {/* No free "Add line": a return line must come from a Consignment Note line
+              (server 409 note_link_required). When empty, steer to the From-Note picker. */}
+          {lines.length === 0 && (
+            <div style={{
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'var(--space-3)',
+              padding: '24px 14px', border: '1px dashed var(--line)', borderRadius: 'var(--radius-md)',
+              color: 'var(--fg-muted)', fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-13)', textAlign: 'center',
+            }}>
+              <span>Every return line must be picked from a Consignment Note — start from the note.</span>
+              <Button variant="primary" size="md" onClick={() => navigate('/scm/consignment-returns/from-note')}>
+                <ArrowRightLeft {...ICON} /> {transferFromLabel('cn')}
+              </Button>
+            </div>
+          )}
           <div style={{
             display: 'flex', justifyContent: 'flex-end', marginTop: 'var(--space-2)', paddingTop: 'var(--space-3)',
             borderTop: '1px solid var(--line)', fontFamily: 'var(--font-mark)', fontSize: 'var(--fs-20)',

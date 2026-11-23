@@ -304,7 +304,12 @@ const CEILINGS = {
   // module (the page, its model and the report sheet are lazy) and crossed it by
   // bytes, the renamed lazy-chunk hashes in the entry's map: initial-app 93.05 ->
   // 93.08 KB gzip, the same raw size. Same mechanism as the bumps above.
-  INITIAL_JS_GZIP: 181 * KB,
+  // 181 -> 182 on 2026-11-23: main sat at 180.9 (the merge base in run
+  // 45153890320); the owner's cash-book Daily Bank (PR #5959) adds no eager
+  // module (its page, views and hooks are lazy) — one lazy() route in App.tsx,
+  // its route label and its Bank & cards sidebar entry: initial 180.9 -> 181.1
+  // KB gzip. Same shell-DATA mechanism as the notes above.
+  INITIAL_JS_GZIP: 182 * KB,
   // Everything the app can lazy-load (users only fetch the routes they visit).
   // A soft guard against unbounded total growth, not a first-paint cost. Left
   // at 1800 deliberately — main is at ~99% of it and RAISING IT AGAIN IS NOT

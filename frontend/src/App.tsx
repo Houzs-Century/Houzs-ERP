@@ -110,6 +110,7 @@ const ScmPurchaseOrderDetailV2 = lazyPage(() => import("./pages/scm-v2/PurchaseO
 const ScmMrpV2 = lazyPage(() => import("./pages/scm-v2/Mrp").then((m) => ({ default: m.Mrp })));
 const ScmAccountingV2 = lazyPage(() => import("./pages/scm-v2/Accounting").then((m) => ({ default: m.Accounting })));
 const ScmDailyBank = lazyPage(() => import("./pages/scm-v2/DailyBank").then((m) => ({ default: m.DailyBank })));
+const ScmDailyBankCashbook = lazyPage(() => import("./pages/scm-v2/DailyBank").then((m) => ({ default: m.DailyBankCashbookPage })));
 const ScmMerchantRecon = lazyPage(() => import("./pages/scm-v2/MerchantRecon").then((m) => ({ default: m.MerchantRecon })));
 const ScmBankRecon = lazyPage(() => import("./pages/scm-v2/BankRecon").then((m) => ({ default: m.BankRecon })));
 const ScmUnmatchedPayments = lazyPage(() => import("./pages/scm-v2/UnmatchedPayments").then((m) => ({ default: m.UnmatchedPayments })));
@@ -833,6 +834,7 @@ const APP_ROUTES = (
         <Route path="/scm/mrp" element={<ScmGuard area="scm.procurement.mrp"><Scm2990Shell><ScmMrpV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/accounting" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmAccountingV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/daily-bank" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmDailyBank /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/daily-bank-cashbook" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmDailyBankCashbook /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/merchant-recon" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmMerchantRecon /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/bank-recon" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmBankRecon /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/unmatched-payments" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmUnmatchedPayments /></Scm2990Shell></ScmGuard>} />

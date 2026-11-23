@@ -16,24 +16,30 @@
 // is ONE (daily-bank-report.ts), read by this page, the image and the PDF.
 // Get image copies a PNG to the clipboard for WhatsApp (download fallback);
 // PNG saves it; PDF saves the same table on the letterhead.
+//
+// The cash book (owner 2026-11-23: 原版的daily bank还是要保留哦，我这算是新的daily
+// bank) is a second page on the same frame, /scm/daily-bank-cashbook: its board
+// (/accounting/daily-bank/cashbook/board) reads each bank from the starting
+// balance the owner types, the receipts he types and the approved vouchers, and
+// its third view is where he types them. This page, the original, is untouched.
 // ----------------------------------------------------------------------------
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Calendar, ChevronLeft, ChevronRight, ImageDown, Printer } from 'lucide-react';
-import { useDailyBank, useDailyClose, useSaveDailyClose, useConfirmDailyClose } from './accounting-phase1-queries';
-import { fmtSen, fmtSenPlain } from '../../vendor/shared/format';
-import styles from './Suppliers.module.css';
+import type { UseQueryResult } from '@tanstack/react-query';
+import { useDailyBank, type DailyBankBoard } from './accounting-phase1-queries';
+import { useDailyBankCashbookBoard } from './daily-bank-cashbook-queries';
 import { PageHeader } from '../../components/Layout';
 import { DateField } from "../../vendor/scm/components/DateField";
 import { DailyBankBoardView } from './DailyBankBoard';
 import { DailyBankAccounts } from './DailyBankAccounts';
 import { DailyBankClose } from './DailyBankClose';
+import { DailyBankCashbook } from './DailyBankCashbook';
 import { DailyBankImageModal, DailyBankPrintModal } from './DailyBankPrint';
 import css from './DailyBank.module.css';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 
-const fmt = (sen: number | null | undefined) => fmtSen(sen);
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const shiftDate = (date: string, days: number): string => {
@@ -42,28 +48,23 @@ const shiftDate = (date: string, days: number): string => {
   return d.toISOString().slice(0, 10);
 };
 
-const btnStyle = (primary?: boolean): React.CSSProperties => ({
-  display: 'inline-flex', alignItems: 'center', gap: 6,
-  padding: '6px 14px',
-  border: '1px solid var(--c-ink)',
-  borderRadius: 'var(--radius-md)',
-  background: primary ? 'var(--c-ink)' : 'transparent',
-  color: primary ? 'var(--c-cream)' : 'var(--c-ink)',
-  fontSize: 'var(--fs-13)',
-  fontWeight: 600,
-  cursor: 'pointer',
-});
-
-type DailyBankView = 'board' | 'accounts' | 'close';
-const VIEWS: Array<[DailyBankView, string]> = [['board', 'Board'], ['accounts', 'Accounts'], ['close', 'Daily close']];
+/** Which Daily Bank: the original, from the ledger, or the owner's cash book. */
+type Book = 'ledger' | 'cashbook';
+type DailyBankView = 'board' | 'accounts' | 'close' | 'entries';
+const VIEWS: Record<Book, Array<[DailyBankView, string]>> = {
+  ledger: [['board', 'Board'], ['accounts', 'Accounts'], ['close', 'Daily close']],
+  cashbook: [['board', 'Board'], ['accounts', 'Accounts'], ['entries', 'Receipts & starts']],
+};
 const isDay = (v: string | null): v is string => !!v && /^\d{4}-\d{2}-\d{2}$/.test(v);
 
-export const DailyBank = () => {
-  /* Board / Accounts / Daily close and the day live in the address (the redesign:
-     Money today opens the Board and stays lit while it shows). */
+/** The view and the day live in the address (the redesign: Money today opens the
+    Board and stays lit while it shows). A missing or unknown view becomes Board. */
+function useDailyBankAddress(book: Book) {
   const [params, setParams] = useSearchParams();
+  const views = VIEWS[book];
+  const known = (v: string | null): v is DailyBankView => views.some(([k]) => k === v);
   const rawView = params.get('view');
-  const view: DailyBankView = rawView === 'accounts' || rawView === 'close' ? rawView : 'board';
+  const view: DailyBankView = known(rawView) ? rawView : 'board';
   const dayParam = params.get('date');
   const date = isDay(dayParam) ? dayParam : todayMyt();
   const setParam = (patch: Record<string, string | null>) => {
@@ -72,27 +73,34 @@ export const DailyBank = () => {
     setParams(next, { replace: true });
   };
   useEffect(() => {
-    if (rawView !== 'board' && rawView !== 'accounts' && rawView !== 'close') setParam({ view: 'board' });
+    if (!known(rawView)) setParam({ view: 'board' });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only a missing or unknown view is rewritten
   }, [rawView]);
-  const setView = (v: DailyBankView) => setParam({ view: v });
-  const setDate = (d: string) => setParam({ date: d === todayMyt() ? null : d });
-  const [focus, setFocus] = useState<string | null>(null);
+  return {
+    view,
+    date,
+    setView: (v: DailyBankView) => setParam({ view: v }),
+    setDate: (d: string) => setParam({ date: d === todayMyt() ? null : d }),
+  };
+}
 
-  const q = useDailyBank(date);
+function DailyBankFrame({ book, nav, q }: { book: Book; nav: ReturnType<typeof useDailyBankAddress>; q: UseQueryResult<DailyBankBoard> }) {
+  const { view, date, setView, setDate } = nav;
+  const [focus, setFocus] = useState<string | null>(null);
   const board = q.data ?? null;
   /* Print opens the day's sheet (or the count sheet); Export image its picture. */
   const [printing, setPrinting] = useState(false);
   const [imaging, setImaging] = useState(false);
   const future = date > todayMyt();
+  const boardView = view === 'board' || view === 'accounts';
 
   return (
     <div className={css.page}>
-      <PageHeader eyebrow="Finance · Bank & cards" title="Daily Bank" />
+      <PageHeader eyebrow="Finance · Bank & cards" title={book === 'cashbook' ? 'Daily Bank (cash book)' : 'Daily Bank'} />
 
       <div className={css.topBar}>
         <span className={css.segmented} role="group" aria-label="View">
-          {VIEWS.map(([v, label]) => (
+          {VIEWS[book].map(([v, label]) => (
             <button key={v} type="button" className={view === v ? css.segOn : ''} aria-pressed={view === v} onClick={() => setView(v)}>{label}</button>
           ))}
         </span>
@@ -112,12 +120,14 @@ export const DailyBank = () => {
       </div>
 
       {view === 'close' && <DailyBankClose date={date} today={todayMyt()} />}
+      {view === 'entries' && <DailyBankCashbook date={date} today={todayMyt()} />}
 
-      {view !== 'close' && q.isLoading && <div className={css.muted}>Loading the board…</div>}
-      {view !== 'close' && q.isError && <div role="alert" className={css.problem}>The board could not be loaded — {q.error instanceof Error ? q.error.message : 'something went wrong.'}</div>}
+      {boardView && q.isLoading && <div className={css.muted}>Loading the board…</div>}
+      {boardView && q.isError && <div role="alert" className={css.problem}>The board could not be loaded — {q.error instanceof Error ? q.error.message : 'something went wrong.'}</div>}
 
       {view === 'board' && board && (
-        <DailyBankBoardView board={board} onOpenAccount={(code) => { setFocus(code); setView('accounts'); }} />
+        <DailyBankBoardView board={board} onOpenAccount={(code) => { setFocus(code); setView('accounts'); }}
+          cashbook={book === 'cashbook' ? { onOpenEntries: () => setView('entries') } : null} />
       )}
 
       {view === 'accounts' && board && <DailyBankAccounts board={board} focus={focus} future={future} />}
@@ -126,4 +136,18 @@ export const DailyBank = () => {
       {imaging && board && <DailyBankImageModal board={board} onClose={() => setImaging(false)} />}
     </div>
   );
+}
+
+/** The original Daily Bank, from the ledger. */
+export const DailyBank = () => {
+  const nav = useDailyBankAddress('ledger');
+  const q = useDailyBank(nav.date);
+  return <DailyBankFrame book="ledger" nav={nav} q={q} />;
+};
+
+/** The owner's cash book, a second Daily Bank beside the original (2026-11-23). */
+export const DailyBankCashbookPage = () => {
+  const nav = useDailyBankAddress('cashbook');
+  const q = useDailyBankCashbookBoard(nav.date);
+  return <DailyBankFrame book="cashbook" nav={nav} q={q} />;
 };

@@ -157,3 +157,33 @@
 }
 .solidButton:disabled { background: #8fb3ad; border-color: var(--hz-dk-primary-line, #8fb3ad); cursor: default; }
 .saidLine { font-size: 12.5px; color: var(--fin-green); }
+
+/* ── Cash book (owner 2026-11-23): where an account's figures come from, and the tab ── */
+.srcTag { display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 4px; font-size: 10.5px; font-weight: 600; white-space: nowrap; }
+.srcCash { background: var(--hz-c-synced-bg); color: var(--fin-green); }
+.srcLedger { background: var(--fin-rule); color: var(--fin-detail); }
+.sourceNote { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 14px; border: 1px dashed var(--fin-line); border-radius: 8px; background: var(--hz-c-surface); font-size: 12.5px; color: var(--fin-text); }
+.linkButton { padding: 0; border: 0; background: none; color: var(--fin-petrol); font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer; }
+.linkButton:hover { text-decoration: underline; }
+.cashbook { display: flex; flex-direction: column; gap: 16px; }
+.cbCard { display: flex; flex-direction: column; gap: 12px; padding: 16px; border: 1px solid var(--fin-line); border-radius: 10px; background: var(--hz-c-surface); }
+.cbHelp { max-width: 920px; font-size: 12.5px; color: var(--fin-text); }
+.cbForm { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; }
+.cbField { display: flex; flex-direction: column; gap: 4px; min-width: 0; max-width: 100%; font-size: 11.5px; font-weight: 600; color: var(--fin-detail); }
+.cbGrow { flex: 1 1 240px; }
+.cbText { height: 32px; max-width: 100%; padding: 0 8px; border: 1px solid var(--hz-c-border-strong); border-radius: 6px; background: var(--hz-c-surface); font: 500 13px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-ink); }
+.cbGrow .cbText { width: 100%; }
+.acctTable .cbText { width: 100%; min-width: 180px; }
+.cbActions { text-align: right; white-space: nowrap; }
+.cbActions > button + button { margin-left: 6px; }
+.iconButton {
+  height: 28px; display: inline-flex; align-items: center; gap: 4px; padding: 0 8px; border: 1px solid var(--fin-line); border-radius: 6px;
+  background: var(--hz-c-surface); color: var(--fin-text); font: 600 12px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer; vertical-align: middle;
+}
+.iconButton:hover:not(:disabled) { background: var(--fin-paper); }
+.iconButton:disabled { opacity: 0.55; cursor: default; }
+.dangerText { color: var(--fin-red); }
+.cbFlag { margin-left: 6px; font-size: 11.5px; color: var(--hz-dk-accent-ink, #7a5a1e); }
+.cbDeletedList { font-size: 12.5px; color: var(--fin-detail); }
+.cbDeletedList > summary { cursor: pointer; font-weight: 600; }
+.cbDeletedList td { color: var(--fin-muted); }
