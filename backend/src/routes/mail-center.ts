@@ -560,6 +560,7 @@ type AddressRow = {
   assigned_dept: string | null;
   assigned_position: string | null;
   department_id: number | null;
+  owner_department_id?: number | null; owner_department_name?: string | null; // the owner's Org Chart department
   active: number | boolean | null;
   created_at: string | null;
 };
@@ -574,6 +575,7 @@ function rowToAddress(r: AddressRow) {
     assignedDept: r.assigned_dept ?? undefined,
     departmentId: r.department_id ?? null,
     assignedPosition: r.assigned_position ?? undefined,
+    ownerDepartmentId: r.owner_department_id ?? null, ownerDepartmentName: r.owner_department_name ?? null,
     active: Number(r.active ?? 0) === 1,
     createdAt: r.created_at ?? "",
   };
@@ -601,9 +603,10 @@ function rowToLabel(r: LabelRow) {
 // Org Chart):
 //   • 'personal'   — own assigned alias(es) + shared mailboxes granted via
 //                    email_address_access.
-//   • 'department' — the personal set PLUS every active department mailbox
-//                    (no owner) linked to the caller's Org Chart department
-//                    (email_addresses.department_id = users.department_id).
+//   • 'department' — L1 · Personal: the same as 'personal'. A department mailbox
+//                    is opened only by an admin's tick (a grant), never by the
+//                    department alone (owner 2026-11-23). A Sales Director still
+//                    gets their department's mailboxes.
 //   • 'department_all' — 'department' PLUS everyone's own mailbox in those and the ticked (mail_scope_departments) departments.
 //   • 'company'    — every active mailbox. A member of the Management
 //                    department always gets it (lib/mail-access.ts).
@@ -655,9 +658,8 @@ export async function getMailScope(c: Context<{ Bindings: Env }>): Promise<{
     : DEFAULT_MAIL_SCOPE_LEVEL;
 
   // Sales Director (owner 2026-07, rule 5) always gets their own department's
-  // mailboxes, even when set to 'personal'; never downgrades 'company'.
+  // mailboxes at L1 (below); never downgrades 'company'.
   const user = c.get("user");
-  if (isSalesDirectorUser(user) && level === "personal") level = "department";
   const departmentIds = await departmentIdsOf(c.env.DB, userId, user?.department_id ?? null);
   if (await isInManagement(c.env.DB, departmentIds)) level = "company";
 
@@ -686,15 +688,15 @@ export async function getMailScope(c: Context<{ Bindings: Env }>): Promise<{
     .all<{ address: string }>();
   const addresses = (own.results ?? []).map((r) => r.address);
 
-  // Department mailboxes of the caller's departments; 'department_all' also opens colleagues' own and the ticked departments.
-  if (level === "department" || level === "department_all") {
-    if (departmentIds.length > 0 || level === "department_all") {
-      const whole = level === "department_all" ? await extraScopeDepartments(c.env.DB, userId, departmentIds) : departmentIds;
-      addresses.push(...(await departmentMailboxes(c.env.DB, whole, level === "department_all", coSql)));
-    } else {
-      level = "personal";
-    }
+  // L2 (department_all) opens its departments' mailboxes, colleagues' own included, and the ticked departments.
+  // L1 opens only what was ticked (granted above), except a Sales Director keeps their department's mailboxes.
+  if (level === "department_all") {
+    const whole = await extraScopeDepartments(c.env.DB, userId, departmentIds);
+    addresses.push(...(await departmentMailboxes(c.env.DB, whole, true, coSql)));
+  } else if (isSalesDirectorUser(user) && departmentIds.length > 0) {
+    addresses.push(...(await departmentMailboxes(c.env.DB, departmentIds, false, coSql)));
   }
+  if (level === "department" && departmentIds.length === 0) level = "personal";
 
   return { isAdmin: false, userId, addresses: dedupeLower(addresses), level };
 }
@@ -1064,9 +1066,9 @@ app.get("/addresses", async (c) => {
   if (scope.addresses.length === 0) return c.json([]);
   const ph = scope.addresses.map(() => "?").join(", ");
   const res = await c.env.DB.prepare(
-    `SELECT * FROM email_addresses
-       WHERE LOWER(address) IN (${ph})
-       ORDER BY address ASC`,
+    `SELECT e.*, u.department_id AS owner_department_id, d.name AS owner_department_name FROM email_addresses e
+       LEFT JOIN users u ON u.id = e.assigned_user_id LEFT JOIN departments d ON d.id = u.department_id
+       WHERE LOWER(e.address) IN (${ph}) ORDER BY e.address ASC`,
   )
     .bind(...scope.addresses)
     .all<AddressRow>();

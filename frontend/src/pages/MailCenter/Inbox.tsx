@@ -80,6 +80,7 @@ import {
   type OutboxCounts,
   type OutboxDetail,
 } from "./mail-actions";
+import { UNASSIGNED_DEPT, mailboxDept, mailboxOrder } from "./mail-groups";
 import {
   type MailLabel,
   LABEL_PALETTE,
@@ -163,6 +164,9 @@ type MailAddress = {
   label: string;
   assignedDept: string | null;
   assignedUserName: string | null;
+  departmentId?: number | null;
+  ownerDepartmentId?: number | null;
+  ownerDepartmentName?: string | null;
   active: boolean;
 };
 
@@ -216,7 +220,6 @@ type Folder =
 // mailboxes' `assignedDept` strings exactly so the sidebar groups each shared
 // mailbox under its department header (and rolls up its unread count).
 const DEPT_PRIORITY = ["Operation", "Sales", "Marketing", "Finance", "HR"];
-const UNASSIGNED_DEPT = "Other";
 
 function deptRank(dept: string): number {
   const i = DEPT_PRIORITY.indexOf(dept);
@@ -966,7 +969,7 @@ export function MailInbox() {
   const deptGroups = useMemo(() => {
     const byDept = new Map<string, MailAddress[]>();
     for (const a of activeAddresses) {
-      const dept = (a.assignedDept ?? "").trim() || UNASSIGNED_DEPT;
+      const dept = mailboxDept(a, activeAddresses);
       const arr = byDept.get(dept);
       if (arr) arr.push(a);
       else byDept.set(dept, [a]);
@@ -974,13 +977,7 @@ export function MailInbox() {
     return Array.from(byDept.entries())
       .map(([dept, mailboxes]) => ({
         dept,
-        mailboxes: mailboxes
-          .slice()
-          .sort((x, y) =>
-            (x.assignedUserName || x.address || "").localeCompare(
-              y.assignedUserName || y.address || "",
-            ),
-          ),
+        mailboxes: mailboxes.slice().sort(mailboxOrder),
       }))
       .sort((a, b) => sortDepts(a.dept, b.dept));
   }, [activeAddresses]);
