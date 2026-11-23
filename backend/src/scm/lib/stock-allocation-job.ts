@@ -308,7 +308,8 @@ export function deferAllocationRecompute(c: any, sb: any, where: string): void {
  * hold). deferAllocationRecompute would sweep and then find that same row in
  * its catch-up and sweep again; this drains the row instead, so the one sweep
  * also clears it. When the drain ran no sweep (row parked, backing off, claimed
- * elsewhere, or a read failed) it falls back to one plain sweep, as before.
+ * elsewhere, or a read failed) it falls back to the ordinary sweep, whose
+ * catch-up then finds nothing it can run, so it is still one sweep.
  */
 export function deferQueuedAllocationDrain(c: { executionCtx: ExecutionContext }, sb: QueueDb, where: string): void {
   const sweep = drainOrSweepOnce(sb).then(
@@ -325,7 +326,7 @@ export function deferQueuedAllocationDrain(c: { executionCtx: ExecutionContext }
 async function drainOrSweepOnce(sb: QueueDb): Promise<void> {
   const drained = await drainCoalesced(sb);
   if (drained.processed || drained.completed) return;
-  await recomputeSoStockAllocation(sb);
+  await sweepThenCatchUp(sb);
 }
 
 type QueueDb = Parameters<typeof drainStockAllocationRecomputeWithClient>[0];
