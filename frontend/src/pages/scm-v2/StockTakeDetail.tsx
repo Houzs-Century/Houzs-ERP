@@ -1015,9 +1015,9 @@ export const StockTakeDetail = () => {
       )}
 
       {/* ── Lines ───────────────────────────────────────────────────── */}
-      {/* overflow: clip, not the card's hidden — `hidden` makes the card a
-          scroll container, and a sticky header then sticks to a box that never
-          scrolls (owner 2026-10-06: the header must stay on screen). */}
+      {/* The table scrolls in its own box, sized to the screen under the page
+          header: the header row freezes to its top and the first column to its
+          left. overflow: clip, not hidden, so the card is never a scroll box. */}
       <section className={styles.card} style={{ overflow: 'clip' }}>
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>
@@ -1074,7 +1074,8 @@ export const StockTakeDetail = () => {
           </div>
         </div>
         <div className={styles.cardBody}>
-          <table className={`${styles.table} ${styles.tableOwnWidths} ${styles.stickyHead}`}>
+          <div className={`thin-scroll ${styles.sheetScroll}`}>
+          <table className={`${styles.table} ${styles.tableOwnWidths} ${styles.stickyHead} ${styles.freezeFirstCol}`}>
             <thead>
               <tr>
                 {/* Blind (phase 1): the figures the counter must not see
@@ -1418,6 +1419,7 @@ export const StockTakeDetail = () => {
               })()}
             </tbody>
           </table>
+          </div>
 
           {isDraft && (
             <AddFoundLine
