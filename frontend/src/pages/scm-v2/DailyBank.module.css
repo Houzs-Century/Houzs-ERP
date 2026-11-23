@@ -190,3 +190,22 @@
 .cbDeletedList { font-size: 12.5px; color: var(--fin-detail); }
 .cbDeletedList > summary { cursor: pointer; font-weight: 600; }
 .cbDeletedList td { color: var(--fin-muted); }
+.cbDetails { font-size: 12.5px; }
+.cbDetails > summary { cursor: pointer; font-weight: 600; color: var(--fin-detail); }
+
+/* ── The day's income as a table, bank by method (owner 2026-11-23: 不能做成这样的表格给我keyin income？) ── */
+.cbGrid td, .cbGrid th { padding: 6px 5px; }
+/* The bank stays in view when the table scrolls sideways on a narrow screen. */
+.cbGrid td:first-child, .cbGrid th:first-child { position: sticky; left: 0; z-index: 1; padding-left: 8px; white-space: nowrap; background: var(--hz-c-surface); }
+.cbGrid tfoot td:first-child { background: var(--hz-dk-surface-2, #eef2f0); }
+.cbCell {
+  width: 92px; height: 30px; padding: 0 7px; border: 1px solid var(--hz-c-border-strong); border-radius: 6px; background: var(--hz-c-surface);
+  text-align: right; font: 500 13px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-ink); font-variant-numeric: tabular-nums;
+}
+.cbCell::placeholder { color: var(--fin-muted); }
+.cbCell:disabled { border-color: transparent; background: transparent; }
+.cbCellChanged { border-color: var(--fin-petrol); box-shadow: 0 0 0 2px #e1efed; }
+.cbCellBad { border-color: var(--fin-red); box-shadow: 0 0 0 2px #f6e1e1; }
+.cbTotal { font-weight: 700; }
+.cbSaveRow { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.cbSubhead { margin: 4px 0; font-size: 11.5px; font-weight: 600; color: var(--fin-detail); }

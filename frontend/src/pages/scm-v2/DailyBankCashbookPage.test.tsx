@@ -40,12 +40,13 @@ vi.mock('./daily-bank-cashbook-queries', () => ({
   useDailyBankCashbook: (date: string) => ({ data: { date, today: date, canWrite: true, accounts: [
     { accountCode: '310-0010', accountName: 'CASH AT BANK - MAYBANK', start: { date: '2026-11-24', balanceSen: 10_000_000, note: null, setBy: 'Chew', setAt: null } },
     { accountCode: '310-0020', accountName: 'CASH AT BANK - HLBB', start: null },
-  ], receipts: [], deleted: [] }, isLoading: false, isError: false, error: null }),
+  ], receipts: [], deleted: [], methods: [{ key: 'online', label: 'Online' }] }, isLoading: false, isError: false, error: null }),
   useAddCashbookReceipt: () => ({ mutate: vi.fn(), isPending: false }),
   useEditCashbookReceipt: () => ({ mutate: vi.fn(), isPending: false }),
   useDeleteCashbookReceipt: () => ({ mutate: vi.fn(), isPending: false }),
   useSaveCashbookStart: () => ({ mutate: vi.fn(), isPending: false }),
   useRemoveCashbookStart: () => ({ mutate: vi.fn(), isPending: false }),
+  useSaveCashbookDay: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 vi.mock('../../vendor/scm/components/ConfirmDialog', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../vendor/scm/components/ConfirmDialog')>()),

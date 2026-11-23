@@ -2,15 +2,16 @@
 // DailyBankCashbook — Receipts & starts, the third view of the cash book's Daily
 // Bank (owner 2026-11-23: 先做一个daily bank的一开始直接，但不需要列实际差额。然后我每天
 // 会手动输入收到的金额; 付款就根据pv; 原版的daily bank还是要保留哦，我这算是新的daily
-// bank). Two cards: the money received on the page's day, typed by hand per bank
-// (add, change, delete, each on its history), and each money account's starting
-// balance: the bank's balance at the start of a day. From its start a bank is on
+// bank). Two cards: the money received on the page's day, keyed as a table of banks
+// by method — one total per cell (不能做成这样的表格给我keyin income？), each change
+// on its history — and each money account's starting balance: the bank's balance
+// at the start of a day. From its start a bank is on
 // the cash book's Board as start + typed receipts − approved payment vouchers.
 // Nothing here posts to the books, and the original Daily Bank never reads it.
 // ----------------------------------------------------------------------------
 
-import { useState, type FormEvent } from 'react';
-import { History, Pencil, Plus, Trash2 } from 'lucide-react';
+import { useState } from 'react';
+import { History, Pencil, Save, Trash2 } from 'lucide-react';
 import { fmtDate, fmtDateTime, fmtSenPlain } from '../../vendor/shared/format';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
@@ -18,8 +19,8 @@ import type { AuditLabelDictionary } from '../../components/audit/audit-labels';
 import { EntityHistoryPanel } from './EntityHistoryPanel';
 import styles from './DailyBank.module.css';
 import {
-  useAddCashbookReceipt, useDailyBankCashbook, useDeleteCashbookReceipt, useEditCashbookReceipt,
-  useRemoveCashbookStart, useSaveCashbookStart, type CashbookAccount, type CashbookReceiptRow,
+  useDailyBankCashbook, useDeleteCashbookReceipt, useEditCashbookReceipt, useRemoveCashbookStart, useSaveCashbookDay,
+  useSaveCashbookStart, type CashbookAccount, type CashbookDay, type CashbookReceiptRow,
 } from './daily-bank-cashbook-queries';
 
 const money = (sen: number): string => fmtSenPlain(sen);
@@ -71,41 +72,94 @@ function RmBox({ value, onChange, label }: { value: string; onChange: (v: string
   );
 }
 
-function ReceiptForm({ date, accounts, onSaid }: { date: string; accounts: CashbookAccount[]; onSaid: (s: string) => void }) {
-  const add = useAddCashbookReceipt();
-  const [picked, setPicked] = useState('');
-  const [amount, setAmount] = useState('');
-  const [note, setNote] = useState('');
-  const account = accounts.some((a) => a.accountCode === picked) ? picked : (accounts[0]?.accountCode ?? '');
-  const sen = rmToSen(amount, { negative: false });
-  const ready = account !== '' && sen != null && sen > 0 && note.trim() !== '';
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
-    if (!ready) return;
-    add.mutate({ accountCode: account, date, amountSen: sen, note: note.trim() }, {
+/** A bank's name as the table prints it: without the chart's "CASH AT BANK -". */
+export const shortBank = (name: string): string => name.replace(/^CASH\s+(AT\s+)?BANK\s*-\s*/i, '') || name;
+
+const cellKey = (accountCode: string, method: string): string => `${accountCode}|${method}`;
+const splitKey = (key: string): { accountCode: string; method: string } => {
+  const at = key.indexOf('|');
+  return { accountCode: key.slice(0, at), method: key.slice(at + 1) };
+};
+
+/** The day's income as a table, bank by method (owner 2026-11-23: 不能做成这样的表格给我
+    keyin income？): one total per cell, each bank's total and each method's beside them.
+    Save sends only the cells that changed; 0 (or empty) clears one. */
+function IncomeGrid({ day, date, banks, canEdit, onSaid }: {
+  day: CashbookDay; date: string; banks: CashbookAccount[]; canEdit: boolean; onSaid: (s: string) => void;
+}) {
+  const save = useSaveCashbookDay();
+  const [typed, setTyped] = useState<Partial<Record<string, string>>>({});
+  const saved = new Map(day.receipts.filter((r) => r.method != null).map((r) => [cellKey(r.accountCode, r.method ?? ''), r.amountSen]));
+  const savedOf = (key: string): number => saved.get(key) ?? 0;
+  const shown = (key: string): string => typed[key] ?? (savedOf(key) > 0 ? money(savedOf(key)) : '');
+  const senOf = (key: string): number | null => (shown(key).trim() === '' ? 0 : rmToSen(shown(key), { negative: false }));
+  const keys = banks.flatMap((b) => day.methods.map((m) => cellKey(b.accountCode, m.key)));
+  const bad = keys.filter((k) => senOf(k) == null);
+  const changed = keys.filter((k) => typed[k] !== undefined && senOf(k) != null && senOf(k) !== savedOf(k));
+  const cell = (k: string): number => senOf(k) ?? 0;
+  const rowTotal = (code: string): number => day.methods.reduce((n, m) => n + cell(cellKey(code, m.key)), 0);
+  const colTotal = (method: string): number => banks.reduce((n, b) => n + cell(cellKey(b.accountCode, method)), 0);
+  const grand = banks.reduce((n, b) => n + rowTotal(b.accountCode), 0);
+  const shownTotal = (sen: number): string => (sen > 0 ? money(sen) : '—');
+  const submit = () => {
+    if (bad.length > 0 || changed.length === 0) return;
+    save.mutate({ date, cells: changed.map((k) => ({ ...splitKey(k), amountSen: cell(k) })) }, {
       onSuccess: () => {
-        onSaid(`Added RM ${money(sen)} into ${account} on ${fmtDate(date)}`);
-        setAmount('');
-        setNote('');
+        setTyped({});
+        onSaid(`Saved ${changed.length} cell${changed.length === 1 ? '' : 's'} for ${fmtDate(date)} · RM ${money(grand)} received that day`);
       },
     });
   };
   return (
-    <form className={styles.cbForm} onSubmit={submit} aria-label="Type a receipt">
-      <label className={styles.cbField}>Bank / cash account
-        <AccountSelect accounts={accounts} value={account} onChange={setPicked} label="Account received into" />
-      </label>
-      <label className={styles.cbField}>Amount received
-        <RmBox value={amount} onChange={setAmount} label="Amount received" />
-      </label>
-      <label className={`${styles.cbField} ${styles.cbGrow}`}>Who paid / what it is for
-        <input className={styles.cbText} value={note} maxLength={300} placeholder="e.g. Hookka deposit SO-1234" aria-label="Who paid or what for" onChange={(e) => setNote(e.target.value)} />
-      </label>
-      <button type="submit" className={styles.solidButton} disabled={!ready || add.isPending}
-        title={ready ? undefined : 'Pick the account, type the amount and say who paid'}>
-        <Plus size={14} />{add.isPending ? 'Saving…' : 'Add receipt'}
-      </button>
-    </form>
+    <>
+      <div className={styles.tableWrap}>
+        <table className={`${styles.acctTable} ${styles.cbGrid}`} aria-label="Income by bank and method">
+          <thead>
+            <tr>
+              <th>{'Bank \\ method'}</th>
+              {day.methods.map((m) => <th key={m.key} className={styles.num}>{m.label}</th>)}
+              <th className={styles.num}>Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {banks.map((b) => (
+              <tr key={b.accountCode}>
+                <td><span className={styles.docCell}>{shortBank(b.accountName)}</span> <span className={styles.muted}>{b.accountCode}</span></td>
+                {day.methods.map((m) => {
+                  const k = cellKey(b.accountCode, m.key);
+                  const isBad = senOf(k) == null;
+                  const isChanged = !isBad && typed[k] !== undefined && senOf(k) !== savedOf(k);
+                  return (
+                    <td key={m.key} className={styles.num}>
+                      <input className={`${styles.cbCell} ${isBad ? styles.cbCellBad : ''} ${isChanged ? styles.cbCellChanged : ''}`}
+                        inputMode="decimal" placeholder="0" value={shown(k)} disabled={!canEdit} aria-label={`${b.accountCode} ${m.label}`}
+                        onChange={(e) => setTyped((t) => ({ ...t, [k]: e.target.value }))} />
+                    </td>
+                  );
+                })}
+                <td className={`${styles.num} ${styles.cbTotal}`}>{shownTotal(rowTotal(b.accountCode))}</td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr className={styles.subtotal}>
+              <td>Total</td>
+              {day.methods.map((m) => <td key={m.key} className={styles.num}>{shownTotal(colTotal(m.key))}</td>)}
+              <td className={styles.num}>{shownTotal(grand)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      {canEdit && (
+        <div className={styles.cbSaveRow}>
+          <button type="button" className={styles.solidButton} disabled={changed.length === 0 || bad.length > 0 || save.isPending} onClick={submit}>
+            <Save size={14} />{save.isPending ? 'Saving…' : changed.length > 0 ? `Save ${changed.length} change${changed.length === 1 ? '' : 's'}` : 'Saved'}
+          </button>
+          {bad.length > 0 && <span className={styles.cbFlag}>Fix the cells in red: a plain amount with at most two decimals.</span>}
+          {bad.length === 0 && changed.length > 0 && <span className={styles.muted}>Not saved yet.</span>}
+        </div>
+      )}
+    </>
   );
 }
 
@@ -245,6 +299,9 @@ export function DailyBankCashbook({ date, today }: { date: string; today: string
   const open = openOn(accounts, date);
   const canEdit = day?.canWrite === true;
   const total = (day?.receipts ?? []).filter((r) => r.counted).reduce((n, r) => n + r.amountSen, 0);
+  /* A receipt typed with a note, before the table: listed on its own, changed there. */
+  const noted = (day?.receipts ?? []).filter((r) => r.method == null);
+  const cells = (day?.receipts ?? []).filter((r) => r.method != null);
   const future = date > today;
 
   return (
@@ -258,18 +315,39 @@ export function DailyBankCashbook({ date, today }: { date: string; today: string
             <span className={styles.closeTitle}>Money received · {fmtDate(date)}</span>
             <span className={styles.closeSub}>{day.receipts.length} typed · RM {money(total)} on the Board</span>
           </div>
-          <div className={styles.cbHelp}>Type what actually came into each bank this day, with who paid or what it is for. Payments come off by themselves: every approved payment voucher paying out of the account, on its voucher date. Nothing here posts to the books.</div>
+          <div className={styles.cbHelp}>Type what came into each bank this day as one total per way it came: Online, Cash, Cheque, or a card terminal. Save keeps the cells you changed; 0 clears one. Payments come off by themselves: every approved payment voucher paying out of the bank, on its voucher date. Nothing here posts to the books.</div>
           {future && <div className={styles.muted}>This day hasn’t happened yet. Money is typed once it is received.</div>}
-          {!future && canEdit && open.length > 0 && <ReceiptForm date={date} accounts={open} onSaid={setSaid} />}
+          {!future && open.length > 0 && <IncomeGrid key={date} day={day} date={date} banks={open} canEdit={canEdit} onSaid={setSaid} />}
           {!future && open.length === 0 && <div className={styles.muted}>No account’s cash book has started by {fmtDate(date)}. Set a starting balance below first.</div>}
           {!canEdit && <div className={styles.muted}>You can read the cash book; changing it needs Finance’s posting permission.</div>}
           {said && <div className={styles.saidLine} role="status">{said}</div>}
-          {day.receipts.length > 0 && (
+          {cells.length > 0 && (
+            <details className={styles.cbDetails}>
+              <summary>Who typed each cell ({cells.length})</summary>
+              <table className={styles.acctTable}>
+                <tbody>
+                  {cells.map((r) => (
+                    <tr key={r.id}>
+                      <td><span className={styles.docCell}>{r.accountCode}</span> {r.note}
+                        {!r.counted && <span className={styles.cbFlag}>Not on the Board: before this account's start</span>}</td>
+                      <td className={`${styles.num} ${styles.moneyIn}`}>{money(r.amountSen)}</td>
+                      <td className={styles.muted}>{typedLine(r)}</td>
+                      <td className={styles.cbActions}>
+                        <button type="button" className={styles.iconButton} onClick={() => setHistory({ type: 'DAILY_BANK_RECEIPT', id: r.id, label: `${r.accountCode} · ${r.note} · ${fmtDate(r.date)}` })} aria-label={`History of ${r.accountCode} ${r.note}`}><History {...ICON} /></button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </details>
+          )}
+          {noted.length > 0 && (
             <div className={styles.tableWrap}>
+              <div className={styles.cbSubhead}>Typed with a note</div>
               <table className={styles.acctTable}>
                 <thead><tr><th>Account</th><th>Day</th><th className={styles.num}>Received (RM)</th><th>Who paid / what for</th><th /></tr></thead>
                 <tbody>
-                  {day.receipts.map((r) => (
+                  {noted.map((r) => (
                     <ReceiptRowView key={`${r.id}:${r.updatedAt ?? ''}`} r={r} accounts={accounts} canEdit={canEdit} today={today} onHistory={setHistory} />
                   ))}
                 </tbody>
