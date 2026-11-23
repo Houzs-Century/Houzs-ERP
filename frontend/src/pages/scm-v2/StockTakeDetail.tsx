@@ -1509,9 +1509,11 @@ function SourcePoNote({ line, inGroup }: { line: LineDraft; inGroup: boolean }) 
     ? line.systemQty - traced : 0;
   if (line.sourcePos.length === 0 && untraced === 0) return null;
   return (
-    <div style={{ marginTop: 2, fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>
+    /* Wraps between POs: a line with 55 POs on one unbreakable row made the
+       Variant column 6,000px wide and pushed the Qty columns off screen. */
+    <div data-testid="source-po-note" style={{ marginTop: 2, fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', display: 'flex', flexWrap: 'wrap', columnGap: 8 }}>
       {line.sourcePos.map((p) => (
-        <span key={p.po} style={{ marginRight: 8, whiteSpace: 'nowrap' }}>
+        <span key={p.po} style={{ whiteSpace: 'nowrap' }}>
           <span style={{ fontFamily: 'var(--font-mono)' }}>{p.po}</span> × {fmtQty(p.qty)}
         </span>
       ))}
