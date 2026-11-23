@@ -69,14 +69,14 @@ function compare(before, after) {
   for (const b of before.lines) {
     const x = a.get(`${b.doc}|${b.id}`);
     if (!x) { amountMoved.push(`${b.doc} ${b.no} ${b.item_code}: row gone`); continue; }
-    if (String(x.amount) !== String(b.amount)) amountMoved.push(`${b.doc} ${b.no} ${b.item_code}: amount ${b.amount} -> ${x.amount}`);
+    if (String(x.amount) !== String(b.amount)) amountMoved.push(`${b.doc} ${b.no} ${b.item_code}: amount_sen=${b.amount} -> amount_sen=${x.amount}`);
     rows.push({ b, x, changed: String(b.unit_cost_sen) !== String(x.unit_cost_sen) || String(b.line_margin_sen) !== String(x.line_margin_sen) });
   }
   const h = new Map(after.heads.map((r) => [r.id, r]));
   for (const b of before.heads) {
     const x = h.get(b.id);
     if (!x || String(x.subtotal_sen) !== String(b.subtotal_sen) || String(x.total_sen) !== String(b.total_sen)) {
-      amountMoved.push(`SI ${b.no}: total ${b.total_sen} -> ${x?.total_sen}`);
+      amountMoved.push(`SI ${b.no}: total_sen=${b.total_sen} -> total_sen=${x?.total_sen}`);
     }
   }
   return { rows, amountMoved };
@@ -135,7 +135,7 @@ async function main() {
     /* Shape: each DO line's stored line cost equals unit cost x qty, and its margin equals amount - line cost. */
     const off = after.lines.filter((r) => r.doc === 'DO' && r.unit_cost_sen != null
       && (Number(r.line_cost_sen) !== Number(r.unit_cost_sen) * Number(r.qty) || Number(r.line_margin_sen) !== Number(r.amount) - Number(r.line_cost_sen)));
-    for (const r of off) bad(`  ${r.no} ${r.item_code}: line cost ${r.line_cost_sen} / margin ${r.line_margin_sen} do not add up`);
+    for (const r of off) bad(`  ${r.no} ${r.item_code}: line_cost_sen=${r.line_cost_sen} line_margin_sen=${r.line_margin_sen} do not add up`);
     note(`  DO lines whose cost and margin do not add up: ${off.length}`);
     if (amountMoved.length) process.exitCode = 1;
   } finally {
