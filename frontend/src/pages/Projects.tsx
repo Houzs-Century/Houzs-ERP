@@ -638,8 +638,6 @@ function ProjectsListView() {
   const setOrganizer = (v: string) => patchParams({ organizer: v, page: "1" });
   const setYear = (v: string) => patchParams({ year: v, page: "1" });
   const setMonth = (v: string) => patchParams({ month: v, page: "1" });
-  const setSection = (v: string) => patchParams({ section: v, page: "1" });
-  const setTaskPending = (v: string) => patchParams({ task: v, page: "1" });
   const setStatus = (v: string) => patchParams({ status: v, page: "1" });
   const setDateRange = (f: string, t: string) => patchParams({ from: f, to: t, page: "1" });
   const setPhase = (v: string) => patchParams({ phase: v, page: "1" });
@@ -948,18 +946,51 @@ function ProjectsListView() {
     }
     return c;
   }, [taskTitles.data]);
-  // Individual task titles grouped under their section, in checklist order (the
-  // backend already returns them section-ordered), for the task-item dropdown.
-  const taskTitleGroups = useMemo(() => {
-    const bySection = new Map<string, { value: string; label: string }[]>();
+  // One "Task" filter: the checklist SECTION and the individual tasks under it,
+  // in a single dropdown (owner 2026-11-23: "sekali kan je jangan pecah task and
+  // task detail"). A `sec:` value ticks a whole section (the active-section
+  // filter); a `task:` value ticks one task that is still not done
+  // (task_pending). Each section is a group: its header "(whole section)" row,
+  // then its tasks in checklist order; "Completed" is the trailing group.
+  const taskFilterGroups = useMemo(() => {
+    const tasksBySection = new Map<string, string[]>();
     for (const t of taskTitles.data?.data ?? []) {
       const sec = t.section ?? "Other";
-      const arr = bySection.get(sec);
-      if (arr) arr.push({ value: t.title, label: t.title });
-      else bySection.set(sec, [{ value: t.title, label: t.title }]);
+      const arr = tasksBySection.get(sec);
+      if (arr) arr.push(t.title);
+      else tasksBySection.set(sec, [t.title]);
     }
-    return [...bySection.entries()].map(([name, options]) => ({ name, options }));
-  }, [taskTitles.data]);
+    const ordered = sectionsList.data?.data ?? [];
+    const seen = new Set(ordered);
+    const sectionNames = [...ordered, ...[...tasksBySection.keys()].filter((s) => !seen.has(s))];
+    const groups: { name: string | null; options: { value: string; label: string; count?: number }[] }[] =
+      sectionNames.map((s) => ({
+        name: s,
+        options: [
+          { value: `sec:${s}`, label: `${s} (whole section)`, count: sectionCounts[s] },
+          ...(tasksBySection.get(s) ?? []).map((title) => ({ value: `task:${title}`, label: title })),
+        ],
+      }));
+    groups.push({ name: null, options: [{ value: "sec:__done", label: "Completed" }] });
+    return groups;
+  }, [sectionsList.data, taskTitles.data, sectionCounts]);
+  // The combined selection, each URL param mapped back onto its prefixed value.
+  const taskFilterSelected = useMemo(
+    () => [...sectionList.map((s) => `sec:${s}`), ...taskPendingList.map((t) => `task:${t}`)],
+    [sectionList, taskPendingList],
+  );
+  // Split the ticked values back into the two params and patch BOTH at once —
+  // patching section and task in two calls would clobber (each rebuilds the URL
+  // from the same stale snapshot).
+  const setTaskFilter = (values: string[]) => {
+    const secs: string[] = [];
+    const tasks: string[] = [];
+    for (const v of values) {
+      if (v.startsWith("sec:")) secs.push(v.slice(4));
+      else if (v.startsWith("task:")) tasks.push(v.slice(5));
+    }
+    patchParams({ section: secs.join(","), task: tasks.join(","), page: "1" });
+  };
 
   const columns: Column<ProjectRow>[] = [
     {
@@ -1385,47 +1416,20 @@ function ProjectsListView() {
           </div>
         ) : (
         <>
-        {/* Task filter — the tasklist-section dropdown; each option carries how
-            many tasks that section holds. Labelled "Status" on 2026-08-14, then
-            "Task" on 2026-08-19 (owner: "the left one change word status to
-            task") because the real project-status chip sits two along and two
-            chips reading "status" was the confusion this rename removes. */}
+        {/* Task filter — ONE dropdown for both the checklist SECTION and the
+            individual tasks under it (owner named it "Task" 2026-08-19; the
+            section and per-task controls were unified here 2026-11-23: "sekali
+            kan je jangan pecah"). Tick a section's "(whole section)" row to
+            filter by active section, or tick individual tasks (3D Design,
+            Display Floor Plan, …) to keep events where that task is not yet
+            done. */}
         <MultiSelectFilter
           placeholder="Task"
-          title="Filter by tasklist section"
-          summary={(n) => `${n} sections`}
-          selected={sectionList}
-          onChange={(next) => setSection(next.join(","))}
-          groups={[
-            {
-              name: null,
-              options: [
-                ...(sectionsList.data?.data ?? []).map((s) => ({
-                  value: s,
-                  label: s,
-                  count: sectionCounts[s],
-                })),
-                { value: "__done", label: "Completed" },
-              ],
-            },
-          ]}
-        />
-        {/* Task-item filter (owner 2026-08-05: "booth layout for display, 3D, 2D
-            … make it drop down. and i can filter which task is not complete
-            yet"). Lists the canonical checklist tasks GROUPED BY SECTION; ticking
-            one keeps events where that task is still not done (task_pending →
-            EXISTS status NOT IN done/na). Separate from the "Task" section
-            dropdown above, which filters by active SECTION. Re-surfaced
-            2026-11-20 — the state/deep-link (?task=) wiring was never removed;
-            only the control had been hidden. */}
-        <MultiSelectFilter
-          placeholder="Task detail"
-          title="Filter by a specific task still not completed"
-          summary={(n) => `${n} tasks`}
-          panelWidth="w-[280px]"
-          selected={taskPendingList}
-          onChange={(next) => setTaskPending(next.join(","))}
-          groups={taskTitleGroups}
+          title="Filter by checklist section or a specific task"
+          panelWidth="w-[300px]"
+          selected={taskFilterSelected}
+          onChange={setTaskFilter}
+          groups={taskFilterGroups}
         />
         <MultiSelectFilter
           placeholder="All brands"
