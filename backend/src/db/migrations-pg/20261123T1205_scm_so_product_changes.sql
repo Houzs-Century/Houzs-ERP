@@ -1,4 +1,4 @@
--- 20261123T0827_scm_so_product_changes.sql
+-- 20261123T1205_scm_so_product_changes.sql
 --
 -- REVERSAL: revert the code first (scm/lib/so-product-change-record.ts and its
 --   callers, scm/lib/so-set-change-cost.ts, the Product changes reports). Then:
