@@ -59,11 +59,11 @@ const toast = {
   info: vi.fn(),
 };
 
-function renderChat(projectId = 1) {
+function renderChat(projectId = 1, canPost = false) {
   return render(
     <ProjectChat
       projectId={projectId}
-      canPost={false}
+      canPost={canPost}
       toast={toast as never}
     />,
   );
@@ -188,7 +188,7 @@ describe("ProjectChat polling", () => {
       path.endsWith("/notes") ? postResponse.promise : Promise.resolve({ ok: true }),
     );
 
-    render(<ProjectChat projectId={1} canPost={true} toast={toast as never} />);
+    renderChat(1, true);
     await flushPromises();
     expect(screen.getByText("No messages yet.")).toBeTruthy();
 
