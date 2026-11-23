@@ -426,17 +426,14 @@ export async function reconcileDropshipBatches(
     try {
       const { error } = await sb.rpc('fn_reconcile_dropship_batch', {
         p_warehouse_id: b.warehouse_id,
-        p_item_code: b.item_code,
+        p_product_code: b.item_code, // the function's own parameter name (see oversell-retrocost.ts)
         p_variant_key: b.variant_key ?? '',
         p_batch_no: b.batch_no,
         p_created_by: performedBy,
       });
       if (error) {
-        // Pre-0057 (function not created) — silently no-op; nothing to reconcile.
-        if (!(error.message ?? '').includes('fn_reconcile_dropship_batch')) {
-          // eslint-disable-next-line no-console
-          console.error('[dropship] reconcile failed:', error.message);
-        }
+        // eslint-disable-next-line no-console
+        console.error('[dropship] reconcile failed:', error.message);
       } else {
         reconciled += 1;
       }
