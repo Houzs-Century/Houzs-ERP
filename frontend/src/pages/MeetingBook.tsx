@@ -95,14 +95,15 @@ export function MeetingBook() {
   const chosen = day ?? days.at(0) ?? null;
 
   const loadDay = (d: string) => {
-    setDayInfo(null);
     call<DayInfo>(`/links/${encodeURIComponent(code)}/day?day=${d}`).then(setDayInfo).catch(() => setDayInfo({ day: d, open: false, rooms: [] }));
   };
   useEffect(() => { if (link && chosen) loadDay(chosen); }, [link, chosen]); // eslint-disable-line react-hooks/exhaustive-deps -- loadDay reads only code
 
+  // The answer for the chosen day only; while another day loads, nothing stale is drawn.
+  const dayNow = dayInfo?.day === chosen ? dayInfo : null;
   // Each room has its own bookable window that day (its opening hours within the link's); the bars share one scale.
-  const dayRoom = (rid: number) => dayInfo?.rooms.find((r) => r.id === rid);
-  const openWins = (dayInfo?.rooms ?? []).filter((r) => !r.closed && r.from !== undefined && r.to !== undefined);
+  const dayRoom = (rid: number) => dayNow?.rooms.find((r) => r.id === rid);
+  const openWins = (dayNow?.rooms ?? []).filter((r) => !r.closed && r.from !== undefined && r.to !== undefined);
   const open = openWins.length ? Math.min(...openWins.map((r) => r.from ?? 0)) : link ? Math.max(link.from * 60, 8 * 60) : 0;
   const close = openWins.length ? Math.max(...openWins.map((r) => r.to ?? 1440)) : link ? Math.min(link.to * 60, 20 * 60) : 0;
   const earliest = chosen === myDay(now) ? Math.ceil((myMin(now) + 1) / 15) * 15 : 0;
@@ -355,7 +356,7 @@ export function MeetingBook() {
                 })}
               </div>
             )}
-            {dayInfo === null && chosen ? <p className="text-ink-muted">Loading the rooms...</p> : rooms.length === 0 ? <p className="text-ink-secondary">No rooms are open through this link.</p> : (
+            {dayNow === null && chosen ? <p className="text-ink-muted">Loading the rooms...</p> : rooms.length === 0 ? <p className="text-ink-secondary">No rooms are open through this link.</p> : (
               <div className="flex flex-col gap-2.5">
                 {rooms.map((r) => {
                   const busy = busyOf(r.id);
