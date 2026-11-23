@@ -220,6 +220,54 @@ describe('the report date', () => {
   });
 });
 
+describe('a multi-day paste with per-section subtotals (owner 2026-11-23, Dunlopillo Pisa Spice)', () => {
+  const MULTI = [
+    'Total: RM87,088',
+    '',
+    '8/11 dunlop spice',
+    '1. PG10229 RM9688 Shawn',
+    '2. PG10230 RM1400 CH',
+    'Total: RM11,088',
+    '',
+    '9/11 dunlop spice',
+    '1. PG10699 RM6100 CH',
+    '2. PG10670 RM400 CH',
+    'TOTAL: RM6500',
+  ].join('\n');
+
+  test('section headers like "8/11 dunlop spice" are not skipped', () => {
+    const r = parseSalesReport(MULTI);
+    // The three section header / grand-total lines no longer land in `skipped`,
+    // so the frontend's "N lines don't match the bill format" hint does not fire.
+    expect(r.skipped).toEqual([]);
+  });
+
+  test('a per-day Total that matches the sum of bills does not trigger a mismatch warning', () => {
+    // Four bills: 9688 + 1400 + 6100 + 400 = 17588. The last Total line is 6500,
+    // so no collected Total matches the full sum; the LAST Total is reported but
+    // the warning still fires because nothing matches. The point of this test is
+    // the reverse: when one of the collected Totals matches the sum, the warning
+    // stays quiet.
+    const matching = parseSalesReport([
+      'Total: RM87,088',
+      '',
+      '8/11 dunlop spice',
+      '1. PG10229 RM9688 Shawn',
+      '2. PG10230 RM1400 CH',
+      'Total: RM11,088',  // 9688 + 1400 = 11,088 — matches these bills
+    ].join('\n'));
+    expect(matching.warnings).toEqual([]);
+    expect(matching.total_sen).toBe(1108800);
+  });
+
+  test('when no collected Total matches the sum of bills, the warning still fires with the last Total', () => {
+    const r = parseSalesReport(MULTI);
+    // Sum of bills = 9688 + 1400 + 6100 + 400 = 17,588. No Total line matches,
+    // so the warning uses the LAST Total we saw (RM 6,500).
+    expect(r.warnings.some((w) => w.includes('6,500.00') && w.includes('17,588.00'))).toBe(true);
+  });
+});
+
 describe('reportDateFor', () => {
   test('takes the year from the project and pads the day and month', () => {
     expect(reportDateFor({ day: 7, month: 10 }, '2026-10-05')).toBe('2026-10-07');

@@ -136,7 +136,8 @@ const DeleteCell = ({ row }: { row: FabricTrackingRow }) => {
 const sofaTier = (r: FabricTrackingRow): FabricTier | null => r.sofa_price_tier ?? r.price_tier;
 const bedTier = (r: FabricTrackingRow): FabricTier | null => r.bedframe_price_tier ?? r.price_tier;
 
-const FABRIC_COLUMNS: GridColumn<FabricTrackingRow>[] = [
+// Exported so fabric-csv.test.ts can check the toolbar export still imports back.
+export const FABRIC_COLUMNS: GridColumn<FabricTrackingRow>[] = [
   {
     key: 'code',
     label: 'Internal Code',
