@@ -42,9 +42,9 @@ describe("mail access on the Org Chart", () => {
     expect(ownDepartmentMailboxes(elvis, addresses).map((a) => a.id)).toEqual(["ops"]);
   });
 
-  it("a grant to their own mailbox or own department mailbox is not shown as extra", () => {
+  it("only a grant to their own mailbox is redundant; their department mailbox is a real tick at L1", () => {
     const sales = { id: 4, department_id: 1, department_ids: [1] } as TeamMember;
-    expect(isRedundantGrant({ ...box(1), id: "sales" }, sales)).toBe(true);
+    expect(isRedundantGrant({ ...box(1), id: "sales" }, sales)).toBe(false);
     expect(isRedundantGrant({ ...box(2), id: "ops" }, sales)).toBe(false);
     expect(isRedundantGrant({ id: "me", address: "me@x.com", label: "", active: true, assignedUserId: 4 } as MailAddress, sales)).toBe(true);
     expect(isRedundantGrant({ id: "mate", address: "mate@x.com", label: "", active: true, assignedUserId: 5 } as MailAddress, sales)).toBe(false);

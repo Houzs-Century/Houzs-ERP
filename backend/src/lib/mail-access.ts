@@ -95,7 +95,7 @@ export async function recordAccessChange(
 }
 
 export const LEVEL_NAME: Record<string, string> = {
-  personal: "L1 · Personal (no department mailbox)",
+  personal: "L1 · Personal",
   department: "L1 · Personal",
   department_all: "L2 · Department",
   company: "L3 · Company",
