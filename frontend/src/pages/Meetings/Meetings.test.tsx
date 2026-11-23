@@ -2,6 +2,8 @@
  * and what the page sends: the calendar draws the hub's meetings, a booking conflict
  * opens the dialog built from the 409 body (and never drops anyone), room editing is
  * offered only with Manage meeting rooms, and the guest link is this ERP's address. */
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactNode } from "react";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -36,7 +38,8 @@ function serve(canManage: boolean) {
   api.post.mockResolvedValue({});
 }
 
-const open = (url: string) => render(<MemoryRouter initialEntries={[url]}><Meetings /></MemoryRouter>);
+const withQuery = (ui: ReactNode) => <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>{ui}</QueryClientProvider>;
+const open = (url: string) => render(withQuery(<MemoryRouter initialEntries={[url]}><Meetings /></MemoryRouter>));
 
 beforeEach(() => {
   for (const f of [api.get, api.post, api.patch, api.postForm, api.fetchBlobUrl]) f.mockReset();
@@ -116,7 +119,7 @@ describe("Meetings", () => {
       cleanup();
     }
     serve(false);
-    render(<MemoryRouter initialEntries={["/meetings"]}><MobileMeetings onBack={() => undefined} /></MemoryRouter>);
+    render(withQuery(<MemoryRouter initialEntries={["/meetings"]}><MobileMeetings onBack={() => undefined} /></MemoryRouter>));
     expect(await screen.findByText("Meetings")).toBeTruthy();
   });
 });

@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { Bell, ChevronLeft, ChevronRight, Link2, Search } from "lucide-react";
 import { api } from "../../api/client";
 import { TabStrip } from "../../components/TabStrip";
+import { useRefreshMeetingsUnread } from "../../hooks/useAmendmentApprovals";
 import { openLoadedTab } from "../../lib/openLoadedTab";
 import { cn } from "../../lib/utils";
 import {
@@ -42,6 +43,7 @@ function rangeFor(view: CalView, anchor: number): [number, number] {
 
 export function Meetings({ erpName = "Houzs ERP", embedded = false }: { erpName?: string; embedded?: boolean }) {
   const [params, setParams] = useSearchParams();
+  const refreshUnread = useRefreshMeetingsUnread();
   const tab: MeetingsTab = isMeetingsTab(params.get("tab")) ? (params.get("tab") as MeetingsTab) : "calendar";
   const narrow = typeof window !== "undefined" && window.innerWidth < 768;
   const view: CalView = isView(params.get("view")) ? (params.get("view") as CalView) : narrow ? "day" : "week";
@@ -109,10 +111,10 @@ export function Meetings({ erpName = "Houzs ERP", embedded = false }: { erpName?
     if (tab !== "mine") return;
     let live = true;
     fresh<{ meetings: Meeting[]; notifications: Notice[] }>("/api/meetings/mine")
-      .then((r) => { if (!live) return; setMine(r); setMineError(null); if (r.notifications.some((n) => !n.read)) api.post("/api/meetings/notifications/read").catch((e) => console.warn("[meetings] could not mark notifications read", e)); })
+      .then((r) => { if (!live) return; setMine(r); setMineError(null); if (r.notifications.some((n) => !n.read)) api.post("/api/meetings/notifications/read").then(refreshUnread).catch((e) => console.warn("[meetings] could not mark notifications read", e)); })
       .catch((e) => live && setMineError(message(e)));
     return () => { live = false; };
-  }, [tab, tick]);
+  }, [tab, tick, refreshUnread]);
   useEffect(() => {
     if (tab !== "links") return;
     fresh<{ links: GuestLink[] }>("/api/meetings/links").then((r) => setLinks(r.links)).catch((e) => showError(e));
