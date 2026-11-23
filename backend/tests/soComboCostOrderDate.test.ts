@@ -47,9 +47,9 @@ const SET_PRICE = {
   prices_by_height: { 28: 100000 }, label: null, effective_from: '2026-10-10', created_at: '2026-10-10T02:00:00Z', deleted_at: null,
 };
 
-function orderOn(soDate: string | null, dateReadFails = false, setRow: Record<string, unknown> = SET_PRICE) {
+function orderOn(soDate: string | null, dateReadFails = false, setRow: Record<string, unknown> = SET_PRICE, setCostDay: string | null = null) {
   return makeSb((table, select, single) => {
-    if (table === 'mfg_sales_order_items') return { data: PIECES.map((p) => ({ ...p })), error: null };
+    if (table === 'mfg_sales_order_items') return { data: PIECES.map((p) => ({ ...p, set_cost_day: setCostDay })), error: null };
     if (table === 'sofa_combo_pricing') return { data: [setRow], error: null };
     if (table === 'mfg_sales_orders' && select.includes('so_date')) {
       return dateReadFails ? { data: null, error: { message: 'read failed' } } : { data: { so_date: soDate }, error: null };
@@ -96,6 +96,15 @@ describe('recomputeTotals prices a sofa set as of the order date', () => {
   test('a set price created after the order date never costs it, even with an earlier start date', async () => {
     const { sb, updates } = orderOn('2026-10-20', false, { ...SET_PRICE, effective_from: '2026-05-31', created_at: '2026-10-25T02:00:00Z' });
     await recomputeTotals(sb, 'HC-SO-TEST-6', ctx);
+    expect(lineCosts(updates)).toEqual([]);
+    expect(headerCost(updates)).toBe(120000);
+  });
+
+  // Owner 2026-11-23 (rule 2): a set re-costed on the day its pieces changed
+  // keeps that cost; a later save must not put the order-date set price back.
+  test('a set re-costed by a later product change is left as it is', async () => {
+    const { sb, updates } = orderOn('2026-10-20', false, SET_PRICE, '2026-11-05');
+    await recomputeTotals(sb, 'HC-SO-TEST-7', ctx);
     expect(lineCosts(updates)).toEqual([]);
     expect(headerCost(updates)).toBe(120000);
   });

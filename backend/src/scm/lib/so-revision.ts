@@ -37,6 +37,7 @@
 
 import type { Context } from 'hono';
 import { buildVariantSummary, receivedFloorViolation } from '../shared';
+import { canonicalizeVariants } from '../shared/so-variant-rule';
 import {
   loadMaintenanceConfig,
   recomputeOneLine,
@@ -57,7 +58,10 @@ import {
 } from '../routes/mfg-sales-orders';
 import { activeCompanyId, isMirroredDocNo, houzsOwns2990 } from './companyScope';
 import { scopeToCompanyIdOrOpen } from './companyScope';
-import { todayMyt } from './my-time';
+import { mytDateOf, todayMyt } from './my-time';
+import { lineEditCostKind, qtyChangeLineCostSen } from './so-line-cost-edit';
+import { amendmentSubmissionKey, closeChangeWindow, isLaterChange, openChangeWindow, type ChangeWindow, type OrderDays } from './so-product-change-record';
+import { costChangedSofaSets, sofaModelOf } from './so-set-change-cost';
 import { dateOrNull } from './date-coerce';
 import { exemptionExpirySeed } from './so-exemption-expiry';
 import { soWarehouseIdForDoc } from './so-warehouse';
@@ -133,6 +137,12 @@ type AmendmentRow = {
   id: string;
   so_doc_no: string;
   status: string;
+  amendment_no?: string | null;
+  /* staff id of who asked, and when: the record names them, and finds the
+     submission's other halves by them (so-product-change-record.ts). */
+  requested_by?: string | null;
+  reason?: string | null;
+  created_at?: string | null;
   /* mig 0119 — the HEADER half of the request: { camelCaseKey: newValue|null }
      for the frozen columns only. NULL on a line-only amendment. */
   header_changes?: Record<string, string | null> | null;
@@ -341,7 +351,7 @@ export async function applySoAmendment(
   // (1) Load amendment + lines + SO header.
   const { data: amdRow, error: amdErr } = await sb
     .from('so_amendments')
-    .select('id, so_doc_no, status, header_changes')
+    .select('id, so_doc_no, status, header_changes, amendment_no, requested_by, reason, created_at')
     .eq('id', amendmentId)
     .maybeSingle();
   if (amdErr) throw new Error(`applySoAmendment: amendment load failed: ${amdErr.message}`);
@@ -397,12 +407,33 @@ export async function applySoAmendment(
      mig 0091 gave the column a HOUZS DEFAULT — so a blip books a 2990 order's new
      line to Houzs, silently, exactly as the note on that insert warns. */
   const { data: soHdrCo, error: soHdrCoErr } = await sb.from('mfg_sales_orders')
-    .select('company_id, linked_ac_docno, so_date, status, processing_date, customer_delivery_date, sales_exemption_expiry').eq('doc_no', docNo).maybeSingle();
+    .select('company_id, linked_ac_docno, so_date, created_at, status, processing_date, customer_delivery_date, sales_exemption_expiry').eq('doc_no', docNo).maybeSingle();
   if (soHdrCoErr) throw new Error(`applySoAmendment: SO company load failed: ${soHdrCoErr.message}`);
   const soCompanyId = (soHdrCo as { company_id?: number | null } | null)?.company_id ?? null;
   // Stage 3c: re-price a bound line's COST as-of the order's own date (auto-derive,
   // flag-gated in recomputeOneLine). Null when the header carries no date.
   const soAsOf = (soHdrCo as { so_date?: string | null } | null)?.so_date ?? null;
+  /* Rule 2 (owner 2026-11-23): approved after the order's opening day, a PRODUCT
+     change is costed on the day it is approved (the change day), unchanged lines
+     keep the order-date cost, and the change goes on Finance's record. On the
+     opening day every line is priced as before. */
+  const changeDay = todayMyt();
+  const hdrCreatedAt = (soHdrCo as { created_at?: string | null } | null)?.created_at ?? null;
+  const hdrDays: OrderDays | null = hdrCreatedAt
+    ? {
+      openingDay: mytDateOf(hdrCreatedAt),
+      orderDay: soAsOf && /^\d{4}-\d{2}-\d{2}/.test(soAsOf) ? soAsOf.slice(0, 10) : mytDateOf(hdrCreatedAt),
+      status: String((soHdrCo as { status?: string | null } | null)?.status ?? ''),
+    }
+    : null;
+  const ruleTwo: OrderDays | null = soCompanyId != null && isLaterChange(hdrDays, changeDay) ? hdrDays : null;
+  const changeWindow: ChangeWindow | null = ruleTwo && soCompanyId != null
+    ? { companyId: soCompanyId, docNo, route: 'AMENDMENT', windowKey: await amendmentSubmissionKey(sb, amendment) }
+    : null;
+  const changeWindowId = changeWindow ? await openChangeWindow(sb, changeWindow, changeDay) : null;
+  /* The sofa sets this amendment changes, and its lines costed on the change day. */
+  const ruleTwoModels = new Set<string>();
+  const ruleTwoLineIds: string[] = [];
 
   /* Is this order MIGRATED from AutoCount? `linked_ac_docno` is the marker that
      actually exists on the SO header (migration 0271); `migrated_no_stock` lives
@@ -559,6 +590,9 @@ export async function applySoAmendment(
       if (delErr) throw new Error(`applySoAmendment: REMOVE failed for line ${diff.sales_order_item_id}: ${delErr.message}`);
       {
         const snap = (diff.old_snapshot ?? {}) as Record<string, unknown>;
+        if (ruleTwo && String(snap.item_group ?? '').toLowerCase() === 'sofa' && snap.item_code) {
+          ruleTwoModels.add(sofaModelOf(String(snap.item_code)));
+        }
         const gone = String(snap.item_code ?? snap.itemCode ?? diff.sales_order_item_id);
         lineChanges.push({ field: `line_removed_${gone}`, from: `qty ${snap.qty ?? '?'}`, to: 'removed' });
         touched.push({ change, itemCode: String(snap.item_code ?? ''), qty: 0 });
@@ -616,7 +650,7 @@ export async function applySoAmendment(
         qty,
         unitPriceSen: Number(diff.new_unit_price_sen ?? 0),
         variants: (variants as MfgItemForRecompute['variants']) ?? null,
-      }, cachedConfig, soCompanyId, { trustOperatorSelling: addLineTrust, asOf: soAsOf });
+      }, cachedConfig, soCompanyId, { trustOperatorSelling: addLineTrust, asOf: ruleTwo ? changeDay : soAsOf });
 
       const unit = rec.unit_price_sen;
       const lineTotal = qty * unit;
@@ -652,6 +686,7 @@ export async function applySoAmendment(
         ...(soCompanyId != null ? { company_id: soCompanyId } : {}),
         ...(typeof maxLineNo === 'number' ? { line_no: maxLineNo + 1 } : {}),
         doc_no:                  docNo,
+        ...(ruleTwo ? { cost_day: changeDay } : {}),
         line_date:              todayMyt(),
         item_group:             itemGroup,
         item_code:              itemCode,
@@ -693,6 +728,10 @@ export async function applySoAmendment(
       }).select('id').single();
       if (insErr) throw new Error(`applySoAmendment: ADD insert failed: ${insErr.message}`);
       if (insRow?.id) addedLineIds.push(String(insRow.id));
+      if (ruleTwo && insRow?.id && itemGroup === 'sofa') {
+        ruleTwoModels.add(sofaModelOf(itemCode));
+        ruleTwoLineIds.push(String(insRow.id));
+      }
       lineChanges.push({ field: `line_added_${itemCode}`, from: null, to: `qty ${qty}` });
       /* The remark is its OWN audit row — an added line's note is the request in
          a service line's case, so "qty 1" alone would not say what was approved. */
@@ -775,8 +814,57 @@ export async function applySoAmendment(
       ? Math.min(Math.max(Math.round(Number(diff.new_discount_sen)), 0), qty * unit)
       : Number(row.discount_sen ?? 0);
     const lineTotal = (qty * unit) - discount;
-    const unitCost = rec.unit_cost_sen;
-    const lineCost = unitCost * qty;
+    let unitCost = rec.unit_cost_sen;
+    let lineCost = unitCost * qty;
+    /* Rule 2 (see changeDay above). Not a product change (colour, fabric, side,
+       price, discount, a quantity whose selling amount stays): the line keeps the
+       cost it carries; the extra units of a quantity that moves the selling amount
+       take the change day's cost. A product change (another SKU or model, a leg,
+       an option, a seat height whose two heights cost differently that day) is
+       costed on the change day. A line with no cost yet is priced as before. */
+    let lineCostDay: string | null = null;
+    if (ruleTwo) {
+      const prevUnitCost = Math.max(0, Math.round(Number(row.unit_cost_sen) || 0));
+      const prevQty = Math.max(1, Number(row.qty) || 1);
+      const shape = lineEditCostKind(
+        { itemCode: String(row.item_code ?? ''), variants: canonicalizeVariants(String(row.item_group ?? ''), (row.variants as Record<string, unknown> | null) ?? null), unitCostSen: 1 },
+        { itemCode, variants: canonicalizeVariants(itemGroup, variants) },
+      );
+      const atChangeDay = (spec: { itemCode: string; itemGroup: string; variants: Record<string, unknown> | null }) => recomputeOneLine(sb, {
+        itemCode: spec.itemCode, itemGroup: spec.itemGroup, qty, unitPriceSen: clientUnit,
+        variants: (spec.variants as MfgItemForRecompute['variants']) ?? null,
+      }, cachedConfig, soCompanyId, { trustOperatorSelling: amendTrust, asOf: changeDay });
+      let sameHeight = false;
+      let changeUnit: number | null = null;
+      if (shape === 'height' && prevUnitCost > 0) {
+        const [was, now] = await Promise.all([
+          atChangeDay({ itemCode: String(row.item_code ?? ''), itemGroup: String(row.item_group ?? itemGroup), variants: (row.variants as Record<string, unknown> | null) ?? null }),
+          atChangeDay({ itemCode, itemGroup, variants }),
+        ]);
+        sameHeight = was.unit_cost_sen === now.unit_cost_sen;
+        changeUnit = now.unit_cost_sen;
+      }
+      if ((shape === 'keep' || sameHeight) && prevUnitCost > 0) {
+        const sellingMoved = lineTotal !== Math.round(Number(row.total_sen) || 0);
+        const extraToday = sellingMoved && qty > prevQty;
+        const extraUnit = extraToday ? (changeUnit ?? (await atChangeDay({ itemCode, itemGroup, variants })).unit_cost_sen) : null;
+        lineCost = qtyChangeLineCostSen({
+          qtyBefore: prevQty, qtyAfter: qty, lineCostBeforeSen: prevUnitCost * prevQty,
+          sellingChanged: sellingMoved, changeDayUnitCostSen: extraUnit,
+        });
+        unitCost = qty === prevQty ? prevUnitCost : Math.round(lineCost / qty);
+        if (extraToday) lineCostDay = changeDay;
+      } else if (shape !== 'keep') {
+        unitCost = changeUnit ?? (await atChangeDay({ itemCode, itemGroup, variants })).unit_cost_sen;
+        lineCost = unitCost * qty;
+        lineCostDay = changeDay;
+      }
+      if (lineCostDay && itemGroup === 'sofa') {
+        ruleTwoModels.add(sofaModelOf(itemCode));
+        if (codeMoved) ruleTwoModels.add(sofaModelOf(String(row.item_code ?? '')));
+        ruleTwoLineIds.push(String(diff.sales_order_item_id));
+      }
+    }
 
     /* NAME + variant summary must track a SPEC's new code (owner 2026-08-11).
        This UPDATE rewrote item_code but left description / description2 untouched,
@@ -814,6 +902,7 @@ export async function applySoAmendment(
       unit_cost_sen:         unitCost,
       line_cost_sen:         lineCost,
       line_margin_sen:       lineTotal - lineCost,
+      ...(lineCostDay ? { cost_day: lineCostDay } : {}),
       divan_price_sen:         rec.divan_price_sen,
       leg_price_sen:           rec.leg_price_sen,
       special_order_price_sen: rec.special_order_sen,
@@ -1012,6 +1101,18 @@ export async function applySoAmendment(
     }
   }
 
+  /* Rule 2 for the sofa sets this amendment changed: re-costed on the change day
+     before the roll-up below (lib/so-set-change-cost.ts). A failure leaves the
+     order-date spread, as before the rule; an atomic command rethrows. */
+  if (ruleTwo && soCompanyId != null && ruleTwoModels.size > 0) {
+    const set = await costChangedSofaSets(sb, {
+      docNo, companyId: soCompanyId, orderDay: ruleTwo.orderDay, changeDay,
+      models: [...ruleTwoModels], changedLineIds: ruleTwoLineIds,
+    });
+    // eslint-disable-next-line no-console
+    if (!set.ok) console.error('[so-rule-2] set re-cost failed — the order-date spread stands:', docNo, set.reason);
+  }
+
   /* (4-continued) Re-derive the delivery fee (rebuilds SVC-DELIVERY* lines on
      the authoritative computeSoDeliveryFee) AND fold header totals — the same
      helper the create + add-line paths call after a line change; it internally
@@ -1087,7 +1188,26 @@ export async function applySoAmendment(
      coverage and must not pay for the reconciler's reads. */
   if (addedLineIds.length > 0) await syncSoDeliveredFromDo(sb, [docNo], userId);
 
+  /* Finance's record of the change (lib/so-product-change-record.ts): who asked,
+     who approved, and the order's product lines before and after. */
+  if (changeWindow && changeWindowId) {
+    await closeChangeWindow(sb, changeWindow, changeWindowId, {
+      changedBy: await staffNameOf(sb, amendment.requested_by ?? null),
+      approvedBy: realActorName(c),
+      amendmentNo: amendment.amendment_no ?? null,
+      changeDay,
+    });
+  }
+
   return { soDocNo: docNo, revision: nextRevision, addedLineIds };
+}
+
+/** A staff member's name, or null. */
+async function staffNameOf(sb: Sb, staffId: string | null): Promise<string | null> {
+  if (!staffId) return null;
+  const { data, error } = await sb.from('staff').select('name').eq('id', staffId).maybeSingle();
+  if (error) return null;
+  return ((data as { name?: string | null } | null)?.name ?? '').trim() || null;
 }
 
 /* ── snapshotPo ─────────────────────────────────────────────────────────────
