@@ -5,8 +5,8 @@
    WHY. All five are category SERVICE in the product list and the system already keeps them out of stock (a
    10 Nov receipt of TRANSPORTATION CHARGES booked none). Their rows are leftovers: the 29 Aug AutoCount cutover
    wrote stock adjustments for them, and two September receipts of TRANSPORTATION CHARGES booked lots. Read
-   23 Nov: balances from -1,714 to +1 across KL / PG / SBH / SRW / HQ, and three open lots worth RM 707.15
-   (TRANSPORTATION CHARGES RM 546.15 + RM 65.00, RC-CUS RM 96.00).
+   23 Nov: balances from -1,714 to +1 across KL / PG / SBH / SRW / HQ, and three open lots (two on
+   TRANSPORTATION CHARGES, one on RC-CUS).
 
    THE HOUSE PATH. Houzs posts no journal per stock adjustment: stock value reaches the ledger once a month,
    from the movements, through the stock close (acc/stock-close.ts: Dr STOCK - <bucket> / Cr STOCKS AT THE END -
