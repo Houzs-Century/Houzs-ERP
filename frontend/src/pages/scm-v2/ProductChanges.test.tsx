@@ -70,7 +70,8 @@ describe('Product changes, by month', () => {
     const t3 = rowOf('HC-SO-T3').textContent;
     expect(t3).toContain('9,000.00 → 7,800.00');
     expect(t3).toContain('(1,200.00)');
-    expect(t3).toContain('Not covered · 1,120.00');
+    expect(t3).toContain('Not covered');
+    expect(rowOf('HC-SO-T3').querySelector('[title="Short by 1,120.00"]')).toBeTruthy();
     expect(t3).toContain('Amendment A1 + A2');
     expect(rowOf('HC-SO-T2').textContent).toContain('Covered');
   });

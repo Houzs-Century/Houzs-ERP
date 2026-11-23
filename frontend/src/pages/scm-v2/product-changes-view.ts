@@ -18,9 +18,9 @@ export const TYPE_LABEL: Record<ProductChangeType, string> = {
   height: 'Seat height',
   option: 'Option',
   pieces: 'Sofa pieces',
-  qty: 'Quantity',
-  new_line: 'Line added',
-  removed_line: 'Line removed',
+  qty: 'Qty',
+  new_line: 'New line',
+  removed_line: 'Removed line',
 };
 
 export const BUCKET_LABEL: Record<ProductChangeBucket, string> = {

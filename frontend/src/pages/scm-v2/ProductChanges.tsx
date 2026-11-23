@@ -99,7 +99,7 @@ const linesTable = (r: ProductChangeRow) => (
 const DETAIL_COLUMNS: Column<ProductChangeRow>[] = [
   { key: 'change_day', label: 'Date', getValue: (r) => r.changeDay, exportValue: (r) => r.changeDay, render: (r) => fmtDate(r.changeDay) },
   {
-    key: 'doc_no', label: 'Order', getValue: (r) => r.docNo, searchValue: (r) => `${r.docNo} ${r.customer ?? ''}`,
+    key: 'doc_no', label: 'Order', width: '150px', getValue: (r) => r.docNo, searchValue: (r) => `${r.docNo} ${r.customer ?? ''}`,
     render: (r) => (
       <span className={s.stack}>
         <Link to={`/scm/sales-orders/${encodeURIComponent(r.docNo)}`} className={s.doc}>{r.docNo}</Link>
@@ -110,7 +110,7 @@ const DETAIL_COLUMNS: Column<ProductChangeRow>[] = [
   {
     key: 'salesperson', label: 'Salesperson', getValue: (r) => r.salesperson, searchValue: (r) => `${r.salesperson} ${whoText(r)}`,
     exportValue: (r) => `${r.salesperson} · changed by ${whoText(r)}`,
-    render: (r) => <span className={s.stack}><span>{r.salesperson}</span><span className={s.muted}>by {whoText(r)}</span></span>,
+    render: (r) => <span className={s.stack}><span>{r.salesperson}</span>{r.changedBy.length > 0 && <span className={s.muted}>by {whoText(r)}</span>}</span>,
   },
   {
     key: 'what', label: 'What changed', getValue: (r) => typesText(r), exportValue: (r) => `${typesText(r)} · ${routeText(r)}`,
@@ -135,7 +135,7 @@ const DETAIL_COLUMNS: Column<ProductChangeRow>[] = [
     key: 'margin_covered', label: 'Covered', getValue: (r) => (r.covered ? 1 : 0), exportValue: (r) => (r.covered ? 'Covered' : `Not covered · ${fmtSenPlain(r.shortfallSen)}`),
     render: (r) => (r.covered
       ? <span className={s.ok}>Covered</span>
-      : <span className={s.flag}>Not covered · {fmtSenPlain(r.shortfallSen)}</span>),
+      : <span className={s.flag} title={`Short by ${fmtSenPlain(r.shortfallSen)}`}>Not covered</span>),
   },
 ];
 
