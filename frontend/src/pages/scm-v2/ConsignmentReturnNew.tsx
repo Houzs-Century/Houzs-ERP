@@ -259,7 +259,7 @@ export const ConsignmentReturnNew = () => {
     }
     // Server rule (consignment-returns.ts → 409 note_link_required): every line names its note line.
     if (validLines.some((l) => !l.doItemId)) {
-      notify({ title: 'Every return line must be picked from a Consignment Note — start from the note.', tone: 'error' });
+      void notify({ title: 'Every return line must be picked from a Consignment Note — start from the note.', tone: 'error' });
       return;
     }
 

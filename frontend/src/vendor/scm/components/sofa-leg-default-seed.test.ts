@@ -116,6 +116,6 @@ describe('the sofa Leg Height default is a per-document decision', () => {
     const listed = new Set([...MAY_SEED, ...MAY_NOT_SEED]);
     for (const f of listed) expect(renderCount(page(f))).toBeGreaterThan(0);
     const total = [...listed].reduce((n, f) => n + renderCount(page(f)), 0);
-    expect(total).toBe(15);
+    expect(total).toBe(14); // 15 until the Consignment Return detail lost its free add-line card (note_link_required)
   });
 });
