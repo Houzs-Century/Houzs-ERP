@@ -105,6 +105,12 @@ type LineDraft = {
   countedAt: string | null;
   /* Round 1: unit cost (sen) the post would value a variance at; null = none. */
   estUnitCostSen: number | null;
+  /* Round 3 (owner 2026-11-23): the unit cost the counter types for a found SKU
+     with no priced lot. enteredCostSen is what the server holds (sen);
+     enteredCostRmInput is the editable RM text in the box. */
+  enteredCostSen: number | null;
+  origEnteredCostSen: number | null;
+  enteredCostRmInput: string;
   sourcePos: Array<{ po: string; qty: number }>;
   addedOnCount: boolean;
   /* Round 2: where the counter found the goods (moved there at post). */
@@ -130,6 +136,9 @@ const toDraft = (l: StockTakeLine): LineDraft => ({
   countedBy:        l.counted_by ?? null,
   countedAt:        l.counted_at ?? null,
   estUnitCostSen:   l.est_unit_cost_sen ?? null,
+  enteredCostSen:     l.entered_unit_cost_sen ?? null,
+  origEnteredCostSen: l.entered_unit_cost_sen ?? null,
+  enteredCostRmInput: l.entered_unit_cost_sen == null ? '' : String(l.entered_unit_cost_sen / 100),
   sourcePos:        l.source_pos ?? [],
   addedOnCount:     l.added_on_count === true,
   rackId:           l.rack_id ?? null,
@@ -147,11 +156,22 @@ const parseCounted = (s: string): number | null => {
   return n;
 };
 
+/* The unit cost (sen) a found line carries from the sheet — the RM the counter
+   typed in the cost box, parsed; null when blank or not a positive number. */
+const enteredCostSenOf = (d: LineDraft): number | null => {
+  const s = d.enteredCostRmInput.trim();
+  if (s === '') return null;
+  const rm = Number(s);
+  return Number.isFinite(rm) && rm > 0 ? Math.round(rm * 100) : null;
+};
+
 /* The RM a line's variance is worth, in sen; null when there is no variance
-   to show or no cost to value it at. */
+   to show or no cost to value it at. A SKU with no priced lot falls back to the
+   cost the counter typed on the sheet, so the value previews as they fill it. */
 const valueOf = (d: LineDraft): number | null => {
   const v = varianceOf(d);
-  return v == null || d.estUnitCostSen == null ? null : v * d.estUnitCostSen;
+  const cost = d.estUnitCostSen ?? enteredCostSenOf(d);
+  return v == null || cost == null ? null : v * cost;
 };
 
 /* null = "no variance to show": uncounted, OR system qty hidden (blind). */
@@ -440,7 +460,8 @@ export const StockTakeDetail = () => {
     // Build diff payload — only lines whose counted or notes changed.
     const changed = shownLines.filter((l) => {
       const parsedCounted = parseCounted(l.countedQtyInput);
-      return parsedCounted !== l.origCountedQty || l.notes !== l.origNotes || l.rackId !== l.origRackId;
+      return parsedCounted !== l.origCountedQty || l.notes !== l.origNotes || l.rackId !== l.origRackId
+        || enteredCostSenOf(l) !== l.origEnteredCostSen;
     });
     const unknownRacks = shownLines.filter(rackUnknown);
     if (unknownRacks.length > 0) {
@@ -465,6 +486,7 @@ export const StockTakeDetail = () => {
             ...(parseCounted(l.countedQtyInput) !== l.origCountedQty ? { countedQty: parseCounted(l.countedQtyInput) } : {}),
             notes:      l.notes.trim() ? l.notes.trim() : null,
             ...(l.rackId !== l.origRackId ? { rackId: l.rackId } : {}),
+            ...(enteredCostSenOf(l) !== l.origEnteredCostSen ? { enteredUnitCostSen: enteredCostSenOf(l) } : {}),
           })),
         });
         setDirty(false);
@@ -1183,7 +1205,24 @@ export const StockTakeDetail = () => {
                       <td key="value" className={styles.tableRight}
                           title={v != null && v !== 0 && lineValue == null ? 'No cost on record for this SKU' : undefined}
                           style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-13)', color: varianceColor }}>
-                        {lineValue == null || lineValue === 0 ? '—' : fmtSignedRM(lineValue)}
+                        {/* Owner 2026-11-23: a found SKU with no cost on record blocks Post.
+                            Let the counter type the unit cost right here (OPEN + found +
+                            no priced lot) instead of opening a separate Stock Adjustment. */}
+                        {isDraft && ln.estUnitCostSen == null && v != null && v > 0 ? (
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            aria-label={`Unit cost (RM) for ${ln.itemCode}`}
+                            value={ln.enteredCostRmInput}
+                            onChange={(e) => setLine(ln.id, { enteredCostRmInput: e.target.value.replace(/[^0-9.]/g, '') })}
+                            placeholder="cost RM"
+                            title="This SKU has no cost on record. Type the unit cost (RM) so the found quantity can post."
+                            className={styles.fieldInput}
+                            style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-12)', width: 92 }}
+                          />
+                        ) : (
+                          lineValue == null || lineValue === 0 ? '—' : fmtSignedRM(lineValue)
+                        )}
                       </td>
                     ),
                     /* WHO counted this cell (mig 0270) — stamped server-side
