@@ -1142,6 +1142,34 @@ export const hr_ot_claims = pgTable(
   ],
 );
 
+// HC-0125 self-service make-up punch (补卡): a worker files the in and/or out
+// time for a day they forgot to punch, a supervisor (hr.punch.approve) approves,
+// and the approval writes hr_attendance like an HR correction. Minutes from
+// midnight, like hr_ot_claims.
+export const hr_punch_corrections = pgTable(
+  "hr_punch_corrections",
+  {
+    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    company_id: bigint("company_id", { mode: "number" }).notNull(),
+    employee_id: bigint("employee_id", { mode: "number" }).notNull(),
+    work_date: date("work_date", { mode: "string" }).notNull(),
+    req_in_min: integer("req_in_min"),
+    req_out_min: integer("req_out_min"),
+    reason: text("reason").notNull().default(""),
+    status: text("status").notNull().default("PENDING"),
+    reject_reason: text("reject_reason"),
+    reviewed_by: integer("reviewed_by"),
+    reviewed_at: timestamp("reviewed_at", { withTimezone: true, mode: "string" }),
+    created_by: integer("created_by"),
+    created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+    updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("idx_hr_punch_corrections_emp").on(t.company_id, t.employee_id, t.work_date),
+    index("idx_hr_punch_corrections_status").on(t.company_id, t.status, t.work_date),
+  ],
+);
+
 export const hr_attendance = pgTable(
   "hr_attendance",
   {

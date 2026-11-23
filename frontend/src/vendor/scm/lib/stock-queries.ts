@@ -785,8 +785,8 @@ export function useReopenStockTake() {
         method: 'PATCH', body: '{}',
       }),
     onSuccess: (_data, id) => {
-      qc.invalidateQueries({ queryKey: ['stock-takes'] });
-      qc.invalidateQueries({ queryKey: ['stock-takes', id] });
+      void qc.invalidateQueries({ queryKey: ['stock-takes'] });
+      void qc.invalidateQueries({ queryKey: ['stock-takes', id] });
     },
   });
 }

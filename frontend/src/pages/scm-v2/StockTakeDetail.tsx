@@ -662,13 +662,13 @@ export const StockTakeDetail = () => {
     if (!proceed) return;
     reopen.mutate(id, {
       onSuccess: (res) => {
-        detail.refetch();
-        notify({
+        void detail.refetch();
+        void notify({
           title: 'Reopened',
           body: `${res.lineCount} line${res.lineCount === 1 ? '' : 's'} refreshed to current stock. Count and post again.`,
         });
       },
-      onError: (err) => notify({ title: 'Reopen failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' }),
+      onError: (err) => { void notify({ title: 'Reopen failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' }); },
     });
   };
 

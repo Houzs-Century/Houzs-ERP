@@ -54,14 +54,17 @@ function cellOf(day: WorkDay | undefined, future: boolean): Cell {
   if (day.status === "ABSENT") return "absent";
   return day.lateMin > 0 ? "late" : "present";
 }
-const CELL: Record<Cell, { bg: string; letter: string; color: string }> = {
-  present: { bg: "bg-synced-bg", letter: "", color: "" },
-  late: { bg: "bg-time/15", letter: "L", color: "text-time" },
-  absent: { bg: "bg-err-bg", letter: "A", color: "text-err" },
-  leave: { bg: "bg-surface-dim", letter: "V", color: "text-ink-muted" },
-  rest: { bg: "", letter: "·", color: "text-ink-soft" },
-  notin: { bg: "bg-surface-2", letter: "?", color: "text-ink-muted" },
-  future: { bg: "", letter: "", color: "" },
+const CELL: Record<Cell, { bg: string; letter: string; color: string; dot: boolean }> = {
+  present: { bg: "bg-synced-bg", letter: "", color: "text-synced", dot: true },
+  late: { bg: "bg-time/15", letter: "L", color: "text-time", dot: false },
+  absent: { bg: "bg-err-bg", letter: "A", color: "text-err", dot: false },
+  leave: { bg: "bg-surface-dim", letter: "V", color: "text-ink-secondary", dot: false },
+  // Rest days and days with no punch stay blank, so the month reads calm and
+  // only real exceptions (late / absent / leave) draw the eye. Before go-live
+  // every past day has no punch; a grid full of grey "?" was the eye-strain.
+  rest: { bg: "", letter: "", color: "", dot: false },
+  notin: { bg: "", letter: "", color: "", dot: false },
+  future: { bg: "", letter: "", color: "", dot: false },
 };
 
 const STATUS: { key: PunchState; label: string; dot: string }[] = [
@@ -187,7 +190,7 @@ export function AttendancePage() {
               <button type="button" disabled={isCurrentMonth} onClick={() => setMonth(shiftMonth(month, 1))} className="flex h-7 w-7 items-center justify-center rounded-md text-ink-muted hover:bg-surface-2 disabled:opacity-40">›</button>
             </div>
             <div className="ml-auto flex items-center gap-3 text-[11px] text-ink-muted">
-              <Legend bg="bg-synced-bg" label="Present" /><Legend bg="bg-time/15" label="Late" /><Legend bg="bg-err-bg" label="Absent" /><Legend bg="bg-surface-dim" label="Leave" /><Legend bg="bg-surface-2" label="No punch" />
+              <Legend bg="bg-synced-bg" label="Present" /><Legend bg="bg-time/15" label="Late" /><Legend bg="bg-err-bg" label="Absent" /><Legend bg="bg-surface-dim" label="Leave" />
             </div>
           </div>
 
@@ -229,11 +232,11 @@ export function AttendancePage() {
                           const s = CELL[c];
                           const editable = canManage && !future;
                           return (
-                            <td key={d} className={cx("border-b border-r border-border-subtle p-0.5 text-center", isToday ? "bg-primary-soft/30" : isWeekend(d) && "bg-surface-dim/50")}>
+                            <td key={d} className={cx("border-b border-border-subtle px-0.5 py-1 text-center", isToday ? "bg-primary-soft/30" : isWeekend(d) && "bg-surface-dim/40")}>
                               {editable ? (
-                                <button type="button" onClick={() => openCell(e.id, d)} aria-label={`${e.name} ${month}-${pad2(d)}`} className={cx("mx-auto flex h-6 w-6 items-center justify-center rounded text-[9px] font-bold hover:ring-1 hover:ring-primary", s.bg, s.color)}>{s.letter}</button>
+                                <button type="button" onClick={() => openCell(e.id, d)} aria-label={`${e.name} ${month}-${pad2(d)}`} className={cx("mx-auto flex h-6 w-6 items-center justify-center rounded-md text-[9px] font-bold hover:ring-1 hover:ring-primary", s.bg, s.color)}>{s.dot ? <span className="h-1.5 w-1.5 rounded-full bg-synced/70" /> : s.letter}</button>
                               ) : (
-                                <div className={cx("mx-auto flex h-6 w-6 items-center justify-center rounded text-[9px] font-bold", s.bg, s.color)}>{s.letter}</div>
+                                <div className={cx("mx-auto flex h-6 w-6 items-center justify-center rounded-md text-[9px] font-bold", s.bg, s.color)}>{s.dot ? <span className="h-1.5 w-1.5 rounded-full bg-synced/70" /> : s.letter}</div>
                               )}
                             </td>
                           );
