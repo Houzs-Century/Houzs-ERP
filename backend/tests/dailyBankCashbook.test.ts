@@ -118,6 +118,7 @@ type Block = {
 };
 type Board = {
   book: string; blocks: Block[]; totalClosingSen: number; pendingApprovalSen: number; availableSen: number; note: string;
+  transit: Array<{ acquirerCode: string; balanceSen: number }>; unassignedTransit: Array<{ acquirerCode: string }>;
   notStarted: Array<{ accountCode: string; startDate: string | null }>;
 };
 const fetchBoard = async (h: ReturnType<typeof harness>, path: string, date: string) => {
@@ -171,9 +172,13 @@ describe('Daily Bank cash book — the board', () => {
     expect(b.notStarted.map((x) => x.accountCode)).toEqual(['310-0020']);
     expect(b.totalClosingSen).toBe(may.closingSen);
     expect(b.note).toMatch(/^The cash book/);
+    /* Card money not yet in a bank: listed once, on its way; under no bank, not even "not tied to a bank". */
+    expect(b.transit.map((t) => [t.acquirerCode, t.balanceSen])).toEqual([['Untagged bank', 336_500]]);
+    expect(b.unassignedTransit).toEqual([]);
 
-    /* The original board has not moved by a sen. */
+    /* The original board has not moved by a sen, its card money where it always was. */
     expect(await original(h)).toEqual(before);
+    expect(before.unassignedTransit.map((t) => t.acquirerCode)).toEqual(['Untagged bank']);
 
     /* The day before the start: not on the cash book yet, and says when it starts. */
     const earlier = await board(h, '2026-11-23');

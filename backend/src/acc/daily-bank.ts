@@ -37,8 +37,9 @@
 // reading the bank's real balance at the start of its start day, plus the
 // receipts typed for it, less the approved (POSTED) vouchers paying out of it on
 // their voucher date — what the voucher posts, its bank charge included. Pending
-// counts only the vouchers paying out of those accounts; transit is as above.
-// The rest wait in `notStarted`. Without one (cashbook null) the board is the
+// counts only the vouchers paying out of those accounts. Card money not yet in a
+// bank sits under none of them (owner, on its rows: 这个可以不要出现吗): the board
+// still lists it once, as on its way, never counted. The rest wait in `notStarted`. Without one (cashbook null) the board is the
 // original, untouched. No books-versus-bank difference is shown anywhere, and
 // nothing here writes to the ledger.
 // ----------------------------------------------------------------------------
@@ -290,7 +291,8 @@ export function computeDailyBank(
     }
     return { acquirerCode: t.acquirerCode, accountCode: t.account_code, accountName: t.account_name, balanceSen: bal, bankAccountCode: t.bankAccountCode ?? null };
   });
-  const unassignedTransit = transit.filter((t) => t.bankAccountCode == null || !blockCodes.has(t.bankAccountCode));
+  /* On the cash book no card money sits under a bank, so none is left over either. */
+  const unassignedTransit = cashbook ? [] : transit.filter((t) => t.bankAccountCode == null || !blockCodes.has(t.bankAccountCode));
 
   const blocks: DailyBankBlock[] = carried.map((a) => {
     let opening = 0;
@@ -334,7 +336,7 @@ export function computeDailyBank(
     const closingSen = opening + inSen - outSen;
     const pending = pendingOf(a.account_code);
     const pendingSen = pending.reduce((s, p) => s + p.amountSen, 0);
-    const own = transit.filter((t) => t.bankAccountCode === a.account_code);
+    const own = cashbook ? [] : transit.filter((t) => t.bankAccountCode === a.account_code);
     const transitSen = own.reduce((s, t) => s + t.balanceSen, 0);
     return {
       accountCode: a.account_code,
@@ -372,7 +374,7 @@ export function computeDailyBank(
     book: cashbook ? 'cashbook' : 'ledger',
     notStarted,
     note: cashbook
-      ? 'The cash book: each bank from its starting balance, plus the receipts typed for it, less the approved vouchers paying out of it on their voucher date (bank charge included). Pending = checked vouchers awaiting approval, on the bank they pay from. Transit money is swiped but not yet remitted - shown under the bank its acquirer pays into, never counted as movable.'
+      ? 'The cash book: each bank from its starting balance, plus the receipts typed for it, less the approved vouchers paying out of it on their voucher date (bank charge included). Pending = checked vouchers awaiting approval, on the bank they pay from. Card money swiped but not yet remitted is listed once as on its way, never under a bank and never counted as movable.'
       : 'Computed live from the ledger (posted, non-reversed). Pending = checked vouchers awaiting approval, on the account they pay from; an approved one posts on its own date. Transit money is swiped but not yet remitted - shown under the bank its acquirer pays into, never counted as movable.',
   };
 }

@@ -195,7 +195,7 @@ describe('computeDailyBank — the cash book', () => {
     { id: 'p2', pv_number: 'HPV-8', payee_name: 'PAYS FROM HLBB', credit_account_code: '310-0020', voucher_date: DAY, total_sen: 5_000, exchange_rate: 1 },
   ];
 
-  it('B/F = start + receipts − approved vouchers before the day; the day adds its own; only its own banks, their pending and their transit count', () => {
+  it('B/F = start + receipts − approved vouchers before the day; the day adds its own; only its own banks and their pending count; no card money under a bank', () => {
     const board = computeDailyBank(DAY, BANKS, ACQ, LEDGER, PENDING, {
       starts: [START],
       receipts: [
@@ -223,12 +223,16 @@ describe('computeDailyBank — the cash book', () => {
     ]);
     expect(may.pendingSen).toBe(30_000);
     expect(may.availableSen).toBe(may.closingSen - 30_000);
-    expect(may.availableWithTransitSen).toBe(may.availableSen + 120_000);
-    /* HLBB is not on the cash book yet: no block, its pending voucher not counted here, its card money with no bank here. */
+    /* Card money not yet in the bank sits under no bank on the cash book (owner: 这个可以不要出现吗). */
+    expect(may).toMatchObject({ transit: [], transitSen: 0, availableWithTransitSen: may.availableSen });
+    /* HLBB is not on the cash book yet: no block, and its pending voucher not counted here. */
     expect(board.notStarted).toEqual([{ accountCode: '310-0020', accountName: 'CASH AT BANK - HLBB', startDate: null }]);
     expect(board.pendingApprovalSen).toBe(30_000);
     expect(board.unassignedPending).toEqual([]);
-    expect(board.unassignedTransit.map((t) => t.acquirerCode)).toEqual(['PBB']);
+    expect(board.unassignedTransit).toEqual([]);
+    /* It is still listed once, on its way, and still never counted. */
+    expect(board.transit.map((t) => [t.acquirerCode, t.balanceSen])).toEqual([['MBB', 120_000], ['PBB', 70_000]]);
+    expect(board.totalTransitSen).toBe(190_000);
     expect(board.totalClosingSen).toBe(may.closingSen);
     expect(board.availableSen).toBe(may.closingSen - 30_000);
     expect(board.note).toMatch(/^The cash book/);

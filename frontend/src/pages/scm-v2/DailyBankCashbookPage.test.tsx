@@ -103,6 +103,18 @@ describe('Daily Bank (cash book) — its own page beside the original', () => {
     ]);
   });
 
+  test('under each bank: no card money, and a line between the rows (owner 2026-11-23: 这个可以不要出现吗？然后我要有线条)', () => {
+    renderAt('?view=accounts');
+    const may = screen.getByLabelText('310-0010 CASH AT BANK - MAYBANK');
+    expect(may.textContent).not.toMatch(/In transit/);
+    const strip = may.querySelector('[class*="afterStrip"]')!;
+    expect(strip.className).toMatch(/afterRuled/);
+    expect([...strip.children].map((r) => r.textContent)).toEqual([
+      '· Awaiting approval · UMOBILE · HPV-102−800.00',
+      'Available (after pending)100,999.50',
+    ]);
+  });
+
   test('an address with the original\'s Daily close view opens the Board here', async () => {
     renderAt('?view=close');
     await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('?view=board'));

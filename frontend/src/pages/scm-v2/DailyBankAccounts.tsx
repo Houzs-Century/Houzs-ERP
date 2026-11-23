@@ -53,7 +53,11 @@ export function accountLines(block: DailyBankBlock): AccountLine[] {
   return [...paid, ...block.receipts.filter((m) => !isPayment(m)).map((m) => other(m, 'in')), ...block.payouts.map((m) => other(m, 'out'))];
 }
 
-function AccountBlock({ block, date, focused }: { block: DailyBankBlock; date: string; focused: boolean }) {
+function AccountBlock({ block, date, focused, ruled }: {
+  block: DailyBankBlock; date: string; focused: boolean;
+  /** A line between the rows under the closing (the cash book's page, owner 2026-11-23: 我要有线条). */
+  ruled: boolean;
+}) {
   const ref = useRef<HTMLElement | null>(null);
   useEffect(() => {
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- jsdom (the tests) has no scrollIntoView
@@ -96,7 +100,7 @@ function AccountBlock({ block, date, focused }: { block: DailyBankBlock; date: s
         <b className={block.closingSen < 0 ? styles.negative : ''}>{money(block.closingSen)}</b>
       </div>
       {(block.pendingSen !== 0 || block.transitSen !== 0) && (
-        <div className={styles.afterStrip}>
+        <div className={`${styles.afterStrip} ${ruled ? styles.afterRuled : ''}`}>
           {block.pending.map((p, i) => (
             <div key={p.id ?? `${p.pvNumber ?? 'pv'}:${i}`} className={styles.afterRow}>
               <span className={styles.awaitingText}>· Awaiting approval · {p.payee ?? 'Payee'}{p.pvNumber ? ` · ${p.pvNumber}` : ''}</span>
@@ -127,7 +131,7 @@ export function DailyBankAccounts({ board, focus, future }: { board: DailyBankBo
     ...board.unassignedPending.map((p, i) => ({ key: `p:${p.id ?? i}`, text: `Awaiting approval · ${p.payee ?? 'Payee'}${p.pvNumber ? ` · ${p.pvNumber}` : ''}`, sen: -p.amountSen }))];
   return (
     <div className={styles.accounts}>
-      {board.blocks.map((b) => <AccountBlock key={b.accountCode} block={b} date={board.date} focused={b.accountCode === focus} />)}
+      {board.blocks.map((b) => <AccountBlock key={b.accountCode} block={b} date={board.date} focused={b.accountCode === focus} ruled={board.book === 'cashbook'} />)}
       <section className={styles.allCard} aria-label="Closing · all bank & cash">
         <span className={styles.allLabel}>Closing · all bank &amp; cash</span>
         <span className={styles.allSum}>Opening {money(opening)} + In {money(inSen)} − Out {money(outSen)} · {movements} movement{movements === 1 ? '' : 's'}</span>
@@ -143,9 +147,8 @@ export function DailyBankAccounts({ board, focus, future }: { board: DailyBankBo
       )}
       <div className={styles.footnote}>
         {board.book === 'cashbook'
-          ? 'Your cash book: each bank from its starting balance, the receipts typed in Receipts & starts and the approved payment vouchers.'
-          : 'Live from the ledger, posted entries only.'}{' '}
-        Card money not paid out yet sits in the settlement accounts (Board › On its way); vouchers awaiting approval have not left the bank. {board.note}
+          ? `Your cash book; the original Daily Bank is unchanged. ${board.note}`
+          : `Live from the ledger, posted entries only. Card money not paid out yet sits in the settlement accounts (Board › On its way); vouchers awaiting approval have not left the bank. ${board.note}`}
       </div>
     </div>
   );
