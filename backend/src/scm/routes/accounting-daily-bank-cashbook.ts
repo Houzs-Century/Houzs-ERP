@@ -16,6 +16,10 @@
 //   POST   /daily-bank/receipts              { accountCode, date, amountSen, note }
 //   PATCH  /daily-bank/receipts/:id          any of those four
 //   DELETE /daily-bank/receipts/:id          stamps deleted_at / deleted_by; the row stays
+//   PUT    /daily-bank/receipts/day          { date, cells: [{ accountCode, method, amountSen }] }
+//                                            the day's grid (owner 2026-11-23: 不能做成这样的
+//                                            表格给我keyin income？): one total per bank and
+//                                            method; 0 clears a cell
 //
 // Writes take the Finance write key Daily close takes (scm.payment_voucher.post),
 // ask the audit trail first (assertAuditWritable) and record every change on it
@@ -100,19 +104,53 @@ async function startOf(sb: Sb, companyId: number, code: string): Promise<{ ok: t
 const auditReady = async (sb: Sb, entityType: EntityType, entityId: string | null, action: AuditAction, companyId: number): Promise<boolean> =>
   (await assertAuditWritable(sb, { entityType, entityId, action, companyId })).ok;
 
+/** A way money comes in: the grid's column. */
+export type ReceiptMethod = { key: string; label: string };
+const FIXED_METHODS: ReceiptMethod[] = [{ key: 'online', label: 'Online' }, { key: 'cash', label: 'Cash' }, { key: 'cheque', label: 'Cheque' }];
+
+/** The grid's columns: Online, Cash, Cheque, then each card terminal Settlement Setup
+    keeps active for the company (its acquirer code), in code order. */
+async function methodsOf(sb: Sb, companyId: number): Promise<{ ok: true; methods: ReceiptMethod[] } | ({ ok: false } & Refusal)> {
+  const { data, error } = await sb.from('acc_acquirers').select('code').eq('company_id', companyId).eq('is_active', true).order('code');
+  if (error) return { ok: false, status: 500, body: { error: 'load_failed', reason: error.message } };
+  const codes = [...new Set((data as Array<{ code: string }>).map((a) => String(a.code)))];
+  return { ok: true, methods: [...FIXED_METHODS, ...codes.map((code) => ({ key: `card:${code}`, label: code }))] };
+}
+
+/** What a grid receipt says on the board: its method in words. */
+export const methodNote = (m: ReceiptMethod): string => (m.key.startsWith('card:') ? `${m.label} card` : m.label);
+
+/** A method from its key, for one a day already holds: a terminal turned off in
+    Settlement Setup later keeps its column on that day, to be read, changed or cleared. */
+function methodFromKey(key: string): ReceiptMethod | null {
+  const fixed = FIXED_METHODS.find((m) => m.key === key);
+  if (fixed) return fixed;
+  return /^card:\S+$/.test(key) ? { key, label: key.slice('card:'.length) } : null;
+}
+const withHeld = (methods: ReceiptMethod[], held: Iterable<string>): ReceiptMethod[] => {
+  const out = [...methods];
+  for (const key of held) {
+    const m = out.some((x) => x.key === key) ? null : methodFromKey(key);
+    if (m) out.push(m);
+  }
+  return out;
+};
+
 /* ── GET /daily-bank/cashbook?date= ─────────────────────────────────────────── */
 export const cashbookGet = async (c: Ctx): Promise<Response> => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const date = calendarDay(c.req.query('date')) ?? todayMyt();
   const sb = c.get('supabase');
+  const ms = await methodsOf(sb, co.companyId);
+  if (!ms.ok) return c.json(ms.body, ms.status);
   const [acc, st, rc] = await Promise.all([
     sb.from('accounts').select('account_code, account_name')
       .eq('company_id', co.companyId).eq('acc_money', true).eq('is_active', true).order('account_code'),
     sb.from('acc_daily_bank_starts').select('account_code, start_date, balance_sen, note, set_by, updated_at')
       .eq('company_id', co.companyId),
     paginateAll<Record<string, unknown>>((from, to) => sb.from('acc_daily_bank_receipts')
-      .select('id, account_code, receipt_date, amount_sen, note, created_by, created_at, updated_by, updated_at, deleted_by, deleted_at')
+      .select('id, account_code, receipt_date, amount_sen, note, method, created_by, created_at, updated_by, updated_at, deleted_by, deleted_at')
       .eq('company_id', co.companyId).eq('receipt_date', date)
       .order('created_at').order('id').range(from, to)),
   ]);
@@ -132,7 +170,7 @@ export const cashbookGet = async (c: Ctx): Promise<Response> => {
     const start = starts.get(code) ?? null;
     return {
       id: String(r.id), accountCode: code, accountName: nameOf.get(code) ?? code, date: String(r.receipt_date).slice(0, 10),
-      amountSen: Number(r.amount_sen), note: String(r.note ?? ''),
+      amountSen: Number(r.amount_sen), note: String(r.note ?? ''), method: (r.method as string | null) ?? null,
       createdBy: (r.created_by as string | null) ?? null, createdAt: (r.created_at as string | null) ?? null,
       updatedBy: (r.updated_by as string | null) ?? null, updatedAt: (r.updated_at as string | null) ?? null,
       deletedBy: (r.deleted_by as string | null) ?? null, deletedAt: (r.deleted_at as string | null) ?? null,
@@ -140,8 +178,9 @@ export const cashbookGet = async (c: Ctx): Promise<Response> => {
       counted: r.deleted_at == null && start != null && start.date <= date,
     };
   });
+  const held = rows.filter((r) => r.deletedAt == null && r.method != null).map((r) => String(r.method));
   return c.json({
-    date, today: todayMyt(), canWrite: canWrite(c), accounts,
+    date, today: todayMyt(), canWrite: canWrite(c), accounts, methods: withHeld(ms.methods, held),
     receipts: rows.filter((r) => r.deletedAt == null),
     deleted: rows.filter((r) => r.deletedAt != null),
   });
@@ -355,4 +394,125 @@ export const cashbookReceiptDelete = async (c: Ctx): Promise<Response> => {
     fieldChanges: receiptChanges(before, null),
   });
   return c.json({ ok: true });
+};
+
+/* ── PUT /daily-bank/receipts/day { date, cells: [{ accountCode, method, amountSen }] } ──
+   The day's income as a grid (owner 2026-11-23: 不能做成这样的表格给我keyin income？):
+   each cell is one receipt — bank, day, method — holding that day's total. A cell
+   sent with an amount creates or changes its receipt, a cell sent as 0 deletes it
+   (kept, stamped), a cell not sent is left as it is. Each change is on the trail. */
+type Cell = { account_code: string; method: ReceiptMethod; amount_sen: number };
+type GridRow = { id: string; account_code: string; method: string; amount_sen: number };
+type Step = { kind: 'create'; cell: Cell; old: null } | { kind: 'update' | 'delete'; cell: Cell; old: GridRow };
+
+export const cashbookReceiptsDayPut = async (c: Ctx): Promise<Response> => {
+  const g = writeGate(c);
+  if ('resp' in g) return g.resp;
+  const body = await readJson(c);
+  if (!body) return c.json({ error: 'invalid_json' }, 400);
+  const date = calendarDay(body.date);
+  if (!date) return c.json({ error: 'bad_date', message: 'Give the day the money came in as a real day.' }, 400);
+  if (date > todayMyt()) return c.json({ error: 'future_date', message: `${fmtDate(date)} has not come yet. Type money once it is received.` }, 400);
+  if (!Array.isArray(body.cells)) return c.json({ error: 'bad_cells', message: 'Send the cells of the day.' }, 400);
+  const sb = c.get('supabase');
+
+  const ms = await methodsOf(sb, g.companyId);
+  if (!ms.ok) return c.json(ms.body, ms.status);
+  const { data: liveRaw, error: lErr } = await sb.from('acc_daily_bank_receipts')
+    .select('id, account_code, method, amount_sen')
+    .eq('company_id', g.companyId).eq('receipt_date', date).is('deleted_at', null).not('method', 'is', null);
+  if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
+  const live = new Map((liveRaw as Array<Record<string, unknown>>).map((r) => {
+    const row: GridRow = { id: String(r.id), account_code: String(r.account_code), method: String(r.method), amount_sen: Number(r.amount_sen) };
+    return [`${row.account_code}|${row.method}`, row];
+  }));
+  const methodBy = new Map(withHeld(ms.methods, [...live.values()].map((r) => r.method)).map((m) => [m.key, m]));
+  const [st, acc] = await Promise.all([
+    sb.from('acc_daily_bank_starts').select('account_code, start_date').eq('company_id', g.companyId),
+    sb.from('accounts').select('account_code').eq('company_id', g.companyId).eq('acc_money', true).eq('is_active', true),
+  ]);
+  if (st.error) return c.json({ error: 'load_failed', reason: st.error.message }, 500);
+  if (acc.error) return c.json({ error: 'load_failed', reason: acc.error.message }, 500);
+  const money = new Set((acc.data as Array<{ account_code: string }>).map((a) => String(a.account_code)));
+  /* The banks on the cash book this day: a money account whose start is on or before it. */
+  const open = new Set((st.data as Array<{ account_code: string; start_date: string }>)
+    .filter((s) => money.has(String(s.account_code)) && String(s.start_date).slice(0, 10) <= date)
+    .map((s) => String(s.account_code)));
+
+  const cells: Cell[] = [];
+  const seen = new Set<string>();
+  for (const raw of body.cells as unknown[]) {
+    const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+    const account = String(r.accountCode ?? '').trim();
+    const method = methodBy.get(String(r.method ?? '').trim());
+    const amount = Number(r.amountSen);
+    if (!method) return c.json({ error: 'bad_method', message: `${String(r.method ?? '') || 'That'} is not a way money comes in here.` }, 400);
+    if (!open.has(account)) return c.json({ error: 'not_open', message: `${account || 'That account'} is not on the cash book on ${fmtDate(date)}. Set its starting balance first.` }, 409);
+    if (!Number.isSafeInteger(amount) || amount < 0 || amount >= MAX_SEN) {
+      return c.json({ error: 'bad_amount', message: 'Each amount is zero or more, in whole sen.' }, 400);
+    }
+    const key = `${account}|${method.key}`;
+    if (seen.has(key)) return c.json({ error: 'duplicate_cell', message: `${account} · ${method.label} is sent twice.` }, 400);
+    seen.add(key);
+    cells.push({ account_code: account, method, amount_sen: amount });
+  }
+
+  const plan = cells.flatMap((cell): Step[] => {
+    const old = live.get(`${cell.account_code}|${cell.method.key}`);
+    if (old && cell.amount_sen === 0) return [{ kind: 'delete', cell, old }];
+    if (old && old.amount_sen !== cell.amount_sen) return [{ kind: 'update', cell, old }];
+    if (!old && cell.amount_sen > 0) return [{ kind: 'create', cell, old: null }];
+    return [];
+  });
+  if (plan.length === 0) return c.json({ ok: true, created: 0, updated: 0, deleted: 0 });
+  if (!(await auditReady(sb, 'DAILY_BANK_RECEIPT', null, 'UPDATE', g.companyId))) return c.json(auditUnavailableBody(), 409);
+
+  const by = who(c);
+  const done = { created: 0, updated: 0, deleted: 0 };
+  /* Applied one cell at a time: a failure part-way leaves the earlier cells saved and
+     on the trail, and says so — the page re-reads the day. */
+  const stopped = (reason: string, status: 409 | 500) => c.json({
+    error: status === 409 ? 'conflict' : 'save_failed',
+    message: `Stopped part-way (${done.created + done.updated + done.deleted} of ${plan.length} saved): ${reason} The table now shows what is saved.`,
+  }, status);
+  for (const step of plan) {
+    const { cell } = step;
+    const facts = { account_code: cell.account_code, receipt_date: date, amount_sen: cell.amount_sen, note: methodNote(cell.method) };
+    if (step.kind === 'create') {
+      const { data, error } = await sb.from('acc_daily_bank_receipts')
+        .insert({ company_id: g.companyId, ...facts, method: cell.method.key, created_by: by }).select('id').single();
+      if (error) {
+        return String((error as { code?: string }).code ?? '') === '23505'
+          ? stopped(`someone else has just typed ${cell.account_code} · ${cell.method.label} for this day.`, 409)
+          : stopped(error.message, 500);
+      }
+      const id = String((data as { id: unknown }).id);
+      await recordEntityAudit(sb, {
+        entityType: 'DAILY_BANK_RECEIPT', entityId: id, entityDocNo: cell.account_code, action: 'CREATE', actor: c.get('houzsUser'), companyId: g.companyId,
+        note: `Received ${fmtSen(cell.amount_sen)} into ${cell.account_code} on ${fmtDate(date)}: ${facts.note}`,
+        fieldChanges: receiptChanges(null, facts),
+      });
+      done.created += 1;
+      continue;
+    }
+    const old = step.old;
+    const patch = step.kind === 'delete'
+      ? { deleted_at: new Date().toISOString(), deleted_by: by }
+      : { amount_sen: cell.amount_sen, note: facts.note, updated_by: by, updated_at: new Date().toISOString() };
+    const { data, error } = await sb.from('acc_daily_bank_receipts').update(patch)
+      .eq('company_id', g.companyId).eq('id', old.id).is('deleted_at', null).select('id');
+    if (error) return stopped(error.message, 500);
+    if (!Array.isArray(data) || data.length === 0) return stopped(`${cell.account_code} · ${cell.method.label} was changed by someone else a moment ago.`, 409);
+    const before = { ...facts, amount_sen: old.amount_sen };
+    await recordEntityAudit(sb, {
+      entityType: 'DAILY_BANK_RECEIPT', entityId: old.id, entityDocNo: cell.account_code,
+      action: step.kind === 'delete' ? 'DELETE' : 'UPDATE', actor: c.get('houzsUser'), companyId: g.companyId,
+      note: step.kind === 'delete'
+        ? `Receipt deleted: ${fmtSen(old.amount_sen)} into ${cell.account_code} on ${fmtDate(date)}: ${facts.note}`
+        : `Receipt changed: ${fmtSen(cell.amount_sen)} into ${cell.account_code} on ${fmtDate(date)}: ${facts.note}`,
+      fieldChanges: step.kind === 'delete' ? receiptChanges(before, null) : receiptChanges(before, facts),
+    });
+    if (step.kind === 'delete') done.deleted += 1; else done.updated += 1;
+  }
+  return c.json({ ok: true, ...done });
 };

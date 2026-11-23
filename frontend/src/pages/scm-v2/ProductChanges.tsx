@@ -15,7 +15,8 @@
 // ----------------------------------------------------------------------------
 
 import { useMemo } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
+import { FinanceDocLink } from './finance/FinanceDocLink';
 import { ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import { DataTable, type Column } from '../../components/DataTable';
 import { monthEnd } from '../../lib/dateRangePresets';
@@ -115,12 +116,13 @@ const linesTable = (r: ProductChangeRow) => (
 const DETAIL_COLUMNS: Column<ProductChangeRow>[] = [
   { key: 'change_day', label: 'Date', getValue: (r) => r.changeDay, exportValue: (r) => r.changeDay, render: (r) => fmtDate(r.changeDay) },
   {
-    key: 'doc_no', label: 'Order', width: '150px', getValue: (r) => r.docNo, searchValue: (r) => `${r.docNo} ${r.customer ?? ''}`,
+    key: 'doc_no', label: 'Order', width: '180px', getValue: (r) => r.docNo, searchValue: (r) => `${r.docNo} ${r.customer ?? ''}`,
     exportValue: (r) => (r.imported ? `${r.docNo} (imported)` : r.docNo),
     render: (r) => (
       <span className={s.stack}>
         <span className={s.docLine}>
-          <Link to={`/scm/sales-orders/${encodeURIComponent(r.docNo)}`} className={s.doc}>{r.docNo}</Link>
+          {/* Its own tab of the strip: the order's Back returns to this report as it was (owner 2026-11-23: 「我点开so后要返回这里」). */}
+          <FinanceDocLink to={`/scm/sales-orders/${encodeURIComponent(r.docNo)}`}>{r.docNo}</FinanceDocLink>
           {r.imported && <span className={s.tag} title="Brought over from AutoCount at the cutover">Imported</span>}
         </span>
         {r.customer && <span className={s.muted}>{r.customer}</span>}
