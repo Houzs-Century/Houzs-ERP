@@ -199,20 +199,6 @@ export const useUpdateConsignmentReturnStatus = () => {
 };
 
 /* ── Line items ──────────────────────────────────────────────────────── */
-export const useAddConsignmentReturnItem = () => {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, ...item }: { id: string } & Record<string, unknown>) =>
-      authedFetch<{ item: unknown }>(`/consignment-returns/${id}/items`, {
-        method: 'POST', body: JSON.stringify(item),
-      }),
-    onSuccess: (_, vars) => {
-      qc.invalidateQueries({ queryKey: ['consignment-return-detail', vars.id] });
-      qc.invalidateQueries({ queryKey: ['consignment-return'] });
-    },
-  });
-};
-
 export const useUpdateConsignmentReturnItem = () => {
   const qc = useQueryClient();
   return useMutation({

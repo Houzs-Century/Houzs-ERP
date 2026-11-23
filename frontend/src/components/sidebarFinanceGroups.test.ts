@@ -68,6 +68,8 @@ describe('the Finance sidebar', () => {
       '/scm/unmatched-payments',
       /* The supplier's credit notes, their own page under Money out (2026-10-28). */
       '/scm/supplier-notes',
+      /* The owner's cash book, a second Daily Bank under Bank & cards (2026-11-23). */
+      '/scm/daily-bank-cashbook',
     ]) expect(tos, `${to} is still reachable`).toContain(to);
     /* The Accounting page's tabs, now reachable by name. */
     for (const tab of ['je', 'gl', 'tb', 'close', 'check', 'pnl', 'bs', 'rp', 'ar', 'ap', 'corrections', 'collection', 'charges', 'groups', 'performance', 'products', 'logistics']) {

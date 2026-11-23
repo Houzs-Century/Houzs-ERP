@@ -438,7 +438,7 @@ export async function readFinanceTodoFacts(sb: any, companyId: number, today: st
   let stockClose: TodoFacts['stockClose'] = null;
   if (full) {
     const [board, doneRead, trialBalance, stockRun] = await Promise.all([
-      loadDailyBankBoard(sb, companyId, today, { withNames: false })
+      loadDailyBankBoard(sb, companyId, today, { withNames: false, book: 'ledger' })
         .catch((e: unknown) => ({ ok: false as const, reason: e instanceof Error ? e.message : String(e) })),
       safe('what was done today', () => readDone(sb, companyId, today, card, bk)),
       safe('trial balance', () => readTrialBalance(sb, companyId)),
