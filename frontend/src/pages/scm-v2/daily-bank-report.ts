@@ -115,6 +115,8 @@ export const boardTotalsLine = (board: DailyBankBoard): string =>
 export const DB_COLORS = {
   ink: '#221F20', soft: '#6F6A63', green: '#2F5D4F', red: '#B8331F', orange: '#B76B00', grey: '#8A857E',
   band: '#E4F0E9', sectionBg: '#EDE8E2', bar: '#2B2320', barText: '#F6F1EA', rule: '#DDD7CF',
+  /* The cash book's picture draws its lines to be seen (owner 2026-11-23: 线条). */
+  line: '#B3AA9F',
 } as const;
 
 export const rowColor = (k: DailyBankRowKind): string => {
@@ -177,7 +179,16 @@ export function drawDailyBankCanvas(board: DailyBankBoard): HTMLCanvasElement {
   text(boardDayLabel(board.date), W - P - 14, y + 22, { size: 12.5, bold: true, color: DB_COLORS.barText, right: true });
   y += 34;
 
+  /* The cash book's picture is ruled: a line under the headings and under every
+     row, and a frame round each bank (owner 2026-11-23: 线条). The original keeps
+     its faint rules. */
+  const ruled = board.book === 'cashbook';
+  const lineUnder = (at: number) => {
+    ctx.fillStyle = ruled ? DB_COLORS.line : DB_COLORS.rule;
+    ctx.fillRect(P, at + rowH - 1, W - 2 * P, 1);
+  };
   for (const sec of sections) {
+    const top = y;
     ctx.fillStyle = DB_COLORS.sectionBg;
     ctx.fillRect(P, y, W - 2 * P, rowH);
     text(sec.code ? `${sec.title}  ·  ${sec.code}` : sec.title, X.who, y + 16, { size: 13, bold: true });
@@ -192,6 +203,7 @@ export function drawDailyBankCanvas(board: DailyBankBoard): HTMLCanvasElement {
     text(heads[3], X.rec, y + 16, { size: 10, bold: true, color: DB_COLORS.soft, right: true });
     text(heads[4], X.pay, y + 16, { size: 10, bold: true, color: DB_COLORS.soft, right: true });
     text(heads[5], X.bal, y + 16, { size: 10, bold: true, color: DB_COLORS.soft, right: true });
+    if (ruled) lineUnder(y);
     y += rowH;
     for (const r of sec.rows) {
       if (r.kind === 'available') { ctx.fillStyle = DB_COLORS.band; ctx.fillRect(P, y, W - 2 * P, rowH); }
@@ -205,9 +217,13 @@ export function drawDailyBankCanvas(board: DailyBankBoard): HTMLCanvasElement {
       if (r.receivedSen != null) text(cellMoney(r.receivedSen), X.rec, y + 16, { size: 12, mono: true, color: DB_COLORS.green, bold: r.kind === 'receivedHead', right: true });
       if (r.paymentSen != null) text(cellMoney(r.paymentSen), X.pay, y + 16, { size: 12, mono: true, color, bold: r.kind === 'paidHead' || r.kind === 'pendingHead', right: true });
       if (r.balanceSen != null) text(cellMoney(r.balanceSen), X.bal, y + 16, { size: 12, mono: true, color: balanceColor(r), bold: strong || r.kind === 'bf' || r.kind === 'transitHead', right: true });
-      ctx.fillStyle = DB_COLORS.rule;
-      ctx.fillRect(P, y + rowH - 1, W - 2 * P, 1);
+      lineUnder(y);
       y += rowH;
+    }
+    if (ruled) {
+      ctx.strokeStyle = DB_COLORS.line;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(P + 0.5, top + 0.5, W - 2 * P - 1, y - top - 1);
     }
     y += 6;
   }
