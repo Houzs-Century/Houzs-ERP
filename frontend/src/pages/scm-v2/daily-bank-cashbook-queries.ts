@@ -18,10 +18,16 @@ export type CashbookReceiptRow = {
   deletedBy: string | null; deletedAt: string | null;
   /** On the board: its account's start is on or before it, and it is not deleted. */
   counted: boolean;
+  /** The grid's column it was keyed in (online, cash, cheque, card:<code>); null = typed with a note. */
+  method: string | null;
 };
+/** A way money comes in: one column of the day's grid. */
+export type CashbookMethod = { key: string; label: string };
 export type CashbookDay = {
   date: string; today: string; canWrite: boolean;
   accounts: CashbookAccount[]; receipts: CashbookReceiptRow[]; deleted: CashbookReceiptRow[];
+  /** The grid's columns: Online, Cash, Cheque, then the company's active card terminals. */
+  methods: CashbookMethod[];
 };
 
 /** The cash-book board: the same shape as the original Daily Bank's, its banks
@@ -79,6 +85,13 @@ export const useEditCashbookReceipt = () => useCashbookWrite(
   (v: { id: string; accountCode: string; date: string; amountSen: number; note: string }) =>
     authedFetch<{ ok: boolean }>(receiptPath(v.id), json('PATCH', { accountCode: v.accountCode, date: v.date, amountSen: v.amountSen, note: v.note })),
   'Receipt not changed',
+);
+
+/** The day's grid (owner 2026-11-23): the cells that changed, each bank × method's total; 0 clears one. */
+export const useSaveCashbookDay = () => useCashbookWrite(
+  (v: { date: string; cells: Array<{ accountCode: string; method: string; amountSen: number }> }) =>
+    authedFetch<{ ok: boolean; created: number; updated: number; deleted: number }>('/accounting/daily-bank/receipts/day', json('PUT', v)),
+  'Income not saved',
 );
 
 export const useDeleteCashbookReceipt = () => useCashbookWrite(

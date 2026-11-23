@@ -15,7 +15,7 @@ vi.mock('../../vendor/scm/lib/mutation-error', () => ({ writeFailedAs: () => () 
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import {
   useAddCashbookReceipt, useDailyBankCashbook, useDailyBankCashbookBoard, useDeleteCashbookReceipt, useEditCashbookReceipt,
-  useRemoveCashbookStart, useSaveCashbookStart,
+  useRemoveCashbookStart, useSaveCashbookDay, useSaveCashbookStart,
 } from './daily-bank-cashbook-queries';
 
 const mockedFetch = vi.mocked(authedFetch);
@@ -56,6 +56,8 @@ describe('Daily Bank cash book hooks — the wire contract', () => {
         .mutateAsync({ id: 'r 1', accountCode: '310-0010', date: '2026-11-25', amountSen: 1, note: 'x' }),
       deleteReceipt: () => renderHook(() => useDeleteCashbookReceipt(), { wrapper }).result.current
         .mutateAsync({ id: 'r1' }),
+      saveDay: () => renderHook(() => useSaveCashbookDay(), { wrapper }).result.current
+        .mutateAsync({ date: '2026-11-25', cells: [{ accountCode: '310-0010', method: 'card:GHL', amountSen: 903_150 }] }),
     };
     const cases: Array<[() => Promise<unknown>, string, string, unknown]> = [
       [send.saveStart, '/accounting/daily-bank/starts/310-0010', 'PUT', { startDate: '2026-11-24', balanceSen: -250_000, note: null }],
@@ -63,6 +65,7 @@ describe('Daily Bank cash book hooks — the wire contract', () => {
       [send.addReceipt, '/accounting/daily-bank/receipts', 'POST', { accountCode: '310-0010', date: '2026-11-25', amountSen: 300_000, note: 'Hookka deposit' }],
       [send.editReceipt, '/accounting/daily-bank/receipts/r%201', 'PATCH', { accountCode: '310-0010', date: '2026-11-25', amountSen: 1, note: 'x' }],
       [send.deleteReceipt, '/accounting/daily-bank/receipts/r1', 'DELETE', undefined],
+      [send.saveDay, '/accounting/daily-bank/receipts/day', 'PUT', { date: '2026-11-25', cells: [{ accountCode: '310-0010', method: 'card:GHL', amountSen: 903_150 }] }],
     ];
     for (const [run, path, method, body] of cases) {
       mockedFetch.mockReset();
