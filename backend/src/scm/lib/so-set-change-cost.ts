@@ -16,11 +16,12 @@
    company never had a set price for needs nothing: its pieces carry their own
    costs already. */
 
-import { scopeToCompanyId } from './companyScope';
+import { activeCompanyId, scopeToCompanyId, type CompanyScopeCtx } from './companyScope';
 import { loadMaintenanceConfig, recomputeOneLine, type MfgItemForRecompute } from './mfg-pricing-recompute';
 import { loadMasterSofaComboCostsOf } from './pos-sofa-combos';
 import { planChangedSetCost, type ChangedSetPiece } from './sofa-combo-cost-spread';
 import { splitSofaCode, type SofaPriceTier } from '../shared/sofa-combo-pricing';
+import type { OrderDays } from './so-product-change-record';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SCM PostgREST client is untyped at every call site in this tree.
 type Sb = any;
@@ -135,4 +136,25 @@ export async function costChangedSofaSets(sb: Sb, args: {
     written += 1;
   }
   return { ok: true, written };
+}
+
+/** The line routes' half: after a line write that is a rule-2 change (`later`
+ *  set), re-cost the sofa sets of the `touched` lines — an added or changed
+ *  piece (`changed`: these lines were just priced on the change day) or a piece
+ *  taken off. A failure is logged and the order-date spread stands, as before
+ *  the rule. */
+export async function recostSofaSetsAfterWrite(
+  sb: Sb, c: CompanyScopeCtx, docNo: string, later: OrderDays | null, changeDay: string,
+  touched: ReadonlyArray<{ id?: unknown; item_code?: unknown; item_group?: unknown }>, changed: boolean,
+): Promise<void> {
+  const companyId = activeCompanyId(c);
+  const sofa = touched.filter((t) => String(t.item_group ?? '').toLowerCase() === 'sofa' && String(t.item_code ?? '') !== '');
+  if (!later || companyId == null || sofa.length === 0) return;
+  const set = await costChangedSofaSets(sb, {
+    docNo, companyId, orderDay: later.orderDay, changeDay,
+    models: sofa.map((t) => sofaModelOf(String(t.item_code))),
+    changedLineIds: changed ? sofa.filter((t) => t.id != null).map((t) => String(t.id)) : [],
+  });
+  /* eslint-disable-next-line no-console */
+  if (!set.ok) console.error('[so-rule-2] set re-cost failed — the order-date spread stands:', docNo, set.reason);
 }

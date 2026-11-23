@@ -137,9 +137,9 @@ import {
 } from '../lib/companyScope';
 import { loadComboModulesById, loadMasterSofaComboCosts, loadSellingSofaCombos } from '../lib/pos-sofa-combos';
 import { comboCostAsOf, combosStandingOn, planComboCostSpread } from '../lib/sofa-combo-cost-spread';
-import { lineEditCostKind, qtyChangeLineCostSen } from '../lib/so-line-cost-edit';
+import { priceLineEdit } from '../lib/so-line-edit-cost';
 import { openDirectChangeWindow, productChangeWindow } from '../lib/so-product-change-record';
-import { costChangedSofaSets, sofaModelOf } from '../lib/so-set-change-cost';
+import { recostSofaSetsAfterWrite, sofaModelOf } from '../lib/so-set-change-cost';
 import { supabaseAuth } from '../middleware/auth';
 import { escapeForOr } from '../lib/postgrest-search';
 import { effectiveStatusFilter, isRangeNotSatisfiable } from '../lib/so-list-filters';
@@ -227,7 +227,6 @@ import {
   loadModelSofaModulePrices,
   loadModelSofaModuleCostRows,
   loadActiveFreeItemCampaigns,
-  recomputeOneLine,
   type MfgItemForRecompute,
   type RecomputedLine,
   type SofaModuleCostRowLite,
@@ -384,11 +383,8 @@ mfgSalesOrders.use('*', async (c, next) => {
   return next();
 });
 
-/* Every product change after the order's opening day is recorded for Finance
-   (owner 2026-11-23, lib/so-product-change-record.ts): a line route opens the
-   day's window right before it writes (openDirectChangeWindow) and this records
-   the event once it answered 2xx. `/:docNo/items/*` matches POST /:docNo/items
-   too; a second registration would run it twice. */
+/* Finance's product change record (lib/so-product-change-record.ts): a line route opens the day's
+   window before it writes; this records it after a 2xx. `/:docNo/items/*` matches POST /:docNo/items too. */
 mfgSalesOrders.use('/:docNo/items/*', productChangeWindow());
 
 /* ── SO child-lock guard (Tier 2 — downstream lock) ─────────────────────────
@@ -7058,9 +7054,7 @@ export async function recomputeTotals(sb: any, docNo: string, c: any) {
   const rows = (items ?? []) as Row[];
 
   /* ── Master sofa-combo COST spread: lib/sofa-combo-cost-spread.ts ────────── */
-  /* A set re-costed by rule 2 (a product change after the opening day,
-     lib/so-set-change-cost.ts) keeps the costs of its change day: the order-date
-     spread below would put the order-date set price back on it. */
+  /* A set re-costed on its change day (rule 2, lib/so-set-change-cost.ts) keeps that cost. */
   const ruleTwoSets = new Set(rows.filter((r) => r.set_cost_day).map((r) => sofaModelOf(r.item_code)));
   const sofaRows = rows.filter((r) => (r.item_group ?? '').toLowerCase() === 'sofa' && !ruleTwoSets.has(sofaModelOf(r.item_code)));
   if (sofaRows.length > 0) {
@@ -7266,24 +7260,6 @@ export async function recomputeTotals(sb: any, docNo: string, c: any) {
     return;
   }
   await recordSoTotalChange(sb, c, docNo, totalsBefore, { goodsSen: mattressSofa + bedframe + accessories + others, totalSen: grandTotal });
-}
-
-/* Rule 2 for an added sofa piece: its set is re-costed on the day it is added
-   (lib/so-set-change-cost.ts), before the roll-up spreads anything. A failure
-   is logged and the order-date spread stands, as before this rule. */
-async function recostSetAfterAdd(
-  sb: any, c: any, docNo: string, later: Awaited<ReturnType<typeof openDirectChangeWindow>>, changeDay: string,
-  inserted: Array<{ id?: unknown; item_code?: unknown; item_group?: unknown }>,
-): Promise<void> {
-  const co = activeCompanyId(c);
-  const sofa = inserted.filter((r) => String(r?.item_group ?? '').toLowerCase() === 'sofa' && r?.id != null);
-  if (!later || co == null || sofa.length === 0) return;
-  const set = await costChangedSofaSets(sb, {
-    docNo, companyId: co, orderDay: later.orderDay, changeDay,
-    models: sofa.map((r) => sofaModelOf(String(r.item_code ?? ''))), changedLineIds: sofa.map((r) => String(r.id)),
-  });
-  /* eslint-disable-next-line no-console */
-  if (!set.ok) console.error('[so-rule-2] set re-cost failed — the order-date spread stands:', docNo, set.reason);
 }
 
 mfgSalesOrders.post('/:docNo/items', async (c) => {
@@ -7691,9 +7667,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
      phone's add-item payload sends `itemGroup: l.itemGroup || "others"`. */
   const addGroupOf = await skuCategoryResolver(sb, [{ materialKind: 'mfg_product', itemCode: itemCodeStr }], activeCompanyId(c) ?? null);
   const addItemGroup = addGroupOf({ materialKind: 'mfg_product', itemCode: itemCodeStr, itemGroup: it.itemGroup }) ?? 'others';
-  /* Rule 2 (owner 2026-11-23): a line added after the order's opening day is
-     costed on the day it is added — today's cost, which the recompute above
-     already took — and carries that day. */
+  /* Rule 2: a line added after the opening day is costed today (the recompute above) and carries the day. */
   const addLater = await openDirectChangeWindow(c, sb, docNo);
   const addChangeDay = todayMyt();
   /* Shared base fields — used for both the single-row non-sofa path and as the
@@ -7850,7 +7824,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
         return c.json({ error: 'insert_failed', reason: moduleError.message }, 500);
       }
       const firstRow = (moduleData ?? [])[0] ?? moduleRows[0];
-      await recostSetAfterAdd(sb, c, docNo, addLater, addChangeDay, (moduleData ?? []) as Array<{ id?: unknown; item_code?: unknown; item_group?: unknown }>);
+      await recostSofaSetsAfterWrite(sb, c, docNo, addLater, addChangeDay, moduleData ?? [], true);
 
       // Default Free Gift — adding a sofa trigger may grant a gift.
       await reconcileFreeGiftLinesForSo(sb, docNo, c);
@@ -7910,7 +7884,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
     if (addLinePwpClaimed) await rollbackSinglePwpClaim(sb, addLinePwpClaimed);
     return c.json({ error: 'insert_failed', reason: error.message }, 500);
   }
-  await recostSetAfterAdd(sb, c, docNo, addLater, addChangeDay, [data as { id?: unknown; item_code?: unknown; item_group?: unknown }]);
+  await recostSofaSetsAfterWrite(sb, c, docNo, addLater, addChangeDay, [data], true);
   // Default Free Gift (0170) — adding a trigger line may grant a new accessory
   // gift; reconcile auto-inserts/deletes gift lines, then recomputes totals.
   await reconcileFreeGiftLinesForSo(sb, docNo, c);
@@ -8330,83 +8304,13 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
   /* The total floor that stood here (Loo 2026-06-11) is GONE — owner ruling,
      relayed 2026-08-18: a POS caller may lower a line. `posTablet` still gates
      the pricing_drift check below, which is a different rule and stays. */
-  /* Commander 2026-05-28 — cost snapshot on PATCH. Order of precedence:
-       1. Client sent unitCostSen > 0 → use it (explicit override).
-       2. A recompute ran (variants/itemCode/price touched) AND produced a
-          cost > 0 → use the server-computed cost (base + Σ backend priceSen
-          surcharges via computeMfgLineCost). This is the source of truth.
-       3. Client changed itemCode but recompute had no cost → re-snapshot
-          mfg_products under the new code.
-       4. Otherwise keep the prior unit_cost_sen unchanged.
-     Owner 2026-11-20 (lib/so-line-cost-edit.ts): a new colour, fabric, side,
-     price, discount or quantity keeps the line's cost (step 4) before step 2:
-     the order costs the prices of its order date, not today's.
-     Owner 2026-11-23 (rule 2): after the order's opening day a PRODUCT change
-     is costed today, the change day (cost_day), and so are the extra units of
-     a quantity change that moves the selling amount; a seat height whose two
-     heights cost the same today is not a product change. On the opening day
-     (laterChange null) every rule above stands as it was. */
-  const laterChange = await openDirectChangeWindow(c, sb, docNo);
-  const changeDay = todayMyt();
-  const explicitCost = it.unitCostSen !== undefined ? Number(it.unitCostSen) : 0;
-  const itemCodeChanged = it.itemCode !== undefined && it.itemCode !== prev.item_code;
-  const prevVariantsCanon = canonicalizeVariants(prev.item_group, prev.variants as Record<string, unknown> | null);
-  const afterVariantsCanon = canonicalizeVariants(itemGroupAfter, variantsAfter as Record<string, unknown> | null);
-  const prevUnitCost = senOrZero(prev.unit_cost_sen);
-  /* What the edit is to the PRODUCT, whatever the line's cost: `keep` (colour,
-     fabric, side, price, discount, quantity), `height`, or `product`. */
-  const shape = lineEditCostKind(
-    { itemCode: String(prev.item_code ?? ''), variants: prevVariantsCanon, unitCostSen: 1 },
-    { itemCode: itemCodeAfter, variants: afterVariantsCanon },
-  );
+  /* Cost: lib/so-line-edit-cost.ts (order of precedence, rules 1 and 2). */
+  const { unitCost, lineCost, costDay, later: laterChange, changeDay } = await priceLineEdit(sb, c, docNo, {
+    prev, explicitUnitCostSen: it.unitCostSen !== undefined ? Number(it.unitCostSen) : 0,
+    newItemCode: it.itemCode !== undefined ? String(it.itemCode ?? '') : null,
+    qty, unit, discount, itemCodeAfter, itemGroupAfter, variantsAfter: variantsAfter ?? null, recomputed: recomputedPatch,
+  });
   const lineTotal = senOrZero((qty * unit) - discount);
-  const prevQty = Math.max(1, Number(prev.qty) || 1);
-  const sellingMoved = lineTotal !== senOrZero((prev as { total_sen?: number | null }).total_sen);
-  /* Today's own unit cost of the line as it is after the edit (the recompute's
-     when one ran, else the product's). */
-  const todaysUnitCost = async (): Promise<number> => (
-    recomputedPatch && recomputedPatch.unit_cost_sen > 0
-      ? recomputedPatch.unit_cost_sen
-      : senOrZero((await recomputeOneLine(sb, { itemCode: itemCodeAfter, itemGroup: itemGroupAfter, qty, unitPriceSen: unit, variants: variantsAfter ?? null }, null, activeCompanyId(c))).unit_cost_sen)
-  );
-  /* A seat height alone: a product change only when the two heights cost
-     differently today. */
-  let sameCostHeight = false;
-  if (shape === 'height' && laterChange && prevUnitCost > 0) {
-    const was = senOrZero((await recomputeOneLine(sb, { itemCode: String(prev.item_code ?? ''), itemGroup: String(prev.item_group ?? itemGroupAfter), qty, unitPriceSen: unit, variants: (prev.variants as MfgItemForRecompute['variants']) ?? null }, null, activeCompanyId(c))).unit_cost_sen);
-    sameCostHeight = was === (await todaysUnitCost());
-  }
-  let unitCost: number;
-  let lineCost: number;
-  let costDay: string | null = null;
-  if (explicitCost > 0) {
-    unitCost = explicitCost;
-    lineCost = senOrZero(unitCost * qty);
-  } else if ((shape === 'keep' || sameCostHeight) && prevUnitCost > 0) {
-    const extraUnitsToday = laterChange != null && sellingMoved && qty > prevQty;
-    const todayUnit = extraUnitsToday ? await todaysUnitCost() : null;
-    lineCost = qtyChangeLineCostSen({
-      qtyBefore: prevQty, qtyAfter: qty, lineCostBeforeSen: prevUnitCost * prevQty,
-      sellingChanged: sellingMoved, changeDayUnitCostSen: todayUnit,
-    });
-    unitCost = qty === prevQty ? prevUnitCost : Math.round(lineCost / Math.max(1, qty));
-    if (extraUnitsToday) costDay = changeDay;
-  } else {
-    if (recomputedPatch && recomputedPatch.unit_cost_sen > 0) {
-      unitCost = recomputedPatch.unit_cost_sen;
-    } else if (itemCodeChanged) {
-      unitCost = await snapshotUnitCostSen(sb, String(it.itemCode ?? ''), 0, c);
-    } else {
-      /* Case 4 "keep the prior cost" — a legacy row whose unit_cost_sen was
-         never stamped reads back null/undefined here, and `undefined * qty` is
-         NaN, which then rides into line_cost_sen / line_margin_sen and the
-         header roll-up. Unknown prior cost = 0. */
-      unitCost = prevUnitCost;
-    }
-    lineCost = senOrZero(unitCost * qty);
-    /* A real product change, not a line that merely had no cost yet. */
-    if (laterChange && shape !== 'keep') costDay = changeDay;
-  }
 
   const updates: Record<string, unknown> = {
     qty, unit_price_sen: unit, discount_sen: discount, unit_cost_sen: unitCost,
@@ -8527,19 +8431,8 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
   // HC-0004: the DB floor (mig 20261014T1420) refused a cut below what a DO, created after the freeze read above, ships.
   if (isSoLineOverDelivered(error)) return c.json({ error: 'qty_below_delivered', message: 'A Delivery Order has just shipped this Sales Order line. Its qty can no longer be cut below what was delivered. Refresh and check the order.', reason: error!.message }, 409);
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
-  /* Rule 2: a sofa piece priced on the change day re-costs its set (and the set
-     it left, on a code change) before the roll-up below spreads anything. */
-  if (costDay && laterChange && itemGroupAfter.toLowerCase() === 'sofa') {
-    const co = activeCompanyId(c);
-    if (co != null) {
-      const set = await costChangedSofaSets(sb, {
-        docNo, companyId: co, orderDay: laterChange.orderDay, changeDay,
-        models: [sofaModelOf(String(prev.item_code ?? '')), sofaModelOf(itemCodeAfter)], changedLineIds: [itemId],
-      });
-      /* eslint-disable-next-line no-console */
-      if (!set.ok) console.error('[so-rule-2] set re-cost failed — the order-date spread stands:', docNo, set.reason);
-    }
-  }
+  /* Rule 2: a sofa piece priced on the change day re-costs its set, and the one it left. */
+  if (costDay) await recostSofaSetsAfterWrite(sb, c, docNo, laterChange, changeDay, [{ id: itemId, item_code: itemCodeAfter, item_group: itemGroupAfter }, { item_code: prev.item_code, item_group: prev.item_group }], true);
   // Default Free Gift (0170) — editing a line (code/qty) may add or drop a
   // trigger; reconcile auto-syncs the gift lines, then recomputes totals.
   await reconcileFreeGiftLinesForSo(sb, docNo, c);
@@ -8687,9 +8580,7 @@ mfgSalesOrders.delete('/:docNo/items/:itemId', async (c) => {
   const feeRefusal = await transportFeeEditRefusal(c, sb, docNo, { kind: 'line', itemId, after: null });
   if (feeRefusal) return feeRefusal;
 
-  /* Rule 2 / Finance's record: opened before anything is removed. */
-  const removeLater = await openDirectChangeWindow(c, sb, docNo);
-
+  const removeLater = await openDirectChangeWindow(c, sb, docNo); // rule 2 and the record, before anything is removed
   /* Super-admin product-line removal — invoice + DO lines go (stock returns) BEFORE the SO line; a refusal leaves the SO line untouched. */
   if (afterDoRemove) {
     const deps: AfterDoLineDeps = { resyncInventoryForDo, restampDoActualCost, performedBy: user?.id ?? '' };
@@ -8705,18 +8596,8 @@ mfgSalesOrders.delete('/:docNo/items/:itemId', async (c) => {
   );
   if (isSoLineOverDelivered(error)) return c.json(SO_LINE_FROZEN_REFUSAL, 409); // a DO confirmed after the freeze read (mig 20261029T1000)
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
-  /* Rule 2: a sofa piece taken off after the opening day re-costs the set it
-     leaves on today's set prices (lib/so-set-change-cost.ts). */
-  const removedGroup = String((prev as { item_group?: string | null } | null)?.item_group ?? '').toLowerCase();
-  const removeCo = activeCompanyId(c);
-  if (removeLater && removeCo != null && removedGroup === 'sofa' && prevTyped?.item_code) {
-    const set = await costChangedSofaSets(sb, {
-      docNo, companyId: removeCo, orderDay: removeLater.orderDay, changeDay: todayMyt(),
-      models: [sofaModelOf(prevTyped.item_code)], changedLineIds: [],
-    });
-    /* eslint-disable-next-line no-console */
-    if (!set.ok) console.error('[so-rule-2] set re-cost failed — the order-date spread stands:', docNo, set.reason);
-  }
+  /* Rule 2: a sofa piece taken off re-costs the set it leaves on the change day. */
+  if (prev) await recostSofaSetsAfterWrite(sb, c, docNo, removeLater, todayMyt(), [prev as { item_code?: unknown; item_group?: unknown }], false);
   // Default Free Gift (0170) — removing a trigger line (e.g. a mattress) must
   // auto-delete its free gift; reconcile drops orphaned gifts, then recomputes.
   await reconcileFreeGiftLinesForSo(sb, docNo, c);

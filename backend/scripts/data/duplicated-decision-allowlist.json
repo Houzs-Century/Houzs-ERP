@@ -1944,6 +1944,11 @@
       "check": "D2",
       "key": "DELIVERY,DISMANTLE,INSPECTION,PICKUP,SERVICE,SETUP,SUPPLIER_PICKUP,TRANSFER ~ DELIVERY,INSPECTION,PICKUP,SERVICE,SUPPLIER_PICKUP,TRANSFER",
       "why": "THE BILLABLE JOBS vs POSTCODE_REQUIRED_JOB_TYPES (dp-postcode-rule.ts): which jobs a carrier is paid for, and which DP jobs must carry a postcode before they are saved. Different questions: the postcode rule leaving setup and dismantle out never stops a carrier being paid for them."
+    },
+    {
+      "check": "D1",
+      "key": "HEIGHT,NEW_LINE,OPTION,PIECES,QTY,REMOVED_LINE,SKU|backend/src/scm/lib/so-product-change.ts frontend/src/pages/scm-v2/product-changes-view.ts",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it: PRODUCT_CHANGE_TYPES (backend) decides what a product change is and records it; TYPE_LABEL (frontend) is how the Product changes report names each recorded type. A type the backend adds shows as its raw key until labelled, a blank-chip cost, not a wrong number."
     }
   ]
 }
