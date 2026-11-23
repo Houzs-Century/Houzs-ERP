@@ -5,12 +5,15 @@
 // document), the subtotal and the closing — then all of them together. Under
 // each block, what the owner asked for on 2026-09-29 stays: the vouchers
 // awaiting approval, what is left after them, and the card money on its way
-// into that bank with the line it adds up to.
+// into that bank with the line it adds up to. A bank on the owner's cash book
+// (2026-11-23) lists his typed receipts and the approved vouchers instead of
+// its ledger lines, and says so.
 // ----------------------------------------------------------------------------
 
 import { useEffect, useRef } from 'react';
 import { fmtDate, fmtSenPlain } from '../../vendor/shared/format';
 import styles from './DailyBank.module.css';
+import { sourceLabel } from './DailyBankBoard';
 import type { DailyBankBlock, DailyBankBoard, DailyBankMovement } from './accounting-phase1-queries';
 
 const money = (sen: number): string => fmtSenPlain(sen);
@@ -40,10 +43,14 @@ export function accountLines(block: DailyBankBlock): AccountLine[] {
       ? { key: `in:${label}`, who: ms[0]!.party ?? '', doc: ms[0]!.docNo, description: `${label}${ms[0]!.party ? ` · ${ms[0]!.party}` : ''}`, journal: ms[0]!.jeNo, inSen: ms[0]!.amountSen, outSen: null }
       : { key: `in:${label}`, who: `${ms.length} customers`, doc: `${ms.length} receipts`, description: `${label} · ${ms.length} sales${few ? ` · ${few}` : ''}`, journal: '', inSen: sum(ms.map((m) => m.amountSen)), outSen: null };
   });
-  const other = (m: DailyBankMovement, dir: 'in' | 'out'): AccountLine => ({
-    key: `${dir}:${m.jeNo}:${m.docNo}`, who: m.party ?? '', doc: m.docNo, description: [m.party, m.note].filter(Boolean).join(' · '), journal: m.jeNo,
-    inSen: dir === 'in' ? m.amountSen : null, outSen: dir === 'out' ? m.amountSen : null,
-  });
+  const other = (m: DailyBankMovement, dir: 'in' | 'out'): AccountLine => (m.sourceType === 'TYPED'
+    /* A receipt typed into the cash book: no document, no journal — its note and who typed it. */
+    ? { key: `${dir}:typed:${m.sourceDocNo ?? ''}`, who: '', doc: '', description: [m.note, m.typedBy ? `typed by ${m.typedBy}` : null].filter(Boolean).join(' · '), journal: '',
+      inSen: dir === 'in' ? m.amountSen : null, outSen: dir === 'out' ? m.amountSen : null }
+    : {
+      key: `${dir}:${m.jeNo}:${m.docNo}:${m.sourceDocNo ?? ''}`, who: m.party ?? '', doc: m.docNo, description: [m.party, m.note].filter(Boolean).join(' · '), journal: m.jeNo,
+      inSen: dir === 'in' ? m.amountSen : null, outSen: dir === 'out' ? m.amountSen : null,
+    });
   return [...paid, ...block.receipts.filter((m) => !isPayment(m)).map((m) => other(m, 'in')), ...block.payouts.map((m) => other(m, 'out'))];
 }
 
@@ -57,7 +64,8 @@ function AccountBlock({ block, date, focused }: { block: DailyBankBlock; date: s
   return (
     <section ref={ref} className={`${styles.acctBlock} ${focused ? styles.focused : ''}`} aria-label={`${block.accountCode} ${block.accountName}`} data-account={block.accountCode}>
       <div className={styles.acctStrip}>
-        <span className={styles.acctTitle}><span className={styles.accountCode}>{block.accountCode}</span> {block.accountName}</span>
+        <span className={styles.acctTitle}><span className={styles.accountCode}>{block.accountCode}</span> {block.accountName}{' '}
+          <span className={`${styles.srcTag} ${block.source === 'cashbook' ? styles.srcCash : styles.srcLedger}`}>{sourceLabel(block)}</span></span>
         <span className={styles.acctOpening}>Opening balance <b>{money(block.openingSen)}</b></span>
       </div>
       {lines.length === 0 ? <div className={styles.acctEmpty}>No movement this day.</div> : (
@@ -135,7 +143,10 @@ export function DailyBankAccounts({ board, focus, future }: { board: DailyBankBo
         </section>
       )}
       <div className={styles.footnote}>
-        Live from the ledger, posted entries only. Card money not paid out yet sits in the settlement accounts (Board › On its way); vouchers awaiting approval have not left the bank. {board.note}
+        {board.blocks.some((b) => b.source === 'cashbook')
+          ? 'Cash book accounts: the starting balance, the receipts typed in Cash book, and the approved payment vouchers. Ledger accounts: posted entries only.'
+          : 'Live from the ledger, posted entries only.'}{' '}
+        Card money not paid out yet sits in the settlement accounts (Board › On its way); vouchers awaiting approval have not left the bank. {board.note}
       </div>
     </div>
   );

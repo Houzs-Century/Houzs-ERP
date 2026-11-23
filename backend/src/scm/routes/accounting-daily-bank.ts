@@ -6,17 +6,22 @@
 // without importing the whole router.
 // ----------------------------------------------------------------------------
 
+import type { Variables } from '../env';
 import { requireActiveCompanyId } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
 import { paginateAll } from '../lib/paginate-all';
-import { computeDailyBank, type PendingVoucherRow } from '../../acc/daily-bank';
+import {
+  computeDailyBank, type CashbookPayout, type CashbookReceipt, type CashbookStart, type DailyBankCashbook, type PendingVoucherRow,
+} from '../../acc/daily-bank';
 import { describeVouchers } from './payment-vouchers-describe';
 import { resolveRoles } from '../../acc/rules';
 import { isReversalPair } from '../../acc/reversal-pairs';
 
 /* GET /daily-bank?date=YYYY-MM-DD — the owner's board (brief 3.6): where the
-   money is today and how much can actually move. Live from the ledger, no
-   cache (2.3) - so it can never disagree with the trial balance. */
+   money is today and how much can actually move. Live, no cache (2.3): an
+   account with a cash-book start reads the start, the typed receipts and the
+   approved vouchers (owner 2026-11-23); every other account reads the ledger,
+   so it can never disagree with the trial balance. */
 /** The board for one company and day — the handler's reads and the To do's
     "Can move today" (acc/finance-todo) share it, so the two never disagree.
     `withNames` false skips the names the board prints for the day's lines. */
@@ -89,23 +94,32 @@ export async function loadDailyBankBoard(
     .lt('checked_at', new Date(Date.parse(`${date}T00:00:00+08:00`) + 86_400_000).toISOString());
   if (pErr) return { ok: false, reason: pErr.message };
   let pending = (pendingRaw ?? []) as PendingVoucherRow[];
+
+  const cash = await loadCashbook(sb, co.companyId, date, money.map((m) => m.account_code));
+  if (!cash.ok) return cash;
+  const cashbook = cash.cashbook;
+
   /* Each listed voucher reads as the PV list's Description does: what it pays for,
-     never its bill number (owner 2026-11-09). The To do's sum needs no words. */
-  if (opts.withNames && pending.length > 0) {
+     never its bill number (owner 2026-11-09) — the pending ones and the day's
+     cash-book payouts, in one read. The To do's sum needs no words. */
+  const paidToday = cashbook.payouts.filter((v) => v.voucher_date === date);
+  if (opts.withNames && pending.length + paidToday.length > 0) {
     const described = await describeVouchers(sb, { get: (k: string) => (k === 'companyId' ? co.companyId : undefined) },
-      pending.map((v) => ({ ...v, id: String(v.id) })));
+      [...pending, ...paidToday].map((v) => ({ ...v, id: String(v.id) })));
     if (!described.ok) return { ok: false, reason: described.reason };
-    pending = pending.map((v) => ({ ...v, description_text: described.byId.get(String(v.id))?.description_text ?? null }));
+    const wordsOf = (id: unknown): string | null => described.byId.get(String(id))?.description_text ?? null;
+    pending = pending.map((v) => ({ ...v, description_text: wordsOf(v.id) }));
+    cashbook.payouts = cashbook.payouts.map((v) => (v.voucher_date === date ? { ...v, description_text: wordsOf(v.id) } : v));
   }
 
-  const allCodes = [...money.map((m) => m.account_code), ...transitCodes];
-  if (allCodes.length === 0) {
-    return { ok: true, board: computeDailyBank(date, [], [], [], pending) };
-  }
+  /* An account on its cash book this day needs none of its ledger lines. */
+  const onCashbook = new Set(cashbook.starts.filter((s) => s.start_date <= date).map((s) => s.account_code));
+  const ledgerMoney = money.filter((m) => !onCashbook.has(m.account_code));
+  const allCodes = [...ledgerMoney.map((m) => m.account_code), ...transitCodes];
   const { data: lines, error: lErr } = await paginateAll<Record<string, unknown>>((from, to) =>
     sb.from('v_gl_entries').select('entry_date, je_no, source_type, source_doc_no, account_code, debit_sen, credit_sen, notes, reversed, reversed_by_je')
       .eq('company_id', co.companyId)
-      .in('account_code', allCodes)
+      .in('account_code', allCodes.length ? allCodes : ['—none—'])
       .lte('entry_date', date)
       .order('line_id')
       .range(from, to));
@@ -121,7 +135,7 @@ export async function loadDailyBankBoard(
      official receipt (the order when none was issued) in place of the
      payment's internal id. Both reads are bound: a failed one answers 500,
      never a board of nameless lines. */
-  const moneyCodes = new Set(money.map((m) => m.account_code));
+  const moneyCodes = new Set(ledgerMoney.map((m) => m.account_code));
   type BoardLine = { entry_date: string; je_no: string; source_type: string; source_doc_no: string | null; account_code: string };
   const isTodayMoney = (l: BoardLine): boolean => l.entry_date === date && moneyCodes.has(String(l.account_code));
   const todays = (counted as unknown as BoardLine[]).filter(isTodayMoney);
@@ -173,7 +187,58 @@ export async function loadDailyBankBoard(
   const stamped = (counted as unknown as BoardLine[]).map((l) => (isTodayMoney(l)
     ? { ...l, party: partyOf.get(String(l.je_no)) ?? null, doc_no: docOf(l), method: methodOf.get(String(l.source_doc_no ?? '')) ?? null }
     : l));
-  return { ok: true, board: computeDailyBank(date, money, transitAccounts, stamped as never, pending) };
+  return { ok: true, board: computeDailyBank(date, money, transitAccounts, stamped as never, pending, cashbook) };
+}
+
+/** The cash book behind the board (owner 2026-11-23): every money account's
+    start, and — for the accounts whose start is on or before the day — the
+    receipts typed for them (deleted ones left out) and the approved vouchers
+    paying out of them, from the earliest such start to the day. Every read is
+    bound: a failed or cut-short one answers 500, never a board that quietly fell
+    back to the ledger or dropped a receipt. */
+export async function loadCashbook(
+  sb: Variables['supabase'], companyId: number, date: string, moneyCodes: string[],
+): Promise<{ ok: true; cashbook: DailyBankCashbook } | { ok: false; reason: string }> {
+  const { data: startsRaw, error: sErr } = await sb.from('acc_daily_bank_starts')
+    .select('account_code, start_date, balance_sen')
+    .eq('company_id', companyId);
+  if (sErr) return { ok: false, reason: sErr.message };
+  const isMoney = new Set(moneyCodes);
+  const starts: CashbookStart[] = (startsRaw as Array<Record<string, unknown>>)
+    .map((s) => ({ account_code: String(s.account_code), start_date: String(s.start_date).slice(0, 10), balance_sen: Number(s.balance_sen) }))
+    .filter((s) => isMoney.has(s.account_code));
+  const live = starts.filter((s) => s.start_date <= date);
+  if (live.length === 0) return { ok: true, cashbook: { starts, receipts: [], payouts: [] } };
+  const codes = live.map((s) => s.account_code);
+  const since = live.reduce((first, s) => (s.start_date < first ? s.start_date : first), date);
+  const [rq, pq] = await Promise.all([
+    paginateAll<Record<string, unknown>>((from, to) => sb.from('acc_daily_bank_receipts')
+      .select('id, account_code, receipt_date, amount_sen, note, created_by')
+      .eq('company_id', companyId).in('account_code', codes).is('deleted_at', null)
+      .gte('receipt_date', since).lte('receipt_date', date)
+      .order('receipt_date').order('created_at').order('id')
+      .range(from, to)),
+    /* Approved = POSTED: approval posts in the same request, and a voucher whose
+       posting died stays DRAFT — pending above, never paid here as well. */
+    paginateAll<Record<string, unknown>>((from, to) => sb.from('payment_vouchers')
+      .select('id, pv_number, payee_name, notes, purpose, credit_account_code, voucher_date, total_sen, exchange_rate, bank_charge_sen')
+      .eq('company_id', companyId).eq('status', 'POSTED').in('credit_account_code', codes)
+      .gte('voucher_date', since).lte('voucher_date', date)
+      .order('voucher_date').order('pv_number').order('id')
+      .range(from, to)),
+  ]);
+  if (rq.error) return { ok: false, reason: rq.error.message };
+  if (pq.error) return { ok: false, reason: pq.error.message };
+  if (rq.truncated || pq.truncated) return { ok: false, reason: 'the cash book is too long to read in one go' };
+  const receipts: CashbookReceipt[] = (rq.data ?? []).map((r) => ({
+    id: String(r.id), account_code: String(r.account_code), receipt_date: String(r.receipt_date).slice(0, 10),
+    amount_sen: Number(r.amount_sen), note: String(r.note ?? ''), created_by: (r.created_by as string | null) ?? null,
+  }));
+  const payouts = (pq.data ?? []).map((v) => ({
+    ...v, id: String(v.id), pv_number: String(v.pv_number), credit_account_code: String(v.credit_account_code),
+    voucher_date: String(v.voucher_date).slice(0, 10),
+  })) as unknown as CashbookPayout[];
+  return { ok: true, cashbook: { starts, receipts, payouts } };
 }
 
 export const dailyBankHandler = async (c: any) => {

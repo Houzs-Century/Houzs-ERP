@@ -17,7 +17,7 @@ const BOARD: DailyBankBoard = {
   date: '2026-09-29',
   blocks: [
     {
-      accountCode: '310-0020', accountName: 'CASH AT BANK - HLBB',
+      accountCode: '310-0020', accountName: 'CASH AT BANK - HLBB', source: 'ledger', start: null,
       openingSen: 6_172_699, inSen: 285_000, outSen: 44_264, closingSen: 6_413_435,
       receipts: [{ jeNo: 'JE-2', sourceType: 'SOPAY', sourceDocNo: 'pay-1', docNo: '2990-MOR-2609-009', party: 'Hookka', note: 'Settle invoice HV-INV-0039', amountSen: 285_000 }],
       payouts: [{ jeNo: 'JE-4', sourceType: 'PV', sourceDocNo: 'PV-0432', docNo: 'PV-0432', party: 'Tan Yong Hong', note: 'Claude - Sep', amountSen: 44_264 }],
@@ -27,7 +27,7 @@ const BOARD: DailyBankBoard = {
       transitSen: 3_750_352, availableWithTransitSen: 9_080_187,
     },
     {
-      accountCode: '310-0030', accountName: 'CASH AT BANK - ALLIANCE',
+      accountCode: '310-0030', accountName: 'CASH AT BANK - ALLIANCE', source: 'ledger', start: null,
       openingSen: 2_433_855, inSen: 0, outSen: 0, closingSen: 2_433_855, receipts: [], payouts: [],
       pending: [], pendingSen: 0, availableSen: 2_433_855, transit: [], transitSen: 0, availableWithTransitSen: 2_433_855,
     },
@@ -45,11 +45,26 @@ const BOARD: DailyBankBoard = {
   note: 'test note',
 };
 
+/* The board a test reads; a test about the cash book swaps it and puts it back. */
+let boardNow: DailyBankBoard = BOARD;
+
 vi.mock('./accounting-phase1-queries', () => ({
-  useDailyBank: () => ({ data: BOARD, isLoading: false, isError: false, error: null }),
+  useDailyBank: () => ({ data: boardNow, isLoading: false, isError: false, error: null }),
   useDailyClose: () => ({ data: { rows: [] }, isLoading: false }),
   useSaveDailyClose: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useConfirmDailyClose: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
+vi.mock('./daily-bank-cashbook-queries', () => ({
+  useDailyBankCashbook: (date: string) => ({ data: { date, today: date, canWrite: false, accounts: [], receipts: [], deleted: [] }, isLoading: false, isError: false, error: null }),
+  useAddCashbookReceipt: () => ({ mutate: vi.fn(), isPending: false }),
+  useEditCashbookReceipt: () => ({ mutate: vi.fn(), isPending: false }),
+  useDeleteCashbookReceipt: () => ({ mutate: vi.fn(), isPending: false }),
+  useSaveCashbookStart: () => ({ mutate: vi.fn(), isPending: false }),
+  useRemoveCashbookStart: () => ({ mutate: vi.fn(), isPending: false }),
+}));
+vi.mock('../../vendor/scm/components/ConfirmDialog', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../vendor/scm/components/ConfirmDialog')>()),
+  useConfirm: () => async () => true,
 }));
 vi.mock('../../hooks/useBranding', () => ({ useBranding: () => ({ companyName: 'Houzs Century Sdn Bhd' }) }));
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ user: { name: 'Mei Ling' } }) }));
@@ -191,5 +206,63 @@ describe("DailyBank Board (the redesign's Money today)", () => {
     const awaiting = screen.getByLabelText('Awaiting your approval');
     expect(awaiting.textContent).toContain('UNICOM MARKETING SDN BHD · BILL IV2026-09-007 · 2990-HPV-2609-023');
     expect(within(awaiting).getByRole('link', { name: /Review vouchers/ }).getAttribute('href')).toBe('/scm/payment-vouchers?status=CHECKED');
+  });
+});
+
+/* The cash book (owner 2026-11-23): a bank with a starting balance shows the start,
+   his typed receipts and the approved vouchers; one without still reads the
+   ledger — and the page says which is which. */
+describe('DailyBank with the cash book', () => {
+  const CASH: DailyBankBoard = {
+    ...BOARD,
+    blocks: [
+      {
+        ...BOARD.blocks[0]!, source: 'cashbook', start: { date: '2026-09-28', balanceSen: 77_408_649 },
+        openingSen: 77_408_649, inSen: 300_000, outSen: 25_050, closingSen: 77_683_599,
+        receipts: [{ jeNo: '', sourceType: 'TYPED', sourceDocNo: 'r1', docNo: '', party: null, note: 'Hookka deposit', amountSen: 300_000, method: null, typedBy: 'Chew' },
+          { jeNo: '', sourceType: 'TYPED', sourceDocNo: 'r2', docNo: '', party: null, note: 'Cash sales', amountSen: 1, method: null, typedBy: 'Chew' }],
+        payouts: [{ jeNo: '', sourceType: 'PV', sourceDocNo: 'pv-2', docNo: 'HPV-102', party: 'UNICOM', note: 'Truck rental · incl. bank charge RM 0.50', amountSen: 25_050, method: null }],
+      },
+      { ...BOARD.blocks[1]!, start: { date: '2026-10-01', balanceSen: 100 } },
+    ],
+  };
+  const withCashbook = (run: () => void | Promise<void>) => async () => {
+    boardNow = CASH;
+    try { await run(); } finally { boardNow = BOARD; }
+  };
+
+  test('the Board says which accounts show the cash book and which the ledger, and opens the Cash book', withCashbook(async () => {
+    renderAt('?view=board');
+    const note = screen.getByRole('note');
+    expect(note.textContent).toContain('1 of 2 accounts show your cash book');
+    const accounts = screen.getByLabelText('Accounts');
+    expect(within(accounts).getByText('Cash book')).toBeTruthy();
+    expect(within(accounts).getByText('Ledger · cash book from 2026/10/01')).toBeTruthy();
+    /* A typed receipt is called by its note; a voucher by its payee. */
+    expect(within(accounts).getByText('Hookka deposit')).toBeTruthy();
+    expect(within(accounts).getByText('+3,000.00')).toBeTruthy();
+    expect(within(accounts).getByText('UNICOM')).toBeTruthy();
+    expect(within(accounts).getByText('−250.50')).toBeTruthy();
+    fireEvent.click(within(note).getByRole('button', { name: 'Open Cash book' }));
+    await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('?view=cashbook'));
+    expect(screen.getByLabelText('Starting balances')).toBeTruthy();
+  }));
+
+  test('the Accounts sheet lists a typed receipt by its note and who typed it, with no document or journal', withCashbook(() => {
+    renderAt('?view=accounts');
+    const may = screen.getByLabelText('310-0020 CASH AT BANK - HLBB');
+    expect(may.textContent).toContain('Cash book');
+    const rows = [...may.querySelectorAll('tbody tr')].map((tr) => [...tr.querySelectorAll('td')].slice(1).map((td) => td.textContent));
+    expect(rows).toEqual([
+      ['', 'Hookka deposit · typed by Chew', '', '3,000.00', ''],
+      ['', 'Cash sales · typed by Chew', '', '0.01', ''],
+      ['HPV-102', 'UNICOM · Truck rental · incl. bank charge RM 0.50', '', '', '250.50'],
+    ]);
+    expect(screen.getByText(/Cash book accounts: the starting balance, the receipts typed in Cash book/)).toBeTruthy();
+  }));
+
+  test('with no starting balance anywhere the Board says every account still shows the ledger', () => {
+    renderAt('?view=board');
+    expect(screen.getByRole('note').textContent).toContain('Every account still shows the ledger.');
   });
 });

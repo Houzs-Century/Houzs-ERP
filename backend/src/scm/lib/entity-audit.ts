@@ -68,6 +68,11 @@ export const ENTITY_TYPES = [
      to the note, or a posted note's knock-off changed — the invoice owes again.
      Write-only so far. */
   'CREDIT_NOTE',
+  /* Daily Bank's cash book (owner 2026-11-23): a money account's starting
+     balance, keyed by the account code (set, changed, removed), and a typed
+     receipt, keyed by its row id (typed, edited, deleted). */
+  'DAILY_BANK_START',
+  'DAILY_BANK_RECEIPT',
 ] as const;
 export type EntityType = (typeof ENTITY_TYPES)[number];
 

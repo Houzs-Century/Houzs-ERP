@@ -99,6 +99,12 @@ export function boardDayLabel(date: string): string {
 /** A money cell as the table prints it: plain figures, blank when there is none. */
 export const cellMoney = (sen: number | null): string => (sen == null ? '' : fmtSenPlain(sen));
 
+/** Where the figures come from, under the picture: the owner's cash book for a bank
+    with a starting balance (2026-11-23), the ledger for the rest. */
+export const boardSourceLine = (board: DailyBankBoard): string => (board.blocks.some((b) => b.source === 'cashbook')
+  ? 'Cash book banks: starting balance + receipts typed − approved vouchers; the others from the ledger. Pending = checked, awaiting approval; transit shown, never counted as movable.'
+  : 'Live from the ledger — posted entries only. Pending = checked vouchers awaiting approval; transit money is shown, never counted as movable.');
+
 /** The three totals above the table, in words — the image and the PDF print them too. */
 export const boardTotalsLine = (board: DailyBankBoard): string =>
   `Can actually move ${fmtSen(board.availableSen)}   ·   In transit (swiped, not yet remitted) ${fmtSen(board.totalTransitSen)}   ·   Checked, awaiting approval ${fmtSen(board.pendingApprovalSen)}`;
@@ -204,6 +210,6 @@ export function drawDailyBankCanvas(board: DailyBankBoard): HTMLCanvasElement {
     }
     y += 6;
   }
-  text('Live from the ledger — posted entries only. Pending = checked vouchers awaiting approval; transit money is shown, never counted as movable.', P, y + 18, { size: 10.5, color: DB_COLORS.soft });
+  text(boardSourceLine(board), P, y + 18, { size: 10.5, color: DB_COLORS.soft });
   return canvas;
 }

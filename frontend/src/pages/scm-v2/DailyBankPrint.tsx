@@ -56,7 +56,7 @@ export function DailyBankSheet({ board, upcoming, companyName, printedBy, printe
       {board.blocks.map((b) => (
         <table key={b.accountCode} className={styles.sheetTable}>
           <thead>
-            <tr className={styles.bankHead}><th colSpan={3}>{b.accountName} <span className={styles.code}>{b.accountCode}</span></th><th colSpan={2} className={styles.num}>Bank balance {money(b.closingSen)}</th></tr>
+            <tr className={styles.bankHead}><th colSpan={3}>{b.accountName} <span className={styles.code}>{b.accountCode}{b.source === 'cashbook' ? ' · cash book' : ''}</span></th><th colSpan={2} className={styles.num}>Bank balance {money(b.closingSen)}</th></tr>
             <tr><th>PAY TO / FROM</th><th>DOCUMENT</th><th>DESCRIPTION</th><th className={styles.num}>RECEIVED (RM)</th><th className={styles.num}>PAYMENT (RM)</th></tr>
           </thead>
           <tbody>

@@ -16,6 +16,9 @@
 // is ONE (daily-bank-report.ts), read by this page, the image and the PDF.
 // Get image copies a PNG to the clipboard for WhatsApp (download fallback);
 // PNG saves it; PDF saves the same table on the letterhead.
+// Cash book (owner 2026-11-23): a bank given a starting balance shows, from that
+// day, the start + the receipts typed in the Cash book tab − approved payment
+// vouchers; a bank without one still reads the ledger, and the Board says which.
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useState } from 'react';
@@ -29,6 +32,7 @@ import { DateField } from "../../vendor/scm/components/DateField";
 import { DailyBankBoardView } from './DailyBankBoard';
 import { DailyBankAccounts } from './DailyBankAccounts';
 import { DailyBankClose } from './DailyBankClose';
+import { DailyBankCashbook } from './DailyBankCashbook';
 import { DailyBankImageModal, DailyBankPrintModal } from './DailyBankPrint';
 import css from './DailyBank.module.css';
 import { todayMyt } from '../../vendor/scm/lib/dates';
@@ -54,8 +58,9 @@ const btnStyle = (primary?: boolean): React.CSSProperties => ({
   cursor: 'pointer',
 });
 
-type DailyBankView = 'board' | 'accounts' | 'close';
-const VIEWS: Array<[DailyBankView, string]> = [['board', 'Board'], ['accounts', 'Accounts'], ['close', 'Daily close']];
+type DailyBankView = 'board' | 'accounts' | 'cashbook' | 'close';
+const VIEWS: Array<[DailyBankView, string]> = [['board', 'Board'], ['accounts', 'Accounts'], ['cashbook', 'Cash book'], ['close', 'Daily close']];
+const isView = (v: string | null): v is DailyBankView => VIEWS.some(([k]) => k === v);
 const isDay = (v: string | null): v is string => !!v && /^\d{4}-\d{2}-\d{2}$/.test(v);
 
 export const DailyBank = () => {
@@ -63,7 +68,7 @@ export const DailyBank = () => {
      Money today opens the Board and stays lit while it shows). */
   const [params, setParams] = useSearchParams();
   const rawView = params.get('view');
-  const view: DailyBankView = rawView === 'accounts' || rawView === 'close' ? rawView : 'board';
+  const view: DailyBankView = isView(rawView) ? rawView : 'board';
   const dayParam = params.get('date');
   const date = isDay(dayParam) ? dayParam : todayMyt();
   const setParam = (patch: Record<string, string | null>) => {
@@ -72,7 +77,7 @@ export const DailyBank = () => {
     setParams(next, { replace: true });
   };
   useEffect(() => {
-    if (rawView !== 'board' && rawView !== 'accounts' && rawView !== 'close') setParam({ view: 'board' });
+    if (!isView(rawView)) setParam({ view: 'board' });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only a missing or unknown view is rewritten
   }, [rawView]);
   const setView = (v: DailyBankView) => setParam({ view: v });
@@ -112,12 +117,13 @@ export const DailyBank = () => {
       </div>
 
       {view === 'close' && <DailyBankClose date={date} today={todayMyt()} />}
+      {view === 'cashbook' && <DailyBankCashbook date={date} today={todayMyt()} />}
 
-      {view !== 'close' && q.isLoading && <div className={css.muted}>Loading the board…</div>}
-      {view !== 'close' && q.isError && <div role="alert" className={css.problem}>The board could not be loaded — {q.error instanceof Error ? q.error.message : 'something went wrong.'}</div>}
+      {(view === 'board' || view === 'accounts') && q.isLoading && <div className={css.muted}>Loading the board…</div>}
+      {(view === 'board' || view === 'accounts') && q.isError && <div role="alert" className={css.problem}>The board could not be loaded — {q.error instanceof Error ? q.error.message : 'something went wrong.'}</div>}
 
       {view === 'board' && board && (
-        <DailyBankBoardView board={board} onOpenAccount={(code) => { setFocus(code); setView('accounts'); }} />
+        <DailyBankBoardView board={board} onOpenAccount={(code) => { setFocus(code); setView('accounts'); }} onOpenCashbook={() => setView('cashbook')} />
       )}
 
       {view === 'accounts' && board && <DailyBankAccounts board={board} focus={focus} future={future} />}

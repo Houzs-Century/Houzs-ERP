@@ -268,11 +268,18 @@ export type DailyBankMovement = {
   note: string; amountSen: number;
   /** A customer payment's method (cash, transfer, online:<how>, …); null for anything else. */
   method?: string | null;
+  /** A receipt typed into the cash book (sourceType 'TYPED'): who typed it. */
+  typedBy?: string | null;
 };
 export type DailyBankPending = { id: string | null; pvNumber: string | null; payee: string | null; description: string; voucherDate: string | null; accountCode: string | null; amountSen: number };
 export type DailyBankTransit = { acquirerCode: string; accountCode: string; accountName: string; balanceSen: number; bankAccountCode: string | null };
 export type DailyBankBlock = {
   accountCode: string; accountName: string;
+  /** 'cashbook' = the owner's start, his typed receipts and the approved vouchers
+      (2026-11-23); 'ledger' = the posted ledger (no start, or a day before it). */
+  source: 'cashbook' | 'ledger';
+  /** The account's cash-book start when one is set — also on a day before it. */
+  start: { date: string; balanceSen: number } | null;
   openingSen: number; inSen: number; outSen: number; closingSen: number;
   receipts: DailyBankMovement[]; payouts: DailyBankMovement[];
   pending: DailyBankPending[]; pendingSen: number; availableSen: number;

@@ -31,6 +31,9 @@ import { postJournal, reverseJournal } from '../../acc/engine';
 import { upperTyped } from '../../acc/typed-text';
 import { CONVERT_SOURCE, backfillSoPayments, paymentEntryDisagreements, unbookedPayments } from '../../acc/payments';
 import { dailyBankHandler } from './accounting-daily-bank';
+import {
+  cashbookGet, cashbookStartPut, cashbookStartDelete, cashbookReceiptCreate, cashbookReceiptUpdate, cashbookReceiptDelete,
+} from './accounting-daily-bank-cashbook';
 import { systemTakings, postCashOverShort } from '../../acc/daily-close';
 import { resolveRoles, piLines, DEFAULT_ROLE_CODES } from '../../acc/rules';
 import { splitByItemGroup } from '../../acc/item-group-split';
@@ -1278,6 +1281,14 @@ accounting.post('/backfill/customer-payments', async (c) => {
 /* GET /daily-bank?date=YYYY-MM-DD — the owner's board (brief 3.6); its reads live in
    accounting-daily-bank.ts, shared with the To do's "Can move today". */
 accounting.get('/daily-bank', dailyBankHandler);
+/* Its cash book (owner 2026-11-23): each money account's starting balance and the
+   receipts typed by hand. Handlers in accounting-daily-bank-cashbook.ts. */
+accounting.get('/daily-bank/cashbook', cashbookGet);
+accounting.put('/daily-bank/starts/:accountCode', cashbookStartPut);
+accounting.delete('/daily-bank/starts/:accountCode', cashbookStartDelete);
+accounting.post('/daily-bank/receipts', cashbookReceiptCreate);
+accounting.patch('/daily-bank/receipts/:id', cashbookReceiptUpdate);
+accounting.delete('/daily-bank/receipts/:id', cashbookReceiptDelete);
 
 /* ════════════════════════════════════════════════════════════════════════
    Daily close (cashup, brief 3.5 layer 2)
