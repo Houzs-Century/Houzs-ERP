@@ -28,6 +28,7 @@ import {
   patchStockTakeLinesHandler,
   postStockTakeHandler,
   rejectStockTakeHandler,
+  reopenStockTakeHandler,
 } from '../src/scm/routes/stock-takes';
 import { readStockTakeSheetHandler } from '../src/scm/routes/stock-take-sheet-read';
 
@@ -122,6 +123,7 @@ function harness(tables: Record<string, Row[]>, opts?: { perms?: string[] }) {
   app.patch('/stock-takes/:id/post', postStockTakeHandler as never);
   app.patch('/stock-takes/:id/approve', approveStockTakeHandler as never);
   app.patch('/stock-takes/:id/reject', rejectStockTakeHandler as never);
+  app.patch('/stock-takes/:id/reopen', reopenStockTakeHandler as never);
   app.patch('/stock-takes/:id/lines', patchStockTakeLinesHandler as never);
   app.patch('/stock-takes/:id', patchStockTakeHeaderHandler as never);
   app.post('/stock-takes/:id/lines', addStockTakeLineHandler as never);
@@ -412,6 +414,50 @@ describe('cost_required refusal is short and names the SKU (owner 2026-11-20)', 
     expect(body.itemCodes).toHaveLength(6);           // full set still carried
     expect(String(body.message)).toMatch(/and \d+ more/); // the rest are summarised
     expect(String(body.message).length).toBeLessThan(200);
+  });
+});
+
+describe('reopen a cancelled take → OPEN with a fresh snapshot (owner 2026-11-23)', () => {
+  const reopenTables = (status = 'CANCELLED'): Record<string, Row[]> => ({
+    stock_takes: [{
+      id: 'st-1', take_no: 'STK-2611-006', company_id: CO, status,
+      warehouse_id: 'w1', scope_type: 'NONZERO', scope_value: null, nonzero_only: true,
+      assignee_staff_id: CALLER_STAFF, blind: false,
+      cancelled_at: '2026-11-21T00:00:00Z', posted_at: null,
+    }],
+    // Stale lines from when it was first created — reopen must replace these.
+    stock_take_lines: [
+      { id: 'old-1', stock_take_id: 'st-1', item_code: 'OLDGONE', product_name: 'Removed', variant_key: '', system_qty: 2, counted_qty: 2 },
+    ],
+    v_inventory_all_skus: [
+      { company_id: CO, warehouse_id: 'w1', item_code: 'CODY', product_name: 'Cody sofa', category: 'SOFA' },
+    ],
+    inventory_balances: [
+      { company_id: CO, warehouse_id: 'w1', item_code: 'CODY', variant_key: '', product_name: 'Cody sofa', qty: 7 },
+    ],
+  });
+
+  test('CANCELLED → OPEN; the stale sheet is replaced by a snapshot at CURRENT stock, counts cleared', async () => {
+    const t = reopenTables();
+    const res = await jsonReq(harness(t).app, '/stock-takes/st-1/reopen', 'PATCH');
+    expect(res.status).toBe(200);
+    expect(t.stock_takes[0].status).toBe('OPEN');
+    expect(t.stock_takes[0].cancelled_at).toBeNull();
+    const codes = t.stock_take_lines.map((l) => l.item_code);
+    expect(codes).toContain('CODY');      // fresh snapshot line
+    expect(codes).not.toContain('OLDGONE'); // stale line dropped
+    const cody = t.stock_take_lines.find((l) => l.item_code === 'CODY')!;
+    expect(cody.system_qty).toBe(7);       // today's on-hand, not the old snapshot
+    expect(cody.counted_qty).toBeNull();   // a fresh count
+  });
+
+  test('only a CANCELLED take reopens — any other status refuses 409 and nothing changes', async () => {
+    const t = reopenTables('OPEN');
+    const res = await jsonReq(harness(t).app, '/stock-takes/st-1/reopen', 'PATCH');
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as Row).error).toBe('not_cancelled');
+    expect(t.stock_takes[0].status).toBe('OPEN');
+    expect(t.stock_take_lines.map((l) => l.item_code)).toEqual(['OLDGONE']); // untouched
   });
 });
 
