@@ -18,6 +18,7 @@
    Run under tsx (the runner does).
 
    RE-RUN: inert. The re-stamp derives the stored cost from the movements; a second run stamps the same values. */
+import './lib/public-log-guard.mjs';
 import postgres from 'postgres';
 import { pgrestShim } from './lib/pgrest-shim.mjs';
 import { restampDoActualCost } from '../src/scm/routes/delivery-orders-mfg.ts';
