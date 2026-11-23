@@ -19,14 +19,15 @@ import type { Context } from "hono";
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lte } from "drizzle-orm";
 import type { Env } from "../types";
 import { getDb } from "../db/client";
-import { hr_attendance, hr_employees, hr_leave_requests, hr_ot_claims, hr_payslips, hr_working_hours } from "../db/schema";
+import { hr_attendance, hr_employees, hr_leave_requests, hr_ot_claims, hr_punch_corrections, hr_payslips, hr_working_hours } from "../db/schema";
 import { requireActiveCompanyId } from "../scm/lib/companyScope";
 import { todayMyt } from "../scm/lib/my-time";
 import { hasPermission } from "../services/permissions";
-import { checkPunchLocation } from "../scm/shared/hr-attendance";
+import { checkPunchLocation, instantOnWorkDate } from "../scm/shared/hr-attendance";
 import { attendanceView, planPunch, punchGateRefusal, type AttendanceRow } from "./lib/hr-attendance-view";
 import { loadSites, loadAttendanceSettings } from "./lib/hr-attendance-store";
 import { parseOtSegment } from "./lib/hr-ot";
+import { parsePunchFix } from "./lib/hr-punch";
 import { APPLICABLE_LEAVE_TYPES, parseLeaveRequest } from "./lib/hr-leave";
 import { scopedEmployeeIds } from "./lib/hr-confirmer-scope";
 import { shiftRulesResolver } from "./lib/hr-shift-store";
@@ -445,6 +446,149 @@ attendance.post("/ot/:id/review", async (c: Ctx) => {
     .where(and(eq(hr_ot_claims.id, id), eq(hr_ot_claims.company_id, co.companyId), eq(hr_ot_claims.status, "PENDING"), otScopeCond(c)))
     .returning({ id: hr_ot_claims.id });
   if (!done.length) return c.json({ error: "not_found", message: "That overtime is gone or already reviewed." }, 404);
+  return c.json({ ok: true });
+});
+
+/* ── make-up punch (补卡) ──────────────────────────────────────────────────
+   A worker who forgot to clock in or out files the in and out time they worked
+   on a past date plus a reason; a supervisor with hr.punch.approve approves or
+   rejects. An approval writes that day's attendance exactly as an HR correction
+   does — status PRESENT, the stated times, MANUAL source, working hours
+   re-synced. Account-based like /punch; only the review is gated, in-handler,
+   so a floor supervisor needs just hr.punch.approve. */
+const canApprovePunch = (c: Ctx): boolean => {
+  const u = c.get("user");
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- tests build AuthUser without permissions_set
+  return hasPermission(u.permissions_set ?? u.permissions, "hr.punch.approve");
+};
+
+type PcRow = { id: number; work_date: string; req_in_min: number | null; req_out_min: number | null; reason: string; status: string; reject_reason: string | null };
+const pcOut = (r: PcRow) => ({ id: r.id, workDate: r.work_date, reqInMin: r.req_in_min, reqOutMin: r.req_out_min, reason: r.reason, status: r.status, rejectReason: r.reject_reason });
+
+attendance.get("/punch-fix", async (c: Ctx) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const db = getDb(c.env);
+  const canApprove = canApprovePunch(c);
+  const emp = await myEmployee(db, co.companyId, c.get("user").id);
+  const since = todayMyt(-60);
+  const mine = emp
+    ? (
+        await db
+          .select()
+          .from(hr_punch_corrections)
+          .where(and(eq(hr_punch_corrections.company_id, co.companyId), eq(hr_punch_corrections.employee_id, emp.id), gte(hr_punch_corrections.work_date, since)))
+          .orderBy(desc(hr_punch_corrections.work_date), desc(hr_punch_corrections.id))
+      ).map((r) => pcOut(r as PcRow))
+    : [];
+  let pending: Array<ReturnType<typeof pcOut> & { employeeName: string; empNo: string }> = [];
+  if (canApprove) {
+    const rows = await db
+      .select({ c: hr_punch_corrections, name: hr_employees.name, emp_no: hr_employees.emp_no })
+      .from(hr_punch_corrections)
+      .innerJoin(hr_employees, eq(hr_employees.id, hr_punch_corrections.employee_id))
+      .where(and(eq(hr_punch_corrections.company_id, co.companyId), eq(hr_punch_corrections.status, "PENDING")))
+      .orderBy(asc(hr_punch_corrections.work_date), asc(hr_punch_corrections.id));
+    pending = rows.map((r) => ({ ...pcOut(r.c as PcRow), employeeName: r.name, empNo: r.emp_no }));
+  }
+  return c.json({ canApprove, mine, pending });
+});
+
+attendance.post("/punch-fix", async (c: Ctx) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const db = getDb(c.env);
+  const userId = c.get("user").id;
+  const emp = await myEmployee(db, co.companyId, userId);
+  if (!emp) return c.json(NOT_LINKED, 403);
+  if (emp.status !== "ACTIVE") return c.json({ error: "not_active", message: "Your employee record is not active. Ask HR." }, 403);
+  const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+  const workDate = typeof body.workDate === "string" ? body.workDate : "";
+  const fix = parsePunchFix(workDate, String(body.clockIn ?? ""), String(body.clockOut ?? ""), todayMyt());
+  if (!fix.ok) return c.json({ error: "bad_fix", message: fix.message }, 400);
+  const reason = typeof body.reason === "string" ? body.reason.trim().slice(0, 500) : "";
+  // One open request per day: a re-filing replaces the pending one (a reviewed
+  // one stays, for the record).
+  await db
+    .delete(hr_punch_corrections)
+    .where(and(eq(hr_punch_corrections.company_id, co.companyId), eq(hr_punch_corrections.employee_id, emp.id), eq(hr_punch_corrections.work_date, workDate), eq(hr_punch_corrections.status, "PENDING")));
+  const [row] = await db
+    .insert(hr_punch_corrections)
+    .values({ company_id: co.companyId, employee_id: emp.id, work_date: workDate, req_in_min: fix.inMin, req_out_min: fix.outMin, reason, status: "PENDING", created_by: userId })
+    .returning({ id: hr_punch_corrections.id });
+  return c.json({ id: row.id }, 201);
+});
+
+attendance.delete("/punch-fix/:id", async (c: Ctx) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id) || id <= 0) return c.json({ error: "bad_id" }, 400);
+  const db = getDb(c.env);
+  const emp = await myEmployee(db, co.companyId, c.get("user").id);
+  if (!emp) return c.json(NOT_LINKED, 403);
+  const done = await db
+    .delete(hr_punch_corrections)
+    .where(and(eq(hr_punch_corrections.id, id), eq(hr_punch_corrections.company_id, co.companyId), eq(hr_punch_corrections.employee_id, emp.id), eq(hr_punch_corrections.status, "PENDING")))
+    .returning({ id: hr_punch_corrections.id });
+  if (!done.length) return c.json({ error: "not_found", message: "That request is gone or already reviewed." }, 404);
+  return c.json({ ok: true });
+});
+
+attendance.post("/punch-fix/:id/review", async (c: Ctx) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  if (!canApprovePunch(c)) return c.json({ error: "forbidden", message: "You cannot approve make-up punches." }, 403);
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id) || id <= 0) return c.json({ error: "bad_id" }, 400);
+  const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+  const decision = body.decision === "approve" || body.decision === "reject" ? body.decision : null;
+  if (!decision) return c.json({ error: "bad_decision", message: "Approve or reject the make-up punch?" }, 400);
+  const rejectReason = typeof body.reason === "string" ? body.reason.trim().slice(0, 300) : "";
+  const db = getDb(c.env);
+  const at = new Date().toISOString();
+  const by = c.get("user").id;
+  // Claim the pending row atomically, so two approvers cannot both act on it.
+  const claimed = await db
+    .update(hr_punch_corrections)
+    .set({
+      status: decision === "approve" ? "APPROVED" : "REJECTED",
+      reject_reason: decision === "reject" ? rejectReason || null : null,
+      reviewed_by: by,
+      reviewed_at: at,
+      updated_at: at,
+    })
+    .where(and(eq(hr_punch_corrections.id, id), eq(hr_punch_corrections.company_id, co.companyId), eq(hr_punch_corrections.status, "PENDING")))
+    .returning();
+  const pc = claimed.at(0) as PcRow & { employee_id: number } | undefined;
+  if (!pc) return c.json({ error: "not_found", message: "That request is gone or already reviewed." }, 404);
+  if (decision === "approve") {
+    // Write the day's attendance like an HR correction: PRESENT, the stated
+    // times (MANUAL), and re-sync the working hours the day pays from.
+    const inAt = pc.req_in_min != null ? instantOnWorkDate(pc.work_date, pc.req_in_min).toISOString() : null;
+    const outAt = pc.req_out_min != null ? instantOnWorkDate(pc.work_date, pc.req_out_min).toISOString() : null;
+    const existing = (
+      await db
+        .select({ id: hr_attendance.id })
+        .from(hr_attendance)
+        .where(and(eq(hr_attendance.company_id, co.companyId), eq(hr_attendance.employee_id, pc.employee_id), eq(hr_attendance.work_date, pc.work_date)))
+        .limit(1)
+    ).at(0);
+    const values = {
+      status: "PRESENT",
+      clock_in_at: inAt,
+      clock_out_at: outAt,
+      in_source: inAt ? "MANUAL" : null,
+      out_source: outAt ? "MANUAL" : null,
+      notes: pc.reason || null,
+      updated_at: at,
+      updated_by: by,
+    };
+    const attendanceId = existing
+      ? (await db.update(hr_attendance).set(values).where(eq(hr_attendance.id, existing.id)).returning({ id: hr_attendance.id }))[0].id
+      : (await db.insert(hr_attendance).values({ ...values, company_id: co.companyId, employee_id: pc.employee_id, work_date: pc.work_date }).returning({ id: hr_attendance.id }))[0].id;
+    if (inAt && outAt) await syncDayFromPunch(db, co.companyId, attendanceId);
+  }
   return c.json({ ok: true });
 });
 

@@ -186,6 +186,10 @@ DELETE,/api/attendance/ot/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,Y
 POST,/api/attendance/ot/:id/review,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/attendance.ts
 GET,/api/attendance/ot/admin,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/attendance.ts
 POST,/api/attendance/punch,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/attendance.ts
+GET,/api/attendance/punch-fix,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/attendance.ts
+POST,/api/attendance/punch-fix,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/attendance.ts
+DELETE,/api/attendance/punch-fix/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/attendance.ts
+POST,/api/attendance/punch-fix/:id/review,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/attendance.ts
 GET,/api/audit,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""settings.manage"")",,NO,DECLARED_GATE,backend/src/routes/audit.ts
 POST,/api/auth/accept-invite,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/auth.ts
 POST,/api/auth/bootstrap,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/auth.ts
