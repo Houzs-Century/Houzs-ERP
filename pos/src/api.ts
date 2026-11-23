@@ -61,6 +61,7 @@ export const deviceApi = {
   reconnectClaim: <T>(token: string) => call<{ status: "none" | "waiting" | "approved"; token?: string; bundle?: T }>("/api/pos-device/reconnect/claim", { method: "POST", body: "{}", headers: { "X-POS-Device": token } }, 60_000),
   reconnectRequests: (token: string) => call<{ data: ReconnectRequest[] }>("/api/pos-device/reconnect/requests", { method: "GET", headers: { "X-POS-Device": token } }),
   reconnectApprove: (token: string, terminal_id: number, pin: string) => call<{ ok: boolean; terminal: string }>("/api/pos-device/reconnect/approve", { method: "POST", body: JSON.stringify({ terminal_id, pin }), headers: { "X-POS-Device": token } }),
+  sales: <T>(token: string, from: string, to: string) => call<{ sales: T[] }>(`/api/pos-device/sales?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, { method: "GET", headers: { "X-POS-Device": token } }, 60_000),
   report: <T>(token: string, from: string, to: string) => call<{ sales: T[] }>(`/api/pos-device/report?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, { method: "GET", headers: { "X-POS-Device": token } }, 60_000),
 };
 

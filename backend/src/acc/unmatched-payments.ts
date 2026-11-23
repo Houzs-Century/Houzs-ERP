@@ -102,6 +102,11 @@ export type UnmatchedPayment = {
   amountSen: number;
   /** The approval code or transfer reference keyed with it. */
   reference: string | null;
+  /** The document's Ref No. (owner 2026-11-20: 把订单的 ref no. 拉出来) — the order's, or
+      the invoice's own: its `ref` and `customer_so_no`, raw, the way so-ref-lookup sends
+      them, so the screen resolves them through the order screen's one display rule. */
+  ref: string | null;
+  customer_so_no: string | null;
   ageDays: number;
   state: UnmatchedState;
   /** transfer: the money account its entry debits, and the last day that
@@ -114,6 +119,10 @@ export type UnmatchedPayment = {
   report: UnmatchedReport | null;
 };
 
+/** A document's Ref No. pair, raw. */
+type DocRef = { ref: string | null; customer_so_no: string | null };
+const docRefOf = (r: Record<string, any>): DocRef => ({ ref: r.ref ?? null, customer_so_no: r.customer_so_no ?? null });
+
 /** One recorded payment, as the classifier needs it. */
 export type PaymentFact = {
   source: PaymentSource;
@@ -122,6 +131,7 @@ export type PaymentFact = {
   customerName: string | null;
   salespersonName: string | null;
   collectedByName?: string | null;
+  docRef?: DocRef | null;
   paidOn: string;
   method: string;
   merchantProvider: string | null;
@@ -179,6 +189,8 @@ export function classifyUnmatched(payments: readonly PaymentFact[], facts: Match
       paidOn: p.paidOn,
       amountSen: p.amountSen,
       reference: tagOf(p.approvalCode),
+      ref: p.docRef?.ref ?? null,
+      customer_so_no: p.docRef?.customer_so_no ?? null,
       ageDays: dayGap(p.paidOn, today),
       jeNo: null,
       report: null,
@@ -249,17 +261,17 @@ async function readPayments(sb: any, companyId: number, from: string, to: string
   return { ok: true, so: so.data ?? [], si: si.data ?? [] };
 }
 
-/** Whose sale each payment is — the order's customer, status and salesperson,
-    the invoice's number and customer — and the names of the salespeople and of
-    whoever collected each payment (the payment's own collected_by). */
+/** Whose sale each payment is — the order's customer, status, salesperson and
+    Ref No., the invoice's number, customer and Ref No. — and the names of the
+    salespeople and of whoever collected each payment (the payment's own collected_by). */
 async function readParties(sb: any, companyId: number, so: Rows, si: Rows): Promise<{
-  ok: true; orders: Map<string, { customer: string | null; cancelled: boolean; salesperson: string | null }>;
-  invoices: Map<string, { number: string | null; customer: string | null }>;
+  ok: true; orders: Map<string, { customer: string | null; cancelled: boolean; salesperson: string | null; docRef: DocRef }>;
+  invoices: Map<string, { number: string | null; customer: string | null; docRef: DocRef }>;
   staffName: Map<string, string>;
 } | Fail> {
   const docs = [...new Set(so.map((r) => String(r.so_doc_no ?? '')).filter(Boolean))];
   const orderRows = await chunkIn<Record<string, any>>(docs, (batch, lo, hi) => sb.from('mfg_sales_orders')
-    .select('doc_no, debtor_name, status, salesperson_id') // debtor_name — docs/bugs/0655
+    .select('doc_no, debtor_name, status, salesperson_id, ref, customer_so_no') // debtor_name — docs/bugs/0655
     .eq('company_id', companyId).in('doc_no', batch).order('doc_no').range(lo, hi));
   if (orderRows.error) return { ok: false, reason: `orders: ${orderRows.error.message}` };
 
@@ -272,21 +284,22 @@ async function readParties(sb: any, companyId: number, so: Rows, si: Rows): Prom
   if (staffRows.error) return { ok: false, reason: `staff: ${staffRows.error.message}` };
   const nameOf = new Map(staffRows.data.filter((r) => r.name).map((r) => [String(r.id), String(r.name)]));
 
-  const orders = new Map<string, { customer: string | null; cancelled: boolean; salesperson: string | null }>();
+  const orders = new Map<string, { customer: string | null; cancelled: boolean; salesperson: string | null; docRef: DocRef }>();
   for (const r of orderRows.data) {
     orders.set(String(r.doc_no), {
       customer: r.debtor_name ?? null,
       cancelled: String(r.status ?? '').toUpperCase() === 'CANCELLED',
       salesperson: nameOf.get(String(r.salesperson_id ?? '')) ?? null,
+      docRef: docRefOf(r),
     });
   }
 
   const invoiceIds = [...new Set(si.map((r) => String(r.sales_invoice_id ?? '')).filter(Boolean))];
   const invoiceRows = await chunkIn<Record<string, any>>(invoiceIds, (batch, lo, hi) => sb.from('sales_invoices')
-    .select('id, invoice_number, debtor_name')
+    .select('id, invoice_number, debtor_name, ref, customer_so_no')
     .eq('company_id', companyId).in('id', batch).order('id').range(lo, hi));
   if (invoiceRows.error) return { ok: false, reason: `invoices: ${invoiceRows.error.message}` };
-  const invoices = new Map(invoiceRows.data.map((r) => [String(r.id), { number: r.invoice_number ?? null, customer: r.debtor_name ?? null }]));
+  const invoices = new Map(invoiceRows.data.map((r) => [String(r.id), { number: r.invoice_number ?? null, customer: r.debtor_name ?? null, docRef: docRefOf(r) }]));
   return { ok: true, orders, invoices, staffName: nameOf };
 }
 
@@ -445,7 +458,7 @@ export async function loadUnmatchedPayments(
   if (!parties.ok) return parties;
 
   const facts: PaymentFact[] = [];
-  const take = (source: PaymentSource, r: Record<string, any>, docNo: string, customer: string | null, salesperson: string | null) => {
+  const take = (source: PaymentSource, r: Record<string, any>, docNo: string, customer: string | null, salesperson: string | null, docRef: DocRef | null) => {
     const paidOn = isoDay(r.paid_at);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(paidOn)) return;
     /* The previous system's, by the owner's mark: listed on its own (header). */
@@ -453,7 +466,7 @@ export async function loadUnmatchedPayments(
     if (banked.keys.has(`${source}:${String(r.id)}`)) return;
     facts.push({
       source, id: String(r.id), docNo, customerName: customer, salespersonName: salesperson,
-      collectedByName: parties.staffName.get(String(r.collected_by ?? '')) ?? null, paidOn,
+      collectedByName: parties.staffName.get(String(r.collected_by ?? '')) ?? null, docRef, paidOn,
       method: String(r.method ?? ''), merchantProvider: r.merchant_provider ?? null, onlineType: r.online_type ?? null,
       amountSen: Number(r.amount_sen ?? 0), approvalCode: r.approval_code ?? null,
     });
@@ -462,12 +475,12 @@ export async function loadUnmatchedPayments(
     const doc = String(r.so_doc_no ?? '');
     const order = parties.orders.get(doc);
     if (order?.cancelled) continue;
-    take('SOPAY', r, doc, order?.customer ?? null, order?.salesperson ?? null);
+    take('SOPAY', r, doc, order?.customer ?? null, order?.salesperson ?? null, order?.docRef ?? null);
   }
   for (const r of pay.si) {
     const inv = parties.invoices.get(String(r.sales_invoice_id ?? ''));
     /* The invoice NUMBER when it resolves — a uuid is nobody's document reference. */
-    take('SIPAY', r, inv?.number ?? String(r.sales_invoice_id ?? ''), inv?.customer ?? null, null);
+    take('SIPAY', r, inv?.number ?? String(r.sales_invoice_id ?? ''), inv?.customer ?? null, null, inv?.docRef ?? null);
   }
 
   /* Card payments, and Online ones: a DuitNow QR sale's QR line holds it as a card's line holds a card (header). */

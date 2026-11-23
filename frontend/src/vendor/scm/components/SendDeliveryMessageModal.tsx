@@ -60,6 +60,9 @@ const KIND_TITLE: Record<SendMessageKind, string> = {
   reminder_3: 'Send reminder 3',
   postage: 'Send postage confirmation',
   delivery_completed: 'Send delivery-completed thank-you',
+  eastmy_prep: 'Send East Malaysia prep notice',
+  eastmy_shipped: 'Send East Malaysia shipped notice',
+  eastmy_arrived: 'Send East Malaysia arrived notice',
   assr_arrangement: 'Send service arrangement',
 };
 
@@ -127,6 +130,8 @@ export const SKIP_LABEL: Record<string, string> = {
   case_closed: 'case is closed',
   not_assr: 'not a Service Case job',
   assr_only: 'Service Case jobs only',
+  not_east: 'not an East Malaysia order',
+  eastmy_shipment_fields_required: 'set Consignment No. + ETA on the row first',
 };
 
 /** The per-customer block reasons, phrased for the operator. */
@@ -157,6 +162,12 @@ export const SendDeliveryMessageModal = ({ rows, onClose, onSent, kind = 'delive
   const isPostpone = kind === 'postpone';
   // One Service Case job per message: the template names one case and one date.
   const isAssrSend = kind === 'assr_arrangement';
+  // East Malaysia (Sabah / Sarawak) touchpoints. Shipped / Arrived read the
+  // shipment facts off the board's EM columns (the latest DO), so an order whose
+  // columns are not filled yet is skipped, not sent blank.
+  const isEmPrep = kind === 'eastmy_prep';
+  const isEmShipped = kind === 'eastmy_shipped';
+  const isEmArrived = kind === 'eastmy_arrived';
 
   // Driver Info only: the operator's per-customer edits of the delivery time,
   // keyed by phone. A customer not edited here sends its rows' Time Slot.
@@ -283,6 +294,24 @@ export const SendDeliveryMessageModal = ({ rows, onClose, onSent, kind = 'delive
           {isPostpone && (
             <div style={noteStyle}>
               The notice uses each order's own <strong>Amend Reason</strong> (printed after "due to") and <strong>Delivery Date</strong> (the proposed new date) from the board. Set those two columns on the row first; an order missing either is skipped.
+            </div>
+          )}
+
+          {isEmPrep && (
+            <div style={noteStyle}>
+              East Malaysia prep notice — tells the customer their order is going into preparation and asks them to <strong>confirm the final delivery details</strong> (recipient, address, remark). Their reply shows on the order's WhatsApp timeline. Only East Malaysia (Sabah / Sarawak) orders are sent; others are skipped.
+            </div>
+          )}
+
+          {isEmShipped && (
+            <div style={noteStyle}>
+              East Malaysia shipped notice — uses the <strong>Consignment No.</strong> and <strong>ETA (arriving port)</strong> from each order's row (the EM columns). Fill those on the row first; an order missing either is skipped. Only East Malaysia orders are sent.
+            </div>
+          )}
+
+          {isEmArrived && (
+            <div style={noteStyle}>
+              East Malaysia arrived notice — tells the customer the goods have reached East Malaysia. Send this when you can see the order has arrived; there is no date check on the row. Only East Malaysia orders are sent.
             </div>
           )}
 

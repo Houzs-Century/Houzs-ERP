@@ -322,6 +322,17 @@ export async function bookRefundCredit(
   if (!code) return;
   const amount = Math.abs(Number(pv.total_sen ?? 0));
   if (!amount) return;
+  /* Once per voucher and direction: a voucher post or cancel that died part-way is now finished by pressing it again
+     (D1/D2, #1126), and that must not pay the credit out twice. A failed read writes nothing - the retry decides. */
+  const sourceType = direction === 'refund' ? 'CUSTOMER_REFUND' : 'CUSTOMER_REFUND_REVERSAL';
+  const { data: had, error: hadErr } = await sb.from('customer_credits')
+    .select('id').eq('source_type', sourceType).eq('source_doc_id', pv.id).limit(1);
+  if (hadErr) {
+    /* eslint-disable-next-line no-console */
+    console.error('[pv-refund] customer credit NOT written (could not check for an earlier one):', pv.pv_number, direction, hadErr.message);
+    return;
+  }
+  if (((had ?? []) as unknown[]).length > 0) return;
   const r = await addCustomerCredit(sb, {
     debtorCode: code,
     debtorName: pv.payee_name,

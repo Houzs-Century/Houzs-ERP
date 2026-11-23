@@ -45,7 +45,7 @@ vi.mock("../../components/scm-v2/DocumentRelationshipMapModal", () => ({
   DocumentChoiceDialog: () => null,
 }));
 vi.mock("../../auth/AuthContext", () => ({
-  useAuth: () => ({ user: { id: 1, name: "Logistics" }, can: (k: string) => k !== "scm.so.edit_after_do" || perms.afterDo }),
+  useAuth: () => ({ user: { id: 1, name: "Logistics" }, can: (k: string) => k === "scm.so.edit_after_do" ? perms.afterDo : k !== "scm.so.edit_lines_after_do" }),
 }));
 vi.mock("../../vendor/scm/lib/auth", async (orig) => ({
   ...(await orig<typeof import("../../vendor/scm/lib/auth")>()),

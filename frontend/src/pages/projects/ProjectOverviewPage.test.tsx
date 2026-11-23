@@ -41,7 +41,7 @@ const PROJECTS: OvProject[] = [
     pnl: {
       fromOrders: false, sales: 90000, serviceRevenue: 0, cogs: { mattSofa: 30000, bedframe: 0, accessories: 0, other: 0 },
       rental: 12000, setup: 0, transportSetup: 0, others: 0, transportFee: 0, commission: 0, merchandise: 0,
-      layers: { estimated: true, lastEvent: { id: 361, code: "P1" }, split: {
+      layers: { estimated: true, lastEvent: { id: 361, code: "P1" }, sources: { sales: "forecast", cogs_matt_sofa: "last_event", rental: "last_event" }, split: {
         sales: { actual: 0, forecast: 90000, last_event: 0 },
         cost: { actual: 0, forecast: 0, last_event: 42000 },
         net: { actual: 0, forecast: 90000, last_event: -42000 },
@@ -177,7 +177,13 @@ describe("Project Overview — future date ranges (owner 2026-11-18)", () => {
     show("?view=finances&af_from=2027-01-01&af_to=2027-03-31");
     expect(titles()).toHaveLength(1);
     const row = within(projectsTable()).getByText("[AKEMI] MYHOME").closest("tr") as HTMLTableRowElement;
-    expect(within(row).getByText("Estimate")).toBeTruthy();
+    /* No tag; its forecast figures are shaded (owner 2026-11-19). */
+    expect(within(row).queryByText("Estimate")).toBeNull();
+    /* Sales was typed (teal); Rental is the last event's (yellow). */
+    expect(within(row).getByText("90,000.00").getAttribute("data-forecast")).toBe("typed");
+    expect(within(row).getByText("12,000.00").getAttribute("data-forecast")).toBe("last");
+    /* The Total row says it holds a forecast too. */
+    expect(within(projectsTable()).getAllByText("90,000.00").some((el) => el.getAttribute("title")?.startsWith("Typed forecast 90,000.00 · last event -"))).toBe(true);
     const split = screen.getByTestId("layer-split");
     expect(split.textContent).toContain("1 of 1 projects include a forecast");
     /* A last event's result is a forecast (owner 2026-11-19): two columns, not three. */
@@ -207,5 +213,21 @@ describe("Project Overview - the hero follows the part picked (owner 2026-11-19)
     show("?view=finances&af_from=2026-10-01&af_to=2027-01-31");
     expect(screen.queryByText(/still to come · /)).toBeNull();
     expect(screen.getByRole("button", { name: /^Projected total/ }).getAttribute("aria-pressed")).toBe("true");
+  });
+});
+
+describe("Project Overview - fits a phone (owner 2026-11-19)", () => {
+  it("the panel grid lets wide tables scroll inside their panel, and the layer split has no fixed width", () => {
+    const { container } = show("?view=finances&af_from=2027-01-01&af_to=2027-03-31");
+    const grid = [...container.querySelectorAll("div")].find((d) => d.className.includes("xl:grid-cols-"));
+    expect(grid?.className).toContain("grid-cols-[minmax(0,1fr)]");
+    expect(screen.getByTestId("layer-split").querySelector("table")?.className).not.toMatch(/min-w-/);
+  });
+});
+
+describe("Project Overview - the ringgit table scrolls on a phone (owner 2026-11-19)", () => {
+  it("sits in its own sideways-scrolling box", () => {
+    show("?view=finances&af_from=2027-01-01&af_to=2027-03-31");
+    expect(screen.getByTestId("ringgit-table").className).toContain("overflow-x-auto");
   });
 });

@@ -20,7 +20,8 @@ export function useItSupportConnected(): boolean {
   return q.data?.connected === true;
 }
 
-/** Drops the IT Support row from a list of menu rows unless IT Support is connected. */
+/** Drops the IT Support and Meetings rows unless this environment is connected to the
+ *  IT Hub: Meetings keeps its rooms and bookings there and uses the same two secrets. */
 export function withoutUnconnectedItSupport<T extends { to?: string }>(tabs: T[], connected: boolean): T[] {
-  return connected ? tabs : tabs.filter((t) => t.to !== "/it-support");
+  return connected ? tabs : tabs.filter((t) => t.to !== "/it-support" && t.to !== "/meetings");
 }

@@ -26,8 +26,10 @@ const mutedChip: CSSProperties = {
 /* Floating identity (Decision, docs/modules/purchase-order.md 2026-08-06: soft
    until DO): a live, recomputed-on-every-view allocation wears a dashed border.
    Mobile twin of the desktop dashed chips — keep in lockstep. */
+/* Owner 2026-11-19: the Assigned SO IS MRP's record - a plain chip, no dash and
+   no "~" (desktop twin: assignmentTone in DocumentLinesExpansion.tsx). */
 const floatingChip: CSSProperties = {
-  ...mutedChip, background: "transparent", border: "1px dashed #b6c6c0",
+  ...mutedChip, color: "var(--hz-c-ink)",
 };
 
 /* Mobile stock pill — the SAME rule as the desktop soLineStockPill
@@ -307,7 +309,7 @@ export function PairedSoRowsMobile({
       floating,
       chip: floating ? floatingChip : anchored ? solidChip : mutedChip,
       title: floating
-        ? "Floating — live MRP allocation, recomputed on every view. It moves as demand moves and can disappear."
+        ? "Assigned by MRP now - it moves if MRP gives the goods to another order. The SO it was raised for is the SO Doc No."
         : anchored
           ? "Delivered — this line's goods shipped against this Sales Order (anchored history)"
           : sourceLinked === false
@@ -336,7 +338,9 @@ export function PairedSoRowsMobile({
      (assignments or orphan delivered rows) — dedupe by soDocNo, so when the
      stored origin won the precedence nothing extra renders. */
   const shownSos = new Set(rows.map((r) => r.soDocNo));
-  const provExtra = (provenance ?? []).filter((p) => p.soDocNo && !shownSos.has(p.soDocNo));
+  /* Owner 2026-11-19: beside MRP's order a raised-for chip read as two orders; it
+     shows only when nothing else is assigned (desktop twin: provenanceExtras). */
+  const provExtra = shownSos.size > 0 ? [] : (provenance ?? []).filter((p) => p.soDocNo && !shownSos.has(p.soDocNo));
   if (rows.length === 0 && provExtra.length === 0) {
     return (
       <div style={rowStyle}>
@@ -352,7 +356,7 @@ export function PairedSoRowsMobile({
         return (
           <div key={r.soDocNo} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
             <span title={r.title} style={r.chip}>
-              {r.soDocNo}{r.floating ? " ~" : ""}
+              {r.soDocNo}
             </span>
             <span className="money" style={{ fontSize: 10.5, color: "var(--hz-c-ink-soft)", fontWeight: 600 }}>
               {r.deliveryDate ? formatDate(r.deliveryDate) : "—"}

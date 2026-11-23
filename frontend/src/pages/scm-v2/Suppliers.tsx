@@ -29,6 +29,7 @@ import { addressLineTwoView, hasLegacyLines } from '../../vendor/shared/address-
 import {
   useSuppliersPaged,
   useCreateSupplier,
+  useNextSupplierCode,
   useUpdateSupplier,
   type SupplierRow,
   type SupplierStatus,
@@ -619,11 +620,25 @@ const CreateForm = ({ onClose }: { onClose: () => void }) => {
   });
   const onChange = (k: string, v: string | number) => setForm((s) => ({ ...s, [k]: v }));
 
+  /* Purchasing opens suppliers of goods: the code is numbered 400- plus the
+     name's first letter until someone types one (owner 2026-11-20). */
+  const [codeTyped, setCodeTyped] = useState(false);
+  const typedName = String(form.name ?? '');
+  const nextCode = useNextSupplierCode('400', typedName, !codeTyped);
+  const suggested = typedName.trim() ? (nextCode.data?.code ?? '') : '';
+  useEffect(() => {
+    if (codeTyped) return;
+    setForm((s) => (s.code === suggested ? s : { ...s, code: suggested }));
+  }, [codeTyped, suggested]);
+  const onFieldChange = (k: string, v: string | number) => {
+    if (k === 'code') setCodeTyped(true);
+    onChange(k, v);
+  };
+
   const submit = () => {
-    const code = String(form.code ?? '').trim();
     const name = String(form.name ?? '').trim();
-    if (!code || !name) {
-      notify({ title: 'Code and Name are required.', tone: 'error' });
+    if (!name) {
+      notify({ title: 'Name is required.', tone: 'error' });
       return;
     }
     const pcErr = masterPostcodeError(String(form.country || ''), String(form.postcode || ''));
@@ -637,7 +652,7 @@ const CreateForm = ({ onClose }: { onClose: () => void }) => {
   return (
     <>
       <div className={styles.drawerBody}>
-        <SupplierFields form={form} onChange={onChange} finance={isFinance} />
+        <SupplierFields form={form} onChange={onFieldChange} finance={isFinance} />
       </div>
       <footer className={styles.drawerFooter}>
         <Button variant="ghost" onClick={onClose}>Cancel</Button>

@@ -10,7 +10,7 @@ export interface FieldChange {
   after: string;
 }
 
-const BLANK = "(blank)";
+export const BLANK = "(blank)";
 
 /** `+60123456789` and the bare `123456789` the draft keeps both read as `0123456789`. */
 export function localPhone(raw: string): string {

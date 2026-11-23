@@ -430,6 +430,35 @@ export function requireAnyPermission(perms: string[]): MiddlewareHandler<{ Bindi
 }
 
 /**
+ * Gate for `/api/hr/*`. A broad reader (hr.employees.read / .manage, or `*`)
+ * reaches everything, exactly as before. A NARROW `hr.attendance.read` reaches
+ * only the time-safe GET reads the Attendance tab needs (the daily punches and
+ * the working-hours grid) — never salary, pay, the employee master or payroll.
+ *
+ * DEFAULT-DENY: a narrow caller is refused any path not on the allow-list, so a
+ * new HR endpoint is private to the broad readers until it is deliberately
+ * added here — a missed route cannot leak salary. Writes are unaffected: each
+ * handler still checks hr.employees.manage, and only GET is allowed for the
+ * narrow key regardless.
+ */
+const HR_ATTENDANCE_READ_PATHS = ["/api/hr/attendance", "/api/hr/working-hours"];
+export const requireHrRead: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
+  const user = c.get("user");
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- auth sets user; keep the 401 for a bare context (tests/scripts)
+  if (!user) return c.json({ error: "Your session has expired. Please sign in again." }, 401);
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- tests and scripts build AuthUser without permissions_set
+  const granted = user.permissions_set ?? user.permissions;
+  if (hasPermission(granted, "hr.employees.read") || hasPermission(granted, "hr.employees.manage")) return next();
+  const path = c.req.path;
+  const timeRead =
+    c.req.method === "GET" &&
+    hasPermission(granted, "hr.attendance.read") &&
+    HR_ATTENDANCE_READ_PATHS.some((base) => path === base || path.startsWith(`${base}/`));
+  if (timeRead) return next();
+  return c.json({ error: "You don't have permission to do that." }, 403);
+};
+
+/**
  * SCM umbrella gate for `/api/scm/*`. ADDITIVE on top of the legacy
  * permission check — preserves the EXACT existing pass conditions so no
  * current SCM user loses access:

@@ -14,7 +14,14 @@
    small fake of env.DB (the scm client cannot reach public). */
 
 import { Hono } from 'hono';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
+import { fakeRunScmPgCommand } from './lib/fake-scm-command';
+
+/* The AP bill edit commits inside one PG transaction; here on the fake, with its rollback. */
+vi.mock('../src/scm/lib/pg-supabase-transaction', async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
+  runScmPgCommand: fakeRunScmPgCommand,
+}));
 import { SCM_SYSTEM_STAFF_ID } from '../src/scm/middleware/auth';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
 import { paymentVouchers, buildLines } from '../src/scm/routes/payment-vouchers';

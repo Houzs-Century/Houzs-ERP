@@ -104,6 +104,8 @@ export function buildPayslip(input: {
   allowances?: ReadonlyArray<{ kind: AllowanceKind; amountSen: number; note: string | null }>;
   /** Earlier months of the same year, for PCB: normal remuneration, employee EPF, PCB withheld. */
   ytd: { remunerationSen: number; epfSen: number; pcbSen: number };
+  /** Confirmed overtime hours per date (HC-0125); null keeps punch-derived weekday OT. */
+  confirmedOtHoursByDate: ReadonlyMap<string, number> | null;
 }): PayslipFigures {
   const { employee: e, period } = input;
   const [year, month] = period.split("-").map(Number);
@@ -119,6 +121,7 @@ export function buildPayslip(input: {
     shortHours: input.shortHours,
     rulesOn: input.rulesOn,
     paidLeave: input.paidLeave,
+    confirmedOtHoursByDate: input.confirmedOtHoursByDate,
   });
   const trip = input.trip ?? null;
   const commissionSen = trip?.commission.amountSen ?? 0;

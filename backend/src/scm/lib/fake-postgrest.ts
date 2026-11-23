@@ -389,7 +389,11 @@ export function fakeSb(
         }
         return { data: row, error: null };
       },
-      then(resolve: (v: unknown) => unknown) { return Promise.resolve(settle()).then(resolve); },
+      /* An awaited update(...).select() is UPDATE ... RETURNING: the rows it touched, as PostgREST answers. A
+         compare-and-set reads an empty list as "lost". Every other chain is unchanged. */
+      then(resolve: (v: unknown) => unknown) {
+        return Promise.resolve(settle()).then((v) => resolve(pendingUpdate && updated && selectCalled && !(v as { error?: unknown }).error ? { data: updated, error: null } : v));
+      },
     };
     return builder;
   };

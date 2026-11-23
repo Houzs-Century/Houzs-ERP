@@ -158,6 +158,10 @@ export type StockAdjustmentDoc = {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  /* Set when this adjustment was auto-created by a posted stock take (owner
+     2026-11-20): it is READ-ONLY (its stock moved through the take) and links
+     back to it. Null for a hand-raised adjustment. */
+  source_stock_take_id?: string | null;
   lines: StockAdjustmentLine[];
 };
 
@@ -302,6 +306,8 @@ export type StockTransferLine = {
 export type StockTransferDetail = {
   transfer: StockTransferRow;
   lines: StockTransferLine[];
+  /** CANCELLED, but its own movements do not net to zero: Finish cancel moves the rest back. */
+  stockNotBack?: boolean;
 };
 
 export type StockTransferListFilters = {
@@ -473,7 +479,7 @@ export function useDeleteStockTransfer() {
 // PR-DRAFT-removal — DRAFT renamed to OPEN (migration 0078). Stock takes
 // keep an editable working state because the commander enters counted_qty
 // per line BEFORE posting; "OPEN" makes the intent explicit.
-export type StockTakeStatus = 'OPEN' | 'POSTED' | 'CANCELLED';
+export type StockTakeStatus = 'OPEN' | 'PENDING_APPROVAL' | 'POSTED' | 'CANCELLED';
 /* NONZERO (phase 1, mig 0270) — only buckets whose system qty ≠ 0. */
 export type StockTakeScopeType = 'ALL' | 'CATEGORY' | 'CODE_PREFIX' | 'NONZERO';
 
@@ -496,6 +502,10 @@ export type StockTakeRow = {
   cancelled_at: string | null;
   created_at: string;
   created_by: string | null;
+  /* Approval lane (owner 2026-11-20): who sent an over-limit count for approval
+     and when. Set while PENDING_APPROVAL; cleared when a supervisor returns it. */
+  submitted_at?: string | null;
+  submitted_by?: string | null;
   /* Phase 1 (mig 0270): the person responsible for the count + blind flag. */
   assignee_staff_id?: string | null;
   /* Round 1 (mig 20261006T1500): EVERY counter — a record, not a post gate. */
@@ -547,9 +557,27 @@ export type StockTakeViewer = {
   blindActive: boolean;
 };
 
+/* One ADJUSTMENT movement a POSTED take booked (owner 2026-11-20): the SKU, its
+   signed qty change, and the unit cost the +variance lot took (0 for a negative
+   variance, which the trigger costs FIFO). Each links to the SKU's stock card. */
+export type StockTakeAdjustment = {
+  item_code: string;
+  product_name: string | null;
+  variant_key: string | null;
+  qty: number;
+  unit_cost_sen: number | null;
+};
+
 export type StockTakeDetail = {
   take: StockTakeRow;
   lines: StockTakeLine[];
+  /* The ADJUSTMENT movements this take booked — present (and non-empty) only on
+     a POSTED take with non-zero variance. */
+  adjustments?: StockTakeAdjustment[];
+  /* The formal Stock Adjustment document this take booked (owner 2026-11-20) —
+     the take links to it instead of a stock card. Null for a take posted before
+     this feature (or until a backfill mints one). */
+  adjustment?: { id: string; adjustment_no: string } | null;
   viewer?: StockTakeViewer;
 };
 
@@ -645,23 +673,64 @@ export function useUpdateStockTakeLines() {
   });
 }
 
+/* Post result. A within-limit count (or any supervisor post) books immediately
+   and carries `movementsWritten`. A non-supervisor's over-limit count instead
+   comes back with `pendingApproval: true` and the breached `itemCodes` — no
+   stock moved; a supervisor must /approve it (owner 2026-11-20). */
+export type PostStockTakeResult = {
+  take: StockTakeRow;
+  movementsWritten?: number;
+  movementErrors?: string[];
+  racksMoved?: number;
+  racksSkipped?: string[];
+  rackError?: string;
+  pendingApproval?: boolean;
+  itemCodes?: string[];
+  message?: string;
+  /* The Stock Adjustment document this post booked (owner 2026-11-20). */
+  adjustmentId?: string;
+  adjustmentNo?: string;
+};
+
 export function usePostStockTake() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      authedFetch<{
-        take: StockTakeRow;
-        movementsWritten: number;
-        movementErrors?: string[];
-        racksMoved?: number;
-        racksSkipped?: string[];
-        rackError?: string;
-      }>(`/stock-takes/${id}/post`, { method: 'PATCH', body: '{}' }),
+      authedFetch<PostStockTakeResult>(`/stock-takes/${id}/post`, { method: 'PATCH', body: '{}' }),
     onSuccess: (_data, id) => {
       qc.invalidateQueries({ queryKey: ['stock-takes'] });
       qc.invalidateQueries({ queryKey: ['stock-takes', id] });
       // Posting writes ADJUSTMENT movements — invalidate inventory views.
       qc.invalidateQueries({ queryKey: ['inventory'] });
+    },
+  });
+}
+
+/* Supervisor approves a PENDING_APPROVAL count → POSTED: books the deferred
+   ADJUSTMENT movements (same shape as a direct post). */
+export function useApproveStockTake() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      authedFetch<PostStockTakeResult>(`/stock-takes/${id}/approve`, { method: 'PATCH', body: '{}' }),
+    onSuccess: (_data, id) => {
+      void qc.invalidateQueries({ queryKey: ['stock-takes'] });
+      void qc.invalidateQueries({ queryKey: ['stock-takes', id] });
+      void qc.invalidateQueries({ queryKey: ['inventory'] });
+    },
+  });
+}
+
+/* Supervisor returns a PENDING_APPROVAL count → OPEN for a recount. No stock
+   moved while pending, so nothing is reversed. */
+export function useRejectStockTake() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      authedFetch<{ take: StockTakeRow }>(`/stock-takes/${id}/reject`, { method: 'PATCH', body: '{}' }),
+    onSuccess: (_data, id) => {
+      void qc.invalidateQueries({ queryKey: ['stock-takes'] });
+      void qc.invalidateQueries({ queryKey: ['stock-takes', id] });
     },
   });
 }

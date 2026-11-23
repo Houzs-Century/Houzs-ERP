@@ -62,7 +62,7 @@ describe('SO create: no global allocation re-walk for a DRAFT', () => {
 
   test('the post-create re-walk is gated on a live (non-draft) create', () => {
     const gate = "if ((body as { asDraft?: unknown }).asDraft !== true) {";
-    const walk = core.indexOf('await recomputeSoStockAllocation(sb)');
+    const walk = core.indexOf("await recomputeAllocationAfterSave(sb, 'post-so-create')");
     expect(walk).toBeGreaterThanOrEqual(0);
     // The nearest gate above the walk is the draft gate, and the walk is the only await in it.
     const opened = core.lastIndexOf(gate, walk);

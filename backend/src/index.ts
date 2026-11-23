@@ -6,7 +6,7 @@ import { pollEtag, POLLED_LIST_PATHS } from "./middleware/pollEtag";
 import type { Env, ScanQueueMessage } from "./types";
 import { GIT_SHA, resolveBuildSha } from "./build-info";
 import { restKeyClaims, restUrlRef } from "./db/rest-key-claims";
-import { auth, requirePermission, requireAnyPermission, requireScmAccess, requirePageAccessOrSalesView, requirePageAccess } from "./middleware/auth";
+import { auth, requirePermission, requireAnyPermission, requireHrRead, requireScmAccess, requirePageAccessOrSalesView, requirePageAccess } from "./middleware/auth";
 import { TRANSIENT_CONN_RE } from "./db/d1-compat";
 // Ported 2990's SCM modules (furniture supply chain). Talk to the `scm` Postgres
 // schema via supabase-js; namespaced under /api/scm/*, owner-only during the port.
@@ -43,6 +43,8 @@ import notifications from "./routes/notifications";
 import badgeCounts, { setBadgeDispatch } from "./routes/badgeCounts";
 import pushDevices from "./routes/push";
 import itSupport from "./routes/itSupport";
+import meetings, { publicMeetings } from "./routes/meetings";
+import { MEETINGS_DIRECTORY_JOB, pushMeetingsDirectory } from "./services/meetingsDirectory";
 import { sendAiUsageToHub } from "./services/aiUsageHub";
 import { HEALTH_HUB_JOB, sendHealthReportToHub } from "./services/healthHub";
 import { runPushFleetReminders } from "./services/pushFleetReminders";
@@ -58,11 +60,13 @@ import { hrLabor } from "./routes/hr-labor";
 import { hrPayroll } from "./routes/hr-payroll";
 import { hrTripPay } from "./routes/hr-trip-pay";
 import { hrKpi } from "./routes/hr-kpi";
+import { hrShifts } from "./routes/hr-shifts";
 import { runNightlyTripSync } from "./routes/lib/hr-trip-sync";
 import { attendance } from "./routes/attendance";
 import { runAutoClockOut } from "./routes/lib/hr-labor-store";
 import { posDevice } from "./routes/pos-device";
 import projectsOutstanding from "./routes/projectsOutstanding";
+import projectsDefectList from "./routes/projectsDefectList";
 import projectsCalendarSearch from "./routes/projectsCalendarSearch";
 import { projectDataGaps } from "./routes/projectDataGaps";
 import { projectOverview } from "./routes/projectOverview";
@@ -118,6 +122,8 @@ import supplierPortal from "./routes/supplierPortal";
 import mailCenter from "./routes/mail-center";
 import mailInbound from "./routes/mail-inbound";
 import mailAcks from "./routes/mail-acks";
+import mailAccessLog from "./routes/mail-access-log";
+import mailReplyGuard from "./routes/mail-reply-guard";
 import mailPersonal from "./routes/mail-personal";
 // 2990 → Houzs LIVE SO mirror receiver. PRE-AUTH (secret-guarded, called by the
 // 2990 DB via pg_net, no user JWT) — mounted at the top level, outside /api/scm.
@@ -170,6 +176,7 @@ import { brandShare } from "./routes/brandShare";
 import { projectForecast } from "./routes/projectForecast";
 import { drainEmailOutbox } from "./services/email";
 import { backfillOutboundMessageIds } from "./lib/mail-threading";
+import { DELIVERY_REFRESH_LIMIT, refreshOutboundDelivery } from "./lib/mail-delivery";
 import { pollVelocity } from "./scm/lib/velocity-poll";
 import { pollItrack } from "./scm/lib/itrack-poll";
 import { runMailAckEscalation } from "./lib/mail-acks";
@@ -215,6 +222,7 @@ import { runSOSnapshot, runPOSnapshot } from "./services/acSnapshot";
 import { isAutoCountSyncDisabled } from "./services/autocount";
 import { jobTracker, purgeOldJobRuns } from "./services/jobRuns";
 import { pruneFailedLogins } from "./services/failedLogins";
+import { bustProjectOverviewOnWrite } from "./routes/lib/project-overview-bust";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -447,6 +455,9 @@ app.route("/api/public/contractor-calendar", publicContractorCalendar);
 // own confirmed events, its display floorplan, its own size and total sales,
 // scoped by the token's brand on every read. See routes/publicBrandCalendar.ts.
 app.route("/api/public/brand-calendar", publicBrandCalendar);
+// A meeting-room booking link (no login): free times, book, a guest's own booking by its token.
+// Proxied to the IT Hub as a guest; see routes/meetings.ts.
+app.route("/api/public/meetings", publicMeetings);
 
 app.use("/api/*", auth);
 
@@ -550,12 +561,17 @@ app.route("/api/badge-counts", badgeCounts);
 app.route("/api/push", pushDevices);
 // IT Support: a proxy to the Houzs IT Hub (any signed-in user, own requests only).
 app.route("/api/it-support", itSupport);
+// Meetings: every signed-in user; rooms need meetings.manage_rooms (checked in the router).
+app.route("/api/meetings", meetings);
 app.route("/api/presence", presence);
 // Mounted at the EXACT path BEFORE the projects router so its "/:id" catch-all
 // does not swallow "outstanding-tasks" as an id (owner/admin Reminder view).
 app.route("/api/projects/outstanding-tasks", projectsOutstanding);
 // All-dates calendar search (Previous / Next match). Same exact-path-first reason.
 app.route("/api/projects/calendar/search", projectsCalendarSearch);
+// Cross-project open-defect feed (service team's Defect List). Same exact-path-
+// first reason; gated projects.list inside. See routes/projectsDefectList.ts.
+app.route("/api/projects/defect-list", projectsDefectList);
 // Finished events with incomplete books (Project Overview, Overview). Same exact-
 // path-first reason as above; finance-viewer rule inside. See routes/projectDataGaps.ts.
 app.use("/api/projects/data-gaps/*", requirePageAccess("projects.finances"));
@@ -568,6 +584,9 @@ const requirePageAccessOrDirector: MiddlewareHandler<{ Bindings: Env }> = async 
   if (isFinanceViewer(c.get("user") as unknown as AuthUser)) return next();
   return requirePageAccess("projects.finances")(c, next);
 };
+// A successful project write drops Project Overview's cached copy (routes/lib/project-overview-bust.ts).
+app.use("/api/projects/*", bustProjectOverviewOnWrite);
+app.use("/api/project-forecast/*", bustProjectOverviewOnWrite);
 app.use("/api/projects/overview/*", requirePageAccessOrDirector);
 app.route("/api/projects/overview", projectOverview);
 app.route("/api/projects", projects);
@@ -596,15 +615,18 @@ app.route("/api/project-pos-sales", projectPosSales);
 // one key. NOT under /api/pos — that is the older 2990 tablet-POS auth.
 app.use("/api/pos-admin/*", requirePermission("pos.manage"));
 app.route("/api/pos-admin", posAdmin);
-// HR Employees & Attendance (HC-0125): reads on either key, every write checks
-// hr.employees.manage inside. Salaries, so not under the SCM umbrella.
-app.use("/api/hr/*", requireAnyPermission(["hr.employees.read", "hr.employees.manage"]));
+// HR Employees & Attendance (HC-0125): broad read on either employees key sees
+// everything; a narrow hr.attendance.read reaches only the Attendance reads
+// (default-deny, see requireHrRead). Every write checks hr.employees.manage
+// inside. Salaries, so not under the SCM umbrella.
+app.use("/api/hr/*", requireHrRead);
 app.route("/api/hr", hrEmployees);
 app.route("/api/hr", hrAttendance);
 app.route("/api/hr", hrLabor);
 app.route("/api/hr", hrPayroll);
 app.route("/api/hr", hrTripPay);
 app.route("/api/hr", hrKpi);
+app.route("/api/hr", hrShifts);
 // The phone punch clock (HC-0125): any signed-in account, answered only for
 // the employee linked to it, so NOT behind the hr.employees.* gate above.
 app.route("/api/attendance", attendance);
@@ -627,6 +649,8 @@ app.route("/api/inbox", inbox);
 // the handlers (owner passes via "*"). The pre-auth /api/mail-center/inbound
 // route is mounted above, before the auth gate, and is not shadowed by this.
 app.route("/api/mail-center", mailAcks);
+app.route("/api/mail-center", mailAccessLog);
+app.route("/api/mail-center", mailReplyGuard);
 app.route("/api/mail-center", mailPersonal);
 app.route("/api/mail-center", mailCenter);
 // Announcements — the banner GET, the LIST GET and the ack POST are open to
@@ -768,7 +792,8 @@ export default {
       // without RESEND_API_KEY; bounded to 25 rows / 3 attempts so a bad batch
       // can't stall the slot.
       // Then give Mail Center sends Resend's Message-ID, which a customer's
-      // reply quotes to land back on its thread.
+      // reply quotes to land back on its thread, and ask whether each recent
+      // send was delivered or bounced (HC-0247).
       ctx.waitUntil(
         track("email-outbox", () => drainEmailOutbox(env))
           .then((r) => {
@@ -777,10 +802,22 @@ export default {
           .catch((e) => console.error("[cron email-outbox]", e))
           .then(() => backfillOutboundMessageIds(env.DB, env, null, 10))
           .catch((e) => console.error("[cron mail-message-ids]", e))
+          .then(() => refreshOutboundDelivery(env.DB, env, DELIVERY_REFRESH_LIMIT, Date.now()))
+          .then((r) => {
+            if (r.changed) console.log(`[cron mail-delivery] checked=${r.checked} changed=${r.changed} bounced=${r.bounced} unreachable=${r.unreachable}`);
+          })
+          .catch((e) => console.error("[cron mail-delivery]", e))
       );
       // Health report to the IT Hub: live DB, email backlog, jobs, AI failures,
       // measured as the System Health page measures them (services/healthHub.ts).
       // No hub address or key: nothing is sent. A refusal is only logged.
+      // The staff list for the meeting-room hub, once an hour (services/meetingsDirectory.ts).
+      if (new Date(event.scheduledTime).getUTCMinutes() < 5) {
+        ctx.waitUntil(
+          track("meetings-directory", () => pushMeetingsDirectory(env))
+            .catch((e) => console.error(`[cron ${MEETINGS_DIRECTORY_JOB}]`, e))
+        );
+      }
       ctx.waitUntil(
         track("health-hub", () => sendHealthReportToHub(env, event.scheduledTime))
           .then((r) => { if (r.sent && !r.ok) console.log(`[cron ${HEALTH_HUB_JOB}] sent, health is not ok`); })

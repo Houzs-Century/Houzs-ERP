@@ -142,7 +142,10 @@ export function eventPnl(input: {
     if (input.booksRows.has(row)) return { amount: sum('cost', cats), from: 'books', pct: null };
     const typed = sum('cost', cats, true);
     if (typed !== 0) return { amount: typed, from: 'typed', pct: null };
-    if (pct == null || sales <= 0) return { amount: 0, from: 'none', pct: null };
+    if (pct == null) return { amount: 0, from: 'none', pct: null };
+    /* No real sales yet: nothing to charge, but the rate stays on the row so a
+       forecast Sales can be priced by it (eventForecast.layerPnl, owner 2026-11-20). */
+    if (sales <= 0) return { amount: 0, from: 'none', pct };
     return { amount: round2((sales * pct) / 100), from: 'rate', pct };
   };
 

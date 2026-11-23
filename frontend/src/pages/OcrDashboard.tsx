@@ -9,6 +9,7 @@ import { PageHeader } from "../components/Layout";
 import { Button } from "../components/Button";
 import { ListSkeleton } from "../components/Skeleton";
 import { DataTable, type Column } from "../components/DataTable";
+import { TabStrip } from "../components/TabStrip";
 import { ResizableDrawer } from "../components/ResizableDrawer";
 import { OrderSlipPhoto } from "../vendor/scm/components/OrderSlipPhoto";
 import { useQuery } from "../hooks/useQuery";
@@ -22,12 +23,15 @@ type DocTypeStats = {
   scans: number;
   pending: number;
   failed: number;
+  needsReview: number;
   discarded: number;
   awaiting: number;
   clean: number;
   corrected: number;
   imported: number;
   accuracy: { clean: number; reviewed: number } | null;
+  /** SO only: fields read right / fields on the slip, over scans whose edits are recorded exactly. */
+  fieldAccuracy: { correct: number; total: number; scans: number } | null;
   avgSec: number | null;
   p90Sec: number | null;
 };
@@ -37,10 +41,12 @@ type ProblemScan = {
   at: string;
   documentType: string;
   docNo: string | null;
-  outcome: "failed" | "corrected";
+  outcome: "failed" | "needsReview" | "corrected";
   detail: string | null;
   /** Before/after per changed field; null for scans with no draft snapshot. */
   changes: FieldChange[] | null;
+  /** Corrected sales slips only; null for scans from before edits were recorded exactly. */
+  fieldAccuracy: { correct: number; total: number } | null;
   /** The slip photo the scan read; null when none was kept. */
   slipImageKey: string | null;
 };
@@ -51,6 +57,8 @@ export type OcrReport = {
   fieldMisses: { reviewed: number; fields: Array<{ field: string; count: number }> };
   problems: ProblemScan[];
 };
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 /** Fewer reviewed scans than this is not enough to judge. */
 const MIN_SAMPLE = 5;
@@ -82,22 +90,45 @@ const DOC_COLUMNS: Column<DocTypeStats>[] = [
       ),
   },
   {
+    key: "fieldAccuracy", label: "Fields read right", align: "right",
+    getValue: (r) => (r.fieldAccuracy?.total ? r.fieldAccuracy.correct / r.fieldAccuracy.total : -1),
+    render: (r) =>
+      !r.fieldAccuracy ? (
+        <span className="text-ink-muted" title="Edits to this document are not recorded, so accuracy cannot be measured">not recorded</span>
+      ) : r.fieldAccuracy.total === 0 ? (
+        "—"
+      ) : (
+        <span className="font-semibold text-ink" title={`${r.fieldAccuracy.correct} of ${r.fieldAccuracy.total} fields, over ${plural(r.fieldAccuracy.scans, "reviewed slip")}`}>
+          {pct(r.fieldAccuracy.correct, r.fieldAccuracy.total)}
+          {r.fieldAccuracy.scans < MIN_SAMPLE ? " *" : ""}{" "}
+          <span className="font-normal text-ink-muted">{r.fieldAccuracy.correct}/{r.fieldAccuracy.total}</span>
+        </span>
+      ),
+  },
+  {
     key: "failed", label: "Failed", align: "right", getValue: (r) => r.failed,
     render: (r) => <span className={r.failed > 0 ? "font-semibold text-err" : undefined}>{share(r.failed, r.scans)}</span>,
   },
-  { key: "discarded", label: "Discarded", align: "right", getValue: (r) => r.discarded, render: (r) => (r.documentType === "SO" ? r.discarded : "—") },
-  { key: "awaiting", label: "Awaiting review", align: "right", getValue: (r) => r.awaiting, render: (r) => (r.documentType === "SO" ? r.awaiting : "—") },
+  {
+    key: "needsReview", label: "Needs review", align: "right", getValue: (r) => r.needsReview,
+    render: (r) => (r.documentType === "SO" ? "—" : <span className={r.needsReview > 0 ? "font-semibold text-warning-text" : undefined}>{share(r.needsReview, r.scans)}</span>),
+  },
+  { key: "discarded", label: "Discarded", align: "right", getValue: (r) => r.discarded, render: (r) => r.discarded },
+  { key: "awaiting", label: "Awaiting review", align: "right", getValue: (r) => r.awaiting, render: (r) => r.awaiting },
   { key: "avg", label: "Avg time", align: "right", getValue: (r) => r.avgSec ?? -1, render: (r) => <span className="font-semibold text-ink">{secs(r.avgSec)}</span> },
   { key: "p90", label: "Slowest 10%", align: "right", getValue: (r) => r.p90Sec ?? -1, render: (r) => secs(r.p90Sec) },
 ];
 
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const scanTime = (at: string) =>
   new Date(at).toLocaleString("en-MY", { timeZone: "Asia/Kuala_Lumpur", dateStyle: "medium", timeStyle: "short" });
 
-function problemSummary({ outcome, changes, detail }: ProblemScan): string {
-  if (outcome === "failed") return detail ?? "No reason was recorded";
-  if (changes?.length) return plural(changes.length, "change");
+const fieldsRight = ({ fieldAccuracy: fa }: ProblemScan): string =>
+  fa?.total ? `${pct(fa.correct, fa.total)} of fields right (${fa.correct}/${fa.total})` : "";
+
+function problemSummary(scan: ProblemScan): string {
+  const { outcome, changes, detail } = scan;
+  if (outcome !== "corrected") return detail ?? "No reason was recorded";
+  if (changes?.length) return [plural(changes.length, "change"), fieldsRight(scan)].filter(Boolean).join(" · ");
   const fields = detail ? detail.split(", ") : [];
   return fields.length ? `${plural(fields.length, "field")} changed: ${detail}` : "Changed, no detail recorded";
 }
@@ -119,7 +150,7 @@ function ChangeList({ changes }: { changes: FieldChange[] }) {
 
 function ProblemDetail({ scan }: { scan: ProblemScan }) {
   if (scan.changes?.length) return <ChangeList changes={scan.changes} />;
-  if (scan.outcome === "failed") return <p className="break-words text-[12px] text-ink">{scan.detail ?? "No reason was recorded."}</p>;
+  if (scan.outcome !== "corrected") return <p className="break-words text-[12px] text-ink">{scan.detail ?? "No reason was recorded."}</p>;
   return (
     <p className="text-[12px] text-ink-muted">
       This slip was scanned before the before and after values were kept, so only the changed fields are known: {scan.detail ?? "none recorded"}.
@@ -128,7 +159,8 @@ function ProblemDetail({ scan }: { scan: ProblemScan }) {
 }
 
 const salesOrderPath = (docNo: string) => `/scm/sales-orders/${encodeURIComponent(docNo)}`;
-const outcomeLabel = (scan: ProblemScan) => (scan.outcome === "failed" ? "Failed" : "Corrected");
+const OUTCOME_LABEL: Record<ProblemScan["outcome"], string> = { failed: "Failed", needsReview: "Needs review", corrected: "Corrected" };
+const outcomeLabel = (scan: ProblemScan) => OUTCOME_LABEL[scan.outcome];
 const sectionTitle = "mb-2 text-[11px] font-bold uppercase tracking-wide text-ink-muted";
 
 function SlipPreviewDrawer({ scan, docNo, onClose }: { scan: ProblemScan; docNo: string; onClose: () => void }) {
@@ -142,7 +174,7 @@ function SlipPreviewDrawer({ scan, docNo, onClose }: { scan: ProblemScan; docNo:
       maxWidth={1600}
       ariaLabel={`Slip check for ${docNo}`}
       title={docNo}
-      subtitle={`${outcomeLabel(scan)} · scanned ${scanTime(scan.at)}`}
+      subtitle={[outcomeLabel(scan), fieldsRight(scan), `scanned ${scanTime(scan.at)}`].filter(Boolean).join(" · ")}
       headerActions={
         <Link to={salesOrderPath(docNo)} className="rounded-md border border-white/40 px-3 py-1.5 text-[12.5px] font-semibold text-white">
           Open sales order
@@ -167,8 +199,9 @@ function SlipPreviewDrawer({ scan, docNo, onClose }: { scan: ProblemScan; docNo:
   );
 }
 
-function ProblemScanCard({ scan, docLabel, onPreview }: { scan: ProblemScan; docLabel: string; onPreview: (scanId: string) => void }) {
+function ProblemScanCard({ scan, onPreview }: { scan: ProblemScan; onPreview: (scanId: string) => void }) {
   const isFailed = scan.outcome === "failed";
+  const hasReason = scan.outcome !== "corrected";
   return (
     <details className="group rounded-lg border border-border bg-surface">
       <summary className="flex min-h-11 cursor-pointer list-none items-start gap-2 px-3 py-2.5 [&::-webkit-details-marker]:hidden">
@@ -189,10 +222,9 @@ function ProblemScanCard({ scan, docLabel, onPreview }: { scan: ProblemScan; doc
             ) : (
               <span className="font-semibold text-ink">{scan.docNo}</span>
             )}
-            <span className="text-ink-muted">{docLabel}</span>
             <span className="ml-auto whitespace-nowrap text-[11.5px] text-ink-muted">{scanTime(scan.at)}</span>
           </div>
-          <div className={cn("mt-0.5 text-[12px] text-ink", "group-open:hidden", isFailed && "truncate")}>{problemSummary(scan)}</div>
+          <div className={cn("mt-0.5 text-[12px] text-ink", "group-open:hidden", hasReason && "truncate")}>{problemSummary(scan)}</div>
         </div>
       </summary>
       <div className="border-t border-border-subtle px-3 pb-3 pl-9 pt-1">
@@ -206,6 +238,37 @@ const card = "rounded-lg border border-border bg-surface px-5 py-5 shadow-stone"
 const cardTitle = "mb-1 text-[13px] font-bold text-ink";
 const cardNote = "mb-4 text-[11px] text-ink-muted";
 
+const problemTotal = (stats: DocTypeStats) => stats.failed + stats.needsReview + stats.corrected;
+
+function ProblemScansByDocument({ report, selectedType, onSelectType, onPreview }: {
+  report: OcrReport;
+  selectedType: string | null;
+  onSelectType: (documentType: string) => void;
+  onPreview: (scanId: string) => void;
+}) {
+  const fallbackType = report.docTypes.find((stats) => problemTotal(stats) > 0)?.documentType ?? report.docTypes[0]?.documentType;
+  const activeType = report.docTypes.some((stats) => stats.documentType === selectedType) ? selectedType : fallbackType;
+  const scans = report.problems.filter((scan) => scan.documentType === activeType);
+  return (
+    <>
+      {report.docTypes.length > 1 && activeType && (
+        <TabStrip
+          value={activeType}
+          onChange={onSelectType}
+          options={report.docTypes.map((stats) => ({ value: stats.documentType, label: stats.label, count: problemTotal(stats) }))}
+        />
+      )}
+      {scans.length === 0 ? (
+        <div className="py-6 text-center text-[12px] text-ink-muted">No problem scans this month.</div>
+      ) : (
+        <div className="space-y-2">
+          {scans.map((scan) => <ProblemScanCard key={scan.id} scan={scan} onPreview={onPreview} />)}
+        </div>
+      )}
+    </>
+  );
+}
+
 export function OcrDashboard() {
   const [params, setParams] = useSearchParams();
   const month = params.get("month") ?? thisMonthMyt();
@@ -213,8 +276,6 @@ export function OcrDashboard() {
   const q = useQuery<OcrReport>(url, () => api.get(url));
   const r = q.data;
   const reviewed = r?.fieldMisses.reviewed ?? 0;
-  const labels = new Map(r?.docTypes.map((d) => [d.documentType, d.label]));
-  const docLabel = (t: string) => labels.get(t) ?? t;
   const previewScan = r?.problems.find((scan) => scan.id === params.get("slip"));
   const setPreview = (scanId: string | null) =>
     setParams((p) => { if (scanId) p.set("slip", scanId); else p.delete("slip"); return p; }, { replace: true });
@@ -253,6 +314,10 @@ export function OcrDashboard() {
               <div className={cardTitle}>Scans by document · {monthLabel(r.month)}</div>
               <div className={cardNote}>
                 Every scan this month, including failed ones. Accuracy = sales slips confirmed with no edits, out of those reviewed.
+                Fields read right = fields the person did not change, out of every filled field on those slips (a missed or extra line counts each of its fields).
+                Both count only slips scanned once the draft was kept as the scan built it (from 17 Nov 2026 afternoon); older slips count the scan's own reformatting as edits.
+                Supplier documents: Failed = the read itself broke; Needs review = read, but no document could be made (e.g. no matching PO or goods receipt);
+                Awaiting review = waiting in the check queue; Discarded = removed from the check queue.
                 * = fewer than {MIN_SAMPLE} reviewed, not enough to judge. Model: {r.model} (the same for every scan; it is not saved per scan).
               </div>
               {r.docTypes.length === 0 ? (
@@ -264,7 +329,7 @@ export function OcrDashboard() {
 
             <div className={card}>
               <div className={cardTitle}>Where it misses · sales slips</div>
-              <div className={cardNote}>Share of the {reviewed} reviewed slips where the person confirming the order corrected this field.</div>
+              <div className={cardNote}>Share of the {reviewed} reviewed slips (scanned from 17 Nov 2026 afternoon) where the person confirming the order corrected this field.</div>
               {r.fieldMisses.fields.length === 0 ? (
                 <div className="py-6 text-center text-[12px] text-ink-muted">{reviewed ? "No field was corrected this month." : "No sales slip was reviewed this month."}</div>
               ) : (
@@ -291,16 +356,15 @@ export function OcrDashboard() {
             <div className={card}>
               <div className={cardTitle}>Recent problem scans</div>
               <div className={cardNote}>
-                The latest failed or corrected scans. Tap a scan to see what changed. Tap the order number to see the slip beside the changes and judge whether it was the photo or the AI.
+                The latest failed, needs-review or corrected scans. Tap a scan to see what changed. Tap the order number to see the slip beside the changes and judge whether it was the photo or the AI.
                 Failed scans someone cleared with "Clear failed" are gone and not counted.
               </div>
-              {r.problems.length === 0 ? (
-                <div className="py-6 text-center text-[12px] text-ink-muted">No problem scans this month.</div>
-              ) : (
-                <div className="space-y-2">
-                  {r.problems.map((scan) => <ProblemScanCard key={scan.id} scan={scan} docLabel={docLabel(scan.documentType)} onPreview={setPreview} />)}
-                </div>
-              )}
+              <ProblemScansByDocument
+                report={r}
+                selectedType={params.get("problems")}
+                onSelectType={(documentType) => setParams((p) => { p.set("problems", documentType); return p; }, { replace: true })}
+                onPreview={setPreview}
+              />
             </div>
           </>
         )

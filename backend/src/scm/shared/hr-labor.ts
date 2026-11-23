@@ -64,6 +64,13 @@ export function punchShortfallHours(inMin: number, outMin: number, rules: Attend
   return round2(day.shortfallMin / 60);
 }
 
+/** Lateness minutes a day's punch earns: past the grace, counted in full from
+ *  shift start. Reuses computeAttendanceDay so the grace rule lives in one place;
+ *  lateness does not depend on the clock-out, so an open day still reads late. */
+export function punchLateMinutes(inMin: number, outMin: number, rules: AttendanceRules): number {
+  return computeAttendanceDay(inMin, outMin, rules).lateMin;
+}
+
 /** Less than this is rounding, not a shortfall. */
 export const MIN_DOCK_HOURS = 0.05;
 

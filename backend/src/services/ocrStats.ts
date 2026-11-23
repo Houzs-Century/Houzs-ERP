@@ -11,12 +11,13 @@ import { mytMonthRangeUtc } from "./agent-console";
 import { scanSoModel } from "../scm/lib/scan-ocr";
 import { changedFields, LINES_CHANGED } from "../scm/lib/scan-slip-fields";
 import { correctionChanges, type FieldChange } from "../scm/lib/scan-correction-detail";
+import { fieldScore } from "../scm/lib/scan-field-accuracy";
 import { SCAN_DOCUMENT_TYPES, SCAN_DOCUMENT_TYPE_LABEL, isScanDocumentType } from "../scm/lib/scan-document-type";
 
 export { changedFields, LINES_CHANGED };
 export type { FieldChange };
 
-export type ScanOutcome = "pending" | "failed" | "discarded" | "clean" | "corrected" | "awaiting" | "imported";
+export type ScanOutcome = "pending" | "failed" | "needsReview" | "discarded" | "clean" | "corrected" | "awaiting" | "imported";
 
 /** One scan_jobs row joined to its sample, as the query returns it. */
 export interface ScanRow {
@@ -24,6 +25,8 @@ export interface ScanRow {
   document_type: string;
   status: string;
   error: string | null;
+  /** GR/PI check-first scans: reading / pending / created / discarded; null on scan-straight-to-draft jobs. */
+  review_state: string | null;
   doc_no: string | null;
   created_at: string | Date;
   updated_at: string | Date;
@@ -35,6 +38,8 @@ export interface ScanRow {
   draft_baseline: unknown;
   /** SO only: the draft this scan made no longer exists (deleted). */
   so_missing: boolean;
+  /** SO only: the sample kept the draft as the scan built it. */
+  has_baseline: boolean;
   /** SO only: R2 key of the slip photo the scan read (`scan-slips/<sampleId>`). */
   slip_image_key: string | null;
 }
@@ -48,8 +53,11 @@ export function classifyScan(r: ScanRow): { outcome: ScanOutcome; detail: string
   if (r.sample_status === "FAILED") return { outcome: "failed", detail: r.sample_error ?? r.error };
   const so = r.document_type === "SO";
   if (so && r.error?.startsWith(UNREADABLE_PREFIX)) return { outcome: "failed", detail: r.error };
-  // GR / PI "needs review": done, but no document was made.
-  if (!so && !r.doc_no) return { outcome: "failed", detail: r.error ?? "No document was created" };
+  if (!so && !r.doc_no) {
+    if (r.review_state === "pending") return { outcome: "awaiting", detail: null };
+    if (r.review_state === "discarded") return { outcome: "discarded", detail: null };
+    return { outcome: "needsReview", detail: r.error ?? "No document was created" };
+  }
   if (so && r.so_missing) return { outcome: "discarded", detail: null };
   // Only the SO review records whether the operator edited the read: GR marks
   // every posted scan ACCEPTED, and an edited PI leaves no trace.
@@ -70,13 +78,16 @@ export interface DocTypeStats {
   scans: number;
   pending: number;
   failed: number;
+  needsReview: number;
   discarded: number;
   awaiting: number;
   clean: number;
   corrected: number;
   imported: number;
-  /** clean / (clean + corrected); null where the review is not recorded (GR, PI). */
+  /** clean / reviewed, over reviewed scans with a draft baseline; null where the review is not recorded (GR, PI). */
   accuracy: { clean: number; reviewed: number } | null;
+  /** SO only: fields read right / fields on the slip, over reviewed scans whose edits are recorded exactly. */
+  fieldAccuracy: { correct: number; total: number; scans: number } | null;
   avgSec: number | null;
   p90Sec: number | null;
 }
@@ -86,10 +97,12 @@ export interface ProblemScan {
   at: string;
   documentType: string;
   docNo: string | null;
-  outcome: "failed" | "corrected";
+  outcome: "failed" | "needsReview" | "corrected";
   detail: string | null;
   /** Before/after per changed field; null when the scan has no draft snapshot. */
   changes: FieldChange[] | null;
+  /** Corrected SO scans only: fields read right / fields on the slip; null before edits were recorded exactly. */
+  fieldAccuracy: { correct: number; total: number } | null;
   /** The slip photo the scan read, served by GET /scan-so/slip-image; null when none was kept. */
   slipImageKey: string | null;
 }
@@ -97,12 +110,20 @@ export interface OcrReport {
   month: string;
   model: string;
   docTypes: DocTypeStats[];
-  /** SO only: per field, how many reviewed scans the operator corrected it on. */
+  /** SO only: per field, how many reviewed scans (with a draft baseline) the operator corrected it on. */
   fieldMisses: { reviewed: number; fields: FieldMiss[] };
   problems: ProblemScan[];
 }
 
-const PROBLEM_LIMIT = 30;
+const PROBLEM_LIMIT_PER_TYPE = 30;
+/**
+ * A reviewed slip's edits are exact only when the draft baseline was kept.
+ * Without it the review counts the scan pipeline's own changes (phone format,
+ * city, postcode) as a person's, so no slip could ever read as clean.
+ */
+export function editsRecordedExactly(r: ScanRow): boolean {
+  return r.has_baseline;
+}
 const iso = (v: string | Date) => new Date(v).toISOString();
 
 function percentile(sorted: number[], p: number): number {
@@ -116,37 +137,61 @@ export function buildOcrReport(month: string, model: string, rows: ScanRow[]): O
   const misses = new Map<string, number>();
   let reviewed = 0;
   const problems: ProblemScan[] = [];
+  const problemCounts = new Map<string, number>();
 
   for (const r of rows) {
     const t = r.document_type;
     let s = byType.get(t);
     if (!s) {
       s = {
-        documentType: t, label: isScanDocumentType(t) ? SCAN_DOCUMENT_TYPE_LABEL[t] : t, scans: 0, pending: 0, failed: 0, discarded: 0, awaiting: 0, clean: 0, corrected: 0, imported: 0,
-        accuracy: null, avgSec: null, p90Sec: null,
+        documentType: t, label: isScanDocumentType(t) ? SCAN_DOCUMENT_TYPE_LABEL[t] : t, scans: 0, pending: 0, failed: 0, needsReview: 0, discarded: 0, awaiting: 0, clean: 0, corrected: 0, imported: 0,
+        accuracy: null, fieldAccuracy: null, avgSec: null, p90Sec: null,
       };
       byType.set(t, s);
       secs.set(t, []);
     }
     const { outcome, detail } = classifyScan(r);
     const changes = outcome === "corrected" ? correctionChanges(r.extracted, r.corrected, r.draft_baseline) : null;
+    const exact = (outcome === "clean" || outcome === "corrected") && editsRecordedExactly(r);
+    const score = exact
+      ? fieldScore(r.extracted, outcome === "clean" ? r.extracted : r.corrected)
+      : null;
+    if (score) {
+      const fa = (s.fieldAccuracy ??= { correct: 0, total: 0, scans: 0 });
+      fa.correct += score.total - score.changed;
+      fa.total += score.total;
+      fa.scans++;
+    }
+    if (exact) {
+      const acc = (s.accuracy ??= { clean: 0, reviewed: 0 });
+      acc.reviewed++;
+      if (outcome === "clean") acc.clean++;
+    }
     s.scans++;
     s[outcome]++;
     if (outcome !== "pending") {
       const sec = (new Date(r.updated_at).getTime() - new Date(r.created_at).getTime()) / 1000;
       if (Number.isFinite(sec) && sec >= 0) secs.get(t)!.push(sec);
     }
-    if (outcome === "clean" || outcome === "corrected") reviewed++;
-    if (outcome === "corrected" && detail) {
+    if (exact) reviewed++;
+    if (exact && outcome === "corrected" && detail) {
       for (const f of detail.split(", ")) misses.set(f, (misses.get(f) ?? 0) + 1);
     }
-    if ((outcome === "failed" || outcome === "corrected") && problems.length < PROBLEM_LIMIT) {
-      problems.push({ id: r.id, at: iso(r.created_at), documentType: t, docNo: r.doc_no, outcome, detail, changes, slipImageKey: r.slip_image_key });
+    const problemsOfType = problemCounts.get(t) ?? 0;
+    if ((outcome === "failed" || outcome === "needsReview" || outcome === "corrected") && problemsOfType < PROBLEM_LIMIT_PER_TYPE) {
+      problemCounts.set(t, problemsOfType + 1);
+      problems.push({ id: r.id, at: iso(r.created_at), documentType: t, docNo: r.doc_no, outcome, detail, changes,
+        fieldAccuracy: outcome === "corrected" && score ? { correct: score.total - score.changed, total: score.total } : null,
+        slipImageKey: r.slip_image_key,
+      });
     }
   }
 
   for (const s of byType.values()) {
-    if (s.documentType === "SO") s.accuracy = { clean: s.clean, reviewed: s.clean + s.corrected };
+    if (s.documentType === "SO") {
+      s.accuracy ??= { clean: 0, reviewed: 0 };
+      s.fieldAccuracy ??= { correct: 0, total: 0, scans: 0 };
+    }
     const list = secs.get(s.documentType)!.sort((a, b) => a - b);
     if (list.length) {
       s.avgSec = list.reduce((a, b) => a + b, 0) / list.length;
@@ -172,15 +217,16 @@ export function buildOcrReport(month: string, model: string, rows: ScanRow[]): O
 export async function loadOcrReport(env: Env, companyId: number, month: string): Promise<OcrReport> {
   const { startIso, endIso } = mytMonthRangeUtc(month);
   const rows = await getDb(env).execute<ScanRow & Record<string, unknown>>(sql`
-    SELECT j.id, j.document_type, j.status, j.error,
+    SELECT j.id, j.document_type, j.status, j.error, j.review_state,
            coalesce(j.linked_doc_no, j.so_doc_no) AS doc_no,
            j.created_at, j.updated_at,
            s.status AS sample_status,
            CASE WHEN s.status = 'FAILED' THEN s.extracted->>'error' END AS sample_error,
-           CASE WHEN s.status = 'CONFIRMED' THEN s.extracted END AS extracted,
+           CASE WHEN s.status IN ('ACCEPTED', 'CONFIRMED') AND j.document_type = 'SO' THEN s.extracted END AS extracted,
            CASE WHEN s.status = 'CONFIRMED' THEN s.corrected END AS corrected,
            CASE WHEN s.status = 'CONFIRMED' THEN s.draft_baseline END AS draft_baseline,
            CASE WHEN j.document_type = 'SO' THEN s.image_key END AS slip_image_key,
+           (s.draft_baseline IS NOT NULL) AS has_baseline,
            (j.document_type = 'SO' AND j.status = 'done' AND j.so_doc_no IS NOT NULL
              AND NOT EXISTS (SELECT 1 FROM scm.mfg_sales_orders so
                               WHERE so.doc_no = j.so_doc_no AND so.company_id = j.company_id)) AS so_missing

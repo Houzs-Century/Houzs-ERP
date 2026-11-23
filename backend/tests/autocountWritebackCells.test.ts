@@ -140,8 +140,8 @@ describe('the four downstream document types queue an edit on every line and hea
      that visible here — a signature change cannot slip past this file. */
   test('GRN — header PATCH and line add / edit / delete', () => {
     expect(between(GRN, "grns.patch('/:id',", 'return c.json({ grn: data });')).toContain('queueAcGrnEdit(c, sb, id)');
-    expect(between(GRN, "grns.post('/:id/items',", 'return c.json({ item: data }, 201);')).toContain('queueAcGrnEdit(c, sb, grnId, [],');
-    expect(between(GRN, "grns.patch('/:id/items/:itemId',", 'return c.json({ ok: true });')).toContain('queueAcGrnEdit(c, sb, grnId)');
+    expect(between(GRN, "grns.post('/:id/items',", 'return c.json({ item: data, movementErrors:')).toContain('queueAcGrnEdit(c, sb, grnId, [],');
+    expect(between(GRN, "grns.patch('/:id/items/:itemId',", 'return c.json({ ok: true, movementErrors:')).toContain('queueAcGrnEdit(c, sb, grnId)');
     expect(between(GRN, "grns.delete('/:id/items/:itemId',", 'return c.body(null, 204);')).toContain('queueAcGrnEdit(c, sb, grnId, retire)');
   });
 

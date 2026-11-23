@@ -28,9 +28,9 @@
 // Back/Close → list, Delete → /scm/stock-takes.
 // ----------------------------------------------------------------------------
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { History, Save, X, Trash2, Send, Ban, AlertTriangle, Search, Wand2, Undo2, ChevronRight, ChevronDown, EyeOff, Rows3, List, Printer, Pencil, Plus, Camera, Download } from 'lucide-react';
+import { History, Save, X, Trash2, Send, Ban, AlertTriangle, Search, Wand2, Undo2, ChevronRight, ChevronDown, EyeOff, Rows3, List, Printer, Pencil, Plus, Camera, Download, Check, CornerUpLeft, ExternalLink } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
@@ -41,6 +41,8 @@ import {
   useStockTakeDetail,
   useUpdateStockTakeLines,
   usePostStockTake,
+  useApproveStockTake,
+  useRejectStockTake,
   useCancelStockTake,
   useReverseStockTake,
   useDeleteStockTake,
@@ -62,6 +64,14 @@ import { PageHeader } from '../../components/Layout';
 import { EntityHistoryPanel } from './EntityHistoryPanel';
 import { STOCK_TAKE_AUDIT_LABELS } from './entity-audit-labels';
 import { groupByModel } from './stock-take-grouping';
+import {
+  COUNT_SHEET_COLUMN_KEYS,
+  COUNT_SHEET_HEADERS,
+  COUNT_SHEET_ORDER_STORAGE_KEY,
+  visibleCountSheetColumns,
+  type CountSheetColumnKey,
+} from './stock-take-columns';
+import { useColumnOrder } from '../../hooks/useColumnOrder';
 import { useStaffLookup } from '../../hooks/useStaffLookup';
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import { warehouseLabel } from '../../vendor/scm/lib/warehouse-label';
@@ -162,6 +172,8 @@ export const StockTakeDetail = () => {
   const detail = useStockTakeDetail(id ?? null);
   const update = useUpdateStockTakeLines();
   const post    = usePostStockTake();
+  const approve = useApproveStockTake();
+  const reject  = useRejectStockTake();
   const cancel  = useCancelStockTake();
   const reverse = useReverseStockTake();
   const del     = useDeleteStockTake();
@@ -184,6 +196,7 @@ export const StockTakeDetail = () => {
   /* Model view is the DEFAULT — variant-heavy categories are why it exists.
      Flat is the toggle (owner phase 1). */
   const [view, setView] = useState<'model' | 'flat'>('model');
+  const columnOrder = useColumnOrder(COUNT_SHEET_ORDER_STORAGE_KEY, COUNT_SHEET_COLUMN_KEYS);
   /* Expanded model groups (multi-line groups start collapsed to one header). */
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   /* Header edit (round 1): assignees + notes while OPEN. */
@@ -238,12 +251,16 @@ export const StockTakeDetail = () => {
   const status: StockTakeStatus | undefined = detail.data?.take.status;
   const isDraft  = status === 'OPEN';      // local var name kept for diff minimization; refers to OPEN state
   const isPosted = status === 'POSTED';
+  /* Approval lane (owner 2026-11-20): an over-limit count a non-supervisor
+     submitted, waiting for a supervisor to approve (→ POSTED) or return (→ OPEN). */
+  const isPendingApproval = status === 'PENDING_APPROVAL';
 
   /* Server-decided viewer facts (backend GET /:id). The fallback only matters
      against an older worker that omits `viewer` — behave exactly as before
      this phase (no blind, buttons enabled; the backend still enforces). */
   const viewer = detail.data?.viewer ?? { isAssignee: true, canSupervise: true, blindActive: false };
   const blindActive = viewer.blindActive;
+  const visibleColumns = visibleCountSheetColumns(columnOrder.order, blindActive);
   /* Owner 2026-10-06: the assignees are a record of who counted, not a gate —
      anyone who can open the take can post it (a big variance still needs a
      supervisor, enforced by the server). */
@@ -483,13 +500,22 @@ export const StockTakeDetail = () => {
         `Estimated gain / loss: ${fmtSignedRM(totals.valueNetSen)}`;
     const proceed = await askConfirm({
       title: 'Post this stock take?',
-      body: `${summary}\n\nOne ADJUSTMENT movement will be written per non-zero-variance line. Untouched lines (no counted qty) are skipped.`,
+      body: `${summary}\n\nOne ADJUSTMENT movement will be written per non-zero-variance line. Untouched lines (no counted qty) are skipped.\n\nIf any line is over the posting limit, the count is sent to a stock-take supervisor to approve instead.`,
       confirmLabel: 'Post',
     });
     if (!proceed) return;
     post.mutate(id, {
       onSuccess: (res) => {
         detail.refetch();
+        /* Over the limit and the caller is not a supervisor: nothing posted —
+           the count is now waiting for a supervisor to approve it. */
+        if (res.pendingApproval) {
+          void notify({
+            title: 'Sent for approval',
+            body: `${res.message ?? 'Some lines are over the posting limit.'}\n\nNothing has moved yet — a stock-take supervisor will approve or return this count.`,
+          });
+          return;
+        }
         if (res.movementErrors && res.movementErrors.length > 0) {
           notify({
             title: 'Stock take posted, but adjustment write failed',
@@ -505,6 +531,50 @@ export const StockTakeDetail = () => {
         }
       },
       onError: (err) => notify({ title: 'Post failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' }),
+    });
+  };
+
+  /* Supervisor approves a pending over-limit count — books the ADJUSTMENT
+     movements now, exactly as a direct post would have. */
+  const onApprove = async () => {
+    if (!id) return;
+    const proceed = await askConfirm({
+      title: 'Approve and post this count?',
+      body: 'The variance will be booked now — one ADJUSTMENT movement per non-zero-variance line. This is the same as posting it yourself.',
+      confirmLabel: 'Approve & post',
+    });
+    if (!proceed) return;
+    approve.mutate(id, {
+      onSuccess: (res) => {
+        void detail.refetch();
+        if (res.movementErrors && res.movementErrors.length > 0) {
+          void notify({
+            title: 'Approved, but adjustment write failed',
+            body: `${res.movementErrors.join('\n')}\n\nFix manually via Stock Adjustments.`,
+            tone: 'error',
+          });
+        } else {
+          void notify({ title: 'Approved', body: `${res.movementsWritten} adjustment movement${res.movementsWritten === 1 ? '' : 's'} written.` });
+        }
+      },
+      onError: (err) => notify({ title: 'Approve failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' }),
+    });
+  };
+
+  /* Supervisor returns a pending count to OPEN for a recount. No stock moved
+     while it waited, so nothing is reversed. */
+  const onReject = async () => {
+    if (!id) return;
+    const proceed = await askConfirm({
+      title: 'Return this count for a recount?',
+      body: 'It goes back to Open so the counts can be edited and re-submitted. No stock has moved, so nothing is reversed.',
+      confirmLabel: 'Return to Open',
+      danger: true,
+    });
+    if (!proceed) return;
+    reject.mutate(id, {
+      onSuccess: () => { void detail.refetch(); void notify({ title: 'Returned', body: 'The count is Open again for editing.' }); },
+      onError: (err) => notify({ title: 'Return failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' }),
     });
   };
 
@@ -584,6 +654,8 @@ export const StockTakeDetail = () => {
   }
 
   const t = detail.data.take;
+  const adjustments = detail.data.adjustments ?? [];
+  const adjustment = detail.data.adjustment ?? null;
 
   return (
     <div className="space-y-4">
@@ -629,6 +701,18 @@ export const StockTakeDetail = () => {
                   </Button>
                 </>
               )}
+              {/* Approval lane: a supervisor signs off (or returns) an over-limit
+                  count. Only a supervisor sees these — the submitter waits. */}
+              {isPendingApproval && viewer.canSupervise && (
+                <>
+                  <Button variant="ghost" size="md" onClick={onReject} disabled={reject.isPending || approve.isPending}>
+                    <CornerUpLeft {...ICON} /> {reject.isPending ? 'Returning…' : 'Return to Open'}
+                  </Button>
+                  <Button variant="primary" size="md" onClick={onApprove} disabled={approve.isPending || reject.isPending}>
+                    <Check {...ICON} /> {approve.isPending ? 'Approving…' : 'Approve & post'}
+                  </Button>
+                </>
+              )}
               {isPosted && (
                 <Button variant="ghost" size="md" onClick={onReverse} disabled={reverse.isPending}>
                   <Undo2 {...ICON} /> {reverse.isPending ? 'Undoing…' : 'Undo'}
@@ -643,6 +727,28 @@ export const StockTakeDetail = () => {
           </>
         }
       />
+
+      {/* ── Pending approval banner (owner 2026-11-20) ──────────────── */}
+      {isPendingApproval && (
+        <section className={styles.card} style={{ borderLeft: '3px solid var(--c-accent-bright, #d69e2e)' }}>
+          <div className={styles.cardBody} style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+            <AlertTriangle size={18} strokeWidth={1.9} style={{ color: '#8a5a00', flexShrink: 0, marginTop: 2 }} />
+            <div style={{ fontSize: 'var(--fs-13)', lineHeight: 1.5 }}>
+              <div style={{ fontWeight: 600, color: 'var(--c-ink)' }}>Waiting for a supervisor to approve</div>
+              <div style={{ color: 'var(--fg-muted)', marginTop: 2 }}>
+                {t.submitted_by ? `Submitted by ${actorNameOf(t.submitted_by)}` : 'Submitted'}
+                {t.submitted_at ? ` · ${fmtDateTime(t.submitted_at)}` : ''}
+                {' — one or more lines are over the posting limit, so no stock has moved yet.'}
+              </div>
+              <div style={{ color: 'var(--fg-muted)', marginTop: 4 }}>
+                {viewer.canSupervise
+                  ? 'Approve & post to book the variance, or Return to Open to send it back for a recount.'
+                  : 'A stock-take supervisor will approve or return it.'}
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* ── Header card ─────────────────────────────────────────────── */}
       <section className={styles.card}>
@@ -798,6 +904,60 @@ export const StockTakeDetail = () => {
         </div>
       </section>
 
+      {/* ── Adjustments booked (owner 2026-11-20) ───────────────────────
+          A POSTED take's variance is booked as a formal Stock Adjustment
+          document (SA number). List the SKUs here and link the whole thing to
+          that adjustment — never to a stock card (owner 2026-11-20). Shown only
+          when there is at least one real movement. */}
+      {isPosted && adjustments.length > 0 && (
+        <section className={styles.card}>
+          <div className={styles.cardHeader}>
+            <h2 className={styles.cardTitle}>
+              Adjustments booked
+              <span style={{ marginLeft: 8, fontSize: 'var(--fs-12)', color: 'var(--fg-muted)', fontWeight: 400 }}>
+                {adjustments.length} SKU{adjustments.length === 1 ? '' : 's'}
+              </span>
+            </h2>
+            {adjustment && (
+              <Link
+                to={`/scm/stock-adjustments/${encodeURIComponent(adjustment.id)}`}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: 'var(--c-burnt, #a6471e)', textDecoration: 'none', fontSize: 'var(--fs-13)', fontWeight: 600, whiteSpace: 'nowrap' }}
+              >
+                View adjustment {adjustment.adjustment_no} <ExternalLink size={13} strokeWidth={1.9} />
+              </Link>
+            )}
+          </div>
+          <div className={styles.cardBody}>
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              {adjustments.map((a) => {
+                const variant = (a.variant_key ?? '').trim();
+                return (
+                  <div
+                    key={`${a.item_code}:${a.variant_key ?? ''}`}
+                    style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 'var(--fs-13)', padding: '7px 0', borderBottom: '1px solid var(--line)' }}
+                  >
+                    <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, minWidth: 54, textAlign: 'right', color: a.qty < 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--c-secondary-a, #2F5D4F)' }}>
+                      {a.qty > 0 ? '+' : ''}{fmtQty(a.qty)}
+                    </span>
+                    <span style={{ flex: 1, minWidth: 0, display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 8 }}>
+                      <span style={{ color: 'var(--c-ink)' }}>{a.product_name ?? a.item_code}</span>
+                      <span style={{ color: 'var(--fg-muted)', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-12)' }}>
+                        {a.item_code}{variant ? ` · ${variant}` : ''}
+                      </span>
+                    </span>
+                    {a.unit_cost_sen != null && a.unit_cost_sen > 0 && (
+                      <span style={{ color: 'var(--fg-muted)', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-12)', whiteSpace: 'nowrap' }}>
+                        @ {fmtSen(a.unit_cost_sen)}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+      )}
+
       {/* ── Lines ───────────────────────────────────────────────────── */}
       {/* overflow: clip, not the card's hidden — `hidden` makes the card a
           scroll container, and a sticky header then sticks to a box that never
@@ -814,6 +974,11 @@ export const StockTakeDetail = () => {
             </span>
           </h2>
           <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
+            {columnOrder.isCustom && (
+              <Button variant="ghost" size="sm" onClick={columnOrder.reset}>
+                <Undo2 size={14} strokeWidth={1.75} /> Reset columns
+              </Button>
+            )}
             {/* Model / flat toggle (phase 1) — model view is the default. */}
             <Button variant={view === 'model' ? 'secondary' : 'ghost'} size="sm" onClick={() => setView('model')}>
               <Rows3 size={14} strokeWidth={1.75} /> By model
@@ -856,26 +1021,29 @@ export const StockTakeDetail = () => {
           <table className={`${styles.table} ${styles.tableOwnWidths} ${styles.stickyHead}`}>
             <thead>
               <tr>
-                <th style={{ width: '18%' }}>SKU</th>
-                <th>Name</th>
-                <th>Variant</th>
-                {/* Blind (phase 1): the two figures the counter must not see
+                {/* Blind (phase 1): the figures the counter must not see
                     simply do not exist in this view — the server already
                     stripped them from the payload. */}
-                {!blindActive && <th style={{ width: 110, textAlign: 'right' }}>System Qty</th>}
-                <th style={{ width: 130, textAlign: 'right' }}>Counted Qty</th>
-                <th style={{ width: 120 }}>Rack</th>
-                <th style={{ width: 160 }}>Notes</th>
-                {!blindActive && <th style={{ width: 110, textAlign: 'right' }}>Variance</th>}
-                {!blindActive && <th style={{ width: 110, textAlign: 'right' }}>Value (RM)</th>}
-                <th style={{ width: 130 }}>Counted By</th>
+                {visibleColumns.map((key) => (
+                  <th
+                    key={key}
+                    {...columnOrder.headerProps(key, visibleColumns)}
+                    style={{
+                      ...COUNT_SHEET_HEADERS[key].style,
+                      cursor: 'grab',
+                      boxShadow: columnOrder.dropTargetKey === key ? 'inset 3px 0 0 var(--c-ink)' : undefined,
+                    }}
+                  >
+                    {COUNT_SHEET_HEADERS[key].label}
+                  </th>
+                ))}
                 {isDraft && <th style={{ width: 110 }} />}
               </tr>
             </thead>
             <tbody>
               {(() => {
-                /* SKU + Name + Variant + Counted + Rack + Notes + Counted By = 7 fixed. */
-                const colCount = 7 + (blindActive ? 0 : 3) + (isDraft ? 1 : 0);
+                const colCount = visibleColumns.length + (isDraft ? 1 : 0);
+                const orderedCells = (cells: Record<CountSheetColumnKey, ReactNode>) => visibleColumns.map((key) => cells[key]);
                 if (filteredLines.length === 0) {
                   return (
                     <tr><td colSpan={colCount} className={styles.emptyRow}>
@@ -894,9 +1062,10 @@ export const StockTakeDetail = () => {
                       : v < 0
                         ? 'var(--c-festive-b, #B8331F)'
                         : 'var(--fg-muted)';
-                  return (
-                    <tr key={ln.id}>
-                      <td>
+                  const lineValue = valueOf(ln);
+                  const cells: Record<CountSheetColumnKey, ReactNode> = {
+                    sku: (
+                      <td key="sku">
                         <span className={styles.codeCell} style={{
                           fontFamily: 'var(--font-mono)',
                           paddingLeft: inGroup ? 22 : undefined,
@@ -908,24 +1077,30 @@ export const StockTakeDetail = () => {
                             style={{ marginLeft: 6, fontSize: 'var(--fs-11)' }}>Added</span>
                         )}
                       </td>
-                      <td style={{ fontSize: 'var(--fs-13)' }}>
+                    ),
+                    name: (
+                      <td key="name" style={{ fontSize: 'var(--fs-13)' }}>
                         {ln.productName || <span className={styles.muted}>—</span>}
                       </td>
-                      {/* Variant bucket (migration 0183) — the (item_code,
-                          variant_key) this line counts. A plain SKU shows '—'. */}
-                      <td style={{ fontSize: 'var(--fs-13)' }}>
+                    ),
+                    /* Variant bucket (migration 0183) — the (item_code,
+                       variant_key) this line counts. A plain SKU shows '—'. */
+                    variant: (
+                      <td key="variant" style={{ fontSize: 'var(--fs-13)' }}>
                         {ln.variantLabel
                           ? <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-12)' }}>{ln.variantLabel}</span>
                           : <span className={styles.muted}>—</span>}
                         <SourcePoNote line={ln} inGroup={inGroup} />
                       </td>
-                      {!blindActive && (
-                        <td className={styles.tableRight}
-                            style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-13)' }}>
-                          {ln.systemQty == null ? '—' : fmtQty(ln.systemQty)}
-                        </td>
-                      )}
-                      <td className={styles.tableRight}>
+                    ),
+                    systemQty: (
+                      <td key="systemQty" className={styles.tableRight}
+                          style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-13)' }}>
+                        {ln.systemQty == null ? '—' : fmtQty(ln.systemQty)}
+                      </td>
+                    ),
+                    countedQty: (
+                      <td key="countedQty" className={styles.tableRight}>
                         {isDraft ? (
                           <input
                             type="text"
@@ -951,8 +1126,10 @@ export const StockTakeDetail = () => {
                           </span>
                         )}
                       </td>
-                      {/* Round 2: where the goods actually sit — moved there at post. */}
-                      <td>
+                    ),
+                    /* Round 2: where the goods actually sit — moved there at post. */
+                    rack: (
+                      <td key="rack">
                         {isDraft && (racksQ.data ?? []).length > 0 ? (
                           <input
                             type="text"
@@ -972,8 +1149,10 @@ export const StockTakeDetail = () => {
                           <span style={{ fontSize: 'var(--fs-12)' }}>{rackLabel(ln.rackId)}</span>
                         )}
                       </td>
-                      {/* HC-0019: the line note was saved by onSave but had no box to type it in. */}
-                      <td>
+                    ),
+                    /* HC-0019: the line note was saved by onSave but had no box to type it in. */
+                    notes: (
+                      <td key="notes">
                         {isDraft ? (
                           <input
                             type="text"
@@ -987,36 +1166,40 @@ export const StockTakeDetail = () => {
                           <span style={{ fontSize: 'var(--fs-12)' }}>{ln.notes || <span className={styles.muted}>—</span>}</span>
                         )}
                       </td>
-                      {!blindActive && (
-                        <td className={styles.tableRight}
-                            style={{
-                              fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-13)',
-                              color: varianceColor, fontWeight: v && v !== 0 ? 600 : 400,
-                            }}>
-                          {v == null
-                            ? '—'
-                            : `${v > 0 ? '+' : ''}${fmtQty(v)}`}
-                        </td>
-                      )}
-                      {!blindActive && (() => {
-                        const val = valueOf(ln);
-                        return (
-                          <td className={styles.tableRight}
-                              title={v != null && v !== 0 && val == null ? 'No cost on record for this SKU' : undefined}
-                              style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-13)', color: varianceColor }}>
-                            {val == null || val === 0 ? '—' : fmtSignedRM(val)}
-                          </td>
-                        );
-                      })()}
-                      {/* WHO counted this cell (mig 0270) — stamped server-side
-                          on save; a just-typed, unsaved entry still shows the
-                          previous author until Save Counts round-trips. */}
-                      <td style={{ fontSize: 'var(--fs-12)' }}
+                    ),
+                    variance: (
+                      <td key="variance" className={styles.tableRight}
+                          style={{
+                            fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-13)',
+                            color: varianceColor, fontWeight: v && v !== 0 ? 600 : 400,
+                          }}>
+                        {v == null
+                          ? '—'
+                          : `${v > 0 ? '+' : ''}${fmtQty(v)}`}
+                      </td>
+                    ),
+                    value: (
+                      <td key="value" className={styles.tableRight}
+                          title={v != null && v !== 0 && lineValue == null ? 'No cost on record for this SKU' : undefined}
+                          style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-13)', color: varianceColor }}>
+                        {lineValue == null || lineValue === 0 ? '—' : fmtSignedRM(lineValue)}
+                      </td>
+                    ),
+                    /* WHO counted this cell (mig 0270) — stamped server-side
+                       on save; a just-typed, unsaved entry still shows the
+                       previous author until Save Counts round-trips. */
+                    countedBy: (
+                      <td key="countedBy" style={{ fontSize: 'var(--fs-12)' }}
                           title={ln.countedAt ? fmtDateTime(ln.countedAt) : undefined}>
                         {ln.countedBy
                           ? actorNameOf(ln.countedBy)
                           : <span className={styles.muted}>—</span>}
                       </td>
+                    ),
+                  };
+                  return (
+                    <tr key={ln.id}>
+                      {orderedCells(cells)}
                       {isDraft && (
                         <td>
                           {!blindActive && ln.systemQty != null && (
@@ -1058,9 +1241,14 @@ export const StockTakeDetail = () => {
                     if (v == null) return acc;
                     return (acc ?? 0) + v;
                   }, null);
-                  const header = (
-                    <tr key={`grp-${g.itemCode}`} style={{ background: 'var(--c-cream)' }}>
-                      <td>
+                  const groupValue = g.lines.reduce<number | null>((acc, l) => {
+                    const lineValue = valueOf(l);
+                    return lineValue == null ? acc : (acc ?? 0) + lineValue;
+                  }, null);
+                  const emptyCell = (key: CountSheetColumnKey) => <td key={key}><span className={styles.muted}>—</span></td>;
+                  const groupCells: Record<CountSheetColumnKey, ReactNode> = {
+                    sku: (
+                      <td key="sku">
                         <button
                           type="button"
                           onClick={() => toggleGroup(g.itemCode)}
@@ -1078,51 +1266,54 @@ export const StockTakeDetail = () => {
                           {g.itemCode}
                         </button>
                       </td>
-                      <td style={{ fontSize: 'var(--fs-13)', fontWeight: 600 }}>
+                    ),
+                    name: (
+                      <td key="name" style={{ fontSize: 'var(--fs-13)', fontWeight: 600 }}>
                         {g.productName || <span className={styles.muted}>—</span>}
                         <span style={{ marginLeft: 8, color: 'var(--fg-muted)', fontWeight: 400 }}>
                           · {g.lines.length} lines
                         </span>
                       </td>
-                      <td><span className={styles.muted}>—</span></td>
-                      {!blindActive && (
-                        <td className={styles.tableRight}
-                            style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-13)', fontWeight: 600 }}>
-                          {g.systemTotal == null ? '—' : fmtQty(g.systemTotal)}
-                          <BucketSplit lines={g.lines} />
-                        </td>
-                      )}
-                      <td className={styles.tableRight}
+                    ),
+                    variant: emptyCell('variant'),
+                    systemQty: (
+                      <td key="systemQty" className={styles.tableRight}
+                          style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-13)', fontWeight: 600 }}>
+                        {g.systemTotal == null ? '—' : fmtQty(g.systemTotal)}
+                        <BucketSplit lines={g.lines} />
+                      </td>
+                    ),
+                    countedQty: (
+                      <td key="countedQty" className={styles.tableRight}
                           style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-13)' }}>
                         {g.countedLines === 0
                           ? <span className={styles.muted}>0/{g.lines.length}</span>
                           : <>{fmtQty(g.countedTotal)} <span style={{ color: 'var(--fg-muted)' }}>({g.countedLines}/{g.lines.length})</span></>}
                       </td>
-                      <td><span className={styles.muted}>—</span></td>
-                      <td><span className={styles.muted}>—</span></td>
-                      {!blindActive && (
-                        <td className={styles.tableRight}
-                            style={{
-                              fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-13)', fontWeight: 600,
-                              color: groupVariance == null || groupVariance === 0
-                                ? 'var(--fg-muted)'
-                                : groupVariance > 0 ? 'var(--c-secondary-a, var(--hz-dk-secondary-a, #2F5D4F))' : 'var(--c-festive-b, #B8331F)',
-                            }}>
-                          {groupVariance == null ? '—' : `${groupVariance > 0 ? '+' : ''}${fmtQty(groupVariance)}`}
-                        </td>
-                      )}
-                      {!blindActive && (() => {
-                        const gv = g.lines.reduce<number | null>((acc, l) => {
-                          const val = valueOf(l);
-                          return val == null ? acc : (acc ?? 0) + val;
-                        }, null);
-                        return (
-                          <td className={styles.tableRight} style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-13)', fontWeight: 600 }}>
-                            {gv == null || gv === 0 ? '—' : fmtSignedRM(gv)}
-                          </td>
-                        );
-                      })()}
-                      <td><span className={styles.muted}>—</span></td>
+                    ),
+                    rack: emptyCell('rack'),
+                    notes: emptyCell('notes'),
+                    variance: (
+                      <td key="variance" className={styles.tableRight}
+                          style={{
+                            fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-13)', fontWeight: 600,
+                            color: groupVariance == null || groupVariance === 0
+                              ? 'var(--fg-muted)'
+                              : groupVariance > 0 ? 'var(--c-secondary-a, var(--hz-dk-secondary-a, #2F5D4F))' : 'var(--c-festive-b, #B8331F)',
+                          }}>
+                        {groupVariance == null ? '—' : `${groupVariance > 0 ? '+' : ''}${fmtQty(groupVariance)}`}
+                      </td>
+                    ),
+                    value: (
+                      <td key="value" className={styles.tableRight} style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-13)', fontWeight: 600 }}>
+                        {groupValue == null || groupValue === 0 ? '—' : fmtSignedRM(groupValue)}
+                      </td>
+                    ),
+                    countedBy: emptyCell('countedBy'),
+                  };
+                  const header = (
+                    <tr key={`grp-${g.itemCode}`} style={{ background: 'var(--c-cream)' }}>
+                      {orderedCells(groupCells)}
                       {isDraft && (
                         <td>
                           <button
@@ -1318,9 +1509,11 @@ function SourcePoNote({ line, inGroup }: { line: LineDraft; inGroup: boolean }) 
     ? line.systemQty - traced : 0;
   if (line.sourcePos.length === 0 && untraced === 0) return null;
   return (
-    <div style={{ marginTop: 2, fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>
+    /* Wraps between POs: a line with 55 POs on one unbreakable row made the
+       Variant column 6,000px wide and pushed the Qty columns off screen. */
+    <div data-testid="source-po-note" style={{ marginTop: 2, fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', display: 'flex', flexWrap: 'wrap', columnGap: 8 }}>
       {line.sourcePos.map((p) => (
-        <span key={p.po} style={{ marginRight: 8, whiteSpace: 'nowrap' }}>
+        <span key={p.po} style={{ whiteSpace: 'nowrap' }}>
           <span style={{ fontFamily: 'var(--font-mono)' }}>{p.po}</span> × {fmtQty(p.qty)}
         </span>
       ))}

@@ -112,6 +112,8 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: "scm.so.edit_after_do",    resource: "Supply Chain", verb: "manage", label: "Edit SO after DO",             description: "After a Delivery Order is raised, change the SO customer details and add or edit charge lines (transport, storage, misc); the change is copied onto the DO. Not once the DO has an invoice or return." },
   // DEV-70 (syasya 2026-10-12) — price of a line already on a DO. Rule: scm/shared/so-after-do-edit.ts.
   { key: "scm.so.edit_price_after_do", resource: "Supply Chain", verb: "manage", label: "Edit SO line price after DO", description: "After a Delivery Order is raised, change the unit price and discount of any SO line it carries (qty, product and specification stay locked); the DO line follows. Not once the DO has an invoice or return." },
+  // Owner 2026-11-21 — the super-admin escape hatch. Rule: scm/shared/so-after-do-edit.ts.
+  { key: "scm.so.edit_lines_after_do", resource: "Supply Chain", verb: "manage", label: "Edit SO line items after DO (super admin)", description: "After a Delivery Order is raised, change the QUANTITY and SPECIFICATION of any product line it carries, and add or remove product lines; the change flows onto the Delivery Order (stock re-synced) and onto every live Sales Invoice billing it (totals, paid status and the revenue entry re-derived), issued or not. Super-admin only; nobody holds it by default except '*'." },
   // Port of 2990 gate #717 — clearing an already-set Processing Date pulls the
   // SO back out of the Proceed lane (and, once the day has elapsed, undoes the
   // lock that says "this is what we PO to the supplier"). 2990 restricts it to
@@ -292,6 +294,15 @@ export const PERMISSIONS: PermissionDef[] = [
   // keys hours and advances does not also sign off what they keyed.
   { key: "hr.payroll.approve", resource: "HR", verb: "approve", label: "Approve payroll", description: "Approve or reopen a payroll month, mark it paid, and approve, reject or revoke penalties" },
   { key: "hr.employees.manage", resource: "HR", verb: "manage", label: "Manage employees", description: "Add and edit employees and their salary, link the ERP account they punch with, keep the public holidays and schedule pay-rule changes — changes what people are paid" },
+  // A supervisor confirms or rejects the overtime workers report on the phone.
+  // Its own key so a floor / warehouse supervisor can sign off OT without the
+  // full hr.employees.manage pay-editing rights. Confirmed OT is what payroll pays.
+  { key: "hr.ot.confirm", resource: "HR", verb: "approve", label: "Confirm overtime", description: "See and confirm or reject the overtime that workers report on the phone; confirmed overtime is what payroll pays" },
+  // Attendance-only view. Opens Employees & Attendance to the Attendance (and,
+  // with hr.ot.confirm, OT) tabs ALONE — the daily punches and working hours,
+  // never salary, pay, the employee master or payroll. For an attendance / OT
+  // supervisor who must see who clocked in but not what anyone is paid.
+  { key: "hr.attendance.read", resource: "HR", verb: "read", label: "View attendance only", description: "See the daily attendance punches and working hours in Employees & Attendance — not salary, pay, the employee master or payroll" },
 
   // AutoCount write-back queue (scm.autocount_outbox, mig 0277) — the READ of
   // what the ERP has told the licensed account book and what came back. It is a
@@ -347,6 +358,10 @@ export const PERMISSIONS: PermissionDef[] = [
   // mailbox owner.
   { key: "mail_center.read",   resource: "Mail Center", verb: "read",   label: "View Mail Center", description: "See the Mail Center inbox and work the mailboxes in your scope" },
   { key: "mail_center.manage", resource: "Mail Center", verb: "manage", label: "Manage Mail Center", description: "Create/assign email aliases, the shared-mailbox access matrix, and per-user visibility levels" },
+
+  // Meetings (/api/meetings): every signed-in user books rooms and sees the calendar,
+  // so the page has no gate. Only adding and changing rooms, and the change log, need this.
+  { key: "meetings.manage_rooms", resource: "Meetings", verb: "manage", label: "Manage meeting rooms", description: "Add and change meeting rooms (seats, hours, rules, closed dates) and see the meetings change log" },
 
   // Announcements — office posts every logged-in user sees as a top-of-screen
   // banner. announcements.read gates the list page + read-receipt visibility;

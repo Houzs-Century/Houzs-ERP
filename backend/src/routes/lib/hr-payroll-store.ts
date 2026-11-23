@@ -12,6 +12,7 @@ import {
   hr_employees,
   hr_attendance,
   hr_hour_deductions,
+  hr_ot_claims,
   hr_payslips,
   hr_penalties,
   hr_penalty_lines,
@@ -19,9 +20,11 @@ import {
   hr_working_hours,
 } from "../../db/schema";
 import { absenceCutoffDay } from "../../scm/shared/hr-payroll";
-import { PAID_LEAVE_STATUSES, computeAttendanceDay, minutesFromWorkDate, toAttendanceRules, type AttendanceStatus } from "../../scm/shared/hr-attendance";
+import { advanceInstallmentForMonth } from "../../scm/shared/hr-advance-installment";
+import { PAID_LEAVE_STATUSES, computeAttendanceDay, minutesFromWorkDate, type AttendanceStatus } from "../../scm/shared/hr-attendance";
 import type { PcbCategory } from "../../scm/shared/hr-pcb";
 import { payRulesResolver } from "./hr-attendance-store";
+import { shiftRulesResolver } from "./hr-shift-store";
 import { attendanceAllowance, attendanceDayFraction, type AttendanceAllowanceDay } from "./hr-attendance-allowance";
 import { buildPayslip, onPayroll, type AllowanceKind, type PayslipFigures } from "./hr-payslip";
 import { loadTripMonth } from "./hr-trip-store";
@@ -42,7 +45,7 @@ export async function lockedPeriods(db: Db, companyId: number): Promise<Set<stri
 export async function computePeriod(db: Db, companyId: number, period: string, today: string, onlyEmployeeId: number | null = null): Promise<PayslipFigures[]> {
   const { first, last, year, month } = periodBounds(period);
   const empWhere = onlyEmployeeId != null ? and(eq(hr_employees.company_id, companyId), eq(hr_employees.id, onlyEmployeeId)) : eq(hr_employees.company_id, companyId);
-  const [employees, holidays, hours, docks, advances, penalties, ytd, rulesOn, allowances, paidLeave, trip, attendance] = await Promise.all([
+  const [employees, holidays, hours, docks, advances, penalties, ytd, rulesOn, allowances, paidLeave, trip, attendance, otClaims] = await Promise.all([
     db
       .select({ e: hr_employees, department: departments.name })
       .from(hr_employees)
@@ -63,10 +66,14 @@ export async function computePeriod(db: Db, companyId: number, period: string, t
       .from(hr_hour_deductions)
       .where(and(eq(hr_hour_deductions.company_id, companyId), gte(hr_hour_deductions.work_date, first), lte(hr_hour_deductions.work_date, last)))
       .groupBy(hr_hour_deductions.employee_id),
+    /* Every advance started on or before this month (not just those dated in
+       it): an installment advance keeps deducting in the months after it was
+       given. No status filter — the schedule, not the settle flag, decides the
+       deduction. advanceInstallmentForMonth then gives this month's share. */
     db
-      .select({ employee_id: hr_advances.employee_id, date: hr_advances.advance_date, amount: hr_advances.amount_sen })
+      .select({ employee_id: hr_advances.employee_id, date: hr_advances.advance_date, amount: hr_advances.amount_sen, installment: hr_advances.installment_sen })
       .from(hr_advances)
-      .where(and(eq(hr_advances.company_id, companyId), gte(hr_advances.advance_date, first), lte(hr_advances.advance_date, last))),
+      .where(and(eq(hr_advances.company_id, companyId), lte(hr_advances.advance_date, last))),
     db
       .select({ employee_id: hr_penalty_lines.employee_id, amount: sql<string>`SUM(${hr_penalty_lines.amount_sen})` })
       .from(hr_penalty_lines)
@@ -122,6 +129,12 @@ export async function computePeriod(db: Db, companyId: number, period: string, t
       })
       .from(hr_attendance)
       .where(and(eq(hr_attendance.company_id, companyId), gte(hr_attendance.work_date, first), lte(hr_attendance.work_date, last))),
+    /* Confirmed overtime claims for the month (HC-0125): weekday OT pay is the
+       sum of these, not the punch surplus. Pending / rejected claims pay nothing. */
+    db
+      .select({ employee_id: hr_ot_claims.employee_id, date: hr_ot_claims.work_date, start_min: hr_ot_claims.start_min, end_min: hr_ot_claims.end_min })
+      .from(hr_ot_claims)
+      .where(and(eq(hr_ot_claims.company_id, companyId), eq(hr_ot_claims.status, "CONFIRMED"), gte(hr_ot_claims.work_date, first), lte(hr_ot_claims.work_date, last))),
   ]);
   const ids = employees.map((r) => r.e.id);
   const history = ids.length
@@ -143,6 +156,17 @@ export async function computePeriod(db: Db, companyId: number, period: string, t
   const leaveBy = by(paidLeave);
   const histBy = by(history);
   const attBy = by(attendance);
+  const otClaimsBy = by(otClaims);
+  /* Confirmed OT hours per date for one employee (HC-0125) — the weekday OT that
+     payroll pays. Empty when nobody reported OT, so a late punch pays no OT. */
+  const confirmedOtHoursFor = (empId: number): Map<string, number> => {
+    const m = new Map<string, number>();
+    for (const r of otClaimsBy.get(empId) ?? []) m.set(r.date, (m.get(r.date) ?? 0) + (r.end_min - r.start_min) / 60);
+    return m;
+  };
+  // Per-employee shift (group + delivery-day) for the month, so lateness is
+  // judged against each person's own shift, not the one global shift.
+  const shiftFor = await shiftRulesResolver(db, companyId, first, last);
   /* The month's attendance for one employee, shaped for the ATTENDANCE allowance:
      lateness is computed from the punch against the day's rules, nothing stored. */
   const allowanceDaysFor = (empId: number): AttendanceAllowanceDay[] =>
@@ -150,7 +174,7 @@ export async function computePeriod(db: Db, companyId: number, period: string, t
       const status = r.status as AttendanceStatus;
       let isLate = false;
       if (r.clock_in_at) {
-        const rules = toAttendanceRules(rulesOn(r.date));
+        const rules = shiftFor.rulesFor(r.date, empId);
         const inMin = minutesFromWorkDate(r.date, new Date(r.clock_in_at));
         const outMin = r.clock_out_at ? minutesFromWorkDate(r.date, new Date(r.clock_out_at)) : inMin;
         isLate = computeAttendanceDay(inMin, outMin, rules).isLate;
@@ -196,7 +220,9 @@ export async function computePeriod(db: Db, companyId: number, period: string, t
         absenceThroughDay: through,
         shortHours: dockBy.get(e.id) ?? 0,
         rulesOn,
-        advances: (advBy.get(e.id) ?? []).map((a) => ({ date: a.date, amountSen: Number(a.amount) })),
+        advances: (advBy.get(e.id) ?? [])
+          .map((a) => ({ date: a.date, amountSen: advanceInstallmentForMonth(a.date.slice(0, 7), a.installment == null ? null : Number(a.installment), Number(a.amount), period) }))
+          .filter((a) => a.amountSen > 0),
         penaltySen: penBy.get(e.id) ?? 0,
         paidLeave: new Set((leaveBy.get(e.id) ?? []).map((l) => l.date)),
         trip: trip.pay.get(e.id) ?? null,
@@ -210,6 +236,7 @@ export async function computePeriod(db: Db, companyId: number, period: string, t
           return { kind: a.kind as AllowanceKind, amountSen: Number(a.amount), note: a.note };
         }),
         ytd: ytdBy.get(e.id) ?? { remunerationSen: 0, epfSen: 0, pcbSen: 0 },
+        confirmedOtHoursByDate: confirmedOtHoursFor(e.id),
       }),
     );
 }

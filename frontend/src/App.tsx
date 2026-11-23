@@ -66,6 +66,7 @@ const Profile = lazyPage(() => import("./pages/Profile").then((m) => ({ default:
 const Notifications = lazyPage(() => import("./pages/Notifications").then((m) => ({ default: m.Notifications })));
 const Announcements = lazyPage(() => import("./pages/Announcements").then((m) => ({ default: m.Announcements })));
 const ItSupport = lazyPage(() => import("./pages/ItSupport").then((m) => ({ default: m.ItSupport })));
+const Meetings = lazyPage(() => import("./pages/Meetings").then((m) => ({ default: m.Meetings })));
 const Settings = lazyPage(() => import("./pages/Settings").then((m) => ({ default: m.Settings })));
 const PosAdmin = lazyPage(() => import("./pages/PosAdmin").then((m) => ({ default: m.PosAdmin })));
 const Team = lazyPage(() => import("./pages/Team").then((m) => ({ default: m.Team })));
@@ -760,6 +761,8 @@ const APP_ROUTES = (
             Announcements: every signed-in user has it, and /api/it-support
             answers each caller with their OWN requests only. */}
         <Route path="/it-support" element={<ItSupport />} />
+        {/* Meetings: every signed-in user; the server checks Manage meeting rooms for room changes. */}
+        <Route path="/meetings" element={<Meetings />} />
         {/* Fleet Health — Fleet Maintenance & Compliance Phase 1 dashboard.
             Gated on the flat fleet.read permission; fleet.write covers the
             mutations (backend re-checks). Desktop ops screen. */}
@@ -942,7 +945,7 @@ const APP_ROUTES = (
             the API will not show them the period to approve. */}
         <Route path="/scm/hr/commission" element={<Guard anyPerm={["*", "scm.hr.read", "scm.hr.manage"]}><Scm2990Shell><ScmHrCommission /></Scm2990Shell></Guard>} />
         <Route path="/scm/hr/settings" element={<Guard anyPerm={["*", "scm.hr.manage"]}><Scm2990Shell><ScmHrSettings /></Scm2990Shell></Guard>} />
-        <Route path="/hr/employees" element={<Guard anyPerm={["*", "hr.employees.read", "hr.employees.manage"]}><HrEmployees /></Guard>} />
+        <Route path="/hr/employees" element={<Guard anyPerm={["*", "hr.employees.read", "hr.employees.manage", "hr.attendance.read", "hr.ot.confirm"]}><HrEmployees /></Guard>} />
         {/* TEMP — vendored 2990's PR / Inventory / Stock Card / Supplier Detail /
             Drivers pages (this wave), parallel to the native /scm/* below. Each
             wrapped in <Scm2990Shell>. Literal segments (/new, /stock-card)

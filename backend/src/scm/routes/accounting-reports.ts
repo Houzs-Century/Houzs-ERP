@@ -264,11 +264,27 @@ const stockLine = (stock: StockLines, names: Map<string, string>, role: AccountR
   const code = stock.roles[role];
   return { code, name: names.get(code) ?? STOCK_ROLE_NAMES[role] ?? code, section, amountSen };
 };
-/** The P&L's stock lines, in bucket order: the openings (debits), then the closings (credits). */
-const stockPnlLines = (stock: StockLines, names: Map<string, string>): ReportLine[] => [
-  ...STOCK_BUCKETS.filter((b) => stock.opening[b] !== 0).map((b) => stockLine(stock, names, STOCK_BUCKET_ROLES[b].opening, 'COST OF GOODS SOLD', stock.opening[b])),
-  ...STOCK_BUCKETS.filter((b) => stock.closing[b] !== 0).map((b) => stockLine(stock, names, STOCK_BUCKET_ROLES[b].closing, 'COST OF GOODS SOLD', -stock.closing[b])),
+/** The P&L's stock lines, in bucket order: the openings (debits), then the closings (credits),
+    each saying which it is. */
+const taggedStockLines = (stock: StockLines, names: Map<string, string>): Array<ReportLine & { stock: 'opening' | 'closing' }> => [
+  ...STOCK_BUCKETS.filter((b) => stock.opening[b] !== 0).map((b) => ({ ...stockLine(stock, names, STOCK_BUCKET_ROLES[b].opening, 'COST OF GOODS SOLD', stock.opening[b]), stock: 'opening' as const })),
+  ...STOCK_BUCKETS.filter((b) => stock.closing[b] !== 0).map((b) => ({ ...stockLine(stock, names, STOCK_BUCKET_ROLES[b].closing, 'COST OF GOODS SOLD', -stock.closing[b]), stock: 'closing' as const })),
 ];
+const stockPnlLines = (stock: StockLines, names: Map<string, string>): ReportLine[] =>
+  taggedStockLines(stock, names).map(({ code, name, section, amountSen }) => ({ code, name, section, amountSen }));
+
+/** What buildPnl puts in place of the ledger's own stock lines for [from, to]: the engine's
+    opening and closing lines (cost of sales) and every code the ledger books stock on —
+    for a reader of one account's lines (the Department P&L's drill-down). */
+export async function pnlStockLines(src: ReportSources, from: string, to: string): Promise<
+  { ok: true; lines: Array<ReportLine & { stock: 'opening' | 'closing' }>; codes: Set<string>; closingProvisional: boolean } | Fail
+> {
+  const [stockR, accs] = await Promise.all([loadStockLines(src, from, to), src.accounts()]);
+  if (!stockR.ok) return { ok: false, reason: stockR.reason };
+  if (!accs.ok) return { ok: false, reason: accs.reason };
+  const names = new Map(accs.accounts.map((a) => [a.account_code, a.account_name ?? a.account_code]));
+  return { ok: true, lines: taggedStockLines(stockR.stock, names), codes: stockR.stock.codes, closingProvisional: stockR.stock.closingProvisional };
+}
 
 /* ── The P&L ─────────────────────────────────────────────────────────────── */
 

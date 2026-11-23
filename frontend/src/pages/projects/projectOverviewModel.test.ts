@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { figuresOf, totalsOf, trendOf, groupBy, drillOf, heldVsComing, isHeld, forecastShareOf, type OvProject } from "./projectOverviewModel";
+import { figuresOf, totalsOf, trendOf, groupBy, drillOf, heldVsComing, isHeld, forecastShareOf, estimatedColumnsOf, forecastKindOf, type OvProject } from "./projectOverviewModel";
 
 const NO_SPLIT = { mattSofa: 0, bedframe: 0, accessories: 0 };
 
@@ -127,5 +127,28 @@ describe("Project Overview - held means real sales (owner 2026-11-19)", () => {
   it("forecast share of a bucket", () => {
     expect(forecastShareOf({ sales: 200, split: { sales: { actual: 100, forecast: 50, last_event: 50 }, cost: { actual: 0, forecast: 0, last_event: 0 }, net: { actual: 0, forecast: 0, last_event: 0 } } })).toBe(0.5);
     expect(forecastShareOf({ sales: 0, split: { sales: { actual: 0, forecast: 0, last_event: 0 }, cost: { actual: 0, forecast: 0, last_event: 0 }, net: { actual: 0, forecast: 0, last_event: 0 } } })).toBe(0);
+  });
+});
+
+describe("Project Overview - which cells are a forecast (owner 2026-11-19)", () => {
+  const withSources = (sources: Record<string, "actual" | "forecast" | "last_event">): OvProject => p({
+    pnl: {
+      fromOrders: true, sales: 100, serviceRevenue: 0, cogs: { mattSofa: 0, bedframe: 0, accessories: 0, other: 0 },
+      rental: 0, setup: 0, transportSetup: 0, others: 0, transportFee: 0, commission: 0, merchandise: 0,
+      layers: { estimated: true, lastEvent: null, sources, split: { sales: { actual: 100, forecast: 0, last_event: 0 }, cost: { actual: 0, forecast: 0, last_event: 0 }, net: { actual: 100, forecast: 0, last_event: 0 } } },
+    },
+  });
+  it("only Setup borrowed: only the Setup column is shaded", () => {
+    expect(estimatedColumnsOf(withSources({ sales: "actual", setup: "last_event", rental: "actual" }))).toEqual(["setup"]);
+  });
+  it("typed beats the last event in a column; a real column has none", () => {
+    const x = withSources({ setup: "last_event", cogs_matt_sofa: "forecast", cogs_bedframe: "last_event", rental: "actual" });
+    expect(forecastKindOf(x, "setup")).toBe("last");
+    expect(forecastKindOf(x, "cogs")).toBe("typed");
+    expect(forecastKindOf(x, "rental")).toBeNull();
+  });
+  it("COGS and transport lines fold into their column, in table order", () => {
+    expect(estimatedColumnsOf(withSources({ transport_fee: "last_event", setup: "forecast", cogs_bedframe: "last_event", transport_setup_dismantle: "last_event" }))).toEqual(["cogs", "setup", "transport"]);
+    expect(estimatedColumnsOf(withSources({ sales: "actual" }))).toEqual([]);
   });
 });

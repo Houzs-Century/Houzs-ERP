@@ -274,6 +274,12 @@ secret-guarded ingest fed by the standalone `mail-sync/` poller;
 `routes/mail-center.ts` is the authed read/reply/compose surface; the pages are
 `pages/MailCenter/*` and `mobile/MobileMailCenter.tsx`.
 
+**Meetings.** Meeting rooms shared by every company and ERP. Rooms, meetings and guest
+links live in the Houzs IT Hub; `routes/meetings.ts` relays to it (staff at `/api/meetings`,
+guests at `/api/public/meetings`), `services/meetingsDirectory.ts` sends the staff list hourly.
+Pages: `pages/Meetings/*`, the guest page `pages/MeetingBook.tsx` (`/book/:code`), phone
+`mobile/MobileMeetings.tsx`. Rules: `docs/modules/meetings.md`.
+
 **The 2990 mirrors.** `/api/sync/{so,amendment,customer,staff,warehouse}-mirror` are
 pre-auth, secret-guarded receivers called by the 2990 database itself. They are
 mounted at the top level, outside `/api/scm`, and are separate routes on purpose so
@@ -341,6 +347,7 @@ together, are:
 | Stock card | `pages/scm-v2/StockCard.tsx` | `mobile/MobileStockCard.tsx` |
 | Stock transfer (new) | `pages/scm-v2/StockTransferNew.tsx` | `mobile/MobileStockTransferNew.tsx` |
 | Mail Center | `pages/MailCenter/Inbox.tsx` | `mobile/MobileMailCenter.tsx` |
+| Meetings | `pages/Meetings/index.tsx` | `mobile/MobileMeetings.tsx` (same page) |
 | Notifications / inbox | `pages/Notifications.tsx` | `mobile/MobileInbox.tsx` |
 | Global search | `components/GlobalSearch.tsx` | `mobile/MobileSearch.tsx` |
 | Calendar | Projects calendar view (in `pages/Projects.tsx`) | `mobile/MobileCalendar.tsx` |

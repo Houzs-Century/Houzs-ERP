@@ -14,6 +14,11 @@
 //     or for each in turn: the Excel lists every table's rows by salesperson,
 //     a subtotal after each; the PDF prints one salesperson after another, each
 //     from a new page.
+// Owner 2026-11-19 (「导出的别放先」, 「summary我主要看的就是 每个tab的total」, 「要有
+// total good」): a line at 0.00 is left out of the file unless asked for (the page
+// lists every line), each table saying how many; the summary is each tab's total —
+// its goods and commission, a line per brand with the rate — and the file can be
+// the summary alone.
 // Pure: the page hands it the report and what each table shows; the writers
 // (vendor/scm/lib/event-commission-xlsx.ts and event-commission-pdf.ts) lay it out.
 // ----------------------------------------------------------------------------
@@ -26,8 +31,8 @@ import type {
 } from '../../vendor/scm/lib/event-queries';
 import {
   BASIS_WORDS, RULE_NOTE, TITLE, basisOf, belowDepositOf, bySalespersonOf, cardsOf, changesEarlierOf, changesInRangeOf, changesTitle,
-  countText, deferredInOf, earlierShownOf, forSalesperson, insideFirstOf, manualOf, markedOf, monthAdjOf, salespeopleOf, soListOf, sum,
-  type BelowDepositRow, type SoListRow,
+  countText, deferredInOf, earlierShownOf, earningOnly, forSalesperson, manualOf, markedOf, monthAdjOf, salespeopleOf, soListOf, sum,
+  summaryTabsOf, summaryTotalOf, type BelowDepositRow, type SoListRow, type SummaryLine,
 } from './eventCommissionModel';
 
 /** Each table's row. */
@@ -77,8 +82,9 @@ export const EC_ROW_KEY: { [K in EcTableKey]: (row: Rows[K]) => string } = {
 export type EcWho = { kind: 'all' } | { kind: 'one'; name: string } | { kind: 'each' };
 
 export type EcColumn = { label: string; format: ExportFormat; align: 'left' | 'right'; sums: boolean };
-/** A line; an "of which" line under a card; a salesperson's name over their lines; their subtotal; the total. */
-export type EcRowKind = 'row' | 'memo' | 'group' | 'subtotal' | 'total';
+/** A line; a line inside the one above it (a brand under its tab); an "of which" line under a card;
+    a salesperson's name over their lines; their subtotal (or a tab's total over its brands); the total. */
+export type EcRowKind = 'row' | 'inner' | 'memo' | 'group' | 'subtotal' | 'total';
 export type EcRow = { kind: EcRowKind; cells: ExportCell[] };
 /** One table: its title, a line on what narrowed it or that it is not in the total, its columns and rows.
     `narrow`: a short table (the summary) that keeps to its own width on paper. */
@@ -88,7 +94,10 @@ export type EcSheet = { name: string; title: string; subtitle: string; blocks: E
 /** A stretch of the PDF: a salesperson's name over it, from a new page or not; its tables; notes under them. */
 export type EcSection = { heading: string | null; newPage: boolean; blocks: EcBlock[]; notes: string[] };
 
-export type EcInput = { report: EventCommission; period: string; brand: string; shown: ShownTables; who: EcWho };
+/** The whole report, or its summary alone. */
+export type EcPart = 'full' | 'summary';
+/** `leaveOutZero`: the tables hold only their lines that earn (the summary always does). */
+export type EcInput = { report: EventCommission; period: string; brand: string; shown: ShownTables; who: EcWho; part: EcPart; leaveOutZero: boolean };
 
 type Spec<K extends EcTableKey> = {
   title: (r: EventCommission) => string;
@@ -145,6 +154,10 @@ function ordered<K extends EcTableKey>(key: K, rows: Array<Rows[K]>, rowKeys: re
   return rows.filter((row) => at.has(keyOf(row))).sort((a, b) => at.get(keyOf(a))! - at.get(keyOf(b))!);
 }
 
+/** A report as the file holds it (`r`: its lines that earn, unless every line is asked for)
+    beside every line of it (`all`): what a table left out at 0.00 is counted against that. */
+type Pair = { r: EventCommission; all: EventCommission };
+
 /** One table's columns and its body over one report — the whole one, or one salesperson's —
     and how many rows it had before its table's own filters. A salesperson's own pages leave
     out the Salesperson column: their name heads them. */
@@ -155,28 +168,35 @@ function bodyOf<K extends EcTableKey>(key: K, r: EventCommission, shown: ShownTa
   return { columns: cols.map(columnOf), body: buildLineExportMatrix(rows, () => [], cols).body, of: all.length };
 }
 
-/** Above a table: that it is not in the total, and what narrowed it — its column filters, or
-    (a search on the table) how many of its rows it kept. */
-const noteOf = (key: EcTableKey, r: EventCommission, shown: ShownTable<unknown>, kept: number, of: number): string | null => {
+/** Of a table's rows as its column filters leave them, how many a 0.00 left out of the file. */
+function zeroOf<K extends EcTableKey>(key: K, pair: Pair, rowKeys: readonly string[] | null): { left: number; of: number } {
+  const of = ordered(key, SPECS[key].rows(pair.all), rowKeys).length;
+  return { left: of - ordered(key, SPECS[key].rows(pair.r), rowKeys).length, of };
+}
+
+/** Above a table: that it is not in the total, what narrowed it — its column filters, or
+    (a search on the table) how many of its rows it kept — and how many rows at 0.00 it left out. */
+const noteOf = (key: EcTableKey, r: EventCommission, shown: ShownTable<unknown>, kept: number, of: number, zero: { left: number; of: number }): string | null => {
   const apart = SPECS[key].apart?.(r) ?? null;
   const narrowed = shown.filters ? `Filter: ${shown.filters}` : kept < of ? `Filtered on the page: ${kept} of ${of} rows` : null;
-  const parts = [apart, narrowed].filter((p): p is string => p != null);
+  const left = zero.left > 0 ? `${zero.left} of ${zero.of} rows at 0.00 left out` : null;
+  const parts = [apart, narrowed, left].filter((p): p is string => p != null);
   return parts.length > 0 ? parts.join(' · ') : null;
 };
 
 /** One table over one report, its total at its foot; null when it has no row. */
-function tableBlock<K extends EcTableKey>(key: K, r: EventCommission, input: EcInput, personal: boolean): EcBlock | null {
+function tableBlock<K extends EcTableKey>(key: K, pair: Pair, input: EcInput, personal: boolean): EcBlock | null {
   const shown = input.shown[key];
-  const { columns, body, of } = bodyOf(key, r, shown, personal);
+  const { columns, body, of } = bodyOf(key, pair.r, shown, personal);
   if (body.length === 0 || columns.length === 0) return null;
   return {
-    title: SPECS[key].title(r), note: noteOf(key, r, shown as ShownTable<unknown>, body.length, of), columns,
+    title: SPECS[key].title(pair.r), note: noteOf(key, pair.r, shown as ShownTable<unknown>, body.length, of, zeroOf(key, pair, shown.rowKeys)), columns,
     rows: [...body.map((cells): EcRow => ({ kind: 'row', cells })), footOf('total', `Total · ${countText(body.length, SPECS[key].unit)}`, columns, body)],
   };
 }
 
 /** One table for each salesperson in turn: their name, their rows, their subtotal; the total at the foot. */
-function groupedBlock<K extends EcTableKey>(key: K, r: EventCommission, people: ReadonlyArray<{ name: string; report: EventCommission }>, input: EcInput): EcBlock | null {
+function groupedBlock<K extends EcTableKey>(key: K, pair: Pair, people: ReadonlyArray<{ name: string; report: EventCommission }>, input: EcInput): EcBlock | null {
   const shown = input.shown[key];
   const each = people.map((p) => ({ name: p.name, ...bodyOf(key, p.report, shown, true) }));
   const parts = each.filter((p) => p.body.length > 0);
@@ -191,30 +211,40 @@ function groupedBlock<K extends EcTableKey>(key: K, r: EventCommission, people: 
   ]);
   const all = parts.flatMap((p) => p.body);
   rows.push(footOf('total', `Total · ${countText(all.length, unit)}`, columns, all));
-  return { title: SPECS[key].title(r), note: noteOf(key, r, shown as ShownTable<unknown>, all.length, sum(each, (p) => p.of)), columns, rows };
+  return {
+    title: SPECS[key].title(pair.r), note: noteOf(key, pair.r, shown as ShownTable<unknown>, all.length, sum(each, (p) => p.of), zeroOf(key, pair, shown.rowKeys)),
+    columns, rows,
+  };
 }
 
 const text = (label: string, align: 'left' | 'right' = 'left'): EcColumn => ({ label, format: 'text', align, sums: false });
 const money = (label: string): EcColumn => ({ label, format: 'money', align: 'right', sums: true });
 const ringgit = (sen: number): number => sen / 100;
+const summaryCells = (l: SummaryLine): ExportCell[] =>
+  [l.label, l.count, l.goodsSen == null ? null : ringgit(l.goodsSen), l.ratePct == null ? null : `${l.ratePct}%`, ringgit(l.commissionSen)];
 
-/** The summary: the cards in the tables' order, the first one's "of which" lines under it, the total;
-    and with `people`, a line per salesperson — each card over their own lines, their total. */
-function summaryBlocks(r: EventCommission, people: boolean): EcBlock[] {
-  const cards = cardsOf(r);
-  const inside = insideFirstOf(r);
+/** The summary (owner 2026-11-19: 「summary我主要看的就是 每个tab的total」, 「要有total good」):
+    each tab's total — its lines that earn, their goods, its commission — a line per brand
+    under it with the rate, the first one's "of which" lines, the total of goods and of
+    commission; and with `people`, a line per salesperson — each card over their own lines,
+    their total. Over the report's lines that earn: `r` is earningOnly's. */
+function summaryBlocks(r: EventCommission, people: boolean, note: string | null): EcBlock[] {
+  const tabs = summaryTabsOf(r);
+  const total = summaryTotalOf(tabs);
   const blocks: EcBlock[] = [{
-    title: 'Summary', note: null, narrow: true,
-    columns: [text(''), text('Orders', 'right'), { ...money('Commission'), sums: false }],
+    title: 'Summary', note, narrow: true,
+    columns: [text(''), { label: 'Orders', format: 'number', align: 'right', sums: false }, { ...money('Goods'), sums: false }, text('Rate', 'right'), { ...money('Commission'), sums: false }],
     rows: [
-      ...cards.flatMap((c): EcRow[] => [
-        { kind: 'row', cells: [c.label, c.count, ringgit(c.sen)] },
-        ...(c.key === 'inRange' ? inside.map((o): EcRow => ({ kind: 'memo', cells: [o.label, o.count, ringgit(o.sen)] })) : []),
+      ...tabs.flatMap((t): EcRow[] => [
+        { kind: 'subtotal', cells: summaryCells(t.total) },
+        ...t.brands.map((b): EcRow => ({ kind: 'inner', cells: summaryCells(b) })),
+        ...t.inside.map((o): EcRow => ({ kind: 'memo', cells: summaryCells(o) })),
       ]),
-      { kind: 'total', cells: ['Total commission', null, ringgit(sum(cards, (c) => c.sen))] },
+      { kind: 'total', cells: ['Total', null, total.goodsSen == null ? null : ringgit(total.goodsSen), null, ringgit(total.commissionSen)] },
     ],
   }];
   if (!people) return blocks;
+  const cards = cardsOf(r);
   const lines = bySalespersonOf(r);
   const columns: EcColumn[] = [text('Salesperson'), { label: 'Orders', format: 'number', align: 'right', sums: true }, ...cards.map((c) => money(c.label)), money('Total')];
   const body = lines.map((p): ExportCell[] => [
@@ -238,17 +268,36 @@ export const ecMeta = (input: Pick<EcInput, 'report' | 'period' | 'brand' | 'who
 ];
 /* In English: the PDF's Chinese face has no 补开单, and refused the whole export over it. */
 const NOTES = [RULE_NOTE];
+export const SUMMARY_NOTE = "The summary counts only the lines that earn. On each brand's line Goods × Rate = Commission; a cancelled order's goods are in brackets; a closed month's adjustment is its Goods × Rate less what that month already paid.";
+export const LEFT_OUT_NOTE = 'Lines at 0.00 are left out of this file, and with them Below 30% paid and Marked — not paid here; the page lists every line.';
+const summaryNote = (input: EcInput): string => [SUMMARY_NOTE, input.part === 'full' && input.leaveOutZero ? LEFT_OUT_NOTE : null].filter(Boolean).join(' ');
+
+/** The report as the file holds it, beside every line, and the lines that earn (the summary's). */
+function filed(input: EcInput): { pair: Pair; earning: EventCommission; personal: (name: string) => Pair } {
+  const earning = earningOnly(input.report);
+  const r = input.leaveOutZero ? earning : input.report;
+  return { pair: { r, all: input.report }, earning, personal: (name) => ({ r: forSalesperson(r, name), all: forSalesperson(input.report, name) }) };
+}
 
 /** Excel: Summary, then a sheet per table — for everyone, for one salesperson, or each
-    table's rows by salesperson with a subtotal each. A table with no row has no sheet. */
+    table's rows by salesperson with a subtotal each. A table with no row has no sheet.
+    The summary alone: its sheet, for each salesperson their own summary under it in turn. */
 export function ecSheets(input: EcInput): EcSheet[] {
   const { report, who } = input;
   const subtitle = ecSubtitle(input);
-  const r = who.kind === 'one' ? forSalesperson(report, who.name) : report;
-  const sheets: EcSheet[] = [{ name: 'Summary', title: who.kind === 'one' ? `Event commission — ${who.name}` : 'Event commission', subtitle, blocks: summaryBlocks(r, who.kind !== 'one'), notes: NOTES }];
-  const people = who.kind === 'each' ? salespeopleOf(report).map((name) => ({ name, report: forSalesperson(report, name) })) : [];
+  const { pair, earning, personal } = filed(input);
+  const one = who.kind === 'one' ? who.name : null;
+  const theirs = input.part === 'summary' && who.kind === 'each'
+    ? salespeopleOf(earning).map((name): EcBlock => ({ ...summaryBlocks(forSalesperson(earning, name), false, null)[0]!, title: name }))
+    : [];
+  const sheets: EcSheet[] = [{
+    name: 'Summary', title: one ? `Event commission — ${one}` : 'Event commission', subtitle,
+    blocks: [...summaryBlocks(one ? forSalesperson(earning, one) : earning, !one, summaryNote(input)), ...theirs], notes: NOTES,
+  }];
+  if (input.part === 'summary') return sheets;
+  const people = who.kind === 'each' ? salespeopleOf(pair.r).map((name) => ({ name, report: forSalesperson(pair.r, name) })) : [];
   for (const key of EC_TABLES[basisOf(report)]) {
-    const block = who.kind === 'each' ? groupedBlock(key, report, people, input) : tableBlock(key, r, input, who.kind === 'one');
+    const block = who.kind === 'each' ? groupedBlock(key, pair, people, input) : tableBlock(key, one ? personal(one) : pair, input, one != null);
     /* The table's own title and note are the sheet's two lines, so its header is the third row on every sheet. */
     if (block) sheets.push({ name: SPECS[key].sheet(report), title: block.title, subtitle: [subtitle, block.note].filter(Boolean).join(' · '), blocks: [{ ...block, title: '', note: null }], notes: [] });
   }
@@ -256,25 +305,28 @@ export function ecSheets(input: EcInput): EcSheet[] {
 }
 
 /** PDF: the summary and every table — for everyone, for one salesperson, or the summary
-    with its line per salesperson and then each salesperson from a new page. */
+    with its line per salesperson and then each salesperson from a new page. The summary
+    alone: the same pages without the tables. */
 export function ecSections(input: EcInput): EcSection[] {
   const { report, who } = input;
-  const tablesOf = (r: EventCommission, personal: boolean): EcBlock[] =>
-    EC_TABLES[basisOf(report)].map((key) => tableBlock(key, r, input, personal)).filter((b): b is EcBlock => b != null);
+  const { pair, earning, personal } = filed(input);
+  const note = summaryNote(input);
+  const tablesOf = (p: Pair, mine: boolean): EcBlock[] => (input.part === 'summary' ? [] :
+    EC_TABLES[basisOf(report)].map((key) => tableBlock(key, p, input, mine)).filter((b): b is EcBlock => b != null));
   if (who.kind === 'one') {
-    const r = forSalesperson(report, who.name);
-    return [{ heading: who.name, newPage: false, blocks: [...summaryBlocks(r, false), ...tablesOf(r, true)], notes: NOTES }];
+    return [{ heading: who.name, newPage: false, blocks: [...summaryBlocks(forSalesperson(earning, who.name), false, note), ...tablesOf(personal(who.name), true)], notes: NOTES }];
   }
-  if (who.kind === 'all') return [{ heading: null, newPage: false, blocks: [...summaryBlocks(report, true), ...tablesOf(report, false)], notes: NOTES }];
+  if (who.kind === 'all') return [{ heading: null, newPage: false, blocks: [...summaryBlocks(earning, true, note), ...tablesOf(pair, false)], notes: NOTES }];
   return [
-    { heading: null, newPage: false, blocks: summaryBlocks(report, true), notes: NOTES },
-    ...salespeopleOf(report).map((name): EcSection => {
-      const r = forSalesperson(report, name);
-      return { heading: name, newPage: true, blocks: [...summaryBlocks(r, false), ...tablesOf(r, true)], notes: [] };
-    }),
+    { heading: null, newPage: false, blocks: summaryBlocks(earning, true, note), notes: NOTES },
+    ...salespeopleOf(input.part === 'summary' ? earning : pair.r).map((name): EcSection => ({
+      heading: name, newPage: true, blocks: [...summaryBlocks(forSalesperson(earning, name), false, null), ...tablesOf(personal(name), true)], notes: [],
+    })),
   ];
 }
 
-/** The file's name: the page's, then whose. */
-export const ecFileBase = (base: string, who: EcWho): string =>
-  who.kind === 'all' ? base : who.kind === 'each' ? `${base}-by-salesperson` : `${base}-${who.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'salesperson'}`;
+/** The file's name: the page's, "summary" for the summary alone, then whose. */
+export const ecFileBase = (base: string, who: EcWho, part: EcPart): string => {
+  const b = part === 'summary' ? `${base}-summary` : base;
+  return who.kind === 'all' ? b : who.kind === 'each' ? `${b}-by-salesperson` : `${b}-${who.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'salesperson'}`;
+};

@@ -9,8 +9,8 @@
    following ticks + prepay, and the one AP-control line written on save. */
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { afterEach, describe, expect, test, vi } from 'vitest';
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 /* Hoisted with the mocks that read them (vi.mock factories run before the
    file's own consts exist). */
@@ -35,6 +35,7 @@ const { updateAsync, approveAsync, idle, DETAIL, FILES } = vi.hoisted(() => {
   const approveAsync = vi.fn(async (_id: string) => ({ ok: true }));
   return { updateAsync, approveAsync, idle, DETAIL, FILES };
 });
+const finishPostMutate = vi.fn();
 /* 欠正式单 (item 3): Finance's marks and the requester's upload — stubbed. */
 const markOfficial = vi.fn();
 const uploadOfficialAsync = vi.fn(async (_b: unknown) => ({ ok: true, received: [{ kind: 'PV', number: 'HC-PV-2610-001' }], note: null as string | null }));
@@ -50,6 +51,7 @@ vi.mock('../../vendor/scm/lib/payment-voucher-queries', async (importOriginal) =
   useUpdatePaymentVoucher: () => ({ mutateAsync: updateAsync, isPending: false }),
   useCancelPaymentVoucher: idle, useSubmitPaymentVoucher: idle, useWithdrawPaymentVoucher: idle,
   useCheckPaymentVoucher: idle, useApprovePaymentVoucher: () => ({ mutateAsync: approveAsync, isPending: false }), useRejectPaymentVoucher: idle,
+  usePostPaymentVoucher: () => ({ mutate: finishPostMutate, isPending: false }),
   useApplyAdvance: idle, useUploadPvFile: idle, useDeletePvFile: idle, useUpdatePvText: idle,
   useSupplierAdvances: () => ({ data: { advances: [], totalRemainingSen: 0 }, isLoading: false }),
   usePvFiles: () => ({ data: { files: FILES }, isLoading: false, refetch: async () => ({ data: { files: FILES } }) }),
@@ -109,6 +111,9 @@ vi.mock('../../vendor/scm/lib/event-queries', async (importOriginal) => ({
 }));
 
 import { PaymentVoucherDetail } from './PaymentVoucherDetail';
+import { WorkspaceTabs } from '../../components/WorkspaceTabs';
+import { resetWorkspaceTabsForTests } from '../../lib/workspaceTabs';
+import { returnToWorkspaceOpener } from '../../lib/useWorkspaceOpener';
 
 const draw = () => render(
   <MemoryRouter initialEntries={['/scm/payment-vouchers/pv-9?edit=1']}>
@@ -144,6 +149,35 @@ describe('a voucher whose posting failed after approval', () => {
     unmount();
     at({ status: 'POSTED', approved_at: MARK });
     expect(screen.queryByRole('button', { name: 'Retry posting' })).toBeNull();
+  });
+});
+
+/* Ported from Conts-ERP #1137 (D1). A posted voucher whose invoice was never settled offers Finish posting, which
+   presses Post again (the server finishes what the first post left). Fails before the fix: no such button. */
+describe('a posted voucher that did not finish its settlement', () => {
+  afterEach(() => {
+    Object.assign(DETAIL.paymentVoucher, { status: 'DRAFT' });
+    delete (DETAIL as Record<string, unknown>).unfinished;
+    finishPostMutate.mockClear();
+  });
+  test('offers Finish posting, which posts again; a finished one does not', () => {
+    Object.assign(DETAIL.paymentVoucher, { status: 'POSTED' });
+    (DETAIL as Record<string, unknown>).unfinished = 'post';
+    const { unmount } = render(
+      <MemoryRouter initialEntries={['/scm/payment-vouchers/pv-9']}>
+        <Routes><Route path="/scm/payment-vouchers/:id" element={<PaymentVoucherDetail />} /></Routes>
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Finish posting' }));
+    expect(finishPostMutate).toHaveBeenCalledWith('pv-9', expect.anything());
+    unmount();
+    (DETAIL as Record<string, unknown>).unfinished = null;
+    render(
+      <MemoryRouter initialEntries={['/scm/payment-vouchers/pv-9']}>
+        <Routes><Route path="/scm/payment-vouchers/:id" element={<PaymentVoucherDetail />} /></Routes>
+      </MemoryRouter>,
+    );
+    expect(screen.queryByRole('button', { name: 'Finish posting' })).toBeNull();
   });
 });
 
@@ -319,5 +353,49 @@ describe('the Description, the Remark and the bank it pays into', () => {
     expect(updateAsync.mock.calls[0]![0]).toMatchObject({
       notes: 'META ADS SEPTEMBER', payToBankName: 'CITIBANK', payToAccountNo: '0123 9999', payToAccountName: 'META PLATFORMS IRELAND',
     });
+  });
+});
+
+/* Owner 2026-11-20, on a voucher's Applies to with an AP bill on it: 点开打开那
+   invoice，退回来就是退回这一页 — every invoice it settles opens in its own tab of
+   the strip, and that page's Back returns to the voucher. */
+describe('Applies to: each invoice opens and its Back returns to the voucher', () => {
+  const PI_ROW = { id: 'a2', kind: 'PI', piId: 'pi-7', invoiceNumber: '2990-PI-2609-011', supplierInvoiceRef: null, amountSen: 5000, status: 'POSTED' };
+  const allocs = DETAIL.allocations as Array<Record<string, unknown>>;
+  /* The opened page, standing in for the AP bill / PI page: its Back is theirs. */
+  const Opened = ({ name }: { name: string }) => {
+    const navigate = useNavigate();
+    return <button type="button" onClick={() => navigate(returnToWorkspaceOpener() ?? '/scm/list')}>{`Back from ${name}`}</button>;
+  };
+  beforeEach(() => { sessionStorage.clear(); resetWorkspaceTabsForTests(); allocs.push(PI_ROW); });
+  afterEach(() => { allocs.splice(1); });
+
+  test('the AP bill and the purchase invoice open on their own pages, and Back lands on this voucher', () => {
+    render(
+      <MemoryRouter initialEntries={['/scm/payment-vouchers/pv-9']}>
+        <WorkspaceTabs />
+        <Routes>
+          <Route path="/scm/payment-vouchers/:id" element={<PaymentVoucherDetail />} />
+          <Route path="/scm/ap-invoices/:id" element={<Opened name="the AP bill" />} />
+          <Route path="/scm/purchase-invoices/:id" element={<Opened name="the PI" />} />
+          <Route path="/scm/list" element={<div>Some list</div>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole('link', { name: '2990-API-2609-004' }).getAttribute('href')).toBe('/scm/ap-invoices/api-meta');
+    expect(screen.getByRole('link', { name: '2990-PI-2609-011' }).getAttribute('href')).toBe('/scm/purchase-invoices/pi-7');
+    const tabs = () => document.querySelectorAll('[role="tab"]').length;
+    const before = tabs();
+
+    fireEvent.click(screen.getByRole('link', { name: '2990-API-2609-004' }));
+    expect(tabs()).toBe(before + 1);
+    fireEvent.click(screen.getByRole('button', { name: 'Back from the AP bill' }));
+    expect(screen.getByText('Applies to')).toBeTruthy();
+    expect(tabs()).toBe(before);
+
+    fireEvent.click(screen.getByRole('link', { name: '2990-PI-2609-011' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Back from the PI' }));
+    expect(screen.getByText('Applies to')).toBeTruthy();
+    expect(screen.queryByText('Some list')).toBeNull();
   });
 });

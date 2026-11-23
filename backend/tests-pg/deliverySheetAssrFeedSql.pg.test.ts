@@ -44,7 +44,10 @@ async function resetFixture(s: Sql): Promise<void> {
       ('HC-SO-9010', 'SO-9010', 'Malaysia', '47300', 'Petaling Jaya', 'Selangor'),
       ('HC-SO-9011', 'HC-SO-9011', 'Singapore', '600314', 'Jurong East', 'West');
     DROP TABLE IF EXISTS public.assr_case_address CASCADE;
-    CREATE TABLE public.assr_case_address (assr_id bigint PRIMARY KEY, postcode text, city text, state text);
+    -- updated_at / updated_by mirror production: this table ALSO has an updated_at,
+    -- so a bare updated_at in the feed is ambiguous (42702) and 502s it. Keep
+    -- these columns so the feed's assr_cases.-qualified references stay tested.
+    CREATE TABLE public.assr_case_address (assr_id bigint PRIMARY KEY, postcode text, city text, state text, updated_at text, updated_by text);
     DROP TABLE IF EXISTS public.assr_cases CASCADE;
     CREATE TABLE public.assr_cases (
       id bigserial PRIMARY KEY, assr_no text NOT NULL, doc_no text, company_id bigint NOT NULL, status text, stage text,

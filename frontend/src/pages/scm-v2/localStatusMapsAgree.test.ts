@@ -98,6 +98,7 @@ const COLLAPSED_WORDS: ReadonlyArray<readonly [docType: StatusDocType, status: s
   ['pr', 'COMPLETED', 'Completed'],
   ['pr', 'CANCELLED', 'Cancelled'],
   ['stockTake', 'OPEN', 'Open'],
+  ['stockTake', 'PENDING_APPROVAL', 'Pending Approval'],
   ['stockTake', 'POSTED', 'Confirmed'],
   ['stockTake', 'CANCELLED', 'Cancelled'],
   ['stockTransfer', 'POSTED', 'Confirmed'],

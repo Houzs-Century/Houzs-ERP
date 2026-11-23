@@ -62,18 +62,35 @@ export const logisticsPnlHandler = async (c: any): Promise<Response> => {
   const from = dateOrNull(c.req.query('from')) ?? monthStart(today);
   const to = dateOrNull(c.req.query('to')) ?? monthEnd(today);
   if (from > to) return c.json({ error: 'bad_range', message: 'The From date is after the To date.' }, 400);
+  const r = await loadLogisticsPnl(c, co.companyId, from, to);
+  return r.ok ? c.json(r.body) : r.res;
+};
+
+/** The Logistics P&L for [from, to] and the Other Debtor bill lines it read — the
+    route's reply, and what the Department P&L's Operation view builds on. */
+export type LogisticsPnlLoad = { ok: true; body: LogisticsPnlBody; billLines: BillLine[] } | { ok: false; res: Response };
+export type LogisticsPnlBody = ReturnType<typeof buildLogisticsPnl> & {
+  tripsProblem: string | null; fairsProblem: string | null; perMonth: LogisticsPnlMonth[];
+  areaRates: Array<{ key: string; label: string; region: RegionCode; rateSen: number | null; defaultRateSen: number | null; isDefault: boolean }>;
+};
+export type LogisticsPnlMonth = {
+  month: string; rows: ReturnType<typeof buildLogisticsPnl>['rows']; dos: ReturnType<typeof buildLogisticsPnl>['dos'];
+  cost: ReturnType<typeof buildMonthCost>; costTotalSen: number; fairs: FairBlock[]; noFair: { lines: number; sen: number };
+};
+
+export async function loadLogisticsPnl(c: any, companyId: number, from: string, to: string): Promise<LogisticsPnlLoad> {
+  const no = (res: Response) => ({ ok: false as const, res });
   const sb = c.get('supabase');
-  const companyId = co.companyId;
   const wholeFrom = monthStart(from);
   const wholeTo = monthEnd(to);
 
   const setup = await loadCostSetup(sb, companyId);
-  if (!setup.ok) return fail(c, setup.what, setup.reason);
+  if (!setup.ok) return no(fail(c, setup.what, setup.reason));
   const accounts = pnlAccountsOf(setup.chart);
   const nameOf = new Map(setup.chart.map((a) => [a.account_code, a.account_name] as const));
 
   const read = await readMonthDos(sb, companyId, wholeFrom, wholeTo);
-  if (!read.ok) return fail(c, read.what, read.reason);
+  if (!read.ok) return no(fail(c, read.what, read.reason));
   const shown = read.dos.filter((d) => d.day >= from && d.day <= to);
   const regionOf = new Map(read.dos.map((d) => [d.id, regionOfDo(d).code] as const));
   const ownTripsIn = (dos: readonly LogisticsDo[]) => {
@@ -87,10 +104,10 @@ export const logisticsPnlHandler = async (c: any): Promise<Response> => {
 
   /* Finance's own spreads (the rates and ticks are read with the trips). */
   const spreadRes = await sb.from('acc_logistics_spreads').select('line_id, months').eq('company_id', companyId);
-  if (spreadRes.error) return fail(c, 'spreads', spreadRes.error.message);
+  if (spreadRes.error) return no(fail(c, 'spreads', spreadRes.error.message));
   const spreadMonths = new Map(((spreadRes.data ?? []) as Row[]).map((r) => [String(r.line_id), Number(r.months)] as const));
   const rateRes = await sb.from('acc_logistics_area_rates').select('area, rate_sen').eq('company_id', companyId);
-  if (rateRes.error) return fail(c, 'area rates', rateRes.error.message);
+  if (rateRes.error) return no(fail(c, 'area rates', rateRes.error.message));
   const rates = new Map(((rateRes.data ?? []) as Row[]).map((r) => [String(r.area), r.rate_sen == null ? null : Number(r.rate_sen)] as const));
 
   /* The books: every leg on the P&L's accounts, from far enough back for the longest spread. */
@@ -99,7 +116,7 @@ export const logisticsPnlHandler = async (c: any): Promise<Response> => {
     .select('line_id, account_code, account_name, entry_date, debit_sen, credit_sen, posted, reversed, reversed_by_je, opening, notes, je_no, source_type, source_doc_no, party_name')
     .eq('company_id', companyId).in('account_code', b).gte('entry_date', spreadFrom).lte('entry_date', wholeTo)
     .order('line_id').range(lo, hi));
-  if (legsRes.error) return fail(c, 'ledger', legsRes.error.message);
+  if (legsRes.error) return no(fail(c, 'ledger', legsRes.error.message));
   const legs: Leg[] = legsRes.data.filter((l) => l.opening !== true && countsInTheBooks(l)).map((l) => ({
     lineId: String(l.line_id), accountCode: String(l.account_code), accountName: l.account_name == null ? null : String(l.account_name),
     day: String(l.entry_date).slice(0, 10), debitSen: Number(l.debit_sen ?? 0), creditSen: Number(l.credit_sen ?? 0),
@@ -116,7 +133,7 @@ export const logisticsPnlHandler = async (c: any): Promise<Response> => {
     .select('id, bill_number, bill_date, status, debtor_id')
     .eq('company_id', companyId).neq('status', 'CANCELLED').gte('bill_date', billFrom).lte('bill_date', billTo)
     .order('bill_date').range(lo, hi));
-  if (billsRes.error) return fail(c, 'other debtor bills', billsRes.error.message);
+  if (billsRes.error) return no(fail(c, 'other debtor bills', billsRes.error.message));
   const bills = billsRes.data ?? [];
   const [billLinesRes, debtorsRes] = await Promise.all([
     chunkIn<Row>(bills.map((b) => String(b.id)), (b, lo, hi) => sb.from('acc_debtor_bill_lines')
@@ -125,8 +142,8 @@ export const logisticsPnlHandler = async (c: any): Promise<Response> => {
     chunkIn<Row>([...new Set(bills.map((b) => String(b.debtor_id)))], (b, lo, hi) => sb.from('acc_debtors')
       .select('id, name').in('id', b).order('id').range(lo, hi)),
   ]);
-  if (billLinesRes.error) return fail(c, 'other debtor bill lines', billLinesRes.error.message);
-  if (debtorsRes.error) return fail(c, 'other debtors', debtorsRes.error.message);
+  if (billLinesRes.error) return no(fail(c, 'other debtor bill lines', billLinesRes.error.message));
+  if (debtorsRes.error) return no(fail(c, 'other debtors', debtorsRes.error.message));
   const billOf = new Map(bills.map((b) => [String(b.id), b] as const));
   const debtorOf = new Map(debtorsRes.data.map((d) => [String(d.id), String(d.name ?? '')] as const));
   const billLines: BillLine[] = billLinesRes.data.map((l) => {
@@ -172,8 +189,8 @@ export const logisticsPnlHandler = async (c: any): Promise<Response> => {
     paginateAll<Row>((lo, hi) => sb.from('threepl_bill_lines').select('id, ap_invoice_id, amount_sen')
       .eq('company_id', companyId).eq('assign', 'event').is('project_id', null).order('id').range(lo, hi)),
   ]);
-  if (apRes.error) return fail(c, 'AP invoices', apRes.error.message);
-  if (noFairRes.error) return fail(c, '3PL bill lines', noFairRes.error.message);
+  if (apRes.error) return no(fail(c, 'AP invoices', apRes.error.message));
+  if (noFairRes.error) return no(fail(c, '3PL bill lines', noFairRes.error.message));
   const apIds = apRes.data.map((x) => String(x.id));
   const noFairApIds = [...new Set((noFairRes.data ?? []).map((l) => String(l.ap_invoice_id)))];
   const [tplRes, supRes, noFairApRes] = await Promise.all([
@@ -184,13 +201,13 @@ export const logisticsPnlHandler = async (c: any): Promise<Response> => {
     chunkIn<Row>(noFairApIds, (b, lo, hi) => sb.from('ap_invoices').select('id, invoice_date, status')
       .eq('company_id', companyId).in('id', b).order('id').range(lo, hi)),
   ]);
-  if (tplRes.error) return fail(c, '3PL bill lines', tplRes.error.message);
-  if (supRes.error) return fail(c, 'suppliers', supRes.error.message);
-  if (noFairApRes.error) return fail(c, 'AP invoices', noFairApRes.error.message);
+  if (tplRes.error) return no(fail(c, '3PL bill lines', tplRes.error.message));
+  if (supRes.error) return no(fail(c, 'suppliers', supRes.error.message));
+  if (noFairApRes.error) return no(fail(c, 'AP invoices', noFairApRes.error.message));
   const carrierIds = [...new Set(tplRes.data.map((l) => l.threepl_company_id).filter((x) => x != null).map(String))];
   const carRes = await chunkIn<Row>(carrierIds, (b, lo, hi) => sb.from('threepl_companies').select('id, name')
     .eq('company_id', companyId).in('id', b).order('id').range(lo, hi));
-  if (carRes.error) return fail(c, '3PL companies', carRes.error.message);
+  if (carRes.error) return no(fail(c, '3PL companies', carRes.error.message));
   const carrierName = new Map(carRes.data.map((x) => [String(x.id), String(x.name ?? '')] as const));
   const supplierName = new Map(supRes.data.map((x) => [String(x.id), String(x.name ?? '')] as const));
   const linesOfAp = new Map<string, Row[]>();
@@ -209,7 +226,7 @@ export const logisticsPnlHandler = async (c: any): Promise<Response> => {
   const missing = [...new Set([...threeplBills.values()].flatMap((b) => b.lines.flatMap((l) => l.doIds)).filter((id) => !regionOf.has(id)))];
   if (missing.length > 0) {
     const more = await readDoRegions(sb, companyId, missing);
-    if (!more.ok) return fail(c, more.what, more.reason);
+    if (!more.ok) return no(fail(c, more.what, more.reason));
     for (const [id, r] of more.regions) regionOf.set(id, r);
   }
   const noFairDay = new Map(noFairApRes.data.filter((x) => String(x.status ?? '').toUpperCase() !== 'CANCELLED').map((x) => [String(x.id), String(x.invoice_date ?? '').slice(0, 10)] as const));
@@ -261,14 +278,18 @@ export const logisticsPnlHandler = async (c: any): Promise<Response> => {
       fairs: fairBlocks, noFair: { lines: noFair.length, sen: noFair.reduce((s, l) => s + Number(l.amount_sen ?? 0), 0) },
     };
   });
-  return c.json({
-    ...pnl,
-    tripsProblem,
-    fairsProblem,
-    perMonth,
-    areaRates: AREAS.map((a) => ({ key: a.key, label: a.label, region: a.region, rateSen: rateOf(a, rates), defaultRateSen: a.defaultRateSen, isDefault: !rates.has(a.key) })),
-  });
-};
+  return {
+    ok: true,
+    billLines,
+    body: {
+      ...pnl,
+      tripsProblem,
+      fairsProblem,
+      perMonth,
+      areaRates: AREAS.map((a) => ({ key: a.key, label: a.label, region: a.region, rateSen: rateOf(a, rates), defaultRateSen: a.defaultRateSen, isDefault: !rates.has(a.key) })),
+    },
+  };
+}
 
 const mostCommon = (xs: readonly string[]): string | null => {
   const n = new Map<string, number>();

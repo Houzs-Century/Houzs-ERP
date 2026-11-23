@@ -55,13 +55,13 @@ page, and the POS Admin menu. This guide carries only what is built.
   and `pos/src/sale.ts`, both tested): the cart, discounts, FOC, hold /
   recall (`holdsStore.ts`), payment (`sell/Payment.tsx`: cashless methods,
   split across two, Cash with 5 sen rounding and change only when General
-  enables it), the completion screen (`sell/Complete.tsx`), find bill /
-  void / change salesman (`sell/FindBill.tsx`), return / exchange
-  (`sell/ReturnExchange.tsx`). Every receipt is a `SaleRecord` in the
-  IndexedDB `sales` store keyed by its uuid, with `synced_at` null until the
-  ERP acknowledges it (step 6); the receipt counter lives in `meta`
-  (`salesStore.ts`) and is bumped BEFORE the sale is written, so a number is
-  never reused. Local stock = bundle snapshot + `meta.stock_adj` (sold minus
+  enables it), the completion screen (`sell/Complete.tsx`), find bill / void /
+  change salesman (`sell/FindBill.tsx`; "Other terminals" reads other devices'
+  bills from `GET /api/pos-device/sales`, reprint only), return / exchange
+  (`sell/ReturnExchange.tsx`). Every receipt is a `SaleRecord` in the IndexedDB
+  `sales` store keyed by uuid, `synced_at` null until the ERP acknowledges it;
+  the receipt counter lives in `meta` (`salesStore.ts`), bumped BEFORE the sale
+  is written, so no number is reused. Local stock = bundle snapshot + `meta.stock_adj` (sold minus
   returned since Prepare); a VOID restores it, a RETURN gives it back, an
   exchange's new items deduct.
 - Receipt (`pos/src/receipt.ts`, tested) in the AutoCount layout at 32 / 48

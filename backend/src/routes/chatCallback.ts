@@ -163,6 +163,12 @@ app.post("/", async (c) => {
     delivery_purpose?: string;
     need_disposal?: string;
     disposal_item?: string;
+    // event "eastmy_ack": the East Malaysia prep callback — the customer's
+    // confirmed final-mile delivery details.
+    recipient_name?: string;
+    recipient_phone?: string;
+    delivery_address?: string;
+    remark?: string;
   } | null = null;
   try {
     body = await c.req.json();
@@ -208,6 +214,19 @@ app.post("/", async (c) => {
     needDisposal: propField(body.need_disposal, 20),
     disposalItem: propField(body.disposal_item, 200),
   } : null;
+  // event "eastmy_ack": the East Malaysia prep callback. The customer's confirmed
+  // final-mile delivery details are RECORDED on the message-log row (folded into
+  // its note below) and never written onto the Sales Order — the SO's address is
+  // staff's to change (same stance as the postage address). An unset attribute
+  // arrives as Connect's literal "{key}" placeholder, treated as blank by propField.
+  const emAckNote = event === "eastmy_ack"
+    ? [
+        propField(body.recipient_name, 120) && `recipient: ${propField(body.recipient_name, 120)}`,
+        blastPhone(body.recipient_phone) && `phone: ${blastPhone(body.recipient_phone)}`,
+        propField(body.delivery_address, 300) && `address: ${propField(body.delivery_address, 300)}`,
+        propField(body.remark, 500) && `remark: ${propField(body.remark, 500)}`,
+      ].filter(Boolean).join(" | ") || null
+    : null;
 
   const sb = getSupabaseService(c.env);
 
@@ -310,7 +329,11 @@ app.post("/", async (c) => {
         requestedDate,
         reason,
         property,
-        note: requestedAddress ? `${note ?? ""}${note ? " | " : ""}address: ${requestedAddress}` : note,
+        // postage_amend folds the typed address into the note; eastmy_ack folds
+        // the whole confirmed-delivery block (recipient / phone / address / remark).
+        note: emAckNote
+          ? `${note ?? ""}${note ? " | " : ""}${emAckNote}`
+          : requestedAddress ? `${note ?? ""}${note ? " | " : ""}address: ${requestedAddress}` : note,
       }));
     } catch (e) {
       if (e instanceof ChatTapLogFailed) {

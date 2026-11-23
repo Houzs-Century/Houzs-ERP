@@ -8,11 +8,14 @@
 import { and, eq, gte, lte, or, sql } from "drizzle-orm";
 import type { Env } from "../../types";
 import { getDb } from "../../db/client";
-import { hr_attendance, hr_employees, hr_hour_deductions, hr_public_holidays, hr_working_hours } from "../../db/schema";
-import { minutesFromWorkDate, toAttendanceRules } from "../../scm/shared/hr-attendance";
+import { hr_attendance, hr_employees, hr_hour_deductions, hr_ot_claims, hr_public_holidays, hr_working_hours } from "../../db/schema";
+import { minutesFromWorkDate } from "../../scm/shared/hr-attendance";
 import { MIN_DOCK_HOURS, isWorkingDay, punchDayHours, punchShortfallHours, rulesForEmployeeHours } from "../../scm/shared/hr-labor";
+import { planAutoOtClaim, punchOtMinutes } from "./hr-ot";
 import { asDate } from "./hr-attendance-view";
-import { closeForgottenPunches, payRulesResolver, rulesResolver } from "./hr-attendance-store";
+import type { AttendanceRules } from "../../scm/shared/hr-attendance";
+import { closeForgottenPunches, payRulesResolver } from "./hr-attendance-store";
+import { shiftRulesResolver } from "./hr-shift-store";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -57,6 +60,52 @@ export async function applyDayDock(db: Db, companyId: number, employeeId: number
   return "applied";
 }
 
+/* HC-0125 hybrid overtime (owner 2026-11-20): a closed punch on a working day
+ * earns overtime automatically — the span present over the standard day and the
+ * break — kept as ONE pending AUTO claim a supervisor still confirms before it
+ * pays. Suppressed when a human reported overtime for the day (their precise
+ * windows own it), and never over a supervisor's own confirm/reject, so payroll
+ * (which pays every confirmed claim) sees at most one live figure a day and
+ * never double-pays. Company-scoped on the write as well as the read. */
+async function syncAutoOtClaim(
+  db: Db,
+  companyId: number,
+  employeeId: number,
+  workDate: string,
+  rules: AttendanceRules,
+  otMin: number,
+): Promise<void> {
+  const claims = await db
+    .select({ id: hr_ot_claims.id, status: hr_ot_claims.status, source: hr_ot_claims.source })
+    .from(hr_ot_claims)
+    .where(and(eq(hr_ot_claims.company_id, companyId), eq(hr_ot_claims.employee_id, employeeId), eq(hr_ot_claims.work_date, workDate)));
+  const existingAuto = claims.find((r) => r.source === "AUTO") ?? null;
+  const reportedOwnsDay = claims.some((r) => r.source === "REPORTED" && (r.status === "PENDING" || r.status === "CONFIRMED"));
+  const plan = planAutoOtClaim({ existingAuto, reportedOwnsDay, shiftEndMin: rules.endMin, otMin });
+  if (plan.kind === "none") return;
+  if (plan.kind === "delete") {
+    await db.delete(hr_ot_claims).where(and(eq(hr_ot_claims.id, plan.id), eq(hr_ot_claims.company_id, companyId)));
+    return;
+  }
+  const note = `Auto from punch (${round2(otMin / 60)}h past the shift)`;
+  if (plan.kind === "update") {
+    await db
+      .update(hr_ot_claims)
+      .set({ start_min: plan.startMin, end_min: plan.endMin, note, updated_at: new Date().toISOString() })
+      .where(and(eq(hr_ot_claims.id, plan.id), eq(hr_ot_claims.company_id, companyId), eq(hr_ot_claims.status, "PENDING")));
+    return;
+  }
+  try {
+    await db
+      .insert(hr_ot_claims)
+      .values({ company_id: companyId, employee_id: employeeId, work_date: workDate, start_min: plan.startMin, end_min: plan.endMin, note, status: "PENDING", source: "AUTO", created_by: null });
+  } catch (e) {
+    /* The one-AUTO-row-per-day unique index: a concurrent sync already inserted
+       it, which is the row this call would have written. */
+    if ((e as { code?: string } | null)?.code !== "23505" && !String((e as Error | null)?.message ?? "").includes("duplicate key")) throw e;
+  }
+}
+
 /* A closed punch puts its hours on Working Hours and docks its short hours.
  * One AUTO row in the employee's own department (Hookka split by production
  * line scans; Century has none). A forgotten clock-out closed by the system
@@ -74,7 +123,11 @@ export async function syncDayFromPunch(db: Db, companyId: number, attendanceId: 
   ).at(0);
   if (!emp) return;
   const cfg = (await payRulesResolver(db, companyId))(day.work_date);
-  const rules = rulesForEmployeeHours(toAttendanceRules(cfg), Number(emp.hours));
+  const shift = await shiftRulesResolver(db, companyId, day.work_date, day.work_date);
+  const base = shift.rulesFor(day.work_date, day.employee_id);
+  // A grouped employee's shift (and its hours) is authoritative; an ungrouped
+  // one keeps the global shift with their own working_hours_per_day.
+  const rules = shift.hasGroup(day.employee_id) ? base : rulesForEmployeeHours(base, Number(emp.hours));
   const inMin = minutesFromWorkDate(day.work_date, asDate(day.clock_in_at));
   const outMin = minutesFromWorkDate(day.work_date, asDate(day.clock_out_at));
   const forgotten = day.out_source === "AUTO";
@@ -108,6 +161,11 @@ export async function syncDayFromPunch(db: Db, companyId: number, attendanceId: 
   const short = forgotten || broken || !workingDay ? 0 : punchShortfallHours(inMin, outMin, rules);
   const late = Math.max(0, inMin - rules.startMin);
   await applyDayDock(db, companyId, day.employee_id, day.work_date, short, `Auto: short ${short}h${late > rules.lateGraceMin ? `, late ${late} min` : ""} (from punch)`);
+
+  /* Overtime from the same punch (HC-0125 hybrid). A forgotten or broken punch,
+     and Sunday / holiday work (all OT via the hours path), earn no weekday claim. */
+  const otMin = forgotten || broken || !workingDay ? 0 : punchOtMinutes(outMin - inMin, rules.standardWorkMin, rules.lunchMin);
+  await syncAutoOtClaim(db, companyId, day.employee_id, day.work_date, rules, otMin);
 }
 
 /** Close forgotten punches for a company (or one employee) and put each closed day on Working Hours. */
@@ -143,7 +201,7 @@ export async function settlePeriod(db: Db, companyId: number, period: string, to
   const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
   const last = `${period}-${String(lastDay).padStart(2, "0")}`;
   const until = last < today ? last : today;
-  const [employees, holidays, hours, days, rulesFor] = await Promise.all([
+  const [employees, holidays, hours, days, shift] = await Promise.all([
     db
       .select({ id: hr_employees.id, status: hr_employees.status, resigned_on: hr_employees.resigned_on, join_date: hr_employees.join_date, hours: hr_employees.working_hours_per_day })
       .from(hr_employees)
@@ -158,7 +216,7 @@ export async function settlePeriod(db: Db, companyId: number, period: string, to
       .select({ employee_id: hr_attendance.employee_id, work_date: hr_attendance.work_date, clock_in_at: hr_attendance.clock_in_at, clock_out_at: hr_attendance.clock_out_at, out_source: hr_attendance.out_source })
       .from(hr_attendance)
       .where(and(eq(hr_attendance.company_id, companyId), gte(hr_attendance.work_date, first), lte(hr_attendance.work_date, until))),
-    rulesResolver(db, companyId),
+    shiftRulesResolver(db, companyId, first, until),
   ]);
   const holidaySet = new Set(holidays.map((h) => h.d));
   const logged = new Map(hours.map((h) => [`${h.employee_id}|${h.work_date}`, Number(h.hours)]));
@@ -173,7 +231,8 @@ export async function settlePeriod(db: Db, companyId: number, period: string, to
       const loggedHours = logged.get(`${e.id}|${ymd}`) ?? 0;
       if (loggedHours <= 0) continue;
       result.days++;
-      const rules = rulesForEmployeeHours(rulesFor(ymd), Number(e.hours));
+      const base = shift.rulesFor(ymd, e.id);
+      const rules = shift.hasGroup(e.id) ? base : rulesForEmployeeHours(base, Number(e.hours));
       const p = punches.get(`${e.id}|${ymd}`);
       const punchShort =
         p?.clock_in_at && p.clock_out_at && p.out_source !== "AUTO"

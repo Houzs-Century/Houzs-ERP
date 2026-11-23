@@ -233,7 +233,10 @@ export type MailAddress = {
   createdAt?: string;
 };
 
-export type MailScopeLevel = "personal" | "department" | "company";
+/* department = the department mailboxes of every Org Chart department the person
+   is in; department_all adds those departments' colleagues' own mailboxes
+   (a manager, owner 2026-11-21). */
+export type MailScopeLevel = "personal" | "department" | "department_all" | "company";
 
 // No mail_user_scope row = this level (backend DEFAULT_MAIL_SCOPE_LEVEL).
 export const DEFAULT_MAIL_SCOPE_LEVEL: MailScopeLevel = "department";
@@ -388,4 +391,19 @@ export function setScopeLevel(
   level: MailScopeLevel,
 ): Promise<unknown> {
   return api.put("/api/mail-center/scope-level", { userId, level });
+}
+
+// L2 people: the OTHER departments ticked for them (owner 2026-11-21).
+export function fetchScopeDepartments(): Promise<{ userId: number; departmentId: number }[]> {
+  return api.get<{ userId: number; departmentId: number }[]>("/api/mail-center/scope-departments");
+}
+
+export function setScopeDepartments(userId: number, departmentIds: number[]): Promise<unknown> {
+  return api.put("/api/mail-center/scope-departments", { userId, departmentIds });
+}
+
+export type MailboxSync = { address: string; pending: boolean; lastInboundAt: string | null; threads: number };
+
+export function fetchSyncStatus(): Promise<MailboxSync[]> {
+  return api.get<MailboxSync[]>("/api/mail-center/sync-status");
 }

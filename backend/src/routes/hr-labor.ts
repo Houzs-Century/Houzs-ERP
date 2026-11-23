@@ -26,10 +26,11 @@ import { requireActiveCompanyId } from "../scm/lib/companyScope";
 import { todayMyt } from "../scm/lib/my-time";
 import { hasPermission } from "../services/permissions";
 import { audit } from "../services/audit";
-import { minutesFromWorkDate, toAttendanceRules, workClock } from "../scm/shared/hr-attendance";
-import { punchDayHours, rulesForEmployeeHours } from "../scm/shared/hr-labor";
+import { minutesFromWorkDate, workClock } from "../scm/shared/hr-attendance";
+import { punchDayHours, punchLateMinutes, rulesForEmployeeHours } from "../scm/shared/hr-labor";
 import { asDate } from "./lib/hr-attendance-view";
 import { payRulesResolver } from "./lib/hr-attendance-store";
+import { shiftRulesResolver } from "./lib/hr-shift-store";
 import { loadDeductions, redockDay, settlePeriod } from "./lib/hr-labor-store";
 import { laborCost } from "./lib/hr-labor-cost";
 
@@ -88,7 +89,7 @@ hrLabor.get("/working-hours", async (c) => {
   const r = range(c);
   if (typeof r === "string") return c.json({ error: "bad_range", message: r }, 400);
   const db = getDb(c.env);
-  const [employees, depts, days, entries, cfgFor] = await Promise.all([
+  const [employees, depts, days, entries, cfgFor, shift] = await Promise.all([
     db
       .select({
         id: hr_employees.id,
@@ -109,6 +110,7 @@ hrLabor.get("/working-hours", async (c) => {
       .where(and(eq(hr_working_hours.company_id, co.companyId), gte(hr_working_hours.work_date, r.from), lte(hr_working_hours.work_date, r.to)))
       .orderBy(asc(hr_working_hours.id)),
     payRulesResolver(db, co.companyId),
+    shiftRulesResolver(db, co.companyId, r.from, r.to),
   ]);
   const hoursPerDay = new Map(employees.map((e) => [e.id, Number(e.hours)]));
   return c.json({
@@ -119,8 +121,11 @@ hrLabor.get("/working-hours", async (c) => {
       const inMin = d.clock_in_at ? minutesFromWorkDate(d.work_date, asDate(d.clock_in_at)) : null;
       const outMin = d.clock_out_at ? minutesFromWorkDate(d.work_date, asDate(d.clock_out_at)) : null;
       const cfg = cfgFor(d.work_date);
-      const punchHours =
-        inMin != null && outMin != null ? punchDayHours(inMin, outMin, rulesForEmployeeHours(toAttendanceRules(cfg), hoursPerDay.get(d.employee_id) ?? 9), cfg.brokenPunchCreditsFullDay).hours : null;
+      const sr = shift.rulesFor(d.work_date, d.employee_id);
+      const rules = shift.hasGroup(d.employee_id) ? sr : rulesForEmployeeHours(sr, hoursPerDay.get(d.employee_id) ?? 9);
+      const punchHours = inMin != null && outMin != null ? punchDayHours(inMin, outMin, rules, cfg.brokenPunchCreditsFullDay).hours : null;
+      // Lateness for the month grid; the clock-out does not affect it, so an open day still reads late.
+      const lateMin = inMin != null ? punchLateMinutes(inMin, outMin ?? inMin, rules) : 0;
       return {
         attendanceId: d.id,
         employeeId: d.employee_id,
@@ -130,6 +135,7 @@ hrLabor.get("/working-hours", async (c) => {
         clockOut: outMin != null ? workClock(outMin) : null,
         outSource: d.out_source,
         punchHours,
+        lateMin,
       };
     }),
     entries: entries.map((e) => ({

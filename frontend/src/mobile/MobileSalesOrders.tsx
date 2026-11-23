@@ -66,7 +66,7 @@ type SoRow = {
 const dm = (d: string | null | undefined) => formatDate(d);
 const total = (r: SoRow) => r.local_total_sen ?? r.total_revenue_sen ?? 0;
 const paid = (r: SoRow) => r.paid_total_sen ?? 0;
-const balance = (r: SoRow) => r.balance_sen_live ?? r.balance_sen ?? (total(r) - paid(r));
+const balance = (r: SoRow) => r.balance_sen_live ?? (total(r) - paid(r)); // never the stored balance_sen: so-list-balance.ts
 const isCancelled = (r: SoRow) => (r.status ?? "").toLowerCase() === "cancelled";
 const isDraft = (r: SoRow) => (r.status ?? "").toLowerCase() === "draft";
 const soDate = (r: SoRow) => r.so_date ?? r.created_at ?? null;

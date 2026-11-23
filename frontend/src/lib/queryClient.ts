@@ -28,6 +28,7 @@
 import { QueryClient, MutationCache } from "@tanstack/react-query";
 import { installCrossTabSync, mutationSucceeded, mutationSettled } from "./cross-tab-sync";
 import { installQueryPersist } from "./query-persist";
+import { invalidate as invalidateReadCache, onApiWrite } from "../api/cache";
 
 /* Retry policy — one retry, EXCEPT for a 4xx (2026-07-19, fix/so-maintenance-403).
    The bare `retry: 1` re-sent every failure once, including authorization
@@ -53,6 +54,13 @@ export function retryUnlessClientError(failureCount: number, error: unknown): bo
   return true;
 }
 
+/* The paged document lists ('grns-paged', 'purchase-invoices-paged', ...) are siblings of their root key, not under
+   it, so a row action that refreshed only ['grns'] left the list row showing its old status until the page was
+   reopened. Any successful write marks every paged list stale; only the one on screen refetches. */
+export function isPagedListKey(key: readonly unknown[]): boolean {
+  return typeof key[0] === "string" && key[0].endsWith("-paged");
+}
+
 export const queryClient = new QueryClient({
   // Cross-tab sync: every successful write tells other open tabs which query
   // keys it invalidated. One central hook in the MutationCache, so no
@@ -60,6 +68,7 @@ export const queryClient = new QueryClient({
   mutationCache: new MutationCache({
     onSuccess: (_data, _vars, _ctx, mutation) => {
       mutationSucceeded(mutation);
+      void queryClient.invalidateQueries({ predicate: (q) => isPagedListKey(q.queryKey) });
     },
     onSettled: (_data, _error, _vars, _ctx, mutation) => {
       mutationSettled(mutation);
@@ -77,6 +86,25 @@ export const queryClient = new QueryClient({
 
 // Listen for other tabs' writes and invalidate our active queries.
 installCrossTabSync(queryClient);
+
+/* A write through api.post/patch/put/del (not a useMutation) cleared only the 15 s read cache of its own resource:
+   a list read through hooks/useQuery kept its old rows until it went stale (30 s), and a read of another resource
+   (a project archived through /api/projects, read back elsewhere) kept its read cache too. Any such write now drops
+   the read cache and marks every hooks/useQuery read stale; only what is on screen refetches. Writes on a timer or
+   on mount that change nothing anyone is reading are left out, or every screen would refetch on each one. */
+const QUIET_WRITES = [
+  /^\/api\/presence/,
+  /^\/api\/projects\/[^/]+\/read(\?|$)/,
+  /^\/api\/mail-center\/threads\/[^/]+\/replying(\?|$)/,
+];
+export function isQuietWrite(path: string): boolean {
+  return QUIET_WRITES.some((r) => r.test(path));
+}
+onApiWrite((path) => {
+  if (isQuietWrite(path)) return;
+  invalidateReadCache("/api");
+  void queryClient.invalidateQueries({ predicate: (q) => q.queryKey[0] === "uq" });
+});
 
 // Persist the SCM document-list queries to localStorage so a COLD open (fresh
 // session / full reload / PWA reopen) renders the last-known list instantly and

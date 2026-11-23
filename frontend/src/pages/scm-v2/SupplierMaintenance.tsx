@@ -19,7 +19,7 @@
 // pop-out opening that document in its own tab.
 // ----------------------------------------------------------------------------
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Plus } from 'lucide-react';
 import { Button } from '@2990s/design-system';
@@ -27,7 +27,10 @@ import {
   useSupplierMaintenance, useSupplierMaintenanceDetail, useCreateMaintainedSupplier, useUpdateMaintainedSupplier,
   supplierBankLine, type SupplierMaintenanceBody, type SupplierMaintenanceDetail, type SupplierMaintenanceRow,
 } from '../../vendor/scm/lib/supplier-maintenance-queries';
-import type { SupplierRow } from '../../vendor/scm/lib/suppliers-queries';
+import { useNextSupplierCode, type SupplierRow } from '../../vendor/scm/lib/suppliers-queries';
+import { AddressTripleFields } from '../../vendor/scm/components/AddressTripleFields';
+import { masterNeedsPostcode, masterPostcodeError } from '../../vendor/shared/master-postcode-rule';
+import type { SupplierCodeKind } from '../../vendor/shared/supplier-code';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { Modal } from '../../vendor/scm/components/Modal';
 import { DataTable, type Column } from '../../components/DataTable';
@@ -348,6 +351,9 @@ const SupplierDetailBody = ({ d, s, finance }: { d: SupplierMaintenanceDetail; s
    MYR, which is all an AP invoice takes. ──────────────────────────────────── */
 type FormState = {
   code: string; name: string; status: string; forPurchasing: boolean;
+  /** 400 = trade supplier (goods), 405 = other creditor — what a new code is numbered under. */
+  kind: SupplierCodeKind;
+  state: string; city: string; postcode: string; country: string;
   tinNumber: string; businessRegNo: string; registrationNo: string; exemptionNo: string;
   creditLimitSen: number | null; statementType: string; agingBasis: string;
   bankName: string; bankAccountNo: string; bankAccountName: string;
@@ -362,6 +368,10 @@ const fromSupplier = (s: SupplierRow | null): FormState => ({
   code: s?.code ?? '', name: s?.name ?? '', status: s?.status ?? 'ACTIVE',
   /* A supplier Finance opens here is Finance's alone until ticked (A2a). */
   forPurchasing: s ? s.for_purchasing !== false : false,
+  /* A new one starts as an other creditor (405), the kind Finance opens most;
+     the form follows the choice (owner 2026-11-20). */
+  kind: s ? (s.code.startsWith('400-') ? '400' : '405') : '405',
+  state: s?.state ?? '', city: s?.city ?? '', postcode: s?.postcode ?? '', country: s?.country ?? '',
   tinNumber: s?.tin_number ?? '', businessRegNo: s?.business_reg_no ?? '', registrationNo: s?.registration_no ?? '', exemptionNo: s?.exemption_no ?? '',
   creditLimitSen: s?.credit_limit_sen ?? null, statementType: s?.statement_type ?? 'OPEN_ITEM', agingBasis: s?.aging_basis ?? 'INVOICE_DATE',
   bankName: s?.bank_name ?? '', bankAccountNo: s?.bank_account_no ?? '', bankAccountName: s?.bank_account_name ?? '',
@@ -389,6 +399,22 @@ const SupplierForm = ({ supplier, onDone, onCancel }: {
   const saving = create.isPending || update.isPending;
   const note = codeNote(f.code);
 
+  /* A new supplier's code is numbered from its name until Finance types one
+     (owner 2026-11-20: 默认是公司名的字母), and who sees it follows the kind
+     until the box is ticked by hand: purchasing sees trade suppliers only. */
+  const [codeTyped, setCodeTyped] = useState(Boolean(supplier));
+  const [purchasingTicked, setPurchasingTicked] = useState(Boolean(supplier));
+  const nextCode = useNextSupplierCode(f.kind, f.name, !supplier && !codeTyped);
+  const suggested = f.name.trim() ? (nextCode.data?.code ?? null) : null;
+  useEffect(() => {
+    if (supplier || codeTyped) return;
+    setF((p) => (p.code === (suggested ?? '') ? p : { ...p, code: suggested ?? '' }));
+  }, [supplier, codeTyped, suggested]);
+  useEffect(() => {
+    if (supplier || purchasingTicked) return;
+    setF((p) => ({ ...p, forPurchasing: p.kind === '400' }));
+  }, [supplier, purchasingTicked, f.kind]);
+
   const field = (label: string, k: TextKey, opts: { placeholder?: string; full?: boolean } = {}) => (
     <label className={styles.field} style={opts.full ? { gridColumn: '1 / -1' } : undefined}>
       <span className={styles.fieldLabel}>{label}</span>
@@ -401,9 +427,18 @@ const SupplierForm = ({ supplier, onDone, onCancel }: {
   const h3: React.CSSProperties = { margin: 'var(--space-3) 0 var(--space-2)', fontSize: 'var(--fs-13)', fontWeight: 600 };
 
   const submit = async () => {
-    if (!f.code.trim() || !f.name.trim()) { setProblem('A supplier needs its code (the AutoCount creditor no.) and its name.'); return; }
+    if (!f.name.trim()) { setProblem('A supplier needs its company name.'); return; }
+    if (supplier && !f.code.trim()) { setProblem('A supplier needs its code (the creditor no.).'); return; }
+    /* A Malaysian or Singapore address carries a postcode (owner 2026-11-19);
+       a new supplier has no address on file yet, so it is asked for here. */
+    const pcErr = supplier ? null : masterPostcodeError(f.country, f.postcode);
+    if (pcErr) { setProblem(pcErr); return; }
     setProblem(null);
+    /* The address goes on create, and on edit only when it changed: sending an
+       untouched blank postcode back would be refused as clearing it. */
+    const addressChanged = !supplier || f.postcode !== (supplier.postcode ?? '') || f.state !== (supplier.state ?? '') || f.city !== (supplier.city ?? '');
     const body: SupplierMaintenanceBody = {
+      ...(addressChanged ? { postcode: f.postcode.trim() || null, state: f.state.trim() || null, city: f.city.trim() || null, ...(f.country ? { country: f.country } : {}) } : {}),
       name: f.name.trim(), status: f.status, forPurchasing: f.forPurchasing,
       tinNumber: f.tinNumber.trim() || null, businessRegNo: f.businessRegNo.trim() || null,
       registrationNo: f.registrationNo.trim() || null, exemptionNo: f.exemptionNo.trim() || null,
@@ -420,7 +455,9 @@ const SupplierForm = ({ supplier, onDone, onCancel }: {
         const res = await update.mutateAsync({ id: supplier.id, ...body, ...(code !== supplier.code ? { code } : {}) });
         onDone(res.supplier.id);
       } else {
-        const res = await create.mutateAsync({ ...body, code: f.code.trim() });
+        /* A blank code is numbered by the server under the chosen kind. */
+        const code = f.code.trim();
+        const res = await create.mutateAsync({ ...body, codeKind: f.kind, ...(code ? { code } : {}) });
         onDone(res.supplier.id);
       }
     } catch {
@@ -432,10 +469,21 @@ const SupplierForm = ({ supplier, onDone, onCancel }: {
     <div>
       <h3 style={h3}>Identity</h3>
       <div style={grid}>
+        {!supplier && (
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Type *</span>
+            <select className={styles.fieldInput} value={f.kind} aria-label="Type"
+              onChange={(e) => set('kind', e.target.value === '400' ? '400' : '405')}>
+              <option value="405">Other creditor (405)</option>
+              <option value="400">Supplier of goods (400)</option>
+            </select>
+          </label>
+        )}
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Credit Account (code) *</span>
-          <input className={styles.fieldInput} value={f.code} placeholder="405-T001" aria-label="Credit Account (code)"
-            onChange={(e) => set('code', e.target.value)} />
+          <input className={styles.fieldInput} value={f.code} placeholder={supplier ? '405-T001' : 'Filled from the name'} aria-label="Credit Account (code)"
+            onChange={(e) => { setCodeTyped(true); set('code', e.target.value); }} />
+          {!supplier && !codeTyped && f.code && <span style={soft}>Numbered from the name. Type over it to use another code.</span>}
           {note && <span style={{ ...soft, color: note.startsWith('This code') ? '#8a5a12' : undefined }}>{note}</span>}
         </label>
         {field('Company name *', 'name')}
@@ -449,7 +497,7 @@ const SupplierForm = ({ supplier, onDone, onCancel }: {
         )}
         <label className={styles.field} style={{ alignSelf: 'end' }}>
           <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center', fontSize: 'var(--fs-13)' }}>
-            <input type="checkbox" checked={f.forPurchasing} aria-label="Purchasing uses it too" onChange={(e) => set('forPurchasing', e.target.checked)} />
+            <input type="checkbox" checked={f.forPurchasing} aria-label="Purchasing uses it too" onChange={(e) => { setPurchasingTicked(true); set('forPurchasing', e.target.checked); }} />
             Purchasing uses it too
           </span>
           <span style={soft}>{f.forPurchasing ? 'Purchasing sees this supplier.' : 'Finance only — purchasing does not see it.'}</span>
@@ -496,6 +544,13 @@ const SupplierForm = ({ supplier, onDone, onCancel }: {
         {field('Email', 'email')}
         {field('Email 2', 'email2')}
         {field('Email 3', 'email3')}
+        <AddressTripleFields
+          postcodeRequired={masterNeedsPostcode(f.country)}
+          country=""
+          value={{ state: f.state, city: f.city, postcode: f.postcode }}
+          onChange={(t, derived) => setF((p) => ({ ...p, state: t.state, city: t.city, postcode: t.postcode, ...(derived ? { country: derived } : {}) }))}
+          classes={{ field: styles.field, label: styles.fieldLabel, select: styles.fieldSelect, selectWrap: styles.selectWrap, chevron: styles.selectChevron, input: styles.fieldInput }}
+        />
         {field('Billing address', 'address', { full: true })}
         {field('Notes', 'notes', { full: true })}
       </div>

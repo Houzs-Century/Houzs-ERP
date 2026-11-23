@@ -6,8 +6,8 @@
 // the period, view, brand and who; the header bold over a rule, frozen with
 // those two lines; money a number in Finance's bracketed format, a day a real
 // date, a count a number; a salesperson's name bold over their lines, their
-// subtotal shaded, the total shaded darker over a rule. write-excel-file loads
-// on the press.
+// subtotal shaded, the total shaded darker over a rule; a brand under its tab's
+// total set in. write-excel-file loads on the press.
 // ----------------------------------------------------------------------------
 
 import type { Cell, Columns, SheetData } from 'write-excel-file';
@@ -64,7 +64,7 @@ export function ecColumnWidths(sheet: EcSheet): Columns {
       const c = b.columns.at(i);
       if (!c) continue;
       w = Math.max(w, Math.min(c.label.length, 14));
-      for (const row of b.rows) if (row.kind === 'row' || row.kind === 'memo') w = Math.max(w, shownText(c, row.cells[i] ?? null).length + (row.kind === 'memo' ? 2 : 0));
+      for (const row of b.rows) if (row.kind === 'row' || row.kind === 'memo' || row.kind === 'inner') w = Math.max(w, shownText(c, row.cells[i] ?? null).length + (row.kind === 'row' ? 0 : 2));
     }
     return { width: Math.min(48, w + 2) };
   });
@@ -85,7 +85,7 @@ export function ecSheetData(sheet: EcSheet): SheetData {
     })));
     for (const row of b.rows) {
       const style = styleOf(row.kind);
-      data.push(b.columns.map((c, ci) => ecCell(c, row.cells[ci] ?? null, style, row.kind === 'memo' && ci === 0 ? 1 : 0)));
+      data.push(b.columns.map((c, ci) => ecCell(c, row.cells[ci] ?? null, style, (row.kind === 'memo' || row.kind === 'inner') && ci === 0 ? 1 : 0)));
     }
   });
   for (const note of sheet.notes) {

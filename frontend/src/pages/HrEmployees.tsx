@@ -1,93 +1,73 @@
-/* HR > Employees & Attendance (HC-0125), ported from Hookka's /employees.
- * Phase 1 carries the master data (Employee Master, Public Holidays, Pay
- * Rules), phase 2 the punch clock (Attendance, Punch Sites; the phone half is
- * mobile/MobilePunch.tsx), phase 3 the hours pay reads (Working Hours, Labor
- * Cost with the short-hour docks), phase 4 the pay (Payroll, Advances,
- * Penalty; the phone half is My pay in mobile/MobilePunch.tsx), phase 5 the
- * driver commission and trip allowances (Trip Pay) and the monthly
- * Allowances. The URL carries the tab. */
+/* HR > Employees & Attendance (HC-0125) — the redesign, wired to the real API.
+ * A resizable grouped sidebar (HrSubnav) and a full-bleed layout; every page is
+ * the new design on real data. The URL carries the page in ?tab.
+ *
+ * OT Requests is gated on hr.ot.confirm: the nav item is hidden and the page is
+ * not mounted without it (the server re-checks every review). Employee add/edit
+ * reuses the working EmployeeDrawer and the two bulk modals; a save invalidates
+ * the shared /api/hr/employees cache so every page refreshes. */
+import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { PageHeader } from "../components/Layout";
-import { TabStrip, type TabOption } from "../components/TabStrip";
-import { EmployeeMasterTab } from "./hr/EmployeeMasterTab";
-import { PublicHolidaysTab } from "./hr/PublicHolidaysTab";
-import { PayRulesTab } from "./hr/PayRulesTab";
-import { AttendanceTab } from "./hr/AttendanceTab";
+import { useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "../auth/AuthContext";
+import { buildQueryKey } from "../hooks/useQuery";
+import { HrSubnav, HR_NAV } from "./hr/HrSubnav";
+import { HrPageHeader } from "./hr/HrPageHeader";
+import { OverviewPage } from "./hr/OverviewPage";
+import { EmployeeMasterPage } from "./hr/EmployeeMasterPage";
+import { OtRequestsPage } from "./hr/OtRequestsPage";
+import { PublicHolidaysPage } from "./hr/PublicHolidaysPage";
+import { AdvancesPage } from "./hr/AdvancesPage";
+import { AllowancesPage } from "./hr/AllowancesPage";
+import { AttendancePage } from "./hr/AttendancePage";
+import { EmployeeDrawer } from "./hr/EmployeeDrawer";
+import { AddFromAccountsModal } from "./hr/AddFromAccountsModal";
+import { ImportEmployeesModal } from "./hr/ImportEmployeesModal";
+import type { Employee } from "./hr/hrApi";
+// The calc/settings screens, now re-skinned to the new design, rendered directly.
+import { ShiftsTab } from "./hr/ShiftsTab";
 import { PunchSitesTab } from "./hr/PunchSitesTab";
 import { WorkingHoursTab } from "./hr/WorkingHoursTab";
-import { LaborCostTab } from "./hr/LaborCostTab";
 import { PayrollTab } from "./hr/PayrollTab";
-import { AdvancesTab } from "./hr/AdvancesTab";
-import { PenaltiesTab } from "./hr/PenaltiesTab";
+import { PayRulesTab } from "./hr/PayRulesTab";
 import { TripPayTab } from "./hr/TripPayTab";
-import { AllowancesTab } from "./hr/AllowancesTab";
+import { PenaltiesTab } from "./hr/PenaltiesTab";
+import { LaborCostTab } from "./hr/LaborCostTab";
 import { KpiTab } from "./hr/KpiTab";
 
-type Tab = "employees" | "attendance" | "hours" | "labor" | "payroll" | "trip-pay" | "allowances" | "kpi" | "advances" | "penalties" | "sites" | "holidays" | "pay-rules";
-const TABS: TabOption<Tab>[] = [
-  { value: "employees", label: "Employee Master" },
-  { value: "attendance", label: "Attendance" },
-  { value: "hours", label: "Working Hours" },
-  { value: "labor", label: "Labor Cost" },
-  { value: "payroll", label: "Payroll" },
-  { value: "trip-pay", label: "Trip Pay" },
-  { value: "allowances", label: "Allowances" },
-  { value: "kpi", label: "KPI" },
-  { value: "advances", label: "Advances" },
-  { value: "penalties", label: "Penalty" },
-  { value: "sites", label: "Punch Sites" },
-  { value: "holidays", label: "Public Holidays" },
-  { value: "pay-rules", label: "Pay Rules" },
-];
-
-const HEADER: Record<Tab, { title: string; description: string }> = {
-  employees: {
-    title: "Employee Master",
-    description: "Drivers, helpers and warehouse crew: the ERP account they punch in with, pay basis, how they are paid, statutory. Click a row to edit.",
-  },
-  attendance: {
-    title: "Attendance",
-    description: "Phone punches for one day: when, where (site and distance), the selfie. Everyone active is listed, so a missing punch shows. Click a row to key or correct the day.",
-  },
-  hours: {
-    title: "Working Hours",
-    description: "The hours pay reads, one line per person per day. A clock-out logs them in the person's department; HR edits, splits or adds hours, and a punch never writes over HR's.",
-  },
-  labor: {
-    title: "Labor Cost",
-    description: "A month's logged hours priced the way payroll prices them, by department and by person, and the short-hour docks with Settle month.",
-  },
-  payroll: {
-    title: "Payroll",
-    description: "The month's payslips from the logged hours and docks: absences, late and short hours, OT by day type, EPF / SOCSO / EIS / PCB, advances and penalties. Generate, approve (locks the month), mark paid.",
-  },
-  "trip-pay": {
-    title: "Trip Pay",
-    description: "Driver commission and trip allowances for a trip month (23rd to 22nd): paste the Trip Report or read Delivery Planning, fix a job type or a name, and each person's pay lands on that month's payslip.",
-  },
-  allowances: {
-    title: "Allowances",
-    description: "Leadership, transport and KPI allowances for one month or every month, and Backpay (company advance), which is deducted. Overnight is paid on Trip Pay from the punches; add one here only for a night the punches missed.",
-  },
-  kpi: {
-    title: "KPI",
-    description: "The monthly KPI appraisal: rate each weighted KPI 1-5 per week; the final score lands in a payout tier and that RM (by role) is booked as the month's KPI allowance when you confirm. Edit the KPIs and amounts under Settings.",
-  },
-  advances: { title: "Advances", description: "Cash given ahead of payday, taken back in full from the payslip of the month it was given." },
-  penalties: { title: "Penalty", description: "A penalty for an incident, approved by someone other than who raised it, then deducted in the payroll month it lands in." },
-  sites: {
-    title: "Punch Sites",
-    description: "Where a phone punch counts as on site: each warehouse or showroom as a point and a radius. An off-site punch still records; HR sees how far away it was.",
-  },
-  holidays: { title: "Public Holidays", description: "Dates nobody is docked for not working. Hours worked on them count as public-holiday overtime." },
-  "pay-rules": { title: "Pay Rules", description: "Shift, lateness, overtime and statutory rates. A change is scheduled from a date, so earlier months keep the rules they were paid under." },
-};
+const NAV_KEYS = new Set(HR_NAV.map((n) => n.key));
 
 export function HrEmployees() {
+  const { can } = useAuth();
+  const qc = useQueryClient();
   const [params, setParams] = useSearchParams();
-  const raw = params.get("tab") as Tab | null;
-  const active: Tab = raw && TABS.some((t) => t.value === raw) ? raw : "employees";
-  const setTab = (next: Tab) =>
+  const canOt = can("hr.ot.confirm");
+  const canManage = can("hr.employees.manage");
+  // A narrow attendance / OT supervisor (hr.attendance.read or hr.ot.confirm,
+  // without the full employees read) sees ONLY the Attendance and OT tabs — not
+  // the employee master, payroll, allowances or anything with pay on it.
+  const canFull = can("hr.employees.read") || can("hr.employees.manage");
+  const canAttendance = canFull || can("hr.attendance.read");
+
+  const [editEmp, setEditEmp] = useState<Employee | "new" | null>(null);
+  const [bulk, setBulk] = useState<"accounts" | "import" | null>(null);
+
+  const hiddenKeys = (() => {
+    if (canFull) return canOt ? undefined : OT_HIDDEN;
+    const visible = new Set<string>();
+    if (canAttendance) visible.add("attendance");
+    if (canOt) visible.add("ot-requests");
+    return new Set(HR_NAV.filter((n) => !visible.has(n.key)).map((n) => n.key));
+  })();
+
+  const fallback = canFull ? "overview" : canAttendance ? "attendance" : "ot-requests";
+  const raw = params.get("tab");
+  let active = raw && NAV_KEYS.has(raw) ? raw : fallback;
+  if (active === "ot-requests" && !canOt) active = fallback;
+  // A narrow user cannot land on a hidden tab (e.g. a stale ?tab=payroll link).
+  if (hiddenKeys?.has(active)) active = fallback;
+
+  const setTab = (next: string) =>
     setParams(
       (p) => {
         const n = new URLSearchParams(p);
@@ -96,23 +76,80 @@ export function HrEmployees() {
       },
       { replace: true },
     );
+
+  const reloadEmployees = () => void qc.invalidateQueries({ queryKey: buildQueryKey("/api/hr/employees") });
+  const openEmployee = (e: Employee) => setEditEmp(e);
+
+  const page = (() => {
+    switch (active) {
+      case "overview":
+        return (
+          <>
+            <HrPageHeader title="Overview" subtitle="Today at a glance" />
+            <OverviewPage onNavigate={setTab} onPickEmployee={openEmployee} />
+          </>
+        );
+      case "employees":
+        return <EmployeeMasterPage onPickEmployee={openEmployee} onNew={() => setEditEmp("new")} onBulk={setBulk} canManage={canManage} />;
+      case "ot-requests":
+        return (
+          <>
+            <HrPageHeader title="OT Requests" subtitle="Overtime reported by employees, confirmed before it reaches payroll" />
+            <OtRequestsPage />
+          </>
+        );
+      case "holidays":
+        return <PublicHolidaysPage />;
+      case "advances":
+        return <AdvancesPage />;
+      case "allowances":
+        return <AllowancesPage />;
+      case "penalties":
+        return <PenaltiesTab />;
+      case "sites":
+        return <PunchSitesTab />;
+      case "hours":
+        return <WorkingHoursTab />;
+      case "labor":
+        return <LaborCostTab />;
+      case "shifts":
+        return <ShiftsTab />;
+      case "kpi":
+        return <KpiTab />;
+      case "pay-rules":
+        return <PayRulesTab />;
+      case "payroll":
+        return <PayrollTab />;
+      case "trip-pay":
+        return <TripPayTab />;
+      case "attendance":
+        return <AttendancePage />;
+      default:
+        return null;
+    }
+  })();
+
   return (
-    <div className="max-w-7xl">
-      <TabStrip<Tab> value={active} onChange={setTab} options={TABS} />
-      <PageHeader eyebrow="HR · Employees & Attendance" title={HEADER[active].title} description={HEADER[active].description} />
-      {active === "employees" && <EmployeeMasterTab />}
-      {active === "attendance" && <AttendanceTab />}
-      {active === "hours" && <WorkingHoursTab />}
-      {active === "labor" && <LaborCostTab />}
-      {active === "payroll" && <PayrollTab />}
-      {active === "trip-pay" && <TripPayTab />}
-      {active === "allowances" && <AllowancesTab />}
-      {active === "kpi" && <KpiTab />}
-      {active === "advances" && <AdvancesTab />}
-      {active === "penalties" && <PenaltiesTab />}
-      {active === "sites" && <PunchSitesTab />}
-      {active === "holidays" && <PublicHolidaysTab />}
-      {active === "pay-rules" && <PayRulesTab />}
+    // Full-bleed: break out of Layout's content padding so the sidebar sits
+    // flush against the app sidebar and the area fills the viewport height.
+    <div className="-mx-3 -mt-6 -mb-[calc(10rem+env(safe-area-inset-bottom))] flex h-[calc(100dvh-52px)] overflow-hidden bg-bg sm:-mx-4 lg:-mx-4 lg:-mt-2 lg:-mb-10 lg:h-[calc(100dvh-52px)]">
+      <HrSubnav active={active} onSelect={setTab} hiddenKeys={hiddenKeys} />
+      <div className="flex min-w-0 flex-1 flex-col overflow-y-auto thin-scroll">{page}</div>
+      {editEmp && (
+        <EmployeeDrawer
+          employee={editEmp === "new" ? null : editEmp}
+          canManage={canManage}
+          onClose={() => setEditEmp(null)}
+          onSaved={() => {
+            setEditEmp(null);
+            reloadEmployees();
+          }}
+        />
+      )}
+      <AddFromAccountsModal open={bulk === "accounts"} onClose={() => setBulk(null)} onDone={reloadEmployees} />
+      <ImportEmployeesModal open={bulk === "import"} onClose={() => setBulk(null)} onDone={reloadEmployees} />
     </div>
   );
 }
+
+const OT_HIDDEN = new Set(["ot-requests"]);

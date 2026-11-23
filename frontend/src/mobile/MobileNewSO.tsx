@@ -10,6 +10,7 @@ import {
 } from "../vendor/scm/lib/so-variant-cascade";
 import { useQueryClient } from "@tanstack/react-query";
 import { authedFetch, type SaveProblem } from "../vendor/scm/lib/authed-fetch";
+import { reportInBandFailure, type InBandFailure } from "../vendor/scm/lib/mutation-error";
 import { lineWriteFailure, lineWriteSaveMessage, type LineWriteFailure } from "../vendor/scm/lib/line-write-failures";
 import { amendmentVariants, amendmentVariantsKey, amendmentRequestedUnitPriceSen, amendmentPriceFields, storedLineRemark } from "../vendor/scm/lib/so-amendment-line-diff";
 import { photoLabel, photoUploadFailure, photoUploadFailureMessage, unmatchedLinePhotos, type PhotoUploadFailure } from "../vendor/scm/lib/photo-upload-failures";
@@ -45,7 +46,7 @@ import { soSaveEndFields, soVersionAfter } from "../vendor/scm/lib/so-save-lease
 import { planAmendmentSubmit, amendmentSubmittedNotice, AMENDMENT_MODE_BANNER, AMENDMENT_NOTHING_TO_SUBMIT, AMENDMENT_REASON_REQUIRED } from "../vendor/scm/lib/so-amendment-submit";
 import { useAmendmentSubmitDialog, RequestProcessingDateRemoval } from "../vendor/scm/components/AmendmentSubmitDialog";
 import { isLocked as isSoLocked, procLockActive, migratedReadonly as soMigratedReadonly, soDownstreamHardLocked, soItemFrozen, type SoDetailGateHeader } from "../vendor/scm/lib/so-detail-gates";
-import { soAfterDoMode, afterDoEditableLine, afterDoHeaderFields, afterDoEditFields, afterDoAddFields, afterDoCopyProblem, type AfterDoHeader, type AfterDoSave } from "../vendor/scm/lib/so-after-do-client"; import { MobileSoLockBanner } from "./MobileSoLockBanner";
+import { soAfterDoMode, soLinesAfterDoOn, afterDoEditableLine, afterDoProductLineEditable, afterDoFeeLineEditable, afterDoHeaderFields, afterDoEditFields, afterDoAddFields, afterDoCopyProblem, type AfterDoHeader, type AfterDoSave } from "../vendor/scm/lib/so-after-do-client"; import { MobileSoLockBanner } from "./MobileSoLockBanner";
 import { FROZEN_LINE_LABEL, FROZEN_LINE_LABEL_STYLE, FROZEN_LINE_STYLE } from "../vendor/scm/lib/so-frozen-line-style";
 import { MigratedReadonlyBanner } from "../vendor/scm/components/MigratedReadonlyBanner";
 import {
@@ -494,7 +495,7 @@ export async function createDraftFromPrefill(prefill: MobileScanPrefill, idempot
     items,
   };
 
-  const res = await authedFetch<{ docNo: string }>(`/mfg-sales-orders`,
+  const res = await authedFetch<{ docNo: string } & InBandFailure>(`/mfg-sales-orders`,
     idempotentInit(idempotencyKey, { method: "POST", body: JSON.stringify(body) }));
   /* Was `return res?.docNo ?? ""` — flagged by fix/so-idempotency and taken here
      (reference_houzs_nullish_hides_ignorance). The `?? ""` turned "the server
@@ -506,6 +507,7 @@ export async function createDraftFromPrefill(prefill: MobileScanPrefill, idempot
      one ("Throws on failure so the caller can show a plain-language notify"),
      which the `??` quietly broke. */
   if (!res?.docNo) throw new Error("The order was not saved. Scan it again.");
+  reportInBandFailure("Order saved, but a payment was not recorded", res);
   return res.docNo;
 }
 
@@ -1268,9 +1270,9 @@ export function MobileNewSO({
      read-only — a second amendment can't be raised while one is in flight. */
   const lineEditingBlocked = migratedLocked || lineLocked || (procLocked && !amendmentMode);
   /* DEV-32 — Edit SO after DO, desktop's rule (so-after-do-client): charge lines + the DO-snapshotted customer details reopen; a line shown read-only is never written. */
-  const afterDo = soAfterDoMode(migHeader ?? {}, { can, override: unlockOverride, migrated: migratedLocked }), chargeAdds = lineEditingBlocked && afterDo.on, custLocked = identityLocked && !afterDo.headerOpen;
-  const afterDoLineIds = new Set(origItems.filter((it) => afterDoEditableLine(afterDo, it)).map((it) => it.id)), afterDoSave: AfterDoSave = { mode: afterDo, lineIds: afterDoLineIds, chargeAdds, targetId: afterDoTargetId };
-  const roLine = (id: string) => !afterDoLineIds.has(id) && (lineEditingBlocked || frozenItemIds.has(id)), doCopyNotice = (r: unknown) => { const m = afterDoCopyProblem(r); if (m) void notify({ title: "Delivery Order not updated", body: m, tone: "error" }); };
+  const afterDo = soAfterDoMode(migHeader ?? {}, { can, override: unlockOverride, migrated: migratedLocked }), chargeAdds = lineEditingBlocked && afterDo.on, custLocked = identityLocked && !afterDo.headerOpen, linesAfterDo = soLinesAfterDoOn(migHeader ?? {}, { can, migrated: migratedLocked }); // linesAfterDo: super admin edits a delivered PRODUCT line's qty / spec (owner 2026-11-21)
+  const afterDoLineIds = new Set(origItems.filter((it) => afterDoEditableLine(afterDo, it) || afterDoProductLineEditable(linesAfterDo, it)).map((it) => it.id)), afterDoSave: AfterDoSave = { mode: afterDo, lineIds: afterDoLineIds, chargeAdds, targetId: afterDoTargetId }, feeIds = new Set(origItems.filter((it) => afterDoFeeLineEditable(linesAfterDo, it)).map((it) => it.id)); // feeIds: super-admin non-frozen charge lines, editable/removable as a plain write
+  const roLine = (id: string) => !afterDoLineIds.has(id) && !feeIds.has(id) && (lineEditingBlocked || frozenItemIds.has(id)), doCopyNotice = (r: unknown) => { const m = afterDoCopyProblem(r); if (m) void notify({ title: "Delivery Order not updated", body: m, tone: "error" }); };
   /* Identity address columns (State/City/Postcode) freeze on the processing
      lock (State drives each line's warehouse → the supplier PO) — EXCEPT in
      amendment mode, where changing them is exactly what an amendment is for, so
@@ -2080,7 +2082,7 @@ export function MobileNewSO({
         const liveIds = new Set(lines.map((l) => l.itemId).filter(Boolean));
         const snapById = new Map(origItems.map((s) => [s.id, s]));
         const hasStagedPhotos = lines.some((line) => line.photoFiles.length > 0);
-        const hasDirectLineChanges = (!lineEditingBlocked || chargeAdds) && (
+        const hasDirectLineChanges = (!lineEditingBlocked || chargeAdds || linesAfterDo) && (
           origItems.some((snap) => !liveIds.has(snap.id))
           || lines.some((l) => !l.itemId || (snapById.get(l.itemId) ? lineChanged(l, snapById.get(l.itemId)!) : true))
           || hasStagedPhotos
@@ -2102,7 +2104,7 @@ export function MobileNewSO({
         /* FIX D2/D3 — skip line mutations + photo staging when line editing is
            blocked (shipped/has-children OR processing-date-locked); the backend
            rejects them 409 so_locked_processing anyway. */
-        if (!lineEditingBlocked || chargeAdds) {
+        if (!lineEditingBlocked || chargeAdds || linesAfterDo) {
           if (leaseToken) {
             const failures = await applyLineDiff(docNo, leaseToken);
             if (failures.length > 0) {
@@ -2575,7 +2577,7 @@ export function MobileNewSO({
                     <span>{AMENDMENT_MODE_BANNER}</span>
                   </div>
                 )}
-                {lineEditingBlocked && !chargeAdds ? (
+                {lineEditingBlocked && !chargeAdds && !linesAfterDo ? (
                   <>
                     {lines.length ? lines.map((l) => (
                       <div key={l.key} style={roItemBox}>
@@ -2614,7 +2616,7 @@ export function MobileNewSO({
                           line={l}
                           index={i}
                           pools={pools}
-                          removable={lines.length > 1 && !afterDoLineIds.has(l.itemId)}
+                          removable={lines.length > 1 && (!afterDoLineIds.has(l.itemId) || feeIds.has(l.itemId))}
                           /* Red "missing axis" ring only once a Processing Date
                              is set — matches the backend variants gate + the
                              save block above (owner 2026-07-14). */
@@ -2623,7 +2625,7 @@ export function MobileNewSO({
                           onOpenFabricPicker={() => setFabricPickerFor(l.key)}
                           onOpenSpecialPicker={() => setSpecialPickerFor(l.key)}
                           showPrices={showSpecialPrices}
-                          canEditPrice={canEditPrice || afterDoLineIds.has(l.itemId) || (chargeAdds && !l.itemId)}
+                          canEditPrice={canEditPrice || afterDoLineIds.has(l.itemId) || feeIds.has(l.itemId) || (chargeAdds && !l.itemId)}
                           soDocNo={docNo}
                           onChange={(patch) => patchLine(l.key, patch)}
                           onDdateChange={procDate ? (v) => setLineDdateManual(l.key, v) : null}

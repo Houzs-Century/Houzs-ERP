@@ -41,6 +41,7 @@ import { isSupplierFinanceCaller, supplierCodeChangeRefusal } from '../lib/suppl
 import { withoutSupplierFinance, withoutSupplierFinanceKeys } from '../shared/supplier-finance-fields';
 import { checkSupplierEmail } from '../shared/supplier-emails';
 import { masterPostcodeError } from '../shared/master-postcode-rule';
+import { isSupplierCodeKind, nextSupplierCode, type SupplierCodeKind } from '../shared/supplier-code';
 
 type SupplierCtx = Context<{ Bindings: Env; Variables: Variables }>;
 
@@ -541,6 +542,41 @@ export const getSupplierHandler = async (c: SupplierCtx) => {
   const supplier = finance ? supplierRes.data : withoutSupplierFinance(supplierRes.data);
   return c.json({ supplier, bindings: bindingsRes.data ?? [] });
 };
+// ── The code a new supplier gets ─────────────────────────────────────
+/* Every code this company already uses: its suppliers (Finance-only ones too)
+   and its rows in public.creditors, the AutoCount creditor copy after-sales
+   screens read a supplier's NAME from by code, so a number held there is not
+   free either. */
+async function takenSupplierCodes(c: SupplierCtx): Promise<{ ok: true; codes: string[] } | { ok: false; reason: string }> {
+  const supabase = c.get('supabase');
+  const own = await scopeToCompany(supabase.from('suppliers').select('code'), c);
+  if (own.error) return { ok: false, reason: own.error.message };
+  const copy = await supabase.schema('public').from('creditors').select('creditor_code').eq('company_id', activeCompanyId(c));
+  if (copy.error) return { ok: false, reason: copy.error.message };
+  return {
+    ok: true,
+    codes: [
+      ...(own.data as Array<{ code: string | null }>).map((r) => String(r.code ?? '')),
+      ...(copy.data as Array<{ creditor_code: string | null }>).map((r) => String(r.creditor_code ?? '')),
+    ],
+  };
+}
+
+/** The kind a caller may number under: Finance picks 400 or 405; anyone else
+    opens trade suppliers only (purchasing buys goods). */
+const codeKindFor = (finance: boolean, asked: unknown): SupplierCodeKind => (finance && isSupplierCodeKind(asked) ? asked : '400');
+
+/* GET /next-code?kind=400|405&name=… — what a new supplier's code would be
+   (owner 2026-11-20). Only the code comes back, so a purchaser learns nothing
+   about Finance's creditors. */
+export const nextSupplierCodeHandler = async (c: SupplierCtx) => {
+  const kind = codeKindFor(isSupplierFinanceCaller(c), c.req.query('kind'));
+  const taken = await takenSupplierCodes(c);
+  if (!taken.ok) return c.json({ error: 'load_failed', reason: taken.reason }, 500);
+  return c.json({ kind, code: nextSupplierCode(kind, c.req.query('name') ?? '', taken.codes) });
+};
+suppliers.get('/next-code', nextSupplierCodeHandler);
+
 suppliers.get('/:id', getSupplierHandler);
 
 // ── Create supplier ──────────────────────────────────────────────────
@@ -555,10 +591,25 @@ export const createSupplierHandler = async (c: SupplierCtx) => {
   const finance = isSupplierFinanceCaller(c);
   if (!finance) body = withoutSupplierFinanceKeys(body);
 
-  const code = (body.code as string | undefined)?.trim();
+  const typedCode = (body.code as string | undefined)?.trim();
   const name = (body.name as string | undefined)?.trim();
-  if (!code) return c.json({ error: 'code_required' }, 400);
-  if (!name) return c.json({ error: 'name_required' }, 400);
+  if (!name) return c.json({ error: typedCode ? 'name_required' : 'code_required' }, 400);
+  /* No code typed: the server numbers it from the name (owner 2026-11-20), the
+     same rule the forms preview through GET /next-code. */
+  const kind = codeKindFor(finance, body.codeKind);
+  const mint = async (): Promise<{ ok: true; code: string } | { ok: false; status: 400 | 500; body: Record<string, string> }> => {
+    const taken = await takenSupplierCodes(c);
+    if (!taken.ok) return { ok: false, status: 500, body: { error: 'load_failed', reason: taken.reason } };
+    const next = nextSupplierCode(kind, name, taken.codes);
+    if (!next) return { ok: false, status: 400, body: { error: 'code_required', message: 'The name has no letter to number the code from — type the code.' } };
+    return { ok: true, code: next };
+  };
+  let code = typedCode;
+  if (!code) {
+    const m = await mint();
+    if (!m.ok) return c.json(m.body, m.status);
+    code = m.code;
+  }
   /* Malaysia / Singapore suppliers need a postcode; a foreign one does not (owner 2026-11-19). */
   const pcErr = masterPostcodeError((body.country as string) ?? 'Malaysia', body.postcode as string | null);
   if (pcErr) return c.json({ error: 'postcode_required', message: pcErr }, 400);
@@ -611,7 +662,10 @@ export const createSupplierHandler = async (c: SupplierCtx) => {
     bank_name: textOrNull(body.bankName),
     bank_account_no: textOrNull(body.bankAccountNo),
     bank_account_name: textOrNull(body.bankAccountName),
-    for_purchasing: body.forPurchasing !== false,
+    /* Finance's form says; a Finance save that does not (the phone) shares a
+       trade supplier with purchasing and keeps an other creditor (405-) to
+       Finance — 「采购只看 supplier」 (owner 2026-11-20). */
+    for_purchasing: finance && typeof body.forPurchasing !== 'boolean' ? !code.startsWith('405-') : body.forPurchasing !== false,
     /* Mig 0028 — AutoCount creditor-export parity. phone2 normalizes to E.164
        like the other phone fields. */
     registration_no: (body.registrationNo as string) ?? null,
@@ -621,7 +675,15 @@ export const createSupplierHandler = async (c: SupplierCtx) => {
   };
 
   const supabase = c.get('supabase');
-  const { data, error } = await supabase.from('suppliers').insert({ ...row, company_id: activeCompanyId(c) }).select(SUPPLIER_COLS).single();
+  let inserted = await supabase.from('suppliers').insert({ ...row, company_id: activeCompanyId(c) }).select(SUPPLIER_COLS).single();
+  /* Two suppliers numbered at the same moment can draw the same number; the
+     unique index refuses the second, which is numbered again, once. */
+  if (inserted.error?.code === '23505' && !typedCode) {
+    const again = await mint();
+    if (!again.ok) return c.json(again.body, again.status);
+    inserted = await supabase.from('suppliers').insert({ ...row, code: again.code, company_id: activeCompanyId(c) }).select(SUPPLIER_COLS).single();
+  }
+  const { data, error } = inserted;
   if (error) {
     if (error.code === '23505') return c.json({ error: 'duplicate_code' }, 409);
     /* DEAD BRANCH -- here and at EVERY other 42501 site in this file. 42501 is

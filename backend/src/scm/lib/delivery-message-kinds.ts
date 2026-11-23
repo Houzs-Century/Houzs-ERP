@@ -30,6 +30,13 @@ export const MESSAGE_KINDS = [
   // One-way production-delay heads-up (apology only; no new date, not an opener).
   'overdue_order',
   'postage',
+  // East Malaysia (Sabah / Sarawak) sea-freight touchpoints (owner 2026-11-20):
+  // prep notice (an opener), shipped (reads the consignment no + ETA the staff
+  // entered on the board's EM columns), and arrived at the EM port (gated on the
+  // warehouse-arrival date). None moves a Delivery Message Status.
+  'eastmy_prep',
+  'eastmy_shipped',
+  'eastmy_arrived',
   // Service Case (ASSR) legs only — sent by assr-arrangement-message.ts (HC-0171).
   'assr_arrangement',
 ] as const;
@@ -48,6 +55,9 @@ export const KIND_AUTOMATION: Record<MessageKind, string> = {
   postpone: 'Postpone',
   overdue_order: 'Overdue Order',
   postage: 'Postage Confirm',
+  eastmy_prep: 'East Malaysia Prep Notice',
+  eastmy_shipped: 'East Malaysia Shipped',
+  eastmy_arrived: 'East Malaysia Arrived',
   assr_arrangement: 'Service Arrangement',
 };
 
@@ -56,7 +66,7 @@ export const KIND_AUTOMATION: Record<MessageKind, string> = {
  *  Service Arrangement is not here: an ASSR job has no SO status column, its row
  *  reads its state off the WhatsApp record. Overdue Order is not here either: a
  *  one-way production-delay heads-up moves no status (guarded in /send). */
-export const KIND_AFTER_STATUS: Record<Exclude<MessageKind, 'assr_arrangement' | 'overdue_order'>, string> = {
+export const KIND_AFTER_STATUS: Record<Exclude<MessageKind, 'assr_arrangement' | 'overdue_order' | 'eastmy_prep' | 'eastmy_shipped' | 'eastmy_arrived'>, string> = {
   delivery: 'Done Send',
   amend: 'Done Amend',
   postpone: 'Done Postpone Reason',
@@ -71,8 +81,26 @@ export const KIND_AFTER_STATUS: Record<Exclude<MessageKind, 'assr_arrangement' |
 
 /** Kinds that OPEN a Confirm / Amend conversation. Only these reset the
  *  contact's button_status & co. — a Driver Info or Balance Reminder sent to a
- *  customer who already confirmed must not unlock the Delivery Lock guard. */
-export const OPENER_KINDS: ReadonlySet<MessageKind> = new Set<MessageKind>(['delivery', 'amend', 'postpone', 'assr_arrangement']);
+ *  customer who already confirmed must not unlock the Delivery Lock guard. The
+ *  East Malaysia prep notice opens the details conversation (its callback comes
+ *  back as the eastmy_ack form), so it resets too; Shipped / Arrived are one-way. */
+export const OPENER_KINDS: ReadonlySet<MessageKind> = new Set<MessageKind>(['delivery', 'amend', 'postpone', 'assr_arrangement', 'eastmy_prep']);
+
+/** Kinds that move NO Delivery Message Status after they send: a one-way
+ *  production-delay heads-up (overdue_order) and the three East Malaysia
+ *  touchpoints, which track their own lifecycle on the board's EM columns and
+ *  must not disturb the delivery-date conversation's status. (assr_arrangement
+ *  never reaches the SO status path — it has its own sender.) */
+export const NO_STATUS_MOVE_KINDS: ReadonlySet<MessageKind> =
+  new Set<MessageKind>(['overdue_order', 'eastmy_prep', 'eastmy_shipped', 'eastmy_arrived']);
+
+/** True when this kind lands a "Done X" Delivery Message Status after it sends —
+ *  i.e. it has a KIND_AFTER_STATUS entry. The type predicate lets the caller index
+ *  KIND_AFTER_STATUS without a cast. assr_arrangement is excluded (its own sender,
+ *  no SO status); so is every NO_STATUS_MOVE_KINDS kind. */
+export function movesDeliveryStatus(kind: MessageKind): kind is keyof typeof KIND_AFTER_STATUS {
+  return kind !== 'assr_arrangement' && !NO_STATUS_MOVE_KINDS.has(kind);
+}
 
 /** Kinds a Service Case (ASSR) leg row can be sent — besides assr_arrangement,
  *  which is ASSR-only and handled on its own. A mixed selection's ASSR row keys
@@ -104,6 +132,11 @@ export interface KindSoRow {
   // Postpone reads these straight off the board: the staff-picked Amend Reason
   // and the "Delivery Date" (amended_delivery_date) they set as the new date.
   amend_reason?: unknown; amended_delivery_date?: unknown; customer_delivery_date?: unknown;
+  // East Malaysia shipment facts the board holds on the latest live DO
+  // (delivery-planning-fields.ts), merged onto the row by the sender:
+  // consignment_no + eta_arriving_port drive the Shipped message. (Arrived is
+  // an operator-judgment send and reads nothing off the DO.)
+  consignment_no?: unknown; eta_arriving_port?: unknown;
 }
 
 /** ISO yyyy-mm-dd → the templates' yyyy/mm/dd; '' when blank. */
@@ -151,6 +184,10 @@ export function kindAttributes(
     case 'reminder_2':
     case 'reminder_3':
     case 'delivery_completed':
+    // The East Malaysia prep notice is a plain opener: the shared bundle
+    // (buildDeliveryFollowUp) already carries ref_1 / refs_all / callback_url and,
+    // when something is owed, amount + bank_block — all this template reads.
+    case 'eastmy_prep':
       return { attributes: {} };
 
     case 'balance_reminder':
@@ -221,6 +258,28 @@ export function kindAttributes(
           delivery_address: address,
         },
       };
+    }
+
+    case 'eastmy_shipped': {
+      // The consignment (bill-of-lading) number and the ETA at the EM port are
+      // staff-entered on the board's EM columns — the latest live DO's
+      // consignment_no / eta_arriving_port (delivery-planning-fields.ts), merged
+      // onto `first` by the sender. Skip an order missing either rather than send
+      // a Shipped template with a blank consignment or ETA.
+      const consignment = clean(first.consignment_no);
+      const eta = clean(first.eta_arriving_port).slice(0, 10);
+      if (!consignment || !eta) return { attributes: {}, skip: 'eastmy_shipment_fields_required' };
+      return { attributes: { consignment_no: consignment, eta_em_port: templateDate(eta) } };
+    }
+
+    case 'eastmy_arrived': {
+      // Operator-judgment send (owner 2026-11-20): Sya Sya decides from Delivery
+      // Planning that the goods have arrived and sends this by hand, so there is
+      // NO system date gate. The structured arrival date is never filled in
+      // practice (ops track arrival as free text in em_delivery_status), which
+      // would otherwise block every send. Nothing beyond the shared bundle's
+      // ref_1 is in this template.
+      return { attributes: {} };
     }
   }
 }

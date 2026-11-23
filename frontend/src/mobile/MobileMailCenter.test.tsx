@@ -182,7 +182,7 @@ function threadsPage() {
 }
 
 function fromPicker(): HTMLSelectElement {
-  return screen.getByRole("combobox") as HTMLSelectElement;
+  return screen.getByRole("combobox", { name: "From" }) as HTMLSelectElement;
 }
 
 describe("MobileMailCenter reply-all", () => {
@@ -216,16 +216,20 @@ describe("MobileMailCenter reply-all", () => {
     return call![1] as Record<string, unknown>;
   }
 
-  it("posts replyAll:true when the operator tapped Reply all", async () => {
+  /* Owner 2026-11-21: Cc is now filled on the phone (and editable), so Reply all
+     sends everyone on the last message explicitly instead of a server-side flag. */
+  it("Reply all sends everyone else on the last message as Cc", async () => {
     const body = await openThreadAndReply("Reply all");
     expect(body.text).toBe("Sending our quote now.");
-    expect(body.replyAll).toBe(true);
+    expect(body.to).toEqual(["customer@example.com"]);
+    expect(body.cc).toEqual(["sales@example.com", "partner@example.com"]);
   });
 
-  it("posts no replyAll key for a plain reply", async () => {
+  it("a plain reply goes to the customer only", async () => {
     const body = await openThreadAndReply("Reply");
     expect(body.text).toBe("Sending our quote now.");
-    expect(body).not.toHaveProperty("replyAll");
+    expect(body.to).toEqual(["customer@example.com"]);
+    expect(body.cc).toEqual([]);
   });
 });
 

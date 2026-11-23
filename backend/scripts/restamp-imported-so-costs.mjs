@@ -11,10 +11,12 @@
 //             -> else base_price_sen -> else cost_price_sen
 //   BEDFRAME  base_price_sen -> cost_price_sen (PRICE_2 lane)
 //   other     base_price_sen -> cost_price_sen
-// line_cost = unit x qty. Then, for headers whose total_cost_sen = 0,
-// recompute the category aggregates + total + margin (= revenue - cost).
+// line_cost = unit x qty, line margin = line total - line cost. Then, for
+// headers whose total_cost_sen = 0, recompute the category aggregates + total +
+// margin (= revenue - cost) + margin basis, as a save writes them (lib/so-margin.mjs).
 // Never touches a non-zero stamp. DRY-RUN default; APPLY=1 writes.
 import postgres from "postgres";
+import { marginPctBasis } from "./lib/so-margin.mjs";
 
 const APPLY = process.env.APPLY === "1";
 const url = process.env.DATABASE_URL;
@@ -69,7 +71,7 @@ try {
           if (uc > 0) {
             anyStamp = true; stamped++;
             if (APPLY) await tx`UPDATE scm.mfg_sales_order_items
-              SET unit_cost_sen = ${uc}, line_cost_sen = ${uc * (l.qty || 1)}
+              SET unit_cost_sen = ${uc}, line_cost_sen = ${uc * (l.qty || 1)}, line_margin_sen = total_sen - ${uc * (l.qty || 1)}
               WHERE id = ${l.id}`;  // items table has created_at only
           } else noCost++;
         }
@@ -84,7 +86,8 @@ try {
             mattress_sofa_cost_sen = ${agg.mattress_sofa}, bedframe_cost_sen = ${agg.bedframe},
             accessories_cost_sen = ${agg.accessories}, service_cost_sen = ${agg.service},
             others_cost_sen = ${agg.others}, total_cost_sen = ${total},
-            total_margin_sen = ${(so.total_revenue_sen || 0) - total}, updated_at = ${now}
+            total_margin_sen = ${(so.total_revenue_sen || 0) - total},
+            margin_pct_basis = ${marginPctBasis((so.total_revenue_sen || 0) - total, so.total_revenue_sen || 0)}, updated_at = ${now}
           WHERE doc_no = ${so.doc_no}`;
       }
     };

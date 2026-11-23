@@ -24,6 +24,7 @@ import {
   Users,
   LogOut,
   Calendar,
+  AlertTriangle,
   DollarSign,
   Wrench,
   FolderKanban,
@@ -64,6 +65,7 @@ import {
   MapPinned,
   Megaphone,
   LifeBuoy,
+  CalendarDays,
   History,
   CalendarOff,
   type LucideIcon, Landmark, CreditCard, Banknote, Receipt, Server, Sparkles, ScanLine, ListChecks } from "lucide-react";
@@ -411,6 +413,12 @@ export const NAV_TABS: NavTab[] = [
         label: "Calendar",
         icon: Calendar,
         pageAccess: "projects.calendar",
+      },
+      {
+        to: "/projects?view=defects",
+        label: "Defect List",
+        icon: AlertTriangle,
+        pageAccess: "projects.list",
       },
       {
         to: "/projects?view=maintenance",
@@ -905,11 +913,12 @@ export const NAV_TABS: NavTab[] = [
     // Commission page itself (per-button), not here: they grant an action
     // inside the module, never admittance to it. Neither is usable without
     // scm.hr.read anyway, since the API refuses to show the period first.
-    anyPerm: ["*", "scm.hr.read", "scm.hr.manage", "hr.employees.read", "hr.employees.manage"],
+    anyPerm: ["*", "scm.hr.read", "scm.hr.manage", "hr.employees.read", "hr.employees.manage", "hr.attendance.read", "hr.ot.confirm"],
     children: [
       // Employees & Attendance (HC-0125): its own flat keys, payroll is granted
-      // to different people than commission.
-      { to: "/hr/employees", label: "Employees & Attendance", icon: Users, anyPerm: ["*", "hr.employees.read", "hr.employees.manage"] },
+      // to different people than commission. hr.attendance.read / hr.ot.confirm
+      // open it to the Attendance / OT tabs alone (see HrEmployees narrow mode).
+      { to: "/hr/employees", label: "Employees & Attendance", icon: Users, anyPerm: ["*", "hr.employees.read", "hr.employees.manage", "hr.attendance.read", "hr.ot.confirm"] },
       { to: "/scm/hr/commission", label: "Commission", icon: DollarSign, anyPerm: ["*", "scm.hr.read", "scm.hr.manage"] },
       // Settings is an EDITOR — read-only holders are not shown a page whose
       // every control the API would reject (2990 bounces them to the report).
@@ -925,6 +934,7 @@ export const NAV_TABS: NavTab[] = [
     label: "Mail Center",
     icon: Mail,
     anyPerm: ["mail_center.read"],
+    badge: "mail-waiting",
   },
 
   // ── Announcements — office-wide notices + read receipts (ported from Hookka).
@@ -1073,6 +1083,14 @@ export const NAV_TABS: NavTab[] = [
   // session — backend routes/itSupport.ts), so a permission here would only be
   // a way to lock someone out of asking for help. The row is dropped at render
   // where this environment is not connected to the IT Hub (see visibleTabs).
+  // No gate: every signed-in user books meeting rooms and sees the shared calendar
+  // (backend routes/meetings.ts). Dropped with IT Support where the IT Hub is not connected.
+  {
+    section: "system",
+    to: "/meetings",
+    label: "Meetings",
+    icon: CalendarDays,
+  },
   {
     section: "system",
     to: "/it-support",

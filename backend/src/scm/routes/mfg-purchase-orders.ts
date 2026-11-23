@@ -94,6 +94,8 @@ import { baseKeyOf, thumbKeyFor } from '../../services/photoThumbs';
 import { proxyFallbackPayload, type PhotoUrlPayload } from '../lib/photoProxyFallback';
 import { markIdempotencyNoWrite } from '../../middleware/idempotency';
 import { soHasPoGate } from '../lib/so-line-po-duplicate';
+import { withMrpAssignments } from '../lib/so-has-po-assignments';
+import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChange } from '../lib/entity-audit';
 import { PO_LINE_AUDIT_FIELDS, PO_LINE_AUDIT_SELECT } from '../lib/entity-audit-fields';
@@ -783,10 +785,34 @@ async function poLineReceipts(
   return out;
 }
 
+const PO_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** A PO route parameter as the PO's id: a uuid as it is, otherwise looked up as the PO number in this company. */
+export async function resolvePoId(
+  raw: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a supabase-js builder, untyped like the other scm readers
+  scope: (q: any) => any,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PostgREST client
+  supabase: any,
+): Promise<{ ok: true; id: string } | { ok: false; status: 404 | 500; body: Record<string, unknown> }> {
+  const value = raw.trim();
+  if (PO_UUID_RE.test(value)) return { ok: true, id: value };
+  const notFound = { ok: false as const, status: 404 as const, body: { error: 'not_found', message: `Purchase order ${value || '(blank)'} was not found.` } };
+  if (!value || value.length > 64) return notFound;
+  const { data, error } = await scope(supabase.from('purchase_orders').select('id').eq('po_number', value)).limit(1).maybeSingle();
+  if (error) return { ok: false, status: 500, body: { error: 'load_failed', reason: String((error as { message?: unknown }).message ?? error) } };
+  const id = (data as { id?: string } | null)?.id;
+  return id ? { ok: true, id } : notFound;
+}
+
 // ── Detail ────────────────────────────────────────────────────────────
 mfgPurchaseOrders.get('/:id', async (c) => {
-  const id = c.req.param('id');
   const supabase = c.get('supabase');
+  /* A typed or pasted link names the PO by its number (/scm/purchase-orders/HC-PO-2611-104); the id column is a uuid,
+     so comparing the number with it was a Postgres cast error and an error page. */
+  const resolved = await resolvePoId(c.req.param('id'), (q) => scopeToCompany(q, c), supabase);
+  if (!resolved.ok) return c.json(resolved.body, resolved.status);
+  const id = resolved.id;
 
   /* Perf (go-live) — the downstream-lock GRN count is independent of the
      header + items load, so fold it into the same parallel batch instead of a
@@ -1100,7 +1126,7 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
          the idempotency claim no-write so the confirmed replay re-runs instead of
          replaying this 409 (mirrors the short_stock gate). */
       const dupGate = await soHasPoGate(supabase, soRows, body.confirmDuplicatePo); // 2990-0065; lines confirmed there skip the qty prompt
-      if (dupGate.refusal) { markIdempotencyNoWrite(c); return c.json(dupGate.refusal, 409); }
+      if (dupGate.refusal) { markIdempotencyNoWrite(c); return c.json(await withMrpAssignments(supabase, c, dupGate.refusal), 409); }
       if (!confirmOverConvert) {
         const offender = findOverConvertOffender(items.filter((it) => !dupGate.confirmed.has(it.soItemId as string)), soRows);
         if (offender) {
@@ -1691,7 +1717,8 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
   }
 
   const dupGate = await soHasPoGate(supabase, pickedItems.map((p) => p.row), body.confirmDuplicatePo); // 2990-0065, after the hard caps
-  if (dupGate.refusal) return c.json(dupGate.refusal, 409);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the HTTP route passes its real Context here; the headless agent never reaches the prompt
+  if (dupGate.refusal) return c.json(await withMrpAssignments(supabase, c as unknown as Context<any>, dupGate.refusal), 409);
 
   // Re-project into the legacy soItems shape for the rest of the handler.
   // Commander 2026-05-28 — carry the per-line derived warehouse + delivery
@@ -2947,7 +2974,7 @@ mfgPurchaseOrders.post('/:id/items', async (c) => {
   /* Remaining-qty cap — a NEW line contributes nothing to po_qty_picked yet, so
      its own headroom is the raw remainder (ownCurrentQty = 0). */
   const dupGate = await soHasPoGate(sb, soItemId ? [{ id: soItemId, doc_no: null, item_code: String(it.itemCode ?? '') }] : [], it.confirmDuplicatePo); // 2990-0065
-  if (dupGate.refusal) { markIdempotencyNoWrite(c); return c.json(dupGate.refusal, 409); }
+  if (dupGate.refusal) { markIdempotencyNoWrite(c); return c.json(await withMrpAssignments(sb, c, dupGate.refusal), 409); }
   if (it.confirmOverConvert !== true) {
     const over = await soLineOverConvertRefusal(sb, soItemId, qty, 0);
     if (over) return c.json({ error: 'qty_exceeds_remaining', ...over }, 409);

@@ -136,7 +136,8 @@ import {
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
 } from '../lib/companyScope';
 import { loadComboModulesById, loadMasterSofaComboCosts, loadSellingSofaCombos } from '../lib/pos-sofa-combos';
-import { planComboCostSpread } from '../lib/sofa-combo-cost-spread';
+import { comboCostAsOf, combosStandingOn, planComboCostSpread } from '../lib/sofa-combo-cost-spread';
+import { lineEditKeepsCost } from '../lib/so-line-cost-edit';
 import { supabaseAuth } from '../middleware/auth';
 import { escapeForOr } from '../lib/postgrest-search';
 import { effectiveStatusFilter, isRangeNotSatisfiable } from '../lib/so-list-filters';
@@ -267,8 +268,9 @@ import {
   isProcessingRemovalOnlyRequest,
 } from '../shared/so-processing-date';
 import { ATTRIBUTE_OTHER_REFUSAL, SO_IDENTITY_LOCK_COLS, changedIdentityLockCols, salespersonReattributed } from '../shared/so-identity-lock';
-import { SO_EDIT_AFTER_DO_PERMISSION, SO_EDIT_PRICE_AFTER_DO_PERMISSION, SO_AFTER_DO_CUSTOMER_COLS, AFTER_DO_INVOICED, AFTER_DO_PRICE_FORBIDDEN, AFTER_DO_PRICE_NOT_DELIVERED, afterDoPriceReturnedRefusal, AFTER_DO_SERVICE_ONLY, afterDoBlockedCols, afterDoFieldsRefusal, afterDoHeaderRefusal, afterDoTargetLockedRefusal, pickAfterDoTarget, type AfterDoTarget } from '../shared/so-after-do-edit';
+import { SO_EDIT_AFTER_DO_PERMISSION, SO_EDIT_PRICE_AFTER_DO_PERMISSION, SO_EDIT_LINES_AFTER_DO_PERMISSION, SO_AFTER_DO_CUSTOMER_COLS, AFTER_DO_INVOICED, AFTER_DO_PRICE_FORBIDDEN, AFTER_DO_PRICE_NOT_DELIVERED, AFTER_DO_LINES_FORBIDDEN, afterDoPriceReturnedRefusal, AFTER_DO_SERVICE_ONLY, afterDoBlockedCols, afterDoFieldsRefusal, afterDoHeaderRefusal, afterDoTargetLockedRefusal, pickAfterDoTarget, type AfterDoTarget } from '../shared/so-after-do-edit';
 import { openAfterDo, readAfterDoTargets, catalogSaysService, copyCustomerDetailsToDos, addChargeLineToDo, readDoLinesOfSoLine, copyChargeLineToDo, copyLinePriceToDos, copyLinePriceToInvoices, type DoLineOfSoLine } from '../lib/so-after-do';
+import { openProductLineAfterDo, afterDoQtyChangeAllowed, propagateLineEditAfterDo, AFTER_DO_LINE_NOT_SETTLED, type AfterDoLineDeps, type OpenProductLineOk } from '../lib/so-after-do-lines';
 /* Variants-vocabulary unification (port of 2990 73aeeb1e, 2026-06-26):
    POS-handover sofa lines speak `depth`/`sofaLegHeight`/`fabricColor`, Backend
    editors read `seatHeight`/`legHeight`/`fabricCode`. canonicalizeVariants
@@ -312,7 +314,7 @@ import { loadNonSellingWarehouses } from '../lib/non-selling-warehouse';
 import { resolveLineCategories } from '../lib/so-readiness-category';
 import { deriveDisplayBrandingRowByDoc } from '../lib/so-display-branding';
 import { mintMonthlyDocNo, insertWithDocNoRetry, companyCodeById } from '../lib/doc-no';
-import { soDeliverableRemaining, soLineDeliveries, computeSoLifecycle, soCurrentDocNo, soLineShippedSources } from './delivery-orders-mfg';
+import { soDeliverableRemaining, soLineDeliveries, computeSoLifecycle, soCurrentDocNo, soLineShippedSources, resyncInventoryForDo, restampDoActualCost } from './delivery-orders-mfg';
 import { soLineReadySourcePos } from '../lib/source-po-trace';
 import { soLineBoundPoNumbers } from '../lib/so-converted-po';
 /* Shared 4-state delivery-planning derivation — the SO list emits planning_state
@@ -327,7 +329,7 @@ import { deferScmAfterCommit, runScmPgCommand } from '../lib/pg-supabase-transac
 import {
   applySoCancelVouchers, planSoCancelVouchers, soCancelVoucherAuditChanges,
 } from '../lib/so-cancel-vouchers';
-import { deferAllocationRecompute, scheduleStockAllocationAfterCommand } from '../lib/stock-allocation-job';
+import { deferAllocationRecompute, recomputeAllocationAfterSave, scheduleStockAllocationAfterCommand } from '../lib/stock-allocation-job';
 import { pgrestIn } from '../lib/pgrest-in-list';
 import { skuCategoryResolver } from '../lib/sku-category';
 import { fmtSen } from '../shared/format';
@@ -1093,7 +1095,8 @@ export async function soListMoneyKpis(
   let revenueSen = 0, outstandingSen = 0, paidSen = 0;
   for (const m of fb.data ?? []) {
     revenueSen += m.local_total_sen ?? 0;
-    outstandingSen += m.balance_sen_live ?? m.balance_sen ?? 0;
+    /* Never the stored balance_sen: recomputeTotals writes the gross total into it (shared/so-outstanding.ts). */
+    outstandingSen += m.balance_sen_live ?? (m.local_total_sen ?? 0) - (m.paid_total_sen ?? 0);
     paidSen += m.paid_total_sen ?? 0;
   }
   return { data: { revenueSen, outstandingSen, paidSen }, error: null };
@@ -1775,6 +1778,9 @@ mfgSalesOrders.get('/:docNo', async (c) => {
     // Authoritative received-to-date + remaining balance for the detail page
     // and the customer-facing print (so-doc.ts reads paid_sen_total).
     paid_sen_total: paidSenTotal,
+    /* The part of paid_sen_total that is NOT in the payments ledger (a legacy header deposit). A print that lists
+       the ledger rows adds this to their sum, so its "Paid to date" always agrees with the rows it shows. */
+    paid_outside_ledger_sen: paidSenTotal - paidLedgerSen,
     /* SIGNED (owner 2026-08-16) — negative = over-collected, painted red by the
        detail page, the mobile detail and the SO print. The write-back keeps the
        CLAMPED `soOutstandingSen`: a screen can say "you hold RM 250 of his
@@ -4375,170 +4381,6 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       .eq('upload_session_id', uploadSessionId);
   }
 
-  /* ── SO-SKU spec P2 (D5, migration 0155) — the POS deposit becomes a real
-     payments-ledger row at create, so Paid / Last Payment / Account Sheet /
-     Collected By / Balance derive live instead of sitting dead in the
-     deposit_sen header. is_deposit=true marks it so the list paid-rollup
-     doesn't ALSO add the header column (double count) and Finance can tell
-     deposits from balance payments. Method-scoped fields mirror the manual
-     POST /:docNo/payments route. Best-effort: a ledger failure must never
-     block the order (the header column still carries the deposit). */
-  if (posPayments) {
-    /* Split payment — every validated row, best-effort (the header carries Σ; a ledger hiccup never blocks the order). */
-    const paidAt = dateOrNull(body.paymentDate) ?? todayMyt(); // header coerces the same key; uncoerced here the swallowed insert lost the deposit row
-    for (let i = 0; i < posPayments.length; i++) {
-      const p = posPayments[i]!;
-      const merchantLike = p.method === 'merchant' || p.method === 'installment';
-      const merchantProvider = merchantLike ? (p.merchantProvider ?? null) : null;
-      const installmentMonths = merchantLike
-        && typeof p.installmentMonths === 'number' && p.installmentMonths > 0
-        ? p.installmentMonths : null;
-      const plan = convertPlans.get(i) ?? null;
-      const { data: depRow, error: depErr } = await sb.from('mfg_sales_order_payments').insert({
-        company_id:         companyId, // multi-company: match the SO's company
-        so_doc_no:          docNo,
-        paid_at:            plan ? plan.paidAt : paidAt,
-        method:             p.method,
-        ...(plan ? { converted_from_so_doc_no: plan.fromDocNo } : {}),
-        merchant_provider:  merchantProvider,
-        installment_months: installmentMonths,
-        approval_code:      p.approvalCode ?? null,
-        /* A split row's OWN slip when it sent one, else null — the slip is
-           optional (Owner 2026-08-13). Deliberately NOT falling back to
-           `receiptImageKey`: that key is the single-deposit scan path's proof
-           (below) and stamping it on several split rows would put one photo on
-           payments it does not evidence. */
-        slip_key:           posPaymentSlipKeys![i] ?? (plan ? plan.slipKey : null),
-        /* Account Sheet auto-fill (Loo 2026-06-07) — split rows carry no
-           onlineType, so transfer falls back to 'Bank transfer'. */
-        account_sheet:      plan ? `Converted from ${plan.fromDocNo}` : deriveAccountSheet(p.method, merchantProvider, null),
-        amount_sen:       p.amountSen,
-        /* Who took the money. The fallback was the bridge's pinned system uuid,
-           so an unnamed collector recorded as "System" on the money ledger; the
-           column is a NULLABLE FK to staff (the /payments writer stamps null
-           freely), so the real caller — or an honest blank — is always better.
-           Precedence is unchanged: an explicit salespersonId still wins. */
-        collected_by:       plan ? plan.collectedBy : ((body.salespersonId as string) ?? callerStaffId),
-        created_by:         user.id,
-        is_deposit:         true,
-        note:               plan ? `Converted from ${plan.fromDocNo} at SO create` : 'POS split payment (auto-recorded at SO create)',
-      }).select('id, so_doc_no, paid_at, method, merchant_provider, amount_sen, company_id, converted_from_so_doc_no, created_at, created_by').single();
-      if (depErr) {
-        // eslint-disable-next-line no-console
-        console.error('[so-create] split-payment ledger insert failed:', depErr.message);
-        continue;
-      }
-      await bookSoPaymentBestEffort(sb, depRow, 'split payment at SO create'); // docs/bugs/0652: this row used to skip the gate
-      await linkPaymentScan(sb, { companyId: companyId ?? null, slipKey: posPaymentSlipKeys![i] ?? null, paymentId: String((depRow as { id?: unknown }).id ?? '') }); // HC-0006 T7
-      /* Promote — 'promoted' rows are excluded from the slip reaper (same dance
-         as the SO-create order slip). The UPDATE runs under the caller's RLS
-         (pending_slip_uploads allows the UPLOADER to promote); in this flow the
-         uploader IS the order creator, so it matches. If it ever doesn't (or
-         errors), the row stays 'uploaded' → the reaper would delete the R2
-         object after TTL and the same session would be replayable — so a no-op
-         promote is logged LOUDLY instead of swallowed. Best-effort: the payment
-         row stands either way (slip_key already persisted on it).
-
-         Guarded on the session because the slip is OPTIONAL now (Owner
-         2026-08-13): with no id there is nothing to promote, and an unguarded
-         `.eq('upload_session_id', null)` is a filter nobody wrote on purpose.
-         The AUDIT below still runs — a slip-less payment is just as much a
-         payment. */
-      if (p.uploadSessionId) {
-        const { data: promoted, error: promoteErr } = await sb
-          .from('pending_slip_uploads')
-          .update({ status: 'promoted', promoted_at: new Date().toISOString() })
-          .eq('upload_session_id', p.uploadSessionId)
-          .select('upload_session_id');
-        if (promoteErr || !promoted || promoted.length === 0) {
-          // eslint-disable-next-line no-console
-          console.error(
-            `[so-create] slip promote FAILED for session ${p.uploadSessionId} on ${docNo}: `
-            + (promoteErr?.message ?? 'no row matched (RLS uploader mismatch?)')
-            + ' — slip will be reaped after TTL; replay window open until then.',
-          );
-        }
-      }
-      await recordSoAudit(sb, {
-        docNo,
-        action: 'ADD_PAYMENT',
-        actorId: user.id,
-        actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
-        source: 'automation',
-        note: 'Auto: POS split payment recorded at SO create',
-        paymentId: String((depRow as { id?: unknown } | null)?.id ?? '') || null,
-        fieldChanges: [
-          { field: 'paidAt',      from: null, to: paidAt },
-          { field: 'method',      from: null, to: p.method },
-          { field: 'amountSen', from: null, to: p.amountSen },
-          ...(merchantProvider ? [{ field: 'merchantProvider', from: null, to: merchantProvider } satisfies FieldChange] : []),
-          ...(installmentMonths ? [{ field: 'installmentMonths', from: null, to: installmentMonths } satisfies FieldChange] : []),
-          ...(p.approvalCode ? [{ field: 'approvalCode', from: null, to: p.approvalCode } satisfies FieldChange] : []),
-        ],
-      });
-    }
-  } else {
-    const depositSen = typeof body.depositSen === 'number' ? body.depositSen : 0;
-    /* Whitelist — the ledger's method vocabulary is closed; an arbitrary
-       string must not reach Finance reports. Unknown method → header-only
-       (the deposit still shows via the legacy fallback), no ledger row. */
-    const VALID_METHODS = new Set(['cash', 'merchant', 'transfer', 'installment']);
-    const rawMethod = typeof body.paymentMethod === 'string' ? body.paymentMethod.trim() : '';
-    const depositMethod = VALID_METHODS.has(rawMethod) ? rawMethod : null;
-    if (depositSen > 0 && depositMethod) {
-      /* 'installment' is a merchant transaction with a term — both keep the
-         provider/months fields (prod uses both method values). */
-      const merchantLike = depositMethod === 'merchant' || depositMethod === 'installment';
-      const merchantProvider = merchantLike ? ((body.merchantProvider as string) ?? null) : null;
-      const installmentMonths = merchantLike
-        && typeof body.installmentMonths === 'number' && body.installmentMonths > 0
-        ? body.installmentMonths : null;
-      const paidAt = dateOrNull(body.paymentDate) ?? todayMyt(); // same as the split-payment row above
-      const { data: depRow, error: depErr } = await sb.from('mfg_sales_order_payments').insert({
-        company_id:         companyId, // multi-company: match the SO's company
-        so_doc_no:          docNo,
-        paid_at:            paidAt,
-        method:             depositMethod,
-        merchant_provider:  merchantProvider,
-        installment_months: installmentMonths,
-        approval_code:      (body.approvalCode as string) ?? null,
-        slip_key:           slipKey ?? receiptImageKey,        // handover slip, else the scanned receipt = the deposit's proof
-        /* Account Sheet auto-fill (Loo 2026-06-07). */
-        account_sheet:      deriveAccountSheet(depositMethod, merchantProvider, null),
-        amount_sen:       depositSen,
-        // Same as the split-payment row above: never the pin on the money ledger.
-        collected_by:       (body.salespersonId as string) ?? callerStaffId,
-        created_by:         user.id,
-        is_deposit:         true,
-        note:               'POS deposit (auto-recorded at SO create)',
-      }).select('id, so_doc_no, paid_at, method, merchant_provider, amount_sen, company_id').single();
-      if (depErr) {
-        // eslint-disable-next-line no-console
-        console.error('[so-create] deposit ledger insert failed:', depErr.message);
-      } else {
-        await bookSoPaymentBestEffort(sb, depRow, 'deposit at SO create'); // docs/bugs/0652: this row used to skip the gate
-        await linkPaymentScan(sb, { companyId: companyId ?? null, slipKey, paymentId: String((depRow as { id?: unknown }).id ?? '') }); // HC-0006 T7
-        await recordSoAudit(sb, {
-          docNo,
-          action: 'ADD_PAYMENT',
-          actorId: user.id,
-          actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
-          source: 'automation',
-          note: 'Auto: POS deposit recorded at SO create',
-          paymentId: String((depRow as { id?: unknown } | null)?.id ?? '') || null,
-          fieldChanges: [
-            { field: 'paidAt',      from: null, to: paidAt },
-            { field: 'method',      from: null, to: depositMethod },
-            { field: 'amountSen', from: null, to: depositSen },
-            ...(merchantProvider ? [{ field: 'merchantProvider', from: null, to: merchantProvider } satisfies FieldChange] : []),
-            ...(body.approvalCode ? [{ field: 'approvalCode', from: null, to: body.approvalCode as string } satisfies FieldChange] : []),
-          ],
-        });
-      }
-    }
-  }
-
-  lap('so-payments');
   /* Task 5 — mint the one-shot SKUs (gated + collision-safe). Runs BEFORE the
      item insert: buildOneShotMints mutates each accumulated row's item_code to
      the minted code, and the insert below spreads those rows. Uses a service-
@@ -4639,6 +4481,177 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     await recomputeTotals(sb, docNo, c);
   }
   lap('so-items-write');
+
+  /* The deposit rows are written only once the order and its lines are in. Written before the lines, a create whose
+     line insert failed deleted the order but left the deposit row's journal standing; and a deposit row that failed
+     was only logged while the order read as saved. A miss is returned as paymentErrors for the screen to say. */
+  const paymentErrors: string[] = [];
+  /* ── SO-SKU spec P2 (D5, migration 0155) — the POS deposit becomes a real
+     payments-ledger row at create, so Paid / Last Payment / Account Sheet /
+     Collected By / Balance derive live instead of sitting dead in the
+     deposit_sen header. is_deposit=true marks it so the list paid-rollup
+     doesn't ALSO add the header column (double count) and Finance can tell
+     deposits from balance payments. Method-scoped fields mirror the manual
+     POST /:docNo/payments route. Best-effort: a ledger failure must never
+     block the order (the header column still carries the deposit). */
+  if (posPayments) {
+    /* Split payment — every validated row, best-effort (the header carries Σ; a ledger hiccup never blocks the order). */
+    const paidAt = dateOrNull(body.paymentDate) ?? todayMyt(); // header coerces the same key; uncoerced here the swallowed insert lost the deposit row
+    for (let i = 0; i < posPayments.length; i++) {
+      const p = posPayments[i]!;
+      const merchantLike = p.method === 'merchant' || p.method === 'installment';
+      const merchantProvider = merchantLike ? (p.merchantProvider ?? null) : null;
+      const installmentMonths = merchantLike
+        && typeof p.installmentMonths === 'number' && p.installmentMonths > 0
+        ? p.installmentMonths : null;
+      const plan = convertPlans.get(i) ?? null;
+      const { data: depRow, error: depErr } = await sb.from('mfg_sales_order_payments').insert({
+        company_id:         companyId, // multi-company: match the SO's company
+        so_doc_no:          docNo,
+        paid_at:            plan ? plan.paidAt : paidAt,
+        method:             p.method,
+        ...(plan ? { converted_from_so_doc_no: plan.fromDocNo } : {}),
+        merchant_provider:  merchantProvider,
+        installment_months: installmentMonths,
+        approval_code:      p.approvalCode ?? null,
+        /* A split row's OWN slip when it sent one, else null — the slip is
+           optional (Owner 2026-08-13). Deliberately NOT falling back to
+           `receiptImageKey`: that key is the single-deposit scan path's proof
+           (below) and stamping it on several split rows would put one photo on
+           payments it does not evidence. */
+        slip_key:           posPaymentSlipKeys![i] ?? (plan ? plan.slipKey : null),
+        /* Account Sheet auto-fill (Loo 2026-06-07) — split rows carry no
+           onlineType, so transfer falls back to 'Bank transfer'. */
+        account_sheet:      plan ? `Converted from ${plan.fromDocNo}` : deriveAccountSheet(p.method, merchantProvider, null),
+        amount_sen:       p.amountSen,
+        /* Who took the money. The fallback was the bridge's pinned system uuid,
+           so an unnamed collector recorded as "System" on the money ledger; the
+           column is a NULLABLE FK to staff (the /payments writer stamps null
+           freely), so the real caller — or an honest blank — is always better.
+           Precedence is unchanged: an explicit salespersonId still wins. */
+        collected_by:       plan ? plan.collectedBy : ((body.salespersonId as string) ?? callerStaffId),
+        created_by:         user.id,
+        is_deposit:         true,
+        note:               plan ? `Converted from ${plan.fromDocNo} at SO create` : 'POS split payment (auto-recorded at SO create)',
+      }).select('id, so_doc_no, paid_at, method, merchant_provider, amount_sen, company_id, converted_from_so_doc_no, created_at, created_by').single();
+      if (depErr) {
+        // eslint-disable-next-line no-console
+        console.error('[so-create] split-payment ledger insert failed:', depErr.message);
+        paymentErrors.push(`A payment of ${fmtSen(p.amountSen)} (${p.method}) was NOT recorded: ${depErr.message}. Add it on the order's Payments tab.`);
+        continue;
+      }
+      await bookSoPaymentBestEffort(sb, depRow, 'split payment at SO create'); // docs/bugs/0652: this row used to skip the gate
+      await linkPaymentScan(sb, { companyId: companyId ?? null, slipKey: posPaymentSlipKeys![i] ?? null, paymentId: String((depRow as { id?: unknown }).id ?? '') }); // HC-0006 T7
+      /* Promote — 'promoted' rows are excluded from the slip reaper (same dance
+         as the SO-create order slip). The UPDATE runs under the caller's RLS
+         (pending_slip_uploads allows the UPLOADER to promote); in this flow the
+         uploader IS the order creator, so it matches. If it ever doesn't (or
+         errors), the row stays 'uploaded' → the reaper would delete the R2
+         object after TTL and the same session would be replayable — so a no-op
+         promote is logged LOUDLY instead of swallowed. Best-effort: the payment
+         row stands either way (slip_key already persisted on it).
+
+         Guarded on the session because the slip is OPTIONAL now (Owner
+         2026-08-13): with no id there is nothing to promote, and an unguarded
+         `.eq('upload_session_id', null)` is a filter nobody wrote on purpose.
+         The AUDIT below still runs — a slip-less payment is just as much a
+         payment. */
+      if (p.uploadSessionId) {
+        const { data: promoted, error: promoteErr } = await sb
+          .from('pending_slip_uploads')
+          .update({ status: 'promoted', promoted_at: new Date().toISOString() })
+          .eq('upload_session_id', p.uploadSessionId)
+          .select('upload_session_id');
+        if (promoteErr || !promoted || promoted.length === 0) {
+          // eslint-disable-next-line no-console
+          console.error(
+            `[so-create] slip promote FAILED for session ${p.uploadSessionId} on ${docNo}: `
+            + (promoteErr?.message ?? 'no row matched (RLS uploader mismatch?)')
+            + ' — slip will be reaped after TTL; replay window open until then.',
+          );
+        }
+      }
+      await recordSoAudit(sb, {
+        docNo,
+        action: 'ADD_PAYMENT',
+        actorId: user.id,
+        actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
+        source: 'automation',
+        note: 'Auto: POS split payment recorded at SO create',
+        paymentId: String((depRow as { id?: unknown } | null)?.id ?? '') || null,
+        fieldChanges: [
+          { field: 'paidAt',      from: null, to: paidAt },
+          { field: 'method',      from: null, to: p.method },
+          { field: 'amountSen', from: null, to: p.amountSen },
+          ...(merchantProvider ? [{ field: 'merchantProvider', from: null, to: merchantProvider } satisfies FieldChange] : []),
+          ...(installmentMonths ? [{ field: 'installmentMonths', from: null, to: installmentMonths } satisfies FieldChange] : []),
+          ...(p.approvalCode ? [{ field: 'approvalCode', from: null, to: p.approvalCode } satisfies FieldChange] : []),
+        ],
+      });
+    }
+  } else {
+    const depositSen = typeof body.depositSen === 'number' ? body.depositSen : 0;
+    /* Whitelist — the ledger's method vocabulary is closed; an arbitrary
+       string must not reach Finance reports. Unknown method → header-only
+       (the deposit still shows via the legacy fallback), no ledger row. */
+    const VALID_METHODS = new Set(['cash', 'merchant', 'transfer', 'installment']);
+    const rawMethod = typeof body.paymentMethod === 'string' ? body.paymentMethod.trim() : '';
+    const depositMethod = VALID_METHODS.has(rawMethod) ? rawMethod : null;
+    if (depositSen > 0 && depositMethod) {
+      /* 'installment' is a merchant transaction with a term — both keep the
+         provider/months fields (prod uses both method values). */
+      const merchantLike = depositMethod === 'merchant' || depositMethod === 'installment';
+      const merchantProvider = merchantLike ? ((body.merchantProvider as string) ?? null) : null;
+      const installmentMonths = merchantLike
+        && typeof body.installmentMonths === 'number' && body.installmentMonths > 0
+        ? body.installmentMonths : null;
+      const paidAt = dateOrNull(body.paymentDate) ?? todayMyt(); // same as the split-payment row above
+      const { data: depRow, error: depErr } = await sb.from('mfg_sales_order_payments').insert({
+        company_id:         companyId, // multi-company: match the SO's company
+        so_doc_no:          docNo,
+        paid_at:            paidAt,
+        method:             depositMethod,
+        merchant_provider:  merchantProvider,
+        installment_months: installmentMonths,
+        approval_code:      (body.approvalCode as string) ?? null,
+        slip_key:           slipKey ?? receiptImageKey,        // handover slip, else the scanned receipt = the deposit's proof
+        /* Account Sheet auto-fill (Loo 2026-06-07). */
+        account_sheet:      deriveAccountSheet(depositMethod, merchantProvider, null),
+        amount_sen:       depositSen,
+        // Same as the split-payment row above: never the pin on the money ledger.
+        collected_by:       (body.salespersonId as string) ?? callerStaffId,
+        created_by:         user.id,
+        is_deposit:         true,
+        note:               'POS deposit (auto-recorded at SO create)',
+      }).select('id, so_doc_no, paid_at, method, merchant_provider, amount_sen, company_id').single();
+      if (depErr) {
+        // eslint-disable-next-line no-console
+        console.error('[so-create] deposit ledger insert failed:', depErr.message);
+        paymentErrors.push(`The deposit of ${fmtSen(depositSen)} (${depositMethod}) was NOT recorded: ${depErr.message}. Add it on the order's Payments tab.`);
+      } else {
+        await bookSoPaymentBestEffort(sb, depRow, 'deposit at SO create'); // docs/bugs/0652: this row used to skip the gate
+        await linkPaymentScan(sb, { companyId: companyId ?? null, slipKey, paymentId: String((depRow as { id?: unknown }).id ?? '') }); // HC-0006 T7
+        await recordSoAudit(sb, {
+          docNo,
+          action: 'ADD_PAYMENT',
+          actorId: user.id,
+          actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
+          source: 'automation',
+          note: 'Auto: POS deposit recorded at SO create',
+          paymentId: String((depRow as { id?: unknown } | null)?.id ?? '') || null,
+          fieldChanges: [
+            { field: 'paidAt',      from: null, to: paidAt },
+            { field: 'method',      from: null, to: depositMethod },
+            { field: 'amountSen', from: null, to: depositSen },
+            ...(merchantProvider ? [{ field: 'merchantProvider', from: null, to: merchantProvider } satisfies FieldChange] : []),
+            ...(body.approvalCode ? [{ field: 'approvalCode', from: null, to: body.approvalCode as string } satisfies FieldChange] : []),
+          ],
+        });
+      }
+    }
+  }
+
+  lap('so-payments');
 
   /* ── FAIR LINK (owner 2026-09-13) ─────────────────────────────────────────
      Which EXHIBITION this sale belongs to, not just where it was written. The
@@ -4800,7 +4813,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      sweep repairs anything else. */
   lap('so-followers');
   if ((body as { asDraft?: unknown }).asDraft !== true) {
-    try { await recomputeSoStockAllocation(sb); }
+    try { await recomputeAllocationAfterSave(sb, 'post-so-create'); }
     catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-create failed:', e); }
   }
   lap('so-alloc');
@@ -4818,6 +4831,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     : (await enqueueSoCreate(sb, { companyId, docNo, createdBy: c.get('houzsUser')?.id ?? null })).problems;
   lap('so-ac-queue');
 
+  if (paymentErrors.length) return c.json({ docNo, ...(acNotSent.length ? { acNotSent } : {}), paymentErrors }, 201);
   return c.json({ docNo, ...(acNotSent.length ? { acNotSent } : {}) }, 201);
 }
 
@@ -5446,7 +5460,7 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
      the queue (its claim releases); terminal statuses (SHIPPED/DELIVERED/…)
      also drop it out. Other PENDING SOs may move into READY. Best-effort. */
   lap('status-scan-note');
-  try { await recomputeSoStockAllocation(sb); }
+  try { await recomputeAllocationAfterSave(sb, 'post-so-status'); }
   catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-status failed:', e); }
   lap('status-alloc');
 
@@ -7011,7 +7025,7 @@ mfgSalesOrders.patch('/:docNo', patchMfgSalesOrderHeaderHandler);
 // so-revision.ts already wraps this path in.
 export async function recomputeTotals(sb: any, docNo: string, c: any) {
   const { data: items, error: itemsErr } = await sb.from('mfg_sales_order_items')
-    .select('id, item_code, item_group, variants, qty, total_sen, line_cost_sen')
+    .select('id, item_code, item_group, variants, qty, total_sen, line_cost_sen, line_margin_sen')
     .eq('doc_no', docNo).eq('cancelled', false);
   /* A failed READ is not an empty SO — and `?? []` cannot tell them apart.
      supabase-js resolves a failed select to { data: null, error } and does NOT
@@ -7030,7 +7044,7 @@ export async function recomputeTotals(sb: any, docNo: string, c: any) {
     console.error('[so-recompute] item read failed — header left unchanged:', docNo, itemsErr.message);
     return;
   }
-  type Row = { id: string; item_code: string; item_group: string; variants: Record<string, unknown> | null; qty: number; total_sen: number; line_cost_sen: number };
+  type Row = { id: string; item_code: string; item_group: string; variants: Record<string, unknown> | null; qty: number; total_sen: number; line_cost_sen: number; line_margin_sen: number | null };
   const rows = (items ?? []) as Row[];
 
   /* ── Master sofa-combo COST spread: lib/sofa-combo-cost-spread.ts ────────── */
@@ -7064,16 +7078,32 @@ export async function recomputeTotals(sb: any, docNo: string, c: any) {
           tierByFabric.set(f.fabric_code, (f.sofa_price_tier ?? f.price_tier ?? 'PRICE_2'));
         }
       }
-      const spread = planComboCostSpread(sofaRows, combos, (code) => tierByFabric.get(code) ?? 'PRICE_2', null);
+      /* The set price of the ORDER's date, not today's: an edit or an approved
+         amendment (even a delivery-date-only one) must not put a set price
+         created after the order on it, and one that stood that day still counts
+         after it is deleted (combosStandingOn). A failed read is not "no date":
+         today's price would re-cost the order, so abort like the reads above. */
+      const { data: hdrDate, error: dateErr } = await scopeToCompany(
+        sb.from('mfg_sales_orders').select('so_date').eq('doc_no', docNo),
+        c,
+      ).maybeSingle();
+      if (dateErr) {
+        /* eslint-disable-next-line no-console */
+        console.error('[so-recompute] order date read failed — header left unchanged:', docNo, dateErr.message);
+        return;
+      }
+      const day = comboCostAsOf((hdrDate as { so_date?: string | null } | null)?.so_date ?? null) ?? todayMyt();
+      const spread = planComboCostSpread(sofaRows, combosStandingOn(combos, day), (code) => tierByFabric.get(code) ?? 'PRICE_2', day);
       for (const m of sofaRows) {
         const newLineCost = spread.get(m.id);
         if (newLineCost === undefined) continue;
         const q = Math.max(1, m.qty || 1);
         m.line_cost_sen = newLineCost; // mutate in place so the rollup below sees it
+        m.line_margin_sen = (m.total_sen || 0) - newLineCost;
         const { error: spreadErr } = await sb.from('mfg_sales_order_items').update({
           line_cost_sen:   newLineCost,
           unit_cost_sen:   Math.round(newLineCost / q),
-          line_margin_sen: (m.total_sen || 0) - newLineCost,
+          line_margin_sen: m.line_margin_sen,
         }).eq('id', m.id);
         /* The in-memory mutation above already fed this cost to the roll-up,
            so a failed line write would have the header assert a cost its own
@@ -7090,6 +7120,28 @@ export async function recomputeTotals(sb: any, docNo: string, c: any) {
           return;
         }
       }
+    }
+  }
+
+  /* Every line's margin follows its cost, not only the spread's above: the
+     nightly cost fill and the AutoCount import stamped line costs without it,
+     so a line kept its full price as margin until that line itself was edited
+     (HC-SO-2609-013). Only a line whose margin is off is written. The header
+     below reads no line margin, so a failed write is logged and leaves just
+     that line as it was. */
+  for (const it of rows) {
+    const margin = (it.total_sen || 0) - (it.line_cost_sen || 0);
+    if (Number(it.line_margin_sen) === margin) continue;
+    const { error: marginErr } = await scopeToCompany(
+      sb.from('mfg_sales_order_items').update({ line_margin_sen: margin }).eq('id', it.id),
+      c,
+    );
+    if (marginErr) {
+      if (sb?.__atomicCommand === true) {
+        throw new Error(`SO line margin update failed: ${marginErr.message}`);
+      }
+      /* eslint-disable-next-line no-console */
+      console.error('[so-recompute] line margin update failed — that line left stale:', docNo, it.id, marginErr.message);
     }
   }
 
@@ -7881,10 +7933,30 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown, codeCheck.inactive), 409);
   }
 
+  /* Owner 2026-11-21 — a super admin (scm.so.edit_lines_after_do) may change the
+     QUANTITY or SPECIFICATION of a PRODUCT line a DO carries; the DO line and
+     every live invoice follow, stock re-synced (lib/so-after-do-lines.ts). This
+     runs AHEAD of the DEV-32 charge-line path and claims only product lines, so
+     the charge-line behaviour below is untouched. */
+  let afterDoProduct: (OpenProductLineOk & { companyId: number }) | null = null;
+  if (it.afterDo === true && hasHouzsPerm(c, SO_EDIT_LINES_AFTER_DO_PERMISSION)) {
+    const co = requireActiveCompanyId(c); if (!co.ok) return c.json(co.refusal, 409);
+    const { data: line, error: lineErr } = await scopeSoItemToDocument(sb.from('mfg_sales_order_items').select('item_code'), docNo, itemId).maybeSingle();
+    if (lineErr) return c.json({ error: 'downstream_check_failed', message: 'Could not read the line, so nothing was changed. Try again.' }, 409);
+    if (!line) return c.json({ error: 'not_found' }, 404);
+    const svc = await catalogSaysService(sb, String((line as { item_code?: string | null }).item_code ?? ''), co.companyId);
+    if (svc === null) return c.json({ error: 'downstream_check_failed', message: 'Could not read the product, so nothing was changed. Try again.' }, 409);
+    if (!svc) {
+      const open = await openProductLineAfterDo(sb, true, docNo, itemId, co.companyId, AFTER_DO_LINES_FORBIDDEN);
+      if (!open.ok) return c.json(open.body, open.status);
+      afterDoProduct = { target: open.target, doLine: open.doLine, siLines: open.siLines, siQtyOnDoLine: open.siQtyOnDoLine, companyId: co.companyId };
+    }
+  }
+
   /* DEV-32 — after the DO a permitted caller may edit a CHARGE line its one DO
      line carries; the DO line follows (shared/so-after-do-edit.ts). */
   let afterDoLine: { doLine: DoLineOfSoLine; target: AfterDoTarget; companyId: number } | null = null;
-  if (it.afterDo === true) {
+  if (it.afterDo === true && !afterDoProduct) {
     const co = requireActiveCompanyId(c); if (!co.ok) return c.json(co.refusal, 409);
     const open = await openAfterDo(sb, docNo, hasHouzsPerm(c, SO_EDIT_AFTER_DO_PERMISSION), co.companyId);
     if (!open.ok) return c.json(open.body, open.status);
@@ -7904,9 +7976,11 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
     if (target) afterDoLine = { doLine: doLines[0], target, companyId: co.companyId };
   }
 
-  /* A line a live DO / SI carries is frozen; its siblings are not (owner 2026-09-15, shared/so-line-freeze.ts). */
+  /* A line a live DO / SI carries is frozen; its siblings are not (owner 2026-09-15, shared/so-line-freeze.ts).
+     The DEV-32 charge-line path and the super-admin product path (above) are the
+     two keys that turn a frozen line back on. */
   const lineLock = soLineWriteRefusal(await readSoLineFreeze(sb, docNo), [itemId]);
-  if (lineLock && !(afterDoLine && lineLock.error === 'so_line_frozen')) return c.json(lineLock, 409);
+  if (lineLock && !((afterDoLine || afterDoProduct) && lineLock.error === 'so_line_frozen')) return c.json(lineLock, 409);
 
   /* TBC fill-in (Loo 2026-06-11) — self-scoped selling roles only touch
      their own SO. */
@@ -7919,9 +7993,21 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
   const leaseBlocked = await requireSoLineWriteLease(sb, docNo, c);
   if (leaseBlocked) return leaseBlocked;
 
+  /* Owner 2026-11-21 — a super admin may edit a non-frozen SERVICE / charge line
+     stuck on a processing-locked / completed order (on no DO, carries no PO), so
+     it skips the processing-date lock below the same way the after-DO paths do. */
+  let superAdminFeeWrite = false;
+  if (!afterDoLine && !afterDoProduct && it.afterDo !== true && hasHouzsPerm(c, SO_EDIT_LINES_AFTER_DO_PERMISSION)) {
+    const { data: ln, error: lnErr } = await scopeSoItemToDocument(sb.from('mfg_sales_order_items').select('item_code, item_group'), docNo, itemId).maybeSingle();
+    const l = lnErr ? null : (ln as { item_code?: string | null; item_group?: string | null } | null); // a failed read -> no bypass (the lock stands)
+    if (l) superAdminFeeWrite = isServiceLine({ itemGroup: l.item_group ?? null, itemCode: l.item_code ?? null });
+  }
+
   /* Owner 2026-06-12 — processing-date lock: no line EDIT once the processing
-     day has passed (the locked order is already PO'd to the supplier). */
-  if (!afterDoLine) {
+     day has passed (the locked order is already PO'd to the supplier). The
+     after-DO paths are PAST that lock by definition (the goods already shipped),
+     so they skip it; so does the super-admin fee-line edit above. */
+  if (!afterDoLine && !afterDoProduct && !superAdminFeeWrite) {
     const procLock = await soProcessingLockBlocked(sb, docNo);
     if (procLock) return c.json(procLock, 409);
   }
@@ -7945,6 +8031,18 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
     itemId,
   ).maybeSingle();
   if (!prev) return c.json({ error: 'not_found' }, 404);
+  /* A QUANTITY change on the super-admin product path is only unambiguous when
+     the ONE DO line carries the whole ordered qty and (if billed) the invoice
+     bills it in full; a split / part-delivered / part-invoiced line is refused.
+     Spec / price changes (qty unchanged) always flow — the DO qty is untouched. */
+  let afterDoSetSiQty: number | null = null;
+  if (afterDoProduct) {
+    const qtyChanging = it.qty !== undefined && Number(it.qty) !== Number(prev.qty);
+    if (qtyChanging && !afterDoQtyChangeAllowed(Number(prev.qty), Number(afterDoProduct.doLine.qty), afterDoProduct.siQtyOnDoLine, afterDoProduct.siLines.length)) {
+      return c.json(AFTER_DO_LINE_NOT_SETTLED, 409);
+    }
+    afterDoSetSiQty = qtyChanging ? Number(it.qty) : null;
+  }
   /* ACTIVE gate on a CHANGED code only (owner 2026-08-08) — a product swap is
      a NEW pick, so the replacement must be ACTIVE like every picker offer;
      re-sending the line's unchanged code (every editor does, on any edit)
@@ -8199,12 +8297,21 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
           surcharges via computeMfgLineCost). This is the source of truth.
        3. Client changed itemCode but recompute had no cost → re-snapshot
           mfg_products under the new code.
-       4. Otherwise keep the prior unit_cost_sen unchanged. */
+       4. Otherwise keep the prior unit_cost_sen unchanged.
+     Owner 2026-11-20 (lib/so-line-cost-edit.ts): a new colour, fabric, side,
+     price, discount or quantity keeps the line's cost (step 4) before step 2:
+     the order costs the prices of its order date, not today's. */
   let unitCost: number;
   const explicitCost = it.unitCostSen !== undefined ? Number(it.unitCostSen) : 0;
   const itemCodeChanged = it.itemCode !== undefined && it.itemCode !== prev.item_code;
+  const keepsCost = lineEditKeepsCost(
+    { itemCode: String(prev.item_code ?? ''), variants: canonicalizeVariants(prev.item_group, prev.variants as Record<string, unknown> | null), unitCostSen: senOrZero(prev.unit_cost_sen) },
+    { itemCode: itemCodeAfter, variants: canonicalizeVariants(itemGroupAfter, variantsAfter as Record<string, unknown> | null) },
+  );
   if (explicitCost > 0) {
     unitCost = explicitCost;
+  } else if (keepsCost) {
+    unitCost = senOrZero(prev.unit_cost_sen);
   } else if (recomputedPatch && recomputedPatch.unit_cost_sen > 0) {
     unitCost = recomputedPatch.unit_cost_sen;
   } else if (itemCodeChanged) {
@@ -8390,6 +8497,23 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
     return c.json({ ok: true, doNumber: afterDoLine.target.do_number, ...(put.ok ? {} : { doCopyFailed: [afterDoLine.target.do_number ?? afterDoLine.target.id], doCopyError: put.reason }) });
   }
 
+  /* Super-admin product edit — mirror the just-saved SO line onto its DO line,
+     re-sync stock, then re-derive every live invoice (lib/so-after-do-lines.ts). */
+  if (afterDoProduct) {
+    const deps: AfterDoLineDeps = { resyncInventoryForDo, restampDoActualCost, performedBy: user?.id ?? '' };
+    const r = await propagateLineEditAfterDo(
+      sb,
+      { companyId: afterDoProduct.companyId, actor: c.get('houzsUser') ?? null, soDocNo: docNo },
+      { soItemId: itemId, doLine: afterDoProduct.doLine, target: afterDoProduct.target, siLines: afterDoProduct.siLines, setSiQty: afterDoSetSiQty, deps },
+    );
+    return c.json({
+      ok: true,
+      doNumber: afterDoProduct.target.do_number,
+      ...(r.doCopyFailed.length ? { doCopyFailed: r.doCopyFailed } : {}),
+      ...(r.siCopyFailed.length ? { siCopyFailed: r.siCopyFailed } : {}),
+    });
+  }
+
   return c.json({ ok: true });
 });
 
@@ -8411,9 +8535,21 @@ mfgSalesOrders.delete('/:docNo/items/:itemId', async (c) => {
   const leaseBlocked = await requireSoLineWriteLease(sb, docNo, c);
   if (leaseBlocked) return leaseBlocked;
 
+  /* Owner 2026-11-21 — a super admin (scm.so.edit_lines_after_do) may remove a
+     non-frozen SERVICE / charge line that is stuck on a processing-locked or
+     completed order. The freeze gate above already proved it is on no Delivery
+     Order, so there is nothing downstream to follow — it is a plain SO delete. */
+  let superAdminFeeWrite = false;
+  if (hasHouzsPerm(c, SO_EDIT_LINES_AFTER_DO_PERMISSION)) {
+    const { data: ln, error: lnErr } = await scopeSoItemToDocument(sb.from('mfg_sales_order_items').select('item_code, item_group'), docNo, itemId).maybeSingle();
+    const l = lnErr ? null : (ln as { item_code?: string | null; item_group?: string | null } | null); // a failed read -> no bypass (the lock stands)
+    if (l) superAdminFeeWrite = isServiceLine({ itemGroup: l.item_group ?? null, itemCode: l.item_code ?? null });
+  }
+
   /* Owner 2026-06-12 — processing-date lock: no line DELETE once the
-     processing day has passed (the locked order is already PO'd). */
-  {
+     processing day has passed (the locked order is already PO'd). The
+     super-admin fee-line removal above is past it (the charge carries no PO). */
+  if (!superAdminFeeWrite) {
     const procLock = await soProcessingLockBlocked(sb, docNo);
     if (procLock) return c.json(procLock, 409);
   }

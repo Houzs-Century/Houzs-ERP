@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { siCreditNotesSen, siDepositAppliedSen, siOutstandingSen } from "../vendor/scm/lib/si-outstanding";
+import { siCreditNotesSen, siDepositAppliedSen, siOutstandingSen, siIsCancelled } from "../vendor/scm/lib/si-outstanding";
 import { lineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { useAuth } from "../auth/AuthContext";
@@ -295,7 +295,7 @@ const mrpState = (r: any): string => {
 };
 
 /** Invoice balance in sen. SI nets off its order's deposit; a PI row has no such key. */
-const balanceSen = (r: any): number => siOutstandingSen(
+const balanceSen = (r: any): number => siIsCancelled(pick(r, "status") as string | null) ? 0 : siOutstandingSen(
   Number(pick(r, "totalSen", "total_sen", "localTotalSen", "local_total_sen") ?? 0),
   Number(pick(r, "paidSen", "paid_sen") ?? 0),
   siDepositAppliedSen({ so_deposit_applied_sen: pick(r, "soDepositAppliedSen", "so_deposit_applied_sen") as number | null }), siCreditNotesSen({ credit_notes_sen: pick(r, "creditNotesSen", "credit_notes_sen") as number | null }));
@@ -884,7 +884,8 @@ export const FORM_SUPPLIERS: FormSchema = {
   idKey: "id",
   responseIdKeys: ["id"],
   fields: [
-    { key: "code", label: "Code", type: "text", required: true, placeholder: "e.g. SUP-001" },
+    { key: "codeKind", label: "Type", type: "select", options: [{ value: "400", label: "Supplier of goods (400)" }, { value: "405", label: "Other creditor (405)" }], placeholder: "Supplier of goods (400)" }, // owner 2026-11-20: Finance picks; a blank code is numbered by the server
+    { key: "code", label: "Code", type: "text", placeholder: "Leave blank to number it from the name", hint: "Blank: 400- or 405-, the name's first letter, the next number." },
     { key: "name", label: "Name", type: "text", required: true, placeholder: "Company name" },
     { key: "contactPerson", label: "Contact Person", type: "text" },
     { key: "phone", label: "Phone", type: "tel", placeholder: "01X-XXX XXXX" },

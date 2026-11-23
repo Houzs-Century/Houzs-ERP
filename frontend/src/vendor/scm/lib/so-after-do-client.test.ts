@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import {
-  afterDoAddFields, afterDoCopyProblem, afterDoEditFields, afterDoEditableLine, afterDoHeaderFields, soAfterDoMode, soEditOpensOnOverride,
+  afterDoAddFields, afterDoCopyProblem, afterDoEditFields, afterDoEditableLine, afterDoProductLineEditable, afterDoFeeLineEditable,
+  afterDoHeaderFields, soAfterDoMode, soEditOpensOnOverride,
   type AfterDoSave,
 } from './so-after-do-client';
 
@@ -61,6 +62,27 @@ describe('what each save carries', () => {
   });
 });
 
+describe('the super-admin line doors (owner 2026-11-21)', () => {
+  const svcFrozen = { downstream_frozen: true, item_code: 'SVC-TRANSPORT', item_group: 'service' };
+  const svcLoose = { downstream_frozen: false, item_code: 'TRANSPORTATION CHARGES', item_group: 'service' };
+  const prodFrozen = { downstream_frozen: true, item_code: 'BF-QUEEN', item_group: 'bedframe' };
+  const prodLoose = { downstream_frozen: false, item_code: 'BF-QUEEN', item_group: 'bedframe' };
+
+  test('product door: only a FROZEN product line (on a DO) reopens for qty/spec', () => {
+    expect(afterDoProductLineEditable(true, prodFrozen)).toBe(true);
+    expect(afterDoProductLineEditable(true, prodLoose)).toBe(false); // not on a DO
+    expect(afterDoProductLineEditable(true, svcFrozen)).toBe(false); // a charge line is the DEV-32 door
+    expect(afterDoProductLineEditable(false, prodFrozen)).toBe(false); // no key
+  });
+
+  test('fee door: only a NON-frozen charge line (on no DO) reopens for a plain edit/remove', () => {
+    expect(afterDoFeeLineEditable(true, svcLoose)).toBe(true);
+    expect(afterDoFeeLineEditable(true, svcFrozen)).toBe(false); // on a DO -> the DEV-32 door, not this
+    expect(afterDoFeeLineEditable(true, prodLoose)).toBe(false); // a product line, not a charge
+    expect(afterDoFeeLineEditable(false, svcLoose)).toBe(false); // no key
+  });
+});
+
 describe('the phone detail Edit button on a locked order (soEditOpensOnOverride)', () => {
   test('a DELIVERED order fully on its DO opens for the after-DO permission only', () => {
     const header = { status: 'DELIVERED', downstream_fully_frozen: true, after_do_targets: [DO] };
@@ -70,8 +92,13 @@ describe('the phone detail Edit button on a locked order (soEditOpensOnOverride)
   test('a status lock with lines still open opens (Override lifts it, as desktop isSoLocked)', () => {
     expect(soEditOpensOnOverride({ status: 'SHIPPED', downstream_fully_frozen: false }, { can: () => false, migrated: false })).toBe(true);
   });
-  test('never a migrated order, never a fully frozen order with every DO invoiced', () => {
+  test('never a migrated order; a fully frozen all-invoiced order opens only for the super-admin lines key', () => {
     expect(soEditOpensOnOverride({ status: 'SHIPPED', downstream_fully_frozen: false }, { can: canAll, migrated: true })).toBe(false);
-    expect(soEditOpensOnOverride({ status: 'DELIVERED', downstream_fully_frozen: true, after_do_targets: [INVOICED] }, { can: canAll, migrated: false })).toBe(false);
+    const allInvoiced = { status: 'DELIVERED', downstream_fully_frozen: true, after_do_targets: [INVOICED] };
+    // DEV-32 / price persona: an all-invoiced order stays shut on the phone.
+    const noLines = (k: string) => k !== 'scm.so.edit_lines_after_do';
+    expect(soEditOpensOnOverride(allInvoiced, { can: noLines, migrated: false })).toBe(false);
+    // Owner 2026-11-21 — a super admin still opens it to change a delivered line (the invoice follows).
+    expect(soEditOpensOnOverride(allInvoiced, { can: canAll, migrated: false })).toBe(true);
   });
 });

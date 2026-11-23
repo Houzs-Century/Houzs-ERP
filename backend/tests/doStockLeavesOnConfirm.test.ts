@@ -256,7 +256,10 @@ describe('the route implements the two rules the simulation models', () => {
     expect(fn).toContain(".eq('source_doc_type', 'DO')");
     expect(fn).toContain('.eq(\'source_doc_id\', deliveryOrderId)');
     expect(fn).toContain(".eq('movement_type', 'OUT')");
-    expect(fn).toMatch(/if \(\(existing \?\? 0\) > 0\) return done\(\[\]\);/);
+    expect(fn).toMatch(/if \(\(existing \?\? 0\) > 0\) \{/);
+    /* A returned ship (reverted to Draft) is retired and deducts again; a live one stays the no-op. */
+    expect(fn).toContain('await reshipAfterRevert(sb, deliveryOrderId)');
+    expect(fn).toMatch(/if \(reship === 'shipped'\) return done\(\[\]\);/);
   });
 
   it('there is exactly ONE deduction trigger on the status PATCH', () => {

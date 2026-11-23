@@ -89,6 +89,8 @@ describe('Stock Take detail — HC-0158 model delete', () => {
     fireEvent.click(screen.getByRole('button', { name: 'FENRIR-(Q)' }));
     expect(screen.getByText('HC-PO-009630')).toBeTruthy();
     expect(screen.getByText('1 without PO')).toBeTruthy();
+    // 55 POs on one unbreakable row pushed the Qty columns off screen.
+    expect(screen.getByTestId('source-po-note').style.flexWrap).toBe('wrap');
   });
 
   test('the header trash queues the whole model; Undo brings it back; Save Counts deletes each line', async () => {
@@ -112,5 +114,33 @@ describe('Stock Take detail — HC-0158 model delete', () => {
     expect(delLine).toHaveBeenCalledWith({ id: 'st-1', lineId: 'l1' });
     expect(delLine).toHaveBeenCalledWith({ id: 'st-1', lineId: 'l2' });
     expect(screen.getByLabelText('Counted qty for HB109NL')).toBeTruthy();
+  });
+});
+
+describe('Stock Take detail — HC-0248 column order', () => {
+  const headerLabels = () => screen.getAllByRole('columnheader').map((th) => th.textContent).filter(Boolean);
+  const cellIndexOfCountedBox = () => {
+    const box = screen.getByLabelText('Counted qty for HB109NL');
+    const cell = box.closest('td');
+    return cell ? Array.from(cell.parentElement?.children ?? []).indexOf(cell) : -1;
+  };
+
+  test('Alt+Left moves Counted Qty left in the header and in every row; Reset puts it back', () => {
+    window.localStorage.clear();
+    draw();
+    expect(headerLabels().slice(0, 5)).toEqual(['SKU', 'Name', 'Variant', 'System Qty', 'Counted Qty']);
+    expect(cellIndexOfCountedBox()).toBe(4);
+
+    const countedHeader = screen.getByRole('columnheader', { name: 'Counted Qty' });
+    fireEvent.keyDown(countedHeader, { key: 'ArrowLeft', altKey: true });
+    fireEvent.keyDown(countedHeader, { key: 'ArrowLeft', altKey: true });
+
+    expect(headerLabels().slice(0, 5)).toEqual(['SKU', 'Name', 'Counted Qty', 'Variant', 'System Qty']);
+    expect(cellIndexOfCountedBox()).toBe(2);
+    expect(JSON.parse(window.localStorage.getItem('stock-take-count-sheet-column-order') ?? '[]')[2]).toBe('countedQty');
+
+    fireEvent.click(screen.getByRole('button', { name: /Reset columns/ }));
+    expect(cellIndexOfCountedBox()).toBe(4);
+    expect(screen.queryByRole('button', { name: /Reset columns/ })).toBeNull();
   });
 });

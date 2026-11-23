@@ -119,7 +119,7 @@ export const assignmentTreatment = (a: OriginAssignment): AssignmentTreatment =>
       : "provenance";
 
 export const FLOATING_ASSIGNMENT_TITLE =
-  "Floating — live MRP allocation, recomputed on every view. It moves as demand moves and can disappear.";
+  "Assigned by MRP now - it moves if MRP gives the goods to another order. The SO it was raised for is the SO Doc No. column.";
 
 export const assignmentTitle = (a: OriginAssignment, sourceLinked?: boolean): string => {
   switch (assignmentTreatment(a)) {
@@ -139,8 +139,10 @@ export const assignmentTitle = (a: OriginAssignment, sourceLinked?: boolean): st
 
 export const assignmentTone = (a: OriginAssignment): string => {
   switch (assignmentTreatment(a)) {
+    /* Owner 2026-11-19: the Assigned SO IS MRP's record - a plain chip, no dash
+       and no "~" that read as "not sure". */
     case "floating":
-      return "border border-dashed border-border text-ink-secondary";
+      return "border border-border-subtle bg-surface-2 text-ink";
     case "anchored":
       return "border border-border-subtle bg-surface-2 text-accent-ink";
     default:
@@ -163,6 +165,10 @@ export const provenanceExtras = (
   shownSoDocNos: Iterable<string>,
 ): OriginAssignment[] => {
   const seen = new Set(shownSoDocNos);
+  /* Owner 2026-11-19 ("看到两个？"): beside MRP's order a second, raised-for chip
+     read as the PO going to two orders. The raised-for SO is the SO Doc No.
+     column; it shows here only when nothing else is assigned. */
+  if (seen.size > 0) return [];
   return (provenance ?? [])
     .filter((p) => p.soDocNo && !seen.has(p.soDocNo))
     .map((p) => ({ ...p, locked: true, source: "linked" as const }));
@@ -453,12 +459,12 @@ function PairedSoCell({
                 className={cn(chipBase, soTone, "hover:border-accent hover:text-accent")}
               >
                 {r.soDocNo}
-                {floating && <span className="text-ink-muted">{" ~"}</span>}
+                
               </button>
             ) : (
               <span title={soTitle} className={cn(chipBase, soTone)}>
                 {r.soDocNo}
-                {floating && <span className="text-ink-muted">{" ~"}</span>}
+                
               </span>
             )}
             <span className="whitespace-nowrap font-mono text-[10.5px] text-ink-muted">
@@ -705,12 +711,12 @@ export function DocumentLinesExpansion({
                           className={cn(base, tone, "hover:border-accent hover:text-accent")}
                         >
                           {a.soDocNo}
-                          {floating && <span className="text-ink-muted">{" ~"}</span>}
+                          
                         </button>
                       ) : (
                         <span key={a.soDocNo} title={title} className={cn(base, tone)}>
                           {a.soDocNo}
-                          {floating && <span className="text-ink-muted">{" ~"}</span>}
+                          
                         </span>
                       );
                     })
@@ -881,7 +887,7 @@ export function AssignedSoCell({
     const label = (
       <>
         {a.soDocNo}
-        {assignmentTreatment(a) === "floating" && <span className="text-ink-muted">{" ~"}</span>}
+        
       </>
     );
     const title = provSlot ? assignmentTitle(a) : assignmentTitle(a, sourceLinked);

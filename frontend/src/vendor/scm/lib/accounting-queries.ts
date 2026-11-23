@@ -294,6 +294,8 @@ export type ChartRow = {
   pmsRow?: string | null;
   /** The Logistics P&L's row this account feeds (owner 2026-10-29: picked here, not on the report). */
   logisticsRow?: string | null;
+  /** The Department P&L's department and row (owner 2026-11-19): G&A, or an Operation row in a region. */
+  departmentRow?: string | null;
   perCompany: Partial<Record<number, { active: boolean }>>;
 };
 /** pmsRows: the PMS event page's rows an account can fill; logisticsRows: the Logistics
@@ -302,6 +304,7 @@ export const useChartUnion = () => baseQuery<{
   companies: ChartCompany[]; sections: AccountSection[]; accounts: ChartRow[];
   pmsRows?: Array<{ row: string; label: string }>;
   logisticsRows?: Array<{ row: string; label: string; type: ChartRow['type'] }>;
+  departmentRows?: Array<{ row: string; label: string }>;
 }>(
   ['chart-union'], `/accounting/chart`,
 );
@@ -384,7 +387,7 @@ export const useChartRename = () => {
 export const useChartUpdate = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { code: string; name?: string; accountType?: string; accMoney?: boolean; parentCode?: string | null; section?: string; needsEvent?: boolean; pmsRow?: string | null; logisticsRow?: string | null }) =>
+    mutationFn: (body: { code: string; name?: string; accountType?: string; accMoney?: boolean; parentCode?: string | null; section?: string; needsEvent?: boolean; pmsRow?: string | null; logisticsRow?: string | null; departmentRow?: string | null }) =>
       authedFetch<{ ok: boolean; companies: number }>(
         `/accounting/chart/update`, { method: 'PUT', body: JSON.stringify(body) },
       ),
@@ -487,13 +490,14 @@ export const useUpdateDebtor = () => {
 export const useCreateDebtorBill = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ debtorId, ...body }: {
-      debtorId: string; billDate?: string; notes?: string;
+    /* `idempotencyKey`: one per opened form (lib/idempotency.ts), so a double press posts one bill. */
+    mutationFn: ({ debtorId, idempotencyKey, ...body }: {
+      debtorId: string; idempotencyKey: string | null; billDate?: string; notes?: string;
       lines: Array<{ description?: string; creditAccountCode?: string; amountSen: number }>;
       /** 'DN': a debit note to the debtor — a bill of its own kind, series {co}ODN- (2026-10-28). */
       docKind?: 'INV' | 'DN';
     }) => authedFetch<{ ok: boolean; bill: { id?: string; billNumber: string; totalSen: number } }>(
-      `/other-debtors/${debtorId}/bills`, { method: 'POST', body: JSON.stringify(body) },
+      `/other-debtors/${debtorId}/bills`, idempotentInit(idempotencyKey ?? undefined, { method: 'POST', body: JSON.stringify(body) }),
     ),
     onSuccess: () => invalidateDebtors(qc),
   });

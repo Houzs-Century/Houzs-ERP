@@ -684,122 +684,184 @@ export async function getProjectDetail(env: Env, id: number, companyId?: number)
     .first<any>();
   if (!project) return null;
 
-  const finance = await env.DB.prepare(
-    `SELECT * FROM project_finance WHERE project_id = ?`
-  )
-    .bind(id)
-    .first<any>();
-
-  const checklist = await env.DB.prepare(
-    `SELECT c.*, u.name as owner_name, uc.name as completed_by_name
-       FROM project_checklist c
-       LEFT JOIN users u  ON u.id  = c.owner_user_id
-       LEFT JOIN users uc ON uc.id = c.completed_by
-      WHERE c.project_id = ?
-      ORDER BY c.seq, c.id`
-  )
-    .bind(id)
-    .all();
-
-  // Sections (mig 050) — ordered by sort_order. Tasks reference these
-  // by section_id; tasks with section_id IS NULL render as
-  // "Uncategorised" on the frontend.
-  const sections = await env.DB.prepare(
-    `SELECT id, name, sort_order, display_mode, created_at
-       FROM project_checklist_sections
-      WHERE project_id = ?
-      ORDER BY sort_order, id`
-  )
-    .bind(id)
-    .all();
-
-  // Per-task attachments (mig 050) — replaces the project-level
-  // Attachments panel. Attached to tasks by item_id.
-  const checklistItemIdsRaw = (checklist.results ?? []).map((r: any) => r.id);
-  let taskAttachments: any[] = [];
-  if (checklistItemIdsRaw.length) {
-    const placeholders = checklistItemIdsRaw.map(() => "?").join(",");
-    const a = await env.DB.prepare(
-      `SELECT att.*, u.name as uploader_name
-         FROM project_checklist_attachments att
-         LEFT JOIN users u ON u.id = att.uploaded_by
-        WHERE att.item_id IN (${placeholders}) AND att.archived_at IS NULL
-        ORDER BY att.uploaded_at DESC, att.id DESC`
+  /* Every read below needs only the project id, so they go to the database
+     together: one after another they were ~15 round trips per page open. */
+  const [finance, checklist, sections, attachments, activity, team, trips,
+    defects, salesReports, stockTransfers, salesAttendees, ledgerLines] = await Promise.all([
+    env.DB.prepare(
+      `SELECT * FROM project_finance WHERE project_id = ?`
     )
-      .bind(...checklistItemIdsRaw)
-      .all();
-    taskAttachments = a.results ?? [];
-  }
-
-  // Per-attachment ACTION TIMELINE (owner 2026-07-29): append-only Ongoing /
-  // Done log the purchaser + BD stamp on defect-list uploads. Fetched for the
-  // whole project in one query; the UI groups by attachment_id.
-  let attachmentActions: any[] = [];
-  if (taskAttachments.length) {
-    const attIds = taskAttachments.map((a: any) => a.id);
-    const ph = attIds.map(() => "?").join(",");
-    const acts = await env.DB.prepare(
+      .bind(id)
+      .first<any>(),
+    env.DB.prepare(
+      `SELECT c.*, u.name as owner_name, uc.name as completed_by_name
+         FROM project_checklist c
+         LEFT JOIN users u  ON u.id  = c.owner_user_id
+         LEFT JOIN users uc ON uc.id = c.completed_by
+        WHERE c.project_id = ?
+        ORDER BY c.seq, c.id`
+    )
+      .bind(id)
+      .all(),
+    env.DB.prepare(
+      `SELECT id, name, sort_order, display_mode, created_at
+         FROM project_checklist_sections
+        WHERE project_id = ?
+        ORDER BY sort_order, id`
+    )
+      .bind(id)
+      .all(),
+    // Project-level attachments: legacy (panel removed in mig 050), kept so an old client doesn't 500.
+    env.DB.prepare(
+      `SELECT a.*, u.name as uploader_name
+         FROM project_attachments a
+         LEFT JOIN users u ON u.id = a.uploaded_by
+        WHERE a.project_id = ? AND a.archived_at IS NULL
+        ORDER BY a.created_at DESC`
+    )
+      .bind(id)
+      .all(),
+    env.DB.prepare(
       `SELECT act.*, u.name as user_name
-         FROM project_checklist_attachment_actions act
+         FROM project_activity act
          LEFT JOIN users u ON u.id = act.user_id
-        WHERE act.attachment_id IN (${ph})
-        ORDER BY act.id ASC`
+        WHERE act.project_id = ? AND act.archived_at IS NULL
+        ORDER BY act.created_at DESC
+        LIMIT 100`
     )
-      .bind(...attIds)
-      .all();
-    attachmentActions = acts.results ?? [];
-  }
+      .bind(id)
+      .all(),
+    env.DB.prepare(
+      `SELECT t.*, u.name as user_name, u.email as user_email
+         FROM project_team t
+         LEFT JOIN users u ON u.id = t.user_id
+        WHERE t.project_id = ?
+        ORDER BY t.role, u.name`
+    )
+      .bind(id)
+      .all(),
+    env.DB.prepare(
+      `SELECT id,
+              trip_no  as code,
+              status,
+              trip_date as scheduled_date,
+              trip_type,
+              notes    as description
+         FROM trips
+        WHERE project_id = ?
+        ORDER BY trip_date DESC, id DESC
+        LIMIT 50`
+    )
+      .bind(id)
+      .all(),
+    env.DB.prepare(
+      `SELECT d.*, u.name as reported_by_name, a.assr_no as linked_assr_no
+         FROM project_defects d
+         LEFT JOIN users u ON u.id = d.reported_by
+         LEFT JOIN assr_cases a ON a.id = d.linked_assr_id
+        WHERE d.project_id = ? AND d.archived_at IS NULL
+        ORDER BY d.phase, d.id DESC`
+    )
+      .bind(id)
+      .all(),
+    env.DB.prepare(
+      `SELECT sr.*, u.name as uploaded_by_name
+         FROM project_sales_reports sr
+         LEFT JOIN users u ON u.id = sr.uploaded_by
+        WHERE sr.project_id = ? AND sr.archived_at IS NULL
+        ORDER BY sr.created_at DESC`
+    )
+      .bind(id)
+      .all(),
+    env.DB.prepare(
+      `SELECT t.*, u.name as created_by_name, uc.name as confirmed_by_name
+         FROM project_stock_transfers t
+         LEFT JOIN users u ON u.id = t.created_by
+         LEFT JOIN users uc ON uc.id = t.confirmed_by
+        WHERE t.project_id = ? AND t.archived_at IS NULL
+        ORDER BY t.direction, t.transferred_at DESC, t.id DESC`
+    )
+      .bind(id)
+      .all(),
+    env.DB.prepare(
+      `SELECT a.sales_rep_id, a.created_at,
+              r.code      as rep_code,
+              r.name      as rep_name,
+              r.phone     as rep_phone,
+              r.user_id   as rep_user_id,
+              u.name      as user_name
+         FROM project_sales_attendees a
+         LEFT JOIN sales_reps r ON r.id = a.sales_rep_id
+         LEFT JOIN users u      ON u.id = r.user_id
+        WHERE a.project_id = ?
+        ORDER BY LOWER(r.name), r.code`
+    )
+      .bind(id)
+      .all(),
+    listLedgerLines(env, id),
+  ]);
 
-  // Project-level attachments — kept for legacy data. The UI panel was
-  // removed in mig 050; this stays in the response so any old client
-  // doesn't 500 on a missing field.
-  const attachments = await env.DB.prepare(
-    `SELECT a.*, u.name as uploader_name
-       FROM project_attachments a
-       LEFT JOIN users u ON u.id = a.uploaded_by
-      WHERE a.project_id = ? AND a.archived_at IS NULL
-      ORDER BY a.created_at DESC`
-  )
-    .bind(id)
-    .all();
+  /* Three independent chains, run together: the task attachments and their
+     action log, the checklist comments, and the finance ledger -> P&L. */
+  const checklistItemIds = (checklist.results ?? []).map((r: any) => r.id);
+  const inList = (ids: unknown[]) => ids.map(() => "?").join(",");
+  const [{ taskAttachments, attachmentActions }, comments, { financeLines, books, pnl }] = await Promise.all([
+    // Per-task attachments (mig 050), then each one's Ongoing / Done action
+    // timeline (owner 2026-07-29) - the UI groups the actions by attachment_id.
+    (async () => {
+      const none: any[] = [];
+      if (!checklistItemIds.length) return { taskAttachments: none, attachmentActions: none };
+      const att = await env.DB.prepare(
+        `SELECT att.*, u.name as uploader_name
+           FROM project_checklist_attachments att
+           LEFT JOIN users u ON u.id = att.uploaded_by
+          WHERE att.item_id IN (${inList(checklistItemIds)}) AND att.archived_at IS NULL
+          ORDER BY att.uploaded_at DESC, att.id DESC`
+      )
+        .bind(...checklistItemIds)
+        .all();
+      const rows = att.results ?? none;
+      if (!rows.length) return { taskAttachments: rows, attachmentActions: none };
+      const attIds = rows.map((r: any) => r.id);
+      const acts = await env.DB.prepare(
+        `SELECT act.*, u.name as user_name
+           FROM project_checklist_attachment_actions act
+           LEFT JOIN users u ON u.id = act.user_id
+          WHERE act.attachment_id IN (${inList(attIds)})
+          ORDER BY act.id ASC`
+      )
+        .bind(...attIds)
+        .all();
+      return { taskAttachments: rows, attachmentActions: acts.results ?? none };
+    })(),
+    // Checklist comments - attached to the item rows client-side via item_id.
+    (async () => {
+      if (!checklistItemIds.length) return [];
+      const c = await env.DB.prepare(
+        `SELECT cc.*, u.name as user_name
+           FROM project_checklist_comments cc
+           LEFT JOIN users u ON u.id = cc.user_id
+          WHERE cc.item_id IN (${inList(checklistItemIds)})
+          ORDER BY cc.created_at ASC`
+      )
+        .bind(...checklistItemIds)
+        .all();
+      return c.results ?? [];
+    })(),
+    // Finance ledger lines, with the books and the sales entries in
+    // (services/projectFinanceLines.ts), then the two P&Ls (owner 2026-10-16).
+    (async () => {
+      const fl = await eventFinanceLines(
+        env, id, project.company_id ?? companyId ?? null, ledgerLines, LEDGER_COST_CATEGORIES);
+      const p = await loadEventPnl(env, { id, brand: project.brand, companyId: project.company_id ?? companyId ?? null },
+        fl.financeLines, fl.books.rows, (finance as { total_sales?: number | null } | null)?.total_sales ?? null);
+      return { ...fl, pnl: p };
+    })(),
+  ]);
+  /* The P&L's three-layer forecast and the last event's Expo Map (eventForecastLoad.ts). */
+  const layered = await loadDetailLayers(env, { ...project, id, company_id: project.company_id ?? companyId ?? null }, pnl, books.rows,
+    { checklist: checklist.results, sections: sections.results, attachments: taskAttachments }, LEDGER_COST_CATEGORIES);
 
-  const activity = await env.DB.prepare(
-    `SELECT act.*, u.name as user_name
-       FROM project_activity act
-       LEFT JOIN users u ON u.id = act.user_id
-      WHERE act.project_id = ? AND act.archived_at IS NULL
-      ORDER BY act.created_at DESC
-      LIMIT 100`
-  )
-    .bind(id)
-    .all();
-
-  const team = await env.DB.prepare(
-    `SELECT t.*, u.name as user_name, u.email as user_email
-       FROM project_team t
-       LEFT JOIN users u ON u.id = t.user_id
-      WHERE t.project_id = ?
-      ORDER BY t.role, u.name`
-  )
-    .bind(id)
-    .all();
-
-  // Linked trips (project_id FK on trips). trips uses trip_no + trip_date
-  // + notes — normalize to {code, scheduled_date, description} for the UI.
-  const trips = await env.DB.prepare(
-    `SELECT id,
-            trip_no  as code,
-            status,
-            trip_date as scheduled_date,
-            trip_type,
-            notes    as description
-       FROM trips
-      WHERE project_id = ?
-      ORDER BY trip_date DESC, id DESC
-      LIMIT 50`
-  )
-    .bind(id)
-    .all();
   // Progress: % of non-NA items done or approved. Trip & finance excluded.
   const counts = {
     total: (checklist.results ?? []).length,
@@ -818,66 +880,6 @@ export async function getProjectDetail(env: Env, id: number, companyId?: number)
       duration_days = Math.round((e.getTime() - s.getTime()) / 86400000) + 1;
     }
   }
-
-  // Defects — group by phase in the UI. Service returns both phases flat.
-  const defects = await env.DB.prepare(
-    `SELECT d.*, u.name as reported_by_name, a.assr_no as linked_assr_no
-       FROM project_defects d
-       LEFT JOIN users u ON u.id = d.reported_by
-       LEFT JOIN assr_cases a ON a.id = d.linked_assr_id
-      WHERE d.project_id = ? AND d.archived_at IS NULL
-      ORDER BY d.phase, d.id DESC`
-  )
-    .bind(id)
-    .all();
-
-  const salesReports = await env.DB.prepare(
-    `SELECT sr.*, u.name as uploaded_by_name
-       FROM project_sales_reports sr
-       LEFT JOIN users u ON u.id = sr.uploaded_by
-      WHERE sr.project_id = ? AND sr.archived_at IS NULL
-      ORDER BY sr.created_at DESC`
-  )
-    .bind(id)
-    .all();
-
-  // Checklist comments — attached to the item rows client-side via item_id.
-  const checklistItemIds = (checklist.results ?? []).map((r: any) => r.id);
-  let comments: any[] = [];
-  if (checklistItemIds.length) {
-    const placeholders = checklistItemIds.map(() => "?").join(",");
-    const c = await env.DB.prepare(
-      `SELECT cc.*, u.name as user_name
-         FROM project_checklist_comments cc
-         LEFT JOIN users u ON u.id = cc.user_id
-        WHERE cc.item_id IN (${placeholders})
-        ORDER BY cc.created_at ASC`
-    )
-      .bind(...checklistItemIds)
-      .all();
-    comments = c.results ?? [];
-  }
-
-  // Finance ledger lines, with the books and the sales entries in (services/projectFinanceLines.ts).
-  const { financeLines, books } = await eventFinanceLines(
-    env, id, project.company_id ?? companyId ?? null, await listLedgerLines(env, id), LEDGER_COST_CATEGORIES);
-  /* The two P&Ls (owner 2026-10-16), then their three-layer forecast and the last event's Expo Map (eventForecastLoad.ts). */
-  const pnl = await loadEventPnl(env, { id, brand: project.brand, companyId: project.company_id ?? companyId ?? null },
-    financeLines, books.rows, (finance as { total_sales?: number | null } | null)?.total_sales ?? null);
-  const layered = await loadDetailLayers(env, { ...project, id, company_id: project.company_id ?? companyId ?? null }, pnl, books.rows,
-    { checklist: checklist.results, sections: sections.results, attachments: taskAttachments }, LEDGER_COST_CATEGORIES);
-
-  // Stock transfers — OUT + RETURN records, confirmation-tracked.
-  const stockTransfers = await env.DB.prepare(
-    `SELECT t.*, u.name as created_by_name, uc.name as confirmed_by_name
-       FROM project_stock_transfers t
-       LEFT JOIN users u ON u.id = t.created_by
-       LEFT JOIN users uc ON uc.id = t.confirmed_by
-      WHERE t.project_id = ? AND t.archived_at IS NULL
-      ORDER BY t.direction, t.transferred_at DESC, t.id DESC`
-  )
-    .bind(id)
-    .all();
 
   // Stage progress (mig 050) — one entry per section with done /
   // total / na counts. The UI replaces the percentage bar with this.
@@ -924,25 +926,6 @@ export async function getProjectDetail(env: Env, id: number, companyId?: number)
       complete: denom > 0 && done === denom ? 1 : 0,
     });
   }
-
-  // Sales attendees (mig 087) — reps physically attending the project.
-  // Reading from the sales_reps master so we can show code + name + the
-  // user-name fallback when the rep has a workspace login.
-  const salesAttendees = await env.DB.prepare(
-    `SELECT a.sales_rep_id, a.created_at,
-            r.code      as rep_code,
-            r.name      as rep_name,
-            r.phone     as rep_phone,
-            r.user_id   as rep_user_id,
-            u.name      as user_name
-       FROM project_sales_attendees a
-       LEFT JOIN sales_reps r ON r.id = a.sales_rep_id
-       LEFT JOIN users u      ON u.id = r.user_id
-      WHERE a.project_id = ?
-      ORDER BY LOWER(r.name), r.code`
-  )
-    .bind(id)
-    .all();
 
   return {
     project: { ...project, progress_pct, duration_days },
@@ -1537,17 +1520,14 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
                                      AND (fp.status = 'done' OR fp.review_status = 'approved'))))`
     );
     pendingBinds.push(dueToday);
-    // Defect ACTIONING (owner 2026-07-29; two-stage 2026-08-07): a defect-list
-    // file reaches the PURCHASER only once the Storekeeper Supervisor (Shukor)
-    // has ESCALATED it — its LATEST timeline entry is 'replace'. He resolves
-    // clean-able ones himself with 'done' (they never reach here); the purchaser
-    // then closes a replace with 'done'. Timeline-gated to events that ended
-    // within the last 30 days so the historical backlog does not flood the lane.
-    // The defect ITEM must still be open: once it is ticked done/na the
-    // purchaser is finished, so the project leaves this lane even though the
-    // attachment's last action stays 'replace' on record (owner 2026-10-21 —
-    // Sim saw two done HOMEDEC events linger here, chip falling back to a
-    // BD/owner section). One bind (defectSince).
+    // Defect ACTIONING (owner 2026-07-29; five-state 2026-11-20): a defect-list
+    // file reaches the PURCHASER (Farra) once the reviewer ESCALATED it ('exchange'
+    // / 'service', legacy 'replace'), and stays while she works it ('in_progress');
+    // she clears it 'done' (a reviewer cleans with 'done_clean', never here).
+    // Timeline-gated to events ended within 30 days so the backlog does not flood.
+    // The defect ITEM must still be open: once ticked done/na the purchaser is
+    // finished, so the project leaves this lane even though the attachment's last
+    // action stays escalated on record (owner 2026-10-21). One bind (defectSince).
     const defectSince = (() => {
       const d = new Date(`${dueToday}T00:00:00Z`);
       d.setUTCDate(d.getUTCDate() - 30);
@@ -1564,7 +1544,8 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
                   AND COALESCE((SELECT act.status
                                   FROM project_checklist_attachment_actions act
                                  WHERE act.attachment_id = da.id
-                                 ORDER BY act.id DESC LIMIT 1), '') = 'replace'))`
+                                 ORDER BY act.id DESC LIMIT 1), '')
+                      IN ('replace', 'exchange', 'service', 'in_progress')))`
     );
     pendingBinds.push(defectSince);
   } else if (f.pending_label) {
@@ -1579,10 +1560,11 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
     pendingBinds.push(`%${f.pending_label}%`, dueToday);
   }
   if (f.pending_defect_review) {
-    // Defect clean-or-replace REVIEW (owner 2026-08-07): the Storekeeper
-    // Supervisor's lane (Shukor). A live defect-list attachment whose LATEST
-    // timeline entry is neither 'done' (he cleaned it) nor 'replace' (he
-    // escalated it to the purchaser) is a fresh upload awaiting his triage.
+    // Defect triage REVIEW (owner 2026-08-07): the reviewer's lane (Shukor /
+    // Nancy). A live defect-list attachment whose LATEST timeline entry is a fresh
+    // upload (no action yet, or legacy 'ongoing') awaits triage — it has NOT been
+    // cleaned ('done_clean'/'done'), escalated ('exchange'/'service'/legacy
+    // 'replace'), or picked up by the purchaser ('in_progress').
     // Same 30-day window as the purchaser arm so the pre-feature backlog stays
     // out. One bind (reviewSince).
     const reviewSince = (() => {
@@ -1609,7 +1591,8 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
                   AND COALESCE((SELECT act.status
                                   FROM project_checklist_attachment_actions act
                                  WHERE act.attachment_id = da.id
-                                 ORDER BY act.id DESC LIMIT 1), '') NOT IN ('done', 'replace')))`
+                                 ORDER BY act.id DESC LIMIT 1), '')
+                      NOT IN ('done', 'done_clean', 'exchange', 'service', 'in_progress', 'replace')))`
     );
     pendingBinds.push(reviewSince, ...stateBinds);
   }

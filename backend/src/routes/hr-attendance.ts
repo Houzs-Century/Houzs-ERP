@@ -18,14 +18,15 @@ import type { Context } from "hono";
 import { and, asc, eq } from "drizzle-orm";
 import type { Env } from "../types";
 import { getDb } from "../db/client";
-import { departments, hr_attendance, hr_employees, hr_punch_sites, hr_working_hours } from "../db/schema";
+import { departments, hr_attendance, hr_attendance_settings, hr_employees, hr_punch_sites, hr_working_hours } from "../db/schema";
 import { requireActiveCompanyId } from "../scm/lib/companyScope";
 import { todayMyt } from "../scm/lib/my-time";
 import { hasPermission } from "../services/permissions";
 import { audit } from "../services/audit";
 import { ATTENDANCE_STATUSES, instantOnWorkDate, type AttendanceStatus } from "../scm/shared/hr-attendance";
 import { asDate, attendanceView, correctionTimes, type AttendanceRow } from "./lib/hr-attendance-view";
-import { loadSites, rulesResolver } from "./lib/hr-attendance-store";
+import { loadAttendanceSettings, loadSites, rulesResolver } from "./lib/hr-attendance-store";
+import { shiftRulesResolver } from "./lib/hr-shift-store";
 import { applyDayDock, closeForgottenAndSync, syncDayFromPunch } from "./lib/hr-labor-store";
 
 type Ctx = Context<{ Bindings: Env }>;
@@ -51,7 +52,7 @@ hrAttendance.get("/attendance", async (c) => {
   const db = getDb(c.env);
   const now = new Date();
   await closeForgottenAndSync(db, co.companyId, null, now);
-  const [rows, employees, rulesFor, sites] = await Promise.all([
+  const [rows, employees, rulesFor, sites, shiftRes] = await Promise.all([
     db.select().from(hr_attendance).where(and(eq(hr_attendance.company_id, co.companyId), eq(hr_attendance.work_date, date))),
     db
       .select({
@@ -69,8 +70,11 @@ hrAttendance.get("/attendance", async (c) => {
       .orderBy(asc(hr_employees.emp_no)),
     rulesResolver(db, co.companyId),
     loadSites(db, co.companyId),
+    shiftRulesResolver(db, co.companyId, date, date),
   ]);
   const byEmployee = new Map(rows.map((r) => [r.employee_id, r]));
+  // Header shows the global shift as a reference; each row is judged by that
+  // employee's own group shift (and delivery-day override).
   const rules = rulesFor(date);
   const list = employees
     .filter((e) => e.status === "ACTIVE" || byEmployee.has(e.id))
@@ -78,7 +82,7 @@ hrAttendance.get("/attendance", async (c) => {
       const r = byEmployee.get(e.id);
       return {
         employee: { id: e.id, empNo: e.emp_no, name: e.name, position: e.position ?? "", department: e.department ?? null, linked: e.user_id != null, status: e.status },
-        day: r ? attendanceView(r as AttendanceRow, rules, sites.names, now) : null,
+        day: r ? attendanceView(r as AttendanceRow, shiftRes.rulesFor(date, e.id), sites.names, now) : null,
       };
     });
   return c.json({
@@ -215,8 +219,44 @@ function parseSite(raw: unknown): SiteInput | string {
 hrAttendance.get("/punch-sites", async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-  const rows = await getDb(c.env).select().from(hr_punch_sites).where(eq(hr_punch_sites.company_id, co.companyId)).orderBy(asc(hr_punch_sites.name));
-  return c.json({ sites: rows.map((r) => ({ id: r.id, name: r.name, lat: r.lat, lng: r.lng, radiusM: r.radius_m, active: r.active })), canManage: canManage(c) });
+  const db = getDb(c.env);
+  const [rows, settings] = await Promise.all([
+    db.select().from(hr_punch_sites).where(eq(hr_punch_sites.company_id, co.companyId)).orderBy(asc(hr_punch_sites.name)),
+    loadAttendanceSettings(db, co.companyId),
+  ]);
+  return c.json({
+    sites: rows.map((r) => ({ id: r.id, name: r.name, lat: r.lat, lng: r.lng, radiusM: r.radius_m, active: r.active })),
+    settings,
+    canManage: canManage(c),
+  });
+});
+
+/* The two punch gates (HC-0125). When on, a phone punch that lacks a selfie /
+   is not within a site is refused (see routes/attendance.ts). */
+hrAttendance.put("/punch-settings", async (c) => {
+  if (!canManage(c)) return c.json(FORBIDDEN, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+  const requireSelfie = body.requireSelfie === true;
+  const requireOnSite = body.requireOnSite === true;
+  const by = c.get("user").id;
+  const now = new Date().toISOString();
+  await getDb(c.env)
+    .insert(hr_attendance_settings)
+    .values({ company_id: co.companyId, require_selfie: requireSelfie, require_on_site: requireOnSite, updated_by: by, updated_at: now })
+    .onConflictDoUpdate({
+      target: hr_attendance_settings.company_id,
+      set: { require_selfie: requireSelfie, require_on_site: requireOnSite, updated_by: by, updated_at: now },
+    });
+  await audit(c, {
+    action: "hr.punch_settings.update",
+    entityType: "hr_attendance_settings",
+    entityId: co.companyId,
+    summary: `Punch gates: selfie ${requireSelfie ? "on" : "off"}, on-site ${requireOnSite ? "on" : "off"}`,
+    meta: { requireSelfie, requireOnSite },
+  });
+  return c.json({ ok: true, settings: { requireSelfie, requireOnSite } });
 });
 
 hrAttendance.post("/punch-sites", async (c) => {

@@ -18,9 +18,11 @@
 //     scm.stock_take.supervise; legacy takes without an assignee keep the old
 //     "any area-access caller" behaviour so history stays operable.
 //   • Variances beyond the configured threshold (scm/shared/
-//     stock-take-threshold.ts — default 5 units or RM500 per line) need the
-//     supervise permission too; the refusal names the SKUs and reverts the
-//     status flip exactly like the R3 cost_required path.
+//     stock-take-threshold.ts — default 5 units or RM500 per line) need a
+//     supervisor. Owner 2026-11-20: a non-supervisor's over-threshold post no
+//     longer REFUSES — it SUBMITS (OPEN → PENDING_APPROVAL, no stock moved),
+//     naming the SKUs, and a supervisor /approve books it (→ POSTED) or /reject
+//     returns it (→ OPEN). A supervisor still posts straight through.
 //   • Every counted CELL records WHO and WHEN (counted_by / counted_at,
 //     stamped from the caller's REAL scm.staff uuid via the mig-0066 bridge).
 //   • BLIND counts: with take.blind set, system_qty / variance are stripped
@@ -35,7 +37,10 @@
 //   GET    /stock-takes/:id            — header + lines + warehouse name
 //   POST   /stock-takes                — create OPEN + snapshot scope
 //   PATCH  /stock-takes/:id/lines      — bulk update counted_qty (OPEN only)
-//   PATCH  /stock-takes/:id/post       — OPEN → POSTED (writes ADJUSTMENT movements)
+//   PATCH  /stock-takes/:id/post       — OPEN → POSTED (writes ADJUSTMENT movements),
+//                                         or OPEN → PENDING_APPROVAL (over-limit, non-supervisor)
+//   PATCH  /stock-takes/:id/approve    — PENDING_APPROVAL → POSTED (supervisor books it)
+//   PATCH  /stock-takes/:id/reject     — PENDING_APPROVAL → OPEN (supervisor returns it)
 //   PATCH  /stock-takes/:id/cancel     — OPEN → CANCELLED
 //   PATCH  /stock-takes/:id/reverse    — POSTED → CANCELLED (undo: reverses the ADJUSTMENT movements)
 //   DELETE /stock-takes/:id            — OPEN only
@@ -45,7 +50,7 @@ import { yymmFor } from '../../services/documentRefs';
 import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
-import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
+import { mintMonthlyDocNo, insertWithDocNoRetry, docMonthTag } from '../lib/doc-no';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
@@ -73,12 +78,12 @@ const SUPERVISE_PERM = 'scm.stock_take.supervise';
 const HEADER =
   'id, take_no, status, warehouse_id, scope_type, scope_value, take_date, ' +
   'notes, posted_at, cancelled_at, created_at, created_by, assignee_staff_id, blind, ' +
-  'assignee_staff_ids, nonzero_only';
+  'assignee_staff_ids, nonzero_only, submitted_at, submitted_by';
 const LINE =
   'id, stock_take_id, item_code, product_name, variant_key, variant_label, ' +
   'system_qty, counted_qty, variance, notes, created_at, counted_by, counted_at, added_on_count, rack_id';
 
-const VALID_STATUS = new Set(['OPEN', 'POSTED', 'CANCELLED']);
+const VALID_STATUS = new Set(['OPEN', 'PENDING_APPROVAL', 'POSTED', 'CANCELLED']);
 const VALID_SCOPE  = new Set(['ALL', 'CATEGORY', 'CODE_PREFIX', 'NONZERO']);
 
 /* The caller's REAL scm.staff uuid (mig-0066 bridge), or null when the bridge
@@ -106,7 +111,10 @@ async function notOpenOrNotOurs(
     sb.from('stock_takes').select('id').eq('id', id), companyId,
   ).maybeSingle();
   if (!data) return { body: NOT_THIS_COMPANY, status: 404 };
-  return { body: { error: expected === 'OPEN' ? 'not_open' : 'not_posted' }, status: 409 };
+  const error = expected === 'OPEN' ? 'not_open'
+    : expected === 'PENDING_APPROVAL' ? 'not_pending'
+    : 'not_posted';
+  return { body: { error }, status: 409 };
 }
 
 const nextTakeNo = async (sb: any, c: any): Promise<string> => {
@@ -442,9 +450,49 @@ export const getStockTakeDetailHandler = async (c: any) => {
         return { ...l, est_unit_cost_sen: facts.costByKey.get(key) ?? null, source_pos: facts.posByKey.get(key) ?? [] };
       });
 
+  /* Adjustment link (owner 2026-11-20): a POSTED take booked one ADJUSTMENT
+     movement per non-zero-variance line. Surface them so the detail can show
+     "what this count moved" and link each SKU to its stock card — where the
+     same movement links back (StockCard.tsx), a closed loop. Read ONLY when
+     POSTED: an OPEN / PENDING take booked nothing, and a CANCELLED (reversed)
+     take's forward + reversal rows net to zero, so showing them would mislead. */
+  let adjustments: Array<Record<string, unknown>> = [];
+  /* The formal Stock Adjustment document this take booked (owner 2026-11-20) —
+     the take links to it instead of a stock card. null for a take posted before
+     this feature, or until a backfill mints one. */
+  let adjustment: { id: string; adjustment_no: string } | null = null;
+  if (take.status === 'POSTED') {
+    const { data: movs, error: movsErr } = await sb.from('inventory_movements')
+      .select('item_code, product_name, variant_key, qty, unit_cost_sen')
+      .eq('source_doc_type', 'STOCK_TAKE')
+      .eq('source_doc_id', id);
+    /* Bind the error rather than discard it (audit:swallowed-reads): this is a
+       display-only enhancement, so a failed read degrades to "no adjustments
+       shown" — never an empty list mistaken for "this take booked nothing". */
+    if (movsErr) {
+      // eslint-disable-next-line no-console
+      console.error('[stock-takes] adjustments read failed:', (movsErr as { message?: unknown }).message ?? movsErr);
+    } else {
+      adjustments = ((movs as Array<Record<string, unknown>>) ?? [])
+        .filter((m) => Number(m.qty ?? 0) !== 0)
+        .sort((a, b) => String(a.item_code).localeCompare(String(b.item_code)));
+    }
+    const { data: sa, error: saErr } = await scopeToCompany(
+      sb.from('stock_adjustments').select('id, adjustment_no').eq('source_stock_take_id', id), c,
+    ).maybeSingle();
+    if (saErr) {
+      // eslint-disable-next-line no-console
+      console.error('[stock-takes] linked adjustment read failed:', (saErr as { message?: unknown }).message ?? saErr);
+    } else if (sa) {
+      adjustment = sa as unknown as { id: string; adjustment_no: string };
+    }
+  }
+
   return c.json({
     take: headerRes.data,
     lines,
+    adjustments,
+    adjustment,
     viewer: {
       isAssignee: callerStaffId != null && assigneesOf(take).includes(callerStaffId),
       canSupervise,
@@ -1153,6 +1201,18 @@ stockTakes.patch('/:id/reverse', async (c) => {
     if (!insErr) await reconcileUncostedAfterIn(sb, reverseRows, reverserStaffId);
   }
 
+  /* Drop the mirror Stock Adjustment document (owner 2026-11-20): it recorded
+     this take's variance, which is now reversed, so it must not keep standing in
+     the Stock Adjustments list. It holds no movements of its own, so deleting it
+     touches no stock; lines cascade on the header. Best-effort. */
+  const { error: saDelErr } = await scopeToCompanyId(
+    sb.from('stock_adjustments').delete().eq('source_stock_take_id', id), co.companyId,
+  );
+  if (saDelErr) {
+    // eslint-disable-next-line no-console
+    console.error('[stock-takes] mirror adjustment delete on reverse failed:', (saDelErr as { message?: unknown }).message ?? saDelErr);
+  }
+
   /* POSTED is the prior status by construction — the .eq('status','POSTED')
      gate on the flip above is what let this call proceed. The reversed quantity
      is recorded as a signed total so the history says how much stock moved back,
@@ -1178,8 +1238,8 @@ stockTakes.patch('/:id/reverse', async (c) => {
 
   /* Stock changed back — re-walk SO stock allocation (mirrors the post path). */
   try {
-    const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
-    await recomputeSoStockAllocation(sb);
+    const { recomputeAllocationAfterSave } = await import('../lib/stock-allocation-job');
+    await recomputeAllocationAfterSave(sb, 'reverse-stock-take');
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] reverse-stock-take failed:', e); }
 
   return c.json({
@@ -1240,55 +1300,27 @@ stockTakes.delete('/:id', async (c) => {
   return c.json({ ok: true });
 });
 
-// ── Post OPEN → POSTED ────────────────────────────────────────────────
-// For every line where counted_qty IS NOT NULL and variance != 0, insert
-// a single ADJUSTMENT movement with SIGNED qty (mirrors what POST
-// /inventory/adjustments does — see apps/api/src/routes/inventory.ts).
-//
-// Lines with counted_qty == NULL are treated as "untouched" (commander
-// never got to that SKU) and skipped — no movement, no audit trail beyond
-// the line itself.
-export const postStockTakeHandler = async (c: any) => {
-  const sb = c.get('supabase');
-  const user = c.get('user');
-  const id = c.req.param('id');
+// ── Posting: the shared count → movement computation ──────────────────
+// For every line where counted_qty IS NOT NULL and variance != 0, build a
+// single ADJUSTMENT movement with SIGNED qty (mirrors what POST
+// /inventory/adjustments does). Lines with counted_qty == NULL are "untouched"
+// (the counter never got to that SKU) and skipped. Purely READS — it writes
+// nothing and flips nothing, so it is safe to run BEFORE the status flip, which
+// is what lets the post decide pending-vs-book, and lets /approve reuse it.
+type PostingHeader = { id: string; take_no: string; warehouse_id: string };
+type PostingPlan = {
+  liveByKey: Map<string, number>;
+  adjustmentRows: Array<Record<string, unknown>>;
+  costlessSkus: string[];
+  thresholdLines: VarianceLine[];
+};
 
-  /* Probe before the flip, for the same reason as /reverse: the flip is both
-     the first write and the state check, and it stays the single-flight lock. */
-  const co = requireActiveCompanyId(c);
-  if (!co.ok) return c.json(co.refusal, 409);
-
-  /* WHO MAY POST (owner 2026-10-06): the assignees are a RECORD of who
-     counted, not a gate — anyone with stock-take access may post. What still
-     needs a supervisor is a variance over the threshold (below). */
-  const isSupervisor = hasHouzsPerm(c, SUPERVISE_PERM);
-  const callerStaffId = await callerStaffIdOf(sb, c);
-
-  const pf = await assertAuditWritable(sb, { entityType: 'STOCK_TAKE', entityId: id, action: 'POST', companyId: co.companyId });
-  if (!pf.ok) return c.json(auditUnavailableBody(), 409);
-
-  /* Company predicate on the FLIP itself, which is this handler's only gate —
-     there is no load to scope. It matters more here than elsewhere because the
-     two siblings below were ALREADY company-aware while this was not: the
-     inventory_balances read is scopeToCompany'd and the movements insert is
-     stampCompany'd. Posting another company's take therefore compared THEIR
-     counted qty against OUR on-hand (no rows -> live 0), turning every line
-     into a full-quantity phantom movement stamped to us. Scoping the flip is
-     what closes that; the two siblings are deliberately left as they are. */
-  const { data: posted, error: pErr } = await scopeToCompanyId(sb.from('stock_takes')
-    .update({ status: 'POSTED', posted_at: new Date().toISOString() })
-    .eq('id', id), co.companyId).eq('status', 'OPEN')
-    .select(HEADER).maybeSingle();
-  if (pErr)    return c.json({ error: 'post_failed', reason: pErr.message }, 500);
-  if (!posted) { const r = await notOpenOrNotOurs(sb, id, co.companyId, 'OPEN'); return c.json(r.body, r.status); }
-
-  const header = posted as unknown as {
-    id: string; take_no: string; warehouse_id: string;
-  };
-
+const computeStockTakePosting = async (
+  sb: any, c: any, header: PostingHeader, performedBy: string,
+): Promise<PostingPlan> => {
   const { data: lines } = await sb.from('stock_take_lines')
     .select('item_code, product_name, variant_key, counted_qty, notes')
-    .eq('stock_take_id', id);
+    .eq('stock_take_id', header.id);
   const counted = ((lines as Array<{
     item_code: string; product_name: string | null;
     variant_key: string | null; counted_qty: number | null; notes: string | null;
@@ -1321,8 +1353,6 @@ export const postStockTakeHandler = async (c: any) => {
       liveByKey.set(`${b.item_code} ${b.variant_key ?? ''}`, Number(b.qty ?? 0));
     }
   }
-
-  const movementErrors: string[] = [];
 
   // Every line whose count differs from live on-hand, with its SIGNED variance.
   const pending = counted
@@ -1399,58 +1429,93 @@ export const postStockTakeHandler = async (c: any) => {
       source_doc_no:   header.take_no,
       reason_code:     'COUNT',                          // count correction
       notes:           `Stock take variance${p.ln.notes ? ` · ${p.ln.notes}` : ''}`,
-      /* Phase 1 attribution fix: the REAL caller's staff uuid, resolved by the
-         assignee gate above — never the pinned system row, which the roster
-         scopes out and which therefore rendered "Performed by: Unknown user".
+      /* Phase 1 attribution fix: the REAL caller's staff uuid — never the pinned
+         system row, which the roster scopes out and which therefore rendered
+         "Performed by: Unknown user". On /approve this is the SUPERVISOR who
+         signed the count off, which is exactly who performed the correction.
          Fallback keeps the FK satisfied for a bridge-less caller. */
-      performed_by:    callerStaffId ?? user.id,
+      performed_by:    performedBy,
     });
   }
 
-  // R3: a positive variance on a SKU with NO cost basis anywhere (first-ever
-  // stock, never priced) cannot be posted at a real cost — writing it at RM0 is
-  // the exact defect. Refuse the POST rather than open a permanent cost-less lot,
-  // and REVERT the status flip so the take stays editable (nothing was written
-  // yet). The operator seeds an initial cost (a costed adjustment or a GRN) for
-  // the named SKU(s), then re-posts. Symmetric with the manual-adjustment 422.
-  if (costlessSkus.length > 0) {
-    const { error: revErr } = await scopeToCompanyId(
-      sb.from('stock_takes').update({ status: 'OPEN', posted_at: null }).eq('id', id),
-      co.companyId,
-    ).eq('status', 'POSTED');
-    const skus = [...new Set(costlessSkus)];
-    return c.json({
-      error: 'cost_required',
-      message: `These items have no known cost yet, so they can't be added at RM0: ${skus.join(', ')}. Enter an initial unit cost (a costed stock adjustment or a GRN) for them, then post the count again.`,
-      itemCodes: skus,
-      postReverted: !revErr,
-    }, 422);
-  }
+  return { liveByKey, adjustmentRows, costlessSkus, thresholdLines };
+};
 
-  /* ── VARIANCE THRESHOLD GATE (phase 1). A variance big enough in units or
-     ringgit needs a supervisor's signature to become stock truth. Decided by
-     the pure fold in shared/stock-take-threshold.ts against LIVE variances
-     (the same `pending` the movements are built from — not the stale sheet
-     figure), and enforced HERE, after the flip, with the flip REVERTED on
-     refusal — the identical posture to the R3 cost_required block above:
-     nothing has been written, the take stays OPEN and editable, and the
-     message says exactly why and who can proceed. */
-  if (!isSupervisor) {
-    const thresholds = parseVarianceThresholds(c.env);
-    const breaches = findVarianceBreaches(thresholdLines, thresholds);
-    if (breaches.length > 0) {
-      const { error: revErr } = await scopeToCompanyId(
-        sb.from('stock_takes').update({ status: 'OPEN', posted_at: null }).eq('id', id),
-        co.companyId,
-      ).eq('status', 'POSTED');
-      return c.json({
-        error: 'variance_supervisor_required',
-        message: formatVarianceRefusal(breaches, thresholds),
-        itemCodes: breaches,
-        postReverted: !revErr,
-      }, 403);
+// ── Posting: the shared write (movements + audit + racks + allocation) ─
+// Given a header already flipped to POSTED and a plan from
+// computeStockTakePosting, write the stock effects. Used by both the direct
+// post (OPEN → POSTED) and the supervisor approval (PENDING_APPROVAL → POSTED);
+// `fromStatus` and `auditAction` carry the difference into the audit row.
+/* Mirror Stock Adjustment (owner 2026-11-20). A posted take's variance already
+   moved stock as ADJUSTMENT movements (source STOCK_TAKE). This ALSO records a
+   formal Stock Adjustment DOCUMENT (SA number, scm.stock_adjustments) so the
+   correction shows in the Stock Adjustments list and the take links to it
+   instead of a stock card. It writes NO movements — stock moves exactly once,
+   through the take — so it carries no risk to the ledger. The document is
+   read-only (its edit is refused while source_stock_take_id is set, which would
+   otherwise double-move) and is deleted when the take is reversed. Best-effort:
+   a failure never fails the post (the movements are the truth); a backfill can
+   mint a missing one later. */
+const createMirrorAdjustment = async (
+  sb: any, c: any, header: PostingHeader,
+  adjustmentRows: ReadonlyArray<Record<string, unknown>>, performedBy: string,
+): Promise<{ id: string; adjustment_no: string } | null> => {
+  if (adjustmentRows.length === 0) return null;
+  try {
+    const prefix = `${companyDocPrefix(c)}SA-${docMonthTag(null)}`;
+    const { data, error } = await insertWithDocNoRetry<{ id: string; adjustment_no: string }>(
+      () => mintMonthlyDocNo(sb, 'stock_adjustments', 'adjustment_no', prefix),
+      (adjustmentNo) => sb.from('stock_adjustments')
+        .insert({
+          adjustment_no:        adjustmentNo,
+          company_id:           activeCompanyId(c),  // multi-company: the only boundary
+          warehouse_id:         header.warehouse_id,
+          notes:                `Auto-created from stock take ${header.take_no}`,
+          created_by:           performedBy,
+          source_stock_take_id: header.id,
+        })
+        .select('id, adjustment_no').single(),
+    );
+    if (error || !data) {
+      // eslint-disable-next-line no-console
+      console.error('[stock-takes] mirror adjustment header failed:', (error as { message?: unknown } | null)?.message ?? 'no header');
+      return null;
     }
+    const sa = data as unknown as { id: string; adjustment_no: string };
+    const lines = adjustmentRows.map((r, i) => ({
+      stock_adjustment_id: sa.id,
+      line_no:       i + 1,
+      item_code:     r.item_code,
+      product_name:  r.product_name ?? null,
+      variant_key:   r.variant_key ?? '',
+      qty:           r.qty,
+      unit_cost_sen: r.unit_cost_sen ?? null,
+      reason_code:   'COUNT',
+      notes:         `Stock take ${header.take_no}`,
+    }));
+    const { error: lErr } = await sb.from('stock_adjustment_lines').insert(stampCompany(lines, c));
+    if (lErr) {
+      // A header with no lines reads as an empty adjustment; drop it (lines cascade
+      // on the header, so nothing orphans) and leave the take with no mirror.
+      await sb.from('stock_adjustments').delete().eq('id', sa.id);
+      // eslint-disable-next-line no-console
+      console.error('[stock-takes] mirror adjustment lines failed:', lErr.message);
+      return null;
+    }
+    return sa;
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('[stock-takes] mirror adjustment failed:', e instanceof Error ? e.message : String(e));
+    return null;
   }
+};
+
+const writePostingEffects = async (
+  sb: any, c: any, co: { companyId: number }, header: PostingHeader, plan: PostingPlan,
+  opts: { performedBy: string; fromStatus: 'OPEN' | 'PENDING_APPROVAL'; auditAction: 'POST' | 'APPROVE' },
+) => {
+  const { adjustmentRows, liveByKey } = plan;
+  const movementErrors: string[] = [];
 
   if (adjustmentRows.length > 0) {
     // One bulk insert — the FIFO trigger runs row-by-row anyway, but the
@@ -1464,25 +1529,33 @@ export const postStockTakeHandler = async (c: any) => {
        found by a count never repaired the earlier shipment (COE §2). Negative
        variances are filtered out by the helper. Best-effort — never fails the
        post, and the shortfall is retried on the next IN. */
-    if (!mErr) await reconcileUncostedAfterIn(sb, adjustmentRows, callerStaffId ?? user.id);
+    if (!mErr) await reconcileUncostedAfterIn(sb, adjustmentRows, opts.performedBy);
   }
+
+  /* Record the formal Stock Adjustment document for this variance (owner
+     2026-11-20) — ONLY when the movements actually landed, so a document never
+     claims a correction the ledger does not hold. No movements are written here;
+     stock moved once, above. */
+  const mirror = movementErrors.length === 0
+    ? await createMirrorAdjustment(sb, c, header, adjustmentRows, opts.performedBy)
+    : null;
 
   /* The variance that actually hit stock, per SKU — keyed by product code for
      the same reason the line PATCH is. This is the moment a count becomes the
      new truth, so the per-SKU adjustment is the WHAT, not a summary count. */
   await recordEntityAudit(sb, {
     entityType: 'STOCK_TAKE',
-    entityId: id,
+    entityId: header.id,
     entityDocNo: header.take_no,
-    action: 'POST',
+    action: opts.auditAction,
     actor: c.get('houzsUser'),
     companyId: activeCompanyId(c),
     statusSnapshot: 'POSTED',
     note: movementErrors.length
       ? `Stock adjustment FAILED — ${movementErrors.join('; ')}`
-      : `${adjustmentRows.length} SKU(s) adjusted at posting`,
+      : `${adjustmentRows.length} SKU(s) adjusted ${opts.auditAction === 'APPROVE' ? 'on supervisor approval' : 'at posting'}`,
     fieldChanges: compactChanges([
-      ...statusChange('OPEN', 'POSTED'),
+      ...statusChange(opts.fromStatus, 'POSTED'),
       fieldChange('warehouseId', null, header.warehouse_id),
       /* from = the on-hand this post overwrote, to = the counted figure that
          replaced it. Recording the PAIR is the whole point: "12" alone does not
@@ -1500,22 +1573,212 @@ export const postStockTakeHandler = async (c: any) => {
      reported, never a reason to undo the post. */
   const racks = await applyStockTakeRacks(sb, {
     takeId: header.id, takeNo: header.take_no, warehouseId: header.warehouse_id,
-    companyId: co.companyId, performedBy: callerStaffId ?? user.id,
+    companyId: co.companyId, performedBy: opts.performedBy,
   });
 
-  /* B2C SO auto-allocation — variance changed stock, re-walk SO lines. */
+  /* B2C SO auto-allocation — variance changed stock, re-walk SO lines. One
+     inline recompute for the whole module's posting path (post AND approve
+     funnel through here); /reverse has the only other. The pinned ledger in
+     stockAllocationDurabilityScope.test.ts counts exactly two. */
   try {
-    const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
-    await recomputeSoStockAllocation(sb);
+    const { recomputeAllocationAfterSave } = await import('../lib/stock-allocation-job');
+    await recomputeAllocationAfterSave(sb, 'post-stock-take');
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-stock-take failed:', e); }
 
-  return c.json({
-    take: posted,
+  return {
     movementsWritten: movementErrors.length ? 0 : adjustmentRows.length,
     movementErrors: movementErrors.length ? movementErrors : undefined,
     racksMoved: racks.moved,
     racksSkipped: racks.skippedCodes.length ? racks.skippedCodes : undefined,
     rackError: racks.error ?? undefined,
+    /* The Stock Adjustment document this post booked (null when nothing moved or
+       the record failed) — the take detail links to it. */
+    adjustmentId: mirror?.id,
+    adjustmentNo: mirror?.adjustment_no,
+  };
+};
+
+/* The cost_required refusal — a positive variance on a SKU with NO cost basis
+   anywhere cannot be booked at a real cost, so RM0 would be written (the exact
+   defect). Refused for anyone, supervisor included: approving the count cannot
+   invent a cost. Nothing was flipped yet, so there is no status to revert. */
+const costRequiredBody = (costlessSkus: string[]) => {
+  const skus = [...new Set(costlessSkus)];
+  /* Keep the sentence SHORT so the client shows it rather than the generic
+     "some details weren't accepted" — the operator must see WHICH items have no
+     cost. authed-fetch.ts `isPlain` drops any refusal >= 200 chars, and the old
+     message listed every SKU (owner saw the generic line on a 97-line mattress
+     count, 2026-11-20). So list the fewest names that stay under the cap — two,
+     then one, then one truncated — with "and N more" for the rest; the full set
+     still rides in `itemCodes`. */
+  const say = (list: string) => `No cost on record for ${list}. Give them a cost first (a costed stock adjustment or a GRN), then post again.`;
+  const more = (n: number) => (n > 0 ? ` and ${n} more` : '');
+  let message = say(skus.slice(0, 2).join(', ') + more(Math.max(0, skus.length - 2)));
+  if (message.length >= 200) message = say(skus[0] + more(skus.length - 1));
+  if (message.length >= 200) message = say(`${skus[0].slice(0, 60)}…${more(skus.length - 1)}`);
+  return { error: 'cost_required', message, itemCodes: skus };
+};
+
+// ── Post OPEN → POSTED, or OPEN → PENDING_APPROVAL ────────────────────
+// A variance over the threshold (shared/stock-take-threshold.ts) used to REFUSE
+// a non-supervisor's post. Owner 2026-11-20: it now SUBMITS instead — the take
+// goes to PENDING_APPROVAL (no stock moved) and a supervisor approves it into
+// POSTED, or rejects it back to OPEN. A supervisor still posts straight through,
+// and a within-limit count by anyone books immediately, exactly as before.
+export const postStockTakeHandler = async (c: any) => {
+  const sb = c.get('supabase');
+  const user = c.get('user');
+  const id = c.req.param('id');
+
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+
+  /* WHO MAY POST (owner 2026-10-06): the assignees are a RECORD of who
+     counted, not a gate — anyone with stock-take access may post. What a
+     non-supervisor can no longer do UNILATERALLY is book a variance over the
+     threshold; that now goes to a supervisor to approve (below). */
+  const isSupervisor = hasHouzsPerm(c, SUPERVISE_PERM);
+  const performedBy = (await callerStaffIdOf(sb, c)) ?? user.id;
+
+  const pf = await assertAuditWritable(sb, { entityType: 'STOCK_TAKE', entityId: id, action: 'POST', companyId: co.companyId });
+  if (!pf.ok) return c.json(auditUnavailableBody(), 409);
+
+  /* Load the OPEN header read-only FIRST (company-scoped), so the plan is
+     computed before any flip and the handler can choose pending-vs-book. The
+     flip below keeps its single-flight role via `.eq('status', ...)`. */
+  const { data: head0, error: h0Err } = await scopeToCompanyId(
+    sb.from('stock_takes').select(HEADER).eq('id', id), co.companyId,
+  ).eq('status', 'OPEN').maybeSingle();
+  if (h0Err)  return c.json({ error: 'post_failed', reason: h0Err.message }, 500);
+  if (!head0) { const r = await notOpenOrNotOurs(sb, id, co.companyId, 'OPEN'); return c.json(r.body, r.status); }
+  const header = head0 as unknown as PostingHeader;
+
+  const plan = await computeStockTakePosting(sb, c, header, performedBy);
+  if (plan.costlessSkus.length > 0) return c.json(costRequiredBody(plan.costlessSkus), 422);
+
+  /* A non-supervisor whose count breaches the threshold SUBMITS for approval
+     instead of booking: flip OPEN → PENDING_APPROVAL, stamp who/when, write no
+     movement. The supervisor's /approve does the booking. */
+  if (!isSupervisor) {
+    const thresholds = parseVarianceThresholds(c.env);
+    const breaches = findVarianceBreaches(plan.thresholdLines, thresholds);
+    if (breaches.length > 0) {
+      const nowIso = new Date().toISOString();
+      const { data: pend, error: subErr } = await scopeToCompanyId(sb.from('stock_takes')
+        .update({ status: 'PENDING_APPROVAL', submitted_at: nowIso, submitted_by: performedBy })
+        .eq('id', id), co.companyId).eq('status', 'OPEN')
+        .select(HEADER).maybeSingle();
+      if (subErr) return c.json({ error: 'post_failed', reason: subErr.message }, 500);
+      if (!pend)  { const r = await notOpenOrNotOurs(sb, id, co.companyId, 'OPEN'); return c.json(r.body, r.status); }
+      await recordEntityAudit(sb, {
+        entityType: 'STOCK_TAKE', entityId: id, entityDocNo: header.take_no,
+        action: 'SUBMIT_FOR_APPROVAL', actor: c.get('houzsUser'), companyId: activeCompanyId(c),
+        statusSnapshot: 'PENDING_APPROVAL',
+        note: formatVarianceRefusal(breaches, thresholds),
+        fieldChanges: statusChange('OPEN', 'PENDING_APPROVAL'),
+      });
+      return c.json({
+        take: pend,
+        pendingApproval: true,
+        itemCodes: breaches,
+        message: formatVarianceRefusal(breaches, thresholds),
+      });
+    }
+  }
+
+  /* Company predicate on the FLIP (the siblings below were already company-aware
+     — the inventory_balances read is scopeToCompany'd and the movements insert
+     stampCompany'd). Posting another company's take would otherwise compare THEIR
+     counted qty against OUR on-hand (no rows -> live 0). */
+  const { data: posted, error: pErr } = await scopeToCompanyId(sb.from('stock_takes')
+    .update({ status: 'POSTED', posted_at: new Date().toISOString() })
+    .eq('id', id), co.companyId).eq('status', 'OPEN')
+    .select(HEADER).maybeSingle();
+  if (pErr)    return c.json({ error: 'post_failed', reason: pErr.message }, 500);
+  if (!posted) { const r = await notOpenOrNotOurs(sb, id, co.companyId, 'OPEN'); return c.json(r.body, r.status); }
+
+  const effects = await writePostingEffects(sb, c, co, header, plan, {
+    performedBy, fromStatus: 'OPEN', auditAction: 'POST',
   });
+  return c.json({ take: posted, ...effects });
 };
 stockTakes.patch('/:id/post', postStockTakeHandler);
+
+// ── Approve PENDING_APPROVAL → POSTED (supervisor signs an over-limit count) ──
+// The booking the non-supervisor's post deferred: same movements, same costing,
+// same racks — now performed by, and attributed to, the supervisor. The variance
+// threshold is NOT re-checked (approving IS the override); cost_required still
+// holds (no path can book a positive variance at RM0).
+export const approveStockTakeHandler = async (c: any) => {
+  const sb = c.get('supabase');
+  const id = c.req.param('id');
+
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  if (!hasHouzsPerm(c, SUPERVISE_PERM)) {
+    return c.json({ error: 'supervisor_required', message: 'Only a stock-take supervisor can approve this count.' }, 403);
+  }
+  const performedBy = (await callerStaffIdOf(sb, c)) ?? c.get('user').id;
+
+  const pf = await assertAuditWritable(sb, { entityType: 'STOCK_TAKE', entityId: id, action: 'APPROVE', companyId: co.companyId });
+  if (!pf.ok) return c.json(auditUnavailableBody(), 409);
+
+  const { data: head0, error: h0Err } = await scopeToCompanyId(
+    sb.from('stock_takes').select(HEADER).eq('id', id), co.companyId,
+  ).eq('status', 'PENDING_APPROVAL').maybeSingle();
+  if (h0Err)  return c.json({ error: 'approve_failed', reason: h0Err.message }, 500);
+  if (!head0) { const r = await notOpenOrNotOurs(sb, id, co.companyId, 'PENDING_APPROVAL'); return c.json(r.body, r.status); }
+  const header = head0 as unknown as PostingHeader;
+
+  const plan = await computeStockTakePosting(sb, c, header, performedBy);
+  if (plan.costlessSkus.length > 0) return c.json(costRequiredBody(plan.costlessSkus), 422);
+
+  const { data: posted, error: pErr } = await scopeToCompanyId(sb.from('stock_takes')
+    .update({ status: 'POSTED', posted_at: new Date().toISOString() })
+    .eq('id', id), co.companyId).eq('status', 'PENDING_APPROVAL')
+    .select(HEADER).maybeSingle();
+  if (pErr)    return c.json({ error: 'approve_failed', reason: pErr.message }, 500);
+  if (!posted) { const r = await notOpenOrNotOurs(sb, id, co.companyId, 'PENDING_APPROVAL'); return c.json(r.body, r.status); }
+
+  const effects = await writePostingEffects(sb, c, co, header, plan, {
+    performedBy, fromStatus: 'PENDING_APPROVAL', auditAction: 'APPROVE',
+  });
+  return c.json({ take: posted, ...effects });
+};
+stockTakes.patch('/:id/approve', approveStockTakeHandler);
+
+// ── Reject PENDING_APPROVAL → OPEN (supervisor returns it for a recount) ──
+// No stock ever moved while pending, so there is nothing to reverse: clear the
+// submission marks and hand the sheet back to OPEN so the count can be edited
+// and re-submitted.
+export const rejectStockTakeHandler = async (c: any) => {
+  const sb = c.get('supabase');
+  const id = c.req.param('id');
+
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  if (!hasHouzsPerm(c, SUPERVISE_PERM)) {
+    return c.json({ error: 'supervisor_required', message: 'Only a stock-take supervisor can return this count.' }, 403);
+  }
+
+  const pf = await assertAuditWritable(sb, { entityType: 'STOCK_TAKE', entityId: id, action: 'REJECT', companyId: co.companyId });
+  if (!pf.ok) return c.json(auditUnavailableBody(), 409);
+
+  const { data, error } = await scopeToCompanyId(sb.from('stock_takes')
+    .update({ status: 'OPEN', submitted_at: null, submitted_by: null })
+    .eq('id', id), co.companyId).eq('status', 'PENDING_APPROVAL')
+    .select(HEADER).maybeSingle();
+  if (error) return c.json({ error: 'reject_failed', reason: error.message }, 500);
+  if (!data) { const r = await notOpenOrNotOurs(sb, id, co.companyId, 'PENDING_APPROVAL'); return c.json(r.body, r.status); }
+
+  const returned = data as unknown as { take_no: string };
+  await recordEntityAudit(sb, {
+    entityType: 'STOCK_TAKE', entityId: id, entityDocNo: returned.take_no,
+    action: 'REJECT', actor: c.get('houzsUser'), companyId: activeCompanyId(c),
+    statusSnapshot: 'OPEN',
+    note: 'Returned for recount',
+    fieldChanges: statusChange('PENDING_APPROVAL', 'OPEN'),
+  });
+  return c.json({ take: data });
+};
+stockTakes.patch('/:id/reject', rejectStockTakeHandler);

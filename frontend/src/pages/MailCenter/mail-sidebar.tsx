@@ -193,3 +193,28 @@ export function FolderItem({
     </button>
   );
 }
+
+/* Owner 2026-11-21: the rail says why a mailbox is there when it is not your own
+   or your department's: shared with you by an admin, or a colleague's mailbox
+   your Whole department level opens. */
+export function reachTagOf(vis: MailVisibility | null, address: string, personal: boolean): "Shared" | "Team" | null {
+  const list = vis && Array.isArray(vis.mailboxes) ? vis.mailboxes : [];
+  const reach = list.find((m) => m.address === address.toLowerCase())?.reach ?? null;
+  return reach === "granted" ? "Shared" : reach === "department" && personal ? "Team" : null;
+}
+
+export function ReachTag({ address, personal }: { address: string; personal: boolean }) {
+  const tag = reachTagOf(useMailVisibility(), address, personal);
+  if (!tag) return null;
+  return (
+    <span
+      className={cn(
+        "shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold",
+        tag === "Shared" ? "bg-warning-bg text-warning-text" : "bg-primary/15 text-primary",
+      )}
+      title={tag === "Shared" ? REACH_LABEL.granted : REACH_LABEL.department}
+    >
+      {tag}
+    </span>
+  );
+}

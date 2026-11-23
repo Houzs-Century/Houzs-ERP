@@ -34,6 +34,7 @@ import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
 import { summariseReadiness } from "../scm/lib/so-readiness";
 import { soStreetTail, soTownLines } from "../services/autocount-address-fit";
 import { caseAddressFourLines } from "../scm/shared/assr-case-address";
+import { reopenedLegSets } from "../scm/shared/assr-leg-reopen";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -656,7 +657,7 @@ app.post("/delivery-dates", async (c) => {
       continue;
     }
     await c.env.DB.prepare(
-      `UPDATE assr_cases SET ${col} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+      `UPDATE assr_cases SET ${[`${col} = ?`, ...reopenedLegSets({ [col]: row.cur }, { [col]: date })].join(", ")}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
     )
       .bind(date, row.id)
       .run();

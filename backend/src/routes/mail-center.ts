@@ -22,6 +22,8 @@
 //
 // Timestamp columns are TEXT, written via new Date().toISOString() (per mig 0008).
 // ---------------------------------------------------------------------------
+import { afterReplySent, replyConflict, replyingOn } from "./mail-reply-guard";
+import { afterGrantChange, departmentIdsOf, extraScopeDepartments, departmentMailboxes, isInManagement, LEVEL_NAME, recordAccessChange } from "../lib/mail-access";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { Env } from "../types";
@@ -36,12 +38,12 @@ import { activeCompanyCodePred, activeCompanyId, activeCompanySql } from "../scm
 import { toArray, stripHtml, safeIso, base64ToBytes, safeFilename } from "../services/mail-parse";
 import {
   backfillOutboundMessageIds,
-  deliveryStatus,
   recordOutboundMessage,
   threadForReferences,
   threadingHeaders,
   threadMessageIds,
 } from "../lib/mail-threading";
+import { deliveryStatus } from "../lib/mail-delivery";
 import { MY_READ_JOIN, MY_UNREAD_SQL, isThreadUnreadFor, setThreadRead, threadReaders } from "../lib/mail-reads";
 import { acksForMessages, myOwedOnThread, requestAcks, staffRecipients } from "../lib/mail-acks";
 
@@ -488,6 +490,7 @@ type MessageRow = {
   sent_by_name: string | null;
   created_at: string | null;
   outbox_status?: string | null;
+  delivery_status?: string | null;
 };
 
 function parseJsonArray(s: string | null): string[] {
@@ -519,7 +522,7 @@ function rowToMessage(r: MessageRow) {
     sentByUserId: r.sent_by_user_id ?? undefined,
     sentByName: r.sent_by_name ?? undefined,
     createdAt: r.created_at ?? "",
-    deliveryStatus: deliveryStatus(r.outbox_status),
+    deliveryStatus: deliveryStatus(r.outbox_status ?? null, r.delivery_status ?? null),
   };
 }
 
@@ -601,10 +604,13 @@ function rowToLabel(r: LabelRow) {
 //   • 'department' — the personal set PLUS every active department mailbox
 //                    (no owner) linked to the caller's Org Chart department
 //                    (email_addresses.department_id = users.department_id).
-//   • 'company'    — every active mailbox.
+//   • 'department_all' — 'department' PLUS everyone's own mailbox in those and the ticked (mail_scope_departments) departments.
+//   • 'company'    — every active mailbox. A member of the Management
+//                    department always gets it (lib/mail-access.ts).
+// Departments are the primary one plus every user_departments row.
 // Inherently scoped to the caller — no broad RBAC grant required.
 // ---------------------------------------------------------------------------
-const MAIL_SCOPE_LEVELS = ["personal", "department", "company"] as const;
+const MAIL_SCOPE_LEVELS = ["personal", "department", "department_all", "company"] as const;
 type MailScopeLevel = (typeof MAIL_SCOPE_LEVELS)[number];
 export const DEFAULT_MAIL_SCOPE_LEVEL: MailScopeLevel = "department";
 
@@ -652,6 +658,8 @@ export async function getMailScope(c: Context<{ Bindings: Env }>): Promise<{
   // mailboxes, even when set to 'personal'; never downgrades 'company'.
   const user = c.get("user");
   if (isSalesDirectorUser(user) && level === "personal") level = "department";
+  const departmentIds = await departmentIdsOf(c.env.DB, userId, user?.department_id ?? null);
+  if (await isInManagement(c.env.DB, departmentIds)) level = "company";
 
   // 'company' — every active mailbox.
   if (level === "company") {
@@ -678,22 +686,11 @@ export async function getMailScope(c: Context<{ Bindings: Env }>): Promise<{
     .all<{ address: string }>();
   const addresses = (own.results ?? []).map((r) => r.address);
 
-  // 'department' — the department mailboxes of the caller's Org Chart
-  // department. Matched by id: the old name match compared "Sales" with
-  // "Sales Department" and never hit. Owned (personal) rows are excluded so
-  // a department never reaches a colleague's personal mail.
-  if (level === "department") {
-    const departmentId = user?.department_id ?? null;
-    if (departmentId != null) {
-      const deptRows = await c.env.DB.prepare(
-        `SELECT address FROM email_addresses
-           WHERE active = 1${coSql}
-             AND assigned_user_id IS NULL
-             AND department_id = ?`,
-      )
-        .bind(departmentId)
-        .all<{ address: string }>();
-      addresses.push(...(deptRows.results ?? []).map((r) => r.address));
+  // Department mailboxes of the caller's departments; 'department_all' also opens colleagues' own and the ticked departments.
+  if (level === "department" || level === "department_all") {
+    if (departmentIds.length > 0 || level === "department_all") {
+      const whole = level === "department_all" ? await extraScopeDepartments(c.env.DB, userId, departmentIds) : departmentIds;
+      addresses.push(...(await departmentMailboxes(c.env.DB, whole, level === "department_all", coSql)));
     } else {
       level = "personal";
     }
@@ -980,6 +977,7 @@ app.get("/threads/:id", async (c) => {
   return c.json({
     thread: { ...rowToThread(thread), unread: false },
     readers: await threadReaders(c.env.DB, thread, activeCompanyId(c) ?? null),
+    replying: await replyingOn(c.env.DB, id, me),
     messages: mappedMsgs.map((m) => ({
       ...m,
       attachments: attByMsg.get(m.id) ?? [],
@@ -1726,7 +1724,9 @@ app.post("/access", async (c) => {
       .run();
   } catch {
     // Unique (address_id,user_id) collision → the grant already exists.
+    return c.json({ ok: true, addressId, userId }, 201);
   }
+  await afterGrantChange(c, addressId, userId, "shared");
   return c.json({ ok: true, addressId, userId }, 201);
 });
 
@@ -1751,6 +1751,7 @@ app.delete("/access", async (c) => {
   )
     .bind(addressId, userId)
     .run();
+  await afterGrantChange(c, addressId, userId, "stopped sharing");
   return c.json({ ok: true });
 });
 
@@ -1792,7 +1793,7 @@ app.put("/scope-level", async (c) => {
   }
   if (!(MAIL_SCOPE_LEVELS as readonly string[]).includes(level)) {
     return c.json(
-      { error: "level must be 'personal', 'department', or 'company'" },
+      { error: "level must be 'personal', 'department', 'department_all' or 'company'" },
       400,
     );
   }
@@ -1803,6 +1804,12 @@ app.put("/scope-level", async (c) => {
   )
     .bind(userId, level, new Date().toISOString())
     .run();
+  await recordAccessChange(c.env.DB, {
+    companyId: activeCompanyId(c) ?? null,
+    byUserId: c.get("userId") ?? null,
+    userId,
+    change: `set level to ${LEVEL_NAME[level] ?? level}`,
+  });
   return c.json({ ok: true });
 });
 
@@ -1857,6 +1864,8 @@ app.post("/threads/:id/reply", async (c) => {
     bcc?: string | string[];
     attachments?: Array<{ filename: string; contentBase64: string }>;
     needsAck?: boolean;
+    afterMessageId?: string | null; // newest message seen; `force` sends past a newer colleague reply
+    force?: boolean;
   };
   const body: ReplyBody = await c.req
     .json<ReplyBody>()
@@ -1887,6 +1896,8 @@ app.post("/threads/:id/reply", async (c) => {
     return c.json({ error: "Thread not found" }, 404);
   }
 
+  const clash = body.force ? null : await replyConflict(c.env.DB, id, body.afterMessageId ?? null, scope.userId);
+  if (clash) return c.json({ code: "already_replied", ...clash, error: `${clash.by} already replied.` }, 409);
   const mailbox = (thread.mailbox_address ?? "").trim();
 
   /* WHO THE REPLY GOES TO.
@@ -2029,6 +2040,7 @@ app.post("/threads/:id/reply", async (c) => {
     .run();
 
   if (scope.userId != null) await setThreadRead(c.env.DB, id, scope.userId, true);
+  await afterReplySent(c, id, thread.assigned_to_user_id ?? null, userId, fromName);
   if (ackPeople.length) await requestAcks(c.env, messageId, ackPeople, { subject, senderName: fromName });
   return c.json({ ok: true, messageId, queued: result.status !== "sent" });
 });

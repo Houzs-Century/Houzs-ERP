@@ -490,7 +490,7 @@ export async function afterConvertedRowBooked(sb: Db, row: Row, where: string): 
   try {
     const issued = await issueDepositInvoice(sb, {
       paymentId: id, soDocNo: toDocNo, paidAt: day, amountSen, method: CONVERTED_METHOD, createdBy: row.created_by ? String(row.created_by) : null,
-    });
+    }, false);
     if (!issued.ok) log(`${where}: deposit invoice for the move to ${toDocNo} not issued —`, issued.status, issued.reason);
   } catch (e) {
     log(`${where}: deposit-invoice hook threw:`, e);

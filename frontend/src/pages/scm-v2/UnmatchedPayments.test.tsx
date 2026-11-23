@@ -22,12 +22,12 @@ import type { UnmatchedBankLine, UnmatchedPayment } from './unmatched-payments-q
 
 const row = (over: Partial<UnmatchedPayment>): UnmatchedPayment => ({
   source: 'SOPAY', paymentId: 'p1', docNo: '2990-SO-2609-045', customerName: 'YEAP KAR CHUN', salespersonName: 'Nico', collectedByName: 'Esther',
-  paidOn: '2026-09-02', kind: 'card', channel: 'PBB', amountSen: 324_000, reference: 'R18656', ageDays: 28,
+  paidOn: '2026-09-02', kind: 'card', channel: 'PBB', amountSen: 324_000, reference: 'R18656', ref: null, customer_so_no: null, ageDays: 28,
   state: 'CARD_TO_CONFIRM', bankAccountCode: null, statementUpTo: null, ...over,
 });
 const ROWS: UnmatchedPayment[] = [
-  row({}),
-  row({ paymentId: 'p2', docNo: '2990-SO-2609-031', customerName: 'Chong Hui Wen', kind: 'transfer', channel: 'Bank Transfer', amountSen: 143_300, reference: '260920CE0DB5C26', ageDays: 10, state: 'TRANSFER_NOT_MATCHED', bankAccountCode: '310-0020', statementUpTo: '2026-09-28', jeNo: 'JE-2609-0031' }),
+  row({ customer_so_no: 'TEST-REF-01' }),
+  row({ paymentId: 'p2', docNo: '2990-SO-2609-031', customerName: 'Chong Hui Wen', kind: 'transfer', channel: 'Bank Transfer', amountSen: 143_300, reference: '260920CE0DB5C26', ref: 'TEST-REF-02', customer_so_no: 'TEST-REF-OLD', ageDays: 10, state: 'TRANSFER_NOT_MATCHED', bankAccountCode: '310-0020', statementUpTo: '2026-09-28', jeNo: 'JE-2609-0031' }),
   row({ paymentId: 'p3', docNo: '2990-SO-2608-069', customerName: 'Poon How kei', kind: 'transfer', channel: 'TNG', amountSen: 150_000, reference: '602788', ageDays: 1, state: 'TRANSFER_NO_STATEMENT', bankAccountCode: '310-0020', statementUpTo: '2026-09-28', jeNo: 'JE-2609-0099' }),
   row({ paymentId: 'p4', docNo: '2990-SO-2609-050', channel: null, amountSen: 50_000, ageDays: 3, state: 'CARD_NOT_REPORTED', collectedByName: null }),
   /* The sale MBB's 01/11 report line 19 guesses (GUESS below): the same money, from the books' side. */
@@ -221,6 +221,19 @@ describe('Payments', () => {
     expect(screen.queryByRole('button', { name: /Transfer · not in the books/ })).toBeNull();
   });
 
+  /* Owner 2026-11-20 (帮我在这里把订单的 ref no. 拉出来): the Ref No. right after the document,
+     read as the order's own screen reads it — `ref`, else `customer_so_no`; none keyed, a dash. */
+  test('shows each document\'s Ref No. right after it, as the order\'s screen reads it', () => {
+    draw();
+    const nextTo = (doc: string): string | undefined => {
+      const cells = [...rowOf(doc).querySelectorAll('td')].map((td) => td.textContent.trim());
+      return cells[cells.indexOf(doc) + 1];
+    };
+    expect(nextTo('2990-SO-2609-045')).toBe('TEST-REF-01');
+    expect(nextTo('2990-SO-2609-031')).toBe('TEST-REF-02');
+    expect(nextTo('2990-SO-2609-050')).toBe('—');
+  });
+
   /* Owner 2026-11-09: sales person 应该不太对，应该是collected by 的人. */
   test('names who collected the payment; the order\'s salesperson waits under Columns', () => {
     draw();
@@ -298,6 +311,12 @@ describe('Export', () => {
     expect(payments).not.toContain('Salesperson');
     expect(payments).toContain('Where it is stuck');
     expect(payments).toContain('Possibly the same as');
+    /* The Ref No. right after the document, as the screen shows it; none keyed, an empty cell. */
+    expect(payments[payments.indexOf('Document') + 1]).toBe('Ref No.');
+    const refOf = (doc: string) => sheets[2]!.matrix.body.find((r) => r[payments.indexOf('Document')] === doc)?.[payments.indexOf('Ref No.')];
+    expect(refOf('2990-SO-2609-045')).toBe('TEST-REF-01');
+    expect(refOf('2990-SO-2609-031')).toBe('TEST-REF-02');
+    expect(refOf('2990-SO-2609-050')).toBeNull();
   });
 
   test('Export all follows each list\'s chip and column filters, and says them above the list', async () => {

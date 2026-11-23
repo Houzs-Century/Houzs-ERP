@@ -9,7 +9,14 @@
    Same fake-PostgREST harness as tests/apInvoices.test.ts. */
 
 import { Hono } from 'hono';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
+import { fakeRunScmPgCommand } from './lib/fake-scm-command';
+
+/* The edit commits inside one PG transaction; here on the fake, with its rollback. */
+vi.mock('../src/scm/lib/pg-supabase-transaction', async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
+  runScmPgCommand: fakeRunScmPgCommand,
+}));
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
 import { SCM_SYSTEM_STAFF_ID } from '../src/scm/middleware/auth';
 import { apInvoices } from '../src/scm/routes/ap-invoices';
@@ -141,5 +148,36 @@ describe('editing a posted bill re-posts', () => {
     await json(app, `/ap-invoices/${id}/cancel`, 'POST');
     const dead = await json(app, `/ap-invoices/${id}`, 'PATCH', { notes: 'x' });
     expect(dead.status).toBe(409);
+  });
+});
+
+/* Ported from Conts-ERP #1137 (D4). Fails on the code before the fix.
+   Symptom: a posted AP bill edit whose re-post failed left the new lines and total on the bill and the old journal
+   reversed, with no journal standing for the bill. Cause: lines, header, contra and re-post committed one by one.
+   Fix: the edit runs in one transaction (runScmPgCommand), with a compare-and-set on paid_sen. */
+describe('an edit that fails part-way changes nothing', () => {
+  test('the re-post fails: the old lines, total and journal all stand', async () => {
+    const { app, sb } = harness();
+    const id = await raise(app);
+    expect((await json(app, `/ap-invoices/${id}/post`, 'POST')).status).toBe(200);
+    const t = sb.tables as Record<string, Row[]>;
+    let armed = true;
+    t.journal_entry_lines = new Proxy(t.journal_entry_lines!, {
+      get(target, prop, recv) {
+        if (prop === 'push' && armed && target.length > 0) { armed = false; throw new Error('connection reset'); }
+        return Reflect.get(target, prop, recv);
+      },
+    });
+    const res = await json(app, `/ap-invoices/${id}`, 'PATCH', {
+      lines: [
+        { description: 'Rent Sept', debitAccountCode: '900-A001', amountSen: 400_000 },
+        { description: 'Cleaning', debitAccountCode: '900-A002', amountSen: 20_000 },
+      ],
+    });
+    expect(res.ok).toBe(false);
+    expect(t.ap_invoices[0]).toMatchObject({ total_sen: 400_000 });
+    expect(t.ap_invoice_lines!.filter((l) => l.invoice_id === id)).toHaveLength(1);
+    expect(t.journal_entries!.filter((j) => j.source_type === 'API' && !j.reversed)).toHaveLength(1);
+    expect(t.journal_entries!.filter((j) => j.source_type === 'API_REVERSAL')).toHaveLength(0);
   });
 });

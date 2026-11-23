@@ -36,6 +36,8 @@
   --hz-err: 178 58 58;
   --hz-err-bg: 248 234 234;
   --hz-learning: 31 58 138;
+  --hz-learning-soft: 230 234 245;
+  --hz-time: 183 107 0;
   --hz-expired-bg: 247 233 233;
   --hz-expired-text: 122 34 34;
   --hz-warning-bg: 246 239 217;
@@ -100,6 +102,8 @@
   --hz-err: 228 112 112;
   --hz-err-bg: 58 29 29;
   --hz-learning: 143 168 240;
+  --hz-learning-soft: 42 50 78;
+  --hz-time: 216 168 90;
   --hz-expired-bg: 58 29 29;
   --hz-expired-text: 240 160 160;
   --hz-warning-bg: 53 44 20;

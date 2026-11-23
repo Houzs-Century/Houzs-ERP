@@ -108,7 +108,7 @@ import {
   soDownstreamHardLocked,
 } from "../../vendor/scm/lib/so-detail-gates";
 import { MigratedReadonlyBanner } from "../../vendor/scm/components/MigratedReadonlyBanner";
-import { soAfterDoMode, soPriceAfterDoOn } from "../../vendor/scm/lib/so-after-do-client";
+import { soAfterDoMode, soPriceAfterDoOn, soLinesAfterDoOn } from "../../vendor/scm/lib/so-after-do-client";
 import type { AfterDoTarget } from "../../vendor/shared/so-after-do-edit";
 import { customerRefOf } from '../../lib/customer-ref';
 
@@ -699,9 +699,13 @@ function SalesOrderDetailV2ReadOnly() {
   const migratedLocked = soMigratedReadonly(salesOrder);
   /* DEV-70 — a delivered line's price is changed from the editor's $ button. */
   const canPriceAfterDo = salesOrder ? soPriceAfterDoOn(salesOrder, { can, migrated: migratedLocked }) : false;
-  const editDisabled = migratedLocked || (hardLocked && !canAttributeOther && !canEditAfterDo && !canPriceAfterDo);
+  /* Owner 2026-11-21 — a super admin edits a delivered PRODUCT line's qty / spec inline. */
+  const canLinesAfterDo = salesOrder ? soLinesAfterDoOn(salesOrder, { can, migrated: migratedLocked }) : false;
+  const editDisabled = migratedLocked || (hardLocked && !canAttributeOther && !canEditAfterDo && !canPriceAfterDo && !canLinesAfterDo);
   const lockedEditHint = migratedLocked
     ? soMigratedReadonlyReason(salesOrder)
+    : hardLocked && canLinesAfterDo
+      ? "This order is locked by its Delivery Order — press Edit to change a delivered line's quantity or specification (super admin); the Delivery Order and any invoice follow."
     : hardLocked && canPriceAfterDo && !canEditAfterDo
       ? "This order is locked by its Delivery Order — press Edit, then the $ button on a line, to change its unit price or discount."
     : hardLocked && canEditAfterDo

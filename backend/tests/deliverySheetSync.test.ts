@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import app from "../src/routes/deliverySheetSync";
-import { isSheetReady, normSheetDate, parseFromDate, parseLimit, parseSince, sheetReadinessWording, toSheetRecord, type FeedHeadRow } from "../src/lib/delivery-sheet-feed";
+import { FEED_EPOCH, FEED_MAX_LIMIT, isSheetReady, normSheetDate, parseFromDate, parseLimit, parseSince, salesLocationRegion, sheetRegion, sheetReadinessWording, toSheetRecord, type FeedHeadRow } from "../src/lib/delivery-sheet-feed";
 import { toOutstandingPoRecord, type PoFeedRow } from "../src/lib/delivery-sheet-po-feed";
 import { toAssrContactRecord, toAssrLegRecords, type AssrFeedRow } from "../src/lib/delivery-sheet-assr-feed";
 
@@ -95,7 +95,12 @@ const HEAD: FeedHeadRow = {
   customer_country: "Malaysia",
   venue: "Balakong Showroom",
   status: "CONFIRMED",
+  delivery_message_status: "Pending Delivery (EM)",
+  dp_remark: "ori 25 Jan",
   do_numbers: "HC-DO-2609-001",
+  shipout_date: "2026-09-10",
+  ctn: "5 ctn",
+  em_delivery_status: "TO BRIGHTSUN",
   po_numbers: "PO-2609-001, PO-2609-002",
   last_modified_text: "2026-09-15 09:09:28.123456+00",
 };
@@ -131,6 +136,7 @@ describe("toSheetRecord — the AutoCount-named record the sheet writes", () => 
     expect(r.SOUDF_VENUE).toBe("Balakong Showroom");
     expect(r.LastModified).toBe(HEAD.last_modified_text);
     expect(r.Ref).toBe("HC12481");
+    expect(r.ShipoutDate).toBe("2026-09-10");
   });
 
   test("Ref = ref, else customer_so_no: a native order (ref NULL) carries its reference in customer_so_no", () => {
@@ -315,7 +321,9 @@ describe("GET /overdue and /balance-collection — the two daily lists (phase 2)
     expect(feed.sql).toContain("t.status NOT IN ('CLOSED', 'DELIVERED', 'INVOICED')");
     expect(feed.sql).toContain("t.customer_delivery_date::date < (now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date");
     expect(feed.sql).toContain("ORDER BY t.customer_delivery_date, t.doc_no");
-    expect(feed.sql).not.toContain("LIMIT");
+    // Full state, no cursor: no PAGINATION limit (the base feed's `LIMIT 1`
+    // lateral for the latest-DO lookup is not a bound `LIMIT ?`).
+    expect(feed.sql).not.toMatch(/LIMIT\s+\?/);
   });
 
   test("balance-collection: delivered orders still owing, company-scoped", async () => {
@@ -999,6 +1007,111 @@ describe("GET /assr-legs", () => {
   });
 });
 
+/* East-Malaysia transporter feed (owner 2026-11-19): ESB / BS are fed from the
+ * ERP directly. One list of two kinds — East SO rows (Ready-gated appends) and
+ * East own-team ASSR legs — with non-East rows dropped on Region. */
+describe("GET /em-transporter", () => {
+  const east1: FeedHeadRow = { ...HEAD, doc_no: "HC-SO-E1", linked_ac_docno: "SO-E1", sales_location: "SRW WAREHOUSE", remark2: "READY", address3: "93050 Kuching", address4: "Sarawak", customer_state: "Sarawak", customer_country: null };
+  const east2: FeedHeadRow = { ...HEAD, doc_no: "HC-SO-E2", linked_ac_docno: "SO-E2", sales_location: "SBH WAREHOUSE", remark2: null, address3: "88000 Kota Kinabalu", address4: "Sabah", customer_state: "Sabah", customer_country: null };
+  const sg: FeedHeadRow = { ...HEAD, doc_no: "HC-SO-SG", linked_ac_docno: "SO-SG", sales_location: "SRW WAREHOUSE", remark2: "READY", address3: "SINGAPORE 123456", address4: null, customer_state: null, customer_country: null };
+  const eastCase: AssrFeedRow = { ...ASSR, assr_no: "ASSR/2611-E1", doc_no: "SO-E-SVC", location: "SBH WAREHOUSE", addr3: "88000 Kota Kinabalu", addr4: "Sabah", inspection_by: null, pickup_by: null, delivery_by: "own", do_date: "2026-10-10", stage: "pending_delivery_service" };
+  const westCase: AssrFeedRow = { ...ASSR, assr_no: "ASSR/2611-W1", doc_no: "SO-W-SVC", location: "KL WAREHOUSE", addr3: "50000 Kuala Lumpur", addr4: "Wilayah Persekutuan", inspection_by: null, pickup_by: null, delivery_by: "own", do_date: "2026-10-11", stage: "pending_delivery_service" };
+
+  const answer = (sql: string) => {
+    if (/FROM companies/i.test(sql)) return { id: HOUZS };
+    if (/FROM scm\.mfg_sales_orders so/.test(sql)) return [east1, east2, sg];
+    if (/mfg_sales_order_items WHERE doc_no IN/.test(sql)) return [];
+    if (/FROM assr_cases/.test(sql)) return [eastCase, westCase];
+    return [];
+  };
+
+  test("a wrong key is 401 before anything is read", async () => {
+    const { db, seen } = fakeDb(() => []);
+    expect((await app.request("/em-transporter", { headers: { "X-Intake-Key": "wrong" } }, env(db))).status).toBe(401);
+    expect(seen).toHaveLength(0);
+  });
+
+  test("East SO rows (Ready → Appendable) + East own-team legs; a Singapore-addressed SRW order and a West leg are dropped", async () => {
+    const { db, seen } = fakeDb(answer);
+    const res = await app.request("/em-transporter", { headers: { "X-Intake-Key": KEY } }, env(db));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.so).toBe(2); // east1, east2 — sg is Region SG
+    expect(body.legs).toBe(1); // the East leg only — westCase is Region WEST
+    expect(body.count).toBe(3);
+
+    const byDoc = Object.fromEntries(body.records.map((r: any) => [r.DocNo, r]));
+    expect(byDoc["SO-E1"]).toMatchObject({ Region: "EAST", Appendable: true, Kind: null, Ready: true });
+    expect(byDoc["SO-E2"]).toMatchObject({ Region: "EAST", Appendable: false, Ready: false });
+    expect(byDoc["SO-SG"]).toBeUndefined();
+    expect(byDoc["SO-E-SVC-SERVICE"]).toMatchObject({ Region: "EAST", Appendable: true, Kind: "DELIVERY" });
+    expect(byDoc["SO-W-SVC-SERVICE"]).toBeUndefined();
+
+    // The SO feed is company-scoped and East-filtered; the ASSR feed reads full
+    // state from the epoch and is NOT company-scoped (owner ruling).
+    const soFeed = seen.find((s) => /FROM scm\.mfg_sales_orders so/.test(s.sql))!;
+    expect(soFeed.binds).toEqual([HOUZS]);
+    expect(soFeed.sql).toContain("so.company_id = ?1");
+    expect(soFeed.sql).toMatch(/SRW WAREHOUSE/);
+    expect(soFeed.sql).toMatch(/SBH WAREHOUSE/);
+    const assrFeed = seen.find((s) => /FROM assr_cases/.test(s.sql))!;
+    expect(assrFeed.binds).toEqual([FEED_EPOCH, FEED_MAX_LIMIT]);
+  });
+
+  test("a failed ASSR read is 502, not a half list that silently loses the service legs", async () => {
+    const { db } = fakeDb((sql) => {
+      if (/FROM companies/i.test(sql)) return { id: HOUZS };
+      if (/FROM scm\.mfg_sales_orders so/.test(sql)) return [east1];
+      if (/mfg_sales_order_items WHERE doc_no IN/.test(sql)) return [];
+      if (/FROM assr_cases/.test(sql)) throw new Error("connection reset");
+      return [];
+    });
+    expect((await app.request("/em-transporter", { headers: { "X-Intake-Key": KEY } }, env(db))).status).toBe(502);
+  });
+});
+
+describe("POST /em-transporter-updates — the sheets' edits write back to the ERP", () => {
+  const bodyOf = (updates: unknown[]) => ({ method: "POST", headers: { "X-Intake-Key": KEY, "content-type": "application/json" }, body: JSON.stringify({ updates }) });
+
+  test("a wrong key is 401 before anything is read", async () => {
+    const { db, seen } = fakeDb(() => []);
+    const res = await app.request("/em-transporter-updates", { method: "POST", headers: { "X-Intake-Key": "wrong", "content-type": "application/json" }, body: "{}" }, env(db));
+    expect(res.status).toBe(401);
+    expect(seen).toHaveLength(0);
+  });
+
+  test("present fields are bound in column order (dates normalised), company is last, and misses are reported", async () => {
+    const { db, seen } = fakeDb((sql) => {
+      if (/FROM companies/i.test(sql)) return { id: HOUZS };
+      if (/UPDATE scm\.delivery_orders/.test(sql)) return [{ sheet_doc_no: "SO-WB-1", so_doc_no: "HC-SO-WB-1" }];
+      return [];
+    });
+    const res = await app.request("/em-transporter-updates", bodyOf([
+      { DocNo: "SO-WB-1", emDeliveryStatus: "TO BRIGHTSUN", consignmentNo: "C1", bsDeliveryDate: "2026/11/01" },
+      { DocNo: "SO-WB-2" }, // no live DO on the ERP side -> not in the RETURNING
+    ]), env(db));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.updated).toBe(1);
+    expect(body.not_updated).toEqual(["SO-WB-2"]);
+
+    const wb = seen.find((s) => /UPDATE scm\.delivery_orders/.test(s.sql))!;
+    // Row 1: DocNo, then the 9 EM_WRITEBACK_COLS values in order (blank -> null,
+    // bsDeliveryDate normalised yyyy/mm/dd -> yyyy-mm-dd).
+    expect(wb.binds.slice(0, 10)).toEqual(["SO-WB-1", "TO BRIGHTSUN", "C1", null, null, null, null, null, "2026-11-01", null]);
+    // Row 2: all nine blank.
+    expect(wb.binds.slice(10, 20)).toEqual(["SO-WB-2", null, null, null, null, null, null, null, null, null]);
+    expect(wb.binds[wb.binds.length - 1]).toBe(HOUZS); // company_id last
+  });
+
+  test("an empty / malformed body is 400, never a write", async () => {
+    const { db, seen } = fakeDb((sql) => (/FROM companies/i.test(sql) ? { id: HOUZS } : []));
+    expect((await app.request("/em-transporter-updates", bodyOf([]), env(db))).status).toBe(400);
+    expect((await app.request("/em-transporter-updates", { method: "POST", headers: { "X-Intake-Key": KEY, "content-type": "application/json" }, body: JSON.stringify({ foo: 1 }) }, env(db))).status).toBe(400);
+    expect(seen.filter((s) => /UPDATE scm\.delivery_orders/.test(s.sql))).toHaveLength(0);
+  });
+});
+
 /* Usage counters (owner 2026-09-24): the ERP's own count of how often the
  * sheet calls each endpoint and how much it carries, because the sheet's log
  * counts SCRIPT RUNS (one run = several requests) and a script that stops
@@ -1096,5 +1209,22 @@ describe("GET /assr-contacts", () => {
     expect(feed.sql).toContain("closed_at IS NULL");
     expect(feed.sql).toContain("archived_at IS NULL");
     expect(feed.sql).not.toMatch(/inspection_by\s*=/);
+  });
+});
+
+describe("salesLocationRegion — raw sales_location, book spelling mapped first", () => {
+  test("a raw East warehouse name reads as EAST (the EM message gate's bug)", () => {
+    // sheetRegion alone only knows the CODE, so the warehouse name is null...
+    expect(sheetRegion("SBH WAREHOUSE", null, "Malaysia")).toBeNull();
+    expect(sheetRegion("SRW WAREHOUSE", null, "Malaysia")).toBeNull();
+    // ...salesLocationRegion maps "SBH WAREHOUSE" -> "SBH" first, so it is EAST.
+    expect(salesLocationRegion("SBH WAREHOUSE", null, "Malaysia")).toBe("EAST");
+    expect(salesLocationRegion("SRW WAREHOUSE", null, "Malaysia")).toBe("EAST");
+  });
+  test("West warehouses stay WEST; Singapore wins off country / addr3", () => {
+    expect(salesLocationRegion("KL WAREHOUSE", null, "Malaysia")).toBe("WEST");
+    expect(salesLocationRegion("PG WAREHOUSE", null, "Malaysia")).toBe("WEST");
+    expect(salesLocationRegion("SBH WAREHOUSE", null, "Singapore")).toBe("SG");
+    expect(salesLocationRegion("SBH WAREHOUSE", "600314 SINGAPORE", "Malaysia")).toBe("SG");
   });
 });

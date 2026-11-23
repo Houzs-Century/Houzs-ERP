@@ -38,7 +38,7 @@
 import { Hono, type Context } from 'hono';
 import { resolveForcedUnitCostSen, type LotCostRow } from '../shared';
 import { supabaseAuth } from '../middleware/auth';
-import { recomputeSoStockAllocation } from '../lib/so-stock-allocation';
+import { recomputeAllocationAfterSave } from '../lib/stock-allocation-job';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { activeCompanyId, requireActiveCompanyId, companyDocPrefix, NOT_THIS_COMPANY } from '../lib/companyScope';
 import { resolveIncreaseKeys } from '../lib/stock-bucket-key';
@@ -68,7 +68,7 @@ type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 export const inventoryAdjustments = new Hono<{ Bindings: Env; Variables: Variables }>();
 inventoryAdjustments.use('*', supabaseAuth);
 
-const HEADER = 'id, adjustment_no, warehouse_id, notes, created_by, created_at, updated_at';
+const HEADER = 'id, adjustment_no, warehouse_id, notes, created_by, created_at, updated_at, source_stock_take_id';
 /* unit_cost_sen is deliberately NOT read back: cost is finance-only, and the
    movement rows (stripped for non-finance callers) are where it lives. */
 const LINE =
@@ -331,7 +331,7 @@ inventoryAdjustments.post('/', async (c) => {
 
   /* Every stock-mutating path re-walks the SO allocation (audit 2026-06-10
      #12): a write-off must un-READY lines whose stock just vanished. */
-  try { await recomputeSoStockAllocation(c.get('supabase')); } catch { /* best-effort */ }
+  try { await recomputeAllocationAfterSave(c.get('supabase'), 'post-adjustment'); } catch { /* best-effort */ }
   return c.json({ id: header.id, adjustmentNo: header.adjustment_no }, 201);
 });
 
@@ -371,6 +371,13 @@ inventoryAdjustments.patch('/:id', async (c) => {
     .select(HEADER).eq('id', id).maybeSingle();
   if (hErr) return c.json({ error: 'load_failed', reason: hErr.message }, 500);
   if (!headerData) return c.json(NOT_THIS_COMPANY, 404);
+  /* A stock-take mirror adjustment (owner 2026-11-20) is a read-only RECORD of a
+     count: its stock moved through the stock take, not here, so editing it would
+     write movements against this document and double-move. Refuse — the stock
+     take is where the count is corrected (undo it to unwind the variance). */
+  if ((headerData as Record<string, unknown>).source_stock_take_id != null) {
+    return c.json({ error: 'stock_take_adjustment_readonly', message: 'This adjustment was created by a stock take and cannot be edited here. Undo the stock take to unwind it.' }, 409);
+  }
   const header = headerData as unknown as { id: string; adjustment_no: string; warehouse_id: string; notes: string | null };
 
   let lines: AdjustmentLine[] = [];
@@ -501,7 +508,7 @@ inventoryAdjustments.patch('/:id', async (c) => {
   });
 
   if (movements.length) {
-    try { await recomputeSoStockAllocation(c.get('supabase')); } catch { /* best-effort */ }
+    try { await recomputeAllocationAfterSave(c.get('supabase'), 'post-adjustment-edit'); } catch { /* best-effort */ }
   }
 
   const { data: after } = await db.from('stock_adjustments', companyScope(c)).select(HEADER).eq('id', id).maybeSingle();

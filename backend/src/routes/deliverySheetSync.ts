@@ -32,7 +32,13 @@ import { timingSafeEqualStr } from "../services/auth";
 import { checkRateLimit, clientIp } from "../middleware/rateLimit";
 import { intakeCompany } from "../lib/intake-company";
 import {
+  EM_WRITEBACK_COLS,
+  EM_WRITEBACK_MAX,
+  emTransporterUpdateSql,
   FEED_BALANCE_COLLECTION_SQL,
+  FEED_EM_TRANSPORTER_SQL,
+  FEED_EPOCH,
+  FEED_MAX_LIMIT,
   FEED_OVERDUE_SQL,
   FEED_READY_OPEN_SQL,
   FEED_SINCE_SQL,
@@ -69,6 +75,8 @@ import {
   toAssrContactRecord,
   toAssrLegRecords,
   type AssrFeedRow,
+  type AssrLegKind,
+  type AssrLegRecord,
 } from "../lib/delivery-sheet-assr-feed";
 import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
 import { SUPPLIER_DATE_SLOT_COL, cascadePoSupplierDate } from "../scm/lib/po-supplier-date-cascade";
@@ -367,6 +375,117 @@ app.post("/feed-by-docnos", async (c) => {
   if ("refusal" in loaded) return loaded.refusal;
   c.set("usageRows", loaded.records.length);
   return c.json({ count: loaded.records.length, requested: docNos.length, records: loaded.records });
+});
+
+/* East-Malaysia transporter feed (owner 2026-11-19): the ESB ("EM Delivery")
+   and BS ("SABAH EM Delivery") transporter sheets are fed DIRECTLY from the ERP
+   now, not from the HC Delivery master sheet's EM Order tab (the master -> ESB /
+   BS push is retired). Full state, no cursor — the transporter Apps Script
+   updates the rows it already has and APPENDS the eligible ones each run. One
+   list, two kinds:
+     - SO rows: East (SBH / SRW) live orders, each carrying `Ready` — the owner's
+       append gate ("只收 ready 的", 2026-11-19). Region is re-checked here so a
+       Singapore-addressed SRW order (Region SG) is dropped.
+     - ASSR legs: the East own-team service / pickup / delivery-back legs that
+       already show on these sheets (keyed SO-xxxx-SERVICE etc.), via the same
+       own-team-gated feed /assr-legs uses, read full-state here.
+   `Appendable` is what the Apps Script appends on: `Ready` for an SO row, always
+   for a leg (its own-team gate is already applied in SQL). Updates to rows the
+   sheet already holds are never gated. The transporter-owned freight columns
+   (consignment, vessel, ETD/ETA, BS delivery date) are the sheets' own and are
+   neither sent nor read back — the ERP has never stored them. */
+app.get("/em-transporter", async (c) => {
+  const denied = await badSheetKey(c);
+  if (denied) return denied;
+  const co = await sheetCompanyId(c);
+  if ("refusal" in co) return co.refusal;
+
+  // SO rows: East live orders (company-scoped ?1), each marked Ready. The
+  // Region re-check drops a Singapore-addressed SRW order the SQL let through.
+  const loaded = await loadRecords(c, FEED_EM_TRANSPORTER_SQL, [co.id]);
+  if ("refusal" in loaded) return loaded.refusal;
+  const soRecords = loaded.records
+    .filter((r) => r.Region === "EAST")
+    .map((r) => ({ ...r, Kind: null as AssrLegKind | null, Appendable: r.Ready }));
+
+  // ASSR legs: own-team legs (all companies, by owner ruling — not
+  // company-scoped), full state from the epoch; keep only the East ones.
+  let legRecords: Array<AssrLegRecord & { Appendable: boolean }> = [];
+  try {
+    const res = (await c.env.DB.prepare(FEED_ASSR_LEGS_SQL).bind(FEED_EPOCH, FEED_MAX_LIMIT).all()) as { results?: AssrFeedRow[] };
+    legRecords = (res.results ?? [])
+      .flatMap(toAssrLegRecords)
+      .filter((r) => r.Region === "EAST")
+      .map((r) => ({ ...r, Appendable: true }));
+  } catch (e) {
+    return c.json({ error: "assr_read_failed", message: e instanceof Error ? e.message : String(e) }, 502);
+  }
+
+  const records = [...soRecords, ...legRecords];
+  c.set("usageRows", records.length);
+  return c.json({ count: records.length, so: soRecords.length, legs: legRecords.length, records });
+});
+
+/* East-MY transporter WRITE-BACK (owner 2026-11-20): the ESB / BS sheets' own
+   edits flow back into the ERP's Delivery Planning. These HC fields live on the
+   DELIVERY ORDER, so each sheet row (keyed on the AutoCount DocNo) resolves to
+   its order's latest live DO and that DO is updated — the board's "EM Order"
+   layout then shows them. Company-scoped by the secret; a blank never clears
+   (emTransporterUpdateSql). ESB writes the shipping fields, BS the delivery
+   ones; both post here. */
+app.post("/em-transporter-updates", async (c) => {
+  const denied = await badSheetKey(c);
+  if (denied) return denied;
+  const co = await sheetCompanyId(c);
+  if ("refusal" in co) return co.refusal;
+
+  let body: any;
+  try { body = await c.req.json(); } catch { body = null; }
+  const raw = Array.isArray(body?.updates) ? (body.updates as unknown[]) : null;
+  if (!raw) return c.json({ error: "bad_body", message: "expected { updates: [{ DocNo, ... }] }" }, 400);
+
+  // One row per DocNo (last wins); drop blank DocNos.
+  const byDoc = new Map<string, Record<string, unknown>>();
+  for (const u of raw) {
+    const rec = (u ?? {}) as Record<string, unknown>;
+    const doc = String(rec.DocNo ?? "").trim();
+    if (doc) byDoc.set(doc, rec);
+  }
+  const rows = [...byDoc.entries()];
+  if (!rows.length) return c.json({ error: "no_updates" }, 400);
+  if (rows.length > EM_WRITEBACK_MAX) return c.json({ error: "too_many", max: EM_WRITEBACK_MAX }, 413);
+
+  // Bind order MUST match emTransporterUpdateSql: per row (DocNo, then each
+  // EM_WRITEBACK_COLS value), then company_id last. Blank -> null (keeps
+  // existing); a date is normalised, and an unparseable one becomes null.
+  const binds: unknown[] = [];
+  for (const [doc, rec] of rows) {
+    binds.push(doc);
+    for (const { key, cast } of EM_WRITEBACK_COLS) {
+      const v = rec[key];
+      if (v === undefined || v === null || String(v).trim() === "") { binds.push(null); continue; }
+      binds.push(cast === "date" ? normSheetDate(v) : String(v));
+    }
+  }
+  binds.push(co.id);
+
+  let updated: Array<{ sheet_doc_no: string }>;
+  try {
+    const res = (await c.env.DB.prepare(emTransporterUpdateSql(rows.length)).bind(...binds).all()) as { results?: Array<{ sheet_doc_no: string }> };
+    updated = res.results ?? [];
+  } catch (e) {
+    return c.json({ error: "write_failed", message: e instanceof Error ? e.message : String(e) }, 502);
+  }
+  const updatedDocs = new Set(updated.map((r) => r.sheet_doc_no));
+  const results = rows.map(([doc]) => ({ DocNo: doc, updated: updatedDocs.has(doc) }));
+  c.set("usageRows", updated.length);
+  return c.json({
+    count: results.length,
+    updated: updated.length,
+    // A DocNo with no live order, or no live DO to carry freight, lands here.
+    not_updated: results.filter((r) => !r.updated).map((r) => r.DocNo),
+    results,
+  });
 });
 
 /* Service-Case (ASSR) legs (owner 2026-09-17): each open case's inspection /

@@ -23,6 +23,7 @@
 
 import { Hono } from 'hono';
 import { beforeEach, describe, expect, test } from 'vitest';
+import { withPvAllocationRpcs } from './lib/pv-allocation-rpc-fake';
 import { computePiSettlement } from '../src/scm/lib/pi-settlement';
 import { postPaymentVoucherHandler, cancelPaymentVoucherHandler } from '../src/scm/routes/payment-vouchers';
 
@@ -98,7 +99,7 @@ function harness(tables: Record<string, Row[]>, breakTable?: string) {
          client is pinned to `scm`; without it the stub throws
          `sb.schema is not a function` and the handler 500s. See docs/bugs/0522. */
       schema(_s: string) { return this; },
-      rpc: async (fn: string, args: Row) => {
+      rpc: withPvAllocationRpcs(tables, async (fn: string, args: Row) => {
         if (fn === 'entity_audit_writable') return { data: true, error: null };
         if (fn === 'settle_pi_paid_sen') {
           const pi = (tables.purchase_invoices ?? []).find((p) => p.id === args.p_pi_id);
@@ -123,7 +124,7 @@ function harness(tables: Record<string, Row[]>, breakTable?: string) {
           return { data: n, error: null };
         }
         return { data: null, error: { message: `unexpected rpc ${fn}` } };
-      },
+      }),
     } as never);
     c.set('companyId' as never, CO as never);
     c.set('user' as never, { id: 'u1' } as never);

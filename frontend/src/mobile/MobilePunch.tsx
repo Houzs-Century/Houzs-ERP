@@ -3,14 +3,15 @@
  * own ERP account (Nico: option B): selfie first, then GPS, then the punch.
  * Neither the selfie nor the location blocks a punch on the server; this
  * screen asks for the selfie because HR checks it, as Hookka's app did. */
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { prepareImageForUpload } from "../lib/imagePipeline";
 import { formatDate } from "../lib/utils";
-import { distanceLabel } from "../vendor/shared/hr-attendance";
+import { checkPunchLocation, distanceLabel, type PunchSite } from "../vendor/shared/hr-attendance";
 import { minToHhmm } from "../vendor/shared/hr-pay-rules";
 import { MyPayBody } from "./MobileMyPay";
+import { OvertimeBody } from "./MobileOvertime";
 import "./mobile.css";
 
 type Side = { clock: string; geo: "IN" | "OUT" | "NONE" | null; siteName: string | null; distanceM: number | null; source: string | null } | null;
@@ -26,6 +27,7 @@ type Me =
       todayDay: Day | null;
       recent: Day[];
       sitesConfigured: number;
+      sites: PunchSite[];
     };
 type PunchResult = { ok: true; action: "CLOCK_IN" | "CLOCK_OUT"; already: boolean; location: { geo: "IN" | "OUT" | "NONE"; siteName: string | null; distanceM: number | null }; photoSaved: boolean };
 
@@ -57,13 +59,32 @@ export function MobilePunch({ onBack }: { onBack: () => void }) {
   const actionRef = useRef<"CLOCK_IN" | "CLOCK_OUT">("CLOCK_IN");
   const [busy, setBusy] = useState<string | null>(null);
   const [result, setResult] = useState<{ tone: "ok" | "warn" | "err"; text: string } | null>(null);
-  const [view, setView] = useState<"punch" | "pay">("punch");
+  const [view, setView] = useState<"punch" | "pay" | "ot">("punch");
+  const [pos, setPos] = useState<{ lat: number; lng: number } | null>(null);
+  const [geoDenied, setGeoDenied] = useState(false);
 
   const me = meQ.data;
   const open = me?.linked ? me.open : null;
   const todayDay = me?.linked ? me.todayDay : null;
   const doneToday = !open && !!todayDay?.out;
   const action: "CLOCK_IN" | "CLOCK_OUT" = open ? "CLOCK_OUT" : "CLOCK_IN";
+  const mySites: PunchSite[] = me?.linked ? me.sites : [];
+  const liveLoc = pos ? checkPunchLocation(pos.lat, pos.lng, mySites) : null;
+
+  // Live distance to the nearest punch site while the Punch tab is open, so a
+  // worker sees whether they are in range before tapping (HC-0125).
+  useEffect(() => {
+    if (view !== "punch" || !me?.linked || !("geolocation" in navigator)) return;
+    const id = navigator.geolocation.watchPosition(
+      (p) => {
+        setPos({ lat: p.coords.latitude, lng: p.coords.longitude });
+        setGeoDenied(false);
+      },
+      () => setGeoDenied(true),
+      { enableHighAccuracy: true, maximumAge: 15_000, timeout: 15_000 },
+    );
+    return () => navigator.geolocation.clearWatch(id);
+  }, [view, me?.linked]);
 
   const startPunch = () => {
     setResult(null);
@@ -113,9 +134,9 @@ export function MobilePunch({ onBack }: { onBack: () => void }) {
             <span className="chev">‹</span> Back
           </button>
         </div>
-        <div className="scr-title">{view === "pay" ? "My pay" : "Punch In / Out"}</div>
+        <div className="scr-title">{view === "pay" ? "My pay" : view === "ot" ? "Overtime" : "Punch In / Out"}</div>
         <div style={{ display: "flex", gap: 6, padding: "0 16px 10px" }}>
-          {(["punch", "pay"] as const).map((v) => (
+          {(["punch", "pay", "ot"] as const).map((v) => (
             <button
               key={v}
               type="button"
@@ -123,13 +144,13 @@ export function MobilePunch({ onBack }: { onBack: () => void }) {
               style={{ flex: 1, minHeight: 34, fontSize: 13 }}
               onClick={() => setView(v)}
             >
-              {v === "punch" ? "Punch" : "My pay"}
+              {v === "punch" ? "Punch" : v === "pay" ? "My pay" : "Overtime"}
             </button>
           ))}
         </div>
       </header>
       <div className="scroll hz-scroll" style={{ padding: "14px 16px" }}>
-        {view === "pay" ? <MyPayBody /> : <>
+        {view === "pay" ? <MyPayBody /> : view === "ot" ? <OvertimeBody /> : <>
         {meQ.isLoading && <div style={{ color: "var(--mut)", fontSize: 13 }}>Loading...</div>}
         {meQ.isError && <div className="card" style={{ padding: 14, color: "var(--red)", fontSize: 13 }}>Could not load your attendance. Pull down or reopen to retry.</div>}
         {me && !me.linked && (
@@ -157,6 +178,21 @@ export function MobilePunch({ onBack }: { onBack: () => void }) {
               {open && open.spanMin != null && <div style={{ fontSize: 12.5, color: "var(--ink)", marginTop: 6 }}>On the clock {hm(open.spanMin)}</div>}
               {open && open.lateMin > 0 && <div style={{ fontSize: 12, color: "var(--red)", marginTop: 2 }}>Late {open.lateMin} min</div>}
             </div>
+
+            {mySites.length > 0 && (
+              <div className="card" style={{ padding: 12, marginTop: 10, fontSize: 12.5 }}>
+                {liveLoc && liveLoc.distanceM != null ? (
+                  <div style={{ color: liveLoc.geo === "IN" ? "var(--green)" : "var(--warn, #9a6b00)" }}>
+                    You are {distanceLabel(liveLoc.distanceM)} from {liveLoc.siteName ?? "the site"}
+                    {liveLoc.geo === "IN" ? " - in range." : " - too far to clock in, move closer."}
+                  </div>
+                ) : (
+                  <div style={{ color: "var(--mut)" }}>
+                    {geoDenied ? "Turn on location to see how far you are from the punch site." : "Getting your location..."}
+                  </div>
+                )}
+              </div>
+            )}
 
             {result && (
               <div

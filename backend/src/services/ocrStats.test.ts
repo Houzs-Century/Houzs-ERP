@@ -6,6 +6,7 @@ const row = (over: Partial<ScanRow>): ScanRow => ({
   document_type: "SO",
   status: "done",
   error: null,
+  review_state: null,
   doc_no: "SO-1",
   created_at: "2026-10-10T01:00:00.000Z",
   updated_at: "2026-10-10T01:00:10.000Z",
@@ -15,6 +16,7 @@ const row = (over: Partial<ScanRow>): ScanRow => ({
   corrected: null,
   draft_baseline: null,
   so_missing: false,
+  has_baseline: false,
   slip_image_key: null,
   ...over,
 });
@@ -35,10 +37,21 @@ describe("classifyScan", () => {
     expect(classifyScan(row({ error: "Payment receipt saved, please check" })).outcome).toBe("clean");
     expect(classifyScan(row({ so_missing: true })).outcome).toBe("discarded");
     expect(classifyScan(row({ sample_status: "EXTRACTED" })).outcome).toBe("awaiting");
-    // GR / PI: no document = failed; a document = imported, never "clean" (GR ACCEPTED means posted).
-    expect(classifyScan(row({ document_type: "GR", doc_no: null, error: "Supplier not matched" }))).toEqual({ outcome: "failed", detail: "Supplier not matched" });
+    // GR / PI: a document = imported, never "clean" (GR ACCEPTED means posted).
     expect(classifyScan(row({ document_type: "GR", doc_no: "GRN-1" })).outcome).toBe("imported");
     expect(classifyScan(row({ document_type: "PI", doc_no: "PI-1", sample_status: "EXTRACTED" })).outcome).toBe("imported");
+  });
+
+  it("splits a supplier scan with no document into failed, needs review, awaiting and discarded", () => {
+    const supplier = (over: Partial<ScanRow>) => row({ document_type: "PI", doc_no: null, sample_status: "EXTRACTED", ...over });
+    expect(classifyScan(supplier({ status: "error", error: "timed out", review_state: "discarded" }))).toEqual({ outcome: "failed", detail: "timed out" });
+    expect(classifyScan(supplier({ error: "The scan could not tell which Goods Receipt this invoice is for" }))).toEqual({
+      outcome: "needsReview", detail: "The scan could not tell which Goods Receipt this invoice is for",
+    });
+    expect(classifyScan(supplier({}))).toEqual({ outcome: "needsReview", detail: "No document was created" });
+    expect(classifyScan(supplier({ review_state: "pending", error: "No matching goods receipt" })).outcome).toBe("awaiting");
+    expect(classifyScan(supplier({ review_state: "discarded" })).outcome).toBe("discarded");
+    expect(classifyScan(supplier({ review_state: "created", doc_no: "PI-1" })).outcome).toBe("imported");
   });
 
   it("names the fields the operator corrected", () => {
@@ -74,11 +87,13 @@ describe("buildOcrReport before/after", () => {
 describe("buildOcrReport", () => {
   it("counts outcomes, accuracy, field misses and time per document type", () => {
     const rows = [
-      row({ id: "a" }),
-      row({ id: "b", sample_status: "CONFIRMED", extracted: slip("A"), corrected: slip("B"), updated_at: "2026-10-10T01:00:30.000Z" }),
+      row({ id: "a", has_baseline: true }),
+      row({ id: "b", has_baseline: true, sample_status: "CONFIRMED", extracted: slip("A"), corrected: slip("B"), updated_at: "2026-10-10T01:00:30.000Z" }),
       row({ id: "c", status: "error", error: "boom" }),
       row({ id: "d", status: "queued" }),
       row({ id: "e", document_type: "PI", doc_no: "PI-9" }),
+      row({ id: "f", document_type: "PI", doc_no: null, error: "No matching goods receipt" }),
+      row({ id: "g", document_type: "PI", doc_no: null, review_state: "pending" }),
     ];
     const r = buildOcrReport("2026-10", "claude-sonnet-5-5", rows);
     expect(r.model).toBe("claude-sonnet-5-5");
@@ -87,14 +102,44 @@ describe("buildOcrReport", () => {
     expect(so).toMatchObject({ scans: 4, clean: 1, corrected: 1, failed: 1, pending: 1, accuracy: { clean: 1, reviewed: 2 } });
     expect(so.avgSec).toBeCloseTo((10 + 30 + 10) / 3);
     expect(so.p90Sec).toBe(30);
-    expect(r.docTypes[1]).toMatchObject({ imported: 1, accuracy: null });
+    expect(r.docTypes[1]).toMatchObject({ scans: 3, imported: 1, needsReview: 1, awaiting: 1, failed: 0, accuracy: null });
     expect(r.fieldMisses).toEqual({ reviewed: 2, fields: [{ field: "Product code", count: 1 }] });
-    expect(r.problems.map((p) => [p.id, p.outcome])).toEqual([["b", "corrected"], ["c", "failed"]]);
+    expect(r.problems.map((p) => [p.id, p.outcome])).toEqual([["b", "corrected"], ["c", "failed"], ["f", "needsReview"]]);
+  });
+
+  it("keeps up to 30 problem scans per document type so one type cannot crowd out another", () => {
+    const salesSlipFailures = Array.from({ length: 31 }, (_, index) => row({ id: `so-${index}`, status: "error", error: "boom" }));
+    const invoiceNeedsReview = row({ id: "pi-1", document_type: "PI", doc_no: null, error: "No matching goods receipt" });
+    const problems = buildOcrReport("2026-10", "m", [...salesSlipFailures, invoiceNeedsReview]).problems;
+    expect(problems.filter((scan) => scan.documentType === "SO")).toHaveLength(30);
+    expect(problems.filter((scan) => scan.documentType === "PI").map((scan) => scan.id)).toEqual(["pi-1"]);
   });
 
   it("carries the slip photo key so the page can show the slip beside the changes", () => {
     const corrected = row({ id: "a", sample_status: "CONFIRMED", extracted: slip("A"), corrected: slip("B"), slip_image_key: "scan-slips/s1" });
     const failed = row({ id: "b", status: "error", error: "boom" });
     expect(buildOcrReport("2026-10", "m", [corrected, failed]).problems.map((p) => p.slipImageKey)).toEqual(["scan-slips/s1", null]);
+  });
+
+  it("scores only slips with a draft baseline, so pipeline changes never read as a person's", () => {
+    const rows = [
+      row({ id: "clean", has_baseline: true, extracted: slip("A") }),
+      row({ id: "fixed", has_baseline: true, sample_status: "CONFIRMED", extracted: slip("A"), corrected: slip("B") }),
+      row({ id: "qty", has_baseline: true, sample_status: "CONFIRMED", extracted: slip("A"), corrected: slip("A", 2) }),
+      // No baseline (even if scanned after the snapshot shipped): its "phone fix" is the pipeline's reformat.
+      row({ id: "old", created_at: "2026-11-17T19:44:00.000Z", extracted: slip("A"), sample_status: "CONFIRMED", corrected: slip("A", 1, { phones: ["+60123"] }) }),
+      row({ id: "oldClean", extracted: slip("A") }),
+    ];
+    const r = buildOcrReport("2026-11", "m", rows);
+    const so = r.docTypes[0];
+    expect(so).toMatchObject({ clean: 2, corrected: 3, accuracy: { clean: 1, reviewed: 3 } });
+    // 4 fields each (name, phone, code, qty); 1 change on "fixed", 1 on "qty".
+    expect(so.fieldAccuracy).toEqual({ correct: 10, total: 12, scans: 3 });
+    expect(r.fieldMisses).toEqual({ reviewed: 3, fields: [{ field: "Product code", count: 1 }, { field: "Qty", count: 1 }] });
+    expect(r.problems.map((p) => [p.id, p.fieldAccuracy])).toEqual([
+      ["fixed", { correct: 3, total: 4 }],
+      ["qty", { correct: 3, total: 4 }],
+      ["old", null],
+    ]);
   });
 });

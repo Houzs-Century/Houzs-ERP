@@ -79,8 +79,8 @@ export async function runGrnPostTail(sb: ReconcileClient, tail: GrnPostTail): Pr
   } catch (e) { console.error('[receipt-so] post-grn failed:', e); }
   /* B2C SO auto-allocation — re-walk PENDING SO lines against the new stock. */
   try {
-    const { recomputeSoStockAllocation } = await import('./so-stock-allocation');
-    await recomputeSoStockAllocation(sb);
+    const { recomputeAllocationAfterSave } = await import('./stock-allocation-job');
+    await recomputeAllocationAfterSave(sb, 'post-grn');
   } catch (e) { console.error('[so-allocation] post-grn failed:', e); }
 }
 

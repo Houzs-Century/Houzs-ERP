@@ -731,12 +731,24 @@ export function stockTakeRowMenu<R extends StatusRow>(h: {
   print: (r: R) => void;
   cancel: (r: R) => void;
   canCancel: (r: R) => boolean;
+  /* Approve / Return a PENDING_APPROVAL count from the list (owner 2026-11-20:
+     a supervisor approves "from outside", like the SO amendment queue). Only
+     wired when the viewer may supervise and the row is pending — the confirm
+     the list builds shows the net variance + line count the supervisor is
+     signing off. Reject moves no stock (back to OPEN); approve books it. */
+  approve?: (r: R) => void;
+  reject?: (r: R) => void;
+  canApprove?: (r: R) => boolean;
 }): (r: R) => RowMenuItem[] {
   // Hold follows: ON_HOLD is being converted from a status into a flag.
   return (r) => buildRowMenu(
     [
       { label: "Open", onClick: () => h.open(r) },
       { label: "Print", onClick: () => h.print(r) },
+    ],
+    [
+      h.approve && h.canApprove?.(r) && { label: "Approve & post", onClick: () => h.approve!(r) },
+      h.reject && h.canApprove?.(r) && { label: "Return to Open", onClick: () => h.reject!(r) },
     ],
     [h.canCancel(r) && dangerItem("Cancel Stock Take", () => h.cancel(r))],
   );

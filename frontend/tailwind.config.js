@@ -7,7 +7,7 @@ export default {
   // Semantic utilities the design-system docs (conventions header)
   // enumerate for the claude.ai/design agent — keep them in the
   // compiled CSS even when no in-repo component happens to use them.
-  safelist: ["bg-err-bg", "bg-synced-bg", "font-body"],
+  safelist: ["bg-err-bg", "bg-synced-bg", "bg-time/15", "font-body"],
   theme: {
     extend: {
       colors: {
@@ -70,7 +70,13 @@ export default {
         // LEARNING announcements — trend blue, mirrors --c-secondary-b in
         // vendor tokens.css. Channel variable so /40-style opacity modifiers
         // compose like the other semantic colors here.
-        learning: "rgb(var(--hz-learning) / <alpha-value>)",
+        learning: {
+          DEFAULT: "rgb(var(--hz-learning) / <alpha-value>)",
+          soft: "rgb(var(--hz-learning-soft) / <alpha-value>)", // HR sidebar Performance group chip
+        },
+        // HR module group accent (Time): a solid amber distinct from the darker
+        // `warning.text`; its soft background reuses `warning.bg`.
+        time: "rgb(var(--hz-time) / <alpha-value>)",
         expired: { bg: "rgb(var(--hz-expired-bg) / <alpha-value>)", text: "rgb(var(--hz-expired-text) / <alpha-value>)" },
         warning: { bg: "rgb(var(--hz-warning-bg) / <alpha-value>)", text: "rgb(var(--hz-warning-text) / <alpha-value>)" },
       },

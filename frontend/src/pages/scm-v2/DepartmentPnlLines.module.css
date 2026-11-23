@@ -1,0 +1,3 @@
+/* DepartmentPnlLines — a line's words with how its amount was worked out under them. */
+.text { display: block; overflow: hidden; text-overflow: ellipsis; }
+.how { display: block; overflow: hidden; text-overflow: ellipsis; font-size: 11.5px; color: var(--fin-detail, #6b7280); }

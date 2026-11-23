@@ -3,9 +3,11 @@ import { toPgPlaceholders } from "../src/db/d1-compat";
 import { FEED_ASSR_CONTACTS_SQL, FEED_ASSR_LEGS_SQL } from "../src/lib/delivery-sheet-assr-feed";
 import {
   FEED_BALANCE_COLLECTION_SQL,
+  FEED_EM_TRANSPORTER_SQL,
   FEED_OVERDUE_SQL,
   FEED_READY_OPEN_SQL,
   FEED_SINCE_SQL,
+  emTransporterUpdateSql,
   feedByDocNosSql,
   feedFullByDocNosSql,
   feedLinesSql,
@@ -25,11 +27,13 @@ const FEEDS: Record<string, string> = {
   FEED_OVERDUE_SQL,
   FEED_BALANCE_COLLECTION_SQL,
   FEED_READY_OPEN_SQL,
+  FEED_EM_TRANSPORTER_SQL,
   FEED_OUTSTANDING_PO_SQL,
   feedLinesSql: feedLinesSql(2),
   feedByDocNosSql: feedByDocNosSql(2),
   feedFullByDocNosSql: feedFullByDocNosSql(2),
   updateFromSheetSql: updateFromSheetSql(2),
+  emTransporterUpdateSql: emTransporterUpdateSql(2),
   poHeadsForSheetSql: poHeadsForSheetSql(2),
 };
 

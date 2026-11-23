@@ -47,6 +47,7 @@ import { activeCompanyId, companyDocPrefix, requireActiveCompanyId, scopeToCompa
 import { docMonthTag, mintMonthlyDocNo } from '../lib/doc-no';
 import { todayMyt } from '../lib/my-time';
 import { postJournal, reverseJournal } from '../../acc/engine';
+import { runScmPgCommand } from '../lib/pg-supabase-transaction';
 import { openingDocumentRefusal } from '../../acc/books-opening';
 import { dateOrNull } from '../lib/date-coerce';
 import { resolveRoles, type RuleLine } from '../../acc/rules';
@@ -383,6 +384,8 @@ export const createDebtorBillHandler = async (c: any): Promise<Response> => {
   const totalSen = lines.reduce((s, l) => s + l.amountSen, 0);
 
   const sb = c.get('supabase');
+  /* Every refusal above only read, so it released the form's Idempotency-Key. */
+  writesFromHere(c);
   const billNumber = await mintMonthlyDocNo(sb, 'acc_debtor_bills', 'bill_number', `${companyDocPrefix(c)}${docKind === 'DN' ? 'ODN' : 'ODB'}-${docMonthTag(billDate)}`);
   const { data: bill, error: insErr } = await sb.from('acc_debtor_bills').insert({
     company_id: coId,
@@ -482,54 +485,66 @@ export const updateDebtorBillHandler = async (c: any): Promise<Response> => {
   const billDate = dateOrNull(body.billDate) ?? oldDate;
   const notes = body.notes !== undefined ? (body.notes ? String(body.notes).trim() : null) : (bill.notes ?? null);
 
-  if (rebuilt) {
-    const { error: delErr } = await sb.from('acc_debtor_bill_lines').delete().eq('company_id', coId).eq('bill_id', bill.id);
-    if (delErr) return c.json({ error: 'save_failed', reason: delErr.message }, 500);
-    const { error: lineErr } = await sb.from('acc_debtor_bill_lines').insert(rebuilt.lines.map((l, i) => ({
-      company_id: coId, bill_id: bill.id, line_no: i + 1,
-      description: l.description, credit_account_code: l.code, amount_sen: l.amountSen, project_id: l.projectId,
-    })));
-    if (lineErr) return c.json({ error: 'save_failed', reason: lineErr.message }, 500);
-  }
-  const totalSen = rebuilt ? rebuilt.total : Number(bill.total_sen ?? 0);
-  const { error: upErr } = await sb.from('acc_debtor_bills')
-    .update({ bill_date: billDate, notes, total_sen: totalSen })
-    .eq('company_id', coId).eq('id', bill.id);
-  if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
+  /* The lines, the header and the ledger re-post commit together or not at all. Written one by one, a failure
+     between them left new lines under the old journal, or the old journal reversed and no new one. */
+  return runScmPgCommand(c, async (tx) => {
+    if (rebuilt) {
+      const { error: delErr } = await tx.from('acc_debtor_bill_lines').delete().eq('company_id', coId).eq('bill_id', bill.id);
+      if (delErr) return c.json({ error: 'save_failed', reason: delErr.message }, 500);
+      const { error: lineErr } = await tx.from('acc_debtor_bill_lines').insert(rebuilt.lines.map((l, i) => ({
+        company_id: coId, bill_id: bill.id, line_no: i + 1,
+        description: l.description, credit_account_code: l.code, amount_sen: l.amountSen, project_id: l.projectId,
+      })));
+      if (lineErr) return c.json({ error: 'save_failed', reason: lineErr.message }, 500);
+    }
+    const totalSen = rebuilt ? rebuilt.total : Number(bill.total_sen ?? 0);
+    /* The status follows the new total: a bill cut down to what was already received is PAID, one raised above it
+       owes again. Compare-and-set on received_sen and the status: a receipt or a cancel that landed since the bill was
+       read refuses the edit instead of being written over. */
+    const nextStatus = received > 0 && received >= totalSen ? 'PAID' : 'POSTED';
+    const { data: upd, error: upErr } = await tx.from('acc_debtor_bills')
+      .update({ bill_date: billDate, notes, total_sen: totalSen, status: nextStatus })
+      .eq('company_id', coId).eq('id', bill.id).eq('received_sen', received).neq('status', 'CANCELLED')
+      .select('id');
+    if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
+    if (((upd ?? []) as unknown[]).length === 0) {
+      return c.json({ error: 'changed', message: `${billNumber} changed while you were editing it (money received, or cancelled). Reload and try again.` }, 409);
+    }
 
-  /* The re-post: contra the entry the old bill wrote, then book the bill as
-     it now reads — through the one gate. */
-  const rev = await reverseJournal(sb, {
-    companyId: coId,
-    sourceType: 'ODB',
-    sourceDocNo: billNumber,
-    narration: (orig) => `Edit ${paper} ${billNumber} — voids ${orig.je_no}`,
-    entryDate: oldDate,
+    /* The re-post: contra the entry the old bill wrote, then book the bill as
+       it now reads — through the one gate. */
+    const rev = await reverseJournal(tx, {
+      companyId: coId,
+      sourceType: 'ODB',
+      sourceDocNo: billNumber,
+      narration: (orig) => `Edit ${paper} ${billNumber} — voids ${orig.je_no}`,
+      entryDate: oldDate,
+    });
+    if (!rev.ok) return c.json({ error: 'reverse_failed', reason: (rev as { reason?: string }).reason ?? rev.status }, 500);
+    let lines: BillLine[];
+    if (rebuilt) lines = rebuilt.lines;
+    else {
+      const { data: rows, error: lErr } = await scopeToCompany(
+        tx.from('acc_debtor_bill_lines').select('line_no, description, credit_account_code, amount_sen, project_id').eq('bill_id', bill.id), c,
+      ).order('line_no');
+      if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
+      lines = ((rows ?? []) as Row[]).map((l) => ({
+        description: l.description ?? null, code: l.credit_account_code ? String(l.credit_account_code) : null, amountSen: Number(l.amount_sen),
+        projectId: l.project_id == null ? null : Number(l.project_id),
+      }));
+    }
+    const roles = await resolveRoles(tx, coId);
+    const r = await postJournal(tx, {
+      companyId: coId,
+      entryDate: billDate,
+      sourceType: 'ODB',
+      sourceDocNo: billNumber,
+      narration: `${paper === 'debit note' ? 'Debit note' : 'Debtor bill'} ${billNumber} — ${found.debtor.name} — edited`,
+      lines: debtorBillRuleLines(roles, String(found.debtor.name), billNumber, lines, totalSen),
+    });
+    if (!r.ok) return c.json({ error: 'post_failed', reason: (r as { reason?: string }).reason ?? r.status }, 500);
+    return c.json({ ok: true, bill: { id: bill.id, billNumber, totalSen }, reposted: true, jeNo: r.jeNo });
   });
-  if (!rev.ok) return c.json({ error: 'reverse_failed', reason: (rev as { reason?: string }).reason ?? rev.status }, 500);
-  let lines: BillLine[];
-  if (rebuilt) lines = rebuilt.lines;
-  else {
-    const { data: rows, error: lErr } = await scopeToCompany(
-      sb.from('acc_debtor_bill_lines').select('line_no, description, credit_account_code, amount_sen, project_id').eq('bill_id', bill.id), c,
-    ).order('line_no');
-    if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
-    lines = ((rows ?? []) as Row[]).map((l) => ({
-      description: l.description ?? null, code: l.credit_account_code ? String(l.credit_account_code) : null, amountSen: Number(l.amount_sen),
-      projectId: l.project_id == null ? null : Number(l.project_id),
-    }));
-  }
-  const roles = await resolveRoles(sb, coId);
-  const r = await postJournal(sb, {
-    companyId: coId,
-    entryDate: billDate,
-    sourceType: 'ODB',
-    sourceDocNo: billNumber,
-    narration: `${paper === 'debit note' ? 'Debit note' : 'Debtor bill'} ${billNumber} — ${found.debtor.name} — edited`,
-    lines: debtorBillRuleLines(roles, String(found.debtor.name), billNumber, lines, totalSen),
-  });
-  if (!r.ok) return c.json({ error: 'post_failed', reason: (r as { reason?: string }).reason ?? r.status }, 500);
-  return c.json({ ok: true, bill: { id: bill.id, billNumber, totalSen }, reposted: true, jeNo: r.jeNo });
 };
 
 export const cancelDebtorBillHandler = async (c: any): Promise<Response> => {
@@ -661,7 +676,7 @@ export const createDebtorReceiptHandler = async (c: any): Promise<Response> => {
   if (freshErr || !fresh) return c.json({ error: 'load_failed', reason: freshErr?.message ?? 'receipt vanished', receipt: made }, 500);
   /* A failure past this point leaves a stamped DRAFT the Other Debtors page
      can re-approve (resume), so the number and the allocations are not lost. */
-  const posted = await postDebtorReceipt(c, sb, coId, fresh as Row);
+  const posted = await postDebtorReceiptAtomic(c, coId, fresh as Row);
   if ('resp' in posted) return posted.resp;
   return c.json({ ok: true, receipt: made, posted: true, jeNo: posted.jeNo }, 201);
 };
@@ -852,7 +867,7 @@ export const approveDebtorReceiptHandler = async (c: any): Promise<Response> => 
       .update({ approved_at: s.at, approved_by: s.by }).eq('company_id', r.company_id).eq('id', r.id);
     if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
   }
-  const posted = await postDebtorReceipt(c, sb, coId, r);
+  const posted = await postDebtorReceiptAtomic(c, coId, r);
   if ('resp' in posted) return posted.resp;
   return c.json({ ok: true, jeNo: posted.jeNo });
 };
@@ -861,6 +876,18 @@ export const approveDebtorReceiptHandler = async (c: any): Promise<Response> => 
    bills knocked off — shared by the fourth layer's Approve and by the
    Receipts page's post-now door, so both book the identical entry. */
 const postDebtorReceipt = async (c: any, sb: any, coId: number, r: Row): Promise<{ jeNo: string } | { resp: Response }> => {
+  /* Claimed FIRST, compare-and-set, inside the caller's transaction (postDebtorReceiptAtomic). A double click or a
+     retry waits on this row and then finds it POSTED, so the bills are never knocked off twice; a failure further down
+     rolls the claim back with everything else. Before, POSTED was written last, and a retry after a post that died
+     between the knock-offs and that write met postJournal's already_posted and knocked the bills off again. */
+  const { data: claimed, error: claimErr } = await sb.from('acc_debtor_receipts')
+    .update({ status: 'POSTED', posted_at: now() })
+    .eq('company_id', coId).eq('id', r.id).neq('status', 'POSTED').neq('status', 'CANCELLED')
+    .select('id');
+  if (claimErr) return { resp: c.json({ error: 'save_failed', reason: claimErr.message }, 500) };
+  if (((claimed ?? []) as unknown[]).length === 0) {
+    return { resp: c.json({ error: 'already_posted', message: `${String(r.receipt_number)} was posted or cancelled a moment ago. Reload.` }, 409) };
+  }
   const { data: debtor, error: dErr } = await sb.from('acc_debtors').select('name').eq('company_id', coId).eq('id', r.debtor_id).maybeSingle();
   if (dErr) return { resp: c.json({ error: 'load_failed', reason: dErr.message }, 500) };
   const roles = await resolveRoles(sb, coId);
@@ -905,17 +932,33 @@ const postDebtorReceipt = async (c: any, sb: any, coId: number, r: Row): Promise
     }
     if (applied <= 0) continue;
     const nextReceived = Number(bill.received_sen ?? 0) + applied;
-    const { error: upErr } = await sb.from('acc_debtor_bills').update({
+    /* Compare-and-set on what was read: another receipt landing on the same bill meanwhile refuses this one (and
+       rolls it back) instead of the second write losing the first one's money. */
+    const { data: moved, error: upErr } = await sb.from('acc_debtor_bills').update({
       received_sen: nextReceived,
       status: nextReceived >= Number(bill.total_sen) ? 'PAID' : 'POSTED',
-    }).eq('company_id', coId).eq('id', bill.id);
+    }).eq('company_id', coId).eq('id', bill.id).eq('received_sen', Number(bill.received_sen ?? 0)).select('id');
     if (upErr) return { resp: c.json({ error: 'save_failed', reason: upErr.message }, 500) };
+    if (((moved ?? []) as unknown[]).length === 0) {
+      return { resp: c.json({ error: 'changed', message: 'A bill this receipt settles was paid by another receipt at the same moment. Nothing was posted; try again.' }, 409) };
+    }
   }
 
-  const { error: doneErr } = await sb.from('acc_debtor_receipts')
-    .update({ status: 'POSTED', posted_at: now() }).eq('company_id', coId).eq('id', r.id);
-  if (doneErr) return { resp: c.json({ error: 'save_failed', reason: doneErr.message }, 500) };
   return { jeNo: String((post as Row).jeNo ?? '') };
+};
+
+/** postDebtorReceipt in one transaction: the claim, the journal and the bill knock-offs commit together or not at
+    all. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the Hono context is untyped across this route file, as in every handler above
+const postDebtorReceiptAtomic = async (c: any, coId: number, r: Row): Promise<{ jeNo: string } | { resp: Response }> => {
+  let jeNo = '';
+  const resp = await runScmPgCommand(c, async (tx) => {
+    const posted = await postDebtorReceipt(c, tx, coId, r);
+    if ('resp' in posted) return posted.resp;
+    jeNo = posted.jeNo;
+    return c.json({ ok: true });
+  });
+  return resp.ok ? { jeNo } : { resp };
 };
 
 /* ── POST /receipts/:receiptId/void — the one undo of a POSTED receipt ─────
@@ -926,9 +969,7 @@ const postDebtorReceipt = async (c: any, sb: any, coId: number, r: Row): Promise
    takes its money back (received_sen down, PAID → POSTED), the receipt turns
    CANCELLED — the ledger keeps both sides, as the RCT void does. A DRAFT is
    not on the books and is rejected instead; a void one refuses twice.
-   The status is written LAST: a void that died after the contra resumes on
-   the next press (the engine answers already_reversed and the bills are
-   re-walked, floored at zero). */
+   All of it is one transaction, the status claimed first. */
 export const voidDebtorReceiptHandler = async (c: any): Promise<Response> => {
   if (!hasHouzsPerm(c, 'scm.payment_voucher.cancel')) {
     return c.json({ error: "You don't have permission to do that." }, 403);
@@ -939,37 +980,42 @@ export const voidDebtorReceiptHandler = async (c: any): Promise<Response> => {
   if (r.opening === true) return c.json(openingDocumentRefusal(String(r.receipt_number)), 409);
   if (r.status === 'CANCELLED') return c.json({ error: 'void_twice', message: `${r.receipt_number} is void.` }, 409);
   if (r.status !== 'POSTED') return c.json({ error: 'not_posted', message: `${r.receipt_number} is not on the books — reject the draft instead of voiding it.` }, 409);
-  const sb = c.get('supabase');
   const coId = Number(r.company_id);
-  const rev = await reverseJournal(sb, {
-    companyId: coId,
-    sourceType: 'ODR',
-    sourceDocNo: String(r.receipt_number),
-    narration: (orig) => `Void debtor receipt ${r.receipt_number} — voids ${orig.je_no}`,
+  /* One transaction, the status claimed first by compare-and-set: a void that died part-way rolls back whole, and a
+     second press waits on the row and finds it void. Before, the status was written last, so a resume re-walked the
+     bills and took the receipt's money off them a second time. */
+  return runScmPgCommand(c, async (tx) => {
+    const { data: claimed, error: claimErr } = await tx.from('acc_debtor_receipts')
+      .update({ status: 'CANCELLED' }).eq('company_id', coId).eq('id', r.id).eq('status', 'POSTED').select('id');
+    if (claimErr) return c.json({ error: 'save_failed', reason: claimErr.message }, 500);
+    if (((claimed ?? []) as unknown[]).length === 0) return c.json({ error: 'void_twice', message: `${r.receipt_number} is void.` }, 409);
+    const rev = await reverseJournal(tx, {
+      companyId: coId,
+      sourceType: 'ODR',
+      sourceDocNo: String(r.receipt_number),
+      narration: (orig) => `Void debtor receipt ${r.receipt_number} — voids ${orig.je_no}`,
+    });
+    if (!rev.ok) return c.json({ error: 'reverse_failed', reason: (rev as { reason?: string }).reason ?? rev.status }, 500);
+    /* The money goes back onto the bills it was taken off — the knock-off's own
+       clamp read backwards, floored at zero. Fail LOUD: the journal is already
+       reversed, and a bill we cannot read would keep money it no longer has. */
+    const { data: allocs, error: aErr } = await tx.from('acc_debtor_receipt_allocations')
+      .select('bill_id, amount_sen').eq('company_id', coId).eq('receipt_id', r.id);
+    if (aErr) return c.json({ error: 'load_failed', reason: aErr.message }, 500);
+    for (const a of (allocs ?? []) as Row[]) {
+      const { data: bill, error: bErr } = await tx.from('acc_debtor_bills')
+        .select('id, total_sen, received_sen, status').eq('company_id', coId).eq('id', a.bill_id).maybeSingle();
+      if (bErr) return c.json({ error: 'load_failed', reason: bErr.message }, 500);
+      if (!bill) continue;
+      const total = Number(bill.total_sen ?? 0);
+      const nextReceived = Math.max(0, Number(bill.received_sen ?? 0) - Number(a.amount_sen ?? 0));
+      const patch: Row = { received_sen: nextReceived };
+      if (bill.status !== 'CANCELLED') patch.status = total > 0 && nextReceived >= total ? 'PAID' : 'POSTED';
+      const { error: upErr } = await tx.from('acc_debtor_bills').update(patch).eq('company_id', coId).eq('id', bill.id);
+      if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
+    }
+    return c.json({ ok: true });
   });
-  if (!rev.ok) return c.json({ error: 'reverse_failed', reason: (rev as { reason?: string }).reason ?? rev.status }, 500);
-  /* The money goes back onto the bills it was taken off — the knock-off's own
-     clamp read backwards, floored at zero. Fail LOUD: the journal is already
-     reversed, and a bill we cannot read would keep money it no longer has. */
-  const { data: allocs, error: aErr } = await sb.from('acc_debtor_receipt_allocations')
-    .select('bill_id, amount_sen').eq('company_id', coId).eq('receipt_id', r.id);
-  if (aErr) return c.json({ error: 'load_failed', reason: aErr.message }, 500);
-  for (const a of (allocs ?? []) as Row[]) {
-    const { data: bill, error: bErr } = await sb.from('acc_debtor_bills')
-      .select('id, total_sen, received_sen, status').eq('company_id', coId).eq('id', a.bill_id).maybeSingle();
-    if (bErr) return c.json({ error: 'load_failed', reason: bErr.message }, 500);
-    if (!bill) continue;
-    const total = Number(bill.total_sen ?? 0);
-    const nextReceived = Math.max(0, Number(bill.received_sen ?? 0) - Number(a.amount_sen ?? 0));
-    const patch: Row = { received_sen: nextReceived };
-    if (bill.status !== 'CANCELLED') patch.status = total > 0 && nextReceived >= total ? 'PAID' : 'POSTED';
-    const { error: upErr } = await sb.from('acc_debtor_bills').update(patch).eq('company_id', coId).eq('id', bill.id);
-    if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
-  }
-  const { error: doneErr } = await sb.from('acc_debtor_receipts')
-    .update({ status: 'CANCELLED' }).eq('company_id', coId).eq('id', r.id);
-  if (doneErr) return c.json({ error: 'save_failed', reason: doneErr.message }, 500);
-  return c.json({ ok: true });
 };
 
 /* ── Router ───────────────────────────────────────────────────────────────── */
@@ -983,7 +1029,7 @@ otherDebtors.get('/', listDebtorsHandler);
 otherDebtors.post('/', createDebtorHandler);
 otherDebtors.get('/:id', debtorDetailHandler);
 otherDebtors.patch('/:id', updateDebtorHandler);
-otherDebtors.post('/:id/bills', createDebtorBillHandler);
+otherDebtors.post('/:id/bills', noWriteUntilMarked, createDebtorBillHandler);
 otherDebtors.post('/bills/:billId/cancel', cancelDebtorBillHandler);
 otherDebtors.patch('/bills/:billId', updateDebtorBillHandler);
 otherDebtors.post('/:id/receipts', noWriteUntilMarked, createDebtorReceiptHandler);

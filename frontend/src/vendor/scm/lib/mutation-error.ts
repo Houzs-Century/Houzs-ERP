@@ -76,8 +76,14 @@ export type InBandFailure = {
   movementErrors?: string[] | null;
   cancelErrors?: string[] | null;
   reversalErrors?: string[] | null;
+  /** Payment voucher post / approve / cancel: a money step that did not finish (an invoice not settled or not
+   *  unwound, a journal not reversed, an order's refund row not written). Each is resumable: pressing the same
+   *  button again finishes it without repeating the rest. */
+  settleErrors?: string[] | null;
   /** GRN post: the receipt and its stock stand, the PO's received qty was not recounted (grns.ts postGrnAndRollup). */
   recountError?: string | null;
+  /** SO create: the order and its lines are in, a payment it was handed was not recorded (mfg-sales-orders.ts). */
+  paymentErrors?: string[] | null;
 };
 
 /**
@@ -99,10 +105,22 @@ export const inBandFailureText = (res: InBandFailure | undefined | void): string
       'The document is saved. Stock was NOT adjusted for this change — tell IT so the ledger can be repaired.',
     );
   }
+  if (res?.settleErrors?.length) {
+    parts.push(
+      `${res.settleErrors.join('\n')}\n\n` +
+      'Nothing was lost: press the same button again and it finishes these steps without repeating the rest.',
+    );
+  }
   if (res?.recountError) {
     parts.push(
       `The purchase order's received quantity was NOT updated (${res.recountError}). ` +
       'The receipt is saved, but the PO may still show these goods as outstanding — tell IT so it can be recounted.',
+    );
+  }
+  if (res?.paymentErrors?.length) {
+    parts.push(
+      `${res.paymentErrors.join('\n')}\n\n` +
+      'The order is saved. Do not create it again - add the payment on the order instead.',
     );
   }
   return parts.length ? parts.join('\n\n') : null;

@@ -87,7 +87,7 @@ describePg('a supplier return is one transaction: OUT + GRN returned + PO receiv
         id bigserial PRIMARY KEY, company_id bigint, movement_type text NOT NULL, warehouse_id text,
         item_code text, variant_key text, product_name text, qty numeric, unit_cost_sen bigint,
         batch_no text, movement_date date, source_doc_type text, source_doc_id text,
-        source_doc_no text, performed_by text, notes text, correction_seq integer
+        source_doc_no text, performed_by text, notes text, correction_seq integer, reverses_movement_id text
       )`;
     await sql`CREATE TABLE scm.test_fifo_lots (item_code text)`;
     await sql`CREATE TABLE scm.mfg_products (code text, category text, company_id bigint)`;

@@ -40,6 +40,10 @@ export type UnmatchedPayment = {
   channel: string | null;
   amountSen: number;
   reference: string | null;
+  /** The document's Ref No. pair — the order's, or the invoice's own — raw, for customerRefOf.
+      Not `reference`, which is the code keyed with the money. */
+  ref: string | null;
+  customer_so_no: string | null;
   ageDays: number;
   state: UnmatchedState;
   /** transfer: the money account its entry debits, and the last day that

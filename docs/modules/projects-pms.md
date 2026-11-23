@@ -16,10 +16,16 @@ via public no-login share links — outside contractors and brand partners.
   `role_label`. Uploading to a gated, not-yet-in-review item auto-flips it to
   `pending_review` on either surface.
 - Defect photo review is a two-stage, append-only action timeline per
-  attachment: `done | replace` (legacy `ongoing` reads as fresh). Stage 1
-  reviewer (region-split: Ops Exec for Pulau Pinang/Kelantan/Terengganu/Perak,
-  else the Storekeeper Supervisor by position name) sets `replace` to
-  escalate; Stage 2 (Purchaser) closes with `done`.
+  attachment with five statuses (owner 2026-11-20), one home for the stage
+  machine + labels + buttons (`frontend/src/pages/projects/defectReviewer.ts`,
+  `defectStage`). Stage 1 reviewer (region-split: Ops Exec for Pulau
+  Pinang/Kelantan/Terengganu/Perak, else the Storekeeper Supervisor by position
+  name) sets `done_clean` (cleaned — resolved), or `exchange` / `service` (both
+  escalate to the purchaser). Stage 2 purchaser (Farra) sets `in_progress`, then
+  `done` (resolved). Every button opens a remark box before it saves. Resolved =
+  `done`/`done_clean`; purchaser lane = `exchange`/`service`/`in_progress` (+
+  legacy `replace`); fresh = no action / legacy `ongoing`. Free-text column, no
+  migration.
 - A defect photo's remark is packed as `Model:` + `Reason:` in its attachment
   `caption` (`pages/projects/defectRemark.ts`); it renders under the photo for
   EVERY mobile viewer (`MobilePmsDefectActions.tsx`, not the hidden tasklist),
@@ -200,7 +206,7 @@ list. Holding `projects.write` escapes crew scoping entirely on both.
   event's RATIO to the shown Sales, not its amount; COGS and fixed costs take its amount. No such
   event = no layer, never another venue. Totals add the shown lines and flag estimates. Project
   Overview layers its column the same way and splits totals Actual / Forecast / Last event; that
-  event's Expo Map files show read-only in this event's EXPO MAP section while it has none.
+  event's Expo Map files show read-only in this event's EXPO MAP section until its own Filled Floorplan has a file.
 - The evening sales report (one bill per line: booklet no, amount, salesperson;
   a "+ N(T)" transport or "(D)" disposal tail is kept apart) is DERIVED from the
   project chat on every read — notes by the Owner position, Ummu or weisiang

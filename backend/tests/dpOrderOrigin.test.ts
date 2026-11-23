@@ -136,3 +136,20 @@ describe('POST /dp-orders — a TRANSFER can pick a saved location (方案2)', (
     expect(insert.from_city).toBe('Petaling Jaya');
   });
 });
+
+describe('POST /dp-orders — a Delivery (no SO) carries its sales amount (owner 2026-11-20)', () => {
+  test('the amount in sen is stored; none given stays null', async () => {
+    const { a, calls } = app(null);
+    const res = await send(a, { jobType: 'DELIVERY', salesAmountSen: 350000, overrides: { party_name: 'Walk-in', address1: '1 Jalan Ampang', postcode: '50450' } });
+    expect(res.status).toBe(201);
+    expect(insertOf(calls).sales_amount_sen).toBe(350000);
+    const plain = app(null);
+    expect((await send(plain.a, { jobType: 'SETUP', overrides: { address1: 'Hall A, KLCC', postcode: '50088' } })).status).toBe(201);
+    expect(insertOf(plain.calls).sales_amount_sen).toBeNull();
+  });
+  test('a negative amount is refused', async () => {
+    const { a } = app(null);
+    const res = await send(a, { jobType: 'DELIVERY', salesAmountSen: -1, overrides: { address1: '1 Jalan Ampang', postcode: '50450' } });
+    expect(res.status).toBe(400);
+  });
+});

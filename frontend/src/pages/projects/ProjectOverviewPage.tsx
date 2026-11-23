@@ -146,7 +146,7 @@ export function ProjectOverviewPage() {
         <select className={SELECT_CLS} value={type} onChange={(e) => setView({ type: e.target.value })} aria-label="Event type"><option value="">All event types</option>{options("eventType").map((b) => <option key={b}>{b}</option>)}</select>
         <select className={SELECT_CLS} value={organizer} onChange={(e) => setView({ organizer: e.target.value })} aria-label="Organizer"><option value="">All organizers</option>{options("organizer").map((b) => <option key={b}>{b}</option>)}</select>
         {/* Venue, state and stage too (owner 2026-11-01: every filter the page can take). */}
-        <select className={SELECT_CLS} value={venue} onChange={(e) => setView({ venue: e.target.value })} aria-label="Venue"><option value="">All venues</option>{options("venue").map((b) => <option key={b}>{b}</option>)}</select>
+        <select className={cn(SELECT_CLS, "max-w-full")} value={venue} onChange={(e) => setView({ venue: e.target.value })} aria-label="Venue"><option value="">All venues</option>{options("venue").map((b) => <option key={b}>{b}</option>)}</select>
         <select className={SELECT_CLS} value={state} onChange={(e) => setView({ state: e.target.value })} aria-label="State"><option value="">All states</option>{options("state").map((b) => <option key={b}>{b}</option>)}</select>
         <select className={SELECT_CLS} value={stage} onChange={(e) => setView({ stage: e.target.value })} aria-label="Stage"><option value="">All stages</option>{options("stage").map((b) => <option key={b} value={b}>{b.charAt(0).toUpperCase() + b.slice(1)}</option>)}</select>
         {q.loading && <span className="text-[11.5px] text-ink-muted">Loading…</span>}
@@ -172,7 +172,9 @@ export function ProjectOverviewPage() {
         </div>
       </section>
 
-      <div className="grid gap-4 xl:grid-cols-[1.6fr_1fr]">
+      {/* minmax(0, ...): a wide table scrolls inside its panel instead of
+          stretching the column past a phone screen (owner 2026-11-19). */}
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
         <Panel title="Trend" hint="sales, gross and net profit by event start · click a row to go one level down"
           right={<span className="flex flex-wrap items-center gap-1 text-[12px]">{crumbs.map(([label, d], i) => (
             <span key={label} className="flex items-center gap-1">
@@ -203,7 +205,9 @@ export function ProjectOverviewPage() {
         </Panel>
         <Panel title="Where each ringgit of sales goes" hint={`${winLabel}${partLabel}`}>
           <RinggitBar sales={ts.sales} parts={[["COGS", ts.cogs, PALETTE[1]!], ...costLines.map(([l, v, c]) => [l, v, c] as [string, number, string]), ["Net profit", Math.max(0, ts.np), "#2f8a5b"]]} />
-          <table className="mt-3 w-full border-collapse text-[12.5px] tabular-nums"><tbody>
+          {/* Scrolls sideways on a phone rather than cutting off the % column. */}
+          <div className="mt-3 overflow-x-auto" data-testid="ringgit-table">
+          <table className="w-full border-collapse text-[12.5px] tabular-nums"><tbody>
             <tr className="font-semibold"><Td left>Sales</Td><Td>{money(ts.sales)}</Td><Td className="w-[64px] text-ink-muted">100.0%</Td></tr>
             {cogsLines.map(([l, v]) => <tr key={l} className={v ? "" : "text-ink-muted"}><Td left className="pl-6">{l}</Td><Td>{money(v)}</Td><Td className="text-ink-muted">{pctTxt(pctOf(v, ts.sales))}</Td></tr>)}
             <tr className="bg-surface-2/70 font-semibold"><Td left className="border-t border-border">Total COGS</Td><Td className="border-t border-border">{money(ts.cogs)}</Td><Td className="border-t border-border">{pctTxt(pctOf(ts.cogs, ts.sales))}</Td></tr>
@@ -213,6 +217,7 @@ export function ProjectOverviewPage() {
             <tr className="bg-surface-2/70 font-semibold"><Td left className="border-t border-border">Total cost</Td><Td className="border-t border-border">{money(running)}</Td><Td className="border-t border-border">{pctTxt(pctOf(running, ts.sales))}</Td></tr>
             <tr className="bg-primary-soft/60 font-bold"><Td left className="border-t-2 border-primary/50">Net profit</Td><Td className={cn("border-t-2 border-primary/50", ts.np < 0 ? "text-err" : "text-synced")}>{money(ts.np)}</Td><Td className="border-t-2 border-primary/50">{pctTxt(pctOf(ts.np, ts.sales))}</Td></tr>
           </tbody></table>
+          </div>
           <p className="mt-2 pb-14 text-[11.5px] text-ink-muted">The lines of each event&apos;s Financial Snapshot, added up; % = share of sales. A grey line has nothing in this period.</p>
         </Panel>
       </div>
@@ -242,7 +247,7 @@ export function ProjectOverviewPage() {
 
       {/* The project list first, the venue rent after it (owner 2026-10-25:
           把venue rent 和 project 倒反位置). */}
-      <Panel title={`Projects${pick ? ` · ${pick}` : ""}${partLabel}`} hint={`${listed.length} projects · amounts in RM · click one to open it`}
+      <Panel title={`Projects${pick ? ` · ${pick}` : ""}${partLabel}`} hint={`${listed.length} projects · amounts in RM · click one to open it · yellow = last event's figure, teal = typed forecast`}
         right={pick ? <button type="button" className="text-[12px] text-primary hover:underline" onClick={() => setView({ pick: null })}>Show all</button> : undefined}>
         <div ref={tableRef}>
           <ProjectOverviewTable rows={listed} loading={q.loading} onOpen={openProject} />
@@ -293,7 +298,7 @@ function LayerSplitRow({ t }: { t: ReturnType<typeof totalsOf> }) {
   return (
     <div className="mt-4 overflow-x-auto rounded-lg bg-white/5 px-3 py-2" data-testid="layer-split">
       <div className="mb-1 text-[11px] text-sidebar-ink/70">{t.estimated} of {t.projects} projects include a forecast (typed, or the last same event&apos;s result)</div>
-      <table className="w-full min-w-[420px] border-collapse text-[12px] tabular-nums">
+      <table className="w-full border-collapse text-[12px] tabular-nums">
         <thead><tr className="text-left text-[10.5px] uppercase tracking-wider text-sidebar-ink/70">
           <th className="py-0.5 font-semibold"> </th><th className="py-0.5 text-right font-semibold">Actual</th><th className="py-0.5 text-right font-semibold">Forecast</th>
         </tr></thead>

@@ -96,6 +96,8 @@ import { api, buildQuery } from "../api/client";
 import { useChecklistPaymentRequests, type PaymentRequest } from "../vendor/scm/lib/payment-request-queries";
 import { PAYMENT_REQUEST_PERMS, RequestPaymentButton, RowRequests, isPayableSectionName, requestsByRow } from "./projects/PmsRequestPayment";
 import OutstandingReminders from "./projects/OutstandingReminders";
+import { DefectListView } from "./projects/DefectListView";
+import { canPurchaseDefect, canReviewDefect, defectActionLabel, defectStage, REVIEWER_DEFECT_ACTIONS, PURCHASER_DEFECT_ACTIONS, type DefectActionTone } from "./projects/defectReviewer";
 import { formatPhone } from "../vendor/shared/phone";
 import { MediaLightbox } from "../components/MediaLightbox";
 import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
@@ -393,11 +395,12 @@ const stageVariant = pmsStageVariant;
 
 // ── Main page ────────────────────────────────────────────────
 
-type ProjectsView = "hub" | "list" | "calendar" | "finances" | "maintenance";
+type ProjectsView = "hub" | "list" | "calendar" | "defects" | "finances" | "maintenance";
 
 const PROJECTS_VIEWS: ProjectsView[] = [
   "list",
   "calendar",
+  "defects",
   "finances",
   "maintenance",
 ];
@@ -429,6 +432,10 @@ export function Projects() {
   const access = {
     list: usePageAccess("projects.list"),
     calendar: usePageAccess("projects.calendar"),
+    // Defect List rides the project-list access: the same cohort that sees the
+    // project list sees the cross-project defect feed (only Calendar-only users
+    // are deliberately out). The action buttons on it carry their own gate.
+    defects: usePageAccess("projects.list"),
     finances: usePageAccess("projects.finances"),
     maintenance: usePageAccess("projects.maintenance"),
   };
@@ -495,6 +502,7 @@ export function Projects() {
       [
         { key: "list", label: "Project List", description: "All projects — status, brand, dates, PIC, budget.", icon: ClipboardList, v: "list" },
         { key: "calendar", label: "Calendar", description: "Projects & tasks on a month timeline.", icon: Calendar, v: "calendar" },
+        { key: "defects", label: "Defect List", description: "Open defect photos across every project.", icon: AlertTriangle, v: "defects" },
         { key: "finances", label: "Project Overview", description: "Sales, COGS, GP and NP across projects.", icon: DollarSign, v: "finances" },
         { key: "maintenance", label: "Project Maintenance", description: "Templates, checklists and defaults.", icon: Wrench, v: "maintenance" },
       ] as const
@@ -528,6 +536,7 @@ export function Projects() {
     <div>
       {view === "list" && <ProjectsListView />}
       {view === "calendar" && <ProjectsCalendarView />}
+      {view === "defects" && <DefectListView />}
       {view === "finances" &&
         (canProjectFinance ? (
           <ProjectsFinancesView />
@@ -629,8 +638,6 @@ function ProjectsListView() {
   const setOrganizer = (v: string) => patchParams({ organizer: v, page: "1" });
   const setYear = (v: string) => patchParams({ year: v, page: "1" });
   const setMonth = (v: string) => patchParams({ month: v, page: "1" });
-  const setSection = (v: string) => patchParams({ section: v, page: "1" });
-  const setTaskPending = (v: string) => patchParams({ task: v, page: "1" });
   const setStatus = (v: string) => patchParams({ status: v, page: "1" });
   const setDateRange = (f: string, t: string) => patchParams({ from: f, to: t, page: "1" });
   const setPhase = (v: string) => patchParams({ phase: v, page: "1" });
@@ -939,6 +946,51 @@ function ProjectsListView() {
     }
     return c;
   }, [taskTitles.data]);
+  // One "Task" filter: the checklist SECTION and the individual tasks under it,
+  // in a single dropdown (owner 2026-11-23: "sekali kan je jangan pecah task and
+  // task detail"). A `sec:` value ticks a whole section (the active-section
+  // filter); a `task:` value ticks one task that is still not done
+  // (task_pending). Each section is a group: its header "(whole section)" row,
+  // then its tasks in checklist order; "Completed" is the trailing group.
+  const taskFilterGroups = useMemo(() => {
+    const tasksBySection = new Map<string, string[]>();
+    for (const t of taskTitles.data?.data ?? []) {
+      const sec = t.section ?? "Other";
+      const arr = tasksBySection.get(sec);
+      if (arr) arr.push(t.title);
+      else tasksBySection.set(sec, [t.title]);
+    }
+    const ordered = sectionsList.data?.data ?? [];
+    const seen = new Set(ordered);
+    const sectionNames = [...ordered, ...[...tasksBySection.keys()].filter((s) => !seen.has(s))];
+    const groups: { name: string | null; options: { value: string; label: string; count?: number }[] }[] =
+      sectionNames.map((s) => ({
+        name: s,
+        options: [
+          { value: `sec:${s}`, label: `${s} (whole section)`, count: sectionCounts[s] },
+          ...(tasksBySection.get(s) ?? []).map((title) => ({ value: `task:${title}`, label: title })),
+        ],
+      }));
+    groups.push({ name: null, options: [{ value: "sec:__done", label: "Completed" }] });
+    return groups;
+  }, [sectionsList.data, taskTitles.data, sectionCounts]);
+  // The combined selection, each URL param mapped back onto its prefixed value.
+  const taskFilterSelected = useMemo(
+    () => [...sectionList.map((s) => `sec:${s}`), ...taskPendingList.map((t) => `task:${t}`)],
+    [sectionList, taskPendingList],
+  );
+  // Split the ticked values back into the two params and patch BOTH at once —
+  // patching section and task in two calls would clobber (each rebuilds the URL
+  // from the same stale snapshot).
+  const setTaskFilter = (values: string[]) => {
+    const secs: string[] = [];
+    const tasks: string[] = [];
+    for (const v of values) {
+      if (v.startsWith("sec:")) secs.push(v.slice(4));
+      else if (v.startsWith("task:")) tasks.push(v.slice(5));
+    }
+    patchParams({ section: secs.join(","), task: tasks.join(","), page: "1" });
+  };
 
   const columns: Column<ProjectRow>[] = [
     {
@@ -1364,38 +1416,21 @@ function ProjectsListView() {
           </div>
         ) : (
         <>
-        {/* Task filter — the tasklist-section dropdown; each option carries how
-            many tasks that section holds. Labelled "Status" on 2026-08-14, then
-            "Task" on 2026-08-19 (owner: "the left one change word status to
-            task") because the real project-status chip sits two along and two
-            chips reading "status" was the confusion this rename removes. */}
+        {/* Task filter — ONE dropdown for both the checklist SECTION and the
+            individual tasks under it (owner named it "Task" 2026-08-19; the
+            section and per-task controls were unified here 2026-11-23: "sekali
+            kan je jangan pecah"). Tick a section's "(whole section)" row to
+            filter by active section, or tick individual tasks (3D Design,
+            Display Floor Plan, …) to keep events where that task is not yet
+            done. */}
         <MultiSelectFilter
           placeholder="Task"
-          title="Filter by tasklist section"
-          summary={(n) => `${n} sections`}
-          selected={sectionList}
-          onChange={(next) => setSection(next.join(","))}
-          groups={[
-            {
-              name: null,
-              options: [
-                ...(sectionsList.data?.data ?? []).map((s) => ({
-                  value: s,
-                  label: s,
-                  count: sectionCounts[s],
-                })),
-                { value: "__done", label: "Completed" },
-              ],
-            },
-          ]}
+          title="Filter by checklist section or a specific task"
+          panelWidth="w-[300px]"
+          selected={taskFilterSelected}
+          onChange={setTaskFilter}
+          groups={taskFilterGroups}
         />
-        {/* Outstanding-TASK filter — hidden 2026-07-20 (owner: "REMOVE DROPDOWN
-            STATUS BUTTON"). The label 'Status' was misleading — the dropdown
-            actually filtered by tasks-not-yet-completed, so the owner saw two
-            'status' controls on the toolbar (this + the real "All statuses"
-            one right below) and asked to drop this. Kept the setTaskPending
-            state wiring untouched so a link with ?task_pending=... still works
-            and a future re-introduction under a clearer label is one line away. */}
         <MultiSelectFilter
           placeholder="All brands"
           summary={(n) => `${n} brands`}
@@ -1904,21 +1939,8 @@ function ProjectDetailContent({
       //    always. Triages a fresh defect: Done (cleaned) or Replace (escalate).
       //  - canPurchase = purchaser (Sim / Farra) / BD or admin — closes an
       //    escalated (Replace) defect with Done once the replacement is ordered.
-      canReview: (() => {
-        if (!user) return false;
-        const perms = user.permissions ?? [];
-        if (perms.includes("*") || perms.includes("projects.manage")) return true;
-        const region = new Set(["pulau pinang", "kelantan", "terengganu", "perak"]);
-        const inRegion = region.has(((detail.data as any)?.project?.state ?? "").trim().toLowerCase());
-        const isShukor = /^storekeeper supervisor$/i.test((user.position_name ?? "").trim());
-        const isNancy = /^ops exec$/i.test((user.role_name ?? "").trim());
-        return (isShukor && !inRegion) || (isNancy && inRegion);
-      })(),
-      canPurchase:
-        !!user &&
-        (user.permissions?.includes("*") ||
-          user.permissions?.includes("projects.manage") ||
-          /purchaser|bd/i.test(user.role_name ?? "")),
+      canReview: canReviewDefect(user, (detail.data as any)?.project?.state ?? null),
+      canPurchase: canPurchaseDefect(user),
       reload: () => detail.reload(),
     }),
     [detail, detail.data, user],
@@ -2045,7 +2067,7 @@ function ProjectDetailContent({
       ]}
       eyebrow="Project"
       title={detailName || "Loading…"}
-      description={p ? `${STAGE_LABEL[p.stage]}${p.brand ? ` · ${p.brand}` : ""}${p.venue ? ` · ${p.venue}` : ""}${p.duration_days ? ` · ${p.duration_days} day${p.duration_days === 1 ? "" : "s"}` : ""}` : undefined}
+      description={p ? `${STAGE_LABEL[p.stage]}${p.brand ? ` · ${p.brand}` : ""}${p.venue ? ` · ${p.venue}` : ""}${p.start_date ? ` · ${formatDate(p.start_date)}${p.end_date && p.end_date !== p.start_date ? `–${formatDate(p.end_date)}` : ""}` : ""}${p.duration_days ? ` · ${p.duration_days} day${p.duration_days === 1 ? "" : "s"}` : ""}` : undefined}
       // Owner 2026-07-29: keep the event title (+ actions) pinned while
       // scrolling the project detail — same sticky chrome ASSR detail uses.
       stickyTitle
@@ -2289,6 +2311,7 @@ function ProjectDetailContent({
                   pnl={detail.data?.finance_pnl ?? null}
                   forecast={detail.data?.finance_forecast ?? null}
                   canForecast={can("projects.write")}
+                  forecastByClick={!!(p.end_date ?? p.start_date) && String(p.end_date ?? p.start_date).slice(0, 10) >= todayMY()}
                   lumpSales={detail.data?.finance?.total_sales ?? null}
                   onChange={() => detail.reload()}
                   toast={toast}
@@ -3110,6 +3133,37 @@ const DefectActionsCtx = createContext<{
   reload: () => void;
 } | null>(null);
 
+// Defect action button + badge colours per tone (shared by the fresh-reviewer
+// and escalated-purchaser rows and the timeline badges). Keyed to defectReviewer
+// tones so the three defect surfaces stay in step.
+const DEFECT_BTN_TONE: Record<DefectActionTone, { active: string; idle: string }> = {
+  done: {
+    active: "border-green-600 bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300",
+    idle: "border-green-300 dark:border-green-800 bg-surface text-green-600 dark:text-green-300 hover:bg-green-50 dark:hover:bg-green-950/40",
+  },
+  escalate: {
+    active: "border-rose-600 bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300",
+    idle: "border-rose-300 dark:border-rose-800 bg-surface text-rose-600 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-950/40",
+  },
+  progress: {
+    active: "border-amber-600 bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300",
+    idle: "border-amber-300 dark:border-amber-800 bg-surface text-amber-600 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/40",
+  },
+};
+const DEFECT_BADGE_TONE: Record<DefectActionTone | "fresh", { dot: string; pill: string }> = {
+  done: { dot: "bg-green-600", pill: "bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300" },
+  escalate: { dot: "bg-rose-600", pill: "bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300" },
+  progress: { dot: "bg-amber-600", pill: "bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300" },
+  fresh: { dot: "bg-amber-500", pill: "bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300" },
+};
+/** The badge tone a stored status renders in. */
+function defectBadgeTone(status: string): DefectActionTone | "fresh" {
+  const stage = defectStage(status);
+  if (stage === "resolved") return "done";
+  if (stage === "fresh") return "fresh";
+  return status.toLowerCase() === "in_progress" ? "progress" : "escalate";
+}
+
 function TaskAttachmentRow({
   attachment,
   canManage,
@@ -3147,16 +3201,15 @@ function TaskAttachmentRow({
   const fileActions = isDefectFile && defectCtx
     ? defectCtx.actions.filter((x) => x.attachment_id === attachment.id)
     : [];
-  // Latest timeline entry drives the two-stage state machine: no action (or a
-  // legacy 'ongoing') = fresh, awaiting the Storekeeper Supervisor's triage;
-  // 'replace' = escalated to the purchaser; 'done' = resolved (no buttons).
+  // Latest timeline entry drives the five-state machine (defectStage): a fresh
+  // upload awaits the reviewer (Done Clean / Exchange / Service); an escalated or
+  // in-progress one awaits the purchaser (In Progress / Done); done/done_clean is
+  // resolved (no buttons).
   const latestAction = fileActions.length
     ? fileActions.reduce((m, a) => (a.id > m.id ? a : m))
     : null;
-  const isFreshDefect =
-    !latestAction || (latestAction.status !== "done" && latestAction.status !== "replace");
-  const isEscalatedDefect = latestAction?.status === "replace";
-  const [actionDraft, setActionDraft] = useState<null | "done" | "replace">(null);
+  const defectStageNow = defectStage(latestAction?.status);
+  const [actionDraft, setActionDraft] = useState<string | null>(null);
   const [actionRemark, setActionRemark] = useState("");
   const [savingAction, setSavingAction] = useState(false);
   async function saveAction() {
@@ -3353,54 +3406,29 @@ function TaskAttachmentRow({
             </div>
           )
         )}
-        {/* Defect action timeline (two-stage, owner 2026-08-07): a FRESH defect
-            shows Done + Replace to the Storekeeper Supervisor (Shukor); once he
-            escalates with Replace it shows Done to the purchaser (Sim / Farra).
-            A resolved (Done) file shows only the stacked history, for everyone. */}
+        {/* Defect action timeline (five-state, owner 2026-11-20): a FRESH defect
+            shows Done Clean + Exchange + Service to the reviewer (Shukor / Nancy);
+            once escalated it shows In Progress + Done to the purchaser (Farra).
+            Every button opens a remark box before it saves. A resolved file shows
+            only the stacked history, for everyone. */}
         {isDefectFile && defectCtx && (
           <div className="mt-1.5" onClick={(e) => e.stopPropagation()}>
-            {isFreshDefect && defectCtx.canReview && (
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => { setActionDraft("done"); }}
-                  className={cn(
-                    "rounded-full border px-2.5 py-0.5 text-[10px] font-bold",
-                    actionDraft === "done"
-                      ? "border-green-600 bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300"
-                      : "border-green-300 dark:border-green-800 bg-surface text-green-600 dark:text-green-300 hover:bg-green-50 dark:hover:bg-green-950/40",
-                  )}
-                >
-                  Done
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { setActionDraft("replace"); }}
-                  className={cn(
-                    "rounded-full border px-2.5 py-0.5 text-[10px] font-bold",
-                    actionDraft === "replace"
-                      ? "border-rose-600 bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300"
-                      : "border-rose-300 dark:border-rose-800 bg-surface text-rose-600 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-950/40",
-                  )}
-                >
-                  Replace
-                </button>
-              </div>
-            )}
-            {isEscalatedDefect && defectCtx.canPurchase && (
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => { setActionDraft("done"); }}
-                  className={cn(
-                    "rounded-full border px-2.5 py-0.5 text-[10px] font-bold",
-                    actionDraft === "done"
-                      ? "border-green-600 bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300"
-                      : "border-green-300 dark:border-green-800 bg-surface text-green-600 dark:text-green-300 hover:bg-green-50 dark:hover:bg-green-950/40",
-                  )}
-                >
-                  Done
-                </button>
+            {((defectStageNow === "fresh" && defectCtx.canReview) ||
+              (defectStageNow === "purchaser" && defectCtx.canPurchase)) && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {(defectStageNow === "fresh" ? REVIEWER_DEFECT_ACTIONS : PURCHASER_DEFECT_ACTIONS).map((a) => (
+                  <button
+                    key={a.status}
+                    type="button"
+                    onClick={() => { setActionDraft(a.status); setActionRemark(""); }}
+                    className={cn(
+                      "rounded-full border px-2.5 py-0.5 text-[10px] font-bold",
+                      actionDraft === a.status ? DEFECT_BTN_TONE[a.tone].active : DEFECT_BTN_TONE[a.tone].idle,
+                    )}
+                  >
+                    {a.label}
+                  </button>
+                ))}
               </div>
             )}
             {actionDraft && (
@@ -3438,31 +3466,9 @@ function TaskAttachmentRow({
                 {[...fileActions].reverse().map((a) => (
                   <div key={a.id}>
                     <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
-                      <span
-                        className={cn(
-                          "h-1.5 w-1.5 shrink-0 rounded-full",
-                          a.status === "done"
-                            ? "bg-green-600"
-                            : a.status === "replace"
-                              ? "bg-rose-600"
-                              : "bg-amber-500",
-                        )}
-                      />
-                      <span
-                        className={cn(
-                          "rounded px-1.5 py-0.5 font-bold",
-                          a.status === "done"
-                            ? "bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300"
-                            : a.status === "replace"
-                              ? "bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300"
-                              : "bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300",
-                        )}
-                      >
-                        {a.status === "done"
-                          ? "Done"
-                          : a.status === "replace"
-                            ? "Replace"
-                            : "Ongoing"}
+                      <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", DEFECT_BADGE_TONE[defectBadgeTone(a.status)].dot)} />
+                      <span className={cn("rounded px-1.5 py-0.5 font-bold", DEFECT_BADGE_TONE[defectBadgeTone(a.status)].pill)}>
+                        {defectActionLabel(a.status)}
                       </span>
                       <span className="text-ink-muted">
                         {a.user_name || "—"} · {formatDateTime(a.created_at)}
@@ -7285,10 +7291,13 @@ function FinanceLedgerSection({
   pnl,
   forecast,
   canForecast,
+  forecastByClick,
   lumpSales,
   onChange,
   toast,
 }: {
+  /** The event has not ended: clicking a figure sets its Forecast (owner 2026-11-20, A). */
+  forecastByClick: boolean;
   projectId: number;
   sizeSqm: number | null;
   durationDays: number | null;
@@ -7531,6 +7540,7 @@ function FinanceLedgerSection({
               rentalNote={`${formatCurrency(rentPerSqmPerDay)}/sqm/day`}
               layers={forecast}
               onForecast={canForecast ? async (line, amount) => { await saveForecast(projectId, line, amount); onChange(); } : null}
+              forecastByClick={forecastByClick}
             />
           </div>
         )}

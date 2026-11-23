@@ -126,9 +126,11 @@ Export and print
 - List search `q` covers `po_number`, `notes`, the SO reference and line `item_code`, not supplier name; the SO-reference and item-code matches share a cap of 60 POs (URL budget); item-code matches keep the newest.
 - A status count that cannot be read must return 500 `status_counts_failed`, never 0.
 - Assigned SO / Delivered columns arrive later from `GET /list-mrp-enrichment`; while loading show WORKING… / NOT LOADED, never `STOCK` or a dash.
+- Assigned SO is MRP's current answer in both companies (`ASSIGNED_FOLLOWS_MRP`, po-so-coverage.ts); SO Doc No. is the SO the line was converted from. The "PO already generated" prompt names, per PO, the SO MRP gives it to now (`so-has-po-assignments.ts`); the PO map leads with MRP's SO and names the raise-link SO as reference.
 - `/outstanding-so-items` shows only lines with pooled MRP shortage > 0; a line MRP did not plan reads the same as a covered one. A DRAFT SO is never convertible — confirm it first.
 - Do not write `ON_HOLD` to status or re-derive status in a way that erases a hold; the hold is the marker columns.
-- SO-drift compare must strip `DISPLAY_ONLY_VARIANT_KEYS` (e.g. `fabricSupplierCode`) from both sides; add any new read-side stamp there the same day.
+- SO-drift compare must strip `DISPLAY_ONLY_VARIANT_KEYS` (`fabricSupplierCode`, `fabricSupplierCodeOf`) from both sides; add any new read-side stamp there the same day.
+- `fabricSupplierCode` prints only when `fabricSupplierCodeOf` equals the line's current fabric code; stamp it with `withFabricSupplierCode`, never by hand.
 - Do not pass `sofaPhotos` from new print callers; `po-print-paths-draw-the-sofa.test.ts` counts callers. Generated PDF strings stay English-only.
 - Sofa piece ordering (LHF first, RHF last) is applied when lines are created (`orderSofaCellsForNewLines`), never at display time — that would re-sequence old orders.
 - `PoLineCard` is shared with PI/PC pages: its Remarks box is opt-in (`showRemarks`) and only safe when the parent sends `notes` in both add and update payloads; photos come through a render slot, never an own uploader.
