@@ -50,9 +50,21 @@ export async function bookMovements(tx: Tx, companyId: number, warehouseId: stri
          ORDER BY created_at DESC LIMIT 1`);
       unitCost = prior.length ? Number(prior[0].c ?? 0) : 0;
     }
+    /* A void's IN names the sale OUT it undoes (one OUT per IN, oldest first), so a sale that took
+       nothing from the lots gets nothing re-opened; without it the void opened a full lot. */
+    let reverses: string | null = null;
+    if (m.movement_type === "IN" && m.reverses) {
+      const out = await tx.execute<{ id: string }>(sql`
+        SELECT o.id::text AS id FROM scm.inventory_movements o
+         WHERE o.company_id = ${companyId} AND o.movement_type = 'OUT' AND o.source_doc_type = ${m.reverses}
+           AND o.source_doc_no = ${docNo} AND o.item_code = ${m.item_code}
+           AND NOT EXISTS (SELECT 1 FROM scm.inventory_movements r WHERE r.reverses_movement_id = o.id)
+         ORDER BY o.created_at, o.id LIMIT 1`);
+      reverses = out.length ? out[0].id : null;
+    }
     await tx.execute(sql`
-      INSERT INTO scm.inventory_movements (movement_type, warehouse_id, item_code, product_name, variant_key, qty, unit_cost_sen, source_doc_type, source_doc_no, notes, movement_date, company_id, reason_code)
-      VALUES (${m.movement_type}::scm.inventory_movement_type, ${warehouseId}::uuid, ${m.item_code}, ${m.product_name}, '', ${m.qty}, ${unitCost}, ${m.source_doc_type}, ${m.source_doc_no}, ${`${m.notes} (${who})`}, ${today}::date, ${companyId}, 'POS')`);
+      INSERT INTO scm.inventory_movements (movement_type, warehouse_id, item_code, product_name, variant_key, qty, unit_cost_sen, source_doc_type, source_doc_no, notes, movement_date, company_id, reason_code, reverses_movement_id)
+      VALUES (${m.movement_type}::scm.inventory_movement_type, ${warehouseId}::uuid, ${m.item_code}, ${m.product_name}, '', ${m.qty}, ${unitCost}, ${m.source_doc_type}, ${m.source_doc_no}, ${`${m.notes} (${who})`}, ${today}::date, ${companyId}, 'POS', ${reverses}::uuid)`);
   }
   const neg = await tx.execute<{ item_code: string; qty: number | string }>(sql`
     SELECT item_code, qty FROM scm.inventory_balances WHERE company_id = ${companyId} AND warehouse_id = ${warehouseId}::uuid AND item_code IN ${rows.map((r) => r.item_code)} AND qty < 0`);

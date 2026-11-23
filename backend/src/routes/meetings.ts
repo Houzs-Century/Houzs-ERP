@@ -326,6 +326,19 @@ publicMeetings.get("/links/:code/slots", async (c) => {
   return relay(c, hubFetch(hub, `/public/links/${code}/slots?day=${day}`));
 });
 
+// One day of a link: each room's taken times (no titles, no people), for the guest to pick a room and time.
+publicMeetings.get("/links/:code/day", async (c) => {
+  const code = c.req.param("code");
+  const day = c.req.query("day") ?? "";
+  if (!LINK_CODE.test(code)) return c.json({ error: "This booking link is not active." }, 404);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return c.json({ error: "Pick a day." }, 400);
+  const limited = await guestLimit(c, "read", 300);
+  if (limited) return limited;
+  const hub = guestHub(c);
+  if (hub instanceof Response) return hub;
+  return relay(c, hubFetch(hub, `/public/links/${code}/day?day=${day}`));
+});
+
 publicMeetings.post("/links/:code/book", async (c) => {
   const code = c.req.param("code");
   if (!LINK_CODE.test(code)) return c.json({ error: "This booking link is not active." }, 404);
@@ -335,7 +348,8 @@ publicMeetings.post("/links/:code/book", async (c) => {
   if (hub instanceof Response) return hub;
   const b = await json(c);
   if (!b) return c.json({ error: "That could not be read. Please try again." }, 400);
-  const body = { start: b.start, name: b.name, phone: b.phone, email: b.email, company: b.company };
+  // Only these fields reach the hub. roomId / end / title / people / department: the guest picks the room and time.
+  const body = { start: b.start, end: b.end, roomId: b.roomId, name: b.name, phone: b.phone, email: b.email, company: b.company, department: b.department, title: b.title, people: b.people };
   return relay(c, hubFetch(hub, `/public/links/${code}/book`, jsonInit("POST", body)));
 });
 

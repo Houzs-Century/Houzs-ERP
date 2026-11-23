@@ -53,13 +53,13 @@ describe("movements", () => {
     const r = parseIncomingSale(raw({ lines: [line(), line({ line_no: 2, code: "GF-01", qty: 1, is_foc: true, amount_sen: 0, discount_amount_sen: 1500 })] }));
     const sale = r.ok ? r.sale : (() => { throw new Error("fixture"); })();
     expect(movementsFor(sale)).toEqual([
-      { movement_type: "OUT", item_code: "PL-01", product_name: "Pillow", qty: 2, source_doc_type: "POS_SALE", source_doc_no: "T02-000279", notes: "POS sale T02-000279" },
-      { movement_type: "OUT", item_code: "GF-01", product_name: "Pillow", qty: 1, source_doc_type: "POS_SALE", source_doc_no: "T02-000279", notes: "POS sale T02-000279" },
+      { movement_type: "OUT", item_code: "PL-01", product_name: "Pillow", qty: 2, source_doc_type: "POS_SALE", source_doc_no: "T02-000279", notes: "POS sale T02-000279", reverses: null },
+      { movement_type: "OUT", item_code: "GF-01", product_name: "Pillow", qty: 1, source_doc_type: "POS_SALE", source_doc_no: "T02-000279", notes: "POS sale T02-000279", reverses: null },
     ]);
     const ret = parseIncomingSale(raw({ type: "RETURN", receipt_no: "R-T02-000280", total_sen: 4009, lines: [line({ qty: -1, amount_sen: -5990 }), line({ line_no: 2, code: "BS-QN", qty: 1, amount_sen: 9999, unit_price_sen: 9999 })], payments: [{ method: "QR", amount_sen: 4009 }] }));
     const rs = ret.ok ? ret.sale : (() => { throw new Error("fixture"); })();
     expect(movementsFor(rs).map((m) => [m.movement_type, m.item_code, m.qty, m.source_doc_type])).toEqual([["IN", "PL-01", 1, "POS_RETURN"], ["OUT", "BS-QN", 1, "POS_RETURN"]]);
-    expect(voidMovementsFor(sale).map((m) => [m.movement_type, m.qty, m.source_doc_type, m.notes])).toEqual([["IN", 2, "POS_VOID", "POS void T02-000279"], ["IN", 1, "POS_VOID", "POS void T02-000279"]]);
+    expect(voidMovementsFor(sale).map((m) => [m.movement_type, m.qty, m.source_doc_type, m.notes, m.reverses])).toEqual([["IN", 2, "POS_VOID", "POS void T02-000279", "POS_SALE"], ["IN", 1, "POS_VOID", "POS void T02-000279", "POS_SALE"]]);
   });
 });
 

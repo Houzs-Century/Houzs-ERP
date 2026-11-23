@@ -653,6 +653,7 @@ GET,/api/public/meetings/bookings/:token,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_C
 POST,/api/public/meetings/bookings/:token/cancel,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/meetings.ts
 GET,/api/public/meetings/links/:code,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/meetings.ts
 POST,/api/public/meetings/links/:code/book,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/meetings.ts
+GET,/api/public/meetings/links/:code/day,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/meetings.ts
 GET,/api/public/meetings/links/:code/slots,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/meetings.ts
 POST,/api/push/devices,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/push.ts
 DELETE,/api/push/devices/:token,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/push.ts

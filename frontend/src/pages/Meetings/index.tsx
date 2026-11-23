@@ -220,7 +220,7 @@ export function Meetings({ erpName = "Houzs ERP", embedded = false }: { erpName?
     setDialogError(null);
     try {
       await api.post("/api/meetings/links", l);
-      flash(`Created the link ${l.name}. Copy it from the list.`);
+      flash("Link created. Copy it from the list below.");
       setLinkEdit(false);
       reload();
     } catch (e) { setDialogError(message(e)); } finally { setSaving(false); }
