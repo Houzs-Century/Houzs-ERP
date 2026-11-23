@@ -117,17 +117,21 @@ beforeEach(async () => {
 });
 
 describe("mail access follows the Org Chart", () => {
-  test("someone in two departments reaches both department mailboxes", async () => {
+  test("someone in two departments at L1 reaches neither department mailbox until one is ticked", async () => {
     const elvis = await user("Acl Elvis", readerRole, OPS);
     await env.DB.prepare(`INSERT INTO user_departments (user_id, department_id) VALUES (?, ?)`).bind(elvis, SALES).run();
-    await mailbox("acl-ops@houzscentury.com", null, OPS);
+    const ops = await mailbox("acl-ops@houzscentury.com", null, OPS);
     await mailbox("acl-sales@houzscentury.com", null, SALES);
     const vis = await visible(await session(elvis));
     expect(vis.level).toBe("department");
-    expect(vis.mailboxes.map((m) => m.address).sort()).toEqual(["acl-ops@houzscentury.com", "acl-sales@houzscentury.com"]);
+    expect(vis.mailboxes).toEqual([]);
+    await env.DB.prepare(`INSERT INTO email_address_access (id, address_id, user_id, created_at) VALUES (?, ?, ?, ?)`)
+      .bind(crypto.randomUUID(), ops, elvis, new Date().toISOString())
+      .run();
+    expect((await visible(await session(elvis))).mailboxes.map((m) => m.address)).toEqual(["acl-ops@houzscentury.com"]);
   });
 
-  test("Whole department adds the colleagues' own mailboxes; Department mailbox does not", async () => {
+  test("Whole department opens the department mailbox and colleagues' own; Personal opens neither", async () => {
     const manager = await user("Acl Manager", readerRole, SALES);
     const staff = await user("Acl Staff", readerRole, SALES);
     const colleague = await user("Acl Colleague", readerRole, SALES);
@@ -144,7 +148,7 @@ describe("mail access follows the Org Chart", () => {
       ["acl-sales@houzscentury.com", "department"],
     ]);
     const plain = await visible(await session(staff));
-    expect(plain.mailboxes.map((m) => m.address)).toEqual(["acl-sales@houzscentury.com"]);
+    expect(plain.mailboxes).toEqual([]);
   });
 
   test("a member of the Management department reads every mailbox, whatever level is stored", async () => {
@@ -204,9 +208,9 @@ describe("L2 Department opens ticked departments wholly (owner 2026-11-21)", () 
       "acl-sales@houzscentury.com",
     ]);
 
-    // L1 ignores the ticked departments.
+    // L1 ignores the ticked departments and opens no department mailbox by itself.
     await level(lead, "department");
-    expect((await visible(await session(lead))).mailboxes.map((m) => m.address)).toEqual(["acl-sales@houzscentury.com"]);
+    expect((await visible(await session(lead))).mailboxes).toEqual([]);
 
     expect((await call(token, "/api/mail-center/scope-departments", "PUT", { userId: lead, departmentIds: [] })).status).toBe(200);
     const log = (await (await call(token, "/api/mail-center/access/changes")).json()) as Array<{ change: string }>;

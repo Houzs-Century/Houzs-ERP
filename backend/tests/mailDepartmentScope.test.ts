@@ -108,7 +108,7 @@ beforeEach(async () => {
 });
 
 describe("a department mailbox follows the Org Chart", () => {
-  test("a member reaches their own department's mailbox, not another department's, and never a colleague's personal mail", async () => {
+  test("an L1 member reaches their department's mailbox only once it is ticked, never another department's or a colleague's", async () => {
     const me = await user("HC157 Me", readerRole, DEPT_A);
     const colleague = await user("HC157 Colleague", readerRole, DEPT_A);
     await mailbox("qzx-sales@houzscentury.com", null, DEPT_A);
@@ -117,9 +117,17 @@ describe("a department mailbox follows the Org Chart", () => {
     // An owned row carrying a department (old data) must still stay personal.
     await mailbox("qzx-colleague@houzscentury.com", colleague, DEPT_A);
 
+    // Owner 2026-11-23: L1 is own mailbox only; the department mailbox is a tick.
     const vis = await visible(await session(me));
     expect(vis.level).toBe("department");
-    expect(vis.mailboxes.map((m) => [m.address, m.reach])).toEqual([["qzx-sales@houzscentury.com", "department"]]);
+    expect(vis.mailboxes).toEqual([]);
+
+    const sales = await env.DB.prepare(`SELECT id FROM email_addresses WHERE address = 'qzx-sales@houzscentury.com'`).first<{ id: string }>();
+    await env.DB.prepare(`INSERT INTO email_address_access (id, address_id, user_id, created_at) VALUES (?, ?, ?, ?)`)
+      .bind(crypto.randomUUID(), sales!.id, me, new Date().toISOString())
+      .run();
+    const ticked = await visible(await session(me));
+    expect(ticked.mailboxes.map((m) => [m.address, m.reach])).toEqual([["qzx-sales@houzscentury.com", "granted"]]);
   });
 
   test("someone set to Personal, or with no department, reaches only their own and granted mailboxes", async () => {
