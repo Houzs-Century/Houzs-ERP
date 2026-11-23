@@ -118,8 +118,23 @@ describe("/api/public/meetings (guests)", () => {
 
   test("a guest booking sends only the booking fields", async () => {
     const calls = fakeHub(() => json({ ok: true, token: "a".repeat(64) }, 201));
-    await appAs(null).request("/api/public/meetings/links/hc-0123456789/book", post({ start: "2026-11-24T06:00:00Z", name: "Lee", phone: "1", email: "l@x.y", organizer: "boss@x", roomId: 1 }));
-    expect(JSON.parse(String(calls[0].body))).toEqual({ start: "2026-11-24T06:00:00Z", name: "Lee", phone: "1", email: "l@x.y" });
+    await appAs(null).request("/api/public/meetings/links/hc-0123456789/book", post({
+      start: "2026-11-24T06:00:00Z", end: "2026-11-24T07:00:00Z", roomId: 1, name: "Lee", phone: "1", email: "l@x.y",
+      company: "ABC", department: "", title: "Intro", people: 3, organizer: "boss@x", attendees: ["x@y"], guest_token: "z",
+    }));
+    expect(JSON.parse(String(calls[0].body))).toEqual({
+      start: "2026-11-24T06:00:00Z", end: "2026-11-24T07:00:00Z", roomId: 1, name: "Lee", phone: "1", email: "l@x.y",
+      company: "ABC", department: "", title: "Intro", people: 3,
+    });
+  });
+
+  test("a guest reads one day of a link: taken times per room, through /public only", async () => {
+    const calls = fakeHub(() => json({ day: "2026-11-24", open: true, rooms: [] }));
+    const res = await appAs(null).request("/api/public/meetings/links/hc-0123456789/day?day=2026-11-24", { headers: { Host: "erp.houzscentury.com" } });
+    expect(res.status).toBe(200);
+    expect(calls[0].url).toBe("https://hub.example/api/v1/sys/meetings/public/links/hc-0123456789/day?day=2026-11-24");
+    expect(calls[0].headers.get("X-Reporter-Id")).toBe("guest");
+    expect((await appAs(null).request("/api/public/meetings/links/hc-0123456789/day?day=tomorrow")).status).toBe(400);
   });
 
   test("odd link codes and tokens never reach the hub", async () => {
