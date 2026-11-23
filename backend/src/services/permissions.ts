@@ -298,6 +298,11 @@ export const PERMISSIONS: PermissionDef[] = [
   // Its own key so a floor / warehouse supervisor can sign off OT without the
   // full hr.employees.manage pay-editing rights. Confirmed OT is what payroll pays.
   { key: "hr.ot.confirm", resource: "HR", verb: "approve", label: "Confirm overtime", description: "See and confirm or reject the overtime that workers report on the phone; confirmed overtime is what payroll pays" },
+  // A supervisor approves the make-up punches (补卡) a worker files when they
+  // forgot to clock in or out. An approval writes that day's attendance. Its own
+  // key so a floor / warehouse supervisor can clear them without the full
+  // hr.employees.manage attendance-editing rights.
+  { key: "hr.punch.approve", resource: "HR", verb: "approve", label: "Approve make-up punches", description: "See and approve or reject the make-up punches workers file when they forgot to clock in or out; an approval writes that day's attendance" },
   // Attendance-only view. Opens Employees & Attendance to the Attendance (and,
   // with hr.ot.confirm, OT) tabs ALONE — the daily punches and working hours,
   // never salary, pay, the employee master or payroll. For an attendance / OT
