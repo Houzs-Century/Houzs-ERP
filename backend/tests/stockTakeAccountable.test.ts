@@ -415,6 +415,45 @@ describe('cost_required refusal is short and names the SKU (owner 2026-11-20)', 
   });
 });
 
+describe('a found line can carry an entered unit cost from the sheet (owner 2026-11-23)', () => {
+  test('a +variance SKU with no priced lot posts when the counter typed a unit cost; the found lot is valued at it', async () => {
+    const t = takeFixture();                               // CODY counted 12 vs live 10 -> +2 found
+    t.inventory_lots = [];                                 // no priced lot, so no lot cost basis
+    t.stock_take_lines[0].entered_unit_cost_sen = 35_000;  // ...but the counter typed RM350 on the sheet
+    /* +2 × RM350 = RM700 now exceeds the RM500 value limit (the entered cost GIVES the
+       found line a value), so a supervisor posts it — the point here is the valuation,
+       not the threshold (covered elsewhere). */
+    const res = await jsonReq(harness(t, { perms: ['*'] }).app, '/stock-takes/st-1/post', 'PATCH');
+    expect(res.status).toBe(200);
+    expect(t.stock_takes[0].status).toBe('POSTED');
+    // The found +2 books instead of refusing, valued at the entered cost — the lot
+    // that opens carries it (the FIFO trigger reads the movement's unit_cost_sen).
+    expect(t.inventory_movements).toHaveLength(1);
+    expect(t.inventory_movements[0].item_code).toBe('CODY');
+    expect(t.inventory_movements[0].qty).toBe(2);
+    expect(t.inventory_movements[0].unit_cost_sen).toBe(35_000);
+  });
+
+  test('a real lot cost still wins over the entered cost — a hand-typed figure never overrides costed stock', async () => {
+    const t = takeFixture();                               // priced open lot RM10 (1000 sen)
+    t.stock_take_lines[0].entered_unit_cost_sen = 99_999;  // an entry that must be ignored
+    const res = await jsonReq(harness(t).app, '/stock-takes/st-1/post', 'PATCH');
+    expect(res.status).toBe(200);
+    expect(t.inventory_movements[0].unit_cost_sen).toBe(1000); // the lot cost, not the typed one
+  });
+
+  test('a zero entered cost still refuses — RM0 is never booked', async () => {
+    const t = takeFixture();
+    t.inventory_lots = [];
+    t.stock_take_lines[0].entered_unit_cost_sen = 0;       // 0 is not a cost
+    const res = await jsonReq(harness(t).app, '/stock-takes/st-1/post', 'PATCH');
+    expect(res.status).toBe(422);
+    const body = await res.json() as Row;
+    expect(body.error).toBe('cost_required');
+    expect(t.inventory_movements).toHaveLength(0);
+  });
+});
+
 describe('blind counts — server-side stripping', () => {
   test('a blind OPEN take hides system_qty and variance from a non-supervisor', async () => {
     const t = takeFixture({ blind: true });
