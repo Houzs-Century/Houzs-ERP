@@ -199,7 +199,7 @@ try {
         values (${r.company_id}, ${r.so_doc_no}, ${r.route}, ${r.window_key}, ${r.change_day}::date, ${r.changed_at}::timestamptz,
           ${r.changed_by}::text[], ${r.approved_by}::text[], ${r.amendment_nos}::text[], ${r.change_types}::text[], ${r.bucket},
           ${r.selling_before_sen}, ${r.selling_after_sen}, ${r.cost_before_sen}, ${r.cost_after_sen},
-          ${tx.json(r.lines)}, ${tx.json(r.before_lines)}, true, ${r.cost_estimated})
+          ${sql.json(r.lines)}, ${sql.json(r.before_lines)}, true, ${r.cost_estimated})
         on conflict (company_id, so_doc_no, route, window_key) do nothing
         returning id`;
       written += got.length;
