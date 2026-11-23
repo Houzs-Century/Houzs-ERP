@@ -126,7 +126,7 @@ Export and print
 - List search `q` covers `po_number`, `notes`, the SO reference and line `item_code`, not supplier name; the SO-reference and item-code matches share a cap of 60 POs (URL budget); item-code matches keep the newest.
 - A status count that cannot be read must return 500 `status_counts_failed`, never 0.
 - Assigned SO / Delivered columns arrive later from `GET /list-mrp-enrichment`; while loading show WORKING… / NOT LOADED, never `STOCK` or a dash.
-- Assigned SO is MRP's current answer in both companies (`ASSIGNED_FOLLOWS_MRP`, po-so-coverage.ts); SO Doc No. is the SO the line was converted from. The "PO already generated" prompt names, per PO, the SO MRP gives it to now (`so-has-po-assignments.ts`); the PO map leads with MRP's SO and names the raise-link SO as reference.
+- Assigned SO is MRP's current answer in both companies (`ASSIGNED_FOLLOWS_MRP`, po-so-coverage.ts); SO Doc No. is the SO the line was converted from. The "PO already generated" prompt (409 `so_has_po`) asks for every line in company 1, but in 2990 only for bedframe, sofa, dining and mattress codes ending `(SP)`/`(SK)` (`asksDuplicatePo`). It names, per PO, the SO MRP gives it to now (`so-has-po-assignments.ts`); the PO map leads with MRP's SO and names the raise-link SO as reference.
 - `/outstanding-so-items` shows only lines with pooled MRP shortage > 0; a line MRP did not plan reads the same as a covered one. A DRAFT SO is never convertible — confirm it first.
 - Do not write `ON_HOLD` to status or re-derive status in a way that erases a hold; the hold is the marker columns.
 - SO-drift compare must strip `DISPLAY_ONLY_VARIANT_KEYS` (`fabricSupplierCode`, `fabricSupplierCodeOf`) from both sides; add any new read-side stamp there the same day.
