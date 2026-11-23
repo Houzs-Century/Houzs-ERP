@@ -138,7 +138,7 @@ import { ProjectPosSalesSection } from "./projects/ProjectPosSalesSection";
 import { ProjectSalesBillsBlock } from "./projects/ProjectSalesBillsBlock";
 import { useCanViewProjectSales, useProjectSalesBills } from "../hooks/useProjectSalesBills";
 import { fmtRmSen, notOpenedByRepId, type ProjectSalesBillsResponse } from "../lib/projectSalesBills";
-import { DateRangeFilter, MultiSelectFilter, SectionTaskBadges, ImportCsvPanel } from "./projects/ProjectsListParts";
+import { DateRangeFilter, MultiSelectFilter, SectionTaskBadges, TaskPendingBadges, ImportCsvPanel } from "./projects/ProjectsListParts";
 import { ProjectsCalendarView } from "./projects/ProjectsCalendarView";
 export { buildCalendarWindow, buildProjectsCalendarModel } from "./projects/calendarModel";
 import { SPEC_INPUT_CLASS, QuickRentalField, SpecTextField, SpecCell, SpecValue } from "./projects/specFields";
@@ -1032,6 +1032,11 @@ function ProjectsListView() {
             </span>
             {r.venue && <span className="text-[10px] text-ink-muted">{r.venue}</span>}
             <SectionTaskBadges map={r.section_tasks_map} />
+            {taskPendingList.length > 0 && (r as any).task_pending_map && (
+              <div className="mt-1 flex flex-wrap gap-1">
+                <TaskPendingBadges map={String((r as any).task_pending_map)} />
+              </div>
+            )}
           </div>
         );
       },
@@ -1636,6 +1641,13 @@ function ProjectsListView() {
                             <Circle size={9} /> {t}
                           </span>
                         ))
+                      ) : taskPendingList.length > 0 && (r as any).task_pending_map ? (
+                        /* A task filter is on: show the ticked task(s) status on
+                           the card (owner 2026-11-23 "ak dah select blank
+                           floorplan kenapa keluar contract je") instead of the
+                           project's current-section chip, which reads as the
+                           wrong thing in a task-chase view. */
+                        <TaskPendingBadges map={String((r as any).task_pending_map)} />
                       ) : done ? (
                         <span className="inline-flex items-center gap-1 rounded-full border border-synced bg-synced/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-synced">
                           <CheckCircle2 size={10} /> Complete

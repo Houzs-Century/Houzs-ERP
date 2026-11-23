@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Calendar, ChevronDown } from "lucide-react";
+import { Calendar, ChevronDown, Circle } from "lucide-react";
 import { Button } from "../../components/Button";
 import { Panel, PanelSection } from "../../components/Panel";
 import { useToast } from "../../hooks/useToast";
@@ -275,6 +275,49 @@ export function SectionTaskBadges({ map }: { map?: string | null }) {
         </span>
       ))}
     </div>
+  );
+}
+
+// Per-project badges for the TASK filter (owner 2026-11-23: a card filtered to
+// "Blank Floorplan" showed the CONTRACT section chip, not the task). Reads
+// task_pending_map ("title=status" joined by "|") and renders one pill per
+// ticked task: done (green) else pending (amber). Returns a fragment of inline
+// pills so they slot straight into the card's chip row in place of the section
+// chip. Absent (null) unless a task filter is on, so the default list is
+// unchanged.
+export function TaskPendingBadges({ map }: { map?: string | null }) {
+  if (!map) return null;
+  const tasks = map
+    .split("|")
+    .filter(Boolean)
+    .map((entry) => {
+      const parts = entry.split("=");
+      return { title: parts[0] ?? "", status: parts[1] ?? "" };
+    })
+    .filter((t) => t.title);
+  if (!tasks.length) return null;
+  return (
+    <>
+      {tasks.map((t, i) => {
+        const done = t.status === "done" || t.status === "na";
+        return (
+          <span
+            key={i}
+            title={t.title}
+            className={cn(
+              "inline-flex max-w-[200px] items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider",
+              done
+                ? "border-synced/40 bg-synced/15 text-synced"
+                : "border-warning-text/30 bg-warning-bg text-warning-text",
+            )}
+          >
+            <Circle size={9} className="shrink-0" />
+            <span className="truncate">{t.title}</span>
+            <span className="shrink-0 opacity-70">{done ? "done" : "pending"}</span>
+          </span>
+        );
+      })}
+    </>
   );
 }
 
