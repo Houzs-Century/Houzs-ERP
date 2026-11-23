@@ -188,12 +188,12 @@ export function LinksPage({ links, rooms, people, origin, onCreate, onToggle, fl
   return (
     <section className={CARD}>
       <div className="flex flex-wrap items-center gap-3 px-4 py-3">
-        <div className="min-w-[240px] flex-1"><b>Guest booking links</b><div className="text-[13px] text-ink-secondary">Send one to a customer or supplier. They pick a free time without logging in and it is confirmed straight away. The link uses this ERP's address ({origin.replace(/^https?:\/\//, "")}).</div></div>
+        <div className="min-w-[240px] flex-1"><b>Guest booking links</b><div className="text-[13px] text-ink-secondary">Send one to a customer or supplier. They pick a day, a room and a time without logging in, and it is confirmed straight away. The link uses this ERP's address ({origin.replace(/^https?:\/\//, "")}).</div></div>
         <button type="button" className={PRI} onClick={onCreate}>+ Create link</button>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full border-collapse text-[13.5px]">
-          <thead><tr className="bg-surface-2 text-left text-[11.5px] font-semibold uppercase tracking-wide text-ink-muted">{["Link", "Rooms", "Length", "Hosts", "Open", "Booked", "Status", ""].map((h) => <th key={h} className="whitespace-nowrap px-3 py-2.5">{h}</th>)}</tr></thead>
+          <thead><tr className="bg-surface-2 text-left text-[11.5px] font-semibold uppercase tracking-wide text-ink-muted">{["Link", "Rooms", "Longest", "Told", "Open", "Booked", "Status", ""].map((h) => <th key={h} className="whitespace-nowrap px-3 py-2.5">{h}</th>)}</tr></thead>
           <tbody>
             {links?.length === 0 && <tr><td colSpan={8} className="px-3 py-6 text-center text-ink-muted">No links yet.</td></tr>}
             {links?.map((l) => {
@@ -202,8 +202,8 @@ export function LinksPage({ links, rooms, people, origin, onCreate, onToggle, fl
                 <tr key={l.id} className="border-t border-border/60 align-middle">
                   <td className="px-3 py-2.5"><b>{l.name}</b><br /><span className="select-all font-mono text-[12px] text-ink-secondary">{url}</span></td>
                   <td className="px-3 py-2.5">{l.rooms.map((id) => rooms.find((r) => r.id === id)?.name ?? `#${id}`).join(", ")}</td>
-                  <td className="px-3 py-2.5">{l.length} min</td>
-                  <td className="px-3 py-2.5">{l.hosts.map((h) => personName(h, people)).join(", ")}</td>
+                  <td className="whitespace-nowrap px-3 py-2.5">up to {l.length < 60 ? `${l.length} min` : `${l.length / 60} h`}{l.audience === "staff" ? <><br /><span className="text-[12px] text-ink-muted">staff only</span></> : null}</td>
+                  <td className="px-3 py-2.5">{l.hosts.length ? l.hosts.map((h) => personName(h, people)).join(", ") : <span className="text-ink-muted">Nobody</span>}</td>
                   <td className="whitespace-nowrap px-3 py-2.5">{daysLabel(l.days)}, {l.from}:00 - {l.to}:00<br /><span className="text-[12px] text-ink-muted">{l.until ? `until ${l.until}` : "no end date"}</span></td>
                   <td className="px-3 py-2.5">{l.booked}</td>
                   <td className="px-3 py-2.5"><span className={cn("rounded-full px-2 py-0.5 text-[11.5px] font-semibold", l.active ? "bg-synced-bg text-synced" : "bg-surface-2")}>{l.active ? "Active" : "Off"}</span></td>
@@ -222,46 +222,95 @@ export function LinksPage({ links, rooms, people, origin, onCreate, onToggle, fl
   );
 }
 
-export type LinkForm = { name: string; rooms: number[]; length: number; days: number[]; from: number; to: number; until: string | null; hosts: string[] };
+export type LinkForm = { name: string; rooms: number[]; length: number; days: number[]; from: number; to: number; until: string | null; hosts: string[]; audience: "anyone" | "staff" };
 
+/** The person with the link picks the room and the time range (owner, 2026-11-23); `length` is the longest booking. */
 export function LinkDialog({ rooms, people, me, saving, error, onClose, onSave }: {
   rooms: Room[]; people: Person[]; me: string; saving: boolean; error: string | null; onClose: () => void; onSave: (l: LinkForm) => void;
 }) {
-  const myCompany = people.find((p) => p.key === me)?.company ?? "";
-  const [x, setX] = useState<LinkForm>({ name: "", rooms: rooms.filter((r) => r.active).slice(0, 1).map((r) => r.id), length: 60, days: [1, 2, 3, 4, 5], from: 10, to: 17, until: isoDay(addDays(Date.now(), 30)), hosts: [me] });
-  const [co, setCo] = useState(myCompany);
+  const open = rooms.filter((r) => r.active);
+  const [x, setX] = useState<LinkForm>({ name: "", rooms: open.map((r) => r.id), length: 120, days: [1, 2, 3, 4, 5], from: 9, to: 18, until: isoDay(addDays(Date.now(), 30)), hosts: me ? [me] : [], audience: "anyone" });
+  const [q, setQ] = useState("");
+  const [co, setCo] = useState("");
   const [dep, setDep] = useState("");
   const companies = [...new Set(people.map((p) => p.company).filter(Boolean))].sort();
-  const deps = [...new Set(people.filter((p) => p.company === co).map((p) => p.department).filter(Boolean))].sort();
-  const hostPool = people.filter((p) => p.company === co && (!dep || p.department === dep));
+  const deps = [...new Set(people.filter((p) => !co || p.company === co).map((p) => p.department).filter(Boolean))].sort();
+  const needle = q.trim().toLowerCase();
+  const pool = people
+    .filter((p) => (needle ? `${p.name} ${p.company} ${p.department}`.toLowerCase().includes(needle) : (!co || p.company === co) && (!dep || p.department === dep)))
+    .slice(0, 200);
+  const byKey = new Map(people.map((p) => [p.key, p]));
   const toggle = <T,>(list: T[], v: T) => (list.includes(v) ? list.filter((a) => a !== v) : [...list, v]);
-  const ok = x.name.trim() && x.rooms.length && x.hosts.length && x.days.length;
+  const missing = [!x.name.trim() && "a link name", !x.rooms.length && "at least one room", !x.days.length && "at least one day", x.from >= x.to && "an end hour after the start"].filter(Boolean) as string[];
+  const ok = missing.length === 0;
   return (
     <Veil onClose={onClose} label="Guest link">
-      <form className="flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); if (ok) onSave(x); }}>
-        <h3 className="text-[18px] font-bold">Create a guest booking link</h3>
-        <label className={LABEL}>Name (only staff see it)<input required className={CONTROL} value={x.name} placeholder="Showroom visits" onChange={(e) => setX({ ...x, name: e.target.value })} /></label>
-        <div className={LABEL}>Rooms the guest can get<div className="flex flex-wrap gap-1.5">{rooms.filter((r) => r.active).map((r) => <button key={r.id} type="button" className={chip(x.rooms.includes(r.id))} onClick={() => setX({ ...x, rooms: toggle(x.rooms, r.id) })}>{r.name}</button>)}</div><span className="font-normal normal-case tracking-normal">The guest does not pick a room. The first free one is given.</span></div>
-        <div className={LABEL}>Meeting length<div className="flex flex-wrap gap-1.5">{[30, 60, 90, 120].map((n) => <button key={n} type="button" className={chip(x.length === n)} onClick={() => setX({ ...x, length: n })}>{n < 60 ? `${n} min` : `${n / 60} h`}</button>)}</div></div>
-        <div className={LABEL}>Days<div className="flex flex-wrap gap-1.5">{DAY_NAMES.map((d, i) => <button key={d} type="button" className={chip(x.days.includes(i))} onClick={() => setX({ ...x, days: toggle(x.days, i) })}>{d}</button>)}</div></div>
-        <div className="grid grid-cols-3 gap-2.5">
-          <label className={LABEL}>From<select className={CONTROL} value={x.from} onChange={(e) => setX({ ...x, from: Number(e.target.value) })}>{[8, 9, 10, 11, 12, 13, 14].map((h) => <option key={h} value={h}>{h}:00</option>)}</select></label>
-          <label className={LABEL}>To<select className={CONTROL} value={x.to} onChange={(e) => setX({ ...x, to: Number(e.target.value) })}>{[12, 13, 14, 15, 16, 17, 18, 19, 20].map((h) => <option key={h} value={h}>{h}:00</option>)}</select></label>
-          <label className={LABEL}>Works until
-            {x.until ? <DateField aria-label="Works until" fullWidth value={x.until} onChange={(v) => setX({ ...x, until: v || null })} /> : <span className={cn(CONTROL, "bg-surface-2")}>No end date</span>}
-            <span className="flex items-center gap-1.5 font-normal normal-case tracking-normal"><input type="checkbox" checked={!x.until} onChange={(e) => setX({ ...x, until: e.target.checked ? null : isoDay(addDays(Date.now(), 30)) })} />Keep it open with no end date</span>
-          </label>
+      <form className="flex flex-col gap-3.5" onSubmit={(e) => { e.preventDefault(); if (ok) onSave(x); }}>
+        <div>
+          <h3 className="text-[18px] font-bold">Create a booking link</h3>
+          <p className="text-[13px] text-ink-secondary">Anyone you send it to picks a day, a room and a time themselves. No login. Confirmed straight away.</p>
         </div>
-        <div className={LABEL}>Who hosts the guest
-          <div className="grid grid-cols-2 gap-2.5">
-            <select className={CONTROL} value={co} onChange={(e) => { setCo(e.target.value); setDep(""); }}>{companies.map((c) => <option key={c}>{c}</option>)}</select>
-            <select className={CONTROL} value={dep} onChange={(e) => setDep(e.target.value)}><option value="">All departments</option>{deps.map((d) => <option key={d}>{d}</option>)}</select>
+        <label className={LABEL}>Link name (only staff see it)<input className={CONTROL} value={x.name} placeholder="Type a name, e.g. Supplier visits" onChange={(e) => setX({ ...x, name: e.target.value })} /></label>
+        <div className={LABEL}>Rooms they can book
+          <div className="flex flex-wrap gap-1.5">{open.map((r) => <button key={r.id} type="button" className={chip(x.rooms.includes(r.id))} onClick={() => setX({ ...x, rooms: toggle(x.rooms, r.id) })}>{r.name}{r.seats ? ` · ${r.seats}` : ""}</button>)}</div>
+          {open.length === 0 && <span className="font-normal normal-case tracking-normal text-err">No rooms yet. Add one under Rooms first.</span>}
+        </div>
+        <div className={LABEL}>Open days<div className="flex flex-wrap gap-1.5">{DAY_NAMES.map((d, i) => <button key={d} type="button" className={chip(x.days.includes(i))} onClick={() => setX({ ...x, days: toggle(x.days, i) })}>{d}</button>)}</div></div>
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+          <label className={LABEL}>From<select className={CONTROL} value={x.from} onChange={(e) => setX({ ...x, from: Number(e.target.value) })}>{[6, 7, 8, 9, 10, 11, 12, 13, 14].map((h) => <option key={h} value={h}>{h}:00</option>)}</select></label>
+          <label className={LABEL}>To<select className={CONTROL} value={x.to} onChange={(e) => setX({ ...x, to: Number(e.target.value) })}>{[12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23].map((h) => <option key={h} value={h}>{h}:00</option>)}</select></label>
+          <label className={LABEL}>Longest booking<select className={CONTROL} value={x.length} onChange={(e) => setX({ ...x, length: Number(e.target.value) })}>{[[30, "30 min"], [60, "1 hour"], [120, "2 hours"], [180, "3 hours"], [240, "4 hours"], [480, "8 hours"]].map(([v, t]) => <option key={v} value={v}>{t}</option>)}</select></label>
+        </div>
+        <div className={LABEL}>Works until
+          <div className="flex flex-wrap items-center gap-3">
+            {x.until ? <div className="min-w-[180px] flex-1"><DateField aria-label="Works until" fullWidth value={x.until} onChange={(v) => setX({ ...x, until: v || null })} /></div> : <span className={cn(CONTROL, "flex min-w-[180px] flex-1 items-center bg-surface-2")}>No end date</span>}
+            <span className="flex items-center gap-1.5 font-normal normal-case tracking-normal text-ink"><input type="checkbox" checked={!x.until} onChange={(e) => setX({ ...x, until: e.target.checked ? null : isoDay(addDays(Date.now(), 30)) })} />No end date</span>
           </div>
-          <div className="flex max-h-40 flex-wrap gap-1.5 overflow-auto">{hostPool.map((p) => <button key={p.key} type="button" className={chip(x.hosts.includes(p.key))} onClick={() => setX({ ...x, hosts: toggle(x.hosts, p.key) })}>{p.name}</button>)}</div>
-          <span className="font-normal normal-case tracking-normal">Only times when a host and a room are both free are offered. Guests are confirmed straight away and never see other meetings.</span>
+        </div>
+        <div className={LABEL}>Who can use it
+          <div className="grid gap-2 sm:grid-cols-2">
+            {([["anyone", "Anyone with the link", "Visitors type their own company; staff pick ours"], ["staff", "Our staff only", "Company must be one of ours (staff without an ERP login)"]] as const).map(([v, t, d]) => (
+              <button key={v} type="button" aria-pressed={x.audience === v} onClick={() => setX({ ...x, audience: v })}
+                className={cn("flex flex-col items-start gap-0.5 rounded-xl border px-3 py-2.5 text-left normal-case tracking-normal", x.audience === v ? "border-primary bg-primary-soft" : "border-border bg-surface")}>
+                <b className="text-[13.5px] text-ink">{t}</b><span className="text-[12px] font-normal text-ink-secondary">{d}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className={LABEL}>Who gets told about each booking (optional)
+          <div className="flex flex-wrap gap-1.5 normal-case tracking-normal">
+            {x.hosts.length === 0 && <span className="font-normal text-ink-muted">Nobody. Bookings still show on everyone's calendar.</span>}
+            {x.hosts.map((k) => { const p = byKey.get(k); return (
+              <span key={k} className="inline-flex items-center gap-1 rounded-full bg-primary-soft py-1 pl-2.5 pr-1 text-[12.5px] font-medium text-primary-ink">
+                {p?.name ?? k}{p?.company ? ` · ${p.company}` : ""}
+                <button type="button" aria-label={`Remove ${p?.name ?? k}`} className="rounded-full p-0.5 hover:bg-surface" onClick={() => setX({ ...x, hosts: x.hosts.filter((h) => h !== k) })}><X size={13} /></button>
+              </span>
+            ); })}
+          </div>
+          <input className={CONTROL} placeholder="Search anyone, in any company" value={q} onChange={(e) => setQ(e.target.value)} />
+          {!needle && (
+            <div className="grid grid-cols-2 gap-2">
+              <select className={CONTROL} value={co} onChange={(e) => { setCo(e.target.value); setDep(""); }}><option value="">All companies</option>{companies.map((c) => <option key={c}>{c}</option>)}</select>
+              <select className={CONTROL} value={dep} onChange={(e) => setDep(e.target.value)}><option value="">All departments</option>{deps.map((d) => <option key={d}>{d}</option>)}</select>
+            </div>
+          )}
+          <div className="max-h-48 overflow-auto rounded-xl border border-border normal-case tracking-normal">
+            {pool.length === 0 && <div className="px-3 py-3 font-normal text-ink-muted">Nobody matches.</div>}
+            {pool.map((p) => (
+              <label key={p.key} className="flex cursor-pointer items-center gap-2.5 border-t border-border/60 px-3 py-2 text-[13.5px] font-normal text-ink first:border-t-0">
+                <input type="checkbox" checked={x.hosts.includes(p.key)} onChange={() => setX({ ...x, hosts: toggle(x.hosts, p.key) })} />
+                <span className="min-w-0 flex-1 truncate">{p.name}</span>
+                <span className="shrink-0 text-[12px] text-ink-muted">{[p.company, p.department].filter(Boolean).join(" · ")}</span>
+              </label>
+            ))}
+          </div>
         </div>
         {error && <div className="text-err">{error}</div>}
-        <div className="flex justify-end gap-2"><button type="button" className={BTN} onClick={onClose}>Cancel</button><button className={PRI} disabled={!ok || saving}>{saving ? "Creating..." : "Create link"}</button></div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {!ok && <span className="mr-auto text-[12.5px] text-ink-muted">Still needed: {missing.join(", ")}</span>}
+          <button type="button" className={BTN} onClick={onClose}>Cancel</button>
+          <button className={PRI} disabled={!ok || saving}>{saving ? "Creating..." : "Create link"}</button>
+        </div>
       </form>
     </Veil>
   );

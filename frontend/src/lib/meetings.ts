@@ -68,6 +68,7 @@ export type GuestLink = {
   active: boolean;
   createdBy: string;
   booked: number;
+  audience?: string;
 };
 export type Conflict = {
   room: { id: number; title: string; start: number; end: number; organizer: string } | null;
