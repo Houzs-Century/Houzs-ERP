@@ -83,6 +83,7 @@ The pitfalls that recurred most, one line each.
 - Display, showroom and service warehouses are not sellable (`backend/src/scm/lib/non-selling-warehouse.ts`); accessories keyed on code alone pool one customer's colour into another order.
 - Zero-cost lots came from zero-priced POs, partly shipped lots and cutover lots; cutover cost comes from the book's cost layers, and shipped cost never from a rounded unit price.
 - Stock-moving writes must invalidate the inventory queries the Stock Card reads.
+- An RPC is matched by argument NAMES: 0307 renamed columns but kept `p_product_code`, so calls sending `p_item_code` failed as "function not found" and were swallowed as "not migrated yet" (DO resync return, both retro-cost reconciles) → `backend/tests/retrocostRpcArgsMatchSql.test.ts`.
 
 ### Accounting and GL
 

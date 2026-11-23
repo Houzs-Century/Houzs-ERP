@@ -246,19 +246,21 @@ export async function reconcileUncostedOuts(
   let reconciled = 0;
   for (const b of distinct) {
     try {
+      /* p_product_code, not p_item_code: PostgREST matches an RPC by its
+         argument NAMES, and 0307 renamed the columns but kept this function's
+         parameter name. The call sent p_item_code from 18 Aug 2026 on, every
+         reconcile answered "function not found", and the guard below took that
+         for "migration not applied yet" and said nothing. */
       const { data, error } = await sb.rpc('fn_reconcile_uncosted_out', {
         p_warehouse_id: b.warehouse_id,
-        p_item_code: b.item_code,
+        p_product_code: b.item_code,
         p_variant_key: b.variant_key ?? '',
         p_before_ts: cutoffTs,
         p_created_by: performedBy,
       });
       if (error) {
-        // Pre-0154 (function not created) — silently no-op; nothing to reconcile.
-        if (!(error.message ?? '').includes('fn_reconcile_uncosted_out')) {
-          // eslint-disable-next-line no-console
-          console.error('[oversell] retro-cost reconcile failed:', error.message);
-        }
+        // eslint-disable-next-line no-console
+        console.error('[oversell] retro-cost reconcile failed:', error.message);
       } else {
         reconciled += Number(data ?? 0);
       }
