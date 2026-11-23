@@ -23,7 +23,7 @@ import { useProductChanges, type ProductChangeRow } from '../../vendor/scm/lib/p
 import { fmtDate, fmtSenPlain } from '../../vendor/shared/format';
 import {
   BUCKET_LABEL, CHANGE_NOTES, SUMMARY_LINES, bySalesperson, detailSheet, filterRows, fmtDelta, lineText, monthBounds, monthsBetween,
-  periodText, pickableMonths, routeShort, routeText, summaryColumns, summaryRed, summarySheet, totalsOf, typesText, whoText, type BucketView, type SalespersonRow,
+  ordersScope, ordersShown, periodText, pickableMonths, routeShort, routeText, summaryColumns, summaryRed, summarySheet, totalsOf, typesText, whoText, type BucketView, type SalespersonRow,
 } from './product-changes-view';
 import { monthName } from './reports/statementColumns';
 import {
@@ -65,6 +65,22 @@ function MonthSelect({ label, value, months, onChange }: { label: string; value:
   );
 }
 
+/* Owner 2026-11-23: 「默认只看新单」. Orders brought over from AutoCount stay out
+   of both reports until the reader turns this on; it lives in the URL. */
+function useImportedSwitch(): [boolean, (on: boolean) => void] {
+  const [params, setParams] = useSearchParams();
+  const set = (on: boolean) => setParams((prev) => {
+    const next = new URLSearchParams(prev);
+    if (on) next.set('imported', '1'); else next.delete('imported');
+    return next;
+  }, { replace: true });
+  return [params.get('imported') === '1', set];
+}
+
+const ImportedSwitch = ({ on, onChange, count }: { on: boolean; onChange: (on: boolean) => void; count: number }) => (
+  <ReportSwitch on={on} onChange={onChange}>{`Include imported orders${count > 0 ? ` (${count})` : ''}`}</ReportSwitch>
+);
+
 const Money = ({ sen, delta = false, bad = false }: { sen: number; delta?: boolean; bad?: boolean }) => (
   <span className={`${s.num} ${bad && sen < 0 ? s.bad : ''}`}>{delta ? fmtDelta(sen) : fmtSenPlain(sen)}</span>
 );
@@ -100,9 +116,13 @@ const DETAIL_COLUMNS: Column<ProductChangeRow>[] = [
   { key: 'change_day', label: 'Date', getValue: (r) => r.changeDay, exportValue: (r) => r.changeDay, render: (r) => fmtDate(r.changeDay) },
   {
     key: 'doc_no', label: 'Order', width: '150px', getValue: (r) => r.docNo, searchValue: (r) => `${r.docNo} ${r.customer ?? ''}`,
+    exportValue: (r) => (r.imported ? `${r.docNo} (imported)` : r.docNo),
     render: (r) => (
       <span className={s.stack}>
-        <Link to={`/scm/sales-orders/${encodeURIComponent(r.docNo)}`} className={s.doc}>{r.docNo}</Link>
+        <span className={s.docLine}>
+          <Link to={`/scm/sales-orders/${encodeURIComponent(r.docNo)}`} className={s.doc}>{r.docNo}</Link>
+          {r.imported && <span className={s.tag} title="Brought over from AutoCount at the cutover">Imported</span>}
+        </span>
         {r.customer && <span className={s.muted}>{r.customer}</span>}
       </span>
     ),
@@ -152,13 +172,16 @@ export const ProductChangesTab = () => {
     return next;
   }, { replace: true });
   const pickMonth = (ym: string) => { const m = monthBounds(ym); r.setRange(m.from, m.to); };
+  const [includeImported, setIncludeImported] = useImportedSwitch();
 
   const q = useProductChanges({ from: month, to: month });
   const all = useMemo(() => q.data?.rows ?? [], [q.data]);
-  const rows = useMemo(() => filterRows(all, bucket, notCoveredOnly), [all, bucket, notCoveredOnly]);
+  const shown = useMemo(() => ordersShown(all, includeImported), [all, includeImported]);
+  const importedCount = all.length - ordersShown(all, false).length;
+  const rows = useMemo(() => filterRows(shown, bucket, notCoveredOnly), [shown, bucket, notCoveredOnly]);
   const t = totalsOf(rows);
   const period = periodText(`${month}-01`, monthEnd(`${month}-01`));
-  useReportSubtitle(`${period} · by change date · product lines`);
+  useReportSubtitle(`${period} · by change date · ${ordersScope(includeImported)} · product lines`);
   const months = useMemo(() => pickableMonths(r.today), [r.today]);
 
   const tiles: ReportTile[] = [
@@ -172,12 +195,13 @@ export const ProductChangesTab = () => {
   return (
     <>
       <ReportHeaderActions>
-        <ReportExports sheet={() => (q.data ? detailSheet(rows, `${month}-01`, monthEnd(`${month}-01`), bucket, notCoveredOnly) : null)} fileBase={`product-changes-${month}`} />
+        <ReportExports sheet={() => (q.data ? detailSheet(rows, `${month}-01`, monthEnd(`${month}-01`), bucket, notCoveredOnly, includeImported) : null)} fileBase={`product-changes-${month}`} />
       </ReportHeaderActions>
       <ReportToolbar>
         <ReportTool label="Month"><MonthSelect label="Month" value={month} months={months} onChange={pickMonth} /></ReportTool>
         <ReportTool label="Show"><Segmented options={BUCKETS} value={bucket} onChange={(v) => setParam('kind', v === 'all' ? null : v)} label="Show" /></ReportTool>
         <ReportSwitch on={notCoveredOnly} onChange={(on) => setParam('uncovered', on ? '1' : null)}>Not covered only</ReportSwitch>
+        <ImportedSwitch on={includeImported} onChange={setIncludeImported} count={importedCount} />
       </ReportToolbar>
 
       {q.isLoading && <div className={`skeleton ${s.skeleton}`} aria-label="Reading the changes" />}
@@ -186,7 +210,9 @@ export const ProductChangesTab = () => {
         <>
           <ReportTiles tiles={tiles} label="Totals" />
           {rows.length === 0 ? (
-            <ReportMessage>{all.length === 0 ? `No product change in ${period}.` : 'No change matches the filter.'}</ReportMessage>
+            <ReportMessage>{all.length === 0 ? `No product change in ${period}.`
+              : shown.length === 0 ? `No change on a new order in ${period}. ${importedCount} on imported orders: turn on Include imported orders to see them.`
+                : 'No change matches the filter.'}</ReportMessage>
           ) : (
             <section aria-label="Product changes">
               <DataTable<ProductChangeRow>
@@ -229,25 +255,29 @@ export const ProductChangesSummaryTab = () => {
     const [lo, hi] = a <= z ? [a, z] : [z, a];
     r.setRange(monthBounds(lo).from, monthBounds(hi).to);
   };
+  const [includeImported, setIncludeImported] = useImportedSwitch();
   const q = useProductChanges({ from: fromYm, to: toYm });
-  const rows = useMemo(() => q.data?.rows ?? [], [q.data]);
+  const all = useMemo(() => q.data?.rows ?? [], [q.data]);
+  const rows = useMemo(() => ordersShown(all, includeImported), [all, includeImported]);
+  const importedCount = all.length - ordersShown(all, false).length;
   const from = `${fromYm}-01`;
   const to = monthEnd(`${toYm}-01`);
   const cols = useMemo(() => summaryColumns(rows, from, to), [rows, from, to]);
   const people = useMemo(() => bySalesperson(rows), [rows]);
   const span = monthsBetween(from, to).length;
   const period = periodText(from, to);
-  useReportSubtitle(`${period}${span > 1 ? ` · ${span} months` : ''} · by change date · product lines`);
+  useReportSubtitle(`${period}${span > 1 ? ` · ${span} months` : ''} · by change date · ${ordersScope(includeImported)} · product lines`);
   const fileBase = fromYm === toYm ? `product-changes-pnl-${fromYm}` : `product-changes-pnl-${fromYm}-${toYm}`;
 
   return (
     <>
       <ReportHeaderActions>
-        <ReportExports sheet={() => (q.data ? summarySheet(rows, from, to) : null)} fileBase={fileBase} />
+        <ReportExports sheet={() => (q.data ? summarySheet(rows, from, to, includeImported) : null)} fileBase={fileBase} />
       </ReportHeaderActions>
       <ReportToolbar>
         <ReportTool label="From"><MonthSelect label="From month" value={fromYm} months={months} onChange={(m) => setMonths(m, toYm)} /></ReportTool>
         <ReportTool label="To"><MonthSelect label="To month" value={toYm} months={months} onChange={(m) => setMonths(fromYm, m)} /></ReportTool>
+        <ImportedSwitch on={includeImported} onChange={setIncludeImported} count={importedCount} />
       </ReportToolbar>
 
       {q.isLoading && <div className={`skeleton ${s.skeleton}`} aria-label="Reading the changes" />}

@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import type { ProductChangeRow } from '../../vendor/scm/lib/product-change-queries';
 import { sheetMatrix } from '../../vendor/scm/lib/report-sheet-xlsx';
 import {
-  bySalesperson, detailSheet, filterRows, fmtDelta, lineText, monthsBetween, pickableMonths, routeText, summaryColumns,
+  bySalesperson, detailSheet, filterRows, fmtDelta, lineText, monthsBetween, ordersShown, pickableMonths, routeText, summaryColumns,
   summarySheet, SUMMARY_LINES, totalsOf, whoText,
 } from './product-changes-view';
 
@@ -14,7 +14,7 @@ let seq = 0;
 const row = (day: string, bucket: ProductChangeRow['bucket'], selling: number, cost: number, salesperson = 'Mei Ling', extra: Partial<ProductChangeRow> = {}): ProductChangeRow => {
   const margin = selling - cost;
   return {
-    id: `e${++seq}`, docNo: `HC-SO-${seq}`, soDate: '2026-09-01', customer: 'A customer', salesperson, changeDay: day, changedAt: null,
+    id: `e${++seq}`, docNo: `HC-SO-${seq}`, soDate: '2026-09-01', customer: 'A customer', salesperson, imported: false, changeDay: day, changedAt: null,
     route: 'DIRECT', amendmentNos: [], changedBy: ['Ali'], approvedBy: [], types: ['sku'], bucket,
     sellingBeforeSen: 100_000, sellingAfterSen: 100_000 + selling, costBeforeSen: 50_000, costAfterSen: 50_000 + cost,
     sellingDeltaSen: selling, costDeltaSen: cost, marginDeltaSen: margin, covered: margin >= 0, shortfallSen: Math.max(0, -margin), lines: [],
@@ -38,6 +38,12 @@ describe('adding the changes up', () => {
     expect(filterRows(ROWS, 'SELLING', false)).toHaveLength(2);
     expect(filterRows(ROWS, 'COST_ONLY', true).map((r) => r.changeDay)).toEqual(['2026-10-20']);
     expect(filterRows(ROWS, 'all', true)).toHaveLength(2);
+  });
+
+  it('leaves out orders brought over from AutoCount unless asked (owner: 「默认只看新单」)', () => {
+    const rows = [...ROWS, row('2026-10-11', 'COST_ONLY', 0, 9_000, 'Kumar', { imported: true })];
+    expect(ordersShown(rows, false)).toEqual(ROWS);
+    expect(ordersShown(rows, true)).toHaveLength(5);
   });
 
   it('a range has a column per month and a total; one month has no total', () => {
@@ -76,17 +82,27 @@ describe('the words', () => {
 
 describe('the exports draw what the screen shows', () => {
   it('the detail sheet has a cell for every column, and a total', () => {
-    const sh = detailSheet(ROWS, '2026-10-01', '2026-10-31', 'all', false);
+    const sh = detailSheet(ROWS, '2026-10-01', '2026-10-31', 'all', false, false);
     const t = sh.tables[0]!;
     expect(t.rows.every((r) => r.cells.length === t.columns.length)).toBe(true);
     expect(t.rows.at(-1)!.kind).toBe('total');
+    expect(sh.subtitle).toContain('new orders only');
+  });
+  it('with imported orders included, the detail sheet says which order came from AutoCount', () => {
+    const rows = [ROWS[0]!, { ...ROWS[1]!, imported: true }];
+    const sh = detailSheet(rows, '2026-10-01', '2026-10-31', 'all', false, true);
+    const t = sh.tables[0]!;
+    expect(t.columns[0]!.label).toBe('Order from');
+    expect(t.rows.every((r) => r.cells.length === t.columns.length)).toBe(true);
+    expect(t.rows.map((r) => r.cells[0])).toEqual([null, 'Imported', null]);
+    expect(sh.subtitle).toContain('imported orders included');
   });
   it('both sheets lay out as an Excel workbook', () => {
-    expect(sheetMatrix(detailSheet(ROWS, '2026-10-01', '2026-10-31', 'COST_ONLY', true)).length).toBeGreaterThan(ROWS.length);
-    expect(sheetMatrix(summarySheet(ROWS, '2026-10-01', '2026-11-30')).length).toBeGreaterThan(SUMMARY_LINES.length);
+    expect(sheetMatrix(detailSheet(ROWS, '2026-10-01', '2026-10-31', 'COST_ONLY', true, false)).length).toBeGreaterThan(ROWS.length);
+    expect(sheetMatrix(summarySheet(ROWS, '2026-10-01', '2026-11-30', false)).length).toBeGreaterThan(SUMMARY_LINES.length);
   });
   it('the P&L sheet has the P&L lines by month and the salespeople', () => {
-    const sh = summarySheet(ROWS, '2026-10-01', '2026-11-30');
+    const sh = summarySheet(ROWS, '2026-10-01', '2026-11-30', false);
     expect(sh.tables[0]!.rows).toHaveLength(SUMMARY_LINES.length);
     expect(sh.tables[0]!.rows.every((r) => r.cells.length === 3)).toBe(true);
     expect(sh.tables[1]!.rows.map((r) => r.label)).toEqual(['Kumar', 'Mei Ling', 'Total']);

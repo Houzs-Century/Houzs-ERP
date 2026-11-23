@@ -6,7 +6,9 @@
      • each row shows selling, cost and margin before → after with the change,
        and the not-covered flag with its shortfall;
      • the summary adds the months up P&L-style with a Total, then by salesperson,
-       the largest shortfall first.
+       the largest shortfall first;
+     • an order brought over from AutoCount is left out of both until "Include
+       imported orders" is on, then marked Imported (owner: 「默认只看新单」).
    The rows are made up, in the server's shape (backend/tests/productChanges.test.ts). */
 
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -26,7 +28,7 @@ function ev(day: string, seller: string, types: ProductChangeType[], sb: number,
   const sd = sa - sb; const cd = ca - cb; const md = sd - cd;
   seq += 1;
   return {
-    id: `e${seq}`, docNo: `HC-SO-T${seq}`, soDate: '2026-09-02', customer: `Customer ${seq}`, salesperson: seller, changeDay: day, changedAt: null,
+    id: `e${seq}`, docNo: `HC-SO-T${seq}`, soDate: '2026-09-02', customer: `Customer ${seq}`, salesperson: seller, imported: false, changeDay: day, changedAt: null,
     route: 'DIRECT', amendmentNos: [], changedBy: [seller], approvedBy: [], types, bucket: sd !== 0 ? 'SELLING' : 'COST_ONLY',
     sellingBeforeSen: sb, sellingAfterSen: sa, costBeforeSen: cb, costAfterSen: ca, sellingDeltaSen: sd, costDeltaSen: cd, marginDeltaSen: md,
     covered: md >= 0, shortfallSen: Math.max(0, -md), lines, ...extra,
@@ -41,6 +43,8 @@ const ROWS: ProductChangeRow[] = [
   ], { route: 'AMENDMENT', amendmentNos: ['HC-SO-T3/A1', 'HC-SO-T3/A2'], approvedBy: ['Kris'] }),
   ev('2026-10-28', 'Ben', ['height'], 520000, 520000, 210000, 222000, [{ id: 'l5', types: ['height'], before: side('9028-2A(LHF)', 1, 520000, 210000), after: side('9028-2A(LHF)', 1, 520000, 222000) }]),
   ev('2026-11-11', 'Aina', ['sku'], 610000, 549000, 230000, 233500, [{ id: 'l6', types: ['sku'], before: side('ULTRA-(K)', 1, 610000, 230000), after: side('ULTRA-FIRM-(K)', 1, 549000, 233500) }]),
+  ev('2026-10-24', 'Ben', ['sku'], 300000, 300000, 100000, 160000, [{ id: 'l7', types: ['sku'], before: side('BEDFRAME KIV', 1, 300000, 100000), after: side('TRION-(K)', 1, 300000, 160000) }],
+    { docNo: 'HC-SO-000777', imported: true }),
 ];
 const monthEnd = (ym: string) => new Date(Date.UTC(Number(ym.slice(0, 4)), Number(ym.slice(5, 7)), 0)).toISOString().slice(0, 10);
 fetchMock.mockImplementation(async (path: string) => {
@@ -88,6 +92,16 @@ describe('Product changes, by month', () => {
     expect(screen.getByText('HC-SO-T3')).toBeTruthy();
   });
 
+  test('an imported order stays out until asked for, then is marked Imported', async () => {
+    draw('detail', 'tab=changes&from=2026-10-01&to=2026-10-31');
+    await screen.findByText('HC-SO-T3');
+    expect(screen.queryByText('HC-SO-000777')).toBeNull();
+    fireEvent.click(screen.getByRole('switch', { name: 'Include imported orders (1)' }));
+    await screen.findByText('HC-SO-000777');
+    expect(rowOf('HC-SO-000777').textContent).toContain('Imported');
+    expect(rowOf('HC-SO-T3').textContent).not.toContain('Imported');
+  });
+
   test('picking another month reads it', async () => {
     draw('detail', 'tab=changes&from=2026-10-01&to=2026-10-31');
     await screen.findByText('HC-SO-T3');
@@ -110,5 +124,14 @@ describe('Product changes P&L', () => {
     await waitFor(() => expect(within(people).getAllByRole('row').length).toBeGreaterThan(1));
     const names = within(people).getAllByRole('row').slice(1).map((r) => r.textContent);
     expect(names[0]).toContain('Chandra');
+  });
+
+  test('imported orders join the P&L only when asked for', async () => {
+    draw('summary', 'tab=changesum&from=2026-10-01&to=2026-10-31');
+    const pnl = await screen.findByRole('region', { name: 'Product changes by month' });
+    const costUp = () => within(pnl).getAllByText('Cost went up')[0]!.closest('tr')!.textContent;
+    expect(costUp()).toBe('Cost went up1');
+    fireEvent.click(screen.getByRole('switch', { name: 'Include imported orders (1)' }));
+    await waitFor(() => expect(costUp()).toBe('Cost went up2'));
   });
 });

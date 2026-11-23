@@ -8,10 +8,13 @@
 // with the order it changed and who sold it. The detail report lists them;
 // the summary report (P&L-style) adds them up by month and by salesperson.
 // The month is the change day's (Malaysia). A change to an order that has since
-// been cancelled is left out: the sale it changed is gone.
+// been cancelled is left out: the sale it changed is gone. Each row says whether
+// the order was brought over from AutoCount at the cutover; the reports leave
+// those out unless asked (owner 2026-11-23: 「默认只看新单」).
 // ----------------------------------------------------------------------------
 
 import { changeCoverage, type ChangedLine, type ProductChangeBucket, type ProductChangeType } from '../scm/lib/so-product-change';
+import { soIsMigratedShape } from '../scm/lib/so-is-migrated';
 
 export type PcEventRow = {
   id: string;
@@ -38,6 +41,7 @@ export type PcOrder = {
   debtor_name: string | null;
   salesperson_id: string | null;
   agent: string | null;
+  linked_ac_docno: string | null;
 };
 
 export type ProductChangeRow = {
@@ -47,6 +51,8 @@ export type ProductChangeRow = {
   customer: string | null;
   /** Who sold the order: the staff name, else the agent text, else Unassigned. */
   salesperson: string;
+  /** The order came over from AutoCount at the cutover (`soIsMigratedShape`), not opened in the ERP. */
+  imported: boolean;
   changeDay: string;
   changedAt: string | null;
   route: 'DIRECT' | 'AMENDMENT';
@@ -107,6 +113,7 @@ export function buildProductChanges(input: {
       soDate: o.so_date ? String(o.so_date).slice(0, 10) : null,
       customer: o.debtor_name ?? null,
       salesperson: id ? (input.staffNames.get(id) ?? o.agent ?? id) : (o.agent?.trim() || 'Unassigned'),
+      imported: soIsMigratedShape(o.doc_no, o.linked_ac_docno),
       changeDay: String(e.change_day).slice(0, 10),
       changedAt: e.changed_at ?? null,
       route: e.route === 'AMENDMENT' ? 'AMENDMENT' : 'DIRECT',

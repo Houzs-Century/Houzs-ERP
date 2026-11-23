@@ -61,6 +61,13 @@ export function lineText(l: ChangedLine): string {
 /** A change in sen with its sign: "+500.00", "(500.00)", "0.00". */
 export const fmtDelta = (sen: number): string => (sen > 0 ? `+${fmtSenPlain(sen)}` : fmtSenPlain(sen));
 
+/* Owner 2026-11-23: 「默认只看新单」. An order brought over from AutoCount at the
+   cutover is left out unless the reader asks for it. */
+export const ordersShown = (rows: readonly ProductChangeRow[], includeImported: boolean): ProductChangeRow[] =>
+  (includeImported ? [...rows] : rows.filter((r) => !r.imported));
+
+export const ordersScope = (includeImported: boolean): string => (includeImported ? 'imported orders included' : 'new orders only');
+
 export function filterRows(rows: readonly ProductChangeRow[], bucket: BucketView, notCoveredOnly: boolean): ProductChangeRow[] {
   return rows.filter((r) => (bucket === 'all' || r.bucket === bucket) && (!notCoveredOnly || !r.covered));
 }
@@ -178,11 +185,13 @@ export function bySalesperson(rows: readonly ProductChangeRow[]): SalespersonRow
 
 const TEXT = (label: string) => ({ label, kind: 'text' as const, align: 'left' as const });
 
-export function detailSheet(rows: readonly ProductChangeRow[], from: string, to: string, bucket: BucketView, notCoveredOnly: boolean): ReportSheet {
+export function detailSheet(rows: readonly ProductChangeRow[], from: string, to: string, bucket: BucketView, notCoveredOnly: boolean, includeImported: boolean): ReportSheet {
   const t = totalsOf(rows);
+  const lead = (v: SheetValue): SheetValue[] => (includeImported ? [v] : []);
   const table: SheetRow[] = rows.map((r) => ({
     kind: 'row', depth: 0, label: r.docNo,
     cells: [
+      ...lead(r.imported ? 'Imported' : null),
       r.changeDay, r.salesperson, whoText(r), routeText(r), typesText(r), BUCKET_LABEL[r.bucket],
       r.sellingBeforeSen, r.sellingAfterSen, r.sellingDeltaSen,
       r.costBeforeSen, r.costAfterSen, r.costDeltaSen,
@@ -193,11 +202,11 @@ export function detailSheet(rows: readonly ProductChangeRow[], from: string, to:
   }));
   table.push({
     kind: 'total', depth: 0, label: 'Total',
-    cells: [null, null, null, null, `${t.events} ${t.events === 1 ? 'change' : 'changes'}`, null, null, null, t.sellingDeltaSen, null, null, t.costDeltaSen, null, null, t.marginDeltaSen, `${t.notCovered} not covered`, t.shortfallSen, null],
+    cells: [...lead(null), null, null, null, null, `${t.events} ${t.events === 1 ? 'change' : 'changes'}`, null, null, null, t.sellingDeltaSen, null, null, t.costDeltaSen, null, null, t.marginDeltaSen, `${t.notCovered} not covered`, t.shortfallSen, null],
   });
   return {
     title: 'Product changes',
-    subtitle: `${periodText(from, to)} · ${bucket === 'all' ? 'all changes' : BUCKET_LABEL[bucket].toLowerCase()}${notCoveredOnly ? ' · not covered only' : ''} · product lines · RM`,
+    subtitle: `${periodText(from, to)} · ${bucket === 'all' ? 'all changes' : BUCKET_LABEL[bucket].toLowerCase()}${notCoveredOnly ? ' · not covered only' : ''} · ${ordersScope(includeImported)} · product lines · RM`,
     meta: [
       { label: 'Month', value: periodText(from, to) },
       { label: 'Changes', value: String(t.events) },
@@ -206,6 +215,7 @@ export function detailSheet(rows: readonly ProductChangeRow[], from: string, to:
     tables: [{
       labelHeader: 'Order',
       columns: [
+        ...(includeImported ? [TEXT('Order from')] : []),
         TEXT('Change date'), TEXT('Salesperson'), TEXT('Changed by'), TEXT('How'), TEXT('What changed'), TEXT('Kind'),
         AMOUNT_COLUMN('Selling before'), AMOUNT_COLUMN('Selling after'), AMOUNT_COLUMN('Selling change'),
         AMOUNT_COLUMN('Cost before'), AMOUNT_COLUMN('Cost after'), AMOUNT_COLUMN('Cost change'),
@@ -218,7 +228,7 @@ export function detailSheet(rows: readonly ProductChangeRow[], from: string, to:
   };
 }
 
-export function summarySheet(rows: readonly ProductChangeRow[], from: string, to: string): ReportSheet {
+export function summarySheet(rows: readonly ProductChangeRow[], from: string, to: string, includeImported: boolean): ReportSheet {
   const cols = summaryColumns(rows, from, to);
   const pnl: SheetRow[] = SUMMARY_LINES.map((l) => (l.kind === 'section'
     ? { kind: 'block', depth: 0, label: l.label, cells: cols.map(() => null) }
@@ -231,7 +241,7 @@ export function summarySheet(rows: readonly ProductChangeRow[], from: string, to
   people.push({ kind: 'total', depth: 0, label: 'Total', cells: [String(t.events), t.sellingDeltaSen, t.costDeltaSen, t.marginDeltaSen, String(t.notCovered), t.shortfallSen] });
   return {
     title: 'Product changes P&L',
-    subtitle: `${periodText(from, to)} · product lines · RM`,
+    subtitle: `${periodText(from, to)} · ${ordersScope(includeImported)} · product lines · RM`,
     meta: [{ label: 'Months', value: periodText(from, to) }, { label: 'Changes', value: String(t.events) }],
     tables: [
       { title: 'By month', columns: cols.map((c) => AMOUNT_COLUMN(c.label)), rows: pnl },
@@ -250,4 +260,5 @@ export const CHANGE_NOTES: readonly string[] = [
   'Selling and cost are the order’s product lines; delivery, disposal and other service lines are left out. A direct edit counts once per order per day; an amendment once, its product and price halves together.',
   'Not covered: the margin fell, because the selling change was smaller than the cost change. Selling same, cost changed: the cost moved with no new price.',
   'The changed part is costed on the change day; unchanged lines keep their order-date cost.',
+  'Orders brought over from AutoCount at the cutover are left out unless Include imported orders is on; their rows are marked Imported.',
 ];

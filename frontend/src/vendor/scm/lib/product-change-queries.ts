@@ -31,6 +31,8 @@ export type ProductChangeRow = {
   soDate: string | null;
   customer: string | null;
   salesperson: string;
+  /** The order came over from AutoCount at the cutover; the reports leave these out unless asked. */
+  imported: boolean;
   /** The Malaysia day of the change: the month it counts in. */
   changeDay: string;
   changedAt: string | null;

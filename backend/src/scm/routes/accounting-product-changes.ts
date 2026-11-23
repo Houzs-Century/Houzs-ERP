@@ -37,7 +37,7 @@ export async function loadProductChanges(sb: Db, companyId: number, range: { fro
   const docs = [...new Set(events.map((e) => e.so_doc_no))];
   const ords = await chunkIn<PcOrder>(docs, (batch, f, t) =>
     sb.from('mfg_sales_orders')
-      .select('doc_no, so_date, status, debtor_name, salesperson_id, agent')
+      .select('doc_no, so_date, status, debtor_name, salesperson_id, agent, linked_ac_docno')
       .eq('company_id', companyId).in('doc_no', batch)
       .order('doc_no').range(f, t));
   if (ords.error) return { ok: false, reason: failed(ords.error) };
