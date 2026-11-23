@@ -30,7 +30,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { History, Save, X, Trash2, Send, Ban, AlertTriangle, Search, Wand2, Undo2, ChevronRight, ChevronDown, EyeOff, Rows3, List, Printer, Pencil, Plus, Camera, Download, Check, CornerUpLeft, ExternalLink } from 'lucide-react';
+import { History, Save, X, Trash2, Send, Ban, AlertTriangle, Search, Wand2, Undo2, RotateCcw, ChevronRight, ChevronDown, EyeOff, Rows3, List, Printer, Pencil, Plus, Camera, Download, Check, CornerUpLeft, ExternalLink } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
@@ -45,6 +45,7 @@ import {
   useRejectStockTake,
   useCancelStockTake,
   useReverseStockTake,
+  useReopenStockTake,
   useDeleteStockTake,
   useUpdateStockTakeHeader,
   useAddStockTakeLine,
@@ -197,6 +198,7 @@ export const StockTakeDetail = () => {
   const reject  = useRejectStockTake();
   const cancel  = useCancelStockTake();
   const reverse = useReverseStockTake();
+  const reopen  = useReopenStockTake();
   const del     = useDeleteStockTake();
   const addLine = useAddStockTakeLine();
   const delLine = useDeleteStockTakeLine();
@@ -275,6 +277,7 @@ export const StockTakeDetail = () => {
   /* Approval lane (owner 2026-11-20): an over-limit count a non-supervisor
      submitted, waiting for a supervisor to approve (→ POSTED) or return (→ OPEN). */
   const isPendingApproval = status === 'PENDING_APPROVAL';
+  const isCancelled = status === 'CANCELLED';
 
   /* Server-decided viewer facts (backend GET /:id). The fallback only matters
      against an older worker that omits `viewer` — behave exactly as before
@@ -647,6 +650,28 @@ export const StockTakeDetail = () => {
     });
   };
 
+  const onReopen = async () => {
+    if (!id) return;
+    const proceed = await askConfirm({
+      title: 'Reopen this cancelled stock take?',
+      body:
+        'It goes back to OPEN so you can count again. The sheet is refreshed to the ' +
+        'current system quantities for its scope, and any earlier counts on it are cleared.',
+      confirmLabel: 'Reopen',
+    });
+    if (!proceed) return;
+    reopen.mutate(id, {
+      onSuccess: (res) => {
+        void detail.refetch();
+        void notify({
+          title: 'Reopened',
+          body: `${res.lineCount} line${res.lineCount === 1 ? '' : 's'} refreshed to current stock. Count and post again.`,
+        });
+      },
+      onError: (err) => { void notify({ title: 'Reopen failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' }); },
+    });
+  };
+
   const onDelete = async () => {
     if (!id) return;
     if (!(await askConfirm({
@@ -739,6 +764,14 @@ export const StockTakeDetail = () => {
               {isPosted && (
                 <Button variant="ghost" size="md" onClick={onReverse} disabled={reverse.isPending}>
                   <Undo2 {...ICON} /> {reverse.isPending ? 'Undoing…' : 'Undo'}
+                </Button>
+              )}
+              {/* Reopen a cancelled take → OPEN, re-snapshotting to current stock
+                  (owner 2026-11-23) so a cancelled sheet can be counted again
+                  without making a new document. */}
+              {isCancelled && (
+                <Button variant="ghost" size="md" onClick={() => { void onReopen(); }} disabled={reopen.isPending}>
+                  <RotateCcw {...ICON} /> {reopen.isPending ? 'Reopening…' : 'Reopen'}
                 </Button>
               )}
               {!isDraft && (
