@@ -10,13 +10,13 @@ import type { DailyBankBoard } from './accounting-phase1-queries';
 import { boardDayLabel, boardSourceLine, dailyBankSections, isDetailRow } from './daily-bank-report';
 
 const block = (over: Partial<DailyBankBoard['blocks'][number]>): DailyBankBoard['blocks'][number] => ({
-  accountCode: '310-0010', accountName: 'CASH AT BANK - MAYBANK', source: 'ledger', start: null,
+  accountCode: '310-0010', accountName: 'CASH AT BANK - MAYBANK', start: null,
   openingSen: 0, inSen: 0, outSen: 0, closingSen: 0, receipts: [], payouts: [],
   pending: [], pendingSen: 0, availableSen: 0, transit: [], transitSen: 0, availableWithTransitSen: 0, ...over,
 });
 const board = (over: Partial<DailyBankBoard>): DailyBankBoard => ({
   date: '2026-09-29', blocks: [], transit: [], totalClosingSen: 0, totalTransitSen: 0, pendingApprovalSen: 0, availableSen: 0,
-  unassignedTransit: [], unassignedPending: [], note: '', ...over,
+  unassignedTransit: [], unassignedPending: [], book: 'ledger', notStarted: [], note: '', ...over,
 });
 
 describe('dailyBankSections', () => {
@@ -78,14 +78,14 @@ describe('boardDayLabel', () => {
 });
 
 describe('the cash book in the picture (owner 2026-11-23)', () => {
-  test('a typed receipt prints its note, with no one and no document; the footer says where the figures come from', () => {
+  test('a typed receipt prints its note, with no one and no document; the footer says which board it is', () => {
     const cash = block({
-      source: 'cashbook', start: { date: '2026-09-28', balanceSen: 1_000 }, openingSen: 1_000, inSen: 500, closingSen: 1_500,
+      start: { date: '2026-09-28', balanceSen: 1_000 }, openingSen: 1_000, inSen: 500, closingSen: 1_500,
       receipts: [{ jeNo: '', sourceType: 'TYPED', sourceDocNo: 'r1', docNo: '', party: null, note: 'Hookka deposit', amountSen: 500, method: null, typedBy: 'Chew' }],
     });
-    const [s] = dailyBankSections(board({ blocks: [cash] }));
+    const [s] = dailyBankSections(board({ book: 'cashbook', blocks: [cash] }));
     expect(s!.rows.filter((r) => r.kind === 'received').map((r) => [r.who, r.doc, r.description, r.receivedSen])).toEqual([['', '', 'Hookka deposit', 500]]);
-    expect(boardSourceLine(board({ blocks: [cash] }))).toMatch(/^Cash book banks: starting balance \+ receipts typed/);
+    expect(boardSourceLine(board({ book: 'cashbook', blocks: [cash] }))).toMatch(/^Cash book: each bank from its starting balance/);
     expect(boardSourceLine(board({ blocks: [block({})] }))).toMatch(/^Live from the ledger/);
   });
 });

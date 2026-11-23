@@ -50,13 +50,13 @@ export function DailyBankSheet({ board, upcoming, companyName, printedBy, printe
     <div className={`${styles.sheet} print-area`} aria-label="Daily Bank sheet">
       <div className={styles.letterhead}>
         <span className={styles.company}>{companyName}</span>
-        <span className={styles.docBlock}><b>DAILY BANK</b><span>Date: {fmtDate(board.date)}</span><span>{board.blocks.length} accounts · {movements} movements</span></span>
+        <span className={styles.docBlock}><b>{board.book === 'cashbook' ? 'DAILY BANK · CASH BOOK' : 'DAILY BANK'}</b><span>Date: {fmtDate(board.date)}</span><span>{board.blocks.length} accounts · {movements} movements</span></span>
       </div>
       <div className={styles.inkBar}><b>BANK BALANCE AVAILABLE</b><span>{dayLabel(board.date)}</span></div>
       {board.blocks.map((b) => (
         <table key={b.accountCode} className={styles.sheetTable}>
           <thead>
-            <tr className={styles.bankHead}><th colSpan={3}>{b.accountName} <span className={styles.code}>{b.accountCode}{b.source === 'cashbook' ? ' · cash book' : ''}</span></th><th colSpan={2} className={styles.num}>Bank balance {money(b.closingSen)}</th></tr>
+            <tr className={styles.bankHead}><th colSpan={3}>{b.accountName} <span className={styles.code}>{b.accountCode}</span></th><th colSpan={2} className={styles.num}>Bank balance {money(b.closingSen)}</th></tr>
             <tr><th>PAY TO / FROM</th><th>DOCUMENT</th><th>DESCRIPTION</th><th className={styles.num}>RECEIVED (RM)</th><th className={styles.num}>PAYMENT (RM)</th></tr>
           </thead>
           <tbody>
@@ -97,7 +97,7 @@ export function DailyBankSheet({ board, upcoming, companyName, printedBy, printe
         </table>
       )}
       <div className={styles.note}>= Current cash available {money(board.availableSen)} − future {money(future)}. Bills fall on their planned payment date, else their due date. Plan them in Money out › Supplier bills and the To do calendar.</div>
-      <div className={styles.footer}><span>{companyName} · DAILY BANK · {fmtDate(board.date)}</span><span>Printed {fmtDateTime(printedAt)} by {printedBy}</span></div>
+      <div className={styles.footer}><span>{companyName} · {board.book === 'cashbook' ? 'DAILY BANK · CASH BOOK' : 'DAILY BANK'} · {fmtDate(board.date)}</span><span>Printed {fmtDateTime(printedAt)} by {printedBy}</span></div>
     </div>
   );
 }

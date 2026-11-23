@@ -1,11 +1,14 @@
-/* Daily Bank's cash book (owner 2026-11-23: 先做一个daily bank的一开始直接，但不需要
-   列实际差额。然后我每天会手动输入收到的金额; 付款就根据pv), pinned on the real
-   handlers over fake PostgREST:
-     • an account with a start reads the start + the receipts typed for it − the
-       approved (POSTED) vouchers paying out of it, on their voucher date and from
-       the start date on; a deleted receipt, a draft or cancelled voucher and
-       another company's rows never count; an account without a start keeps the
-       ledger;
+/* Daily Bank's cash book, a second board beside the original (owner 2026-11-23:
+   先做一个daily bank的一开始直接，但不需要列实际差额。然后我每天会手动输入收到的金额;
+   付款就根据pv; then 原版的daily bank还是要保留哦，我这算是新的daily bank), pinned on
+   the real handlers over fake PostgREST:
+     • the original board (GET /daily-bank) does not move, whatever is typed;
+     • the cash-book board (GET /daily-bank/cashbook/board) carries each account
+       with a start: the start + the receipts typed for it − the approved
+       (POSTED) vouchers paying out of it, on their voucher date and from the
+       start date on; a deleted receipt, a draft or cancelled voucher and another
+       company's rows never count; an account without a start is listed as not
+       started;
      • a receipt is refused for an account with no start, before its start, on a
        day still to come, without a note or an amount; edit and delete keep the
        row and write the change, from -> to, on the audit trail;
@@ -17,6 +20,7 @@ import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
 import { dailyBankHandler } from '../src/scm/routes/accounting';
+import { cashbookBoardHandler } from '../src/scm/routes/accounting-daily-bank';
 import {
   calendarDay, cashbookGet, cashbookReceiptCreate, cashbookReceiptDelete, cashbookReceiptUpdate,
   cashbookStartDelete, cashbookStartPut,
@@ -93,6 +97,7 @@ function harness(perms: string[] = [WRITE]) {
     await next();
   });
   app.get('/accounting/daily-bank', dailyBankHandler as never);
+  app.get('/accounting/daily-bank/cashbook/board', cashbookBoardHandler as never);
   app.get('/accounting/daily-bank/cashbook', cashbookGet as never);
   app.put('/accounting/daily-bank/starts/:accountCode', cashbookStartPut as never);
   app.delete('/accounting/daily-bank/starts/:accountCode', cashbookStartDelete as never);
@@ -106,39 +111,52 @@ function harness(perms: string[] = [WRITE]) {
 }
 
 type Block = {
-  accountCode: string; source: string; start: { date: string; balanceSen: number } | null;
+  accountCode: string; start: { date: string; balanceSen: number } | null;
   openingSen: number; inSen: number; outSen: number; closingSen: number; pendingSen: number; availableSen: number;
   receipts: Array<{ sourceType: string; note: string; amountSen: number; typedBy?: string | null }>;
   payouts: Array<{ docNo: string; party: string | null; note: string; amountSen: number }>;
 };
-const board = async (h: ReturnType<typeof harness>, date = TODAY) => {
-  const res = await h.app.request(`/accounting/daily-bank?date=${date}`);
-  expect(res.status, await res.clone().text()).toBe(200);
-  return await res.json() as { blocks: Block[]; totalClosingSen: number; availableSen: number; note: string };
+type Board = {
+  book: string; blocks: Block[]; totalClosingSen: number; pendingApprovalSen: number; availableSen: number; note: string;
+  notStarted: Array<{ accountCode: string; startDate: string | null }>;
 };
+const fetchBoard = async (h: ReturnType<typeof harness>, path: string, date: string) => {
+  const res = await h.app.request(`${path}?date=${date}`);
+  expect(res.status, await res.clone().text()).toBe(200);
+  return await res.json() as Board;
+};
+/** The cash-book board — the owner's new Daily Bank. */
+const board = (h: ReturnType<typeof harness>, date = TODAY) => fetchBoard(h, '/accounting/daily-bank/cashbook/board', date);
+/** The original board, from the ledger. */
+const original = (h: ReturnType<typeof harness>, date = TODAY) => fetchBoard(h, '/accounting/daily-bank', date);
 const blockOf = (b: { blocks: Block[] }, code: string): Block => b.blocks.find((x) => x.accountCode === code)!;
 
 beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date(`${TODAY}T04:00:00Z`)); });
 afterEach(() => { vi.useRealTimers(); });
 
 describe('Daily Bank cash book — the board', () => {
-  test('no start anywhere: every account keeps the ledger board', async () => {
+  test('no start anywhere: the cash book carries nothing yet; the original board is the ledger', async () => {
     const h = harness();
     const b = await board(h);
-    expect(blockOf(b, '310-0010')).toMatchObject({ source: 'ledger', start: null, closingSen: 52_943_781 + 1_000 });
-    expect(blockOf(b, '310-0020')).toMatchObject({ source: 'ledger', closingSen: -81_164_858 });
+    expect(b).toMatchObject({ book: 'cashbook', blocks: [], totalClosingSen: 0, pendingApprovalSen: 0, availableSen: 0 });
+    expect(b.notStarted.map((x) => [x.accountCode, x.startDate])).toEqual([['310-0010', null], ['310-0020', null]]);
+    const o = await original(h);
+    expect(o.book).toBe('ledger');
+    expect(blockOf(o, '310-0010')).toMatchObject({ start: null, closingSen: 52_943_781 + 1_000 });
+    expect(blockOf(o, '310-0020')).toMatchObject({ closingSen: -81_164_858 });
   });
 
-  test('set a start, type receipts, and the approved vouchers come off on their voucher date', async () => {
+  test('set a start, type receipts, and the approved vouchers come off on their voucher date — on the new board only', async () => {
     const h = harness();
+    const before = await original(h);
     expect((await h.send('PUT', '/accounting/daily-bank/starts/310-0010', { startDate: '2026-11-24', balanceSen: 77_408_649 })).status).toBe(200);
     const typed = await h.send('POST', '/accounting/daily-bank/receipts', { accountCode: '310-0010', date: '2026-11-24', amountSen: 300_000, note: 'Hookka deposit' });
     expect(typed.status, await typed.clone().text()).toBe(201);
     expect((await h.send('POST', '/accounting/daily-bank/receipts', { accountCode: '310-0010', date: TODAY, amountSen: 120_050, note: '  Cash   sales showroom ' })).status).toBe(201);
 
     const b = await board(h);
+    expect(b.blocks.map((x) => x.accountCode)).toEqual(['310-0010']);
     const may = blockOf(b, '310-0010');
-    expect(may.source).toBe('cashbook');
     expect(may.start).toEqual({ date: '2026-11-24', balanceSen: 77_408_649 });
     /* B/F: the start, yesterday's typed receipt, yesterday's approved voucher and its bank charge. */
     expect(may.openingSen).toBe(77_408_649 + 300_000 - 40_100);
@@ -149,14 +167,18 @@ describe('Daily Bank cash book — the board', () => {
     /* The checked voucher still waits as pending, as before. */
     expect(may.pendingSen).toBe(30_000);
     expect(may.availableSen).toBe(may.closingSen - 30_000);
-    /* HLBB has no start: the ledger, untouched. */
-    expect(blockOf(b, '310-0020')).toMatchObject({ source: 'ledger', closingSen: -81_164_858 });
-    expect(b.totalClosingSen).toBe(may.closingSen - 81_164_858);
-    expect(b.note).toMatch(/cash book/);
+    /* HLBB has no start: not on the cash book, not in its totals. */
+    expect(b.notStarted.map((x) => x.accountCode)).toEqual(['310-0020']);
+    expect(b.totalClosingSen).toBe(may.closingSen);
+    expect(b.note).toMatch(/^The cash book/);
 
-    /* The day before the start still reads the ledger, and says when the cash book starts. */
-    const before = blockOf(await board(h, '2026-11-23'), '310-0010');
-    expect(before).toMatchObject({ source: 'ledger', start: { date: '2026-11-24', balanceSen: 77_408_649 }, closingSen: 52_943_781 });
+    /* The original board has not moved by a sen. */
+    expect(await original(h)).toEqual(before);
+
+    /* The day before the start: not on the cash book yet, and says when it starts. */
+    const earlier = await board(h, '2026-11-23');
+    expect(earlier.blocks).toEqual([]);
+    expect(earlier.notStarted.map((x) => [x.accountCode, x.startDate])).toEqual([['310-0010', '2026-11-24'], ['310-0020', null]]);
   });
 
   test('a deleted receipt stops counting; an edited one counts as edited', async () => {
@@ -174,12 +196,14 @@ describe('Daily Bank cash book — the board', () => {
     expect(row.deleted_at).toBeTruthy();
   });
 
-  test('removing the start puts the account back on the ledger', async () => {
+  test('removing the start takes the account off the cash book', async () => {
     const h = harness();
     await h.send('PUT', '/accounting/daily-bank/starts/310-0010', { startDate: '2026-11-24', balanceSen: 1_000_000 });
-    expect(blockOf(await board(h), '310-0010').source).toBe('cashbook');
+    expect((await board(h)).blocks.map((x) => x.accountCode)).toEqual(['310-0010']);
     expect((await h.send('DELETE', '/accounting/daily-bank/starts/310-0010')).status).toBe(200);
-    expect(blockOf(await board(h), '310-0010')).toMatchObject({ source: 'ledger', start: null, closingSen: 52_943_781 + 1_000 });
+    const after = await board(h);
+    expect(after.blocks).toEqual([]);
+    expect(after.notStarted.map((x) => x.accountCode)).toEqual(['310-0010', '310-0020']);
   });
 });
 

@@ -5,15 +5,14 @@
 // document), the subtotal and the closing — then all of them together. Under
 // each block, what the owner asked for on 2026-09-29 stays: the vouchers
 // awaiting approval, what is left after them, and the card money on its way
-// into that bank with the line it adds up to. A bank on the owner's cash book
-// (2026-11-23) lists his typed receipts and the approved vouchers instead of
-// its ledger lines, and says so.
+// into that bank with the line it adds up to. On the cash book's page
+// (2026-11-23) a bank lists the receipts typed for it and the approved vouchers.
 // ----------------------------------------------------------------------------
 
 import { useEffect, useRef } from 'react';
 import { fmtDate, fmtSenPlain } from '../../vendor/shared/format';
 import styles from './DailyBank.module.css';
-import { sourceLabel } from './DailyBankBoard';
+import { sinceLabel } from './DailyBankBoard';
 import type { DailyBankBlock, DailyBankBoard, DailyBankMovement } from './accounting-phase1-queries';
 
 const money = (sen: number): string => fmtSenPlain(sen);
@@ -64,8 +63,8 @@ function AccountBlock({ block, date, focused }: { block: DailyBankBlock; date: s
   return (
     <section ref={ref} className={`${styles.acctBlock} ${focused ? styles.focused : ''}`} aria-label={`${block.accountCode} ${block.accountName}`} data-account={block.accountCode}>
       <div className={styles.acctStrip}>
-        <span className={styles.acctTitle}><span className={styles.accountCode}>{block.accountCode}</span> {block.accountName}{' '}
-          <span className={`${styles.srcTag} ${block.source === 'cashbook' ? styles.srcCash : styles.srcLedger}`}>{sourceLabel(block)}</span></span>
+        <span className={styles.acctTitle}><span className={styles.accountCode}>{block.accountCode}</span> {block.accountName}
+          {block.start && <> <span className={`${styles.srcTag} ${styles.srcCash}`}>{sinceLabel(block.start)}</span></>}</span>
         <span className={styles.acctOpening}>Opening balance <b>{money(block.openingSen)}</b></span>
       </div>
       {lines.length === 0 ? <div className={styles.acctEmpty}>No movement this day.</div> : (
@@ -143,8 +142,8 @@ export function DailyBankAccounts({ board, focus, future }: { board: DailyBankBo
         </section>
       )}
       <div className={styles.footnote}>
-        {board.blocks.some((b) => b.source === 'cashbook')
-          ? 'Cash book accounts: the starting balance, the receipts typed in Cash book, and the approved payment vouchers. Ledger accounts: posted entries only.'
+        {board.book === 'cashbook'
+          ? 'Your cash book: each bank from its starting balance, the receipts typed in Receipts & starts and the approved payment vouchers.'
           : 'Live from the ledger, posted entries only.'}{' '}
         Card money not paid out yet sits in the settlement accounts (Board › On its way); vouchers awaiting approval have not left the bank. {board.note}
       </div>

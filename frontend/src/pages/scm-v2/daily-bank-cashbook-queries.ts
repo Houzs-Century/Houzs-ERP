@@ -1,12 +1,14 @@
-// Daily Bank's cash book (owner 2026-11-23): each money account's starting
-// balance and the receipts typed by hand (backend routes/accounting-daily-bank-
-// cashbook.ts). Every write refreshes the day, the board and the To do's "Can
-// move today", which reads the same board.
+// Daily Bank's cash book, a second Daily Bank beside the original (owner
+// 2026-11-23): its board, each money account's starting balance and the
+// receipts typed by hand (backend routes/accounting-daily-bank-cashbook.ts).
+// Every write refreshes the day and the cash-book board; the original board
+// never reads them.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { writeFailedAs } from '../../vendor/scm/lib/mutation-error';
 import { retryUnlessClientError } from '../../lib/retryPolicy';
+import type { DailyBankBoard } from './accounting-phase1-queries';
 
 export type CashbookStartInfo = { date: string; balanceSen: number; note: string | null; setBy: string | null; setAt: string | null };
 export type CashbookAccount = { accountCode: string; accountName: string; start: CashbookStartInfo | null };
@@ -22,6 +24,16 @@ export type CashbookDay = {
   accounts: CashbookAccount[]; receipts: CashbookReceiptRow[]; deleted: CashbookReceiptRow[];
 };
 
+/** The cash-book board: the same shape as the original Daily Bank's, its banks
+    read from their starts, the receipts typed and the approved vouchers. */
+export const useDailyBankCashbookBoard = (date: string) => useQuery({
+  queryKey: ['daily-bank-cashbook-board', date],
+  queryFn: () => authedFetch<DailyBankBoard>(`/accounting/daily-bank/cashbook/board?date=${date}`),
+  staleTime: 30_000,
+  retry: retryUnlessClientError,
+  retryDelay: 800,
+});
+
 export const useDailyBankCashbook = (date: string) => useQuery({
   queryKey: ['daily-bank-cashbook', date],
   queryFn: () => authedFetch<CashbookDay>(`/accounting/daily-bank/cashbook?date=${date}`),
@@ -36,8 +48,7 @@ function useCashbookWrite<V>(send: (v: V) => Promise<unknown>, failedTitle: stri
     mutationFn: send,
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['daily-bank-cashbook'] });
-      void qc.invalidateQueries({ queryKey: ['daily-bank'] });
-      void qc.invalidateQueries({ queryKey: ['finance-todo'] });
+      void qc.invalidateQueries({ queryKey: ['daily-bank-cashbook-board'] });
     },
     onError: writeFailedAs(failedTitle),
   });

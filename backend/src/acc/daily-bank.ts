@@ -30,15 +30,17 @@
 // account) and a voucher paying from an account the board does not carry
 // stay in their own lists, still inside the totals.
 //
-// THE CASH BOOK (owner 2026-11-23: 先做一个daily bank的一开始直接，但不需要列实际
-// 差额。然后我每天会手动输入收到的金额; 付款就根据pv). An account given a starting
-// balance reads, from its start date on, his own figures instead of the
-// ledger's: the bank's real balance at the start of that day, plus the receipts
-// he types, less the approved (POSTED) vouchers paying out of it on their
-// voucher date — what the voucher posts, its bank charge included. Pending and
-// transit stay as above. No books-versus-bank difference is shown anywhere, and
-// nothing here writes to the ledger. An account with no start, or a day before
-// its start, keeps the ledger board.
+// THE CASH BOOK — a second board beside this one (owner 2026-11-23: 先做一个daily
+// bank的一开始直接，但不需要列实际差额。然后我每天会手动输入收到的金额; 付款就根据pv;
+// then: 原版的daily bank还是要保留哦，我这算是新的daily bank). Given a cash book,
+// the board carries only the accounts whose start is on or before the day, each
+// reading the bank's real balance at the start of its start day, plus the
+// receipts typed for it, less the approved (POSTED) vouchers paying out of it on
+// their voucher date — what the voucher posts, its bank charge included. Pending
+// counts only the vouchers paying out of those accounts; transit is as above.
+// The rest wait in `notStarted`. Without one (cashbook null) the board is the
+// original, untouched. No books-versus-bank difference is shown anywhere, and
+// nothing here writes to the ledger.
 // ----------------------------------------------------------------------------
 
 import { fmtSen } from '../scm/shared/format';
@@ -99,12 +101,8 @@ export type DailyBankTransit = { acquirerCode: string; accountCode: string; acco
 export type DailyBankBlock = {
   accountCode: string;
   accountName: string;
-  /** Where the money figures come from: 'cashbook' = the start, the typed
-      receipts and the approved vouchers; 'ledger' = the posted ledger (no start
-      set, or a day before it). */
-  source: 'cashbook' | 'ledger';
-  /** The account's cash-book start when one is set — also on a day before it,
-      when the block still reads the ledger. */
+  /** On the cash-book board: the account's start (the day and the balance it
+      starts from). Always null on the original board. */
   start: { date: string; balanceSen: number } | null;
   openingSen: number;
   inSen: number;
@@ -137,6 +135,11 @@ export type DailyBankBoard = {
   unassignedTransit: DailyBankTransit[];
   /** Pending vouchers paying from an account the board does not carry. */
   unassignedPending: DailyBankPending[];
+  /** Which board: the original ('ledger') or the owner's cash book ('cashbook'). */
+  book: 'ledger' | 'cashbook';
+  /** On the cash-book board: the money accounts it does not carry yet — no start,
+      or a start after the day. Always empty on the original board. */
+  notStarted: Array<{ accountCode: string; accountName: string; startDate: string | null }>;
   note: string;
 };
 
@@ -241,8 +244,8 @@ export function computeDailyBank(
       account it will pay out of. Amounts are document-currency sen; the rate
       converts to MYR the same way posting will (round per voucher). */
   pendingVouchers: PendingVoucherRow[],
-  /** The cash book: each account's start, the typed receipts and the approved
-      vouchers of the accounts that have one. null = every block reads the ledger. */
+  /** null = the original board, from the ledger. Given = the cash-book board:
+      each account's start, the typed receipts and the approved vouchers. */
   cashbook: DailyBankCashbook | null,
 ): DailyBankBoard {
   const byAccount = new Map<string, GlLine[]>();
@@ -251,10 +254,23 @@ export function computeDailyBank(
     arr.push(l);
     byAccount.set(l.account_code, arr);
   }
-  const blockCodes = new Set(moneyAccounts.map((a) => a.account_code));
+  /* The cash book carries only the accounts whose start is on or before the day. */
+  const startOf = new Map((cashbook?.starts ?? []).map((s) => [s.account_code, s]));
+  const onBoard = (a: MoneyAccount): boolean => {
+    if (!cashbook) return true;
+    const s = startOf.get(a.account_code);
+    return s != null && s.start_date <= date;
+  };
+  const carried = moneyAccounts.filter(onBoard);
+  const notStarted = moneyAccounts.filter((a) => !onBoard(a))
+    .map((a) => ({ accountCode: a.account_code, accountName: a.account_name, startDate: startOf.get(a.account_code)?.start_date ?? null }));
+  const blockCodes = new Set(carried.map((a) => a.account_code));
 
-  /* The vouchers, each on the account it pays from. */
-  const pendingAll: DailyBankPending[] = pendingVouchers.map((v) => ({
+  /* The vouchers, each on the account it pays from. On the cash book, one paying
+     out of an account it does not carry is that account's business, not this
+     board's: the original board still shows it. */
+  const asked = cashbook ? pendingVouchers.filter((v) => v.credit_account_code != null && blockCodes.has(String(v.credit_account_code))) : pendingVouchers;
+  const pendingAll: DailyBankPending[] = asked.map((v) => ({
     id: v.id ?? null,
     pvNumber: v.pv_number ?? null,
     payee: v.payee_name ?? null,
@@ -276,27 +292,24 @@ export function computeDailyBank(
   });
   const unassignedTransit = transit.filter((t) => t.bankAccountCode == null || !blockCodes.has(t.bankAccountCode));
 
-  const startOf = new Map((cashbook?.starts ?? []).map((s) => [s.account_code, s]));
-  const blocks: DailyBankBlock[] = moneyAccounts.map((a) => {
-    const ls = byAccount.get(a.account_code) ?? [];
+  const blocks: DailyBankBlock[] = carried.map((a) => {
     let opening = 0;
     let inSen = 0;
     let outSen = 0;
     let receipts: DailyBankMovement[] = [];
     let payouts: DailyBankMovement[] = [];
     const start = startOf.get(a.account_code) ?? null;
-    const source: DailyBankBlock['source'] = start && start.start_date <= date ? 'cashbook' : 'ledger';
-    if (start && source === 'cashbook') {
+    if (cashbook && start) {
       const f = cashbookFigures(date, start,
-        (cashbook?.receipts ?? []).filter((r) => r.account_code === a.account_code),
-        (cashbook?.payouts ?? []).filter((v) => v.credit_account_code === a.account_code));
+        cashbook.receipts.filter((r) => r.account_code === a.account_code),
+        cashbook.payouts.filter((v) => v.credit_account_code === a.account_code));
       opening = f.opening;
       inSen = f.inSen;
       outSen = f.outSen;
       receipts = f.received;
       payouts = f.paid;
     } else {
-      for (const l of ls) {
+      for (const l of byAccount.get(a.account_code) ?? []) {
         const net = Number(l.debit_sen) - Number(l.credit_sen);
         if (l.entry_date < date) {
           opening += net;
@@ -326,8 +339,7 @@ export function computeDailyBank(
     return {
       accountCode: a.account_code,
       accountName: a.account_name,
-      source,
-      start: start ? { date: start.start_date, balanceSen: Number(start.balance_sen) } : null,
+      start: cashbook && start ? { date: start.start_date, balanceSen: Number(start.balance_sen) } : null,
       openingSen: opening,
       inSen,
       outSen,
@@ -357,8 +369,10 @@ export function computeDailyBank(
     availableSen: totalClosingSen - pendingApprovalSen,
     unassignedTransit,
     unassignedPending,
-    note: blocks.some((b) => b.source === 'cashbook')
-      ? 'An account with a starting balance reads the cash book: the start, the receipts typed for it, less the approved vouchers paying out of it on their voucher date (bank charge included). An account without one reads the ledger (posted, non-reversed). Pending = checked vouchers awaiting approval, on the account they pay from. Transit money is swiped but not yet remitted - shown under the bank its acquirer pays into, never counted as movable.'
+    book: cashbook ? 'cashbook' : 'ledger',
+    notStarted,
+    note: cashbook
+      ? 'The cash book: each bank from its starting balance, plus the receipts typed for it, less the approved vouchers paying out of it on their voucher date (bank charge included). Pending = checked vouchers awaiting approval, on the bank they pay from. Transit money is swiped but not yet remitted - shown under the bank its acquirer pays into, never counted as movable.'
       : 'Computed live from the ledger (posted, non-reversed). Pending = checked vouchers awaiting approval, on the account they pay from; an approved one posts on its own date. Transit money is swiped but not yet remitted - shown under the bank its acquirer pays into, never counted as movable.',
   };
 }

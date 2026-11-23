@@ -151,15 +151,15 @@ describe('DailyBankCashbook — money received', () => {
 });
 
 describe('DailyBankCashbook — starting balances', () => {
-  test('each account says what the Board shows for it', () => {
+  test('each account says whether it is on the cash book', () => {
     renderTab();
     const card = screen.getByLabelText('Starting balances');
     expect(card.textContent).toContain('2 of 3 accounts use the cash book');
     const rows = [...card.querySelectorAll('tbody tr')].map((tr) => [...tr.querySelectorAll('td')].slice(0, 4).map((td) => td.textContent));
     expect(rows).toEqual([
-      ['310-0010 CASH AT BANK - MAYBANK', '2026/11/24', '774,086.49', 'Cash book statement 23/11 · set by Chew'],
-      ['310-0020 CASH AT BANK - HLBB', '2026/11/30', '50,000.00', 'Cash book set by Chew'],
-      ['310-0030 CASH AT BANK - ALLIANCE', 'Not set', '', 'Ledger no starting balance: the Board shows the ledger'],
+      ['310-0010 CASH AT BANK - MAYBANK', '2026/11/24', '774,086.49', 'On the cash book statement 23/11 · set by Chew'],
+      ['310-0020 CASH AT BANK - HLBB', '2026/11/30', '50,000.00', 'Starts later set by Chew'],
+      ['310-0030 CASH AT BANK - ALLIANCE', 'Not set', '', 'Not started no starting balance yet'],
     ]);
   });
 
@@ -180,7 +180,7 @@ describe('DailyBankCashbook — starting balances', () => {
     expect(save).toHaveBeenCalledWith({ accountCode: '310-0010', startDate: '2026-11-24', balanceSen: 77_408_649, note: 'statement 23/11' }, expect.anything());
   });
 
-  test('remove asks first, then puts the account back on the ledger', async () => {
+  test('remove asks first, then takes the account off the cash book', async () => {
     renderTab();
     fireEvent.click(within(screen.getByLabelText('Starting balances')).getAllByRole('button', { name: /Remove/ })[0]!);
     await waitFor(() => expect(remove).toHaveBeenCalledWith({ accountCode: '310-0010' }, expect.anything()));

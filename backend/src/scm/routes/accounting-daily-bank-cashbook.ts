@@ -1,16 +1,18 @@
 // ----------------------------------------------------------------------------
-// accounting-daily-bank-cashbook — Daily Bank's cash book (owner 2026-11-23:
-// 先做一个daily bank的一开始直接，但不需要列实际差额。然后我每天会手动输入收到的金额;
-// 付款就根据pv). Per money account, the bank's real balance at the start of a
-// day; then the money received, typed by hand per bank and day. Both live only
-// here and on the board (acc/daily-bank.ts): nothing posts a journal, and no
+// accounting-daily-bank-cashbook — Daily Bank's cash book, a second Daily Bank
+// beside the original (owner 2026-11-23: 先做一个daily bank的一开始直接，但不需要列实际
+// 差额。然后我每天会手动输入收到的金额; 付款就根据pv; 原版的daily bank还是要保留哦，我这
+// 算是新的daily bank). Per money account, the bank's real balance at the start of
+// a day; then the money received, typed by hand per bank and day. Both live only
+// here and on the cash-book board (GET /daily-bank/cashbook/board, acc/daily-bank.ts);
+// the original board never reads them, nothing posts a journal, and no
 // books-versus-bank difference is shown anywhere.
 //
 //   GET    /daily-bank/cashbook?date=        the money accounts with their start,
 //                                            the day's typed receipts, and the
 //                                            day's deleted ones (who, when)
 //   PUT    /daily-bank/starts/:accountCode   { startDate, balanceSen, note? }
-//   DELETE /daily-bank/starts/:accountCode   the account reads the ledger again
+//   DELETE /daily-bank/starts/:accountCode   the account leaves the cash book
 //   POST   /daily-bank/receipts              { accountCode, date, amountSen, note }
 //   PATCH  /daily-bank/receipts/:id          any of those four
 //   DELETE /daily-bank/receipts/:id          stamps deleted_at / deleted_by; the row stays
@@ -134,7 +136,7 @@ export const cashbookGet = async (c: Ctx): Promise<Response> => {
       createdBy: (r.created_by as string | null) ?? null, createdAt: (r.created_at as string | null) ?? null,
       updatedBy: (r.updated_by as string | null) ?? null, updatedAt: (r.updated_at as string | null) ?? null,
       deletedBy: (r.deleted_by as string | null) ?? null, deletedAt: (r.deleted_at as string | null) ?? null,
-      /* On the board only while its account's start is on or before it. */
+      /* On the cash-book board only while its account's start is on or before it. */
       counted: r.deleted_at == null && start != null && start.date <= date,
     };
   });
@@ -203,7 +205,7 @@ export const cashbookStartDelete = async (c: Ctx): Promise<Response> => {
   if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
   await recordEntityAudit(sb, {
     entityType: 'DAILY_BANK_START', entityId: code, entityDocNo: code, action: 'DELETE', actor: c.get('houzsUser'), companyId: g.companyId,
-    note: `${code}: starting balance removed; the account reads the ledger again`,
+    note: `${code}: starting balance removed; the account leaves the cash book`,
     fieldChanges: compactChanges([
       fieldChange('start_date', prior.start.start_date, null),
       fieldChange('balance_sen', prior.start.balance_sen, null),
@@ -242,7 +244,7 @@ async function receiptAllowed(sb: Sb, companyId: number, r: ReceiptFields): Prom
   const s = await startOf(sb, companyId, r.account_code);
   if (!s.ok) return s;
   if (!s.start) {
-    return { ok: false, status: 409, body: { error: 'no_start', message: `Set ${acct.name}'s starting balance first. Until then it reads the ledger and a typed receipt would not count.` } };
+    return { ok: false, status: 409, body: { error: 'no_start', message: `Set ${acct.name}'s starting balance first. Until then it is not on the cash book and a typed receipt would not count.` } };
   }
   if (r.receipt_date < s.start.start_date) {
     return { ok: false, status: 409, body: { error: 'before_start', message: `${acct.name}'s cash book starts on ${fmtDate(s.start.start_date)}. Money before that is already inside its starting balance.` } };

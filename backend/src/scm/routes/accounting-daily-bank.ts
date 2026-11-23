@@ -18,15 +18,16 @@ import { resolveRoles } from '../../acc/rules';
 import { isReversalPair } from '../../acc/reversal-pairs';
 
 /* GET /daily-bank?date=YYYY-MM-DD — the owner's board (brief 3.6): where the
-   money is today and how much can actually move. Live, no cache (2.3): an
-   account with a cash-book start reads the start, the typed receipts and the
-   approved vouchers (owner 2026-11-23); every other account reads the ledger,
-   so it can never disagree with the trial balance. */
+   money is today and how much can actually move. Live from the ledger, no
+   cache (2.3) - so it can never disagree with the trial balance. */
 /** The board for one company and day — the handler's reads and the To do's
     "Can move today" (acc/finance-todo) share it, so the two never disagree.
-    `withNames` false skips the names the board prints for the day's lines. */
+    `withNames` false skips the names the board prints for the day's lines.
+    `book` 'ledger' is the original board; 'cashbook' is the owner's cash book
+    (2026-11-23: 原版的daily bank还是要保留哦，我这算是新的daily bank), read
+    through the same transit and pending reads but none of the banks' ledger lines. */
 export async function loadDailyBankBoard(
-  sb: any, companyId: number, date: string, opts: { withNames: boolean } = { withNames: true },
+  sb: any, companyId: number, date: string, opts: { withNames: boolean; book: 'ledger' | 'cashbook' },
 ): Promise<{ ok: true; board: ReturnType<typeof computeDailyBank> } | { ok: false; reason: string }> {
   const co = { companyId };
 
@@ -95,26 +96,32 @@ export async function loadDailyBankBoard(
   if (pErr) return { ok: false, reason: pErr.message };
   let pending = (pendingRaw ?? []) as PendingVoucherRow[];
 
-  const cash = await loadCashbook(sb, co.companyId, date, money.map((m) => m.account_code));
-  if (!cash.ok) return cash;
-  const cashbook = cash.cashbook;
+  /* The cash book's own reads, for its board only; its banks need none of their
+     ledger lines, and a voucher paying out of a bank it does not carry is not
+     its pending (the original board still shows it). */
+  let cashbook: DailyBankCashbook | null = null;
+  if (opts.book === 'cashbook') {
+    const cash = await loadCashbook(sb, co.companyId, date, money.map((m) => m.account_code));
+    if (!cash.ok) return cash;
+    cashbook = cash.cashbook;
+    const carried = new Set(cashbook.starts.filter((s) => s.start_date <= date).map((s) => s.account_code));
+    pending = pending.filter((v) => carried.has(String(v.credit_account_code ?? '')));
+  }
 
   /* Each listed voucher reads as the PV list's Description does: what it pays for,
-     never its bill number (owner 2026-11-09) — the pending ones and the day's
-     cash-book payouts, in one read. The To do's sum needs no words. */
-  const paidToday = cashbook.payouts.filter((v) => v.voucher_date === date);
+     never its bill number (owner 2026-11-09) — the pending ones and, on the cash
+     book, the day's payouts, in one read. The To do's sum needs no words. */
+  const paidToday = (cashbook?.payouts ?? []).filter((v) => v.voucher_date === date);
   if (opts.withNames && pending.length + paidToday.length > 0) {
     const described = await describeVouchers(sb, { get: (k: string) => (k === 'companyId' ? co.companyId : undefined) },
       [...pending, ...paidToday].map((v) => ({ ...v, id: String(v.id) })));
     if (!described.ok) return { ok: false, reason: described.reason };
     const wordsOf = (id: unknown): string | null => described.byId.get(String(id))?.description_text ?? null;
     pending = pending.map((v) => ({ ...v, description_text: wordsOf(v.id) }));
-    cashbook.payouts = cashbook.payouts.map((v) => (v.voucher_date === date ? { ...v, description_text: wordsOf(v.id) } : v));
+    if (cashbook) cashbook.payouts = cashbook.payouts.map((v) => (v.voucher_date === date ? { ...v, description_text: wordsOf(v.id) } : v));
   }
 
-  /* An account on its cash book this day needs none of its ledger lines. */
-  const onCashbook = new Set(cashbook.starts.filter((s) => s.start_date <= date).map((s) => s.account_code));
-  const ledgerMoney = money.filter((m) => !onCashbook.has(m.account_code));
+  const ledgerMoney = cashbook ? [] : money;
   const allCodes = [...ledgerMoney.map((m) => m.account_code), ...transitCodes];
   const { data: lines, error: lErr } = await paginateAll<Record<string, unknown>>((from, to) =>
     sb.from('v_gl_entries').select('entry_date, je_no, source_type, source_doc_no, account_code, debit_sen, credit_sen, notes, reversed, reversed_by_je')
@@ -241,12 +248,16 @@ export async function loadCashbook(
   return { ok: true, cashbook: { starts, receipts, payouts } };
 }
 
-export const dailyBankHandler = async (c: any) => {
+/** GET /daily-bank (the original board) and GET /daily-bank/cashbook/board (the
+    owner's cash book, 2026-11-23): the same handler, a different book. */
+const boardHandler = (book: 'ledger' | 'cashbook') => async (c: any) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const dateQ = c.req.query('date') ?? todayMyt();
   const date = /^\d{4}-\d{2}-\d{2}$/.test(dateQ) ? dateQ : todayMyt();
-  const r = await loadDailyBankBoard(c.get('supabase'), co.companyId, date);
+  const r = await loadDailyBankBoard(c.get('supabase'), co.companyId, date, { withNames: true, book });
   if (!r.ok) return c.json({ error: 'load_failed', reason: r.reason }, 500);
   return c.json(r.board);
 };
+export const dailyBankHandler = boardHandler('ledger');
+export const cashbookBoardHandler = boardHandler('cashbook');

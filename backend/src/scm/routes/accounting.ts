@@ -30,7 +30,7 @@ import { hasHouzsPerm } from '../lib/houzs-perms';
 import { postJournal, reverseJournal } from '../../acc/engine';
 import { upperTyped } from '../../acc/typed-text';
 import { CONVERT_SOURCE, backfillSoPayments, paymentEntryDisagreements, unbookedPayments } from '../../acc/payments';
-import { dailyBankHandler } from './accounting-daily-bank';
+import { dailyBankHandler, cashbookBoardHandler } from './accounting-daily-bank';
 import {
   cashbookGet, cashbookStartPut, cashbookStartDelete, cashbookReceiptCreate, cashbookReceiptUpdate, cashbookReceiptDelete,
 } from './accounting-daily-bank-cashbook';
@@ -1281,8 +1281,10 @@ accounting.post('/backfill/customer-payments', async (c) => {
 /* GET /daily-bank?date=YYYY-MM-DD — the owner's board (brief 3.6); its reads live in
    accounting-daily-bank.ts, shared with the To do's "Can move today". */
 accounting.get('/daily-bank', dailyBankHandler);
-/* Its cash book (owner 2026-11-23): each money account's starting balance and the
-   receipts typed by hand. Handlers in accounting-daily-bank-cashbook.ts. */
+/* The owner's cash book, a second Daily Bank beside the original (2026-11-23: 原版的
+   daily bank还是要保留哦，我这算是新的daily bank): its board, then each money account's
+   starting balance and the receipts typed by hand (accounting-daily-bank-cashbook.ts). */
+accounting.get('/daily-bank/cashbook/board', cashbookBoardHandler);
 accounting.get('/daily-bank/cashbook', cashbookGet);
 accounting.put('/daily-bank/starts/:accountCode', cashbookStartPut);
 accounting.delete('/daily-bank/starts/:accountCode', cashbookStartDelete);

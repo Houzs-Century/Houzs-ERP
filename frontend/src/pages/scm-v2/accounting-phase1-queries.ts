@@ -275,10 +275,7 @@ export type DailyBankPending = { id: string | null; pvNumber: string | null; pay
 export type DailyBankTransit = { acquirerCode: string; accountCode: string; accountName: string; balanceSen: number; bankAccountCode: string | null };
 export type DailyBankBlock = {
   accountCode: string; accountName: string;
-  /** 'cashbook' = the owner's start, his typed receipts and the approved vouchers
-      (2026-11-23); 'ledger' = the posted ledger (no start, or a day before it). */
-  source: 'cashbook' | 'ledger';
-  /** The account's cash-book start when one is set — also on a day before it. */
+  /** On the cash-book board (2026-11-23): the day and balance the account starts from. Null on the original board. */
   start: { date: string; balanceSen: number } | null;
   openingSen: number; inSen: number; outSen: number; closingSen: number;
   receipts: DailyBankMovement[]; payouts: DailyBankMovement[];
@@ -294,6 +291,10 @@ export type DailyBankBoard = {
   unassignedTransit: DailyBankTransit[];
   /** Pending vouchers paying from an account the board does not carry. */
   unassignedPending: DailyBankPending[];
+  /** 'ledger' = the original board; 'cashbook' = the owner's cash book (2026-11-23), a second board. */
+  book: 'ledger' | 'cashbook';
+  /** On the cash book: the money accounts it does not carry yet (no start, or a start after the day). */
+  notStarted: Array<{ accountCode: string; accountName: string; startDate: string | null }>;
   note: string;
 };
 

@@ -1,11 +1,12 @@
 // ----------------------------------------------------------------------------
-// DailyBankCashbook — the Daily Bank's Cash book (owner 2026-11-23: 先做一个daily
-// bank的一开始直接，但不需要列实际差额。然后我每天会手动输入收到的金额; 付款就根据pv).
-// Two cards: the money received on the page's day, typed by hand per bank (add,
-// change, delete, each on its history), and each money account's starting
-// balance: the bank's balance at the start of a day. An account with a start
-// reads, on the Board, start + typed receipts − approved payment vouchers; one
-// without still reads the ledger. Nothing here posts to the books.
+// DailyBankCashbook — Receipts & starts, the third view of the cash book's Daily
+// Bank (owner 2026-11-23: 先做一个daily bank的一开始直接，但不需要列实际差额。然后我每天
+// 会手动输入收到的金额; 付款就根据pv; 原版的daily bank还是要保留哦，我这算是新的daily
+// bank). Two cards: the money received on the page's day, typed by hand per bank
+// (add, change, delete, each on its history), and each money account's starting
+// balance: the bank's balance at the start of a day. From its start a bank is on
+// the cash book's Board as start + typed receipts − approved payment vouchers.
+// Nothing here posts to the books, and the original Daily Bank never reads it.
 // ----------------------------------------------------------------------------
 
 import { useState, type FormEvent } from 'react';
@@ -189,7 +190,7 @@ function StartRowView({ a, canEdit, defaultDay, onHistory, onSaid }: {
   const drop = async () => {
     const ok = await confirm({
       title: `Remove ${a.accountCode}'s starting balance?`,
-      body: 'The Board goes back to the ledger for this account. Its typed receipts are kept, and count again once a start on or before them is set.',
+      body: 'This bank leaves the cash book. Its typed receipts are kept, and count again once a start on or before them is set. The original Daily Bank is not affected.',
       confirmLabel: 'Remove start',
       danger: true,
     });
@@ -223,8 +224,8 @@ function StartRowView({ a, canEdit, defaultDay, onHistory, onSaid }: {
       <td className={styles.num}>{a.start ? <span className={a.start.balanceSen < 0 ? styles.negative : undefined}>{money(a.start.balanceSen)}</span> : ''}</td>
       <td>
         {a.start
-          ? <><span className={`${styles.srcTag} ${styles.srcCash}`}>Cash book</span> <span className={styles.muted}>{a.start.note ? `${a.start.note} · ` : ''}{a.start.setBy ? `set by ${a.start.setBy}` : ''}</span></>
-          : <><span className={`${styles.srcTag} ${styles.srcLedger}`}>Ledger</span> <span className={styles.muted}>no starting balance: the Board shows the ledger</span></>}
+          ? <><span className={`${styles.srcTag} ${a.start.date <= defaultDay ? styles.srcCash : styles.srcLedger}`}>{a.start.date <= defaultDay ? 'On the cash book' : 'Starts later'}</span> <span className={styles.muted}>{a.start.note ? `${a.start.note} · ` : ''}{a.start.setBy ? `set by ${a.start.setBy}` : ''}</span></>
+          : <><span className={`${styles.srcTag} ${styles.srcLedger}`}>Not started</span> <span className={styles.muted}>no starting balance yet</span></>}
       </td>
       <td className={styles.cbActions}>
         {canEdit && <button type="button" className={styles.iconButton} onClick={open}><Pencil {...ICON} />{a.start ? 'Change' : 'Set start'}</button>}
@@ -302,10 +303,10 @@ export function DailyBankCashbook({ date, today }: { date: string; today: string
         <section className={styles.cbCard} aria-label="Starting balances">
           <div className={styles.closeHead}><span className={styles.closeTitle}>Starting balances</span>
             <span className={styles.closeSub}>{accounts.filter((a) => a.start).length} of {accounts.length} accounts use the cash book</span></div>
-          <div className={styles.cbHelp}>The bank’s real balance at the start of a day, before any of that day’s money in or out: the closing balance of the day before. For example, a statement’s balance on 30/09 starts the cash book on 01/10. From that day the Board shows this account as start + money received − approved payment vouchers. An account without a start still shows the ledger.</div>
+          <div className={styles.cbHelp}>The bank’s real balance at the start of a day, before any of that day’s money in or out: the closing balance of the day before. For example, a statement’s balance on 30/09 starts the cash book on 01/10. From that day this bank is on the cash book’s Board as start + money received − approved payment vouchers. A bank without a start is not on it yet. The original Daily Bank is not affected.</div>
           <div className={styles.tableWrap}>
             <table className={styles.acctTable}>
-              <thead><tr><th>Account</th><th>Starts on</th><th className={styles.num}>Balance at the start (RM)</th><th>Board shows</th><th /></tr></thead>
+              <thead><tr><th>Account</th><th>Starts on</th><th className={styles.num}>Balance at the start (RM)</th><th>Cash book</th><th /></tr></thead>
               <tbody>
                 {accounts.map((a) => (
                   <StartRowView key={`${a.accountCode}:${a.start?.setAt ?? ''}`} a={a} canEdit={canEdit} defaultDay={date} onHistory={setHistory} onSaid={setSaid} />

@@ -3,9 +3,9 @@
 // batch 3, "Money today"): how much can move today, how the day got there, each
 // bank and cash account with the day's movements, the card money on its way,
 // and the vouchers awaiting approval. Reads the same board the Accounts sheet
-// does (GET /accounting/daily-bank), so the two never disagree. Each account
-// says where its figures come from: the owner's cash book or the ledger
-// (2026-11-23).
+// does (GET /accounting/daily-bank), so the two never disagree. The cash book's
+// page (2026-11-23) draws its own board here too, and says which banks it does
+// not carry yet.
 // ----------------------------------------------------------------------------
 
 import { Link } from 'react-router-dom';
@@ -28,19 +28,17 @@ export function bridgeRows(b: DailyBankBoard): Array<{ key: string; label: strin
   ];
 }
 
-/** Which accounts show the owner's cash book and which still read the ledger (owner 2026-11-23: the page says so). */
-export function sourceSummary(b: DailyBankBoard): string {
-  const cash = b.blocks.filter((x) => x.source === 'cashbook').length;
-  const ledger = b.blocks.length - cash;
-  if (cash === 0) return 'Every account still shows the ledger. Set a bank’s starting balance in Cash book to show your own figures for it.';
-  if (ledger === 0) return 'Every account shows your cash book: its starting balance, plus the money typed in, less approved payment vouchers.';
-  return `${cash} of ${b.blocks.length} accounts show your cash book (starting balance + money typed in − approved payment vouchers). The other ${ledger} still show the ledger until a starting balance is set.`;
+/** On the cash book: the banks it does not carry yet, and why — none of them is in its totals. */
+export function notStartedNote(b: DailyBankBoard): string | null {
+  if (b.book !== 'cashbook' || b.notStarted.length === 0) return null;
+  const names = b.notStarted.map((a) => (a.startDate ? `${a.accountName} (starts ${fmtDate(a.startDate)})` : a.accountName)).join(', ');
+  return b.blocks.length === 0
+    ? `No bank is on the cash book yet for this day. Set a bank's starting balance in Receipts & starts. Not started: ${names}.`
+    : `Not on the cash book yet, so not in these totals: ${names}.`;
 }
 
-/** The tag on an account: its cash book, or the ledger (and when its cash book starts, if later). */
-export const sourceLabel = (block: DailyBankBlock): string => (block.source === 'cashbook'
-  ? 'Cash book'
-  : block.start ? `Ledger · cash book from ${fmtDate(block.start.date)}` : 'Ledger');
+/** A cash-book bank's tag: the day its cash book starts. */
+export const sinceLabel = (start: { date: string }): string => `Cash book since ${fmtDate(start.date)}`;
 
 /** What a day's line is called on a card: who, else (a typed receipt) its note, else its document. */
 const lineWho = (m: DailyBankMovement): string => m.party ?? (m.sourceType === 'TYPED' ? m.note : m.docNo);
@@ -59,7 +57,7 @@ function AccountCard({ block, onOpen }: { block: DailyBankBlock; onOpen: (accoun
         <span className={styles.accountName}>{block.accountName}</span>
         <span className={styles.accountCode}>{block.accountCode}</span>
       </div>
-      <span><span className={`${styles.srcTag} ${block.source === 'cashbook' ? styles.srcCash : styles.srcLedger}`}>{sourceLabel(block)}</span></span>
+      {block.start && <span><span className={`${styles.srcTag} ${styles.srcCash}`}>{sinceLabel(block.start)}</span></span>}
       <div className={`${styles.accountClosing} ${block.closingSen < 0 ? styles.negative : ''}`}>{fmtSen(block.closingSen)}</div>
       <div className={styles.accountLines}>
         {lines.length === 0 && <span className={styles.muted}>No movement today</span>}
@@ -75,10 +73,13 @@ function AccountCard({ block, onOpen }: { block: DailyBankBlock; onOpen: (accoun
   );
 }
 
-export function DailyBankBoardView({ board, onOpenAccount, onOpenCashbook }: {
-  board: DailyBankBoard; onOpenAccount: (accountCode: string) => void; onOpenCashbook: () => void;
+export function DailyBankBoardView({ board, onOpenAccount, cashbook }: {
+  board: DailyBankBoard; onOpenAccount: (accountCode: string) => void;
+  /** The cash book's page: where its banks' starts and receipts are typed. null on the original. */
+  cashbook: { onOpenEntries: () => void } | null;
 }) {
   const bridge = bridgeRows(board);
+  const waiting = notStartedNote(board);
   /* Bars start at zero; a negative figure draws no bar and reads red. */
   const top = Math.max(1, ...bridge.map((r) => r.sen));
   const awaiting = awaitingVouchers(board);
@@ -110,10 +111,12 @@ export function DailyBankBoardView({ board, onOpenAccount, onOpenCashbook }: {
         </section>
       </div>
 
-      <div className={styles.sourceNote} role="note">
-        <span>{sourceSummary(board)}</span>
-        <button type="button" className={styles.linkButton} onClick={onOpenCashbook}>Open Cash book</button>
-      </div>
+      {cashbook && waiting && (
+        <div className={styles.sourceNote} role="note">
+          <span>{waiting}</span>
+          <button type="button" className={styles.linkButton} onClick={cashbook.onOpenEntries}>Open Receipts &amp; starts</button>
+        </div>
+      )}
 
       <section aria-label="Accounts" className={styles.accountGrid}>
         {board.blocks.map((b) => <AccountCard key={b.accountCode} block={b} onOpen={onOpenAccount} />)}
@@ -147,8 +150,8 @@ export function DailyBankBoardView({ board, onOpenAccount, onOpenCashbook }: {
         </section>
       </div>
 
-      <div className={styles.footnote}>{board.blocks.some((b) => b.source === 'cashbook')
-        ? `Drafts are not counted. ${board.note}`
+      <div className={styles.footnote}>{board.book === 'cashbook'
+        ? `Your cash book; the original Daily Bank is unchanged. Drafts are not counted. ${board.note}`
         : `Live from the ledger. Money already paid out is inside the bank figures; drafts are not counted. ${board.note}`}</div>
     </div>
   );

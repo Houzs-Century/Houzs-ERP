@@ -99,10 +99,11 @@ export function boardDayLabel(date: string): string {
 /** A money cell as the table prints it: plain figures, blank when there is none. */
 export const cellMoney = (sen: number | null): string => (sen == null ? '' : fmtSenPlain(sen));
 
-/** Where the figures come from, under the picture: the owner's cash book for a bank
-    with a starting balance (2026-11-23), the ledger for the rest. */
-export const boardSourceLine = (board: DailyBankBoard): string => (board.blocks.some((b) => b.source === 'cashbook')
-  ? 'Cash book banks: starting balance + receipts typed − approved vouchers; the others from the ledger. Pending = checked, awaiting approval; transit shown, never counted as movable.'
+/** Where the figures come from, under the picture: the ledger on the original
+    board; on the owner's cash book (2026-11-23), his starts, receipts and the
+    approved vouchers. */
+export const boardSourceLine = (board: DailyBankBoard): string => (board.book === 'cashbook'
+  ? 'Cash book: each bank from its starting balance + receipts typed − approved vouchers. Pending = checked, awaiting approval; transit shown, never counted as movable.'
   : 'Live from the ledger — posted entries only. Pending = checked vouchers awaiting approval; transit money is shown, never counted as movable.');
 
 /** The three totals above the table, in words — the image and the PDF print them too. */
@@ -172,7 +173,7 @@ export function drawDailyBankCanvas(board: DailyBankBoard): HTMLCanvasElement {
   y += 22;
   ctx.fillStyle = DB_COLORS.bar;
   ctx.fillRect(P, y, W - 2 * P, 34);
-  text('BANK BALANCE AVAILABLE', P + 14, y + 22, { size: 14, bold: true, color: DB_COLORS.barText });
+  text(board.book === 'cashbook' ? 'BANK BALANCE AVAILABLE · CASH BOOK' : 'BANK BALANCE AVAILABLE', P + 14, y + 22, { size: 14, bold: true, color: DB_COLORS.barText });
   text(boardDayLabel(board.date), W - P - 14, y + 22, { size: 12.5, bold: true, color: DB_COLORS.barText, right: true });
   y += 34;
 
