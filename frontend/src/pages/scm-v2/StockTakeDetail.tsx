@@ -64,6 +64,7 @@ import { PageHeader } from '../../components/Layout';
 import { EntityHistoryPanel } from './EntityHistoryPanel';
 import { STOCK_TAKE_AUDIT_LABELS } from './entity-audit-labels';
 import { groupByModel } from './stock-take-grouping';
+import { SourcePoNote } from './stock-take-source-po-note';
 import {
   COUNT_SHEET_COLUMN_KEYS,
   COUNT_SHEET_HEADERS,
@@ -1090,7 +1091,7 @@ export const StockTakeDetail = () => {
                         {ln.variantLabel
                           ? <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-12)' }}>{ln.variantLabel}</span>
                           : <span className={styles.muted}>—</span>}
-                        <SourcePoNote line={ln} inGroup={inGroup} />
+                        <SourcePoNote sourcePos={ln.sourcePos} systemQty={ln.systemQty} inGroup={inGroup} />
                       </td>
                     ),
                     systemQty: (
@@ -1499,28 +1500,6 @@ function BucketSplit({ lines }: { lines: LineDraft[] }) {
   );
 }
 
-/* HC-0158: the PO(s) behind the bucket's open lots, so sofa / bedframe stock
-   can be traced; the rest of a positive system qty came in without one. That
-   remainder is only named beside a PO or on a variant model's line: on a plain
-   SKU it is AC opening stock on every row and says nothing. */
-function SourcePoNote({ line, inGroup }: { line: LineDraft; inGroup: boolean }) {
-  const traced = line.sourcePos.reduce((s, p) => s + p.qty, 0);
-  const untraced = (inGroup || traced > 0) && line.systemQty != null && line.systemQty > traced
-    ? line.systemQty - traced : 0;
-  if (line.sourcePos.length === 0 && untraced === 0) return null;
-  return (
-    /* Wraps between POs: a line with 55 POs on one unbreakable row made the
-       Variant column 6,000px wide and pushed the Qty columns off screen. */
-    <div data-testid="source-po-note" style={{ marginTop: 2, fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', display: 'flex', flexWrap: 'wrap', columnGap: 8 }}>
-      {line.sourcePos.map((p) => (
-        <span key={p.po} style={{ whiteSpace: 'nowrap' }}>
-          <span style={{ fontFamily: 'var(--font-mono)' }}>{p.po}</span> × {fmtQty(p.qty)}
-        </span>
-      ))}
-      {untraced > 0 && <span style={{ whiteSpace: 'nowrap' }}>{fmtQty(untraced)} without PO</span>}
-    </div>
-  );
-}
 
 function AddFoundLine({ takeId, pending, onQueue, onRemove }: {
   takeId: string;
