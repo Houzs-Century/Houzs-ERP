@@ -13,9 +13,10 @@
    B. VOIDS AND RETURNS THAT RE-OPENED MORE THAN WAS TAKEN (5 positions, 6 units). A POS void (POS_VOID IN) or a
       consignment return (CS_DR IN) opened a full lot although the sale / ship-out it undoes took less from the
       lots. Each such IN is linked to its OUT (reverses_movement_id) and its lot is set to what the OUT took, at
-      the cost it took it: exactly what the FIFO trigger (20261123T0100) now does for a new one. Only an IN with
-      one OUT to match and one untouched lot (nothing consumed from it) is repaired; anything else is refused and
-      printed.
+      the cost it took it: exactly what the FIFO trigger (20261123T0100) now does for a new one. A return finds its
+      note through its header or lines; a free-entry return (HC-CRN-2610-001 is one) is matched to the earlier,
+      not-yet-undone ship-out of the same item and spec, and only when there is exactly one. Only an IN with one
+      OUT to match and one untouched lot (nothing consumed from it) is repaired; anything else is refused and printed.
 
    MODE=plan (default) makes the changes inside a transaction, prints every row and the resulting count of
    positions above balance, then ROLLS BACK: nothing is written. MODE=apply needs
@@ -69,7 +70,13 @@ const DO_BUCKETS = `
 /** POS_VOID / CS_DR INs not yet linked, with the OUT they undo and what that OUT took from the lots. */
 const OVER_OPENED = `
   WITH ins AS (
-    SELECT m.id, m.item_code, COALESCE(m.variant_key, '') AS vk, m.qty, m.source_doc_type::text AS t, m.source_doc_no, m.source_doc_id
+    SELECT m.id, m.item_code, COALESCE(m.variant_key, '') AS vk, m.qty, m.source_doc_type::text AS t, m.source_doc_no, m.source_doc_id,
+           m.created_at,
+           ARRAY(SELECT r.consignment_do_id FROM scm.consignment_delivery_returns r WHERE r.id = m.source_doc_id AND r.consignment_do_id IS NOT NULL
+                 UNION
+                 SELECT ci.consignment_delivery_order_id FROM scm.consignment_delivery_return_items ri
+                   JOIN scm.consignment_delivery_order_items ci ON ci.id = ri.consignment_do_item_id
+                  WHERE ri.consignment_delivery_return_id = m.source_doc_id) AS notes
       FROM scm.inventory_movements m
      WHERE m.company_id = $1 AND m.movement_type = 'IN' AND m.reverses_movement_id IS NULL
        AND m.source_doc_type IN ('POS_VOID', 'CS_DR')),
@@ -79,7 +86,11 @@ const OVER_OPENED = `
       JOIN scm.inventory_movements o ON o.company_id = $1 AND o.movement_type = 'OUT' AND o.item_code = i.item_code
        AND ((i.t = 'POS_VOID' AND o.source_doc_type = 'POS_SALE' AND o.source_doc_no = i.source_doc_no)
          OR (i.t = 'CS_DR' AND o.source_doc_type = 'CS_DO' AND COALESCE(o.variant_key, '') = i.vk
-             AND o.source_doc_id = (SELECT r.consignment_do_id FROM scm.consignment_delivery_returns r WHERE r.id = i.source_doc_id))))
+             AND (o.source_doc_id = ANY (i.notes)
+                  /* A free-entry return names no note: match only a ship-out of the same item and spec that
+                     came before it and is not yet undone; more than one such ship-out is refused (judgeOver). */
+                  OR (cardinality(i.notes) = 0 AND o.created_at < i.created_at
+                      AND NOT EXISTS (SELECT 1 FROM scm.inventory_movements r2 WHERE r2.reverses_movement_id = o.id))))))
   SELECT x.id::text AS id, x.t, x.source_doc_no AS doc, x.item_code, x.vk, x.qty,
          count(*) OVER (PARTITION BY x.id)::int AS outs,
          x.out_id::text AS out_id, x.out_qty,
