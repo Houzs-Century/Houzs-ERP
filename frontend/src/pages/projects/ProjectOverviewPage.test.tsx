@@ -84,10 +84,10 @@ const titles = () => [...projectsTable().querySelectorAll("tbody tr span.text-pr
    moving a column, the right-click header menu and the column chooser are DataTable's
    own (its tests pin them); here, what this table puts in it. */
 describe("Project Overview — the project table", () => {
-  it("keeps every cost, gives Project / Event type / Venue / State / Dates their own columns, and money as 1,234.56 / (1,234.56)", () => {
+  it("keeps every cost, gives Project / Event type / Venue / State / Start / End their own columns, and money as 1,234.56 / (1,234.56)", () => {
     show(PERIOD);
     const table = projectsTable();
-    for (const c of ["Project", "Event Type", "Venue", "State", "Dates", "Rental", "Setup", "Transport", "Commission", "Merchandise", "Others", "Net Profit"]) {
+    for (const c of ["Project", "Event Type", "Venue", "State", "Start", "End", "Rental", "Setup", "Transport", "Commission", "Merchandise", "Others", "Net Profit"]) {
       expect(within(table).getByText(c)).toBeTruthy();
     }
     const row = within(table).getByText("[AKEMI] MYHOME").closest("tr") as HTMLTableRowElement;
@@ -123,11 +123,11 @@ describe("Project Overview — the project table", () => {
 
   /* Owner 2026-11-12: 「这些其他不可以filter?」 — only Project, Event type, Venue and
      State had the header's filter and sort; Dates and the figures had neither. */
-  it("Dates and the figures filter and sort from their headers too: a range for the dates, a minimum and maximum for a figure", () => {
+  it("Start / End and the figures filter and sort from their headers too: a range for the dates, a minimum and maximum for a figure", () => {
     show(PERIOD);
     const table = projectsTable();
     for (const c of [
-      "Project", "Event type", "Venue", "State", "Dates", "Sales", "Service", "COGS", "GP", "GP %", "Rental", "Setup", "Transport",
+      "Project", "Event type", "Venue", "State", "Start", "End", "Sales", "Service", "COGS", "GP", "GP %", "Rental", "Setup", "Transport",
       "Commission", "Merchandise", "Others", "Net profit", "NP %", "Collected", "Collected %",
     ]) {
       expect(within(table).getByRole("button", { name: `Filter & sort ${c}` })).toBeTruthy();
@@ -146,7 +146,7 @@ describe("Project Overview — the project table", () => {
     expect(within(projectsTable()).getByText("Total · 2 projects")).toBeTruthy();
 
     /* The dates' funnel has the presets and a From / To range. */
-    fireEvent.click(within(projectsTable()).getByRole("button", { name: "Filter & sort Dates" }));
+    fireEvent.click(within(projectsTable()).getByRole("button", { name: "Filter & sort Start" }));
     expect(screen.getByLabelText("From date")).toBeTruthy();
     expect(screen.getByRole("button", { name: "This Month" })).toBeTruthy();
   });
