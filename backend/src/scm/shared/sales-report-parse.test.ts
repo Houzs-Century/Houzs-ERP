@@ -268,6 +268,31 @@ describe('a multi-day paste with per-section subtotals (owner 2026-11-23, Dunlop
   });
 });
 
+describe('full-width punctuation (owner 2026-11-23, AEON RAWANG AKEMI MALL MGMT)', () => {
+  test('Chinese full-width colon "：" after Total is read like a regular ":"', () => {
+    const r = parseSalesReport([
+      'AKEMI@ AEON RAWANG SOLO',
+      '',
+      '17/11- RM0',
+      '18/11- RM4739',
+      '19/11- RM0',
+      '',
+      'Total： RM4739',
+    ].join('\n'));
+    expect(r.total_sen).toBe(473900);
+    // The summary post can now Set Total Sales from this paste; before the
+    // fix the Total line was skipped entirely and the overview showed empty.
+    expect(summaryTotalOf(r)).toEqual({ total_sen: 473900, days_sen: 473900 });
+  });
+
+  test('full-width colon in a bill line "HC8993： RM6500 Jason" still parses', () => {
+    const r = parseSalesReport('HC8993： RM6500 Jason');
+    expect(r.bills).toEqual([
+      { line: 1, ref_raw: 'HC8993', ref_token: 'HC8993', amount_sen: 650000, extra_sen: null, extra_tag: null, salesperson_name: 'Jason' },
+    ]);
+  });
+});
+
 describe('reportDateFor', () => {
   test('takes the year from the project and pads the day and month', () => {
     expect(reportDateFor({ day: 7, month: 10 }, '2026-10-05')).toBe('2026-10-07');

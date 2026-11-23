@@ -111,7 +111,14 @@ export function extractRefTokens(text: string | null | undefined): string[] {
 const AMOUNT = String.raw`([\d][\d,]*(?:\.\d{1,2})?)`;
 const EXTRA = String.raw`((?:\s*\+\s*(?:RM|rm|Rm)?\s*[\d][\d,]*(?:\.\d{1,2})?(?:\s*\(\s*[A-Za-z]{1,3}\s*\)?|[A-Za-z](?![A-Za-z]))?)*)`;
 const EXTRA_PART_RE = /\+\s*(?:RM|rm|Rm)?\s*([\d][\d,]*(?:\.\d{1,2})?)(?:\s*\(\s*([A-Za-z]{1,3})|([A-Za-z])(?![A-Za-z]))?/g;
-const SEP = String.raw`(?:-|:|–|=)`;
+/* The separator between pieces of a line ("1. HC8993 - RM6500 - Jason").
+   Owner 2026-11-23 (project 2326, AKEMI MALL MGMT @ AEON RAWANG): the
+   Total line "Total： RM4739" used a Chinese full-width colon "：" and
+   the parser skipped it, so a Set-Total post landed no total and the
+   project overview showed no sales report. Full-width colon (：),
+   full-width hyphen (－) and em dash (—) are now accepted alongside the
+   ASCII forms the floor usually types. */
+const SEP = String.raw`(?:-|:|–|—|=|：|－)`;
 const BILL_RE = new RegExp(
   String.raw`^\s*(?:\d{1,3}\s*[.)]\s*)?([A-Za-z]{1,5}\s*-?\s*\d{3,6})\b\s*${SEP}?\s*(?:RM|rm|Rm)?\s*${AMOUNT}${EXTRA}\s*${SEP}?\s*(.*?)\s*$`,
 );
