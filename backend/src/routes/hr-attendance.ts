@@ -15,7 +15,7 @@
 // ----------------------------------------------------------------------------
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Env } from "../types";
 import { getDb } from "../db/client";
 import { departments, hr_attendance, hr_attendance_settings, hr_employees, hr_punch_sites, hr_working_hours } from "../db/schema";
@@ -27,6 +27,7 @@ import { ATTENDANCE_STATUSES, instantOnWorkDate, type AttendanceStatus } from ".
 import { asDate, attendanceView, correctionTimes, type AttendanceRow } from "./lib/hr-attendance-view";
 import { loadAttendanceSettings, loadSites, rulesResolver } from "./lib/hr-attendance-store";
 import { shiftRulesResolver } from "./lib/hr-shift-store";
+import { scopedEmployeeIds } from "./lib/hr-confirmer-scope";
 import { applyDayDock, closeForgottenAndSync, syncDayFromPunch } from "./lib/hr-labor-store";
 
 type Ctx = Context<{ Bindings: Env }>;
@@ -52,8 +53,12 @@ hrAttendance.get("/attendance", async (c) => {
   const db = getDb(c.env);
   const now = new Date();
   await closeForgottenAndSync(db, co.companyId, null, now);
+  // A pinned confirmer (hr-confirmer-scope) sees only their own employees; an
+  // unrestricted reader gets null and the queries stay company-wide.
+  const scope = scopedEmployeeIds(c.get("user").id);
+  const scopeIds = scope ? [...scope] : null;
   const [rows, employees, rulesFor, sites, shiftRes] = await Promise.all([
-    db.select().from(hr_attendance).where(and(eq(hr_attendance.company_id, co.companyId), eq(hr_attendance.work_date, date))),
+    db.select().from(hr_attendance).where(and(eq(hr_attendance.company_id, co.companyId), eq(hr_attendance.work_date, date), scopeIds ? inArray(hr_attendance.employee_id, scopeIds) : undefined)),
     db
       .select({
         id: hr_employees.id,
@@ -66,7 +71,7 @@ hrAttendance.get("/attendance", async (c) => {
       })
       .from(hr_employees)
       .leftJoin(departments, eq(departments.id, hr_employees.department_id))
-      .where(eq(hr_employees.company_id, co.companyId))
+      .where(and(eq(hr_employees.company_id, co.companyId), scopeIds ? inArray(hr_employees.id, scopeIds) : undefined))
       .orderBy(asc(hr_employees.emp_no)),
     rulesResolver(db, co.companyId),
     loadSites(db, co.companyId),

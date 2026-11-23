@@ -27,6 +27,7 @@ import { checkPunchLocation } from "../scm/shared/hr-attendance";
 import { attendanceView, planPunch, punchGateRefusal, type AttendanceRow } from "./lib/hr-attendance-view";
 import { loadSites, loadAttendanceSettings } from "./lib/hr-attendance-store";
 import { parseOtSegment } from "./lib/hr-ot";
+import { scopedEmployeeIds } from "./lib/hr-confirmer-scope";
 import { shiftRulesResolver } from "./lib/hr-shift-store";
 import { closeForgottenAndSync, syncDayFromPunch } from "./lib/hr-labor-store";
 import { computePeriod } from "./lib/hr-payroll-store";
@@ -308,6 +309,13 @@ const canConfirmOt = (c: Ctx): boolean => {
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- tests build AuthUser without permissions_set
   return hasPermission(u.permissions_set ?? u.permissions, "hr.ot.confirm");
 };
+// A confirmer pinned to specific employees (hr-confirmer-scope) only ever sees
+// or reviews their own; an unrestricted confirmer gets `undefined` here, which
+// drizzle's and() drops, so the query is company-wide as before.
+const otScopeCond = (c: Ctx) => {
+  const scope = scopedEmployeeIds(c.get("user").id);
+  return scope ? inArray(hr_ot_claims.employee_id, [...scope]) : undefined;
+};
 
 attendance.get("/ot", async (c: Ctx) => {
   const co = requireActiveCompanyId(c);
@@ -331,7 +339,7 @@ attendance.get("/ot", async (c: Ctx) => {
       .select({ c: hr_ot_claims, name: hr_employees.name, emp_no: hr_employees.emp_no })
       .from(hr_ot_claims)
       .innerJoin(hr_employees, eq(hr_employees.id, hr_ot_claims.employee_id))
-      .where(and(eq(hr_ot_claims.company_id, co.companyId), eq(hr_ot_claims.status, "PENDING")))
+      .where(and(eq(hr_ot_claims.company_id, co.companyId), eq(hr_ot_claims.status, "PENDING"), otScopeCond(c)))
       .orderBy(asc(hr_ot_claims.work_date), asc(hr_ot_claims.id));
     pending = rows.map((r) => ({ ...otOut(r.c), employeeName: r.name, empNo: r.emp_no }));
   }
@@ -352,7 +360,7 @@ attendance.get("/ot/admin", async (c: Ctx) => {
     .select({ c: hr_ot_claims, name: hr_employees.name, emp_no: hr_employees.emp_no })
     .from(hr_ot_claims)
     .innerJoin(hr_employees, eq(hr_employees.id, hr_ot_claims.employee_id))
-    .where(and(eq(hr_ot_claims.company_id, co.companyId), gte(hr_ot_claims.work_date, `${month}-01`), lte(hr_ot_claims.work_date, `${month}-31`)))
+    .where(and(eq(hr_ot_claims.company_id, co.companyId), gte(hr_ot_claims.work_date, `${month}-01`), lte(hr_ot_claims.work_date, `${month}-31`), otScopeCond(c)))
     .orderBy(asc(hr_ot_claims.work_date), asc(hr_ot_claims.id));
   const claims = rows.map((r) => ({ ...otOut(r.c), employeeName: r.name, empNo: r.emp_no, reviewedAt: r.c.reviewed_at ?? null }));
   return c.json({ month, claims });
@@ -433,7 +441,7 @@ attendance.post("/ot/:id/review", async (c: Ctx) => {
       reviewed_at: at,
       updated_at: at,
     })
-    .where(and(eq(hr_ot_claims.id, id), eq(hr_ot_claims.company_id, co.companyId), eq(hr_ot_claims.status, "PENDING")))
+    .where(and(eq(hr_ot_claims.id, id), eq(hr_ot_claims.company_id, co.companyId), eq(hr_ot_claims.status, "PENDING"), otScopeCond(c)))
     .returning({ id: hr_ot_claims.id });
   if (!done.length) return c.json({ error: "not_found", message: "That overtime is gone or already reviewed." }, 404);
   return c.json({ ok: true });

@@ -33,6 +33,7 @@ import { payRulesResolver } from "./lib/hr-attendance-store";
 import { shiftRulesResolver } from "./lib/hr-shift-store";
 import { loadDeductions, redockDay, settlePeriod } from "./lib/hr-labor-store";
 import { laborCost } from "./lib/hr-labor-cost";
+import { scopedEmployeeIds } from "./lib/hr-confirmer-scope";
 
 type Ctx = Context<{ Bindings: Env }>;
 type Db = ReturnType<typeof getDb>;
@@ -89,6 +90,10 @@ hrLabor.get("/working-hours", async (c) => {
   const r = range(c);
   if (typeof r === "string") return c.json({ error: "bad_range", message: r }, 400);
   const db = getDb(c.env);
+  // A pinned confirmer (hr-confirmer-scope) sees only their own employees' hours;
+  // an unrestricted reader gets null and the grid stays company-wide.
+  const scope = scopedEmployeeIds(c.get("user").id);
+  const scopeIds = scope ? [...scope] : null;
   const [employees, depts, days, entries, cfgFor, shift] = await Promise.all([
     db
       .select({
@@ -100,14 +105,14 @@ hrLabor.get("/working-hours", async (c) => {
         hours: hr_employees.working_hours_per_day,
       })
       .from(hr_employees)
-      .where(eq(hr_employees.company_id, co.companyId))
+      .where(and(eq(hr_employees.company_id, co.companyId), scopeIds ? inArray(hr_employees.id, scopeIds) : undefined))
       .orderBy(asc(hr_employees.emp_no)),
     db.select({ id: departments.id, name: departments.name }).from(departments).orderBy(asc(departments.sort_order), asc(departments.name)),
-    db.select().from(hr_attendance).where(and(eq(hr_attendance.company_id, co.companyId), gte(hr_attendance.work_date, r.from), lte(hr_attendance.work_date, r.to))),
+    db.select().from(hr_attendance).where(and(eq(hr_attendance.company_id, co.companyId), gte(hr_attendance.work_date, r.from), lte(hr_attendance.work_date, r.to), scopeIds ? inArray(hr_attendance.employee_id, scopeIds) : undefined)),
     db
       .select()
       .from(hr_working_hours)
-      .where(and(eq(hr_working_hours.company_id, co.companyId), gte(hr_working_hours.work_date, r.from), lte(hr_working_hours.work_date, r.to)))
+      .where(and(eq(hr_working_hours.company_id, co.companyId), gte(hr_working_hours.work_date, r.from), lte(hr_working_hours.work_date, r.to), scopeIds ? inArray(hr_working_hours.employee_id, scopeIds) : undefined))
       .orderBy(asc(hr_working_hours.id)),
     payRulesResolver(db, co.companyId),
     shiftRulesResolver(db, co.companyId, r.from, r.to),
