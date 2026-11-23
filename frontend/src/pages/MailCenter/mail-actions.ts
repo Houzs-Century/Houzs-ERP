@@ -229,6 +229,9 @@ export type MailAddress = {
   assignedDept?: string;
   departmentId?: number | null;
   assignedPosition?: string;
+  /** A personal mailbox's owner's Org Chart department (sidebar heading). */
+  ownerDepartmentId?: number | null;
+  ownerDepartmentName?: string | null;
   active: boolean;
   createdAt?: string;
 };

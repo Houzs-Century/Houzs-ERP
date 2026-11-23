@@ -560,6 +560,8 @@ type AddressRow = {
   assigned_dept: string | null;
   assigned_position: string | null;
   department_id: number | null;
+  owner_department_id?: number | null;
+  owner_department_name?: string | null;
   active: number | boolean | null;
   created_at: string | null;
 };
@@ -574,6 +576,8 @@ function rowToAddress(r: AddressRow) {
     assignedDept: r.assigned_dept ?? undefined,
     departmentId: r.department_id ?? null,
     assignedPosition: r.assigned_position ?? undefined,
+    ownerDepartmentId: r.owner_department_id ?? null,
+    ownerDepartmentName: r.owner_department_name ?? null,
     active: Number(r.active ?? 0) === 1,
     createdAt: r.created_at ?? "",
   };
@@ -1064,9 +1068,13 @@ app.get("/addresses", async (c) => {
   if (scope.addresses.length === 0) return c.json([]);
   const ph = scope.addresses.map(() => "?").join(", ");
   const res = await c.env.DB.prepare(
-    `SELECT * FROM email_addresses
-       WHERE LOWER(address) IN (${ph})
-       ORDER BY address ASC`,
+    // The owner's Org Chart department puts a personal mailbox under its department in the sidebar.
+    `SELECT e.*, u.department_id AS owner_department_id, d.name AS owner_department_name
+       FROM email_addresses e
+       LEFT JOIN users u ON u.id = e.assigned_user_id
+       LEFT JOIN departments d ON d.id = u.department_id
+       WHERE LOWER(e.address) IN (${ph})
+       ORDER BY e.address ASC`,
   )
     .bind(...scope.addresses)
     .all<AddressRow>();
