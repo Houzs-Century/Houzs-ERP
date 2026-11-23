@@ -18,8 +18,12 @@ import { HR, useAttendance, useEmployees, useHolidays, usePayroll, useWorkingHou
 import { monthAttendanceStats, monthBounds, pad2 } from "./attendanceMonth";
 
 const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(" ");
-const WD = ["S", "M", "T", "W", "T", "F", "S"];
-const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+// Month and weekday labels from Intl, not a hand-kept array — a calendar
+// vocabulary has one source of truth (the locale), and it keeps the duplicated-
+// decisions audit from counting a second copy of the month/weekday names here.
+const monthLabel = (monthIndex: number, style: "long" | "short"): string =>
+  new Date(Date.UTC(2000, monthIndex, 1)).toLocaleString("en-US", { month: style, timeZone: "UTC" });
+const weekdayLetter = (date: Date): string => date.toLocaleString("en-US", { weekday: "narrow", timeZone: "UTC" });
 
 function Avatar({ name, size = 24, ring = false }: { name: string; size?: number; ring?: boolean }) {
   return (
@@ -242,7 +246,7 @@ export function OverviewPage({ onNavigate, onPickEmployee }: { onNavigate: (key:
 
       {/* Attendance · month — on-time rate per working day */}
       <Card
-        title={`Attendance · ${MONTHS[m - 1]}`}
+        title={`Attendance · ${monthLabel(m - 1, "long")}`}
         className="col-span-12"
         right={monthStats.avg != null ? (
           <div className="flex items-center gap-4 text-[11px]">
@@ -277,7 +281,7 @@ export function OverviewPage({ onNavigate, onPickEmployee }: { onNavigate: (key:
                     </div>
                   </div>
                   <div className="mt-1 flex flex-col items-center leading-none">
-                    <span className={cx("text-[8.5px]", weekend ? "text-ink-muted/70" : "text-ink-muted")}>{WD[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]}</span>
+                    <span className={cx("text-[8.5px]", weekend ? "text-ink-muted/70" : "text-ink-muted")}>{weekdayLetter(new Date(Date.UTC(y, m - 1, d)))}</span>
                     <span className="text-[9px] font-semibold text-ink-secondary">{d}</span>
                   </div>
                 </div>
@@ -341,7 +345,7 @@ export function OverviewPage({ onNavigate, onPickEmployee }: { onNavigate: (key:
               <div key={i} className="flex items-center gap-3">
                 <div className="flex w-10 shrink-0 flex-col items-center">
                   <span className="text-[17px] font-bold leading-none text-ink">{c.day}</span>
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-accent">{MONTHS[Number(c.mon) - 1]?.slice(0, 3) ?? c.mon}</span>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-accent">{monthLabel(Number(c.mon) - 1, "short").toUpperCase()}</span>
                 </div>
                 <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink">{c.label}</span>
                 <span className={cx("shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold", comingTone.National)}>{c.kind}</span>
