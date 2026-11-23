@@ -543,6 +543,9 @@ export type StockTakeLine = {
   /* Best-known unit cost (sen) the post would value this variance at; null =
      no cost basis, or withheld on a blind take. */
   est_unit_cost_sen?: number | null;
+  /* Operator-typed unit cost (sen) for a found line whose SKU has no priced lot
+     — Post values the found lot from it when there is no lot cost. */
+  entered_unit_cost_sen?: number | null;
   /* HC-0158: the PO(s) behind this bucket's open lots, qty per PO; empty when
      none traces (AC opening / adjustment stock, a negative bucket, blind). */
   source_pos?: Array<{ po: string; qty: number }>;
@@ -656,6 +659,9 @@ export type StockTakeLineUpdate = {
   notes?: string | null;
   /* Round 2: a rack of the take's warehouse; null clears. */
   rackId?: string | null;
+  /* Unit cost (sen) typed on the sheet for a found line with no priced lot;
+     null clears it. */
+  enteredUnitCostSen?: number | null;
 };
 
 export function useUpdateStockTakeLines() {
