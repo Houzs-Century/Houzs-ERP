@@ -195,6 +195,21 @@ export function setCostsOnDay(lines, rows, tierOfFabric, day) {
 }
 
 /**
+ * The lines the order-date set rule may re-cost: every line but the pieces of a
+ * sofa set re-costed on a later change day (rule 2, owner 2026-11-23: the set
+ * carries `set_cost_day`, backend/src/scm/lib/so-set-change-cost.ts). Such a set
+ * keeps the cost of its change day; spreading the order-date set price over it
+ * again would undo the change. `lines`: { item_code, item_group, set_cost_day }.
+ */
+export function linesOutsideChangedSets(lines) {
+  const changed = new Set(lines
+    .filter((l) => l.set_cost_day && String(l.item_group ?? '').toLowerCase() === 'sofa')
+    .map((l) => modelOf(l.item_code).toUpperCase()));
+  if (changed.size === 0) return lines;
+  return lines.filter((l) => String(l.item_group ?? '').toLowerCase() !== 'sofa' || !changed.has(modelOf(l.item_code).toUpperCase()));
+}
+
+/**
  * The sofa sets of an order whose piece is about to be stamped, costed by
  * setCostsOnDay on its order date, the pieces already costed included.
  *

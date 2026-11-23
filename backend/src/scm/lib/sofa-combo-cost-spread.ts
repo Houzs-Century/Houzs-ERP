@@ -112,3 +112,49 @@ export function planComboCostSpread(
   }
   return out;
 }
+
+/** A sofa piece of a set that changed after its order date (rule 2). */
+export interface ChangedSetPiece extends ComboCostLine {
+  /** The piece's own line cost, no set price: its own unit cost on the day
+   *  that prices it, times its quantity. */
+  own_cost_sen: number;
+  /** True for a piece no later product change touched: it is priced on the
+   *  order date. */
+  unchanged: boolean;
+}
+
+/** Rule 2 (owner 2026-11-23) for a sofa set whose pieces changed after the
+ *  order date, the line cost of every piece by id:
+ *    - a set price for the WHOLE new combination stood on the change day: the
+ *      set takes it, shared by each piece's own cost;
+ *    - none did: the unchanged pieces keep the order-date cost (a set price of
+ *      the order date still covering them, else each its own order-date cost),
+ *      and the added or changed pieces take their own change-day cost.
+ *  `combos`: the master cost rows, deleted ones included (combosStandingOn
+ *  picks the ones that stood). One base model or several. */
+export function planChangedSetCost(
+  pieces: readonly ChangedSetPiece[],
+  combos: readonly SofaComboRow[],
+  tierOfFabric: (fabricCode: string) => SofaPriceTier,
+  changeDay: string,
+  orderDay: string,
+): Map<string, number> {
+  const out = new Map<string, number>();
+  const byModel = new Map<string, ChangedSetPiece[]>();
+  for (const p of pieces) {
+    out.set(p.id, p.own_cost_sen);
+    const key = splitSofaCode(p.item_code).baseModel.toUpperCase();
+    byModel.set(key, [...(byModel.get(key) ?? []), p]);
+  }
+  for (const members of byModel.values()) {
+    const asOwn = members.map((p) => ({ ...p, line_cost_sen: p.own_cost_sen }));
+    const whole = planComboCostSpread(asOwn, combosStandingOn(combos, changeDay), tierOfFabric, changeDay);
+    if (members.every((p) => whole.has(p.id))) {
+      for (const p of members) out.set(p.id, whole.get(p.id)!);
+      continue;
+    }
+    const kept = planComboCostSpread(asOwn.filter((p) => p.unchanged), combosStandingOn(combos, orderDay), tierOfFabric, orderDay);
+    for (const [id, cost] of kept) out.set(id, cost);
+  }
+  return out;
+}

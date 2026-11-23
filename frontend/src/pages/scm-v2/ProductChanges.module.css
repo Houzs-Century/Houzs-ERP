@@ -1,0 +1,55 @@
+/* Finance › Reports › Product changes and Product changes P&L (owner
+   2026-11-23). Colours from finance/finance-ui.module.css, as the other reports. */
+
+.monthPick { display: inline-flex; align-items: center; gap: 4px; }
+.step {
+  display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 32px; box-sizing: border-box;
+  border: 1px solid var(--fin-line); border-radius: 6px; background: var(--fin-surface); color: var(--fin-text); cursor: pointer;
+}
+.step:hover:not(:disabled) { color: var(--fin-ink); border-color: var(--fin-input); }
+.step:disabled { opacity: 0.4; cursor: default; }
+
+.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.right { text-align: right !important; }
+.bad { color: var(--fin-late-fg); }
+.muted { color: var(--fin-muted); font-size: 12px; }
+.strong { font-weight: 600; }
+.stack { display: inline-flex; flex-direction: column; gap: 1px; }
+.doc { font-weight: 600; color: var(--fin-petrol-ink); text-decoration: none; white-space: nowrap; }
+.doc:hover { text-decoration: underline; }
+.docLine { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.tag {
+  display: inline-block; padding: 0 6px; border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap;
+  border: 1px solid var(--fin-line); color: var(--fin-muted); background: var(--fin-surface);
+}
+.ba { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 1px; }
+.ba > .num:first-child { font-size: 11.5px; color: var(--fin-detail); }
+.delta { font-weight: 600; color: var(--fin-ink); }
+.ok { color: var(--fin-muted); }
+.flag {
+  display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap;
+  background: var(--fin-late-bg, rgba(180, 35, 24, 0.08)); color: var(--fin-late-fg);
+}
+.flagText { font-weight: 600; color: var(--fin-late-fg); }
+
+/* A change's lines, under its row. */
+.lines { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.lines th { padding: 4px 8px; font-size: 11.5px; font-weight: 600; color: var(--fin-muted); text-align: left; white-space: nowrap; }
+.lines td { padding: 4px 8px; border-top: 1px solid var(--fin-rule-soft); color: var(--fin-text); }
+
+/* The P&L: a statement's dress, months across. */
+.card {
+  min-width: 0; overflow-x: auto; padding: 4px 0; background: var(--fin-surface); border: 1px solid var(--fin-line); border-radius: 10px;
+  box-shadow: var(--fin-card-shadow);
+}
+.pnl { width: 100%; border-collapse: collapse; font-size: 13px; }
+.pnl th { padding: 8px 12px; font-size: 12px; font-weight: 600; color: var(--fin-muted); border-bottom: 1px solid var(--fin-line); white-space: nowrap; }
+.pnl td { padding: 5px 12px; color: var(--fin-text); border-bottom: 1px solid var(--fin-rule-soft); }
+.pnlName { text-align: left; min-width: 220px; padding-left: 18px !important; }
+.section td { padding-top: 12px; font-weight: 700; color: var(--fin-ink); background: var(--fin-band); }
+.totalRow td { font-weight: 600; color: var(--fin-ink); }
+.totalCol { background: var(--fin-band); font-weight: 600; }
+
+.h3 { margin: 4px 0 8px; font-size: 13px; font-weight: 600; color: var(--fin-ink); }
+.notes { display: grid; gap: 4px; margin: 0; padding: 0 0 0 18px; font-size: 12px; line-height: 1.5; color: var(--fin-muted); }
+.skeleton { height: 120px; border-radius: 10px; }

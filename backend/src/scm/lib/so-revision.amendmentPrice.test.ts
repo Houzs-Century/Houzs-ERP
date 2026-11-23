@@ -893,3 +893,63 @@ describe('applySoAmendment — Sales Exemption Expiry freezes on the first amend
     expect(so(store).sales_exemption_expiry).toBe('2026-11-10');
   });
 });
+
+/* ── Rule 2 (owner 2026-11-23) ───────────────────────────────────────────────
+   Approved after the order's opening day, a PRODUCT change is costed on the day
+   it is approved; a colour or a typo quantity keeps the cost; and the change goes
+   on Finance's record (scm.so_product_changes). On the opening day nothing of
+   this applies. Amounts are made up. */
+describe('applySoAmendment — rule 2: a product change approved later is costed on the approval day', () => {
+  const later = (store: Record<string, Row[]>, openedToday = false) => {
+    Object.assign(store.mfg_sales_orders[0]!, {
+      so_date: '2026-09-01', status: 'CONFIRMED',
+      created_at: openedToday ? new Date().toISOString() : '2026-09-01T02:00:00.000Z',
+    });
+    store.mfg_products.push(product({ code: 'ACC-2', name: 'Big Table', base_price_sen: 14000, sell_price_sen: 14000, cost_price_sen: 5000 }));
+    return store;
+  };
+
+  it('another SKU takes its cost now, stamps the day, and is recorded with selling and cost before and after', async () => {
+    const store = later(baseStore());
+    store.so_amendment_lines = [specLine({ new_item_code: 'ACC-2', new_unit_price_sen: 15000 })];
+    await apply(store);
+    const line = lineOf(store);
+    const rec = store.so_product_changes?.[0];
+    expect(line.item_code).toBe('ACC-2');
+    expect(line.cost_day).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(line.line_cost_sen).not.toBe(3000);
+    expect(line.line_margin_sen).toBe(Number(line.total_sen) - Number(line.line_cost_sen));
+    expect(rec).toMatchObject({ route: 'AMENDMENT', window_key: AMD, change_types: ['sku'], bucket: 'SELLING', selling_before_sen: 10000, selling_after_sen: 15000, cost_before_sen: 3000 });
+    expect(rec!.cost_after_sen).toBe(line.line_cost_sen);
+  });
+
+  it('a quantity that moves the selling amount costs only the extra units on the day', async () => {
+    const store = later(baseStore());
+    store.so_amendment_lines = [specLine({ change_type: 'QTY', new_qty: 3, new_unit_price_sen: CATALOGUE_SEN })];
+    await apply(store);
+    const line = lineOf(store);
+    const todayUnit = (Number(line.line_cost_sen) - 3000) / 2;
+    expect(Number.isInteger(todayUnit) && todayUnit > 0).toBe(true);
+    expect(line.cost_day).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(store.so_product_changes?.[0]).toMatchObject({ change_types: ['qty'], bucket: 'SELLING' });
+  });
+
+  it('a quantity typo (selling unchanged) keeps the order-date cost and is no event', async () => {
+    const store = later(baseStore());
+    store.so_amendment_lines = [specLine({ change_type: 'QTY', new_qty: 2, new_unit_price_sen: 5000 })];
+    await apply(store);
+    const line = lineOf(store);
+    expect(line.total_sen).toBe(10000);
+    expect(line.line_cost_sen).toBe(6000);
+    expect(line.cost_day ?? null).toBeNull();
+    expect(store.so_product_changes?.[0]?.bucket ?? null).toBeNull();
+  });
+
+  it('on the opening day the line is priced as before and nothing is recorded', async () => {
+    const store = later(baseStore(), true);
+    store.so_amendment_lines = [specLine({ new_item_code: 'ACC-2', new_unit_price_sen: 15000 })];
+    await apply(store);
+    expect(lineOf(store).cost_day ?? null).toBeNull();
+    expect(store.so_product_changes ?? []).toEqual([]);
+  });
+});

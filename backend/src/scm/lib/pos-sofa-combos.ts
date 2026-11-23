@@ -18,7 +18,7 @@ import {
   type SofaComboRow,
   type SofaPriceTier,
 } from '../shared';
-import { activeCompanyId, scopeToCompany, type CompanyScopeCtx } from './companyScope';
+import { activeCompanyId, scopeToCompany, scopeToCompanyId, type CompanyScopeCtx } from './companyScope';
 import { companyCodeById } from './doc-no';
 
 export const POS_COMBO_COMPANY_CODE = '2990';
@@ -133,14 +133,28 @@ export async function loadMasterSofaComboCosts(
   sb: Sb,
   c: CompanyScopeCtx,
 ): Promise<{ rows: SofaComboRow[]; error: string | null }> {
-  const { data, error } = await scopeToCompany(
-    sb
-      .from('sofa_combo_pricing')
-      .select('id, base_model, modules, tier, customer_id, prices_by_height, label, effective_from, created_at, deleted_at'),
-    c,
-  )
+  return masterComboCostRows(await scopeToCompany(masterComboCostQuery(sb), c)
     .is('customer_id', null)
-    .is('supplier_id', null);
+    .is('supplier_id', null));
+}
+
+/** loadMasterSofaComboCosts for a named company: the order's own, which an
+ *  amendment approved while another company is active must still read. */
+export async function loadMasterSofaComboCostsOf(
+  sb: Sb,
+  companyId: number,
+): Promise<{ rows: SofaComboRow[]; error: string | null }> {
+  return masterComboCostRows(await scopeToCompanyId(masterComboCostQuery(sb), companyId)
+    .is('customer_id', null)
+    .is('supplier_id', null));
+}
+
+const masterComboCostQuery = (sb: Sb) => sb
+  .from('sofa_combo_pricing')
+  .select('id, base_model, modules, tier, customer_id, prices_by_height, label, effective_from, created_at, deleted_at');
+
+function masterComboCostRows(res: { data: unknown; error: { message?: string } | null }): { rows: SofaComboRow[]; error: string | null } {
+  const { data, error } = res;
   if (error) return { rows: [], error: error.message ?? String(error) };
   return {
     rows: ((data ?? []) as MasterComboRow[]).map((r) => ({

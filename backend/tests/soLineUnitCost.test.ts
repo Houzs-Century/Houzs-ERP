@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { costHeight, masterSetRows, ownCostOn, productAsOf, recostSetOrder, setCostsOnDay, unitCostSen, usualHeights, wholeSetCosts } from '../scripts/lib/so-line-unit-cost.mjs';
+import { costHeight, linesOutsideChangedSets, masterSetRows, ownCostOn, productAsOf, recostSetOrder, setCostsOnDay, unitCostSen, usualHeights, wholeSetCosts } from '../scripts/lib/so-line-unit-cost.mjs';
 
 const grid = (...rows: Array<[string, number]>) => rows.flatMap(([height, priceSen]) => [
   { tier: 'PRICE_2', height, priceSen }, { tier: 'PRICE_3', height, priceSen: priceSen + 5000 },
@@ -246,5 +246,20 @@ describe('recostSetOrder', () => {
     // Opened before the set price, its pieces changed after it: the set price of the change day.
     const r = recostSetOrder(order({ so_date: new Date('2026-06-30T00:00:00Z') }), [line('a', 'KABBIN-2A(LHF)', 120000, 120000), line('b', 'KABBIN-L(RHF)', 120000, 120000)], ctx, '2026-10-25');
     expect(r.status === 'repair' && r.changes.map((c) => [c.id, c.to])).toEqual([['a', 100000], ['b', 100000]]);
+  });
+});
+
+// Owner 2026-11-23 (rule 2): a sofa set re-costed on the day its pieces changed
+// keeps that cost; the nightly fill must not spread the order-date set price over it.
+describe('linesOutsideChangedSets', () => {
+  test('leaves out the pieces of a set re-costed on a change day, and nothing else', () => {
+    const lines = [
+      { id: 'a', item_code: 'M100-1A(LHF)', item_group: 'sofa', set_cost_day: '2026-11-05' },
+      { id: 'b', item_code: 'M100-2A(RHF)', item_group: 'sofa', set_cost_day: null },
+      { id: 'c', item_code: 'K200-1A(LHF)', item_group: 'sofa', set_cost_day: null },
+      { id: 'd', item_code: 'M100-(Q)', item_group: 'mattress', set_cost_day: null },
+    ];
+    expect(linesOutsideChangedSets(lines).map((l) => l.id)).toEqual(['c', 'd']);
+    expect(linesOutsideChangedSets(lines.slice(1))).toHaveLength(3);
   });
 });

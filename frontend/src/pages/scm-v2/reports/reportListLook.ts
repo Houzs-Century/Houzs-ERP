@@ -12,8 +12,8 @@
 
 import type { LucideIcon } from 'lucide-react';
 import {
-  Banknote, BarChart3, BookOpen, CalendarDays, CreditCard, FileText, Flag, Gauge, HandCoins, History,
-  LayoutDashboard, ListChecks, Network, Package, Scale, TrendingUp, Truck, Users, Wallet,
+  ArrowLeftRight, Banknote, BarChart3, BookOpen, CalendarDays, CreditCard, FileText, Flag, Gauge, HandCoins, History,
+  LayoutDashboard, ListChecks, Network, Package, Replace, Scale, TrendingUp, Truck, Users, Wallet,
 } from 'lucide-react';
 import type { ReportId } from '../reports-catalog';
 
@@ -29,6 +29,8 @@ export const REPORT_LOOK: Readonly<Record<ReportId, { icon: LucideIcon; desc: st
   fair: { icon: TrendingUp, desc: 'Sales orders, delivery orders and invoices anchored on the fair, and each fair’s P&L' },
   performance: { icon: Gauge, desc: 'Sales and cost from the sales orders by product group, with operating expense as a % of sales' },
   products: { icon: Package, desc: 'Every product the month sold, ranked by gross profit after its share of the gifts' },
+  changes: { icon: Replace, desc: 'Every product change on an order in a month: selling and cost before and after, and whether the price covered the cost' },
+  changesum: { icon: ArrowLeftRight, desc: 'Product changes added up by month and by salesperson: selling, cost and margin change, and the shortfall' },
   events: { icon: CalendarDays, desc: 'What each event cost, from the voucher and bill lines tagged with it' },
   commission: { icon: Users, desc: 'Each fair’s commission and the orders under it' },
   logistics: { icon: Truck, desc: 'What delivery cost: by region, per trip, and setup & dismantle' },

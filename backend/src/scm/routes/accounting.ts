@@ -67,6 +67,7 @@ import { unmatchedBankLinesHandler, unmatchedPaymentsHandler } from './accountin
 import { previousPaymentsList, previousPaymentsMark, previousPaymentsUndo } from './accounting-previous-payments';
 import { arAgingHandler, apAgingHandler } from './accounting-aging';
 import { productProfitHandler } from './accounting-product-profit';
+import { productChangesHandler } from './accounting-product-changes';
 import { bankConfigList, bankConfigSave } from './accounting-bank-config';
 import { payoutUpload, payoutList, payoutCharge, payoutChargeUndo, chargeAccountsHandler } from './accounting-payouts';
 import {
@@ -233,6 +234,10 @@ accounting.get('/reports/performance/months', performanceMonthsHandler);
    month sold, by model, with its own cost and its share of the gifts.
    accounting-product-profit.ts; acc/product-profit.ts. */
 accounting.get('/product-profit', productProfitHandler);
+/* The product change reports (owner 2026-11-23): every product change on a
+   sales order with its selling and cost before and after, by the month of its
+   change day. accounting-product-changes.ts; acc/product-changes.ts. */
+accounting.get('/product-changes', productChangesHandler);
 /* The Forecast P&L (owner 2026-09-21): a planning grid beside the statements; nothing posts. */
 accounting.get('/forecast', forecastGetHandler);
 accounting.put('/forecast', forecastPutHandler);

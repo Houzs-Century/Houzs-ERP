@@ -112,6 +112,11 @@ const ALLOWED = new Set([
      pricing it, and the refusal is the safer of the two ways to fail: a parent
      key that is in neither the owned list nor this one makes the row REFUSE. */
   'backend/scripts/repair-migrated-invoice-variants-from-receipt.mjs',
+  /* The SO line-edit cost rule names the key in its COST-NEUTRAL list
+     (isCostNeutralVariantKey, owner 2026-11-23): a change to it never re-costs a
+     line. Naming a key in order to keep it away from the cost is the opposite of
+     pricing it, like the WITHHELD map above. */
+  'backend/src/scm/lib/so-line-cost-edit.ts',
 ]);
 
 const SCAN = ['backend/src', 'backend/scripts', 'frontend/src'];

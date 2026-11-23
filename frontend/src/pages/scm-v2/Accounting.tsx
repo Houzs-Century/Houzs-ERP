@@ -37,6 +37,7 @@ import { PerformanceTab } from './PerformancePnl';
 import { EventCostsTab } from './EventCosts';
 import { EventCommissionTab } from './EventCommission';
 import { ProductProfitTab } from './ProductProfit';
+import { ProductChangesTab, ProductChangesSummaryTab } from './ProductChanges';
 import { LogisticsCostTab } from './LogisticsCost';
 import { DepartmentPnlTab } from './DepartmentPnl';
 import { byText } from '../../vendor/scm/lib/sort-options';
@@ -97,6 +98,8 @@ export const Accounting = () => {
       {tab === 'events' && <EventCostsTab />}
       {tab === 'commission' && <EventCommissionTab />}
       {tab === 'products' && <ProductProfitTab />}
+      {tab === 'changes' && <ProductChangesTab />}
+      {tab === 'changesum' && <ProductChangesSummaryTab />}
       {tab === 'logistics' && <LogisticsCostTab />}
       {tab === 'departments' && <DepartmentPnlTab />}
     </AccountingFrame>
