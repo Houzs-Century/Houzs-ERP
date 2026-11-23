@@ -84,6 +84,13 @@ if (!targets) {
   );
 }
 
+/* Typed linting holds the whole program in memory. The backend's alone needs
+   about 3.5 GB to typecheck (tsc --extendedDiagnostics, 2026-11-23), so
+   ESLint on top of it ran out of Node's default heap (about 4 GB on a 16 GB CI
+   runner): "heap out of memory", no report, a red lint leg with no finding in it.
+   8 GB fits the runner with room to spare. */
+const HEAP_MB = Number(process.env.LINT_HEAP_MB) || 8192;
+
 const outDir = mkdtempSync(join(tmpdir(), 'houzs-lint-'));
 const outFile = join(outDir, 'eslint.json');
 let report;
@@ -92,7 +99,7 @@ try {
   const started = Date.now();
   const run = spawnSync(
     process.execPath,
-    [eslintEntry, ...targets, '-f', 'json', '-o', outFile],
+    [`--max-old-space-size=${HEAP_MB}`, eslintEntry, ...targets, '-f', 'json', '-o', outFile],
     { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
   );
   // 0 = clean, 1 = lint errors present, 2 = ESLint itself failed (bad config,
