@@ -106,7 +106,7 @@ export function PunchFixBody() {
             <input type="text" value={reason} maxLength={200} placeholder="e.g. phone was flat" onChange={(e) => setReason(e.target.value)} style={{ ...input, marginTop: 3 }} />
           </label>
           <button type="button" className="btn" disabled={!canSave} onClick={() => void add()} style={{ minHeight: 44, fontSize: 14 }}>
-            {busy ? "Sending..." : "Send make-up punch"}
+            {busy ? "Submitting..." : "Submit"}
           </button>
         </div>
       </div>
