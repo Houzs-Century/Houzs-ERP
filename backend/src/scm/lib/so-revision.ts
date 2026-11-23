@@ -427,7 +427,8 @@ export async function applySoAmendment(
     }
     : null;
   const ruleTwo: OrderDays | null = soCompanyId != null && isLaterChange(hdrDays, changeDay) ? hdrDays : null;
-  const changeWindow: ChangeWindow | null = ruleTwo && soCompanyId != null
+  /* A header-only amendment (a delivery date, an address) changes no line: no record. */
+  const changeWindow: ChangeWindow | null = ruleTwo && soCompanyId != null && amendmentLines.length > 0
     ? { companyId: soCompanyId, docNo, route: 'AMENDMENT', windowKey: await amendmentSubmissionKey(sb, amendment) }
     : null;
   const changeWindowId = changeWindow ? await openChangeWindow(sb, changeWindow, changeDay) : null;

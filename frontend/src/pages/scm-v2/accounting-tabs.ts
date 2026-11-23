@@ -28,6 +28,8 @@ export const ACCOUNTING_TAB_TITLES = {
   events: 'Event costs',
   commission: 'Event commission',
   products: 'Product profit',
+  changes: 'Product changes',
+  changesum: 'Product changes P&L',
   logistics: 'Logistics cost',
   departments: 'Department P&L',
 } as const;

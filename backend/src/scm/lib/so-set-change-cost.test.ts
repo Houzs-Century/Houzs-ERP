@@ -77,6 +77,7 @@ function stub(lines: Array<Record<string, unknown>>, combos: SofaComboRow[]) {
   const from = (table: string) => {
     let patch: Record<string, unknown> | null = null;
     const q: Record<string, unknown> = {};
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a PostgREST builder stand-in: every method hands itself back.
     const b: any = {
       select: () => b, in: () => b, is: () => b,
       eq: (col: string, v: unknown) => { q[col] = v; filters[`${table}.${col}`] = v; return b; },

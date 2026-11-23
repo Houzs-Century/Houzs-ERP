@@ -27,6 +27,10 @@
    header's category aggregates + total_cost + margin (revenue - cost) + margin
    basis (margin / revenue, lib/so-margin.mjs) are recomputed, as a save writes them.
 
+   Rule 2 (owner 2026-11-23): a line a later product change priced (cost_day) takes
+   its product's cost of that day, and a sofa set re-costed on a change day
+   (set_cost_day) is left as it is (linesOutsideChangedSets).
+
    A SOFA SET (lib/so-line-unit-cost.mjs wholeSetCosts), on every order. Owner's
    rule 2026-11-19: a set costs the set price that stood on its ORDER DATE (one
    deleted since included, 2026-11-20); with none then, each piece its own cost.
@@ -65,7 +69,7 @@
    stamps nothing (every gap the products can fill is already filled). */
 import "./lib/public-log-guard.mjs";
 import postgres from 'postgres';
-import { masterSetRows, ownCostOn, unitCostSen, usualHeights, wholeSetCosts } from './lib/so-line-unit-cost.mjs';
+import { linesOutsideChangedSets, masterSetRows, ownCostOn, unitCostSen, usualHeights, wholeSetCosts } from './lib/so-line-unit-cost.mjs';
 import { isoDay } from './lib/sofa-combo-set-cost.mjs';
 import { headerMarginOff, marginPctBasis } from './lib/so-margin.mjs';
 
@@ -153,7 +157,7 @@ async function main() {
     const linesByDoc = new Map();
     const docNos = sos.map((s) => s.doc_no);
     if (docNos.length > 0) {
-      const allLines = await sql`SELECT id, doc_no, item_code, item_group, qty, variants, unit_cost_sen, line_cost_sen, total_sen, cancelled
+      const allLines = await sql`SELECT id, doc_no, item_code, item_group, qty, variants, unit_cost_sen, line_cost_sen, total_sen, cancelled, cost_day, set_cost_day
                                  FROM scm.mfg_sales_order_items
                                  WHERE company_id = ${co} AND doc_no = ANY(${docNos})`;
       for (const l of allLines) {
@@ -166,7 +170,9 @@ async function main() {
       const plan = { lineWrites: [], agg: { mattress_sofa: 0, bedframe: 0, accessories: 0, service: 0, others: 0 }, anyStamp: false };
       const lines = linesByDoc.get(so.doc_no) ?? [];
       const orderDay = isoDay(so.so_date);
-      const ownOf = (l, p) => ownCostOn(p, historyBy.get(l.item_code), orderDay, l.variants, usual);
+      /* Rule 2 (owner 2026-11-23): a line a later product change priced is costed on
+         that day (cost_day), and a sofa set re-costed on its change day keeps it. */
+      const ownOf = (l, p) => ownCostOn(p, historyBy.get(l.item_code), l.cost_day ? isoDay(l.cost_day) : orderDay, l.variants, usual);
       const costed = lines.map((l) => {
         const p = prodBy.get(l.item_code);
         const qty = l.qty || 1;
@@ -175,10 +181,10 @@ async function main() {
         const uc = ownOf(l, p);
         return { l, p, qty, uc, lc: uc * qty, fresh: uc > 0 };
       });
-      const setCost = wholeSetCosts(costed.map((c) => ({
+      const setCost = wholeSetCosts(linesOutsideChangedSets(costed.map((c) => ({
         id: c.l.id, item_code: c.l.item_code, item_group: c.l.item_group, variants: c.l.variants, qty: c.qty, cancelled: c.l.cancelled,
-        held: Number(c.l.unit_cost_sen) || 0, own: ownOf(c.l, c.p),
-      })), setRows, tierOfFabric, orderDay);
+        held: Number(c.l.unit_cost_sen) || 0, own: ownOf(c.l, c.p), set_cost_day: c.l.set_cost_day,
+      }))), setRows, tierOfFabric, orderDay);
       const moves = [];
       for (const c of costed) {
         if (setCost.has(c.l.id)) { c.lc = setCost.get(c.l.id); c.uc = Math.round(c.lc / c.qty); }

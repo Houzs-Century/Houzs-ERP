@@ -58,7 +58,7 @@ export async function costChangedSofaSets(sb: Sb, args: {
   if (models.size === 0) return { ok: true, written: 0 };
   const combos = await loadMasterSofaComboCostsOf(sb, args.companyId);
   if (combos.error) return { ok: false, reason: `set prices: ${combos.error}` };
-  const priced = new Set(combos.rows.map((r) => String(r.baseModel ?? '').toUpperCase()));
+  const priced = new Set(combos.rows.map((r) => r.baseModel.toUpperCase()));
   const wanted = [...models].filter((m) => priced.has(m));
   if (wanted.length === 0) return { ok: true, written: 0 };
 

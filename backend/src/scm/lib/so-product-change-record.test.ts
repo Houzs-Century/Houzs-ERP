@@ -6,7 +6,7 @@
 // and parallel saves end on the final state. Amounts are made up.
 import { describe, expect, it } from 'vitest';
 import {
-  amendmentSubmissionKey, closeChangeWindow, isLaterChange, openChangeWindow, readOrderDays, type ChangeWindow,
+  amendmentSubmissionKey, closeChangeWindow, isLaterChange, openChangeWindow, readOrderDays, type ChangeWindow, type SubmittedAmendment,
 } from './so-product-change-record';
 
 type Row = Record<string, unknown>;
@@ -32,6 +32,7 @@ function fakeDb(tables: Record<string, Row[]>) {
       }
       return { data: matched(), error: null };
     };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a PostgREST builder stand-in: every method hands itself back.
     const b: any = {
       select: () => b,
       eq: (k: string, v: unknown) => { filters.push((r) => r[k] === v); return b; },
@@ -120,14 +121,14 @@ describe('the order days', () => {
 
 describe('the amendment submission', () => {
   it('the halves of one submission share the first half\'s id; another submission does not', async () => {
-    const db = fakeDb({ so_amendments: [
+    const rows: SubmittedAmendment[] = [
       { id: 'b', so_doc_no: 'HC-SO-T1', requested_by: 's1', reason: 'customer wants K', created_at: '2026-11-20T03:00:00.400Z' },
       { id: 'a', so_doc_no: 'HC-SO-T1', requested_by: 's1', reason: 'customer wants K', created_at: '2026-11-20T03:00:00.100Z' },
       { id: 'c', so_doc_no: 'HC-SO-T1', requested_by: 's1', reason: 'delivery date', created_at: '2026-11-20T03:00:00.200Z' },
-    ] });
-    const rows = db.tables.so_amendments!;
-    expect(await amendmentSubmissionKey(db.sb, rows[0] as never)).toBe('a');
-    expect(await amendmentSubmissionKey(db.sb, rows[1] as never)).toBe('a');
-    expect(await amendmentSubmissionKey(db.sb, rows[2] as never)).toBe('c');
+    ];
+    const db = fakeDb({ so_amendments: rows.map((r) => ({ ...r })) });
+    expect(await amendmentSubmissionKey(db.sb, rows[0]!)).toBe('a');
+    expect(await amendmentSubmissionKey(db.sb, rows[1]!)).toBe('a');
+    expect(await amendmentSubmissionKey(db.sb, rows[2]!)).toBe('c');
   });
 });

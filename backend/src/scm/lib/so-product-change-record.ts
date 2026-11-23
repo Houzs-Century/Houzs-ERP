@@ -22,7 +22,7 @@
 
 import type { MiddlewareHandler } from 'hono';
 import type { Env, Variables } from '../env';
-import { activeCompanyId, scopeToCompanyId } from './companyScope';
+import { activeCompanyId, scopeToCompanyId, type CompanyScopeCtx } from './companyScope';
 import { mytDateOf, todayMyt } from './my-time';
 import { catalogCategoriesByCode } from './validate-item-codes';
 import { changeSnapshot, productChangeEvent, type ChangeLineSnap, type SoLineForChange } from './so-product-change';
@@ -256,13 +256,13 @@ const openedByRequest = new WeakMap<Request, Opened>();
  *  (after the opening day, on a live order), else null. A failed read is not a
  *  rule-2 change and records nothing; the edit goes on as before the rule. */
 export async function openDirectChangeWindow(
-  c: { req: { raw: Request }; get(key: never): unknown },
+  c: CompanyScopeCtx & { req: { raw: Request } },
   sb: Sb,
   docNo: string,
 ): Promise<OrderDays | null> {
   const known = openedByRequest.get(c.req.raw);
   if (known) return known.days;
-  const companyId = activeCompanyId(c as never);
+  const companyId = activeCompanyId(c);
   const day = todayMyt();
   const opened: Opened = { w: { companyId: companyId ?? 0, docNo, route: 'DIRECT', windowKey: day }, id: null, day, days: null };
   openedByRequest.set(c.req.raw, opened);
