@@ -24,6 +24,7 @@
    Env: DATABASE_URL, MODE, CONFIRM, COMPANY (default 1).
 
    RE-RUN: inert. A cleared position has balance 0 and no open lot, so it writes nothing. */
+import './lib/public-log-guard.mjs';
 import postgres from 'postgres';
 import { stockBucketOf } from '../src/scm/lib/stock-bucket.ts';
 
