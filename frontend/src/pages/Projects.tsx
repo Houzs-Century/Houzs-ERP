@@ -950,8 +950,11 @@ function ProjectsListView() {
   // in a single dropdown (owner 2026-11-23: "sekali kan je jangan pecah task and
   // task detail"). A `sec:` value ticks a whole section (the active-section
   // filter); a `task:` value ticks one task that is still not done
-  // (task_pending). Each section is a group: its header "(whole section)" row,
-  // then its tasks in checklist order; "Completed" is the trailing group.
+  // (task_pending). Task titles come from what actually exists on events (see
+  // the task-titles-distinct route), so older sections (e.g. EXPO MAP, where
+  // Blank/Filled Floorplan live) appear after the current template's sections.
+  // The "Other" bucket holds titles no active template defines any more — it is
+  // not a real section, so it gets no "(whole section)" row.
   const taskFilterGroups = useMemo(() => {
     const tasksBySection = new Map<string, string[]>();
     for (const t of taskTitles.data?.data ?? []) {
@@ -963,15 +966,15 @@ function ProjectsListView() {
     const ordered = sectionsList.data?.data ?? [];
     const seen = new Set(ordered);
     const sectionNames = [...ordered, ...[...tasksBySection.keys()].filter((s) => !seen.has(s))];
-    const groups: { name: string | null; options: { value: string; label: string; count?: number }[] }[] =
-      sectionNames.map((s) => ({
-        name: s,
-        options: [
-          { value: `sec:${s}`, label: `${s} (whole section)`, count: sectionCounts[s] },
-          ...(tasksBySection.get(s) ?? []).map((title) => ({ value: `task:${title}`, label: title })),
-        ],
-      }));
-    groups.push({ name: null, options: [{ value: "sec:__done", label: "Completed" }] });
+    const groups: { name: string | null; options: { value: string; label: string; count?: number }[] }[] = [];
+    for (const s of sectionNames) {
+      const taskOpts = (tasksBySection.get(s) ?? []).map((title) => ({ value: `task:${title}`, label: title }));
+      const options =
+        s === "Other"
+          ? taskOpts
+          : [{ value: `sec:${s}`, label: `${s} (whole section)`, count: sectionCounts[s] }, ...taskOpts];
+      if (options.length) groups.push({ name: s, options });
+    }
     return groups;
   }, [sectionsList.data, taskTitles.data, sectionCounts]);
   // The combined selection, each URL param mapped back onto its prefixed value.
