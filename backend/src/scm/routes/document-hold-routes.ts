@@ -65,7 +65,7 @@
    ---------------------------------------------------------------------------- */
 
 import { makeHoldHandler, type HoldRouteConfig } from '../lib/document-hold-route';
-import { deferAllocationRecompute, enqueueStockAllocationRecompute } from '../lib/stock-allocation-job';
+import { deferAllocationRecompute, deferQueuedAllocationDrain, enqueueStockAllocationRecompute } from '../lib/stock-allocation-job';
 
 /** The five documents, and what their own route is keyed by. */
 export type HoldDocument = 'so' | 'po' | 'grn' | 'pi' | 'do';
@@ -83,8 +83,11 @@ async function resweepAllocation(c: any, sb: any, docNo: string): Promise<void> 
   catch (error) {
     // eslint-disable-next-line no-console
     console.error('[so-hold] allocation enqueue failed:', error);
+    deferAllocationRecompute(c, sb, 'post-hold');
+    return;
   }
-  deferAllocationRecompute(c, sb, 'post-hold');
+  /* Drain the row just queued rather than sweep and then catch it up (two sweeps). */
+  deferQueuedAllocationDrain(c, sb, 'post-hold');
 }
 
 const CONFIGS: Record<HoldDocument, HoldRouteConfig> = {

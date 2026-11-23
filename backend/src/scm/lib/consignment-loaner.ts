@@ -310,88 +310,78 @@ export async function reverseLoaner(
     .eq('source_doc_no', cancelNo);
   if ((alreadyReversed ?? 0) > 0) return errors;
 
-  // Re-derive the original transfer's net OUT @fromWh from THIS doc's own
-  // movements: the canonical OUT leg carries the CS_* type, batch_no, qty and
-  // cost. Net per (product, variant, batch) bucket so a partial original (a
-  // failed leg) only reverses what actually moved.
-  const sel = 'movement_type, warehouse_id, item_code, variant_key, batch_no, qty, total_cost_sen, product_name';
+  // Re-derive the original transfer from THIS doc's own movements: the canonical
+  // OUT leg carries the CS_* type, batch_no and qty. Each OUT is reversed on its
+  // own so the IN that puts it back can name it (reverses_movement_id): the FIFO
+  // trigger then re-opens only what that OUT took from the lots. Merging OUTs
+  // into one IN could name none of them, and a short OUT came back in full, so
+  // the source shelf's lots stood above its stock balance by the short.
+  const sel = 'id, movement_type, item_code, variant_key, batch_no, qty, total_cost_sen, product_name';
   let movsRes = await sb.from('inventory_movements').select(sel)
     .eq('source_doc_type', sourceDocType).eq('source_doc_id', sourceDocId);
   if (movsRes.error && (movsRes.error.message ?? '').includes('batch_no')) {
     movsRes = await sb.from('inventory_movements')
-      .select('movement_type, warehouse_id, item_code, variant_key, qty, total_cost_sen, product_name')
+      .select('id, movement_type, item_code, variant_key, qty, total_cost_sen, product_name')
       .eq('source_doc_type', sourceDocType).eq('source_doc_id', sourceDocId);
   }
   if (movsRes.error) { errors.push(`reverse load: ${movsRes.error.message}`); return errors; }
 
-  type Agg = {
-    item_code: string; variant_key: string; batch_no: string | null;
-    product_name: string | null; net_out: number; out_total_cost: number; out_qty: number;
-  };
-  const byBucket = new Map<string, Agg>();
-  for (const m of (movsRes.data ?? []) as Array<{
-    movement_type: string; warehouse_id: string; item_code: string; variant_key: string | null;
+  const outs = ((movsRes.data ?? []) as Array<{
+    id: string; movement_type: string; item_code: string; variant_key: string | null;
     batch_no?: string | null; qty: number; total_cost_sen: number | null; product_name: string | null;
-  }>) {
-    if (m.movement_type !== 'OUT') continue; // the CS_* leg that left fromWh
-    const variant_key = m.variant_key ?? '';
-    const batch_no = m.batch_no ?? null;
-    const k = `${m.item_code}::${variant_key}::${batch_no ?? ''}`;
-    let agg = byBucket.get(k);
-    if (!agg) { agg = { item_code: m.item_code, variant_key, batch_no, product_name: m.product_name, net_out: 0, out_total_cost: 0, out_qty: 0 }; byBucket.set(k, agg); }
-    const q = Number(m.qty ?? 0);
-    agg.net_out += q; agg.out_qty += q; agg.out_total_cost += Number(m.total_cost_sen ?? 0);
-    if (!agg.product_name) agg.product_name = m.product_name;
-  }
+  }>).filter((m) => m.movement_type === 'OUT' && Number(m.qty ?? 0) > 0);
 
-  /* Run the OPPOSITE transfer: pull each bucket OUT of the consignment side (the
+  /* Run the OPPOSITE transfer per OUT: pull it OUT of the consignment side (the
      original `toWh`) and IN @ the original source (`fromWh`). Both reversal legs
      are written under STOCK_TRANSFER with the '-CANCEL' doc-no so they sidestep
      the CS_* unique index entirely and the idempotency pre-check can find them.
      The reversing OUT lets the FIFO trigger consume the consignment lot; the
-     reversing IN re-opens the source lot at the same weighted cost basis. */
-  for (const b of byBucket.values()) {
-    if (b.net_out <= 0) continue;
-    const unitCost = b.out_qty > 0 ? Math.round(b.out_total_cost / b.out_qty) : 0;
+     reversing IN takes its lot qty and cost from what the original OUT consumed. */
+  for (const o of outs) {
+    const variantKey = o.variant_key ?? '';
+    const batchNo = o.batch_no ?? null;
+    const qty = Number(o.qty);
+    const unitCost = Math.round(Number(o.total_cost_sen ?? 0) / qty);
 
     const { error: outErr } = await sb.from('inventory_movements').insert({
       ...companyCol,
       movement_type:   'OUT',
       warehouse_id:    toWh,                 // consignment side gives the loaner back
-      item_code:    b.item_code,
-      variant_key:     b.variant_key,
-      product_name:    b.product_name,
-      qty:             b.net_out,
+      item_code:    o.item_code,
+      variant_key:     variantKey,
+      product_name:    o.product_name,
+      qty,
       source_doc_type: 'STOCK_TRANSFER',
       source_doc_id:   sourceDocId,
       source_doc_no:   cancelNo,
-      ...(b.batch_no ? { batch_no: b.batch_no } : {}),
+      ...(batchNo ? { batch_no: batchNo } : {}),
       performed_by:    userId,
       notes:           `Consignment loaner cancelled — reversing transfer (value-neutral)`,
     }).select('id').single();
-    if (outErr) { errors.push(`reverse OUT ${b.item_code}: ${outErr.message}`); continue; }
+    if (outErr) { errors.push(`reverse OUT ${o.item_code}: ${outErr.message}`); continue; }
 
     const inOk = await writeMovements(sb, [{
       movement_type:   'IN',
       warehouse_id:    fromWh,               // stock returns to the source shelf
-      item_code:    b.item_code,
-      variant_key:     b.variant_key,
-      product_name:    b.product_name,
-      qty:             b.net_out,
+      item_code:    o.item_code,
+      variant_key:     variantKey,
+      product_name:    o.product_name,
+      qty,
       unit_cost_sen:   unitCost,
+      reverses_movement_id: o.id,
       source_doc_type: 'STOCK_TRANSFER',
       source_doc_id:   sourceDocId,
       source_doc_no:   cancelNo,
-      ...(b.batch_no ? { batch_no: b.batch_no } : {}),
+      ...(batchNo ? { batch_no: batchNo } : {}),
       performed_by:    userId,
       notes:           `Consignment loaner cancelled — reversing transfer (value-neutral)`,
     }], companyId);
-    if (!inOk.ok) errors.push(`reverse IN ${b.item_code}: ${inOk.reason ?? 'unknown'}`);
+    if (!inOk.ok) errors.push(`reverse IN ${o.item_code}: ${inOk.reason ?? 'unknown'}`);
     /* Same as the forward hop: the reversal re-opens a lot at the SOURCE shelf. */
     if (inOk.ok) {
       await reconcileUncostedAfterIn(sb, [{
-        movement_type: 'IN', warehouse_id: fromWh, item_code: b.item_code,
-        variant_key: b.variant_key, qty: b.net_out,
+        movement_type: 'IN', warehouse_id: fromWh, item_code: o.item_code,
+        variant_key: variantKey, qty,
       }], userId);
     }
   }

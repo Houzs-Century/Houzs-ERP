@@ -9,9 +9,11 @@ import { fakeSb } from '../lib/fake-postgrest';
 
 const enqueue = vi.fn(async (_sb: unknown, _reason: string) => {});
 const defer = vi.fn((_c: unknown, _sb: unknown, _where: string) => {});
+const drain = vi.fn((_c: unknown, _sb: unknown, _where: string) => {});
 vi.mock('../lib/stock-allocation-job', () => ({
   enqueueStockAllocationRecompute: (sb: unknown, reason: string) => enqueue(sb, reason),
   deferAllocationRecompute: (c: unknown, sb: unknown, where: string) => defer(c, sb, where),
+  deferQueuedAllocationDrain: (c: unknown, sb: unknown, where: string) => drain(c, sb, where),
 }));
 
 const { mountHoldRoute } = await import('./document-hold-routes');
@@ -37,6 +39,7 @@ const hold = (doc: 'so' | 'po', key: string, onHold: boolean) => app(doc).reques
 beforeEach(() => {
   enqueue.mockClear();
   defer.mockClear();
+  drain.mockClear();
   sb.tables.mfg_sales_orders = [{ doc_no: 'SO-1', status: 'CONFIRMED', company_id: 1, on_hold: false }];
   sb.tables.purchase_orders = [{ id: 'po-1', po_number: 'PO-1', status: 'SUBMITTED', company_id: 1, on_hold: false }];
 });
@@ -47,7 +50,8 @@ describe('SO hold starts a stock-allocation sweep', () => {
     expect(res.status).toBe(200);
     expect(sb.tables.mfg_sales_orders[0]!.on_hold).toBe(true);
     expect(enqueue).toHaveBeenCalledWith(sb, 'so-hold:SO-1');
-    expect(defer).toHaveBeenCalledTimes(1);
+    expect(drain).toHaveBeenCalledTimes(1);
+    expect(defer).not.toHaveBeenCalled();
   });
 
   it('taking it off hold does the same', async () => {
@@ -56,7 +60,8 @@ describe('SO hold starts a stock-allocation sweep', () => {
     expect(res.status).toBe(200);
     expect(sb.tables.mfg_sales_orders[0]!.on_hold).toBe(false);
     expect(enqueue).toHaveBeenCalledWith(sb, 'so-hold:SO-1');
-    expect(defer).toHaveBeenCalledTimes(1);
+    expect(drain).toHaveBeenCalledTimes(1);
+    expect(defer).not.toHaveBeenCalled();
   });
 
   it('a failed queue write does not turn the written hold into an error', async () => {
@@ -64,6 +69,7 @@ describe('SO hold starts a stock-allocation sweep', () => {
     const res = await hold('so', 'SO-1', true);
     expect(res.status).toBe(200);
     expect(defer).toHaveBeenCalledTimes(1);
+    expect(drain).not.toHaveBeenCalled();
   });
 
   it('another company\'s order is not found and starts nothing', async () => {
@@ -78,5 +84,6 @@ describe('SO hold starts a stock-allocation sweep', () => {
     expect(res.status).toBe(200);
     expect(enqueue).not.toHaveBeenCalled();
     expect(defer).not.toHaveBeenCalled();
+    expect(drain).not.toHaveBeenCalled();
   });
 });
