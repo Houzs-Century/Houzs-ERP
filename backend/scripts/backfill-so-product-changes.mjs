@@ -63,7 +63,8 @@ const sql = postgres(DSN, { ssl: 'require', prepare: false, max: 1 });
    it. Their whole history is read: the walk starts from today's lines. */
 async function readHistory(db) {
   const fromTs = `${FROM}T00:00:00+08:00`;
-  const scope = db`
+  /* A fresh fragment per query: each read embeds its own copy. */
+  const scope = () => db`
     with o as (
       select doc_no, company_id, status::text st, so_date, created_at,
              (created_at at time zone 'Asia/Kuala_Lumpur')::date open_day
@@ -88,20 +89,20 @@ async function readHistory(db) {
     select * from dd union select * from am`;
 
   const orders = await db`
-    with s as (${scope})
+    with s as (${scope()})
     select json_build_object('d', o.doc_no, 'c', o.company_id, 'st', o.status::text, 'sd', o.so_date::text, 'ca', o.created_at,
              'od', ((o.created_at at time zone 'Asia/Kuala_Lumpur')::date)::text, 'ac', o.linked_ac_docno) j
       from scm.mfg_sales_orders o join s on s.doc_no = o.doc_no and s.company_id = o.company_id
      where o.status::text not in ('CANCELLED', 'DRAFT')`;
   const lines = await db`
-    with s as (${scope})
+    with s as (${scope()})
     select json_build_object('id', i.id, 'd', i.doc_no, 'c', i.company_id, 'ln', i.line_no, 'ic', i.item_code, 'g', i.item_group, 'q', i.qty,
              'u', i.unit_price_sen, 'ds', i.discount_sen, 't', i.total_sen, 'uc', i.unit_cost_sen, 'lc', i.line_cost_sen, 'x', i.cancelled,
              'ca', i.created_at, 'h', i.variants->>'seatHeight', 'bk', i.variants->>'buildKey', 'fc', i.variants->>'fabricCode') j
       from scm.mfg_sales_order_items i join s on s.doc_no = i.doc_no and s.company_id = i.company_id
      order by i.doc_no, i.line_no`;
   const audit = await db`
-    with s as (${scope})
+    with s as (${scope()})
     select json_build_object('id', l.id, 'd', l.so_doc_no, 'c', l.company_id, 'a', l.action, 's', l.source, 'at', l.created_at, 'by', l.actor_name_snapshot,
              'f', (select jsonb_agg(fc) from jsonb_array_elements(l.field_changes) fc
                     where fc->>'field' in ('itemCode', 'qty', 'unitPriceSen', 'discountSen', 'cancelled', 'itemGroup', 'unitCostSen', 'spec', 'sofaBuild',
@@ -118,7 +119,7 @@ async function readHistory(db) {
                  or (fc->>'field' = 'itemCode' and fc ? 'from') or fc->>'field' like 'line\_%'))
      order by l.so_doc_no, l.created_at`;
   const revisions = await db`
-    with s as (${scope})
+    with s as (${scope()})
     select json_build_object('d', r.so_doc_no, 'c', r.company_id, 'rev', r.revision, 'amd', r.amendment_id, 'at', r.created_at,
              'L', (select json_agg(json_build_object('id', x->>'id', 'ln', x->'line_no', 'ic', x->>'item_code', 'g', x->>'item_group', 'q', x->'qty',
                        'u', x->'unit_price_sen', 'ds', x->'discount_sen', 't', x->'total_sen', 'uc', x->'unit_cost_sen', 'lc', x->'line_cost_sen',
@@ -128,7 +129,7 @@ async function readHistory(db) {
       from scm.so_revisions r join s on s.doc_no = r.so_doc_no and s.company_id = r.company_id
      where r.amendment_id is not null`;
   const amendments = await db`
-    with s as (${scope})
+    with s as (${scope()})
     select json_build_object('id', a.id, 'd', a.so_doc_no, 'c', a.company_id, 'no', a.amendment_no, 'lane', a.lane, 'ap', a.so_approved_at,
              'cr', a.created_at, 'rb', a.requested_by, 'reason', a.reason,
              'L', (select json_agg(json_build_object('ct', l.change_type, 'sid', l.sales_order_item_id, 'nic', l.new_item_code, 'nq', l.new_qty,
