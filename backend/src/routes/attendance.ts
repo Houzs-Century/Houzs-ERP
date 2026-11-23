@@ -19,7 +19,7 @@ import type { Context } from "hono";
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lte } from "drizzle-orm";
 import type { Env } from "../types";
 import { getDb } from "../db/client";
-import { hr_attendance, hr_employees, hr_ot_claims, hr_payslips } from "../db/schema";
+import { hr_attendance, hr_employees, hr_leave_requests, hr_ot_claims, hr_payslips, hr_working_hours } from "../db/schema";
 import { requireActiveCompanyId } from "../scm/lib/companyScope";
 import { todayMyt } from "../scm/lib/my-time";
 import { hasPermission } from "../services/permissions";
@@ -27,8 +27,9 @@ import { checkPunchLocation } from "../scm/shared/hr-attendance";
 import { attendanceView, planPunch, punchGateRefusal, type AttendanceRow } from "./lib/hr-attendance-view";
 import { loadSites, loadAttendanceSettings } from "./lib/hr-attendance-store";
 import { parseOtSegment } from "./lib/hr-ot";
+import { APPLICABLE_LEAVE_TYPES, parseLeaveRequest } from "./lib/hr-leave";
 import { shiftRulesResolver } from "./lib/hr-shift-store";
-import { closeForgottenAndSync, syncDayFromPunch } from "./lib/hr-labor-store";
+import { applyDayDock, closeForgottenAndSync, syncDayFromPunch } from "./lib/hr-labor-store";
 import { computePeriod } from "./lib/hr-payroll-store";
 import { slipOut, type SlipRow } from "./hr-payroll";
 
@@ -436,5 +437,126 @@ attendance.post("/ot/:id/review", async (c: Ctx) => {
     .where(and(eq(hr_ot_claims.id, id), eq(hr_ot_claims.company_id, co.companyId), eq(hr_ot_claims.status, "PENDING")))
     .returning({ id: hr_ot_claims.id });
   if (!done.length) return c.json({ error: "not_found", message: "That overtime is gone or already reviewed." }, 404);
+  return c.json({ ok: true });
+});
+
+/* ── self-service leave (请假) ─────────────────────────────────────────────
+   A worker files a leave type (annual / medical / unpaid), a date range and a
+   reason; a supervisor with hr.leave.approve approves or rejects. An approval
+   stamps each day in the range onto hr_attendance with that leave status, which
+   payroll already prices — paid leave is not docked, unpaid is not paid. The
+   leave types ARE the attendance leave statuses, so there is no second list to
+   keep in step. Account-based like /punch; only the review is gated, in-handler. */
+const canApproveLeave = (c: Ctx): boolean => {
+  const u = c.get("user");
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- tests build AuthUser without permissions_set
+  return hasPermission(u.permissions_set ?? u.permissions, "hr.leave.approve");
+};
+
+type LrRow = { id: number; leave_status: string; start_date: string; end_date: string; reason: string; status: string; reject_reason: string | null };
+const lrOut = (r: LrRow) => ({ id: r.id, leaveStatus: r.leave_status, startDate: r.start_date, endDate: r.end_date, reason: r.reason, status: r.status, rejectReason: r.reject_reason });
+
+attendance.get("/leave", async (c: Ctx) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const db = getDb(c.env);
+  const canApprove = canApproveLeave(c);
+  const emp = await myEmployee(db, co.companyId, c.get("user").id);
+  const since = todayMyt(-120);
+  const mine = emp
+    ? (
+        await db
+          .select()
+          .from(hr_leave_requests)
+          .where(and(eq(hr_leave_requests.company_id, co.companyId), eq(hr_leave_requests.employee_id, emp.id), gte(hr_leave_requests.start_date, since)))
+          .orderBy(desc(hr_leave_requests.start_date), desc(hr_leave_requests.id))
+      ).map((r) => lrOut(r as LrRow))
+    : [];
+  let pending: Array<ReturnType<typeof lrOut> & { employeeName: string; empNo: string }> = [];
+  if (canApprove) {
+    const rows = await db
+      .select({ c: hr_leave_requests, name: hr_employees.name, emp_no: hr_employees.emp_no })
+      .from(hr_leave_requests)
+      .innerJoin(hr_employees, eq(hr_employees.id, hr_leave_requests.employee_id))
+      .where(and(eq(hr_leave_requests.company_id, co.companyId), eq(hr_leave_requests.status, "PENDING")))
+      .orderBy(asc(hr_leave_requests.start_date), asc(hr_leave_requests.id));
+    pending = rows.map((r) => ({ ...lrOut(r.c as LrRow), employeeName: r.name, empNo: r.emp_no }));
+  }
+  return c.json({ types: APPLICABLE_LEAVE_TYPES, canApprove, mine, pending });
+});
+
+attendance.post("/leave", async (c: Ctx) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const db = getDb(c.env);
+  const userId = c.get("user").id;
+  const emp = await myEmployee(db, co.companyId, userId);
+  if (!emp) return c.json(NOT_LINKED, 403);
+  if (emp.status !== "ACTIVE") return c.json({ error: "not_active", message: "Your employee record is not active. Ask HR." }, 403);
+  const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+  const parsed = parseLeaveRequest(String(body.leaveType ?? ""), String(body.startDate ?? ""), String(body.endDate ?? ""));
+  if (!parsed.ok) return c.json({ error: "bad_leave", message: parsed.message }, 400);
+  const reason = typeof body.reason === "string" ? body.reason.trim().slice(0, 500) : "";
+  const [row] = await db
+    .insert(hr_leave_requests)
+    .values({ company_id: co.companyId, employee_id: emp.id, leave_status: parsed.leaveStatus, start_date: parsed.days[0], end_date: parsed.days[parsed.days.length - 1], reason, status: "PENDING", created_by: userId })
+    .returning({ id: hr_leave_requests.id });
+  return c.json({ id: row.id }, 201);
+});
+
+attendance.delete("/leave/:id", async (c: Ctx) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id) || id <= 0) return c.json({ error: "bad_id" }, 400);
+  const db = getDb(c.env);
+  const emp = await myEmployee(db, co.companyId, c.get("user").id);
+  if (!emp) return c.json(NOT_LINKED, 403);
+  const done = await db
+    .delete(hr_leave_requests)
+    .where(and(eq(hr_leave_requests.id, id), eq(hr_leave_requests.company_id, co.companyId), eq(hr_leave_requests.employee_id, emp.id), eq(hr_leave_requests.status, "PENDING")))
+    .returning({ id: hr_leave_requests.id });
+  if (!done.length) return c.json({ error: "not_found", message: "That request is gone or already reviewed." }, 404);
+  return c.json({ ok: true });
+});
+
+attendance.post("/leave/:id/review", async (c: Ctx) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  if (!canApproveLeave(c)) return c.json({ error: "forbidden", message: "You cannot approve leave." }, 403);
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id) || id <= 0) return c.json({ error: "bad_id" }, 400);
+  const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+  const decision = body.decision === "approve" || body.decision === "reject" ? body.decision : null;
+  if (!decision) return c.json({ error: "bad_decision", message: "Approve or reject the leave?" }, 400);
+  const rejectReason = typeof body.reason === "string" ? body.reason.trim().slice(0, 300) : "";
+  const db = getDb(c.env);
+  const at = new Date().toISOString();
+  const by = c.get("user").id;
+  // Claim the pending row atomically, so two approvers cannot both act on it.
+  const claimed = await db
+    .update(hr_leave_requests)
+    .set({ status: decision === "approve" ? "APPROVED" : "REJECTED", reject_reason: decision === "reject" ? rejectReason || null : null, reviewed_by: by, reviewed_at: at, updated_at: at })
+    .where(and(eq(hr_leave_requests.id, id), eq(hr_leave_requests.company_id, co.companyId), eq(hr_leave_requests.status, "PENDING")))
+    .returning();
+  const lr = claimed.at(0) as (LrRow & { employee_id: number }) | undefined;
+  if (!lr) return c.json({ error: "not_found", message: "That request is gone or already reviewed." }, 404);
+  if (decision === "approve") {
+    // Stamp each day as the leave status, no times — payroll reads the status,
+    // and a leave day carries no worked hours and no short-hour dock.
+    const parsed = parseLeaveRequest(lr.leave_status, lr.start_date, lr.end_date);
+    const days = parsed.ok ? parsed.days : [];
+    for (const d of days) {
+      const existing = (
+        await db.select({ id: hr_attendance.id }).from(hr_attendance).where(and(eq(hr_attendance.company_id, co.companyId), eq(hr_attendance.employee_id, lr.employee_id), eq(hr_attendance.work_date, d))).limit(1)
+      ).at(0);
+      const values = { status: lr.leave_status, clock_in_at: null, clock_out_at: null, in_source: null, out_source: null, updated_at: at, updated_by: by };
+      const attId = existing
+        ? (await db.update(hr_attendance).set(values).where(eq(hr_attendance.id, existing.id)).returning({ id: hr_attendance.id }))[0].id
+        : (await db.insert(hr_attendance).values({ ...values, company_id: co.companyId, employee_id: lr.employee_id, work_date: d }).returning({ id: hr_attendance.id }))[0].id;
+      await db.delete(hr_working_hours).where(and(eq(hr_working_hours.attendance_id, attId), eq(hr_working_hours.source, "AUTO")));
+      await applyDayDock(db, co.companyId, lr.employee_id, d, 0, "");
+    }
+  }
   return c.json({ ok: true });
 });

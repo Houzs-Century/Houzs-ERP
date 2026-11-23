@@ -1142,6 +1142,34 @@ export const hr_ot_claims = pgTable(
   ],
 );
 
+// HC-0125 self-service leave: a worker files a leave status (ANNUAL_LEAVE /
+// MEDICAL_LEAVE / UNPAID_LEAVE) for a date range, a supervisor (hr.leave.approve)
+// approves, and the approval writes each day onto hr_attendance with that leave
+// status (which payroll already prices). No leave-balance tracking yet.
+export const hr_leave_requests = pgTable(
+  "hr_leave_requests",
+  {
+    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    company_id: bigint("company_id", { mode: "number" }).notNull(),
+    employee_id: bigint("employee_id", { mode: "number" }).notNull(),
+    leave_status: text("leave_status").notNull(),
+    start_date: date("start_date", { mode: "string" }).notNull(),
+    end_date: date("end_date", { mode: "string" }).notNull(),
+    reason: text("reason").notNull().default(""),
+    status: text("status").notNull().default("PENDING"),
+    reject_reason: text("reject_reason"),
+    reviewed_by: integer("reviewed_by"),
+    reviewed_at: timestamp("reviewed_at", { withTimezone: true, mode: "string" }),
+    created_by: integer("created_by"),
+    created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+    updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("idx_hr_leave_requests_emp").on(t.company_id, t.employee_id, t.start_date),
+    index("idx_hr_leave_requests_status").on(t.company_id, t.status, t.start_date),
+  ],
+);
+
 export const hr_attendance = pgTable(
   "hr_attendance",
   {
