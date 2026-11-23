@@ -27,7 +27,6 @@ const MIGRATED = [
   'pages/scm-v2/SalesInvoiceNew.tsx',
   'pages/scm-v2/ConsignmentNoteNew.tsx',
   'pages/scm-v2/ConsignmentOrderNew.tsx',
-  'pages/scm-v2/ConsignmentReturnNew.tsx',
   'pages/scm-v2/StockTransferNew.tsx',
   'pages/scm-v2/StockAdjustmentNew.tsx',
   'pages/scm-v2/PurchaseOrderNew.tsx',

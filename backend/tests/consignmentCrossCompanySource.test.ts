@@ -86,12 +86,12 @@ describe('consignment-notes — the create and add-line paths refuse foreign sou
 
 describe('consignment-returns — the create and add-line paths refuse foreign sources', () => {
   it('the create asserts the note line ids in-company', () => {
-    const seg = slice(CR, "consignmentReturns.post('/', async (c) => {", 'insertHeader(');
+    const seg = slice(CR, 'export const createConsignmentReturnHandler', 'insertHeader(');
     expect(seg).toContain("assertSourceLinesInCompany(sb, c, 'consignment_delivery_order_items'");
   });
 
   it('the add-line path carries the same guard', () => {
-    const seg = slice(CR, "consignmentReturns.post('/:id/items'", 'buildItemRow(id, it');
+    const seg = slice(CR, 'export const addConsignmentReturnItemHandler', 'buildItemRow(id, it');
     expect(seg).toContain("assertSourceLinesInCompany(sb, c, 'consignment_delivery_order_items'");
   });
 });
