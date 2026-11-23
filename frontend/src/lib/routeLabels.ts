@@ -120,6 +120,7 @@ export const SCM_SEGMENT_LABELS: Record<string, SegmentLabel> = {
   "forecast": "Forecast P&L",
   "finance-dashboard": "Dashboard",
   "daily-bank": "Daily Bank",
+  "daily-bank-cashbook": "Daily Bank (cash book)",
   "merchant-recon": "Merchant Reports",
   "bank-recon": "Bank Statements",
   "unmatched-payments": "Unmatched Payments",

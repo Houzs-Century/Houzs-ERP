@@ -17,7 +17,7 @@ const BOARD: DailyBankBoard = {
   date: '2026-09-29',
   blocks: [
     {
-      accountCode: '310-0020', accountName: 'CASH AT BANK - HLBB',
+      accountCode: '310-0020', accountName: 'CASH AT BANK - HLBB', start: null,
       openingSen: 6_172_699, inSen: 285_000, outSen: 44_264, closingSen: 6_413_435,
       receipts: [{ jeNo: 'JE-2', sourceType: 'SOPAY', sourceDocNo: 'pay-1', docNo: '2990-MOR-2609-009', party: 'Hookka', note: 'Settle invoice HV-INV-0039', amountSen: 285_000 }],
       payouts: [{ jeNo: 'JE-4', sourceType: 'PV', sourceDocNo: 'PV-0432', docNo: 'PV-0432', party: 'Tan Yong Hong', note: 'Claude - Sep', amountSen: 44_264 }],
@@ -27,7 +27,7 @@ const BOARD: DailyBankBoard = {
       transitSen: 3_750_352, availableWithTransitSen: 9_080_187,
     },
     {
-      accountCode: '310-0030', accountName: 'CASH AT BANK - ALLIANCE',
+      accountCode: '310-0030', accountName: 'CASH AT BANK - ALLIANCE', start: null,
       openingSen: 2_433_855, inSen: 0, outSen: 0, closingSen: 2_433_855, receipts: [], payouts: [],
       pending: [], pendingSen: 0, availableSen: 2_433_855, transit: [], transitSen: 0, availableWithTransitSen: 2_433_855,
     },
@@ -42,6 +42,8 @@ const BOARD: DailyBankBoard = {
   availableSen: 7_763_690,
   unassignedTransit: [{ acquirerCode: 'Untagged bank', accountCode: '326-0000', accountName: 'CARD MACHINE CLEARING (EDC)', balanceSen: 336_500, bankAccountCode: null }],
   unassignedPending: [],
+  book: 'ledger',
+  notStarted: [],
   note: 'test note',
 };
 
@@ -191,5 +193,17 @@ describe("DailyBank Board (the redesign's Money today)", () => {
     const awaiting = screen.getByLabelText('Awaiting your approval');
     expect(awaiting.textContent).toContain('UNICOM MARKETING SDN BHD · BILL IV2026-09-007 · 2990-HPV-2609-023');
     expect(within(awaiting).getByRole('link', { name: /Review vouchers/ }).getAttribute('href')).toBe('/scm/payment-vouchers?status=CHECKED');
+  });
+});
+
+/* The original stays the original (owner 2026-11-23: 原版的daily bank还是要保留哦，我这
+   算是新的daily bank): the cash book is its own page; this one says nothing of it. */
+describe('DailyBank — the original, beside the cash book', () => {
+  test('its views are Board, Accounts and Daily close; nothing about the cash book', () => {
+    renderAt('?view=board');
+    expect(screen.getByRole('heading', { name: 'Daily Bank' })).toBeTruthy();
+    expect(within(screen.getByRole('group', { name: 'View' })).getAllByRole('button').map((b) => b.textContent)).toEqual(['Board', 'Accounts', 'Daily close']);
+    expect(screen.queryByText(/cash book/i)).toBeNull();
+    expect(screen.queryByRole('note')).toBeNull();
   });
 });

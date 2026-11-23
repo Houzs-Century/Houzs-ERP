@@ -825,6 +825,9 @@ export const NAV_TABS: NavTab[] = [
           { to: "/scm/merchant-recon", label: "Merchant reports", icon: CreditCard, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.bank"] },
           { to: "/scm/bank-recon", label: "Bank statements", icon: Banknote, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.bank"] },
           { to: "/scm/daily-bank", label: "Daily Bank", icon: Landmark, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.bank"] },
+          // The owner's cash book, a second Daily Bank beside the original (2026-11-23:
+          // 原版的daily bank还是要保留哦，我这算是新的daily bank) — same gate.
+          { to: "/scm/daily-bank-cashbook", label: "Daily Bank (cash book)", icon: Wallet, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.bank"] },
           // Card AND transfer payments not matched yet, one list (owner
           // 2026-09-30: 我有没有一个表是显示全部还没 match 的); the recon key family.
           { to: "/scm/unmatched-payments", label: "Unmatched Payments", icon: AlertCircle, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.bank"] },
