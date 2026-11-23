@@ -769,6 +769,22 @@ export function useCancelStockTake() {
   });
 }
 
+/* Reopen a CANCELLED take → OPEN, re-snapshotting its lines to current stock
+   (owner 2026-11-23). `lineCount` is how many lines the fresh snapshot holds. */
+export function useReopenStockTake() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      authedFetch<{ take: StockTakeRow; lineCount: number }>(`/stock-takes/${id}/reopen`, {
+        method: 'PATCH', body: '{}',
+      }),
+    onSuccess: (_data, id) => {
+      qc.invalidateQueries({ queryKey: ['stock-takes'] });
+      qc.invalidateQueries({ queryKey: ['stock-takes', id] });
+    },
+  });
+}
+
 export function useDeleteStockTake() {
   const qc = useQueryClient();
   return useMutation({

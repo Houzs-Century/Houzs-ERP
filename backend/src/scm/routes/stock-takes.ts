@@ -43,6 +43,7 @@
 //   PATCH  /stock-takes/:id/reject     — PENDING_APPROVAL → OPEN (supervisor returns it)
 //   PATCH  /stock-takes/:id/cancel     — OPEN → CANCELLED
 //   PATCH  /stock-takes/:id/reverse    — POSTED → CANCELLED (undo: reverses the ADJUSTMENT movements)
+//   PATCH  /stock-takes/:id/reopen     — CANCELLED → OPEN (re-snapshots the sheet to current stock)
 //   DELETE /stock-takes/:id            — OPEN only
 // ----------------------------------------------------------------------------
 
@@ -1078,6 +1079,102 @@ stockTakes.patch('/:id/cancel', async (c) => {
 
   return c.json({ take: data });
 });
+
+// ── Reopen CANCELLED → OPEN (fresh snapshot) ──────────────────────────
+// A cancelled take is otherwise terminal (see /reverse — "to count again, start
+// a new take"). Reopen (owner 2026-11-23) brings one back to OPEN to count again
+// WITHOUT a new document, and RE-SNAPSHOTS every line's system_qty from current
+// stock over the take's own scope — so the sheet is never counted against a
+// stale, create-time balance (which is why a plain un-cancel would be worse than
+// a new take). The previous counts are dropped: a reopen is a fresh count. Works
+// from either cancel path (OPEN→CANCELLED, or a reversed POSTED→CANCELLED whose
+// stock the reverse already put back).
+/* Exported for the vitest harness (same reason as postStockTakeHandler — the
+   supabaseAuth bridge cannot run there). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Supabase client / Hono context without generated types; same as every handler in this file
+export const reopenStockTakeHandler = async (c: any) => {
+  const sb = c.get('supabase');
+  const id = c.req.param('id');
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+
+  // Scope needed to re-snapshot; also the ownership + state check.
+  const { data: prev, error: prevErr } = await scopeToCompanyId(
+    sb.from('stock_takes')
+      .select('status, take_no, company_id, warehouse_id, scope_type, scope_value, nonzero_only')
+      .eq('id', id),
+    co.companyId,
+  ).maybeSingle();
+  if (prevErr) return c.json({ error: 'load_failed', reason: prevErr.message }, 500);
+  if (!prev) return c.json(NOT_THIS_COMPANY, 404);
+  const head = prev as {
+    status: string; take_no: string; company_id: number | null; warehouse_id: string;
+    scope_type: string; scope_value: string | null; nonzero_only: boolean | null;
+  };
+  if (head.status !== 'CANCELLED') {
+    return c.json({ error: 'not_cancelled', message: 'Only a cancelled stock take can be reopened.' }, 409);
+  }
+
+  // The warehouse is still ours (same belt-and-braces as createStockTakeHandler).
+  const whCheck = await assertWarehouseInCompany(sb, head.warehouse_id, co.companyId);
+  if (!whCheck.ok) return c.json(whCheck.body, whCheck.status);
+
+  const pf = await assertAuditWritable(sb, { entityType: 'STOCK_TAKE', entityId: id, action: 'UPDATE', companyId: head.company_id });
+  if (!pf.ok) return c.json(auditUnavailableBody(), 409);
+
+  // Fresh snapshot BEFORE the flip — a scope read failure leaves the take CANCELLED.
+  const scoped = await fetchScopedSkus(
+    sb, head.warehouse_id,
+    head.scope_type as 'ALL' | 'CATEGORY' | 'CODE_PREFIX' | 'NONZERO',
+    head.scope_value, head.nonzero_only === true, c,
+  );
+  if (scoped.error) return c.json({ error: 'scope_load_failed', reason: scoped.error }, 500);
+  if (scoped.rows.length === 0) {
+    return c.json({ error: 'scope_empty', reason: 'No SKUs match the scope now; nothing to reopen onto.' }, 400);
+  }
+
+  // Single-flight flip CANCELLED → OPEN; only the winner rewrites the lines.
+  const { data: flipped, error: fErr } = await scopeToCompanyId(sb.from('stock_takes')
+    .update({ status: 'OPEN', cancelled_at: null, posted_at: null })
+    .eq('id', id), co.companyId).eq('status', 'CANCELLED')
+    .select('id, take_no, company_id').maybeSingle();
+  if (fErr) return c.json({ error: 'reopen_failed', reason: fErr.message }, 500);
+  if (!flipped) return c.json({ error: 'not_cancelled', message: 'Only a cancelled stock take can be reopened.' }, 409);
+
+  // Replace the sheet with the fresh snapshot. If the insert fails the status is
+  // rolled back to CANCELLED so the document is never left OPEN-and-broken (a
+  // later reopen re-snapshots from scratch).
+  const { error: delErr } = await sb.from('stock_take_lines').delete().eq('stock_take_id', id);
+  if (delErr) {
+    await scopeToCompanyId(sb.from('stock_takes').update({ status: 'CANCELLED', cancelled_at: new Date().toISOString() }).eq('id', id), co.companyId);
+    return c.json({ error: 'reopen_lines_failed', reason: delErr.message }, 500);
+  }
+  const lineRows = scoped.rows.map((r) => ({
+    stock_take_id: id,
+    item_code:  r.item_code,
+    product_name:  r.product_name,
+    variant_key:   r.variant_key,
+    variant_label: r.variant_label,
+    system_qty:    r.qty,
+    counted_qty:   null,
+  }));
+  const { error: insErr } = await sb.from('stock_take_lines').insert(stampCompany(lineRows, c));
+  if (insErr) {
+    await scopeToCompanyId(sb.from('stock_takes').update({ status: 'CANCELLED', cancelled_at: new Date().toISOString() }).eq('id', id), co.companyId);
+    return c.json({ error: 'reopen_lines_failed', reason: insErr.message }, 500);
+  }
+
+  const reopened = flipped as unknown as { take_no: string; company_id: number | null };
+  await recordEntityAudit(sb, {
+    entityType: 'STOCK_TAKE', entityId: id, entityDocNo: reopened.take_no, action: 'UPDATE',
+    actor: c.get('houzsUser'), companyId: reopened.company_id, statusSnapshot: 'OPEN',
+    note: `Reopened — ${lineRows.length} line(s) re-snapshotted to current stock`,
+    fieldChanges: statusChange('CANCELLED', 'OPEN'),
+  });
+
+  return c.json({ take: flipped, lineCount: lineRows.length });
+};
+stockTakes.patch('/:id/reopen', reopenStockTakeHandler);
 
 // ── Reverse POSTED → CANCELLED (undo a posted count) ──────────────────
 // Every other inventory module's cancel reverses its stock; a POSTED stock
