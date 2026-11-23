@@ -34,7 +34,7 @@ export const LEVELS: { value: LevelGroup; short: string; name: string; help: str
     value: "department",
     short: "L1",
     name: "Personal",
-    help: "Their own mailbox and their department's shared mailbox. You can tick colleagues in the same department.",
+    help: "Their own mailbox only. Tick their department's shared mailbox or colleagues in the same department to open them.",
   },
   {
     value: "department_all",
@@ -52,7 +52,7 @@ export function levelGroup(level: MailScopeLevel): LevelGroup {
 
 export function levelLabel(level: MailScopeLevel): string {
   const l = LEVELS.find((x) => x.value === levelGroup(level))!;
-  return `${l.short} · ${l.name}${level === "personal" ? " (no department mailbox)" : ""}`;
+  return `${l.short} · ${l.name}`;
 }
 
 /** L1 choices: own mailboxes of colleagues who share a department with `u`. */
@@ -64,17 +64,15 @@ export function colleagueMailboxes(u: TeamMember, users: TeamMember[], addresses
   return addresses.filter((a) => a.active && a.assignedUserId != null && mates.has(a.assignedUserId));
 }
 
-/** Department mailboxes that reach `u` through their own departments (no tick). */
+/** Their own departments' shared mailboxes: at L1 each is a tick (owner 2026-11-23), at L2 included. */
 export function ownDepartmentMailboxes(u: TeamMember, addresses: MailAddress[]): MailAddress[] {
   const mine = new Set(departmentIdsOf(u));
   return addresses.filter((a) => a.active && a.assignedUserId == null && a.departmentId != null && mine.has(a.departmentId));
 }
 
-/** A grant the person already has without it (their own mailbox, or a department
- *  mailbox of their own departments). Older data carries many; they are not shown. */
+/** A grant the person has anyway: their own mailbox. A department mailbox grant now matters (the L1 tick). */
 export function isRedundantGrant(a: MailAddress, u: TeamMember): boolean {
-  if (a.assignedUserId === u.id) return true;
-  return a.assignedUserId == null && a.departmentId != null && departmentIdsOf(u).includes(a.departmentId);
+  return a.assignedUserId === u.id;
 }
 
 export type AccessDraft = { level: MailScopeLevel; grants: Set<string>; departments: Set<number> };
@@ -301,7 +299,7 @@ export function AccessEditPanel({
   const colleagues = colleagueMailboxes(u, users, addresses);
   const ownShared = ownDepartmentMailboxes(u, addresses);
   const earlier = [...grants, ...before.grants]
-    .filter((id, i, all) => all.indexOf(id) === i && !colleagues.some((c) => c.id === id))
+    .filter((id, i, all) => all.indexOf(id) === i && !colleagues.some((c) => c.id === id) && !ownShared.some((s) => s.id === id))
     .map((id) => addresses.find((a) => a.id === id))
     .filter((a): a is MailAddress => !!a && !isRedundantGrant(a, u));
   const plan = planAccessSave(before, { level, grants, departments: depts });
@@ -398,7 +396,9 @@ export function AccessEditPanel({
 
       {group === "department" && (
         <PanelSection title="2. Colleagues they can read">
-          {ownShared.map((a) => <Included key={a.id} label={a.address} sub="Department mailbox - included" />)}
+          {ownShared.map((a) => (
+            <Tick key={a.id} checked={grants.has(a.id)} disabled={busy} onChange={() => setGrants(flip(grants, a.id))} label={a.address} sub="Department mailbox - tick to open it" />
+          ))}
           {colleagues.length === 0 ? (
             <p className="px-2 text-[11.5px] text-ink-muted">No colleague in the same department has a mailbox.</p>
           ) : (
