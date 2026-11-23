@@ -17,8 +17,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { describe, expect, test, vi } from 'vitest';
 import type { ChangedLine, ProductChangeRow, ProductChangeType } from '../../vendor/scm/lib/product-change-queries';
 
-const { fetchMock } = vi.hoisted(() => ({ fetchMock: vi.fn(async (_path: string): Promise<unknown> => ({})) }));
+const { fetchMock, openIntent } = vi.hoisted(() => ({ fetchMock: vi.fn(async (_path: string): Promise<unknown> => ({})), openIntent: vi.fn() }));
 vi.mock('../../vendor/scm/lib/authed-fetch', () => ({ authedFetch: (path: string) => fetchMock(path) }));
+vi.mock('../../lib/workspaceTabs', async (actual) => ({ ...(await actual<typeof import('../../lib/workspaceTabs')>()), markWorkspaceOpenIntent: openIntent }));
 
 import { ProductChangesSummaryTab, ProductChangesTab } from './ProductChanges';
 
@@ -104,6 +105,16 @@ describe('Product changes, by month', () => {
     await screen.findByText('HC-SO-000777');
     expect(rowOf('HC-SO-000777').textContent).toContain('Imported');
     expect(rowOf('HC-SO-T3').textContent).not.toContain('Imported');
+  });
+
+  test("an order opens in its own tab, so the order's Back returns to the report", async () => {
+    /* Owner 2026-11-23: 「我点开so后要返回这里」. */
+    draw('detail', 'tab=changes&from=2026-10-01&to=2026-10-31');
+    const link = await screen.findByRole('link', { name: 'HC-SO-T3' });
+    expect(link.getAttribute('href')).toBe('/scm/sales-orders/HC-SO-T3');
+    expect(link.getAttribute('title')).toBe('Open HC-SO-T3 in a new tab');
+    fireEvent.click(link, { button: 0 });
+    expect(openIntent).toHaveBeenCalledWith(true);
   });
 
   test('picking another month reads it', async () => {
