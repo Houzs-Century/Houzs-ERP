@@ -25,6 +25,7 @@
 
 import { scopeToCompanyId } from './companyScope';
 import { buildVariantSummary } from '../shared';
+import { isServiceLine } from '../shared/service-sku';
 import { recomputeDoTotals } from './do-totals';
 import { recomputeTotals as recomputeSiTotals } from './si-from-do';
 import { recomputeSiPaid } from './si-order-deposit';
@@ -122,6 +123,27 @@ export async function openProductLineAfterDo(
     siQtyOnDoLine = siLines.reduce((s, l) => s + Number(l.qty ?? 0), 0);
   }
   return { ok: true, target, doLine, siLines, siQtyOnDoLine };
+}
+
+export type ProductRemoveGate =
+  | { ok: true; skip: true }
+  | ({ ok: true; skip: false } & OpenProductLineOk)
+  | { ok: false; status: 403 | 404 | 409; body: Record<string, unknown> };
+
+/** The DELETE route's gate for a super-admin PRODUCT-line removal: reads the
+ *  line, SKIPS a charge line (the fee path handles those), else runs the shared
+ *  gate. */
+export async function openProductLineRemove(
+  sb: Db, docNo: string, itemId: string, companyId: number, forbidden: AfterDoRefusal,
+): Promise<ProductRemoveGate> {
+  const { data: ln, error } = await scopeToCompanyId(
+    sb.from('mfg_sales_order_items').select('item_code, item_group').eq('doc_no', docNo).eq('id', itemId), companyId,
+  ).maybeSingle();
+  const l = error ? null : (ln as { item_code?: string | null; item_group?: string | null } | null);
+  if (l && isServiceLine({ itemGroup: l.item_group ?? null, itemCode: l.item_code ?? null })) return { ok: true, skip: true };
+  const open = await openProductLineAfterDo(sb, true, docNo, itemId, companyId, forbidden);
+  if (!open.ok) return open;
+  return { ok: true, skip: false, target: open.target, doLine: open.doLine, siLines: open.siLines, siQtyOnDoLine: open.siQtyOnDoLine };
 }
 
 /** A qty change is only unambiguous when the single DO line carries the WHOLE
@@ -298,4 +320,87 @@ export async function propagateLineEditAfterDo(
     if (!ok) siCopyFailed.push(head.invoice_number ?? head.sales_invoice_id);
   }
   return { doCopyFailed, siCopyFailed };
+}
+
+const removeEmptiesDo = (doLabel: string): AfterDoRefusal => ({
+  error: 'after_do_remove_empties_do',
+  message: `This is the only line on Delivery Order ${doLabel}. Cancel the Delivery Order instead of removing its last line.`,
+});
+const removeEmptiesSi = (invoiceNo: string): AfterDoRefusal => ({
+  error: 'after_do_remove_empties_si',
+  message: `This is the only line on Sales Invoice ${invoiceNo}. Cancel the invoice instead of removing its last line.`,
+});
+
+/** REMOVE — a super admin deletes a frozen PRODUCT line that a single live DO
+ *  carries. Its invoice line(s) are deleted and each invoice re-totalled / paid
+ *  re-rolled / revenue re-posted; the DO line is deleted and the shipped stock
+ *  returned (the DO's own resync), then the caller deletes the SO line. Refused
+ *  when it would leave a shipped Delivery Order OR an invoice with no lines (the
+ *  DB refuses an empty shipped DO) — cancel that document instead. The ids were
+ *  read BEFORE the SO line delete, which would otherwise null the links. */
+export async function propagateLineRemoveAfterDo(
+  sb: Db, who: Who,
+  args: { doLine: DoLineOfSoLine; target: AfterDoTarget; siLines: ReadonlyArray<SiLineRow>; deps: AfterDoLineDeps },
+): Promise<{ ok: true; doCopyFailed: string[]; siCopyFailed: string[] } | { ok: false; status: 409; body: AfterDoRefusal }> {
+  const { doLine, target, siLines, deps } = args;
+  const label = target.do_number ?? target.id;
+
+  // Never leave a shipped Delivery Order with no lines (a DB trigger refuses it).
+  const { data: doRows, error: doErr } = await scopeToCompanyId(
+    sb.from('delivery_order_items').select('id').eq('delivery_order_id', target.id), who.companyId,
+  );
+  if (doErr) return { ok: false, status: 409, body: downstreamCheckFailed("the Delivery Order's lines") };
+  if (((doRows ?? []) as unknown[]).length <= 1) return { ok: false, status: 409, body: removeEmptiesDo(label) };
+
+  const byInvoice = new Map<string, { head: SiLineRow; ids: string[] }>();
+  for (const l of siLines) {
+    const g = byInvoice.get(l.sales_invoice_id) ?? { head: l, ids: [] };
+    g.ids.push(l.id); byInvoice.set(l.sales_invoice_id, g);
+  }
+  // Never empty a live invoice either.
+  for (const { head, ids } of byInvoice.values()) {
+    const { data: siAll, error: siErr } = await scopeToCompanyId(
+      sb.from('sales_invoice_items').select('id').eq('sales_invoice_id', head.sales_invoice_id), who.companyId,
+    );
+    if (siErr) return { ok: false, status: 409, body: downstreamCheckFailed("the Sales Invoice's lines") };
+    if (((siAll ?? []) as unknown[]).length <= ids.length) return { ok: false, status: 409, body: removeEmptiesSi(head.invoice_number ?? head.sales_invoice_id) };
+  }
+
+  const doCopyFailed: string[] = [];
+  const siCopyFailed: string[] = [];
+
+  // Invoice lines FIRST (they reference the DO line), then re-derive each invoice.
+  for (const { head, ids } of byInvoice.values()) {
+    const { error: delErr } = await scopeToCompanyId(sb.from('sales_invoice_items').delete().in('id', ids), who.companyId);
+    if (delErr) { siCopyFailed.push(head.invoice_number ?? head.sales_invoice_id); continue; }
+    await recomputeSiTotals(sb, head.sales_invoice_id);
+    await recomputeSiPaid(sb, head.sales_invoice_id);
+    if (head.invoice_number) {
+      try { await resyncSiRevenue(sb, head.invoice_number); }
+      catch (e) { /* eslint-disable-next-line no-console */ console.error('[si-revenue] remove-after-DO resync failed:', e); }
+    }
+    await recordEntityAudit(sb, {
+      entityType: 'SALES_INVOICE', entityId: head.sales_invoice_id, entityDocNo: head.invoice_number, action: 'UPDATE',
+      actor: who.actor, companyId: who.companyId, statusSnapshot: head.invoice_status,
+      note: `Line removed from ${who.soDocNo} (remove line after DO)`,
+      fieldChanges: compactChanges([fieldChange('removedInvoiceLines', null, ids.length)]),
+    });
+    await enqueueEdit(sb, { companyId: who.companyId, docType: 'IV', docId: head.sales_invoice_id, newLineIds: [], createdBy: who.actor?.id ?? null });
+  }
+
+  // Then the DO line: delete it and return the shipped stock (the resync reads the
+  // remaining lines, so the gone bucket's net OUT falls to 0 and comes back IN).
+  const { error: doDelErr } = await scopeToCompanyId(sb.from('delivery_order_items').delete().eq('id', doLine.id), who.companyId);
+  if (doDelErr) { doCopyFailed.push(label); return { ok: true, doCopyFailed, siCopyFailed }; }
+  await deps.resyncInventoryForDo(sb, target.id, deps.performedBy);
+  await deps.restampDoActualCost(sb, target.id);
+  await recomputeDoTotals(sb, target.id);
+  await recordEntityAudit(sb, {
+    entityType: 'DELIVERY_ORDER', entityId: target.id, entityDocNo: target.do_number, action: 'UPDATE',
+    actor: who.actor, companyId: who.companyId, statusSnapshot: target.status,
+    note: `Line removed from ${who.soDocNo} (remove line after DO)`,
+    fieldChanges: compactChanges([fieldChange('removedDoLine', doLine.id, null)]),
+  });
+  await enqueueEdit(sb, { companyId: who.companyId, docType: 'DO', docId: target.id, newLineIds: [], createdBy: who.actor?.id ?? null });
+  return { ok: true, doCopyFailed, siCopyFailed };
 }
