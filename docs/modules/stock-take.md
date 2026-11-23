@@ -45,7 +45,7 @@ The cycle-count document — `scm.stock_takes` + `scm.stock_take_lines`. OPEN (c
 - The printed sheet never states a money figure anywhere — cost is used only internally to decide whether a variance can be booked, never printed.
 - The assignee names are resolved by the page and passed to the PDF generator as one string — the generator has no way to accept a staff uuid, by design (a uuid must never reach a person).
 - The printed sheet is compact (owner 2026-10-06: 704 lines printed to 40+ pages): one line per row, the name ellipsized, the variant in its own column in short words (`printVariant`), rows just tall enough to write a count. An OPEN sheet carries a blank Rack column in place of Variance.
-- The count sheet scrolls in its own box (`useFrozenTableHeader`, pinned under the page header): the header row sticks to its top and the first column (SKU unless dragged) to its left. The card stays `overflow: clip`, never `hidden`, or the card becomes the scroll box.
+- The count sheet scrolls in its own box, at most a screen tall under the page header (`.sheetScroll`): the header row sticks to its top and the first column (SKU unless dragged) to its left. Not `useFrozenTableHeader`: it switches off on a laptop-height screen under this page's tall header. The card stays `overflow: clip`, never `hidden`, or the card becomes the scroll box.
 - Adding a line reloads the take, so unsaved counts must be saved first (the form refuses while dirty).
 - Printing reflects the server's saved rows only — an unsaved in-progress count on screen is not part of the record and will not appear on the sheet.
 

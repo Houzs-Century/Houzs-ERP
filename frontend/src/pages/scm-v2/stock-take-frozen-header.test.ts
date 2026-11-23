@@ -1,5 +1,5 @@
-/* The Count Sheet scrolls in its own box (useFrozenTableHeader pins it under
-   the page header). Inside it the header row sticks to the top and the first
+/* The Count Sheet scrolls in its own box, at most a screen tall under the
+   pinned page header. Inside it the header row sticks to the top and the first
    column (SKU by default) to the left, so both stay on screen when the sheet
    scrolls down or sideways (Sim, 2026-11-23). */
 
@@ -15,8 +15,10 @@ const rule = (selector: string): string => css.split('}')
   .join(';');
 
 describe('Stock Take count sheet freeze', () => {
-  test('the sheet box scrolls both ways', () => {
-    expect(rule('.sheetScroll')).toMatch(/overflow:\s*auto/);
+  test('the sheet box scrolls both ways and fits the screen under the page header', () => {
+    const box = rule('.sheetScroll');
+    expect(box).toMatch(/overflow:\s*auto/);
+    expect(box).toMatch(/max-height:[^;]*var\(--page-header-offset/);
   });
 
   test('the header row sticks to the top of the sheet box', () => {

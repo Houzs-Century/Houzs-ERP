@@ -473,12 +473,15 @@
   width: auto;
   min-width: 0;
 }
-/* Stock Take count sheet: the table scrolls inside .sheetScroll, which
-   useFrozenTableHeader caps and pins under the page header. The header row
-   sticks to the top of that box and the first column to its left, so both
-   stay on screen when the sheet scrolls down or sideways. */
+/* Stock Take count sheet: the table scrolls inside .sheetScroll, at most a
+   screen tall under the pinned page header (--page-header-offset, Layout.tsx).
+   The header row sticks to its top and the first column to its left, so both
+   stay on screen when the sheet scrolls down or sideways. A fixed height, not
+   useFrozenTableHeader: that hook switches itself off on a laptop-height
+   screen under this page's tall header, and the header row then scrolled away. */
 .sheetScroll {
   overflow: auto;
+  max-height: max(320px, calc(100dvh - var(--page-header-offset, 0px) - 24px));
 }
 .stickyHead thead th {
   position: sticky;

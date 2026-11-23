@@ -62,7 +62,6 @@ import { StaffMultiPick } from '../../vendor/scm/components/StaffMultiPick';
 import { StockTakeSheetReader, type SheetApply } from '../../vendor/scm/components/StockTakeSheetReader';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
-import { useFrozenTableHeader } from '../../components/useFrozenTableHeader';
 import { EntityHistoryPanel } from './EntityHistoryPanel';
 import { STOCK_TAKE_AUDIT_LABELS } from './entity-audit-labels';
 import { groupByModel } from './stock-take-grouping';
@@ -221,9 +220,6 @@ export const StockTakeDetail = () => {
      Flat is the toggle (owner phase 1). */
   const [view, setView] = useState<'model' | 'flat'>('model');
   const columnOrder = useColumnOrder(COUNT_SHEET_ORDER_STORAGE_KEY, COUNT_SHEET_COLUMN_KEYS);
-  /* The sheet scrolls in its own box (both ways) so the first column can stay
-     put when it scrolls sideways; the box pins under the page header. */
-  const freeze = useFrozenTableHeader(detail.data != null, 'toolbar');
   /* Expanded model groups (multi-line groups start collapsed to one header). */
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   /* Header edit (round 1): assignees + notes while OPEN. */
@@ -1019,10 +1015,9 @@ export const StockTakeDetail = () => {
       )}
 
       {/* ── Lines ───────────────────────────────────────────────────── */}
-      {/* The table scrolls in its own box (useFrozenTableHeader): the header
-          row freezes to its top and the first column to its left. overflow:
-          clip, not hidden, so the card itself never becomes a scroll box. */}
-      <div ref={freeze.rootRef}>
+      {/* The table scrolls in its own box, sized to the screen under the page
+          header: the header row freezes to its top and the first column to its
+          left. overflow: clip, not hidden, so the card is never a scroll box. */}
       <section className={styles.card} style={{ overflow: 'clip' }}>
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>
@@ -1079,8 +1074,7 @@ export const StockTakeDetail = () => {
           </div>
         </div>
         <div className={styles.cardBody}>
-          <div style={freeze.boxStyle}>
-          <div ref={freeze.scrollWrapRef} className={`thin-scroll ${styles.sheetScroll}`} style={freeze.scrollStyle}>
+          <div className={`thin-scroll ${styles.sheetScroll}`}>
           <table className={`${styles.table} ${styles.tableOwnWidths} ${styles.stickyHead} ${styles.freezeFirstCol}`}>
             <thead>
               <tr>
@@ -1426,7 +1420,6 @@ export const StockTakeDetail = () => {
             </tbody>
           </table>
           </div>
-          </div>
 
           {isDraft && (
             <AddFoundLine
@@ -1476,10 +1469,6 @@ export const StockTakeDetail = () => {
           )}
         </div>
       </section>
-      {freeze.freezeBox && freeze.freezeBox.runway > 0 && (
-        <div ref={freeze.spacerRef} aria-hidden style={{ height: freeze.freezeBox.runway }} />
-      )}
-      </div>
 
       {sheetOpen && (
         <StockTakeSheetReader
