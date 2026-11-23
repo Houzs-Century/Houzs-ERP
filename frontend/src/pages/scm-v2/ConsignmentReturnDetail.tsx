@@ -24,7 +24,7 @@ import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import {
-  ArrowLeft, Pencil, Plus, Printer, Save, ChevronDown, Ban, RotateCcw,
+  ArrowLeft, Pencil, Printer, Save, ChevronDown, Ban, RotateCcw,
 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
@@ -33,11 +33,10 @@ import {
   useConsignmentReturnDetail,
   useUpdateConsignmentReturnHeader,
   useUpdateConsignmentReturnStatus,
-  useAddConsignmentReturnItem,
   useUpdateConsignmentReturnItem,
   useDeleteConsignmentReturnItem,
 } from '../../vendor/scm/lib/consignment-return-queries';
-import { SoLineCard, emptySoLine, type SoLineDraft } from '../../vendor/scm/components/SoLineCard';
+import { SoLineCard, type SoLineDraft } from '../../vendor/scm/components/SoLineCard';
 import { buildVariantSummary, fmtDateOrDash, fmtMoneySen, orderLineIdentity } from '@2990s/shared';
 import { useAuth } from '../../auth/AuthContext';
 import { useLocalities } from '../../vendor/scm/lib/localities-queries';
@@ -173,7 +172,6 @@ export const ConsignmentReturnDetail = () => {
   const detail = useConsignmentReturnDetail(id ?? null);
   const updateHeader = useUpdateConsignmentReturnHeader();
   const updateStatus = useUpdateConsignmentReturnStatus();
-  const addItem = useAddConsignmentReturnItem();
   const updateItem = useUpdateConsignmentReturnItem();
   const deleteItem = useDeleteConsignmentReturnItem();
 
@@ -181,7 +179,6 @@ export const ConsignmentReturnDetail = () => {
   const items = useMemo(() => (detail.data?.items as CrnItem[] | undefined) ?? [], [detail.data]);
 
   const [editingDrafts, setEditingDrafts] = useState<Record<string, SoLineDraft>>({});
-  const [addingDraft, setAddingDraft] = useState<SoLineDraft | null>(null);
 
   const [isEditing, setIsEditing] = useState(searchParams.get('edit') === '1');
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -200,7 +197,6 @@ export const ConsignmentReturnDetail = () => {
   useEffect(() => {
     if (!isEditing) {
       setEditingDrafts({});
-      setAddingDraft(null);
       return;
     }
     setEditingDrafts(() => {
@@ -263,24 +259,10 @@ export const ConsignmentReturnDetail = () => {
     return map;
   }, [items, patchEditingDraft, removeEditingLine, deleteItem, askConfirm]);
 
-  const startAddLine = () => setAddingDraft({ ...emptySoLine() });
-  const cancelAddLine = useCallback(() => setAddingDraft(null), []);
-  const patchAddingDraft = useCallback(
-    (patch: Partial<SoLineDraft>) => setAddingDraft((prev) => prev ? { ...prev, ...patch } : prev),
-    [],
-  );
 
   const commitEditingDraft = (lineId: string, d: SoLineDraft) =>
     updateItem.mutateAsync({
       id: header!.id, itemId: lineId,
-      itemCode: d.itemCode, itemGroup: d.itemGroup, description: d.description,
-      uom: d.uom, qtyReturned: d.qty, unitPriceSen: d.unitPriceSen, discountSen: d.discountSen,
-      unitCostSen: d.unitCostSen, variants: d.variants, notes: d.remark,
-    });
-
-  const commitAddLine = (d: SoLineDraft) =>
-    addItem.mutateAsync({
-      id: header!.id,
       itemCode: d.itemCode, itemGroup: d.itemGroup, description: d.description,
       uom: d.uom, qtyReturned: d.qty, unitPriceSen: d.unitPriceSen, discountSen: d.discountSen,
       unitCostSen: d.unitCostSen, variants: d.variants, notes: d.remark,
@@ -291,10 +273,6 @@ export const ConsignmentReturnDetail = () => {
     if (!handle || !header || savingOrder) return;
     setSaveError(null);
 
-    if (addingDraft && !addingDraft.itemCode.trim()) {
-      setSaveError('Pick a product for the new line, or remove it before saving.');
-      return;
-    }
     const blankLine = Object.values(editingDrafts).find((d) => !d.itemCode.trim());
     if (blankLine) {
       setSaveError('Every line must have a product selected before saving.');
@@ -303,12 +281,10 @@ export const ConsignmentReturnDetail = () => {
 
     setSavingOrder(true);
     const lineEntries = Object.entries(editingDrafts);
-    const pendingAdd = addingDraft;
 
     handle.save({
       onSuccess: () => {
         Promise.all(lineEntries.map(([lineId, d]) => commitEditingDraft(lineId, d)))
-          .then(async () => { if (pendingAdd) await commitAddLine(pendingAdd); })
           .then(() => { setSavingOrder(false); setIsEditing(false); })
           .catch((e) => {
             setSavingOrder(false);
@@ -459,15 +435,10 @@ export const ConsignmentReturnDetail = () => {
       <section className={styles.card}>
         <header className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Returned Items ({items.length})</h2>
-          {isEditing && !addingDraft && (
-            <Button variant="primary" size="sm" onClick={startAddLine} disabled={isLocked}>
-              <Plus {...ICON} /><span>Add Line Item</span>
-            </Button>
-          )}
         </header>
 
         {items.length === 0 && !isEditing ? (
-          <p className={styles.emptyRow}>No items yet — click "Edit" then "Add Line Item" to begin.</p>
+          <p className={styles.emptyRow}>No items. Return lines come from a Consignment Note: start a new return from the note.</p>
         ) : isEditing ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)', padding: 'var(--space-3)' }}>
             {items.map((it, idx) => {
@@ -498,23 +469,9 @@ export const ConsignmentReturnDetail = () => {
                               />
                               );
                               })}
-                              {addingDraft && (
-                              <SoLineCard
-                              index={items.length}
-                              draft={addingDraft}
-                              onChange={patchAddingDraft}
-                              onRemove={cancelAddLine}
-                              canRemove={true}
-                              variantsRequired={false}
-                              specLockedReason={null}
-                              lineDateLocked={false}
-                              seedSofaLegDefault={false}
-                              attachOptions={null}
-              />
-            )}
-            {items.length === 0 && !addingDraft && (
+            {items.length === 0 && (
               <p className={styles.emptyRow} style={{ padding: 'var(--space-3)' }}>
-                No items yet — click "Add Line Item" above to begin.
+                No items. Return lines come from a Consignment Note: start a new return from the note.
               </p>
             )}
           </div>
