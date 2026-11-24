@@ -1,0 +1,14 @@
+/* Finance › Reports › SO to DO conversion: the DO list's cells and the notes. */
+
+.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.muted { color: var(--fin-muted); font-size: 12px; }
+.stack { display: inline-flex; flex-direction: column; gap: 1px; }
+.docLine { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.tag {
+  display: inline-block; padding: 0 6px; border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap;
+  border: 1px solid var(--fin-line); color: var(--fin-muted); background: var(--fin-surface);
+}
+/* A part's share beside its amount on the tile (owner: the amount AND the percentage). */
+.share { margin-left: 8px; padding: 1px 6px; border-radius: 6px; font-size: 13px; font-weight: 600; color: var(--fin-petrol); background: var(--fin-surface); border: 1px solid var(--fin-line); vertical-align: 2px; }
+.notes { display: grid; gap: 4px; margin: 0; padding: 0 0 0 18px; font-size: 12px; line-height: 1.5; color: var(--fin-muted); }
+.skeleton { height: 120px; border-radius: 10px; }

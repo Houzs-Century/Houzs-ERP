@@ -30,6 +30,7 @@ export const ACCOUNTING_TAB_TITLES = {
   products: 'Product profit',
   changes: 'Product changes',
   changesum: 'Product changes P&L',
+  sotodo: 'SO to DO conversion',
   logistics: 'Logistics cost',
   departments: 'Department P&L',
 } as const;
