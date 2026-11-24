@@ -5462,12 +5462,13 @@ function ChecklistRow({
           <input
             ref={fileInputRef}
             type="file"
+            multiple
             hidden
-            onChange={(e) => {
-              const f = e.target.files?.[0];
+            onChange={async (e) => {
+              const files = Array.from(e.target.files ?? []);
               const cap = pendingCaptionRef.current;
               pendingCaptionRef.current = undefined;
-              if (f) uploadAttachment(f, cap);
+              for (const f of files) await uploadAttachment(f, cap);
             }}
           />
           {/* Attach / Remark / N/A — BOXED style (owner 2026-08-11):
