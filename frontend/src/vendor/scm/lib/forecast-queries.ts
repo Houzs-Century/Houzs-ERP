@@ -44,6 +44,7 @@ export const useSaveForecast = () => {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [KEY] });
       void qc.invalidateQueries({ queryKey: ['finance-dashboard'] });
+      void qc.invalidateQueries({ queryKey: ['report-rp-forecast'] });
     },
   });
 };

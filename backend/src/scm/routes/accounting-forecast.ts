@@ -140,12 +140,12 @@ export type SupplierBillLine = {
   posted: boolean | null; reversed?: boolean | null; reversed_by_je?: string | null;
 };
 
-/** Which purchase accounts each supplier billed: the bills' ledger lines (one
-    journal per bill, its supplier on the AP line), debit less credit on the
-    purchase accounts, summed per supplier and account; a reversed bill and
-    its contra count nowhere (the books' own rule), and what nets to nothing
-    or less is not a purchase. supplier code → account codes. */
-export function billedAccountsBySupplier(rows: SupplierBillLine[], purchaseCodes: ReadonlySet<string>): Map<string, Set<string>> {
+/** What each supplier billed each purchase account: the bills' ledger lines
+    (one journal per bill, its supplier on the AP line), debit less credit on
+    the purchase accounts, summed per supplier and account; a reversed bill and
+    its contra count nowhere (the books' own rule), and what nets to nothing or
+    less is not a purchase. supplier code → account code → sen. */
+export function netBilledBySupplier(rows: SupplierBillLine[], purchaseCodes: ReadonlySet<string>): Map<string, Map<string, number>> {
   const counted = rows.filter((r) => countsInTheBooks(r));
   const supplierOf = new Map<string, string>();
   for (const r of counted) if (r.party_type === 'SUPPLIER' && r.party_code) supplierOf.set(r.je_no, r.party_code);
@@ -157,33 +157,39 @@ export function billedAccountsBySupplier(rows: SupplierBillLine[], purchaseCodes
     by.set(r.account_code, (by.get(r.account_code) ?? 0) + Number(r.debit_sen ?? 0) - Number(r.credit_sen ?? 0));
     net.set(supplier, by);
   }
-  const out = new Map<string, Set<string>>();
+  const out = new Map<string, Map<string, number>>();
   for (const [supplier, by] of net) {
-    const codes = [...by].filter(([, sen]) => sen > 0).map(([code]) => code);
-    if (codes.length > 0) out.set(supplier, new Set(codes));
+    const kept = new Map([...by].filter(([, sen]) => sen > 0));
+    if (kept.size > 0) out.set(supplier, kept);
   }
   return out;
 }
 
-type SupplierMasterRow = { id: string; code: string; name: string | null; status: string | null };
+/** Which purchase accounts each supplier billed (netBilledBySupplier's accounts). supplier code → account codes. */
+export function billedAccountsBySupplier(rows: SupplierBillLine[], purchaseCodes: ReadonlySet<string>): Map<string, Set<string>> {
+  return new Map([...netBilledBySupplier(rows, purchaseCodes)].map(([supplier, by]) => [supplier, new Set(by.keys())]));
+}
+
+export type SupplierMasterRow = { id: string; code: string; name: string | null; status: string | null; payment_terms: string | null };
 const failed = (e: unknown): string => String((e as { message?: string }).message ?? e);
 
-/** The active company's suppliers, any status (a keyed one must keep its name). */
-async function loadSupplierMaster(sb: Sb, companyId: number): Promise<{ ok: true; rows: SupplierMasterRow[] } | { ok: false; reason: string }> {
-  const { data, error } = await sb.from('suppliers').select('id, code, name, status').eq('company_id', companyId);
+/** The active company's suppliers, any status (a keyed one must keep its name), with their payment terms. */
+export async function loadSupplierMaster(sb: Sb, companyId: number): Promise<{ ok: true; rows: SupplierMasterRow[] } | { ok: false; reason: string }> {
+  const { data, error } = await sb.from('suppliers').select('id, code, name, status, payment_terms').eq('company_id', companyId);
   if (error) return { ok: false, reason: `suppliers: ${failed(error)}` };
   return { ok: true, rows: (data ?? []) as SupplierMasterRow[] };
 }
 
-/** The active company's supplier bills since `from`, as ledger lines. */
-async function loadSupplierBills(sb: Sb, companyId: number, from: string): Promise<{ ok: true; rows: SupplierBillLine[] } | { ok: false; reason: string }> {
-  const { data, error } = await paginateAll<SupplierBillLine>((f: number, t: number) => sb.from('v_gl_entries')
-    .select('je_no, account_code, debit_sen, credit_sen, party_type, party_code, posted, reversed, reversed_by_je')
-    .eq('company_id', companyId)
-    .in('source_type', ['PI', 'API'])
-    .gte('entry_date', from)
-    .order('line_id')
-    .range(f, t));
+/** The active company's supplier bills dated from `from` (and up to `to`, when one is named), as ledger lines. */
+export async function loadSupplierBills(sb: Sb, companyId: number, from: string, to: string | null): Promise<{ ok: true; rows: SupplierBillLine[] } | { ok: false; reason: string }> {
+  const { data, error } = await paginateAll<SupplierBillLine>((f: number, t: number) => {
+    const q = sb.from('v_gl_entries')
+      .select('je_no, account_code, debit_sen, credit_sen, party_type, party_code, posted, reversed, reversed_by_je')
+      .eq('company_id', companyId)
+      .in('source_type', ['PI', 'API'])
+      .gte('entry_date', from);
+    return (to ? q.lte('entry_date', to) : q).order('line_id').range(f, t);
+  });
   if (error) return { ok: false, reason: `supplier bills: ${failed(error)}` };
   return { ok: true, rows: (data ?? []) as SupplierBillLine[] };
 }
@@ -212,7 +218,7 @@ export const forecastGetHandler = async (c: Ctx): Promise<Response> => {
     loadGrid(sb, co.companyId),
     resolveLayout(sb, allowedIds(c), 'pnl'),
     loadSupplierMaster(sb, co.companyId),
-    loadSupplierBills(sb, co.companyId, recentFrom(todayMyt())),
+    loadSupplierBills(sb, co.companyId, recentFrom(todayMyt()), null),
   ]);
   if (!accs.ok) return c.json({ error: 'load_failed', reason: accs.reason }, 500);
   if (!grid.ok) return c.json({ error: 'load_failed', reason: grid.reason }, 500);
