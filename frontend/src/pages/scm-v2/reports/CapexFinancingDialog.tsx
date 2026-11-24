@@ -88,7 +88,7 @@ function AmountCell({ valueSen, label, onCommit, readOnly }: { valueSen: number 
   return (
     <input
       type="text" inputMode="decimal" aria-label={label} readOnly={readOnly}
-      className={`${f.box} ${valueSen != null ? f.boxTyped : ''} ${valueSen != null && valueSen < 0 ? f.loss : ''}`}
+      className={`${f.box} ${readOnly ? '' : f.boxOpen} ${valueSen != null ? f.boxTyped : ''} ${valueSen != null && valueSen < 0 ? f.loss : ''}`}
       value={draft}
       onFocus={() => { setFocused(true); setDraft(valueSen == null ? '' : (valueSen / 100).toFixed(2)); }}
       onChange={(e) => setDraft(e.target.value)}
