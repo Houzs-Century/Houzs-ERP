@@ -18,6 +18,7 @@ import { todayMY } from "../../vendor/shared/format";
 import { DateField } from "../../vendor/scm/components/DateField";
 import { Field, Pill, dangerBtn, errText, ghostBtn, inputCls, primaryBtn } from "../pos-admin/posAdminUi";
 import { HrPageHeader, hrPrimaryBtn, hrSecondaryBtn } from "./HrPageHeader";
+import { LeaveCalendar, type CalEntry } from "./LeaveCalendar";
 
 const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(" ");
 
@@ -54,6 +55,7 @@ export function LeavePage() {
   const [reject, setReject] = useState<PendingRow | null>(null);
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [typeFilter, setTypeFilter] = useState("ALL");
+  const [view, setView] = useState<"list" | "calendar">("list");
 
   const data = q.data;
   const types = data?.types ?? [];
@@ -77,6 +79,22 @@ export function LeavePage() {
     () => mine.filter((r) => (statusFilter === "ALL" || r.status === statusFilter) && (typeFilter === "ALL" || r.leaveStatus === typeFilter)),
     [mine, statusFilter, typeFilter],
   );
+
+  // Calendar entries, from the data the page already has: approved team leave
+  // (approvers) + pending team leave + my own (labelled "You"), deduped by id.
+  const calEntries: CalEntry[] = useMemo(() => {
+    const seen = new Set<number>();
+    const out: CalEntry[] = [];
+    const add = (r: { id: number; leaveStatus: string; startDate: string; endDate: string; status: string }, name: string) => {
+      if (seen.has(r.id)) return;
+      seen.add(r.id);
+      out.push({ id: r.id, name, type: r.leaveStatus, startDate: r.startDate, endDate: r.endDate, status: r.status });
+    };
+    for (const r of teamHistory) if (r.status === "APPROVED") add(r, r.employeeName);
+    for (const r of pending) add(r, r.employeeName);
+    for (const r of mine) if (r.status !== "REJECTED") add(r, "You");
+    return out;
+  }, [teamHistory, pending, mine]);
 
   async function cancelMine(row: LeaveRow) {
     const ok = await dialog.confirm({ title: "Cancel this leave request?", message: `${typeLabel(row.leaveStatus, types)} · ${formatDate(row.startDate)} to ${formatDate(row.endDate)}. Only a pending request can be cancelled.`, confirmLabel: "Cancel request", tone: "danger" });
@@ -121,7 +139,11 @@ export function LeavePage() {
         title="Leave"
         subtitle="Requests and approvals"
         actions={
-          <span className="flex gap-2">
+          <span className="flex items-center gap-2">
+            <span className="inline-flex overflow-hidden rounded-md border border-border">
+              <button type="button" onClick={() => setView("list")} className={cx("h-8 px-3 text-[12px] font-semibold", view === "list" ? "bg-accent text-white" : "bg-surface text-ink-secondary hover:bg-bg")}>List</button>
+              <button type="button" onClick={() => setView("calendar")} className={cx("h-8 border-l border-border px-3 text-[12px] font-semibold", view === "calendar" ? "bg-accent text-white" : "bg-surface text-ink-secondary hover:bg-bg")}>Calendar</button>
+            </span>
             <button type="button" className={hrSecondaryBtn} onClick={exportCsv} disabled={!data || filteredMine.length === 0}>Export</button>
             <button type="button" className={hrPrimaryBtn} onClick={() => setApply(true)}>Apply for leave</button>
           </span>
@@ -131,7 +153,7 @@ export function LeavePage() {
         {q.loading && !data && <div className="py-10 text-center text-[12px] text-ink-muted">Loading…</div>}
         {q.error && <div className="py-10 text-center text-[12px] text-err">{q.error}</div>}
 
-        {data && (
+        {data && view === "list" && (
           <>
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
               <Card label="Total requests" value={counts.total} dot="bg-primary" />
@@ -252,6 +274,8 @@ export function LeavePage() {
             )}
           </>
         )}
+
+        {data && view === "calendar" && <LeaveCalendar entries={calEntries} types={types} />}
       </div>
 
       {apply && <ApplyModal types={types} onClose={() => setApply(false)} onSaved={() => { setApply(false); q.reload(); }} />}

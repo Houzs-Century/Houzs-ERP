@@ -93,4 +93,14 @@ describe("HR Leave desktop page", () => {
     expect(screen.getByText("Ravi Kumar")).toBeTruthy(); // the team member whose reviewed leave shows
     expect(screen.getByText("HCFW0005")).toBeTruthy(); // their emp no, only in the team-history row
   });
+
+  it("toggles between the list and calendar views", () => {
+    render(<LeavePage />);
+    expect(screen.getByText("My requests")).toBeTruthy(); // list view by default
+    fireEvent.click(screen.getByRole("button", { name: "Calendar" }));
+    expect(screen.getByText("Sun")).toBeTruthy(); // a weekday header — the calendar rendered
+    expect(screen.queryByText("My requests")).toBeNull(); // list is hidden
+    fireEvent.click(screen.getByRole("button", { name: "List" }));
+    expect(screen.getByText("My requests")).toBeTruthy(); // back to the list
+  });
 });
