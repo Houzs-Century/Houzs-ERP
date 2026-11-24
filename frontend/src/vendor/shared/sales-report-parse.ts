@@ -118,7 +118,11 @@ const BILL_RE = new RegExp(
 const DAY_RE = new RegExp(
   String.raw`^\s*(\d{1,2})\s*\/\s*(\d{1,2})\s*${SEP}\s*(?:RM|rm|Rm)?\s*${AMOUNT}${EXTRA}\s*$`,
 );
-const TOTAL_RE = new RegExp(String.raw`^\s*total\b\s*${SEP}?\s*(?:RM|rm|Rm)?\s*${AMOUNT}${EXTRA}\s*$`, "i");
+/* "Total sales : RM48,788" (owner 2026-11-24, Wei Pin Homelove paste): the
+   floor also writes the grand-total line as "Total sales" or "Total jualan"
+   when it is summing days, not just "Total". An optional sales/jualan word
+   after "total" counts the same — the next number is still the figure. */
+const TOTAL_RE = new RegExp(String.raw`^\s*total(?:\s+(?:sales|sale|jualan))?\s*${SEP}?\s*(?:RM|rm|Rm)?\s*${AMOUNT}${EXTRA}\s*$`, "i");
 const DATE_RE = /^\s*(\d{1,2})\s*\/\s*(\d{1,2})\b/;
 const RANGE_RE = /\d{1,2}\s*-\s*\d{1,2}\s*\/\s*\d{1,2}/g;
 const EMBEDDED_DATE_RE = /(?:^|\D)(\d{1,2})\s*\/\s*(\d{1,2})(?!\d)/;
@@ -180,7 +184,14 @@ export function parseSalesReport(text: string | null | undefined): ParsedSalesRe
        them and neither could this reader: three of seven bills were dropped
        on the first live paste (2026-10-14). Strip the former and fold the
        latter to a space before anything is matched. */
-    const t = lines[i]!.replace(/[​-‍⁠﻿]/g, "").replace(/ /g, " ").trim();
+    const t = lines[i]!
+      .replace(/[​-‍⁠﻿]/g, "")
+      .replace(/ /g, " ")
+      .replace(/：/g, ":")
+      .replace(/，/g, ",")
+      .replace(/（/g, "(")
+      .replace(/）/g, ")")
+      .trim();
     if (!t) continue;
 
     const total = t.match(TOTAL_RE);
