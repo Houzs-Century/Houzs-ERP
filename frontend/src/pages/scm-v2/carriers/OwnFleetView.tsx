@@ -24,7 +24,7 @@ const exportMoney = (v: number | null) => (v == null ? null : v / 100);
 
 const MONTH_COLUMNS: Column<OwnFleetMonth>[] = [
   { key: 'month', label: 'Month', render: (m) => <span className="font-semibold">{monthLabel(m.month)}</span>, getValue: (m) => m.month },
-  { key: 'trips', label: 'Trips', align: 'right', render: (m) => m.trips, getValue: (m) => m.trips },
+  { key: 'trip_count', label: 'Trips', align: 'right', render: (m) => m.trips, getValue: (m) => m.trips },
   { key: 'dos', label: 'DOs', align: 'right', render: (m) => m.dos, getValue: (m) => m.dos },
   {
     key: 'cost', label: 'Own fleet cost', align: 'right', render: (m) => (m.pricedTrips ? money(m.costSen) : '—'),
