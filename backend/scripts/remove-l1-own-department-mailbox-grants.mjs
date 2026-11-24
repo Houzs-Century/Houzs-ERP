@@ -20,7 +20,9 @@
    re-reads on a FRESH connection: none of the matched shape may remain, and every
    other grant must still be there.
 
-   KEY=VALUE: COMPANY=<id> (default 1, Houzs Century).
+   KEY=VALUE: COMPANY=<id> (default 1, Houzs Century); EXCLUDE_USERS=<id,id,...> keeps those
+   people's grants (shared logins such as Finance / HR / Marketing that exist to read the
+   department mailbox; owner 2026-11-24).
 
    RE-RUN: inert. A second run finds no grant of the matched shape and writes nothing. */
 import postgres from 'postgres';
@@ -28,6 +30,7 @@ import postgres from 'postgres';
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error('need DATABASE_URL'); process.exit(2); }
 const CO = Number(process.env.COMPANY || 1);
+const EXCLUDE = String(process.env.EXCLUDE_USERS || '').split(',').map((x) => x.trim()).filter(Boolean).map(Number);
 const APPLY = (process.env.MODE || 'plan').toLowerCase() === 'apply';
 const CONFIRM_PHRASE = 'REMOVE L1 OWN DEPARTMENT MAILBOX GRANTS';
 const note = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
@@ -37,9 +40,10 @@ if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
   bad(`MODE=apply requires CONFIRM="${CONFIRM_PHRASE}"`);
   process.exit(2);
 }
+if (EXCLUDE.some((n) => !Number.isInteger(n) || n <= 0)) { bad(`EXCLUDE_USERS must be user ids, got ${process.env.EXCLUDE_USERS}`); process.exit(2); }
 if (!Number.isInteger(CO) || CO <= 0) { bad(`COMPANY must be a positive id, got ${process.env.COMPANY}`); process.exit(2); }
 
-/** The grants this script removes. $1 = company id. */
+/** The grants this script removes. $1 = company id, $2 = user ids to keep. */
 const MATCH = `
   SELECT acc.id, acc.address_id, acc.user_id, acc.created_at, acc.created_by, acc.company_id,
          e.address, u.name AS user_name, COALESCE(s.level, 'department') AS level
@@ -53,6 +57,7 @@ const MATCH = `
      AND (e.department_id = u.department_id
           OR EXISTS (SELECT 1 FROM user_departments ud WHERE ud.user_id = u.id AND ud.department_id = e.department_id))
      AND COALESCE(s.level, 'department') IN ('department', 'personal')
+     AND NOT (acc.user_id = ANY($2::int[]))
      AND NOT EXISTS (
        SELECT 1 FROM departments d
         WHERE lower(trim(d.name)) = 'management'
@@ -64,8 +69,9 @@ const countAll = async (client) => (await client.unsafe(`SELECT COUNT(*)::int AS
 const sql = postgres(DSN, { ssl: process.env.PGSSLMODE === 'disable' ? false : 'require', prepare: false, max: 1 });
 let code = 0;
 try {
-  const rows = await sql.unsafe(MATCH, [CO]);
+  const rows = await sql.unsafe(MATCH, [CO, EXCLUDE]);
   const before = await countAll(sql);
+  if (EXCLUDE.length) note(`kept as asked: user(s) ${EXCLUDE.join(', ')}`);
   note(`company ${CO}: ${rows.length} L1 grant(s) to the person's own department mailbox, of ${before} grant(s) in all`);
   const byBox = new Map();
   for (const r of rows) byBox.set(r.address, (byBox.get(r.address) ?? 0) + 1);
@@ -94,7 +100,7 @@ try {
     // Fresh connection: the matched shape is gone, and nothing else moved.
     const check = postgres(DSN, { ssl: process.env.PGSSLMODE === 'disable' ? false : 'require', prepare: false, max: 1 });
     try {
-      const left = await check.unsafe(MATCH, [CO]);
+      const left = await check.unsafe(MATCH, [CO, EXCLUDE]);
       const after = await countAll(check);
       const gone = await check.unsafe(`SELECT COUNT(*)::int AS n FROM email_address_access WHERE id = ANY($1::text[])`, [rows.map((r) => r.id)]);
       // The values: each removed (person, mailbox) pair now has exactly its "stopped sharing" log line,
