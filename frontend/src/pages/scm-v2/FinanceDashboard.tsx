@@ -34,6 +34,8 @@ import {
   type CompareGroup, type CompareTotals, type CostStructureGroup, type DashboardFigures, type DashboardPeriod, type Granularity,
 } from '../../vendor/scm/lib/dashboard-queries';
 import { DashboardChart, type ChartLine, type ChartSeries } from './DashboardChart';
+import { useCashFlowForecast } from '../../vendor/scm/lib/cash-flow-forecast-queries';
+import { forecastSpan, gapOf, periodCashForecasts, pickCash } from './reports/dashboardForecast';
 
 const errText = (e: unknown): string => (e instanceof Error && e.message ? e.message : 'That was not accepted.');
 const soft: React.CSSProperties = { fontSize: 12, color: 'var(--fin-muted)' };
@@ -470,6 +472,24 @@ const CashFlowCard = ({ periods }: { periods: DashboardPeriod[] }) => {
   const pick = (p: DashboardPeriod): number | null => (p.cashFlow ? (tab === 'in' ? p.cashFlow.inSen : tab === 'out' ? p.cashFlow.outSen : p.cashFlow.netSen) : null);
   const color = tab === 'in' ? IN : tab === 'out' ? OUT : NET;
   const bars: ChartSeries[] = [{ key: tab, label: `Cash ${tab}`, color, values: periods.map(pick) }];
+  /* The Cash Flow's two forecasts of the tab's figure (step 7): the P&L forecast and Orders & bills, dashed. */
+  const span = useMemo(() => forecastSpan(periods), [periods]);
+  const fq = useCashFlowForecast(span.from, span.to);
+  const fc = periods.map((p) => periodCashForecasts(p.months, fq.data));
+  const tabName = tab === 'in' ? 'Cash in' : tab === 'out' ? 'Cash out' : 'Net';
+  const pnl = fc.map((x) => pickCash(x.pnl, tab));
+  const docs = fc.map((x) => pickCash(x.docs, tab));
+  const forecastLines: ChartLine[] = [
+    { key: 'fc-pnl', label: `${tabName} forecast (P&L)`, color: RED, dashed: true, values: pnl, tips: periods.map((p, i) => (pnl[i] == null ? null : `${tipHead(p)} · ${tabName} forecast (P&L): RM ${fmtSenPlain(pnl[i])}`)) },
+    { key: 'fc-docs', label: `${tabName} forecast (orders & bills)`, color: BLUE, dashed: true, values: docs, tips: periods.map((p, i) => (docs[i] == null ? null : `${tipHead(p)} · ${tabName} forecast (orders & bills): RM ${fmtSenPlain(docs[i])}`)) },
+  ];
+  const lines = forecastLines.filter((l) => l.values.some((v) => v != null));
+  const forecastRows: TableRow[] = [
+    { id: 'fc-pnl', label: `${tabName} forecast (P&L)`, cells: pnl.map(fmtOrDash) },
+    { id: 'vs-pnl', label: 'vs forecast (P&L)', cells: periods.map((p, i) => fmtOrDash(gapOf(pick(p), pnl[i] ?? null))) },
+    { id: 'fc-docs', label: `${tabName} forecast (orders & bills)`, cells: docs.map(fmtOrDash) },
+    { id: 'vs-docs', label: 'vs forecast (orders & bills)', cells: periods.map((p, i) => fmtOrDash(gapOf(pick(p), docs[i] ?? null))) },
+  ];
   /* Detail: the Cash Flow tree's top categories, one row each, in the order they first appear. */
   const labels: string[] = [];
   for (const p of periods) for (const n of topCategories(p.cashFlow?.tree ?? [])) if (!labels.includes(n.label)) labels.push(n.label);
@@ -479,6 +499,7 @@ const CashFlowCard = ({ periods }: { periods: DashboardPeriod[] }) => {
     { id: 'net', label: 'Net', cells: periods.map((p) => fmtOrDash(p.cashFlow?.netSen)), strong: tab === 'net', tone: periods.map((p) => (p.cashFlow == null || p.cashFlow.netSen === 0 ? null : p.cashFlow.netSen > 0 ? 'good' : 'bad')) },
     { id: 'opening', label: 'Balance b/f', cells: periods.map((p) => fmtOrDash(p.cashFlow?.openingSen)) },
     { id: 'closing', label: 'Balance c/f', cells: periods.map((p) => fmtOrDash(p.cashFlow?.closingSen)) },
+    ...forecastRows,
     ...(detail ? labels.map((label) => ({
       id: `cat:${label}`, label,
       cells: periods.map((p) => { const n = topCategories(p.cashFlow?.tree ?? []).find((x) => x.label === label); return n ? fmtSenPlain(n.amountSen) : '—'; }),
@@ -486,8 +507,12 @@ const CashFlowCard = ({ periods }: { periods: DashboardPeriod[] }) => {
   ];
   return (
     <CardShell title="Cash Flow" controls={<><Tabs options={CASH_TABS} value={tab} onChange={setTab} /><button type="button" style={resetBtn} onClick={() => setDetail((d) => !d)}>{detail ? 'Summary' : 'Detail'}</button></>}>
-      <DashboardChart labels={periods.map(labelOf)} bars={bars} ariaLabel={`Cash ${tab} per period`} />
+      <DashboardChart labels={periods.map(labelOf)} bars={bars} lines={lines} ariaLabel={`Cash ${tab} per period`} />
       <FiguresTable periods={periods} rows={rows} ariaLabel="Cash flow figures" />
+      <div style={soft}>
+        {fq.isLoading ? 'Loading forecast… ' : ''}
+        The dashed lines are the Cash Flow&apos;s two forecasts of the tab&apos;s figure: P&amp;L = the Forecast P&amp;L as cash; orders &amp; bills = the money already in hand, from the current month on. vs = actual less forecast.
+      </div>
     </CardShell>
   );
 };

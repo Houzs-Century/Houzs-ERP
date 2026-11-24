@@ -91,6 +91,17 @@ vi.mock('../../vendor/scm/lib/dashboard-queries', async (importOriginal) => ({
   ...(await importOriginal() as object),
   useFinanceDashboard: (p: DashboardParams) => { lastParams.value = p; return { data: PAYLOAD, isLoading: false, isFetching: false, isError: false, error: null }; },
 }));
+/* The Cash Flow's two forecasts (step 7): the P&L forecast for August to October, Orders & bills for October only. */
+const fm = (month: string, inSen: number, outSen: number) => ({ month, future: false, report: { totals: { receiptsTotalSen: inSen, paymentsTotalSen: outSen } } });
+const CASH_FORECAST = {
+  months: [fm('2026-08', 10_000_000, 4_000_000), fm('2026-09', 6_000_000, 2_000_000), fm('2026-10', 7_000_000, 3_000_000)],
+  docs: { months: [fm('2026-10', 6_500_000, 2_500_000)] },
+};
+const forecastAsked: { value: [string, string] | null } = { value: null };
+vi.mock('../../vendor/scm/lib/cash-flow-forecast-queries', async (importOriginal) => ({
+  ...(await importOriginal() as object),
+  useCashFlowForecast: (from: string, to: string) => { forecastAsked.value = [from, to]; return { data: CASH_FORECAST, isLoading: false }; },
+}));
 /* The page sits in the Finance report shell, whose report list reads the
    sidebar's gates (reports/ReportRail). */
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ user: null, can: () => true, pageAccess: () => 'full' }) }));
@@ -288,6 +299,20 @@ describe('the Financial Dashboard page', () => {
     expect(screen.queryByText('Receipts')).toBeNull();
     fireEvent.click(screen.getByText('Detail'));
     expect(cells('cat:Receipts')).toEqual(['103,000.00', '—', '—']);
+  });
+
+  test("the cash flow's two forecasts follow the tab: dashed lines, their rows and actual less forecast", () => {
+    render(<MemoryRouter><FinanceDashboard /></MemoryRouter>);
+    expect(forecastAsked.value).toEqual(['2026-08', '2026-10']);
+    expect(cells('fc-pnl')).toEqual(['100,000.00', '60,000.00', '70,000.00']);
+    expect(cells('vs-pnl')).toEqual(['3,000.00', '(10,000.00)', '—']);
+    expect(cells('fc-docs')).toEqual(['—', '—', '65,000.00']);
+    expect(rowText('fc-pnl')).toContain('Cash in forecast (P&L)');
+    expect(document.querySelectorAll('[data-line="fc-pnl"] [data-segment]').length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole('tab', { name: 'Net' }));
+    expect(cells('fc-pnl')).toEqual(['60,000.00', '40,000.00', '40,000.00']);
+    expect(cells('fc-docs')).toEqual(['—', '—', '40,000.00']);
+    expect(rowText('fc-docs')).toContain('Net forecast (orders & bills)');
   });
 
   test('the balance sheet and the ratios', () => {
