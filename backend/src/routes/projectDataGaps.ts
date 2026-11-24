@@ -52,7 +52,6 @@ projectDataGaps.get("/", async (c) => {
   // company-scope: finance lines are read per project of the active company (activeCompanySql on p.company_id at the end of this statement).
   const rows = await c.env.DB.prepare(
     `SELECT p.id, p.code, p.name, p.brand, p.start_date, p.end_date, p.size_sqm,
-            pf.total_sales AS total_sales,
             ${sum("l.kind = 'income'")} AS income,
             ${sum(`l.kind = 'cost' AND l.category IN ${COGS}`)} AS cogs,
             ${sum("l.kind = 'cost' AND l.category = 'commission'")} AS commission,
@@ -66,10 +65,9 @@ projectDataGaps.get("/", async (c) => {
             ${sum("l.kind = 'cost' AND l.category = 'cogs_bedframe'")} AS cogs_bedframe,
             ${sum("l.kind = 'cost' AND l.category = 'cogs_accessories'")} AS cogs_accessories
        FROM projects p
-       LEFT JOIN project_finance pf ON pf.project_id = p.id
       WHERE p.archived_at IS NULL AND COALESCE(p.status, '') <> 'cancelled'
         AND substr(p.end_date, 1, 10) >= ? AND substr(p.end_date, 1, 10) <= ?${activeCompanySql(c, "p.company_id")}`,
-  ).bind(from, to).all<Omit<GapProject, "soSen"> & { start_date: string | null; size_sqm: number | null; total_sales: number | null; rental: number; setup: number; transport_fee: number; transport_setup: number; merchandise: number; cogs_matt_sofa: number; cogs_bedframe: number; cogs_accessories: number }>();
+  ).bind(from, to).all<Omit<GapProject, "soSen"> & { start_date: string | null; size_sqm: number | null; rental: number; setup: number; transport_fee: number; transport_setup: number; merchandise: number; cogs_matt_sofa: number; cogs_bedframe: number; cogs_accessories: number }>();
   const projects = rows.results;
   // company-scope: the removed gaps of this company's events (activeCompanySql on p.company_id).
   const waivedRows = await c.env.DB.prepare(
@@ -190,15 +188,8 @@ projectDataGaps.get("/", async (c) => {
   }
   const pnls = await pnlForProjects(c.env as unknown as Parameters<typeof pnlForProjects>[0], projects.map((p) => ({ id: p.id, brand: p.brand })), activeCompanyId(c) ?? null, LEDGER_COST_CATEGORIES);
 
-  /* "No chat sales report" (owner 2026-11-23): an event has a report only
-     when the chat's Total line landed in project_finance.total_sales. Bills
-     that parse but a Total line that does not (e.g. SELANGOR AKEMI VINCENT @
-     PARADIGM MALL PJ: "TOTAL：RM6000" with a full-width colon, or PUTRAJAYA
-     ZANOTTI HOMELOVE @ IOIGECC: "TOTAL : 12 930" with a space in the amount)
-     leave the P&L reading as no sales — the books are incomplete whether or
-     not the floor also typed bill lines, so this still needs to be chased. */
   const books = projects.map((p) => ({
-    hasReport: Number(p.total_sales ?? 0) > 0,
+    hasReport: billsOf.has(p.id),
     reportBills: billsOf.get(p.id)?.length ?? 0,
     problemBills: problems.get(p.id) ?? [],
     rental: pnls.get(p.id)?.by_sales.rental ?? Number(p.rental),
