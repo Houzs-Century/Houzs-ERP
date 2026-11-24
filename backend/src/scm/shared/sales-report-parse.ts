@@ -108,9 +108,13 @@ export function extractRefTokens(text: string | null | undefined): string[] {
    anywhere in this file, comments included: Tailwind scans every source file
    for class candidates and turned the dash/colon class into an invalid CSS
    rule that failed the production build. */
-const AMOUNT = String.raw`([\d][\d,]*(?:\.\d{1,2})?)`;
-const EXTRA = String.raw`((?:\s*\+\s*(?:RM|rm|Rm)?\s*[\d][\d,]*(?:\.\d{1,2})?(?:\s*\(\s*[A-Za-z]{1,3}\s*\)?|[A-Za-z](?![A-Za-z]))?)*)`;
-const EXTRA_PART_RE = /\+\s*(?:RM|rm|Rm)?\s*([\d][\d,]*(?:\.\d{1,2})?)(?:\s*\(\s*([A-Za-z]{1,3})|([A-Za-z])(?![A-Za-z]))?/g;
+/* Amount accepts BOTH comma and space as thousands separators (owner
+   2026-11-24): "RM10,200" and "RM10 200" are both ten thousand two hundred.
+   The floor's preferred format drops the comma and uses a single space, so
+   the parser must read that too. amountToSen strips both before parseFloat. */
+const AMOUNT = String.raw`([\d][\d, ]*(?:\.\d{1,2})?)`;
+const EXTRA = String.raw`((?:\s*\+\s*(?:RM|rm|Rm)?\s*[\d][\d, ]*(?:\.\d{1,2})?(?:\s*\(\s*[A-Za-z]{1,3}\s*\)?|[A-Za-z](?![A-Za-z]))?)*)`;
+const EXTRA_PART_RE = /\+\s*(?:RM|rm|Rm)?\s*([\d][\d, ]*(?:\.\d{1,2})?)(?:\s*\(\s*([A-Za-z]{1,3})|([A-Za-z])(?![A-Za-z]))?/g;
 const SEP = String.raw`(?:-|:|–|=)`;
 const BILL_RE = new RegExp(
   String.raw`^\s*(?:\d{1,3}\s*[.)]\s*)?([A-Za-z]{1,5}\s*-?\s*\d{3,6})\b\s*${SEP}?\s*(?:RM|rm|Rm)?\s*${AMOUNT}${EXTRA}\s*${SEP}?\s*(.*?)\s*$`,
@@ -133,7 +137,7 @@ const ringgit = (sen: number): string =>
   (sen / 100).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 function amountToSen(s: string): number | null {
-  const n = Number(s.replace(/,/g, ""));
+  const n = Number(s.replace(/[\s,]/g, ""));
   if (!Number.isFinite(n) || n < 0) return null;
   return Math.round(n * 100);
 }
@@ -157,7 +161,11 @@ const validDayMonth = (day: number, month: number): boolean => day >= 1 && day <
  *  as a false "N lines don't match the bill format" hint; owner 2026-11-23
  *  flagged it on the Dunlopillo Pisa Spice paste. The parser quietly
  *  recognises them now so the hint only fires on real typos. */
-const SECTION_HEADER_RE = /^\s*\d{1,2}\s*\/\s*\d{1,2}\s+[A-Za-z]/;
+/* Range form too: "20-22/11 Akemi @ SCCC" is the fair-summary header the
+   floor pastes after the last day (owner 2026-11-24). Previously only the
+   single-day form "20/11 Akemi" was accepted, so the range header raised a
+   false "N lines don't match the bill format" hint on every summary post. */
+const SECTION_HEADER_RE = /^\s*\d{1,2}(?:\s*-\s*\d{1,2})?\s*\/\s*\d{1,2}\s+[A-Za-z]/;
 
 export function parseSalesReport(text: string | null | undefined): ParsedSalesReport {
   const lines = String(text ?? "").split(/\r?\n/);
