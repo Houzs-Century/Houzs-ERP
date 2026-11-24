@@ -1,5 +1,6 @@
 // HC-0157 A: a member with no company address claims their own (once) in Mail
-// Center, desktop and phone alike. The server re-checks everything; the
+// Center, desktop and phone alike. Owner 2026-11-24: the claim is a request an
+// admin approves; the address works only after that. The server re-checks everything; the
 // pattern here only explains a bad entry before the round trip.
 import { useState } from "react";
 import { api } from "../../api/client";
@@ -12,6 +13,8 @@ export type MailClaimOffer = {
   suggestion: string;
   department: { id: number; name: string } | null;
   departments: Array<{ id: number; name: string }>;
+  /** Their latest request: waiting, approved, or rejected with the admin's reason. */
+  request: { id: string; address: string; status: "requested" | "approved" | "rejected"; reason: string | null; createdAt: string } | null;
 };
 
 const CLAIM_KEY = "/api/mail-center/claim";
@@ -37,6 +40,8 @@ export function useMailClaim() {
   const data = offer.data ?? null;
   const value = local ?? data?.suggestion ?? "";
   const needsDepartment = data != null && data.department == null;
+  const waiting = data?.request?.status === "requested" ? data.request : null;
+  const rejected = data?.request?.status === "rejected" ? data.request : null;
   const problem = localPartProblem(value);
   const ready = !!data && !busy && !!value.trim() && !problem && (!needsDepartment || departmentId != null);
 
@@ -59,6 +64,8 @@ export function useMailClaim() {
 
   return {
     offer: data,
+    waiting,
+    rejected,
     value,
     setValue: (v: string) => setLocal(v),
     departmentId,

@@ -125,6 +125,7 @@ import mailAcks from "./routes/mail-acks";
 import mailAccessLog from "./routes/mail-access-log";
 import mailReplyGuard from "./routes/mail-reply-guard";
 import mailPersonal from "./routes/mail-personal";
+import mailClaim from "./routes/mail-claim";
 // 2990 → Houzs LIVE SO mirror receiver. PRE-AUTH (secret-guarded, called by the
 // 2990 DB via pg_net, no user JWT) — mounted at the top level, outside /api/scm.
 import { soMirror } from "./scm/routes/so-mirror";
@@ -652,6 +653,7 @@ app.route("/api/mail-center", mailAcks);
 app.route("/api/mail-center", mailAccessLog);
 app.route("/api/mail-center", mailReplyGuard);
 app.route("/api/mail-center", mailPersonal);
+app.route("/api/mail-center", mailClaim);
 app.route("/api/mail-center", mailCenter);
 // Announcements — the banner GET, the LIST GET and the ack POST are open to
 // every authed user (the route handles it internally: the list is audience- and

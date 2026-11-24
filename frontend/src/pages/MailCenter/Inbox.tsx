@@ -1488,8 +1488,8 @@ export function MailInbox() {
           splitView && "lg:grid-cols-[230px_minmax(360px,400px)_minmax(0,1fr)]",
         )}
       >
-        {/* LEFT RAIL */}
-        <aside className="space-y-3">
+        {/* LEFT RAIL: scrolls by itself and stays in view, so a long mailbox list never pushes the list and reading pane off screen. */}
+        <aside className="space-y-3 md:sticky md:top-16 md:max-h-[calc(100dvh-5.5rem)] md:self-start md:overflow-y-auto md:overscroll-contain md:pr-1">
           <button
             onClick={() => {
               setResumeDraft(null);
@@ -1751,7 +1751,7 @@ export function MailInbox() {
 
         {/* RIGHT — reading pane (lg+ only, split mode only) */}
         {splitView && (
-          <div className="hidden min-w-0 lg:block">
+          <div className="hidden min-w-0 lg:sticky lg:top-16 lg:block lg:max-h-[calc(100dvh-5.5rem)] lg:self-start lg:overflow-y-auto lg:overscroll-contain">
             {selectedId ? (
               <div className="min-w-0 rounded-xl border border-border bg-surface p-4">
                 <MailThread key={selectedId} id={selectedId} embedded />
