@@ -85,16 +85,25 @@ export type AutoOtPlan =
  * which is not capped. */
 export const MIN_AUTO_OT_MIN = 30;
 
+/* Drivers are paid by trip (Trip Pay), not by the hour, so a driver's punch
+ * earns no auto overtime — OT is warehouse crew only (owner 2026-11-24).
+ * Position-based: any position that names a driver; the warehouse store
+ * supervisor is not one and keeps OT. */
+export function isDriverPosition(position: string | null): boolean {
+  return !!position && /driver/i.test(position);
+}
+
 export function planAutoOtClaim(input: {
   existingAuto: { id: number; status: string } | null;
   reportedOwnsDay: boolean;
+  isDriver: boolean;
   shiftEndMin: number;
   otMin: number;
 }): AutoOtPlan {
-  const { existingAuto, reportedOwnsDay, shiftEndMin, otMin } = input;
+  const { existingAuto, reportedOwnsDay, isDriver, shiftEndMin, otMin } = input;
   const pendingAuto = existingAuto && existingAuto.status === "PENDING" ? existingAuto : null;
   if (existingAuto && existingAuto.status !== "PENDING") return { kind: "none" };
-  if (reportedOwnsDay || otMin < MIN_AUTO_OT_MIN) return pendingAuto ? { kind: "delete", id: pendingAuto.id } : { kind: "none" };
+  if (reportedOwnsDay || isDriver || otMin < MIN_AUTO_OT_MIN) return pendingAuto ? { kind: "delete", id: pendingAuto.id } : { kind: "none" };
   const { startMin, endMin } = autoOtWindow(shiftEndMin, otMin);
   return pendingAuto ? { kind: "update", id: pendingAuto.id, startMin, endMin } : { kind: "insert", startMin, endMin };
 }
