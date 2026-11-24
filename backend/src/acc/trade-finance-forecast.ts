@@ -141,7 +141,7 @@ export function tfPlan(input: TfPlanInput, months: readonly string[]): { legs: C
   const drawn = new Map<string, number>();
   for (const ym of [...new Set(Object.values(input.dues).flatMap((m) => Object.keys(m)))].sort()) {
     const ids = Object.keys(input.dues).filter((id) => {
-      const cell = input.dues[id]?.[ym];
+      const cell = (input.dues as Partial<Record<string, Partial<Record<string, Due>>>>)[id]?.[ym];
       return cell != null && cell.billSen + cell.forecastSen > 0 && ticked(input.off, ym, id);
     }).sort((a, b) => input.supplierName(a).localeCompare(input.supplierName(b)));
     const sen = ids.reduce((s, id) => { const c = input.dues[id]![ym]!; return s + c.billSen + c.forecastSen; }, 0);

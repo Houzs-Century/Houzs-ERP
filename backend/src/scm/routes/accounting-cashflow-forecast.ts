@@ -488,7 +488,7 @@ async function loadFacilityBooks(sb: Sb, companyId: number, codes: string[], mon
     repayments.set(code, list);
   }
   for (const [code, c] of counts) {
-    const top = [...c].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]))[0];
+    const top = [...c].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0])).at(0);
     if (top) interestCode.set(code, top[0]);
   }
   return { ok: true, lines, repayments, interestCode };
@@ -541,7 +541,7 @@ async function buildTf(sb: Sb, companyId: number, a: {
     const open = openDraws(books.lines.get(f.code) ?? []);
     const chosen = ids(plan?.suppliers).filter((id) => byId.has(id));
     const off = offOf(plan?.off);
-    const dues: Dues = Object.fromEntries(chosen.flatMap((id) => (allDues[id] ? [[id, allDues[id]]] : [])));
+    const dues: Dues = Object.fromEntries(chosen.flatMap((id) => { const found = (allDues as Partial<Dues>)[id]; return found ? [[id, found]] : []; }));
     const built = tfPlan({ currentYm: a.currentMonth, facility: f, interest, tenorDays, rateBp, open, dues, off, supplierName: (id) => String(byId.get(id)?.name ?? id) }, shown);
     legs.push(...built.legs);
     facilities.push({
@@ -613,7 +613,7 @@ export async function buildCashFlowForecast(sb: Sb, companyId: number, layoutIds
   const inputLegs = keyedInputLegs(inputs.months, nameOf);
   const currentMonth = today.slice(0, 7);
   const tree = blockOf(rpLayout.layout.blocks, 'accounts');
-  const controls = [roles.AP, roles.AP_OTHER].filter((c): c is string => c != null && c !== '');
+  const controls = [roles.AP, roles.AP_OTHER].filter((c) => c !== '');
   const supplierTermOf = (code: string | null): TermInfo => termOf(code == null ? undefined : byCode.get(code));
 
   /* From the current month on: the orders and bills in hand, and the trade-finance plan, which
@@ -812,7 +812,7 @@ export const tfGetHandler = async (c: Ctx): Promise<Response> => {
   let nowBills: DueBill[] = [];
   if (chart.facilities.length > 0) {
     const got = await loadNowBills(sb, co.companyId, {
-      today, controls: [roles.AP, roles.AP_OTHER].filter((x): x is string => x != null && x !== ''), nameOf,
+      today, controls: [roles.AP, roles.AP_OTHER].filter((x) => x !== ''), nameOf,
       termOf: (code) => parseTermMonths(code == null ? null : (byCode.get(code)?.payment_terms ?? null)),
     });
     if (!got.ok) return c.json({ error: 'load_failed', reason: got.reason }, 500);
@@ -862,7 +862,8 @@ export const tfPutHandler = async (c: Ctx): Promise<Response> => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase');
-  const body = (await c.req.json().catch(() => null)) as { facilities?: unknown } | null;
+  let body: { facilities?: unknown } | null = null;
+  try { body = (await c.req.json()) as { facilities?: unknown } | null; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const [chart, master] = await Promise.all([loadChartLeaves(sb, co.companyId), loadSupplierMaster(sb, co.companyId)]);
   if (!chart.ok) return c.json({ error: 'load_failed', reason: chart.reason }, 500);
   if (!master.ok) return c.json({ error: 'load_failed', reason: master.reason }, 500);
