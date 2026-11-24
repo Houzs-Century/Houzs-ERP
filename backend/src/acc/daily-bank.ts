@@ -46,7 +46,7 @@
 // nothing here writes to the ledger.
 // ----------------------------------------------------------------------------
 
-import { fmtDate, fmtSen } from '../scm/shared/format';
+import { fmtSen } from '../scm/shared/format';
 import { mytDateOf } from '../scm/lib/my-time';
 
 export type GlLine = {
@@ -85,9 +85,6 @@ export type DailyBankMovement = {
   method: string | null;
   /** A receipt typed into the cash book: who typed it. Absent on every other line. */
   typedBy?: string | null;
-  /** On the cash book, an approved voucher that came off on another day than its own
-      date (the day it was approved): that voucher date. Absent on every other line. */
-  voucherDate?: string | null;
 };
 
 /** A checked voucher awaiting approval — money already asked for. */
@@ -250,13 +247,12 @@ function cashbookFigures(
     if (day < date) { opening -= amount; continue; }
     outSen += amount;
     const charge = amount - myrSen(v);
-    /* An old voucher approved today says its own date, so it reads as what it is. */
-    const otherDay = v.voucher_date !== day ? v.voucher_date : null;
+    /* Approved is paid (owner 2026-11-24: 过了就不需要显示了): the line reads like any
+       other, never its own voucher date. */
     paid.push({
       jeNo: '', sourceType: 'PV', sourceDocNo: v.id, docNo: v.pv_number, party: v.payee_name ?? null,
-      note: [pendingDescription(v), otherDay ? `voucher dated ${fmtDate(otherDay)}` : '', charge > 0 ? `incl. bank charge ${fmtSen(charge)}` : '']
-        .filter(Boolean).join(' · '),
-      amountSen: amount, method: null, ...(otherDay ? { voucherDate: otherDay } : {}),
+      note: [pendingDescription(v), charge > 0 ? `incl. bank charge ${fmtSen(charge)}` : ''].filter(Boolean).join(' · '),
+      amountSen: amount, method: null,
     });
   }
   return { opening, inSen, outSen, received, paid };

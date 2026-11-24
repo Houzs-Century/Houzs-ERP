@@ -259,7 +259,7 @@ describe('computeDailyBank — the cash book', () => {
   });
 
   /* Owner 2026-11-24: 其实就是我approved了就当做一件过了要扣，不可以吗？ — then 照这样改. */
-  it('an approved voucher comes off on the Malaysia day it was approved, whatever its own date, and says that date', () => {
+  it('an approved voucher comes off on the Malaysia day it was approved, whatever its own date; its line never shows that date (owner: 过了就不需要显示了)', () => {
     const board = computeDailyBank(DAY, BANKS, ACQ, LEDGER, [], {
       starts: [START], receipts: [],
       payouts: [
@@ -281,12 +281,13 @@ describe('computeDailyBank — the cash book', () => {
     });
     const may = board.blocks[0]!;
     expect(may.openingSen).toBe(77_408_649 - 5_000 - 2_000);
-    expect(may.payouts.map((m) => [m.docNo, m.note, m.amountSen, m.voucherDate ?? null])).toEqual([
-      ['HPV-OLD', 'Other · voucher dated 2026/09/29 · incl. bank charge RM 1.00', 70_100, '2026-09-29'],
-      ['HPV-MOVED', 'Other · voucher dated 2026/11/24', 11_000, '2026-11-24'],
-      ['HPV-LATE', 'Other · voucher dated 2026/11/24', 3_000, '2026-11-24'],
-      ['HPV-SAME', 'Other', 1_500, null],
+    expect(may.payouts.map((m) => [m.docNo, m.note, m.amountSen])).toEqual([
+      ['HPV-OLD', 'Other · incl. bank charge RM 1.00', 70_100],
+      ['HPV-MOVED', 'Other', 11_000],
+      ['HPV-LATE', 'Other', 3_000],
+      ['HPV-SAME', 'Other', 1_500],
     ]);
+    expect(may.payouts.every((m) => !('voucherDate' in m) && !m.note.includes('dated'))).toBe(true);
     expect(may.outSen).toBe(70_100 + 11_000 + 3_000 + 1_500);
     expect(may.closingSen).toBe(77_408_649 - 5_000 - 2_000 - 85_600);
   });
