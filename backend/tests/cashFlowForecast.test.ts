@@ -12,7 +12,7 @@
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
-import { cashFlowForecastHandler, clearCashFlowForecastCache, forecastInputsGetHandler, forecastInputsPutHandler, type CashFlowForecastPayload, type ForecastInputsPayload } from '../src/scm/routes/accounting-cashflow-forecast';
+import { cashFlowForecastHandler, clearCashFlowForecastCache, forecastInputsGetHandler, forecastInputsPutHandler, tfGetHandler, tfPutHandler, type CashFlowForecastPayload, type ForecastInputsPayload, type TfPayload } from '../src/scm/routes/accounting-cashflow-forecast';
 import type { LaidNode } from '../src/acc/report-layout';
 
 const CO = 1;
@@ -125,6 +125,8 @@ function harness(perms: string[] = ['scm.payment_voucher.post'], inputs: Row[] =
   app.get('/accounting/reports/cash-flow-forecast', cashFlowForecastHandler as never);
   app.get('/accounting/reports/cash-flow-forecast/inputs', forecastInputsGetHandler as never);
   app.put('/accounting/reports/cash-flow-forecast/inputs', forecastInputsPutHandler as never);
+  app.get('/accounting/reports/cash-flow-forecast/tf', tfGetHandler as never);
+  app.put('/accounting/reports/cash-flow-forecast/tf', tfPutHandler as never);
   return { app, sb };
 }
 const get = async (app: Hono, q: string): Promise<CashFlowForecastPayload & { cached?: boolean }> => {
@@ -362,5 +364,97 @@ describe('the Orders & bills column', () => {
     expect(docs.undated).toEqual([{ year: '2025', orders: 1, sen: 70_000 }, { year: '2026', orders: 1, sen: 100_000 }]);
     expect(docs.beyond).toEqual({ orders: 1, orderSen: 500_000, bills: 0, billSen: 0 });
     expect(docs.flagged).toEqual(['Beta Supplies']);
+  });
+
+  /* Step 5 (2026-11-24): the trade-finance plan. The facility drew 1,000.00 when the books began, 2,000.00 in
+     September and 500.00 in November; October's repayment of 1,500.00 paid the oldest first, its interest
+     10.00 on the loan-interest account. Alpha is the supplier the facility pays. */
+  const tfTables = (): Record<string, Row[]> => {
+    const base = extra();
+    const fac = (je: string, date: string, src: string, lines: Array<[string, number, number]>): Row[] =>
+      lines.map(([code, dr, cr]) => gl(je, date, code, dr, cr, { source_type: src, source_doc_no: je }));
+    return {
+      ...base,
+      accounts: [
+        ...ACCOUNTS,
+        acc('310-0060', 'CASH AT BANK - SAMPLE BANK (TRADE FINANCE)', 'ASSET', 'CURRENT ASSETS', { acc_money: true }),
+        acc('900-L004', 'LOAN INTEREST', 'EXPENSE', 'EXPENSES'),
+      ].map((r) => ({ ...r })),
+      acc_forecast_pnl: FORECAST.map((r) => (r.month === '2026-11' && r.company_id === CO ? { ...r, lines: { ...(r.lines as object), '900-L004': { amtSen: 5_000 } } } : { ...r })),
+      v_gl_entries: [
+        ...(base.v_gl_entries ?? []),
+        ...fac('OB-TF', '2026-08-31', 'OPENING', [['460-0009', 0, 100_000]]),
+        ...fac('JV-TF1', '2026-09-14', 'MANUAL', [['310-0060', 200_000, 0], ['460-0009', 0, 200_000]]),
+        ...fac('PV-TF1', '2026-10-20', 'PV', [['460-0009', 150_000, 0], ['900-L004', 1_000, 0], ['310-0060', 0, 151_000]]),
+        ...fac('JV-TF2', '2026-11-05', 'MANUAL', [['310-0060', 50_000, 0], ['460-0009', 0, 50_000]]),
+      ],
+      acc_tf_plans: [{ company_id: CO, account_code: '460-0009', tenor_days: null, rate_bp: null, suppliers: ['sup-a'], off: {} }],
+    };
+  };
+
+  test('the trade-finance plan: the owed draws repaid two months after them with the repayments’ rate, the chosen supplier’s dues drawn and repaid; both forecasts carry it', async () => {
+    const { app } = harness(undefined, [], tfTables());
+    const res = await app.request('/accounting/reports/cash-flow-forecast/tf');
+    expect(res.status, await res.clone().text()).toBe(200);
+    const t = (await res.json()) as TfPayload;
+    expect(t.facilities).toHaveLength(1);
+    const f = t.facilities[0]!;
+    expect(f).toMatchObject({
+      code: '460-0009', lender: 'SAMPLE BANK', tenorSet: null, rateSet: null, tenorDays: 60, rateBp: 67, defaultRateBp: 67,
+      interest: { code: '900-L004', name: 'LOAN INTEREST' }, owedNowSen: 200_000, suppliers: ['sup-a'], off: {},
+      open: [{ date: '2026-09-14', sen: 150_000 }, { date: '2026-11-05', sen: 50_000 }],
+    });
+    /* Every supplier's dues, the chosen one's drawn: Alpha's planned bill and its NET 60 figure; Beta's
+       bill and opening balance (no term: a month after) and its figure; Delta's two rent bills. */
+    expect(f.dues).toEqual({
+      'sup-a': { '2026-12': { billSen: 900_000, forecastSen: 0 }, '2027-01': { billSen: 0, forecastSen: 3_000_000 } },
+      'sup-b': { '2026-11': { billSen: 350_000, forecastSen: 0 }, '2026-12': { billSen: 0, forecastSen: 1_000_000 } },
+      'sup-d': { '2026-11': { billSen: 200_000, forecastSen: 0 }, '2026-12': { billSen: 120_000, forecastSen: 0 } },
+    });
+    expect(f.schedule.slice(0, 5).map((m) => [m.ym, m.drawSen, m.repaySen, m.interestSen, m.owedSen])).toEqual([
+      ['2026-11', 0, 150_000, 1_005, 50_000],
+      ['2026-12', 900_000, 0, 0, 950_000],
+      ['2027-01', 3_000_000, 50_000, 335, 3_900_000],
+      ['2027-02', 0, 900_000, 6_030, 3_000_000],
+      ['2027-03', 0, 3_000_000, 20_100, 0],
+    ]);
+    expect(t.suppliers.map((s) => s.name)).toEqual(['Alpha Trading', 'Beta Supplies', 'Cedar Works', 'Delta Property']);
+
+    const b = await get(app, 'from=2026-09&to=2026-11');
+    expect(b.tf).toEqual({
+      facilities: [{ code: '460-0009', lender: 'SAMPLE BANK', tenorDays: 60, rateBp: 67, owedNowSen: 200_000, suppliers: ['Alpha Trading'] }],
+      interestLeftOut: [{ code: '900-L004', name: 'LOAN INTEREST' }],
+    });
+    const nov = b.docs!.months[0]!.report;
+    expect(nov.payments.filter((r) => ['460-0009', '900-L004'].includes(r.key)).map((r) => [r.key, r.totalSen])).toEqual([['460-0009', 150_000], ['900-L004', 1_005]]);
+    expect(b.docs!.months.find((m) => m.month === '2026-12')!.report.receipts.find((r) => r.key === '460-0009:PLAN')).toMatchObject({ name: 'Drawdown — planned', totalSen: 900_000 });
+    expect(b.docs!.months.map((m) => m.month)).toEqual(['2026-11', '2026-12', '2027-01', '2027-02', '2027-03']);
+    /* The P&L forecast carries the same plan; its own November interest line steps aside. */
+    const fpNov = b.months.find((m) => m.month === '2026-11')!.report;
+    expect(fpNov.payments.filter((r) => r.key === '900-L004').map((r) => r.totalSen)).toEqual([1_005]);
+    expect(fpNov.entries.find((e) => e.rowKey === '460-0009')).toMatchObject({ sourceType: 'FORECAST_TF', party: 'SAMPLE BANK', narration: 'drawn 2026-09-14, repaid 2 months after' });
+    expect(b.months.find((m) => m.month === '2027-03')!.report.payments.find((r) => r.key === '460-0009')?.totalSen).toBe(3_000_000);
+  });
+
+  test('saving the plan: the write key; a facility of the company only, its suppliers only; the tenor and rate within reason; unticked months kept for the chosen suppliers', async () => {
+    const put = (app: Hono, facilities: unknown) => app.request('/accounting/reports/cash-flow-forecast/tf', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ facilities }) });
+    expect((await put(harness(undefined, [], tfTables()).app, {})).status).toBe(403);
+    const { app, sb } = harness(['scm.payment_voucher.post', 'scm.payment_voucher.write'], [], tfTables());
+    const plan = { tenorDays: 90, rateBp: null, suppliers: ['sup-a', 'sup-b'], off: { '2027-01': ['sup-a', 'sup-x'], 'bad': ['sup-a'] } };
+    for (const [facilities, message] of [
+      [{ '460-0001': plan }, '460-0001: not a trade-finance account of this company.'],
+      [{ '460-0009': { ...plan, suppliers: ['sup-a', 'sup-zz'] } }, '460-0009: supplier sup-zz is not one of this company\'s.'],
+      [{ '460-0009': { ...plan, tenorDays: 0 } }, '460-0009: the tenor is a whole number of days, 1 to 400.'],
+      [{ '460-0009': { ...plan, rateBp: 10_001 } }, '460-0009: the interest per draw is 0% to 100%.'],
+    ] as const) {
+      const r = await put(app, facilities);
+      expect(r.status).toBe(400);
+      expect(await r.json()).toMatchObject({ error: 'bad_plan', message });
+    }
+    const ok = await put(app, { '460-0009': plan });
+    expect(ok.status, await ok.clone().text()).toBe(200);
+    expect((sb.tables.acc_tf_plans as Row[]).map((r) => [r.company_id, r.account_code, r.tenor_days, r.rate_bp, r.suppliers, r.off, r.updated_by])).toEqual([
+      [CO, '460-0009', 90, null, ['sup-a', 'sup-b'], { '2027-01': ['sup-a'] }, 'Chew'],
+    ]);
   });
 });

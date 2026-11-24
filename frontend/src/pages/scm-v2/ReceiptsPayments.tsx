@@ -34,6 +34,9 @@
 // hand beside the current month and after it — open orders' balances by delivery
 // date, the bills the books owe by their due dates — Actual | Orders & bills | P&L
 // forecast; a figure opens the order or the bill behind it.
+// Trade finance (step 5): a button beside Capex & financing opens the facility's plan
+// (reports/TradeFinanceDialog) — the draws owed repaid with their interest, the chosen
+// suppliers' dues drawn and repaid a tenor later — in both forecast columns.
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -62,6 +65,7 @@ import { splitColumns, splitLines } from './reports/cashFlowSplit';
 import { forecastColumns, forecastNote, isForecastKey, rollForecast } from './reports/cashFlowForecast';
 import { useCashFlowForecast } from '../../vendor/scm/lib/cash-flow-forecast-queries';
 import { CapexFinancingDialog } from './reports/CapexFinancingDialog';
+import { TradeFinanceDialog } from './reports/TradeFinanceDialog';
 import {
   REPORT_CHART_COLORS, ReportBarChart, chartMonths, thousands, useChartMonths, useChartPeriods,
   type ChartBarSeries, type ChartMonth,
@@ -127,6 +131,7 @@ const forecastFrom = (e: DrillEntry, month: (ym: string) => string): string => {
   if (e.sourceType === 'FORECAST_INPUT') return 'Capex & financing';
   if (e.sourceType === 'FORECAST_ORDER') return `Order ${doc}`;
   if (e.sourceType === 'FORECAST_BILL') return `Bill ${doc}`;
+  if (e.sourceType === 'FORECAST_TF') return 'Trade finance';
   return `Forecast P&L ${month(doc)}`;
 };
 /** A forecast figure's entries: where it comes from, who, how it was timed. */
@@ -200,6 +205,7 @@ export const ReceiptsPaymentsTab = () => {
   /* The forecasts beside each month — By month, by account. */
   const [forecast, setForecast] = useState(false);
   const [inputsOpen, setInputsOpen] = useState(false);
+  const [tfOpen, setTfOpen] = useState(false);
   const [months, setMonths] = useState<number>(6);
   const [level, setLevel] = useState<Level>('all');
   const [showPct, setShowPct] = useState(true);
@@ -325,7 +331,10 @@ export const ReceiptsPaymentsTab = () => {
           <ReportSwitch on={forecastOn} onChange={(v) => { setForecast(v); if (v) setByParty(false); }}>Forecast</ReportSwitch>
         )}
         {view === 'month' && (
-          <button type="button" className={s.pickerButton} onClick={() => setInputsOpen(true)}>Capex &amp; financing</button>
+          <>
+            <button type="button" className={s.pickerButton} onClick={() => setInputsOpen(true)}>Capex &amp; financing</button>
+            <button type="button" className={s.pickerButton} onClick={() => setTfOpen(true)}>Trade finance</button>
+          </>
         )}
         {depth >= 2 && (
           <ReportTool label="Levels">
@@ -341,6 +350,7 @@ export const ReceiptsPaymentsTab = () => {
       </ReportToolbar>
       {editing && <ReportLayoutEditor report="rp" onClose={() => setEditing(false)} />}
       {inputsOpen && <CapexFinancingDialog onClose={() => setInputsOpen(false)} canWrite={canPlan} />}
+      {tfOpen && <TradeFinanceDialog onClose={() => setTfOpen(false)} canWrite={canPlan} />}
       {chartWin && <CashFlowChart win={chartWin} />}
       {!r.usable && <ReportMessage>Pick dates.</ReportMessage>}
       {r.usable && failed > 0 && (

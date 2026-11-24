@@ -100,6 +100,17 @@ function docsNote(d: NonNullable<CashFlowForecast['docs']>): string[] {
   return parts;
 }
 
+/** What the trade-finance plan puts in both forecasts, said under the table. */
+function tfNote(t: NonNullable<CashFlowForecast['tf']>): string[] {
+  const parts = t.facilities.map((x) => {
+    const n = Math.round(x.tenorDays / 30);
+    const plan = x.suppliers.length > 0 ? `; its planned draws pay ${named(x.suppliers)}` : '';
+    return `Trade finance (${x.lender}): ${rm(x.owedNowSen)} owed today, each draw repaid ${n === 1 ? 'a month' : `${n} months`} after it with ${(x.rateBp / 100).toFixed(2)}% interest per draw${plan}.`;
+  });
+  if (t.interestLeftOut.length > 0) parts.push(`The Forecast P&L's ${t.interestLeftOut.map((l) => `${l.code} ${l.name}`).join(', ')} is left out: the interest comes with each repayment.`);
+  return parts;
+}
+
 /** What the forecast columns are, said under the table. */
 export function forecastNote(forecast: CashFlowForecast): string {
   const mix = forecast.receiptMix.map((p) => `${p.pct}% ${p.kind === 'DEP' ? 'as deposits' : 'as settlements'} ${after(p.months)}`).join(', ');
@@ -109,6 +120,7 @@ export function forecastNote(forecast: CashFlowForecast): string {
     'A purchase line split by supplier is paid after each supplier’s payment term; Other, and a supplier without a term, a month later; a purchase line keyed whole by its recent suppliers’ terms.',
     'Salaries are paid the month after; every other line in its month. Capex & financing keyed on this page is in its month, on its own account.',
     'A month after this one shows the forecasts alone; its Balance b/f runs on from the month before.',
+    ...(forecast.tf ? tfNote(forecast.tf) : []),
   ];
   if (forecast.nonCash.length > 0) parts.push(`Left out as moving no cash: ${forecast.nonCash.map((l) => `${l.code} ${l.name}`).join(', ')}.`);
   if (forecast.flagged.length > 0) {

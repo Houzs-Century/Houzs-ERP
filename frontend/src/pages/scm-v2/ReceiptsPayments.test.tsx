@@ -85,6 +85,12 @@ const forecastAnswer = vi.hoisted(() => ({ value: null as unknown }));
 vi.mock('../../vendor/scm/lib/authed-fetch', () => ({
   authedFetch: async (path: string) => {
     columnPaths.push(path);
+    if (path.includes('/cash-flow-forecast/tf')) {
+      return { currentMonth: '2026-07', shown: ['2026-07'], suppliers: [], facilities: [{
+        code: '460-0009', name: 'TRADE FINANCE - SAMPLE BANK', lender: 'SAMPLE BANK', tenorSet: null, rateSet: null, tenorDays: 60, rateBp: 50, defaultRateBp: 50,
+        interest: null, owedNowSen: 100000, open: [], suppliers: [], off: {}, dues: {}, schedule: [],
+      }] };
+    }
     if (path.includes('/cash-flow-forecast/inputs')) {
       return { currentMonth: '2026-07', shown: ['2026-07'], months: {}, notOffered: [], accounts: [{ code: '202-1000', name: 'EQUIPMENT (OFFICE)', group: { id: 'cf:funding:capex', label: 'CAPITAL EXPENDITURE (CAPEX)' } }] };
     }
@@ -451,6 +457,7 @@ describe('the P&L forecast', () => {
     flagged: [{ id: 's1', code: '400-S001', name: 'Sample Sofa Works' }],
     nonCash: [],
     docs: null,
+    tf: null,
   };
   beforeEach(() => { forecastAnswer.value = ANSWER; });
   afterEach(() => { forecastAnswer.value = null; });
@@ -544,6 +551,14 @@ describe('the P&L forecast', () => {
     expect(region.textContent).toContain('Customer One');
     expect(region.textContent).toContain('delivery 2026-07-20');
     expect(document.body.textContent).toContain('Open orders with no delivery date, in no month (2): 2 ordered in 2026, RM 1,500.00.');
+  });
+
+  test('Trade finance opens its plan from By month', async () => {
+    await open();
+    fireEvent.click(screen.getByRole('button', { name: 'Trade finance' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Trade finance' });
+    expect(await within(dialog).findByText('460-0009 · TRADE FINANCE - SAMPLE BANK')).toBeTruthy();
+    expect(within(dialog).getByText('Owed today RM 1,000.00')).toBeTruthy();
   });
 
   test('by debtor / creditor the forecast steps aside; Excel carries the forecast columns as shown', async () => {

@@ -26,7 +26,7 @@ const forecast = (o: Partial<CashFlowForecast> = {}): CashFlowForecast => ({
   ],
   measured: { from: '2026-08-01', to: '2026-10-31' },
   receiptMix: [{ kind: 'DEP', months: 0, pct: 100 }],
-  flagged: [], nonCash: [], docs: null,
+  flagged: [], nonCash: [], docs: null, tf: null,
   ...o,
 });
 /* The Orders & bills column: November as at its 1st, then December and February (a month with nothing in between still shows). */
@@ -125,5 +125,16 @@ describe('the Orders & bills column beside them', () => {
     expect(note).toContain('Due after the last month shown: 3 bills, RM 12.34.');
     expect(note).toContain('Bills timed a month later for want of a payment term (1): Beta Supplies.');
     expect(forecastNote(forecast({ docs: docs() }))).not.toContain('in no month');
+  });
+
+  it('the trade-finance plan is said: what is owed, the tenor and rate, the suppliers it pays, the interest line left out', () => {
+    const note = forecastNote(forecast({ tf: {
+      facilities: [{ code: '460-0009', lender: 'SAMPLE BANK', tenorDays: 60, rateBp: 67, owedNowSen: 200_000, suppliers: ['Alpha Trading'] }],
+      interestLeftOut: [{ code: '900-L004', name: 'LOAN INTEREST' }],
+    } }));
+    expect(note).toContain('Trade finance (SAMPLE BANK): RM 2,000.00 owed today, each draw repaid 2 months after it with 0.67% interest per draw; its planned draws pay Alpha Trading.');
+    expect(note).toContain("The Forecast P&L's 900-L004 LOAN INTEREST is left out: the interest comes with each repayment.");
+    expect(forecastNote(forecast({ tf: { facilities: [{ code: '460-0009', lender: 'B', tenorDays: 30, rateBp: 0, owedNowSen: 0, suppliers: [] }], interestLeftOut: [] } })))
+      .toContain('Trade finance (B): RM 0.00 owed today, each draw repaid a month after it with 0.00% interest per draw.');
   });
 });
