@@ -2,7 +2,7 @@
 // /delivery-rate-cards — Fleet Module C: 3PL / own-fleet delivery RATE CARDS,
 // the pure cost CALCULATOR, and the 3PL charge RECONCILIATION view.
 //
-// FOUR surfaces, one router:
+// FIVE surfaces, one router:
 //   1. CRUD over scm.delivery_rate_cards + scm.delivery_rate_rules (mig 0207) —
 //      the owner builds a card per carrier: charging basis (item/set), aggregation
 //      (drop/customer), positional tiers, cap+overage, sofa compartment brackets,
@@ -19,6 +19,9 @@
 //      trip's stops (set count + destination zone), computes the EXPECTED cost,
 //      and flags the delta (billed - expected). COST verification, not billing.
 //   4. GET /meta — the carriers (lorries) + known zones the editor selects from.
+//   5. GET /own-fleet — our own lorries priced like a 3PL: each lorry's day is
+//      one trip, priced once by the company's own fleet card, beside the 3PL
+//      bills of the same days (lib/own-fleet-runs.ts, lib/own-fleet-load.ts).
 //
 // COGS ATTRIBUTION SEAM. The computed/reconciled delivery cost is an ATTACHED
 // cost surfaced read-only here (and available to the DO/trip margin surface); it
@@ -61,6 +64,9 @@ import { loadPlaces, placeName, placeRefusal } from './delivery-places';
 import { MAP_COLS, toPrefixMap, type MapRow } from './delivery-zones';
 import { deriveSetCount, type SetLine } from '../lib/set-count';
 import { composeAddress } from '../lib/geocode';
+import { expectedSen } from '../lib/threepl-do-charge';
+import { buildOwnRuns, ownFleetCardChoice, ownFleetMonths, ownFleetWindow, priceOwnRuns, type ThreePlDo } from '../lib/own-fleet-runs';
+import { loadOwnFleet, type OwnFleetRead } from '../lib/own-fleet-load';
 
 export const deliveryRateCards = new Hono<{ Bindings: Env; Variables: Variables }>();
 deliveryRateCards.use('*', supabaseAuth);
@@ -956,9 +962,101 @@ deliveryRateCards.get('/reconcile', async (c) => {
   return c.json({ rows });
 });
 
+// ── GET /own-fleet — our own lorries priced like a 3PL. ──────────────────────
+// Owner 2026-11-24: 「你可以吧自己的lorry 当做是一个3pl」. Each lorry's day is one
+// trip, priced once by this company's own fleet card (own-fleet-runs.ts),
+// beside the 3PL bills on orders that ran the same days. Writes nothing and
+// touches no money path: the cost is shown, never posted.
+deliveryRateCards.get('/own-fleet', async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const win = ownFleetWindow(c.req.query('from'), c.req.query('to'));
+  if (!win.ok) return c.json({ error: 'invalid_range', reason: win.reason }, 400);
+  const sb = c.get('supabase');
+  const { data: mapRows, error: mapErr } = await paginateAll<MapRow>((lo, hi) =>
+    scopeToCompany(sb.from('delivery_zone_postcodes').select(MAP_COLS), c).order('id').range(lo, hi),
+  );
+  if (mapErr) return c.json({ error: 'load_failed', reason: mapErr.message }, 500);
+  const zoneMapRules = toPrefixMap(mapRows ?? []).map;
+  const places = await loadPlaces(c);
+  if (!places.ok) return c.json({ error: 'load_failed', reason: places.reason }, 500);
+
+  /* This company's active cards: its own fleet card prices our lorries, each
+     carrier's card the 3PL bills beside them. */
+  const { data: cardRows, error: cardErr } = await paginateAll<Row>((lo, hi) =>
+    scopeToCompany(rc(sb).from('delivery_rate_cards').select(CARD_COLS), c).eq('is_active', true).order('created_at').range(lo, hi),
+  );
+  if (cardErr) return c.json({ error: 'load_failed', reason: cardErr.message }, 500);
+  const cards = (cardRows ?? []).map(cardOut);
+  const { data: ruleRows, error: ruleErr } = cards.length
+    ? await paginateAll<Row>((lo, hi) => scopeToCompany(rc(sb).from('delivery_rate_rules').select(RULE_COLS), c).in('card_id', cards.map((x) => x.id)).range(lo, hi))
+    : { data: [] as Row[], error: null };
+  if (ruleErr) return c.json({ error: 'load_failed', reason: ruleErr.message }, 500);
+  const rulesByCard = new Map<string, ReturnType<typeof ruleOut>[]>();
+  for (const r of ruleRows ?? []) {
+    const ro = ruleOut(r);
+    rulesByCard.set(ro.cardId, [...(rulesByCard.get(ro.cardId) ?? []), ro]);
+  }
+  const cardAreas = await loadAreas(c, cards.map((x) => x.id));
+  if (!cardAreas.ok) return c.json({ error: 'load_failed', reason: cardAreas.reason }, 500);
+  const specOf = (card: ReturnType<typeof cardOut>) => toCardSpec(card, rulesByCard.get(card.id) ?? [], cardAreas.areas, places.places);
+  const choice = ownFleetCardChoice(cards.filter((x) => x.isOwnFleet));
+  const carrierSpec = new Map(cards.filter((x) => x.carrierCompanyId).map((x) => [x.carrierCompanyId as string, specOf(x)]));
+
+  let read: OwnFleetRead;
+  try {
+    read = await loadOwnFleet({ sb, scope: (q) => scopeToAllowedCompanies(q, c), payingCompanyId: co.companyId, from: win.from, to: win.to, zoneMap: zoneMapRules });
+  } catch (e) {
+    return c.json({ error: 'load_failed', reason: e instanceof Error ? e.message : String(e) }, 500);
+  }
+  const runs = priceOwnRuns(
+    buildOwnRuns(read.dos, read.trips),
+    (run) => {
+      const card = (run.lorryId ? choice.byLorry.get(run.lorryId) : undefined) ?? choice.fleet;
+      return card ? { id: card.id, name: card.name, spec: specOf(card) } : null;
+    },
+    (address) => zoneForAddress({ postcode: null, address1: address, address2: null }, zoneMapRules).zone,
+  );
+  /* A DO two carriers billed is priced by each one's card; one with no card leaves it unpriced. */
+  const threePl: ThreePlDo[] = read.threePl.map((b) => {
+    let expected: number | null = 0;
+    for (const ch of b.charges) {
+      const spec = carrierSpec.get(ch.carrierId);
+      const e = spec && b.facts ? expectedSen(spec, b.facts) : null;
+      expected = expected == null || e == null ? null : expected + e;
+    }
+    return { doId: b.doId, runDate: b.runDate, setCount: b.facts?.setCount ?? 0, billedSen: b.charges.reduce((n, ch) => n + ch.billedSen, 0), expectedSen: expected };
+  });
+  const codes = companyCodeMap(c);
+  const named = (x: ReturnType<typeof cardOut>) => ({ id: x.id, name: x.name });
+  return c.json({
+    from: win.from,
+    to: win.to,
+    card: choice.fleet ? named(choice.fleet) : null,
+    severalCards: choice.several.map(named),
+    lorryCards: [...choice.byLorry.values()].map((x) => ({ ...named(x), lorryId: x.carrierLorryId })),
+    runs: runs.map((r) => ({
+      key: r.key,
+      runDate: r.runDate,
+      lorryId: r.lorryId,
+      plate: r.plate,
+      tripNos: r.tripNos,
+      dos: r.dos.map((d) => ({ doId: d.doId, doNumber: d.doNumber, companyCode: codes.get(d.companyId) ?? null })),
+      setCount: r.setCount,
+      zones: r.zones,
+      jobs: r.jobs,
+      cardName: r.card?.name ?? null,
+      costSen: r.costSen,
+      otherJobsSen: r.otherJobsSen,
+      lines: (r.breakdown?.lines ?? []).map((l) => ({ label: l.label, amountSen: l.amountSen })),
+    })),
+    months: ownFleetMonths(runs, threePl),
+  });
+});
+
 // ── GET /:id — a card + its rules. ───────────────────────────────────────────
 // Registered LAST: '/:id' is a single segment that would otherwise swallow the
-// static '/meta' and '/reconcile' routes (repo convention, mirrors trips '/day').
+// static '/meta', '/reconcile' and '/own-fleet' routes (repo convention, mirrors trips '/day').
 deliveryRateCards.get('/:id', async (c) => {
   const id = c.req.param('id');
   const sb = c.get('supabase');

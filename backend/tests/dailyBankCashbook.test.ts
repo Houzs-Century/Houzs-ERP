@@ -194,7 +194,7 @@ describe('Daily Bank cash book — the board', () => {
     const h = harness();
     await h.send('PUT', '/accounting/daily-bank/starts/310-0010', { startDate: '2026-11-24', balanceSen: 1_000_000 });
     h.t.payment_vouchers!.push(
-      /* Dated long before the start, approved today: comes off today, saying its date. */
+      /* Dated long before the start, approved today: comes off today, like any other line. */
       pv({ id: 'pv-old', pv_number: 'HPV-050', payee_name: 'OLD BILL', credit_account_code: '310-0010', voucher_date: '2026-09-29', total_sen: 70_000, bank_charge_sen: 100, approved_at: `${TODAY}T01:00:00Z` }),
       /* Dated on the start day, approved today: moves from the 24th to today. */
       pv({ id: 'pv-moved', pv_number: 'HPV-105', payee_name: 'MOVED', credit_account_code: '310-0010', voucher_date: '2026-11-24', total_sen: 11_000, approved_at: '2026-11-24T23:30:00Z' }),
@@ -207,10 +207,10 @@ describe('Daily Bank cash book — the board', () => {
     /* B/F: the start less HPV-101 (approved on the start day, dated on it, with its charge). */
     expect(may.openingSen).toBe(1_000_000 - 40_100);
     expect(may.payouts.map((m) => [m.docNo, m.party, m.note, m.amountSen])).toEqual([
-      ['HPV-050', 'OLD BILL', 'Other · voucher dated 2026/09/29 · incl. bank charge RM 1.00', 70_100],
+      ['HPV-050', 'OLD BILL', 'Other · incl. bank charge RM 1.00', 70_100],
       ['HPV-102', 'TAN YONG HONG', 'Truck rental', 25_000],
-      ['HPV-105', 'MOVED', 'Other · voucher dated 2026/11/24', 11_000],
-      ['HPV-106', 'NO STAMP', 'Other · voucher dated 2026/11/03', 4_000],
+      ['HPV-105', 'MOVED', 'Other', 11_000],
+      ['HPV-106', 'NO STAMP', 'Other', 4_000],
     ]);
     expect(may.closingSen).toBe(1_000_000 - 40_100 - 70_100 - 25_000 - 11_000 - 4_000);
     /* The start day itself: HPV-101 then; HPV-105 not yet, the old ones never. */
