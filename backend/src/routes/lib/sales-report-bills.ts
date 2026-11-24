@@ -82,6 +82,17 @@ export function collectReport(
         });
       }
       contributing.add(n.id);
+      /* All-in-one paste (owner 2026-11-24, Ziyun SCCC + Sally MITC):
+         one long message carries every day's bills AND a day-by-day summary
+         with its grand "Total ... RM..." at the bottom. Before this, the
+         `continue` above skipped the summary and the event stayed on "No chat
+         sales report" even though the chat held the full figure. When the
+         same message carries day lines and a Total, use that Total — the
+         grand total of a self-contained report that the floor pasted as one. */
+      if (parsed.days.length > 0 && parsed.total_sen != null && parsed.total_sen > 0) {
+        const days_sen = parsed.days.reduce((s, d) => s + d.amount_sen, 0);
+        summary = { activity_id: n.id, total_sen: parsed.total_sen, days_sen, created_at: n.created_at };
+      }
       continue;
     }
     const s = summaryTotalOf(parsed);
