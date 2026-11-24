@@ -159,3 +159,19 @@ describe("directoryFor", () => {
     expect(directoryFor({ id: 2, code: "2990", name: "2990s" }, users, grants).map((p) => p.id)).toEqual(["1", "2", "3"]);
   });
 });
+
+describe("meeting emails after a change", () => {
+  test("a booking made here then collects this company's emails from the hub; a refused one does not", async () => {
+    const calls = fakeHub((url) => (url.endsWith("/mail/claim") ? json({ mail: [] }) : json({ ok: true, ids: [5] }, 201)));
+    const res = await appAs(AINA).request("/api/meetings/meetings", post({ title: "Weekly" }));
+    expect(res.status).toBe(201);
+    await vi.waitFor(() => expect(calls.some((c) => c.url.endsWith("/mail/claim"))).toBe(true));
+    const claim = calls.find((c) => c.url.endsWith("/mail/claim"))!;
+    expect(claim.headers.get("Authorization")).toBe("Bearer hub_hc_key");
+
+    const refused = fakeHub(() => json({ error: "Room is busy" }, 409));
+    await appAs(AINA).request("/api/meetings/meetings", post({ title: "Clash" }));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(refused.some((c) => c.url.endsWith("/mail/claim"))).toBe(false);
+  });
+});

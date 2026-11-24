@@ -27,6 +27,7 @@ import type { AuthUser } from "../services/auth";
 import { hasPermission } from "../services/permissions";
 import { checkRateLimit, clientIp } from "../middleware/rateLimit";
 import { defaultCompanyCodeForHost } from "../middleware/companyContext";
+import { sendMeetingMail } from "../services/meetingMail";
 
 const app = new Hono<{ Bindings: Env }>();
 export const publicMeetings = new Hono<{ Bindings: Env }>();
@@ -120,6 +121,21 @@ async function json(c: Ctx): Promise<Record<string, unknown> | null> {
 }
 const jsonInit = (method: string, body: unknown): RequestInit => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body ?? {}) });
 
+/** After a booking, change or cancellation, send the emails it made through this ERP's Mail Center
+ *  (services/meetingMail.ts), once the answer has gone. The 5-minute cron sends anything left. */
+async function thenMail(c: Ctx, company: string, res: Promise<Response>): Promise<Response> {
+  const out = await res;
+  if (out.ok) {
+    const run = sendMeetingMail(c.env, company).catch((e) => console.warn("[meetings] mail:", e instanceof Error ? e.message : String(e)));
+    try {
+      c.executionCtx.waitUntil(run);
+    } catch {
+      // No execution context (tests): the run above carries on by itself.
+    }
+  }
+  return out;
+}
+
 // ---- Connected? (the menu row is listed only where this is true) -----------
 app.get("/status", (c) => {
   const hub = hubFor(c);
@@ -184,7 +200,7 @@ app.post("/meetings", async (c) => {
   if (hub instanceof Response) return hub;
   const body = await json(c);
   if (!body) return c.json({ error: "That could not be read. Please try again." }, 400);
-  return relay(c, hubFetch(hub, "/meetings", jsonInit("POST", body)));
+  return thenMail(c, c.get("companyCode") ?? "", relay(c, hubFetch(hub, "/meetings", jsonInit("POST", body))));
 });
 
 app.patch("/meetings/:id", async (c) => {
@@ -194,7 +210,7 @@ app.patch("/meetings/:id", async (c) => {
   if (!ID.test(id)) return c.json({ error: "That meeting is not there any more." }, 404);
   const body = await json(c);
   if (!body) return c.json({ error: "That could not be read. Please try again." }, 400);
-  return relay(c, hubFetch(hub, `/meetings/${id}`, jsonInit("PATCH", body)));
+  return thenMail(c, c.get("companyCode") ?? "", relay(c, hubFetch(hub, `/meetings/${id}`, jsonInit("PATCH", body))));
 });
 
 app.post("/meetings/:id/:act{cancel|start|end}", async (c) => {
@@ -203,7 +219,7 @@ app.post("/meetings/:id/:act{cancel|start|end}", async (c) => {
   const id = c.req.param("id");
   if (!ID.test(id)) return c.json({ error: "That meeting is not there any more." }, 404);
   const body = (await json(c)) ?? {};
-  return relay(c, hubFetch(hub, `/meetings/${id}/${c.req.param("act")}`, jsonInit("POST", body)));
+  return thenMail(c, c.get("companyCode") ?? "", relay(c, hubFetch(hub, `/meetings/${id}/${c.req.param("act")}`, jsonInit("POST", body))));
 });
 
 app.post("/meetings/:id/files", async (c) => {
@@ -300,9 +316,10 @@ app.patch("/links/:id", async (c) => {
 // ---- Guests (no login) ------------------------------------------------------
 
 /** Guests come in on this ERP's address; that address picks the company key. */
+const guestCompany = (c: Ctx) => defaultCompanyCodeForHost(c.req.header("Host") ?? new URL(c.req.url).host);
 function guestHub(c: Ctx): Hub | Response {
   const base = hubBase(c.env);
-  const key = keyFor(c.env, defaultCompanyCodeForHost(c.req.header("Host") ?? new URL(c.req.url).host));
+  const key = keyFor(c.env, guestCompany(c));
   if (!base || !key) return c.json({ error: "Booking is not available right now." }, 501);
   return { base, key, headers: { "X-Reporter-Id": "guest" } };
 }
@@ -357,7 +374,7 @@ publicMeetings.post("/links/:code/book", async (c) => {
   if (!b) return c.json({ error: "That could not be read. Please try again." }, 400);
   // Only these fields reach the hub. roomId / end / title / people / department: the guest picks the room and time.
   const body = { start: b.start, end: b.end, roomId: b.roomId, name: b.name, phone: b.phone, email: b.email, company: b.company, department: b.department, title: b.title, people: b.people };
-  return relay(c, hubFetch(hub, `/public/links/${code}/book`, jsonInit("POST", body)));
+  return thenMail(c, guestCompany(c), relay(c, hubFetch(hub, `/public/links/${code}/book`, jsonInit("POST", body))));
 });
 
 publicMeetings.get("/bookings/:token", async (c) => {
@@ -377,7 +394,7 @@ publicMeetings.post("/bookings/:token/cancel", async (c) => {
   if (limited) return limited;
   const hub = guestHub(c);
   if (hub instanceof Response) return hub;
-  return relay(c, hubFetch(hub, `/public/bookings/${token}/cancel`, { method: "POST" }));
+  return thenMail(c, guestCompany(c), relay(c, hubFetch(hub, `/public/bookings/${token}/cancel`, { method: "POST" })));
 });
 
 export default app;
