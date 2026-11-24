@@ -64,7 +64,8 @@ import { loadPlaces, placeName, placeRefusal } from './delivery-places';
 import { MAP_COLS, toPrefixMap, type MapRow } from './delivery-zones';
 import { deriveSetCount, type SetLine } from '../lib/set-count';
 import { composeAddress } from '../lib/geocode';
-import { doGoodsSen, expectedSen, orderGoodsSen } from '../lib/threepl-do-charge';
+import { expectedSen } from '../lib/threepl-do-charge';
+import { loadDoGoods } from '../lib/do-goods';
 import { DO_CHARGE, doChargeOf, doChargeProblem, withDoCharge } from '../lib/do-charge';
 import { buildOwnRuns, ownFleetCardChoice, ownFleetMonths, ownFleetWindow, priceOwnRuns, type ThreePlDo } from '../lib/own-fleet-runs';
 import { loadOwnFleet, type OwnFleetRead } from '../lib/own-fleet-load';
@@ -442,7 +443,7 @@ const ruleCreateSchema = z.object({
      params.appliesTo; null = back to the default (delivery orders). */
   appliesTo: z.array(z.enum(BILLABLE_JOB_TYPES as unknown as [BillableJobType, ...BillableJobType[]])).min(1).nullable().optional(),
   /* DO_CHARGE: its name and its share of the goods value in basis points
-     (900 = 9%), kept in params as { label, bps } (do-charge.ts). */
+     (100 = 1%), kept in params as { label, bps } (do-charge.ts). */
   label: z.string().trim().max(40).nullable().optional(),
   bps: z.number().int().min(0).max(10_000).nullable().optional(),
   sortOrder: z.number().int().optional(),
@@ -892,23 +893,22 @@ deliveryRateCards.get('/reconcile', async (c) => {
   }
   // DO -> SO doc no.
   const soDocByDoId = new Map<string, string>();
-  const doTotalById = new Map<string, number | null>();
   if (allDoIds.size > 0) {
-    const { data: doRows } = await sb.from('delivery_orders').select('id, so_doc_no, local_total_sen').in('id', [...allDoIds]);
+    const { data: doRows } = await sb.from('delivery_orders').select('id, so_doc_no').in('id', [...allDoIds]);
     for (const d of (doRows ?? []) as Row[]) {
       const idv = s(d.id); const soDoc = s(d.so_doc_no);
       if (idv && soDoc) soDocByDoId.set(idv, soDoc);
-      if (idv) doTotalById.set(idv, n(d.local_total_sen));
     }
   }
+  /* Each DO's own goods value, for a card's Per DO charge (do-goods.ts). */
+  const doGoods = await loadDoGoods((q) => scopeToAllowedCompanies(q, c), sb, [...allDoIds]);
+  if (!doGoods.ok) return c.json({ error: 'load_failed', reason: doGoods.reason }, 500);
   const allSoDocs = new Set<string>([...soDocByDoId.values()]);
   // SO lines (for set count) + SO header (for postcode -> zone).
   const linesBySo = new Map<string, SetLine[]>();
   const zoneBySo = new Map<string, string | null>();
   const customerKeyBySo = new Map<string, string>();
   const addressBySo = new Map<string, string>();
-  /* Each order's goods value and total, for a Per DO charge's share (do-charge.ts). */
-  const goodsBySo = new Map<string, { goods: number; total: number }>();
   if (allSoDocs.size > 0) {
     const { data: lineRows } = await paginateAll<Row>((lo, hi) =>
       scopeToAllowedCompanies(sb.from('mfg_sales_order_items').select('doc_no, item_group, cancelled'), c).in('doc_no', [...allSoDocs]).range(lo, hi),
@@ -920,13 +920,12 @@ deliveryRateCards.get('/reconcile', async (c) => {
       linesBySo.set(doc, arr);
     }
     const { data: soRows } = await paginateAll<Row>((lo, hi) =>
-      scopeToAllowedCompanies(sb.from('mfg_sales_orders').select('doc_no, postcode, address1, address2, address3, address4, city, debtor_code, debtor_name, local_total_sen, mattress_sofa_sen, bedframe_sen, accessories_sen, others_sen'), c).in('doc_no', [...allSoDocs]).range(lo, hi),
+      scopeToAllowedCompanies(sb.from('mfg_sales_orders').select('doc_no, postcode, address1, address2, address3, address4, city, debtor_code, debtor_name'), c).in('doc_no', [...allSoDocs]).range(lo, hi),
     );
     for (const so of soRows ?? []) {
       const doc = String(so.doc_no ?? '');
       const z = zoneForAddress({ postcode: s(so.postcode), address1: s(so.address1), address2: s(so.address2) }, zoneMapRules);
       zoneBySo.set(doc, z.zone);
-      goodsBySo.set(doc, { goods: orderGoodsSen(so), total: Number(so.local_total_sen ?? 0) });
       /* The "customer" a per-customer card charges once for: the SAME buyer at
          the SAME doorstep. Keyed on debtor + normalised address rather than
          debtor alone, because one buyer with two delivery addresses is two
@@ -969,11 +968,8 @@ deliveryRateCards.get('/reconcile', async (c) => {
        for. Two drops to the same buyer at the same address collapse to one. */
     const customerCount = new Set(soDocs.map((d) => customerKeyBySo.get(d) ?? d)).size;
     const dropCount = soDocs.length;
-    /* The trip's goods value: each DO's share of its order's goods. */
-    const goodsValueSen = [...new Set(doIdsByTrip.get(tripId) ?? [])].reduce((sum, doId) => {
-      const order = goodsBySo.get(soDocByDoId.get(doId) ?? '');
-      return sum + (order ? doGoodsSen(order.goods, order.total, doTotalById.get(doId) ?? null) : 0);
-    }, 0);
+    /* The trip's goods value: its DOs' own goods. */
+    const goodsValueSen = [...new Set(doIdsByTrip.get(tripId) ?? [])].reduce((sum, doId) => sum + (doGoods.goods.get(doId) ?? 0), 0);
     let expectedSen: number | null = null;
     let breakdown: ReturnType<typeof computeDeliveryCost> | null = null;
     if (card) {

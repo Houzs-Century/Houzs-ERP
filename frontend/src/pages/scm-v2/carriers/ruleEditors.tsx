@@ -135,8 +135,8 @@ const DoChargeEditor = ({ cardId, rule, name, onDone }: { cardId: string; rule: 
   );
 };
 
-/** A charge on each DO in a table cell: what it takes ("9% of goods",
- *  "RM 30.00 per DO"), which a click opens to change or remove. */
+/** A charge on each DO in a table cell: what it takes ("5% of goods",
+ *  "RM 25.00 per DO"), which a click opens to change or remove. */
 export const DoChargeButton = ({ cardId, rule, name }: { cardId: string; rule: RateRule; name: string }) => {
   const [editing, setEditing] = useState(false);
   if (editing) return <DoChargeEditor cardId={cardId} rule={rule} name={name} onDone={() => setEditing(false)} />;
@@ -323,7 +323,7 @@ export const AddRule = ({ cardId, category, zones, initialType, onDone }: {
         <div className="basis-full"><AppliesToControl value={form.appliesTo} onChange={(jobs) => set('appliesTo', jobs)} /></div>
       )}
       {isCharge && field('Name', 'flex-[1_1_160px]', <input className={INPUT} value={form.name} placeholder="SST" onChange={(e) => set('name', e.target.value)} />)}
-      {isCharge && field('% of goods value', 'flex-[0_1_140px]', <input className={INPUT} inputMode="decimal" value={form.pct} placeholder="9" onChange={(e) => set('pct', e.target.value)} />)}
+      {isCharge && field('% of goods value', 'flex-[0_1_140px]', <input className={INPUT} inputMode="decimal" value={form.pct} placeholder="5" onChange={(e) => set('pct', e.target.value)} />)}
       {field(isCharge ? 'RM per DO' : 'Amount (RM)', 'flex-[0_1_140px]', <input className={INPUT} inputMode="decimal" value={form.amountRM} placeholder={isCharge ? '0.00' : undefined} onChange={(e) => set('amountRM', e.target.value)} />)}
       <div className="flex gap-2">
         <button type="button" className={BTN_PRI} onClick={addRule} disabled={create.isPending}><Plus size={16} strokeWidth={1.75} />{create.isPending ? 'Adding…' : 'Add rule'}</button>

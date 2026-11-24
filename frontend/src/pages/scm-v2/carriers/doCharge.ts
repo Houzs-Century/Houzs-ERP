@@ -1,11 +1,11 @@
 // A rate card's charge on each delivery order (DO_CHARGE; owner 2026-11-24 on
-// the Singapore carriers: 「haohua应该也是 9% +6%， based on good」 and a RM 30
-// permit per order): a name, an amount per DO and/or a % of the DO's goods
-// value. How it reads on the card, and the boxes read into a rule. Pure.
+// the Singapore carriers: 「based on good」, and a permit per order): a name, an
+// amount per DO and/or a % of the DO's goods value. How it reads on the card,
+// and the boxes read into a rule. Pure.
 import type { RateRule } from '../../../vendor/scm/lib/delivery-rate-card-queries';
 import { centiToRM, rmToSen } from './cardSettings';
 
-/** A share as typed: 9 → "9", 650 basis points → "6.5". */
+/** A share as typed: 500 basis points → "5", 250 → "2.5". */
 export const bpsToPct = (bps: number | null | undefined): string => (bps ? String(bps / 100) : '');
 
 /** A typed % (up to two decimals, 0 to 100) as basis points; blank is 0; null when unreadable. */
@@ -17,7 +17,7 @@ export function pctToBps(raw: string): number | null {
   return bps <= 10_000 ? bps : null;
 }
 
-/** What the charge takes, as the card shows it: "9% of goods", "RM 30.00 per DO", or both. */
+/** What the charge takes, as the card shows it: "5% of goods", "RM 25.00 per DO", or both. */
 export function chargeText(rule: Pick<RateRule, 'bps' | 'amountSen'>): string {
   const parts = [
     rule.bps ? `${bpsToPct(rule.bps)}% of goods` : null,

@@ -53,7 +53,7 @@ export type RateRule = {
    *  none); null for every other price. */
   appliesTo?: string[] | null;
   /** A Per DO charge's name ("SST", "Permit") and its share of the goods value
-   *  in basis points (900 = 9%); null for every other price. */
+   *  in basis points (100 = 1%); null for every other price. */
   label?: string | null;
   bps?: number | null;
   sortOrder: number;

@@ -43,10 +43,10 @@ describe('readFacts', () => {
   });
 
   it("a charge on each DO: one DO, its goods value as typed (owner 2026-11-24, the Singapore carriers)", () => {
-    const charged = pricedTypes([rule({}), rule({ ruleType: 'DO_CHARGE', label: 'SST', bps: 900, amountSen: 0 })]);
-    expect(readFacts({ ...EMPTY_FORM, goods: '7083' }, SET_CARD, charged)).toEqual({ ok: true, facts: { setCount: 1, destinationZone: null, goodsValueSen: 708_300, dropCount: 1 } });
+    const charged = pricedTypes([rule({}), rule({ ruleType: 'DO_CHARGE', label: 'Tax', bps: 700, amountSen: 0 })]);
+    expect(readFacts({ ...EMPTY_FORM, goods: '5000' }, SET_CARD, charged)).toEqual({ ok: true, facts: { setCount: 1, destinationZone: null, goodsValueSen: 500_000, dropCount: 1 } });
     expect(readFacts({ ...EMPTY_FORM, goods: 'abc' }, SET_CARD, charged)).toMatchObject({ ok: false, errors: { goods: expect.any(String) } });
-    expect(lineLabel({ ruleType: 'DO_CHARGE', label: 'SST 9% of goods', amountSen: 63_747 }, 'set')).toBe('SST 9% of goods');
+    expect(lineLabel({ ruleType: 'DO_CHARGE', label: 'Tax 7% of goods', amountSen: 35_000 }, 'set')).toBe('Tax 7% of goods');
   });
 
   it('counts items on a per-item card, nothing on a per-trip card, and in town is no zone', () => {

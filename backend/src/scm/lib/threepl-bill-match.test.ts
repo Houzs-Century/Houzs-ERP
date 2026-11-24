@@ -94,15 +94,16 @@ describe('a trip\'s one price, and an order delivered twice', () => {
     expect(chargeNote(c!, 'HC-API-2610-009')).toBe('HC-API-2610-009: 6/10-SO-013216 — RM 120.00 / 6/10-SO-013216 — RM 100.00');
   });
 
-  /* Owner 2026-11-24, Hao Hua: each order listed with its goods value and no
-     price, then "Total = Rm 51390 x 13%" and "Permit x 8". Made-up figures. */
+  /* Owner 2026-11-24, a Singapore carrier's bill: each order listed with its
+     goods value and no price, then one total line and one permit line. Made-up
+     figures. */
   it('a bill that prices its orders together: its total and its permits go on all of them, shared by goods value', () => {
     const resolve = (k: OrderKeys) => k.soNos.slice(0, 1).map((n) => DO(n.slice(-3)));
     const lines = matchLines([
       line({ text: 'SO-000101 - Rm 3000', amountSen: null, orders: [order({ soNo: 'SO-000101' })] }),
       line({ text: 'SO-000102 - Rm 1000', amountSen: null, orders: [order({ soNo: 'SO-000102' })] }),
-      line({ text: 'Total = Rm 4000 x 13% = Rm 520-00', kind: 'other', amountSen: 52_000 }),
-      line({ text: 'Permit x 2 = Rm 60-00', kind: 'other', amountSen: 6_000 }),
+      line({ text: 'Total = Rm 4000 x 11% = Rm 440-00', kind: 'other', amountSen: 44_000 }),
+      line({ text: 'Permit x 2 = Rm 50-00', kind: 'other', amountSen: 5_000 }),
       line({ text: 'Storage', kind: 'storage', amountSen: 1_000 }),
     ], resolve);
     const assignments = shareOrderTotals(lines, lines.map((l) => preselect(l, [])));
@@ -111,8 +112,8 @@ describe('a trip\'s one price, and an order delivered twice', () => {
     ]);
     const goods = new Map([['101', 300_000], ['102', 100_000]]);
     const charges = chargesPerDo(assignedLines(lines, assignments, new Map([['101', DO('101')], ['102', DO('102')]])), () => null, (id) => goods.get(id) ?? null);
-    // 13% of each order's goods, and the RM 60 of permits in the same shares.
-    expect(charges.map((c) => [c.doId, c.billedSen])).toEqual([['101', 39_000 + 4_500], ['102', 13_000 + 1_500]]);
+    // 11% of each order's goods, and the RM 50 of permits in the same shares.
+    expect(charges.map((c) => [c.doId, c.billedSen])).toEqual([['101', 33_000 + 3_750], ['102', 11_000 + 1_250]]);
   });
 
   it('a bill that prices each order keeps every other line where it was', () => {

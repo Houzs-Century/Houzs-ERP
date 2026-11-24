@@ -60,7 +60,7 @@ export type DispatchableJobType = (typeof DISPATCHABLE_JOB_TYPES)[number];
  */
 export const NON_BILLABLE_JOB_TYPES = ['LORRY_SERVICE'] as const;
 
-/** Every rule type a card can carry. Mirrors the CHECK in mig 20261124T2100. */
+/** Every rule type a card can carry. Mirrors the CHECK in mig 20261124T2230. */
 export const RATE_RULE_TYPES = [
   'POSITIONAL_TIER', 'OVERAGE', 'SOFA_BRACKET',
   'OUTSTATION', 'OUTSTATION_TRIP',

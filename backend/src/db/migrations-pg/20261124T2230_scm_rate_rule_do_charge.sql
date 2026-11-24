@@ -1,13 +1,13 @@
--- 20261124T2100_scm_rate_rule_do_charge.sql
+-- 20261124T2230_scm_rate_rule_do_charge.sql
 --
 -- WHY. Owner 2026-11-24, on the two Singapore carriers (EU LOGISTICS and Hao
--- Hua Furniture): 「EU Logistics 和 hao hua 的算法应该就是Singapore transport的算法」
--- and 「haohua应该也是 9% +6%， based on good」. Their bills charge a share of the
--- order's goods value (SST 9% + cost 6%) and Hao Hua adds a RM 30 permit per
--- order; no rate card rule could say either. DO_CHARGE is a named charge on
--- each delivery order: a fixed amount (amount_sen, sen per DO) and/or a share
--- of the DO's goods value (params.bps, basis points; params.label its name).
--- The calculator is scm/lib/delivery-rate-card.ts; the list of rule types is
+-- Hua Furniture): 「EU Logistics 和 hao hua 的算法应该就是Singapore transport的算法」,
+-- 「based on good」. Their bills charge shares of the goods value (an SST share
+-- and a cost share), and Hao Hua adds a fixed permit per order; no rate card
+-- rule could say either. DO_CHARGE is a named charge on each delivery order: a
+-- fixed amount (amount_sen, sen per DO) and/or a share of the DO's goods value
+-- (params.bps, basis points; params.label its name). The calculator is
+-- scm/lib/delivery-rate-card.ts; the list of rule types is
 -- scm/lib/rate-rule-taxonomy.ts (held to this CHECK by audit:job-types).
 --
 -- The CHECK is re-made with one value more, exactly as 0243 did for

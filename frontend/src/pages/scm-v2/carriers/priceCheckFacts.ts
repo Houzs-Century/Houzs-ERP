@@ -172,7 +172,7 @@ export function lineLabel(line: CostLine, unit: ChargingUnit): string {
       const z = text(d.zone);
       return z == null ? line.label : `${z}, per trip`;
     }
-    /* Its own name and share, as the engine wrote them: "SST 9% of goods". */
+    /* Its own name and share, as the engine wrote them: "Tax 5% of goods". */
     case 'DO_CHARGE':
       return line.label;
     default: {

@@ -15,7 +15,8 @@ import { DO_NOT_DELIVERED_IN_LIST, doCountsAsDelivered } from '../shared/do-ship
 import { doRunDate, isOwnLorryDoRun } from './own-lorry-do-run';
 import { normalizePlate } from './plate-normalize';
 import { zoneForAddress, type ZonePrefixRule } from './zone-classify';
-import { doFacts, doGoodsSen, orderAddressText, orderGoodsSen, setLineOf } from './threepl-do-charge';
+import { doFacts, orderAddressText, setLineOf } from './threepl-do-charge';
+import { loadDoGoods } from './do-goods';
 import type { SetLine } from './set-count';
 import type { TripStopRow } from './trip-stop-jobs';
 import { customerKeyOf, type OwnDo, type OwnTrip } from './own-fleet-runs';
@@ -46,8 +47,8 @@ export interface OwnFleetRead {
   threePl: ThreePlBill[];
 }
 
-const DO_COLS = 'id, company_id, do_number, so_doc_no, status, do_date, delivered_at, created_at, is_dropship, local_total_sen';
-const SO_COLS = 'doc_no, company_id, amended_delivery_date, customer_delivery_date, debtor_code, debtor_name, address1, address2, address3, address4, city, postcode, local_total_sen, mattress_sofa_sen, bedframe_sen, accessories_sen, others_sen';
+const DO_COLS = 'id, company_id, do_number, so_doc_no, status, do_date, delivered_at, created_at, is_dropship';
+const SO_COLS = 'doc_no, company_id, amended_delivery_date, customer_delivery_date, debtor_code, debtor_name, address1, address2, address3, address4, city, postcode';
 
 /** The instant a Malaysia day starts (UTC+8, no daylight saving), as an ISO string. */
 export const myDayStartIso = (ymd: string): string => new Date(`${ymd}T00:00:00+08:00`).toISOString();
@@ -220,19 +221,20 @@ export async function loadOwnFleet(input: {
   }
   const lineRows = await need<Row>('order lines', chunkIn<Row>(factDocs, (b, lo, hi) =>
     scope(db(sb).from('mfg_sales_order_items').select('doc_no, company_id, item_group, qty, cancelled')).in('doc_no', b).order('doc_no').range(lo, hi)));
+  /* Each DO's own goods value (do-goods.ts), for a card's Per DO charge. */
+  const doGoods = await loadDoGoods(scope, sb, [...ownDos.map((d) => d.doId), ...threePlRan.map(({ d }) => String(d.id))]);
+  if (!doGoods.ok) throw new Error(`delivery order lines: ${doGoods.reason}`);
   const linesBySo = new Map<string, SetLine[]>();
   for (const l of lineRows) {
     const k = byCo(l.company_id, l.doc_no);
     (linesBySo.get(k) ?? linesBySo.set(k, []).get(k)!).push(setLineOf(l));
   }
-  /* A DO's facts: its order's lines and address, and its share of the order's goods. */
+  /* A DO's facts: its order's lines and address, and its own goods value. */
   const factsOf = (doId: string, companyId: number, doc: string | null): DeliveryFacts | null => {
     const so = doc ? soByKey.get(byCo(companyId, doc)) : undefined;
     if (!so || !doc) return null;
     const zone = zoneForAddress({ postcode: str(so.postcode), address1: str(so.address1), address2: str(so.address2) }, zoneMap).zone;
-    const doTotal = doById.get(doId)?.local_total_sen;
-    const goods = doGoodsSen(orderGoodsSen(so), Number(so.local_total_sen ?? 0), doTotal == null ? null : Number(doTotal));
-    return doFacts(linesBySo.get(byCo(companyId, doc)) ?? [], zone, orderAddressText(so), goods);
+    return doFacts(linesBySo.get(byCo(companyId, doc)) ?? [], zone, orderAddressText(so), doGoods.goods.get(doId) ?? null);
   };
 
   return {

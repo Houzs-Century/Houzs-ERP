@@ -227,9 +227,9 @@ export function preselect(line: Pick<MatchedLine, 'status' | 'kind' | 'amountSen
   return UNASSIGNED;
 }
 
-/** A bill that prices its orders together (owner 2026-11-24 on Hao Hua's bills:
- *  each order is listed with its goods value and no price, then one line
- *  "Total = Rm 51390 x 13%" and one "Permit x 8"). When the bill's DO lines
+/** A bill that prices its orders together (owner 2026-11-24 on a Singapore
+ *  carrier's bills: each order is listed with its goods value and no price,
+ *  then one total line, a share of their goods, and one permit line). When the bill's DO lines
  *  carry no amount, each line with an amount that is not a delivery and is
  *  assigned nowhere is the price of all those DOs, so it is assigned to them
  *  (chargesPerDo shares it by goods value). A person can still move it. */
