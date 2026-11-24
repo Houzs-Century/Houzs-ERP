@@ -36,7 +36,9 @@
 // the board carries only the accounts whose start is on or before the day, each
 // reading the bank's real balance at the start of its start day, plus the
 // receipts typed for it, less the approved (POSTED) vouchers paying out of it on
-// their voucher date — what the voucher posts, its bank charge included. Pending
+// the Malaysia day each was approved (owner 2026-11-24: 其实就是我approved了就当做一件过了
+// 要扣; 照这样改) — what the voucher posts, its bank charge included. One approved
+// before the start, or on the start day but dated before it, is inside the start. Pending
 // counts only the vouchers paying out of those accounts. Card money not yet in a
 // bank sits under none of them (owner, on its rows: 这个可以不要出现吗): the board
 // still lists it once, as on its way, never counted. The rest wait in `notStarted`. Without one (cashbook null) the board is the
@@ -44,7 +46,8 @@
 // nothing here writes to the ledger.
 // ----------------------------------------------------------------------------
 
-import { fmtSen } from '../scm/shared/format';
+import { fmtDate, fmtSen } from '../scm/shared/format';
+import { mytDateOf } from '../scm/lib/my-time';
 
 export type GlLine = {
   entry_date: string;
@@ -82,6 +85,9 @@ export type DailyBankMovement = {
   method: string | null;
   /** A receipt typed into the cash book: who typed it. Absent on every other line. */
   typedBy?: string | null;
+  /** On the cash book, an approved voucher that came off on another day than its own
+      date (the day it was approved): that voucher date. Absent on every other line. */
+  voucherDate?: string | null;
 };
 
 /** A checked voucher awaiting approval — money already asked for. */
@@ -163,8 +169,12 @@ export type PendingVoucherRow = {
 export type CashbookStart = { account_code: string; start_date: string; balance_sen: number };
 /** Money received, as the owner typed it into the cash book. */
 export type CashbookReceipt = { id: string; account_code: string; receipt_date: string; amount_sen: number; note: string; created_by?: string | null };
-/** An approved (POSTED) voucher paying out of a cash-book account. */
-export type CashbookPayout = PendingVoucherRow & { id: string; pv_number: string; voucher_date: string; credit_account_code: string; bank_charge_sen?: number | null };
+/** An approved (POSTED) voucher paying out of a cash-book account, with when it was
+    approved and posted (timestamps; null when not stamped). */
+export type CashbookPayout = PendingVoucherRow & {
+  id: string; pv_number: string; voucher_date: string; credit_account_code: string; bank_charge_sen?: number | null;
+  approved_at?: string | null; posted_at?: string | null;
+};
 /** What the route read for the accounts that have a start. */
 export type DailyBankCashbook = { starts: CashbookStart[]; receipts: CashbookReceipt[]; payouts: CashbookPayout[] };
 
@@ -194,9 +204,27 @@ export const voucherPayoutSen = (v: CashbookPayout): number => {
   return myrSen(v) + (Number.isFinite(charge) && charge > 0 ? Math.round(charge) : 0);
 };
 
+const mytDay = (at: string | null | undefined): string | null => {
+  const t = at ? Date.parse(at) : Number.NaN;
+  return Number.isFinite(t) ? mytDateOf(t) : null;
+};
+
+/** The day an approved voucher comes off the cash book (owner 2026-11-24: 其实就是我
+    approved了就当做一件过了要扣; 照这样改): the Malaysia day it was approved; without an
+    approval stamp, the day it was posted; without either, its voucher date. */
+export const payoutDay = (v: CashbookPayout): string => mytDay(v.approved_at) ?? mytDay(v.posted_at) ?? v.voucher_date;
+
+/** Already inside the account's starting balance: approved before its start day, or
+    on the start day for a voucher dated before it. */
+export const insideStart = (v: CashbookPayout, start: CashbookStart): boolean => {
+  const day = payoutDay(v);
+  return day < start.start_date || (day === start.start_date && v.voucher_date < start.start_date);
+};
+
 /** One account's cash-book figures for the day: the start, then every typed
-    receipt and approved voucher from the start date on — before the day into
-    Balance B/F, on the day listed; after the day ignored. */
+    receipt from the start date on and every approved voucher on the day it was
+    approved — before the day into Balance B/F, on the day listed; after the day
+    ignored. */
 function cashbookFigures(
   date: string, start: CashbookStart, receipts: CashbookReceipt[], payouts: CashbookPayout[],
 ): { opening: number; inSen: number; outSen: number; received: DailyBankMovement[]; paid: DailyBankMovement[] } {
@@ -216,16 +244,19 @@ function cashbookFigures(
     });
   }
   for (const v of payouts) {
-    if (v.voucher_date < start.start_date || v.voucher_date > date) continue;
+    const day = payoutDay(v);
+    if (insideStart(v, start) || day > date) continue;
     const amount = voucherPayoutSen(v);
-    if (v.voucher_date < date) { opening -= amount; continue; }
+    if (day < date) { opening -= amount; continue; }
     outSen += amount;
     const charge = amount - myrSen(v);
-    const words = pendingDescription(v);
+    /* An old voucher approved today says its own date, so it reads as what it is. */
+    const otherDay = v.voucher_date !== day ? v.voucher_date : null;
     paid.push({
       jeNo: '', sourceType: 'PV', sourceDocNo: v.id, docNo: v.pv_number, party: v.payee_name ?? null,
-      note: charge > 0 ? `${words ? `${words} · ` : ''}incl. bank charge ${fmtSen(charge)}` : words,
-      amountSen: amount, method: null,
+      note: [pendingDescription(v), otherDay ? `voucher dated ${fmtDate(otherDay)}` : '', charge > 0 ? `incl. bank charge ${fmtSen(charge)}` : '']
+        .filter(Boolean).join(' · '),
+      amountSen: amount, method: null, ...(otherDay ? { voucherDate: otherDay } : {}),
     });
   }
   return { opening, inSen, outSen, received, paid };
@@ -374,7 +405,7 @@ export function computeDailyBank(
     book: cashbook ? 'cashbook' : 'ledger',
     notStarted,
     note: cashbook
-      ? 'The cash book: each bank from its starting balance, plus the receipts typed for it, less the approved vouchers paying out of it on their voucher date (bank charge included). Pending = checked vouchers awaiting approval, on the bank they pay from. Card money swiped but not yet remitted is listed once as on its way, never under a bank and never counted as movable.'
+      ? 'The cash book: each bank from its starting balance, plus the receipts typed for it, less the approved vouchers paying out of it on the day each was approved (bank charge included). Pending = checked vouchers awaiting approval, on the bank they pay from. Card money swiped but not yet remitted is listed once as on its way, never under a bank and never counted as movable.'
       : 'Computed live from the ledger (posted, non-reversed). Pending = checked vouchers awaiting approval, on the account they pay from; an approved one posts on its own date. Transit money is swiped but not yet remitted - shown under the bank its acquirer pays into, never counted as movable.',
   };
 }

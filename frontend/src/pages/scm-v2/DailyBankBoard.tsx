@@ -48,8 +48,8 @@ export const awaitingVouchers = (b: DailyBankBoard): DailyBankPending[] => [...b
 
 function AccountCard({ block, onOpen }: { block: DailyBankBlock; onOpen: (accountCode: string) => void }) {
   const lines = [
-    ...block.receipts.map((m, i) => ({ key: `in:${m.jeNo}:${m.docNo}:${m.sourceDocNo ?? i}`, who: lineWho(m), sen: m.amountSen, dir: 'in' as const })),
-    ...block.payouts.map((m, i) => ({ key: `out:${m.jeNo}:${m.docNo}:${m.sourceDocNo ?? i}`, who: lineWho(m), sen: m.amountSen, dir: 'out' as const })),
+    ...block.receipts.map((m, i) => ({ key: `in:${m.jeNo}:${m.docNo}:${m.sourceDocNo ?? i}`, who: lineWho(m), sen: m.amountSen, dir: 'in' as const, dated: null })),
+    ...block.payouts.map((m, i) => ({ key: `out:${m.jeNo}:${m.docNo}:${m.sourceDocNo ?? i}`, who: lineWho(m), sen: m.amountSen, dir: 'out' as const, dated: m.voucherDate ?? null })),
   ];
   return (
     <button type="button" className={styles.accountCard} title="See every movement of this account" onClick={() => onOpen(block.accountCode)}>
@@ -64,6 +64,10 @@ function AccountCard({ block, onOpen }: { block: DailyBankBlock; onOpen: (accoun
         {lines.slice(0, 5).map((l) => (
           <span key={l.key} className={styles.accountLine}>
             <span className={styles.lineWho}>{l.who}</span>
+            {/* A voucher approved on another day than its own date says that date
+                (owner 2026-11-24: it comes off on the day it is approved); the name
+                gives way first, never the date. */}
+            {l.dated && <span className={styles.lineDated}>dated {fmtDate(l.dated)}</span>}
             <span className={l.dir === 'in' ? styles.moneyIn : styles.moneyOut}>{l.dir === 'in' ? '+' : '−'}{fmtSen(l.sen).replace(/^RM\s*/, '')}</span>
           </span>
         ))}

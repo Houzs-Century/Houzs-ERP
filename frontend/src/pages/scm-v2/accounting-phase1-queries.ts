@@ -270,6 +270,9 @@ export type DailyBankMovement = {
   method?: string | null;
   /** A receipt typed into the cash book (sourceType 'TYPED'): who typed it. */
   typedBy?: string | null;
+  /** On the cash book, an approved voucher that came off on another day than its own
+      date (the day it was approved): that voucher date. */
+  voucherDate?: string | null;
 };
 export type DailyBankPending = { id: string | null; pvNumber: string | null; payee: string | null; description: string; voucherDate: string | null; accountCode: string | null; amountSen: number };
 export type DailyBankTransit = { acquirerCode: string; accountCode: string; accountName: string; balanceSen: number; bankAccountCode: string | null };
