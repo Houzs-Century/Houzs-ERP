@@ -350,6 +350,7 @@ export function Meetings({ erpName = "Houzs ERP", embedded = false }: { erpName?
       {quick && <QuickBook draft={quick} rooms={rooms} people={boot?.people ?? []} busyRooms={busyRoomsFor(quick)} saving={saving} onClose={() => setQuick(null)} onMore={(d) => { setQuick(null); setPendingFiles([]); setEditor({ draft: d, isNew: true }); }} onSave={(d) => void save(d, true)} />}
       {editor && (
         <MeetingEditor draft={editor.draft} isNew={editor.isNew} me={me} rooms={rooms} people={boot?.people ?? []} peopleMap={people} meetings={meetings} now={now}
+          makeMeet={boot?.meetConnected ? () => api.post<{ url: string }>("/api/meetings/meet-link").then((r) => r.url) : null}
           busyRooms={busyRoomsFor(editor.draft)} saving={saving} pendingFiles={pendingFiles} onFiles={setPendingFiles} onClose={() => setEditor(null)}
           onSave={(d) => {
             const orig = meetings.find((m) => m.id === d.id);
