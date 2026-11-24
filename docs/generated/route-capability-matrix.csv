@@ -376,8 +376,8 @@ GET,/api/mail-center/addresses,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,
 POST,/api/mail-center/addresses,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mail-center.ts
 PATCH,/api/mail-center/addresses/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mail-center.ts
 GET,/api/mail-center/attachments/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/mail-center.ts
-GET,/api/mail-center/claim,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/mail-personal.ts
-POST,/api/mail-center/claim,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mail-personal.ts
+GET,/api/mail-center/claim,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/mail-claim.ts
+POST,/api/mail-center/claim,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mail-claim.ts
 POST,/api/mail-center/compose,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mail-center.ts
 GET,/api/mail-center/directory,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/mail-personal.ts
 POST,/api/mail-center/inbound,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mail-inbound.ts
@@ -386,7 +386,12 @@ POST,/api/mail-center/labels,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YE
 DELETE,/api/mail-center/labels/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mail-center.ts
 PATCH,/api/mail-center/labels/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mail-center.ts
 POST,/api/mail-center/mail-host/:id/confirm,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mail-personal.ts
+POST,/api/mail-center/mail-host/:id/removed,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mail-claim.ts
 GET,/api/mail-center/mail-host/pending,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/mail-personal.ts
+GET,/api/mail-center/mail-host/requests,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/mail-claim.ts
+POST,/api/mail-center/mail-host/requests/:id/approve,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mail-claim.ts
+POST,/api/mail-center/mail-host/requests/:id/reject,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mail-claim.ts
+GET,/api/mail-center/mail-host/to-remove,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/mail-claim.ts
 POST,/api/mail-center/messages/:id/ack,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mail-acks.ts
 GET,/api/mail-center/outbox,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/mail-center.ts
 GET,/api/mail-center/outbox/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/mail-center.ts
