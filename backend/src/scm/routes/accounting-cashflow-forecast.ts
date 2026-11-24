@@ -27,6 +27,14 @@
 // replaces the company's whole table and refuses, by name, an account the
 // layout no longer offers.
 //
+// The Orders & bills column (step 4, docs/forecast-port-spec.md part 1 `fc:`;
+// acc/cashflow-docs-forecast): the money already in hand — an open order's
+// unpaid balance in its delivery month, what the books say each supplier is
+// owed on its newest bills when they fall due, the Forecast P&L's other lines,
+// the Capex & financing table — for the current month as it stood on its 1st
+// and the later months from today's orders and bills. Only when the range
+// reaches the current month; `docs` is null otherwise.
+//
 // The timings are measured over the 3 complete months before today: the
 // customers' receipts against their order month (imported and converted
 // payments and mirror rows left out — owner 2026-11-24, D2), the supplier
@@ -47,11 +55,16 @@ import { codesUnder, layOutCashFlow, type LaidNode, type LayoutItem, type SplitT
 import { loadOrderPaymentFacts, paymentKinds } from '../../acc/order-payment-kind';
 import { STAFF_COST_CATEGORY_ID } from '../../acc/dashboard';
 import {
-  buildPnlCashLegs, forecastMonths, measuredWindow, monthsBetween, parseTermMonths, receiptMixOf, termMixOf,
+  FORECAST_MONTHS_AHEAD, addMonthsYm, buildPnlCashLegs, forecastMonths, measuredWindow, monthsBetween, parseTermMonths, receiptMixOf, termMixOf,
   type CashLeg, type ReceiptMix, type TermInfo, type TermMix,
 } from '../../acc/cashflow-pnl-forecast';
+import { buildDocsLegs, owedBills, type DueBill, type OpenOrder, type OwedBill } from '../../acc/cashflow-docs-forecast';
+import { ageEntries } from '../../acc/aging';
+import { loadApAging } from '../../acc/aging-load';
+import { countsInTheBooks } from '../../acc/reversal-pairs';
 import { KEYED_MONTHS, keyableAccounts, keyedInputLegs, keyedNotOffered, validateKeyedInputs, type KeyableAccount, type KeyedInputs } from '../../acc/forecast-inputs';
 import { isPurchaseAccount } from '../shared/forecast-pnl';
+import { SO_NOT_AN_ORDER } from '../shared/so-deliverable-states';
 import { allowedIds, resolveLayout } from './accounting-report-layouts';
 import { cashFlowLines, type RpEntry, type RpRow } from './accounting-rp';
 import { loadForecastAccounts, loadGrid, loadSupplierBills, loadSupplierMaster, netBilledBySupplier, type SupplierMasterRow } from './accounting-forecast';
@@ -69,7 +82,10 @@ const who = (c: Ctx): string => String((c.get('houzsUser') as { name?: string } 
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 /** The forecast's one money column. */
 export const FORECAST_COLUMN = 'FORECAST';
-const FORECAST_COLUMN_NAME = 'P&L forecast';
+const PNL_COLUMN_NAME = 'P&L forecast';
+const DOCS_COLUMN_NAME = 'Orders & bills';
+/** What a forecast figure's entry says it came from. */
+const SOURCE_TYPE: Record<CashLeg['source'], string> = { pnl: 'FORECAST', input: 'FORECAST_INPUT', order: 'FORECAST_ORDER', bill: 'FORECAST_BILL' };
 /** Customer payments that are not customers' money coming in: carried over from AutoCount, moved between orders. */
 const NOT_RECEIPTS = new Set(['imported', 'converted']);
 const failed = (e: unknown): string => String((e as { message?: string }).message ?? e);
@@ -102,6 +118,19 @@ export type CashFlowForecastPayload = {
   flagged: Array<{ id: string; code: string; name: string }>;
   /** Forecast lines left out as moving no cash. */
   nonCash: Array<{ code: string; name: string }>;
+  /** The Orders & bills column: the current month as at its 1st, then each later month the
+      orders and bills reach; null when the range ends before the current month. */
+  docs: {
+    months: Array<{ month: string; future: boolean; report: ForecastMonthReport }>;
+    /** The day the current month's orders and bills are taken as at. */
+    asAt: string;
+    /** Open orders with no delivery date, by the year ordered: in no month. */
+    undated: Array<{ year: string; orders: number; sen: number }>;
+    /** Orders and bills expected after the last month shown. */
+    beyond: { orders: number; orderSen: number; bills: number; billSen: number };
+    /** Suppliers a bill of which was timed a month later for want of a payment term. */
+    flagged: string[];
+  } | null;
 };
 
 const monthEnd = (ym: string): string => {
@@ -110,7 +139,7 @@ const monthEnd = (ym: string): string => {
 };
 
 /** One month's legs as the report's rows, entries, tree and totals. */
-export function forecastMonthReport(month: string, legs: readonly CashLeg[], tree: LayoutItem[], stored: boolean, companyId: number): ForecastMonthReport {
+export function forecastMonthReport(month: string, legs: readonly CashLeg[], tree: LayoutItem[], stored: boolean, companyId: number, columnName: string): ForecastMonthReport {
   const receipts = new Map<string, RpRow>();
   const payments = new Map<string, RpRow>();
   const entries: RpEntry[] = [];
@@ -122,7 +151,7 @@ export function forecastMonthReport(month: string, legs: readonly CashLeg[], tre
     row.totalSen += l.sen;
     book.set(l.key, row);
     entries.push({
-      jeNo: '', entryDate: `${month}-01`, sourceType: l.source === 'input' ? 'FORECAST_INPUT' : 'FORECAST', sourceDocNo: l.fromYm, narration: l.note,
+      jeNo: '', entryDate: `${month}-01`, sourceType: SOURCE_TYPE[l.source], sourceDocNo: l.ref ?? l.fromYm, narration: l.note,
       party: l.party, side: l.flow === 'in' ? 'R' : 'P', rowKey: l.key, column: FORECAST_COLUMN, sen: l.sen,
     });
   }
@@ -137,7 +166,7 @@ export function forecastMonthReport(month: string, legs: readonly CashLeg[], tre
   const outSen = paymentRows.reduce((s, r) => s + r.totalSen, 0);
   return {
     from: `${month}-01`, to: monthEnd(month), byParty: false,
-    columns: [{ code: FORECAST_COLUMN, name: FORECAST_COLUMN_NAME }],
+    columns: [{ code: FORECAST_COLUMN, name: columnName }],
     opening: { [FORECAST_COLUMN]: 0 },
     receipts: receiptRows, payments: paymentRows,
     layout: { stored, tree: cf.nodes, inSen: cf.inSen, outSen: cf.outSen },
@@ -199,6 +228,151 @@ async function loadForecastInputs(sb: Sb, companyId: number): Promise<{ ok: true
   return { ok: true, months };
 }
 
+/* ── The Orders & bills column (step 4) ───────────────────────────────────── */
+
+type OrderRow = {
+  doc_no: string; so_date: string | null; debtor_name: string | null; balance_sen: number | string | null; status: string | null;
+  amended_delivery_date: string | null; customer_delivery_date: string | null;
+};
+const ORDER_COLS = 'doc_no, so_date, debtor_name, balance_sen, status, amended_delivery_date, customer_delivery_date';
+/** No money to come: not an order (a draft, a cancelled one), or one whose remainder was given up (closed). */
+const NOT_OPEN: ReadonlySet<string> = new Set([...SO_NOT_AN_ORDER, 'CLOSED']);
+
+/** The open orders today, and as they stood on the current month's 1st:
+    today's balance with what was paid on it since added back; an order placed
+    since then left out. */
+async function loadOpenOrders(sb: Sb, companyId: number, first: string): Promise<{ ok: true; live: OpenOrder[]; baseline: OpenOrder[] } | Fail> {
+  const [open, paid] = await Promise.all([
+    paginateAll<OrderRow>((f: number, t: number) => sb.from('mfg_sales_orders').select(ORDER_COLS)
+      .eq('company_id', companyId).gt('balance_sen', 0).order('doc_no').range(f, t)),
+    paginateAll<{ id: string; so_doc_no: string; amount_sen: number | string | null }>((f: number, t: number) => sb.from('mfg_sales_order_payments')
+      .select('id, so_doc_no, amount_sen').eq('company_id', companyId).gte('paid_at', first).order('id').range(f, t)),
+  ]);
+  if (open.error) return { ok: false, reason: `open orders: ${failed(open.error)}` };
+  if (paid.error) return { ok: false, reason: `order payments: ${failed(paid.error)}` };
+  const since = new Map<string, number>();
+  for (const p of paid.data ?? []) since.set(String(p.so_doc_no), (since.get(String(p.so_doc_no)) ?? 0) + Number(p.amount_sen ?? 0));
+  const rows = new Map((open.data ?? []).map((o) => [String(o.doc_no), o]));
+  /* An order paid off since the 1st is not open today, but it was then. */
+  const more = [...since.keys()].filter((d) => !rows.has(d));
+  if (more.length > 0) {
+    const got = await chunkIn<OrderRow>(more, (batch, f, t) => sb.from('mfg_sales_orders').select(ORDER_COLS)
+      .eq('company_id', companyId).in('doc_no', batch).order('doc_no').range(f, t));
+    if (got.error) return { ok: false, reason: `orders: ${failed(got.error)}` };
+    for (const o of got.data) rows.set(String(o.doc_no), o);
+  }
+  const live: OpenOrder[] = [];
+  const baseline: OpenOrder[] = [];
+  for (const o of rows.values()) {
+    if (NOT_OPEN.has(String(o.status ?? '').toUpperCase())) continue;
+    const base = { docNo: String(o.doc_no), soDate: String(o.so_date ?? ''), customer: String(o.debtor_name ?? o.doc_no), deliveryDate: o.amended_delivery_date ?? o.customer_delivery_date ?? null };
+    const now = Number(o.balance_sen ?? 0);
+    if (now > 0) live.push({ ...base, balanceSen: now });
+    const then = now + (since.get(base.docNo) ?? 0);
+    if (base.soDate !== '' && base.soDate < first && then > 0) baseline.push({ ...base, balanceSen: then });
+  }
+  return { ok: true, live, baseline };
+}
+
+/** The bills the books owe as at a day: the formal AP Aging, each supplier's unapplied money on its oldest bills. */
+async function loadOwedBills(sb: Sb, companyId: number, codes: string[], asOf: string): Promise<{ ok: true; bills: OwedBill[] } | Fail> {
+  const loaded = await loadApAging(sb, companyId, codes, asOf);
+  if (!loaded.ok) return { ok: false, reason: `supplier aging: ${loaded.reason}` };
+  return { ok: true, bills: owedBills(ageEntries(loaded.entries, { asOf, basis: 'invoice', buckets: 'month' })) };
+}
+
+type GlRow = { source_doc_no: string | null; account_code: string; account_name: string | null; debit_sen: number | string | null; posted: boolean | null; reversed: boolean | null; reversed_by_je: string | null };
+
+/** What times and places each owed bill: its plan (Bills to pay), the accounts
+    it was bought on — a PI's own journal debits off the control, an AP
+    invoice's lines, as an actual supplier payment reads (rule A) — and its
+    supplier's payment term. */
+async function billFacts(
+  sb: Sb, companyId: number, owed: readonly OwedBill[], controls: ReadonlySet<string>,
+  nameOf: (code: string) => string, termOf: (supplierCode: string | null) => TermInfo,
+): Promise<{ ok: true; due: (b: OwedBill) => DueBill } | Fail> {
+  const piNos = [...new Set(owed.filter((b) => b.kind === 'PI').map((b) => b.docNo))];
+  const apiNos = [...new Set(owed.filter((b) => b.kind === 'API').map((b) => b.docNo))];
+  const [pis, apis, piLines] = await Promise.all([
+    chunkIn<{ id: string; invoice_number: string }>(piNos, (batch, f, t) => sb.from('purchase_invoices').select('id, invoice_number')
+      .eq('company_id', companyId).in('invoice_number', batch).order('id').range(f, t)),
+    chunkIn<{ id: string; invoice_number: string }>(apiNos, (batch, f, t) => sb.from('ap_invoices').select('id, invoice_number')
+      .eq('company_id', companyId).in('invoice_number', batch).order('id').range(f, t)),
+    chunkIn<GlRow>(piNos, (batch, f, t) => sb.from('v_gl_entries').select('source_doc_no, account_code, account_name, debit_sen, posted, reversed, reversed_by_je')
+      .eq('company_id', companyId).eq('source_type', 'PI').in('source_doc_no', batch).order('line_id').range(f, t)),
+  ]);
+  if (pis.error) return { ok: false, reason: `purchase invoices: ${failed(pis.error)}` };
+  if (apis.error) return { ok: false, reason: `AP invoices: ${failed(apis.error)}` };
+  if (piLines.error) return { ok: false, reason: `purchase invoice journals: ${failed(piLines.error)}` };
+  const piId = new Map(pis.data.map((p) => [String(p.invoice_number), String(p.id)]));
+  const apiId = new Map(apis.data.map((a) => [String(a.invoice_number), String(a.id)]));
+  const [plans, apiLines] = await Promise.all([
+    chunkIn<{ bill_kind: string; bill_id: string; planned_on: string | null }>([...piId.values(), ...apiId.values()], (batch, f, t) => sb.from('acc_bill_plans')
+      .select('bill_kind, bill_id, planned_on').eq('company_id', companyId).in('bill_id', batch).order('bill_id').range(f, t)),
+    chunkIn<{ invoice_id: string; debit_account_code: string; amount_sen: number | string | null }>([...apiId.values()], (batch, f, t) => sb.from('ap_invoice_lines')
+      .select('invoice_id, debit_account_code, amount_sen').eq('company_id', companyId).in('invoice_id', batch).order('invoice_id').range(f, t)),
+  ]);
+  if (plans.error) return { ok: false, reason: `bill plans: ${failed(plans.error)}` };
+  if (apiLines.error) return { ok: false, reason: `AP invoice lines: ${failed(apiLines.error)}` };
+  const planOf = new Map(plans.data.map((p) => [`${p.bill_kind}:${p.bill_id}`, p.planned_on]));
+  const parts = new Map<string, Array<{ code: string; name: string; sen: number }>>();
+  const add = (bill: string, code: string, name: string, sen: number): void => {
+    if (!(sen > 0)) return;
+    const list = parts.get(bill) ?? [];
+    list.push({ code, name, sen });
+    parts.set(bill, list);
+  };
+  for (const l of piLines.data) {
+    if (!countsInTheBooks(l) || controls.has(l.account_code)) continue;
+    add(`PI:${String(l.source_doc_no)}`, l.account_code, l.account_name ?? nameOf(l.account_code), Number(l.debit_sen ?? 0));
+  }
+  const apiNoById = new Map([...apiId].map(([no, id]) => [id, no]));
+  for (const l of apiLines.data) add(`API:${apiNoById.get(String(l.invoice_id)) ?? ''}`, l.debit_account_code, nameOf(l.debit_account_code), Number(l.amount_sen ?? 0));
+  return {
+    ok: true,
+    due: (b) => {
+      const id = b.kind === 'PI' ? piId.get(b.docNo) : b.kind === 'API' ? apiId.get(b.docNo) : undefined;
+      return { ...b, plannedOn: id ? (planOf.get(`${b.kind}:${id}`) ?? null) : null, term: termOf(b.supplierCode), parts: parts.get(`${b.kind}:${b.docNo}`) ?? [] };
+    },
+  };
+}
+
+/** The Orders & bills column's months, as Cash Flow reports on the same tree. */
+async function buildDocsColumn(sb: Sb, companyId: number, a: {
+  today: string; currentMonth: string; ar: string; ap: string; apOther: string | null; tree: LayoutItem[]; stored: boolean;
+  nameOf: (code: string) => string; termOf: (supplierCode: string | null) => TermInfo; costs: CashLeg[]; inputs: CashLeg[];
+}): Promise<{ ok: true; docs: NonNullable<CashFlowForecastPayload['docs']> } | Fail> {
+  const first = `${a.currentMonth}-01`;
+  const controls = [a.ap, a.apOther].filter((c): c is string => c != null && c !== '');
+  const [orders, then, now] = await Promise.all([
+    loadOpenOrders(sb, companyId, first),
+    loadOwedBills(sb, companyId, controls, monthEnd(addMonthsYm(a.currentMonth, -1))),
+    loadOwedBills(sb, companyId, controls, a.today),
+  ]);
+  if (!orders.ok) return orders;
+  if (!then.ok) return then;
+  if (!now.ok) return now;
+  const facts = await billFacts(sb, companyId, [...then.bills, ...now.bills], new Set(controls), a.nameOf, a.termOf);
+  if (!facts.ok) return facts;
+  const built = buildDocsLegs({
+    currentYm: a.currentMonth, lastYm: addMonthsYm(a.currentMonth, FORECAST_MONTHS_AHEAD),
+    arCode: a.ar, ap: { code: a.ap, name: a.nameOf(a.ap) },
+    baseline: { orders: orders.baseline, bills: then.bills.map(facts.due) },
+    live: { orders: orders.live, bills: now.bills.map(facts.due) },
+    costs: a.costs, inputs: a.inputs,
+  });
+  return {
+    ok: true,
+    docs: {
+      months: built.months.map((month) => ({
+        month, future: month > a.currentMonth,
+        report: forecastMonthReport(month, built.legs.filter((l) => l.ym === month), a.tree, a.stored, companyId, DOCS_COLUMN_NAME),
+      })),
+      asAt: first, undated: built.undated, beyond: built.beyond, flagged: built.flagged,
+    },
+  };
+}
+
 export async function buildCashFlowForecast(sb: Sb, companyId: number, layoutIds: number[], from: string, to: string, today: string): Promise<{ ok: true; payload: CashFlowForecastPayload } | Fail> {
   const win = measuredWindow(today);
   const [accs, grid, rpLayout, pnlLayout, roles, master, bills, receipts, chart, inputs] = await Promise.all([
@@ -256,13 +430,29 @@ export async function buildCashFlowForecast(sb: Sb, companyId: number, layoutIds
   });
   for (const id of built.flagged) flaggedIds.add(id);
   /* The Capex & financing table's amounts, on their own accounts in their own months. */
-  const legs = [...built.legs, ...keyedInputLegs(inputs.months, (code) => chart.names.get(code) ?? code)];
+  const nameOf = (code: string): string => chart.names.get(code) ?? code;
+  const inputLegs = keyedInputLegs(inputs.months, nameOf);
+  const legs = [...built.legs, ...inputLegs];
 
   const currentMonth = today.slice(0, 7);
   const tree = blockOf(rpLayout.layout.blocks, 'accounts');
   const months = forecastMonths(from, to, currentMonth, legs).map(({ month, future }) => ({
-    month, future, report: forecastMonthReport(month, legs.filter((l) => l.ym === month), tree, rpLayout.stored, companyId),
+    month, future, report: forecastMonthReport(month, legs.filter((l) => l.ym === month), tree, rpLayout.stored, companyId, PNL_COLUMN_NAME),
   }));
+  /* Orders & bills: sales and purchases come from the open orders and the owed bills, so of
+     the Forecast P&L only its other lines join them. */
+  const purchaseCodes = new Set(accs.accounts.filter(isPurchaseAccount).map((a) => a.code));
+  let docs: CashFlowForecastPayload['docs'] = null;
+  if (to >= currentMonth) {
+    const got = await buildDocsColumn(sb, companyId, {
+      today, currentMonth, ar: roles.AR, ap: roles.AP, apOther: roles.AP_OTHER, tree, stored: rpLayout.stored, nameOf,
+      termOf: (code) => termOf(code == null ? undefined : byCode.get(code)),
+      costs: built.legs.filter((l) => l.group == null && !purchaseCodes.has(l.code)),
+      inputs: inputLegs,
+    });
+    if (!got.ok) return got;
+    docs = got.docs;
+  }
   const mixTotal = receipts.mix.reduce((s, m) => s + m.weight, 0);
   return {
     ok: true,
@@ -274,6 +464,7 @@ export async function buildCashFlowForecast(sb: Sb, companyId: number, layoutIds
         .map((s) => ({ id: String(s.id), code: String(s.code), name: String(s.name ?? s.code) }))
         .sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' })),
       nonCash: built.nonCash,
+      docs,
     },
   };
 }

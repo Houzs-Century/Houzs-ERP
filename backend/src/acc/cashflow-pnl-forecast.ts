@@ -120,10 +120,12 @@ export const isNonCashName = (name: string): boolean => /DEPRECIATION|AMORTI[SZ]
 export type CashLeg = {
   /** The month the money moves (YYYY-MM). */
   ym: string;
-  /** The forecast month it comes from. */
+  /** The forecast month it comes from (an order's or a bill's own month). */
   fromYm: string;
-  /** The Forecast P&L, or an amount keyed in the Capex & financing table. */
-  source: 'pnl' | 'input';
+  /** The document behind it: an order's or a bill's number; none for the Forecast P&L or a keyed amount. */
+  ref: string | null;
+  /** The Forecast P&L, an amount keyed in the Capex & financing table, an open order, a supplier's bill. */
+  source: 'pnl' | 'input' | 'order' | 'bill';
   flow: 'in' | 'out';
   /** The account it lands on, and the row's own key (the code, or the debtor control's kind row). */
   code: string;
@@ -177,7 +179,7 @@ export function buildPnlCashLegs(input: PnlCashInput): { legs: CashLeg[]; nonCas
     /* Sales: by the receipts mix, each part a Deposit or a Settlement on the debtor control. */
     for (const p of spreadSen(f.salesSen, input.receiptMix)) {
       legs.push({
-        ym: addMonthsYm(S, p.months), fromYm: S, source: 'pnl', flow: 'in', code: input.arCode, key: `${input.arCode}:${p.kind}:FC`, name: FORECAST_ROW_NAME,
+        ym: addMonthsYm(S, p.months), fromYm: S, ref: null, source: 'pnl', flow: 'in', code: input.arCode, key: `${input.arCode}:${p.kind}:FC`, name: FORECAST_ROW_NAME,
         group: { id: p.kind, label: KIND_LABEL[p.kind] }, sen: p.sen, party: 'Forecast sales',
         note: `${from} sales · ${KIND_LABEL[p.kind].toLowerCase()} · ${monthWords(p.months)} after the order month`,
       });
@@ -188,7 +190,7 @@ export function buildPnlCashLegs(input: PnlCashInput): { legs: CashLeg[]; nonCas
       if (!a) continue;
       const leg = (ym: string, sen: number, party: string, note: string): void => {
         if (sen === 0) return;
-        legs.push({ ym, fromYm: S, source: 'pnl', flow: l.block === 'otherIncome' ? 'in' : 'out', code: l.code, key: l.code, name: l.name, sen, party, note });
+        legs.push({ ym, fromYm: S, ref: null, source: 'pnl', flow: l.block === 'otherIncome' ? 'in' : 'out', code: l.code, key: l.code, name: l.name, sen, party, note });
       };
       if (blockOfSection(a.section) === 'costOfSales' && isPurchaseAccount(a)) {
         if (l.keyed === 'suppliers') {

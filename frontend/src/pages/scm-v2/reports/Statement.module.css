@@ -92,6 +92,7 @@
 .mark { display: inline-block; width: 7px; height: 7px; margin-right: 5px; border-radius: 50%; vertical-align: 1px; }
 .mark[data-mark='petrol'] { background: var(--fin-petrol); }
 .mark[data-mark='gold'] { background: var(--fin-gold); }
+.mark[data-mark='brass'] { background: var(--fin-brass); }
 /* A little narrower than a column of its own, so more months fit on the screen. */
 .tableGrouped .headPart, .tableGrouped .cellPart { padding-left: 6px; padding-right: 6px; }
 /* A block title reads as a band across the table, not a row of empty cells. */
