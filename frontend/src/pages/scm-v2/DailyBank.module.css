@@ -86,6 +86,8 @@
 .accountLines { display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
 .accountLine { display: flex; justify-content: space-between; gap: 8px; }
 .lineWho { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fin-text); }
+.lineWho + .lineDated { margin-left: auto; }
+.lineDated { flex: none; white-space: nowrap; color: var(--fin-muted); font-size: 11px; }
 .moneyIn { color: var(--fin-green); font-weight: 600; white-space: nowrap; }
 .moneyOut { color: var(--fin-brass); font-weight: 600; white-space: nowrap; }
 

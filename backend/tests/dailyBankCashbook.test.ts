@@ -5,8 +5,9 @@
      • the original board (GET /daily-bank) does not move, whatever is typed;
      • the cash-book board (GET /daily-bank/cashbook/board) carries each account
        with a start: the start + the receipts typed for it − the approved
-       (POSTED) vouchers paying out of it, on their voucher date and from the
-       start date on; a deleted receipt, a draft or cancelled voucher and another
+       (POSTED) vouchers paying out of it, on the Malaysia day each was approved
+       (owner 2026-11-24), those approved before the start (or on it, dated
+       before it) inside the start; a deleted receipt, a draft or cancelled voucher and another
        company's rows never count; an account without a start is listed as not
        started;
      • a receipt is refused for an account with no start, before its start, on a
@@ -62,8 +63,8 @@ function tables(): Record<string, Row[]> {
     acc_acquirers: [],
     acc_account_roles: [],
     payment_vouchers: [
-      pv({ id: 'pv-1', pv_number: 'HPV-101', payee_name: 'UNICOM', credit_account_code: '310-0010', voucher_date: '2026-11-24', total_sen: 40_000, bank_charge_sen: 100 }),
-      pv({ id: 'pv-2', pv_number: 'HPV-102', payee_name: 'TAN YONG HONG', notes: 'Truck rental', credit_account_code: '310-0010', voucher_date: TODAY, total_sen: 25_000 }),
+      pv({ id: 'pv-1', pv_number: 'HPV-101', payee_name: 'UNICOM', credit_account_code: '310-0010', voucher_date: '2026-11-24', total_sen: 40_000, bank_charge_sen: 100, approved_at: '2026-11-24T03:00:00Z' }),
+      pv({ id: 'pv-2', pv_number: 'HPV-102', payee_name: 'TAN YONG HONG', notes: 'Truck rental', credit_account_code: '310-0010', voucher_date: TODAY, total_sen: 25_000, approved_at: `${TODAY}T02:00:00Z` }),
       /* Before the start: already inside the starting balance. */
       pv({ id: 'pv-3', pv_number: 'HPV-090', payee_name: 'OLD', credit_account_code: '310-0010', voucher_date: '2026-11-20', total_sen: 99_999 }),
       /* Checked, not approved: pending, never paid as well. */
@@ -148,7 +149,7 @@ describe('Daily Bank cash book — the board', () => {
     expect(blockOf(o, '310-0020')).toMatchObject({ closingSen: -81_164_858 });
   });
 
-  test('set a start, type receipts, and the approved vouchers come off on their voucher date — on the new board only', async () => {
+  test('set a start, type receipts, and the approved vouchers come off on the day they were approved — on the new board only', async () => {
     const h = harness();
     const before = await original(h);
     expect((await h.send('PUT', '/accounting/daily-bank/starts/310-0010', { startDate: '2026-11-24', balanceSen: 77_408_649 })).status).toBe(200);
@@ -185,6 +186,37 @@ describe('Daily Bank cash book — the board', () => {
     const earlier = await board(h, '2026-11-23');
     expect(earlier.blocks).toEqual([]);
     expect(earlier.notStarted.map((x) => [x.accountCode, x.startDate])).toEqual([['310-0010', '2026-11-24'], ['310-0020', null]]);
+  });
+
+  /* Owner 2026-11-24, approving old vouchers that are being paid now: 其实就是我approved了
+     就当做一件过了要扣，不可以吗？ — then 照这样改. */
+  test('an approved voucher comes off on the Malaysia day it was approved, whatever its own date; one already inside the start stays out', async () => {
+    const h = harness();
+    await h.send('PUT', '/accounting/daily-bank/starts/310-0010', { startDate: '2026-11-24', balanceSen: 1_000_000 });
+    h.t.payment_vouchers!.push(
+      /* Dated long before the start, approved today: comes off today, saying its date. */
+      pv({ id: 'pv-old', pv_number: 'HPV-050', payee_name: 'OLD BILL', credit_account_code: '310-0010', voucher_date: '2026-09-29', total_sen: 70_000, bank_charge_sen: 100, approved_at: `${TODAY}T01:00:00Z` }),
+      /* Dated on the start day, approved today: moves from the 24th to today. */
+      pv({ id: 'pv-moved', pv_number: 'HPV-105', payee_name: 'MOVED', credit_account_code: '310-0010', voucher_date: '2026-11-24', total_sen: 11_000, approved_at: '2026-11-24T23:30:00Z' }),
+      /* Approved on the start day but dated before it: inside the start. */
+      pv({ id: 'pv-in', pv_number: 'HPV-060', payee_name: 'IN THE START', credit_account_code: '310-0010', voucher_date: '2026-11-02', total_sen: 888, approved_at: '2026-11-24T02:00:00Z' }),
+      /* Posted without an approval stamp: the day it was posted. */
+      pv({ id: 'pv-unstamped', pv_number: 'HPV-106', payee_name: 'NO STAMP', credit_account_code: '310-0010', voucher_date: '2026-11-03', total_sen: 4_000, approved_at: null, posted_at: `${TODAY}T05:00:00Z` }),
+    );
+    const may = blockOf(await board(h), '310-0010');
+    /* B/F: the start less HPV-101 (approved on the start day, dated on it, with its charge). */
+    expect(may.openingSen).toBe(1_000_000 - 40_100);
+    expect(may.payouts.map((m) => [m.docNo, m.party, m.note, m.amountSen])).toEqual([
+      ['HPV-050', 'OLD BILL', 'Other · voucher dated 2026/09/29 · incl. bank charge RM 1.00', 70_100],
+      ['HPV-102', 'TAN YONG HONG', 'Truck rental', 25_000],
+      ['HPV-105', 'MOVED', 'Other · voucher dated 2026/11/24', 11_000],
+      ['HPV-106', 'NO STAMP', 'Other · voucher dated 2026/11/03', 4_000],
+    ]);
+    expect(may.closingSen).toBe(1_000_000 - 40_100 - 70_100 - 25_000 - 11_000 - 4_000);
+    /* The start day itself: HPV-101 then; HPV-105 not yet, the old ones never. */
+    const startDay = blockOf(await board(h, '2026-11-24'), '310-0010');
+    expect(startDay.payouts.map((m) => m.docNo)).toEqual(['HPV-101']);
+    expect(startDay.closingSen).toBe(1_000_000 - 40_100);
   });
 
   test('a deleted receipt stops counting; an edited one counts as edited', async () => {
