@@ -81,9 +81,10 @@ export async function aliasUsage(c: Ctx): Promise<{ used: number; limit: number 
 }
 
 /** Someone else's open request for this address makes it taken too. */
-async function requestedByAnother(db: D1Database, address: string, userId: number): Promise<boolean> {
-  const row = await db
-    .prepare(`SELECT 1 AS x FROM mail_address_requests WHERE lower(address) = ? AND status = 'requested' AND user_id <> ? LIMIT 1`)
+async function requestedByAnother(c: Ctx, address: string, userId: number): Promise<boolean> {
+  // company-scope: the active-company predicate on the request rows.
+  const row = await c.env.DB
+    .prepare(`SELECT 1 AS x FROM mail_address_requests WHERE lower(address) = ? AND status = 'requested' AND user_id <> ?${activeCompanySql(c)} LIMIT 1`)
     .bind(address, userId)
     .first();
   return row != null;
@@ -104,7 +105,7 @@ app.get("/claim", async (c) => {
   }>();
   const latest = await c.env.DB.prepare(
     `SELECT id, address, status, reason, created_at, decided_at FROM mail_address_requests
-      WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`,
+      WHERE user_id = ?${activeCompanySql(c)} ORDER BY created_at DESC LIMIT 1`,
   )
     .bind(userId)
     .first<Pick<RequestRow, "id" | "address" | "status" | "reason" | "created_at" | "decided_at">>();
@@ -136,7 +137,7 @@ app.post("/claim", async (c) => {
   if (current.endsWith(`@${domain}`)) {
     return c.json({ error: `You already have ${current}. Ask an admin to change it.` }, 409);
   }
-  const open = await c.env.DB.prepare(`SELECT address FROM mail_address_requests WHERE user_id = ? AND status = 'requested' LIMIT 1`)
+  const open = await c.env.DB.prepare(`SELECT address FROM mail_address_requests WHERE user_id = ? AND status = 'requested'${activeCompanySql(c)} LIMIT 1`)
     .bind(userId)
     .first<{ address: string }>();
   if (open) return c.json({ error: `You already asked for ${open.address}. An admin will approve it.` }, 409);
@@ -160,7 +161,7 @@ app.post("/claim", async (c) => {
     requestedDepartmentId = Number(dept.id);
   }
 
-  if ((await isPersonalAddressTaken(c.env.DB, address, userId)) || (await requestedByAnother(c.env.DB, address, userId))) {
+  if ((await isPersonalAddressTaken(c.env.DB, address, userId)) || (await requestedByAnother(c, address, userId))) {
     return c.json({ error: `${address} is already taken. Try another.` }, 409);
   }
   await c.env.DB.prepare(
