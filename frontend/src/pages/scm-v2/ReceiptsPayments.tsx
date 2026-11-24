@@ -27,7 +27,9 @@
 // the Forecast P&L as cash beside each month — Actual | P&L forecast — and the months
 // after this one as the forecast alone, on the same tree, its balances running on
 // from the actual (reports/cashFlowForecast); a forecast figure opens where it came
-// from and how it was timed.
+// from and how it was timed. Capex & financing (step 3): a button in By month opens
+// the table of money planned outside the trading cycle (reports/CapexFinancingDialog);
+// its amounts sit in the forecast column on their own account in their month.
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -55,6 +57,7 @@ import { MONTH_COUNTS, columnsSpan, monthColumns, monthName, type StatementColum
 import { splitColumns, splitLines } from './reports/cashFlowSplit';
 import { forecastColumns, forecastNote, isForecastKey, rollForecast } from './reports/cashFlowForecast';
 import { useCashFlowForecast } from '../../vendor/scm/lib/cash-flow-forecast-queries';
+import { CapexFinancingDialog } from './reports/CapexFinancingDialog';
 import {
   REPORT_CHART_COLORS, ReportBarChart, chartMonths, thousands, useChartMonths, useChartPeriods,
   type ChartBarSeries, type ChartMonth,
@@ -116,7 +119,7 @@ const DRILL_COLUMNS: Column<DrillEntry>[] = [
 ];
 /** A P&L forecast figure's entries: the Forecast P&L month it comes from, who, how it was timed. */
 const FORECAST_DRILL_COLUMNS: Column<DrillEntry>[] = [
-  { key: 'from', label: 'Forecast P&L', render: (e) => monthName(`${e.sourceDocNo ?? ''}-01`), getValue: (e) => e.sourceDocNo ?? '' },
+  { key: 'from', label: 'From', render: (e) => (e.sourceType === 'FORECAST_INPUT' ? 'Capex & financing' : `Forecast P&L ${monthName(`${e.sourceDocNo ?? ''}-01`)}`), getValue: (e) => (e.sourceType === 'FORECAST_INPUT' ? 'Capex & financing' : `Forecast P&L ${e.sourceDocNo ?? ''}`) },
   { key: 'party', label: 'Who', render: (e) => e.party ?? '—', getValue: (e) => e.party ?? '' },
   { key: 'note', label: 'How it is timed', render: (e) => e.narration ?? '—', getValue: (e) => e.narration ?? '' },
   {
@@ -184,6 +187,7 @@ export const ReceiptsPaymentsTab = () => {
   const [byParty, setByParty] = useState(false);
   /* The P&L forecast beside each month — By month, by account. */
   const [forecast, setForecast] = useState(false);
+  const [inputsOpen, setInputsOpen] = useState(false);
   const [months, setMonths] = useState<number>(6);
   const [level, setLevel] = useState<Level>('all');
   const [showPct, setShowPct] = useState(true);
@@ -193,6 +197,7 @@ export const ReceiptsPaymentsTab = () => {
   const [ticked, setTicked] = useState<string[]>([]);
   const { can } = useAuth();
   const canArrange = can('scm.payment_voucher.post');
+  const canPlan = can('scm.payment_voucher.write');
   const tree = useReportTree(level);
   const chartWin = useChartMonths(r.from, r.to, r.usable);
   const accountsQ = useAccounts();
@@ -307,6 +312,9 @@ export const ReceiptsPaymentsTab = () => {
         {view === 'month' && (
           <ReportSwitch on={forecastOn} onChange={(v) => { setForecast(v); if (v) setByParty(false); }}>P&amp;L forecast</ReportSwitch>
         )}
+        {view === 'month' && (
+          <button type="button" className={s.pickerButton} onClick={() => setInputsOpen(true)}>Capex &amp; financing</button>
+        )}
         {depth >= 2 && (
           <ReportTool label="Levels">
             <Segmented
@@ -320,6 +328,7 @@ export const ReceiptsPaymentsTab = () => {
         <ReportSwitch on={showPct} onChange={setShowPct}>% beside</ReportSwitch>
       </ReportToolbar>
       {editing && <ReportLayoutEditor report="rp" onClose={() => setEditing(false)} />}
+      {inputsOpen && <CapexFinancingDialog onClose={() => setInputsOpen(false)} canWrite={canPlan} />}
       {chartWin && <CashFlowChart win={chartWin} />}
       {!r.usable && <ReportMessage>Pick dates.</ReportMessage>}
       {r.usable && failed > 0 && (

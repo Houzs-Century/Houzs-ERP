@@ -5,7 +5,7 @@
 // is called by its note; the banks not on it yet are named, with the way to start
 // them. The board's arithmetic is pinned in backend/src/acc/daily-bank.test.ts.
 
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { describe, expect, test, vi } from 'vitest';
 import type { DailyBankBoard } from './accounting-phase1-queries';
@@ -91,6 +91,27 @@ describe('Daily Bank (cash book) — its own page beside the original', () => {
     fireEvent.click(within(note).getByRole('button', { name: 'Open Receipts & starts' }));
     await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('?view=entries'));
     expect(screen.getByLabelText('Starting balances')).toBeTruthy();
+  });
+
+  test('a voucher approved on another day than its own date says that date, on the Board and the Accounts sheet (owner 2026-11-24)', () => {
+    const block = CASH.blocks[0]!;
+    const kept = block.payouts;
+    block.payouts = [...kept, {
+      jeNo: '', sourceType: 'PV', sourceDocNo: 'pv-9', docNo: 'HPV-050', party: 'OLD BILL', note: 'Lorry rental · voucher dated 2026/09/29',
+      amountSen: 70_000, method: null, voucherDate: '2026-09-29',
+    }];
+    try {
+      renderAt('?view=board');
+      const accounts = screen.getByLabelText('Accounts');
+      const line = within(accounts).getByText('OLD BILL').parentElement!;
+      expect(line.textContent).toBe('OLD BILLdated 2026/09/29−700.00');
+      expect(within(accounts).getByText('UNICOM')).toBeTruthy();
+      cleanup();
+      renderAt('?view=accounts');
+      expect(screen.getByLabelText('310-0010 CASH AT BANK - MAYBANK').textContent).toContain('OLD BILL · Lorry rental · voucher dated 2026/09/29');
+    } finally {
+      block.payouts = kept;
+    }
   });
 
   test('the Accounts sheet lists a typed receipt by its note and who typed it', () => {
