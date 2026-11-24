@@ -70,3 +70,27 @@ describe("scmAreaGuard — readInheritsFrom lets a Last Mile viewer read the boa
     expect((await request(legacy, "GET")).status).toBe(200);
   });
 });
+
+describe("scmAreaGuard - readBypass (Procurement Overview for a Sales Director, owner 2026-11-24)", () => {
+  const sd: FakeUser = { permissions: ["scm.access"], scm_l2_configured: true, page_access: { "scm.procurement.po": "none" } };
+  const call = (user: FakeUser, method: "GET" | "POST", bypass: boolean) => {
+    const app = new Hono();
+    app.use("*", async (c, next) => {
+      c.set("user", user as never);
+      await next();
+    });
+    app.use("*", scmAreaGuard("scm.procurement.po", { readBypass: () => bypass }));
+    app.all("/x", (c) => c.json({ ok: true }));
+    return app.request("/x", { method });
+  };
+  it("GET: admitted when the bypass says yes, though the area is none", async () => {
+    expect((await call(sd, "GET", true)).status).toBe(200);
+  });
+  it("POST: never admitted by the bypass", async () => {
+    expect((await call(sd, "POST", true)).status).toBe(403);
+  });
+  it("GET: refused when the bypass says no", async () => {
+    expect((await call(sd, "GET", false)).status).toBe(403);
+  });
+});
+

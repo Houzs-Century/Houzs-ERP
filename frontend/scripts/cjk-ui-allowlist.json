@@ -395,6 +395,26 @@
       "file": "src/vendor/scm/lib/pdf-common.ts",
       "text": "/[ -   　]/g",
       "reason": "Regex folding the ideographic space (U+3000) to a plain space before PDF printing. Not text."
+    },
+    {
+      "file": "src/vendor/shared/sales-report-parse.ts",
+      "text": "/：/g",
+      "reason": "Input-normalization regex: the floor Chinese IME types ： (U+FF1A) for Total lines; fold to ASCII colon before matching. Not UI text."
+    },
+    {
+      "file": "src/vendor/shared/sales-report-parse.ts",
+      "text": "/，/g",
+      "reason": "Input-normalization regex: the floor Chinese IME types ， (U+FF0C) in amounts; fold to ASCII comma before matching. Not UI text."
+    },
+    {
+      "file": "src/vendor/shared/sales-report-parse.ts",
+      "text": "/（/g",
+      "reason": "Input-normalization regex: the floor Chinese IME types （ (U+FF08) for transport tags; fold to ASCII ( before matching. Not UI text."
+    },
+    {
+      "file": "src/vendor/shared/sales-report-parse.ts",
+      "text": "/）/g",
+      "reason": "Input-normalization regex: the floor Chinese IME types ） (U+FF09) for transport tags; fold to ASCII ) before matching. Not UI text."
     }
   ]
 }
