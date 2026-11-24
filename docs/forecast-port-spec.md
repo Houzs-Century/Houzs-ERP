@@ -1,6 +1,6 @@
 # Forecast module — port from Hookka ERP
 
-Porting spec for the parts of Hookka's Forecast module that Houzs does not have yet. Written 2026-11-23 from Hookka `main` (commit bde819e) and Houzs `main` (0dbc316). Each rule below names the Hookka file and line it comes from, so the builder can open the reference instead of guessing.
+Porting spec for the parts of Hookka's Forecast module that Houzs does not have yet. Written 2026-11-23, rechecked 2026-11-24 against Hookka `main` (commit bba1d75) and Houzs `main` (aff88a9). Each rule below names the Hookka file and line it comes from, so the builder can open the reference instead of guessing.
 
 ## 中文摘要（给老板）
 
@@ -12,7 +12,7 @@ Houzs 9 月已经从 Hookka 搬过 **Forecast P&L**（`scm.acc_forecast_pnl`、`
 | 2 | **Capex & financing 表**：12 个月，你填 capex、借款、还款 | 把非日常的大笔进出放进 forecast |
 | 3 | **Trade finance 计划**：每个 facility 的额度、tenor、利率；供应商可勾"Can use trade finance"；已过完的月份用真实未付 PI，之后用 Forecast P&L | 哪个月要用 trade finance 付哪些供应商、额度够不够 |
 | 4 | **Forecast Balance Sheet**：从上个月底的实际 BS 往后推 | 每个月底资产、负债、负债比率 |
-| 5 | **Dashboard**：Cash Flow 卡加两条 forecast 线；Balance Sheet 卡加未来月份 | 一眼对比实际和预测 |
+| 5 | **Dashboard**：Cash Flow 卡的图和表跟着 tab（Operating / Investing / Financing / FCF）显示实际和两种 forecast；Detail 每月 Actual \| Forecast，按报表分组；Balance Sheet 卡加未来月份，这个月实际对 forecast | 一眼对比实际和预测 |
 
 另外 Houzs 的 Forecast P&L 现在**每个科目只能填一个数**，不能按客户、按供应商分；trade finance 和"按供应商期限付款"都要先补这一块（第 0 步）。
 
@@ -192,10 +192,11 @@ Hookka reference: `GET /api/accounting/bs-forecast` (`accounting.ts:12109`), `sr
 
 Hookka reference: `src/lib/dashboard-forecast.ts`, `src/lib/cashflow-card.ts`, `src/pages/finance-dashboard.tsx` (#1568, #1569).
 
-- **Cash Flow card**: two dashed lines beside Net change — **Forecast net (P&L)** from `fp:`, **Forecast net (documents)** from `fc:`. Rows for the tab picked (Operating / Investing / Financing / Free cash flow): Forecast (P&L), Forecast (documents), vs each (actual − forecast).
+- **Cash Flow card — everything follows the tab picked** (Operating / Investing / Financing / Free cash flow; Hookka #1572): the chart's solid line is the tab's actual, its two dashed lines that tab's **forecast (P&L)** from `fp:` and **forecast (documents)** from `fc:`, named by the tab ("Operating forecast (P&L)"); the table's forecast rows carry the same names and figures, plus vs each (actual − forecast). Money in / out bars and the Net change row stay overall. (Hookka first drew the forecast NET beside a tab's table rows; the owner saw different numbers above and below — keep chart and table on the same figure.)
   - Split (`cashFlowCardMonth`): operating = "Net operation surplus" result; investing = CAPEX lines; financing = trade finance + loan + deposit + finance cost lines; free cash flow = operating + investing. **Houzs:** map from tree categories (`cf:ops*`, `cf:funding*`, `cf:finance`, capex category).
 - **Balance Sheet card**: periods ahead from the Forecast Balance Sheet — total assets (fixed + current), total liabilities (current + long-term), debt to assets %; bars faded; header "Dec 2026 (F)"; a note under the table.
-- **Cash Flow Detail** (Hookka #1570): its own table — sections in the Cash Flow statement's order, each account line under it, each period **Actual | Forecast** (two sub-columns, as the cost-structure tables); a switch "Forecast from: Forecast P&L | Open documents" (P&L by default). Lines come from the forecast statement's own line rows keyed `<section>||<label>`, matched to the actual lines by the same key (`dashCashForecastLines`, `cashLinesByBucket`, `cashDetailSections`). A period ahead has no actual; a period the forecast does not reach has no forecast; a line only one side has still shows.
+  - **This month beside its forecast** (Hookka #1573): the month that has happened and that the Forecast Balance Sheet also covers gets rows Forecast total assets / liabilities / debt to assets and vs Forecast (assets / liabilities) = actual − forecast. By month only (a quarter's forecast is its last month-end). A month to date (`*`) is noted: its forecast is the month-end, so the gap closes as the month runs. Past months have no forecast kept — to compare them later, either back-calculate one month from each earlier month-end, or keep a month-end copy of the Forecast Balance Sheet from now on (owner has not chosen yet).
+- **Cash Flow Detail** (Hookka #1570, #1572): its own table — sections in the Cash Flow statement's order, each period **Actual | Forecast** (two sub-columns, as the cost-structure tables); a switch "Forecast from: Forecast P&L | Open documents" (P&L by default). **A section opens to the statement's own groups first** (Raw Materials → PURCHASE - FABRIC / WOODEN / FILLER / OTHERS / PACKING MATERIALS), then a group to its lines: the actuals, the P&L forecast and the Docs forecast name their lines differently (item-group codes, material types, "Opening creditors — <supplier>"), so only the group lines Actual up with Forecast; inside a group, the actuals' lines first, then the forecast's, then the per-party catch-alls; lines the statement does not place go under "Other" (`dashCashLineGroups`, `cashDetailSections`). Row names left-aligned. **Houzs:** the groups are the Cash Flow tree's own sub-categories (`acc_report_layouts`).
 - **Both**: after the last period that has happened, add periods ahead while a forecast covers them (`dashAheadRows`). Head them like the others with "(F)": "Dec 2026 (F)". **Fade their bars** (Hookka #1570 had to fix a bar shape that dropped the fade — check the faded bars actually render). Show "Loading forecast…" until the forecasts arrive. Quarter: cash sums its months; balance sheet reads its last month-end. With an explicit From/To nothing is added. Income card unchanged.
 - Houzs charts are SVG: add a dashed `<path>` per forecast series and an opacity per bar.
 
