@@ -392,6 +392,7 @@ function ScmGuard({
   allowSales = false,
   allowDirector = false,
   allowCapability,
+  allowSalesDirector = false,
   children,
 }: {
   area: string;
@@ -407,10 +408,13 @@ function ScmGuard({
    * confirm page though scm.sales.delivery is none; the page's one action still
    * hits the capability-gated status endpoint. */
   allowCapability?: string;
+  /** A Sales Director only (owner 2026-11-24: Procurement Overview); the backend guard's readBypass mirrors it. */
+  allowSalesDirector?: boolean;
   children: React.ReactNode;
 }) {
   const { user } = useAuth();
   if (allowSales && isSalesStaff(user)) return <>{children}</>;
+  if (allowSalesDirector && isSalesDirectorUser(user)) return <>{children}</>;
   if (allowDirector && isDirectorUser(user)) return <>{children}</>;
   if (allowCapability && (user?.position_capabilities ?? []).includes(allowCapability))
     return <>{children}</>;
@@ -807,7 +811,7 @@ const APP_ROUTES = (
             the literal segments match before the param route. Each page is wrapped
             in <Scm2990Shell> for the Notify/Confirm/dialog-service providers. */}
         <Route path="/scm/logistic-overview" element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmLogisticOverview embedded={false} /></Scm2990Shell></ScmGuard>} />
-        <Route path="/scm/procurement-overview" element={<ScmGuard area="scm.procurement.po"><Scm2990Shell><ScmProcurementOverview embedded={false} /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/procurement-overview" element={<ScmGuard area="scm.procurement.po" allowSalesDirector><Scm2990Shell><ScmProcurementOverview embedded={false} /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/purchase-orders" element={<ScmGuard area="scm.procurement.po"><Scm2990Shell><ScmPurchaseOrdersV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/purchase-orders/new" element={<ScmGuard area="scm.procurement.po"><Scm2990Shell><ScmPurchaseOrderNewV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/purchase-orders/from-so" element={<ScmGuard area="scm.procurement.po"><Scm2990Shell><ScmPurchaseOrderFromSoV2 /></Scm2990Shell></ScmGuard>} />

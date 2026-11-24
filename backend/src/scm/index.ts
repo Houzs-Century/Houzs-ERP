@@ -162,6 +162,7 @@ import { hr } from "./routes/hr";
 
 import { scmAreaGuard } from "./middleware/area-guard";
 import { hasPositionCapability } from "../services/positionCapabilities";
+import { isSalesDirectorUser } from "../services/pmsAccess";
 import { isTripLocationPing } from "./lib/tripLocation";
 import { scmWriteFreeze } from "./lib/write-freeze";
 import { venturePortalKick } from "./lib/venture-portal-kick";
@@ -811,8 +812,9 @@ scm.route("/mrp-supplier-lead-times", mrpSupplierLeadTimes);
 // Ported 2026-06-20 — Outstanding dashboard (v_*_outstanding views), MY
 // State/City/Postcode reference (my_localities). /fabric-library already
 // mounted above — its GET list was added to the existing route, not remounted.
-// Procurement Overview (owner 2026-10-16): the PO side of procurement.
-scm.use("/procurement-overview/*", scmAreaGuard("scm.procurement.po"));
+// Procurement Overview (owner 2026-10-16): the PO side of procurement. Read-only,
+// and open to a Sales Director too (owner 2026-11-24).
+scm.use("/procurement-overview/*", scmAreaGuard("scm.procurement.po", { readBypass: isSalesDirectorUser }));
 scm.route("/procurement-overview", procurementOverview);
 // Logistic Overview (owner 2026-10-16): weekly DO / delivered / runs history.
 scm.use("/logistic-overview/*", scmAreaGuard("scm.transportation.drivers"));
