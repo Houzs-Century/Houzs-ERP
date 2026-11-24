@@ -16,6 +16,14 @@
 // blank. Save is the whole grid in ONE PUT: a refused save names the cell
 // and scrolls to it, and nothing is kept. Nothing here touches the books.
 //
+// A purchase line splits by supplier (2026-11-24, step 1 of the Hookka
+// forecast port): its ▸ opens the company's suppliers that billed that line
+// lately, any supplier keyed under it, an Add supplier picker and Other; each
+// takes RM or % like the line itself. A line with any supplier figure that
+// month IS their sum — its own boxes show the sum, greyed, and its own figure
+// stays saved for when the suppliers are cleared. Closed (the default), a
+// line still shows the suppliers that carry a figure.
+//
 // In the owner's Claude Design (batch 6 §5.10, step 15), inside the report
 // shell: the months it covers as the grey line; the bar — Add month (the six
 // after the last, or Other…), "A new month inherits the % of the month
@@ -30,12 +38,12 @@ import { getActiveCompanyId } from '../../lib/activeCompany';
 import { fmtMoneyAtRest } from '../../vendor/scm/components/MoneyInput';
 import { fmtSenPlain } from '../../vendor/shared/format';
 import {
-  FORECAST_BLOCKS, blockOfSection, inheritMonth, isAmountCell, isSalesAccount, monthFigures, nextMonth, sortedMonths,
-  type ForecastAccount, type ForecastBlockKey, type ForecastCell, type ForecastFigures, type ForecastGrid, type ForecastLines,
+  FORECAST_BLOCKS, OTHER_SUPPLIER, blockOfSection, inheritMonth, inheritSuppliers, isAmountCell, isPurchaseAccount, isSalesAccount, monthFigures, nextMonth, sortedMonths,
+  type ForecastAccount, type ForecastBlockKey, type ForecastCell, type ForecastFigures, type ForecastGrid, type ForecastLines, type SupplierGrid, type SupplierLines,
 } from '../../vendor/shared/forecast-pnl';
 import type { LayoutItem } from '../../vendor/scm/lib/report-layout';
 import { AMOUNT_COLUMN, type ReportSheet, type SheetRow } from '../../vendor/scm/lib/report-sheet';
-import { useForecast, useSaveForecast } from '../../vendor/scm/lib/forecast-queries';
+import { useForecast, useSaveForecast, type ForecastSupplier } from '../../vendor/scm/lib/forecast-queries';
 import { useBooksToast } from './books/BooksToast';
 import { ReportExports, ReportHeaderActions, ReportMessage, useReportSubtitle } from './reports/reportParts';
 import { monthName } from './reports/statementColumns';
@@ -168,7 +176,7 @@ const PercentBox = ({ bp, impliedBp, onCommit, label, cellKey, title }: { bp: nu
 
 /* ── What a refused save says ────────────────────────────────────────────── */
 
-const CELL_RE = /^(\d{4}-\d{2}(?: [^\s:]+)?(?: amount| percent)?)/;
+const CELL_RE = /^(\d{4}-\d{2}(?: [^\s:]+){0,2}?(?: amount| percent)?)(?=:|$)/;
 /** The server names the cell ("2026-10 900-T003 amount") and says why; the
     page shows the sentence and scrolls to the cell it names. */
 export function refusalOf(e: unknown): { cell: string | null; message: string } {
@@ -189,8 +197,43 @@ export function refusalOf(e: unknown): { cell: string | null; message: string } 
   return { cell: m ? m[1]! : null, message };
 }
 
-const sameGrid = (a: ForecastGrid, b: ForecastGrid): boolean => JSON.stringify(a) === JSON.stringify(b);
-const hasAnyCell = (g: ForecastGrid): boolean => Object.values(g).some((lines) => Object.keys(lines).length > 0);
+/** JSON with every object's keys in order — a cell cleared and typed again is no change. */
+const canon = (v: unknown): string => JSON.stringify(v, (_k, x: unknown) => (x && typeof x === 'object' && !Array.isArray(x)
+  ? Object.fromEntries(Object.entries(x as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+  : x));
+const sameGrid = (a: ForecastGrid | SupplierGrid, b: ForecastGrid | SupplierGrid): boolean => canon(a) === canon(b);
+const hasAnyCell = (g: ForecastGrid, s: SupplierGrid): boolean =>
+  Object.values(g).some((lines) => Object.keys(lines).length > 0) || Object.values(s).some((byAccount) => Object.keys(byAccount).length > 0);
+
+/** A month's supplier figures with one cell set or cleared; an account or a month left empty goes. */
+export function withSupplierCell(g: SupplierGrid, m: string, code: string, id: string, cell: ForecastCell | null): SupplierGrid {
+  const month: SupplierLines = { ...(g[m] ?? {}) };
+  const cells: Record<string, ForecastCell> = { ...(month[code] ?? {}) };
+  if (cell) cells[id] = cell; else delete cells[id];
+  if (Object.keys(cells).length > 0) month[code] = cells; else delete month[code];
+  const next: SupplierGrid = { ...g };
+  if (Object.keys(month).length > 0) next[m] = month; else delete next[m];
+  return next;
+}
+
+type SupplierRow = { id: string; name: string };
+const OTHER_ROW: SupplierRow = { id: OTHER_SUPPLIER, name: 'Other (new suppliers)' };
+const byName = (a: SupplierRow, b: SupplierRow): number => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' });
+
+/** The supplier rows under a purchase line. Open: the active suppliers that
+    billed the line lately, any supplier keyed under it in some month (kept
+    whatever its status; one the list no longer knows is named as such), the
+    ones added here, by name, then Other. Closed: the keyed ones alone. */
+export function supplierRowsFor(code: string, open: boolean, list: ForecastSupplier[], keyedIds: ReadonlySet<string>, addedIds: readonly string[]): SupplierRow[] {
+  const byId = new Map(list.map((s) => [s.id, s]));
+  const ids = new Set([...keyedIds].filter((id) => id !== OTHER_SUPPLIER));
+  if (open) {
+    for (const s of list) if (s.active && s.recent.includes(code)) ids.add(s.id);
+    for (const id of addedIds) ids.add(id);
+  }
+  const rows = [...ids].map((id) => ({ id, name: byId.get(id)?.name ?? `Unknown supplier (${id})` })).sort(byName);
+  return open || keyedIds.has(OTHER_SUPPLIER) ? [...rows, OTHER_ROW] : rows;
+}
 
 /* ── The page ────────────────────────────────────────────────────────────── */
 
@@ -202,8 +245,11 @@ export const ForecastPnl = () => (
 );
 
 const NOTE = 'Sales lines take an amount; every other line takes a % of that month’s sales — a purchase line, of its own group’s sales — or an amount. '
-  + 'Type in either box: the one you typed is kept and the other shows what it implies, in grey. Subtotals, gross profit, profit before tax and net profit follow the P&L’s layout. '
+  + 'Type in either box: the one you typed is kept and the other shows what it implies, in grey. '
+  + 'A purchase line can be split by supplier (▸): each supplier takes RM or % like the line, and while any supplier has a figure that month the line is their sum. '
+  + 'Subtotals, gross profit, profit before tax and net profit follow the P&L’s layout. '
   + 'Nothing here posts to the books.';
+const SUM_TITLE = 'The sum of its suppliers this month. Clear the suppliers to type the line itself.';
 
 function ForecastGridPage() {
   const q = useForecast();
@@ -212,8 +258,13 @@ function ForecastGridPage() {
   const companyId = getActiveCompanyId();
   const [grid, setGrid] = useState<ForecastGrid | null>(null);
   const [saved, setSaved] = useState<ForecastGrid | null>(null);
+  const [sup, setSup] = useState<SupplierGrid>({});
+  const [savedSup, setSavedSup] = useState<SupplierGrid>({});
   const [hideEmpty, setHideEmpty] = useState(true);
   const [closed, setClosed] = useState<Record<string, boolean>>({});
+  /* A purchase line's supplier rows: closed on every load; suppliers picked here before they carry a figure. */
+  const [openLines, setOpenLines] = useState<Record<string, boolean>>({});
+  const [added, setAdded] = useState<Record<string, string[]>>({});
   const [pick, setPick] = useState('');
   const [otherMonth, setOtherMonth] = useState('');
   const [refusal, setRefusal] = useState<{ cell: string | null; message: string } | null>(null);
@@ -222,11 +273,14 @@ function ForecastGridPage() {
      nothing typed would be lost by it. */
   useEffect(() => {
     if (!q.data) return;
-    if (grid && saved && !sameGrid(grid, saved)) return;
+    if (grid && saved && (!sameGrid(grid, saved) || !sameGrid(sup, savedSup))) return;
+    const serverSup = q.data.suppliers ?? {};
     setGrid(q.data.months);
     setSaved(q.data.months);
-    setHideEmpty(hasAnyCell(q.data.months));
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- the server's grid is adopted only when nothing typed stands in the way; grid/saved are the guard, not a trigger
+    setSup(serverSup);
+    setSavedSup(serverSup);
+    setHideEmpty(hasAnyCell(q.data.months, serverSup));
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- the server's grid is adopted only when nothing typed stands in the way; grid/saved/sup are the guard, not a trigger
   }, [q.data]);
 
   const accounts = useMemo(() => q.data?.accounts ?? [], [q.data]);
@@ -244,20 +298,32 @@ function ForecastGridPage() {
   const picked = pick && (pick === OTHER || choices.includes(pick)) ? pick : (choices[0] ?? '');
   const addTarget = picked === OTHER ? otherMonth : picked;
   /* Index reads typed as possibly absent on purpose: a month the grid does not carry has no figures. */
-  const figures = useMemo<Record<string, ForecastFigures | undefined>>(() => Object.fromEntries(months.map((m) => [m, monthFigures(grid?.[m] ?? {}, accounts)])), [months, grid, accounts]);
+  const supOf = (m: string): Partial<SupplierLines> => (Object.prototype.hasOwnProperty.call(sup, m) ? sup[m]! : {});
+  const figures = useMemo<Record<string, ForecastFigures | undefined>>(() => Object.fromEntries(months.map((m) => [m, monthFigures(grid?.[m] ?? {}, Object.prototype.hasOwnProperty.call(sup, m) ? sup[m]! : {}, accounts)])), [months, grid, sup, accounts]);
   const lineOf = (m: string, code: string) => figures[m]?.lines.find((l) => l.code === code);
   const amountOf = (m: string, codes: string[]): number => codes.reduce((s, c) => s + (lineOf(m, c)?.amountSen ?? 0), 0);
   const cellOf = (m: string, code: string): ForecastCell | null => {
     const lines: ForecastLines | undefined = grid?.[m];
     return lines && Object.prototype.hasOwnProperty.call(lines, code) ? lines[code]! : null;
   };
-  const keyed = (code: string): boolean => months.some((m) => cellOf(m, code) != null);
+  const supplierCellOf = (m: string, code: string, id: string): ForecastCell | null => {
+    const cells: Partial<Record<string, ForecastCell>> = supOf(m)[code] ?? {};
+    return cells[id] ?? null;
+  };
+  /** The suppliers with a figure under a line in any month on the grid. */
+  const keyedSuppliers = (code: string): Set<string> => {
+    const ids = new Set<string>();
+    for (const m of months) for (const id of Object.keys(supOf(m)[code] ?? {})) ids.add(id);
+    return ids;
+  };
+  const keyed = (code: string): boolean => months.some((m) => cellOf(m, code) != null) || keyedSuppliers(code).size > 0;
+  const supplierList = useMemo(() => q.data?.supplierList ?? [], [q.data]);
 
   useReportSubtitle(firstMonth && lastMonth
     ? `${monthLabel(firstMonth)} – ${monthLabel(lastMonth)} · ${months.length} ${months.length === 1 ? 'month' : 'months'} · targets per account on the P&L’s layout`
     : 'No month yet');
 
-  const dirty = grid != null && saved != null && !sameGrid(grid, saved);
+  const dirty = grid != null && saved != null && (!sameGrid(grid, saved) || !sameGrid(sup, savedSup));
   useEffect(() => {
     if (!dirty) return;
     const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
@@ -273,8 +339,12 @@ function ForecastGridPage() {
       return { ...g, [m]: lines };
     });
   };
+  const setSupplierCell = (m: string, code: string, id: string, cell: ForecastCell | null) => {
+    setSup((g) => withSupplierCell(g, m, code, id, cell));
+  };
   const removeMonth = (m: string) => {
     setGrid((g) => { if (!g) return g; const next = { ...g }; delete next[m]; return next; });
+    setSup((g) => { const next = { ...g }; delete next[m]; return next; });
   };
   const add = () => {
     const m = addTarget.trim();
@@ -283,18 +353,27 @@ function ForecastGridPage() {
     const before = months.filter((x) => x < m);
     const prev = before.length > 0 ? before[before.length - 1] : lastMonth;
     setGrid({ ...grid, [m]: inheritMonth(prev ? grid[prev] : undefined) });
+    const carried = inheritSuppliers(prev ? sup[prev] : undefined);
+    if (Object.keys(carried).length > 0) setSup({ ...sup, [m]: carried });
     setRefusal(null);
     setPick('');
     toast.say(`${monthFull(m)} added · type its sales; every other line kept its %`);
+  };
+  const addSupplier = (code: string, id: string) => {
+    if (!id) return;
+    setAdded((a) => ({ ...a, [code]: [...(a[code] ?? []).filter((x) => x !== id), id] }));
+    setOpenLines((o) => ({ ...o, [code]: true }));
   };
   const doSave = () => {
     if (!grid) return;
     if (!dirty) { toast.say('Nothing to save'); return; }
     setRefusal(null);
-    save.mutate(grid, {
+    const sentSup = sup;
+    save.mutate({ months: grid, suppliers: sentSup }, {
       onSuccess: () => {
         const n = sortedMonths(grid).length;
         setSaved(grid);
+        setSavedSup(sentSup);
         toast.say(`Forecast saved · ${n} ${n === 1 ? 'month' : 'months'}`);
       },
       onError: (e) => {
@@ -353,9 +432,17 @@ function ForecastGridPage() {
     for (const b of blocks) {
       rows.push({ kind: 'block', depth: 0, label: b.title, cells: [] });
       for (const r of visibleRows(b)) {
-        rows.push(r.kind === 'category'
-          ? { kind: 'category', depth: r.depth, label: r.label, cells: months.map((m) => amountOf(m, r.codes)) }
-          : { kind: 'row', depth: r.depth, label: `${r.account.code} · ${r.account.name}`, cells: months.map((m) => lineOf(m, r.account.code)?.amountSen ?? 0) });
+        if (r.kind === 'category') {
+          rows.push({ kind: 'category', depth: r.depth, label: r.label, cells: months.map((m) => amountOf(m, r.codes)) });
+          continue;
+        }
+        const code = r.account.code;
+        rows.push({ kind: 'row', depth: r.depth, label: `${code} · ${r.account.name}`, cells: months.map((m) => lineOf(m, code)?.amountSen ?? 0) });
+        /* The suppliers that carry a figure, under their line. */
+        if (!isPurchaseAccount(r.account)) continue;
+        for (const s of supplierRowsFor(code, false, supplierList, keyedSuppliers(code), [])) {
+          rows.push({ kind: 'row', depth: r.depth + 1, label: s.name, cells: months.map((m) => lineOf(m, code)?.bySupplier.find((x) => x.supplierId === s.id)?.amountSen ?? 0) });
+        }
       }
       rows.push({ kind: 'total', depth: 0, label: `TOTAL ${b.title.toUpperCase()}`, cells: months.map((m) => blockTotal(b.key, m)) });
       const after = afterOf(b.key);
@@ -391,6 +478,112 @@ function ForecastGridPage() {
   const after = (key: ForecastBlockKey): ReactElement | null => {
     const a = afterOf(key);
     return a ? <TotalRow id={a.id} label={a.label} strong sen={a.sen} /> : null;
+  };
+
+  /* An account's line: its ▸ when it is a purchase account, and its two boxes
+     each month — read-only, showing their sum, in a month its suppliers carry. */
+  const accountRow = (r: Extract<Row, { kind: 'account' }>): ReactElement => {
+    const a = r.account;
+    const purchase = isPurchaseAccount(a);
+    const open = openLines[a.code] === true;
+    return (
+      <tr key={r.id} data-row={r.id} className={f.row}>
+        {/* One line, `code · name`, the report trees' own label (owner 2026-09-22:
+            the two-line shape belongs to the journal and GL line tables). */}
+        <td className={f.name} style={{ paddingLeft: 12 + (r.depth - 1) * 18 + (purchase ? 0 : 18) }}>
+          {purchase && (
+            <button type="button" className={f.chevron} aria-expanded={open} aria-label={`${open ? 'Hide' : 'Show'} the suppliers of ${a.code}`}
+              title={open ? 'Hide the suppliers' : 'Split by supplier'} onClick={() => setOpenLines((o) => ({ ...o, [a.code]: !open }))}>{open ? '▾' : '▸'}</button>
+          )}
+          {a.code} · {a.name}
+        </td>
+        {months.map((m) => {
+          const line = lineOf(m, a.code);
+          if (line?.keyed === 'suppliers') {
+            return (
+              <Fragment key={m}>
+                <td className={f.cell}>
+                  <input type="text" readOnly tabIndex={-1} className={`${f.box} ${f.sumBox}`} value={fmtMoneyAtRest(line.amountSen)} title={SUM_TITLE}
+                    aria-label={`${m} ${a.code} amount`} data-cell={`${m} ${a.code} amount`} />
+                </td>
+                <td className={f.pctCell}>
+                  <input type="text" readOnly tabIndex={-1} className={`${f.box} ${f.pctBox} ${f.sumBox}`} value={line.bp == null ? '' : fmtBp(line.bp)} title={SUM_TITLE}
+                    aria-label={`${m} ${a.code} percent`} data-cell={`${m} ${a.code} percent`} />
+                </td>
+              </Fragment>
+            );
+          }
+          const cell = cellOf(m, a.code);
+          const amount = cell && isAmountCell(cell) ? cell.amtSen : null;
+          const bp = cell && !isAmountCell(cell) ? cell.bp : null;
+          return (
+            <Fragment key={m}>
+              <td className={f.cell}>
+                <AmountBox valueSen={amount} impliedSen={bp != null ? (line?.amountSen ?? 0) : null} label={`${m} ${a.code} amount`} cellKey={`${m} ${a.code} amount`}
+                  onCommit={(sen) => setCell(m, a.code, sen == null ? null : { amtSen: sen })} />
+              </td>
+              <td className={f.pctCell}>
+                {isSalesAccount(a)
+                  ? <span>{cell ? pctOfSales(line?.amountSen ?? 0, figures[m]?.salesSen ?? 0) : ''}</span>
+                  : <PercentBox bp={bp} impliedBp={amount != null ? line?.bp ?? null : null} label={`${m} ${a.code} percent`} cellKey={`${m} ${a.code} percent`}
+                      title={basisTitle(a)}
+                      onCommit={(next) => setCell(m, a.code, next == null ? null : { bp: next })} />}
+              </td>
+            </Fragment>
+          );
+        })}
+      </tr>
+    );
+  };
+
+  /* A purchase line's supplier rows (supplierRowsFor), each with the line's
+     two boxes, and — open — the Add supplier picker of the company's active
+     suppliers not listed yet. */
+  const supplierRows = (r: Extract<Row, { kind: 'account' }>): ReactElement[] => {
+    const a = r.account;
+    if (!isPurchaseAccount(a)) return [];
+    const open = openLines[a.code] === true;
+    const rows = supplierRowsFor(a.code, open, supplierList, keyedSuppliers(a.code), added[a.code] ?? []);
+    const pad = 12 + (r.depth - 1) * 18 + 36;
+    const out = rows.map((s) => (
+      <tr key={`${r.id}:sup:${s.id}`} data-row={`sup:${a.code}:${s.id}`} className={f.supRow}>
+        <td className={f.name} style={{ paddingLeft: pad }}>{s.name}</td>
+        {months.map((m) => {
+          const cell = supplierCellOf(m, a.code, s.id);
+          const fig = lineOf(m, a.code)?.bySupplier.find((x) => x.supplierId === s.id);
+          const amount = cell && isAmountCell(cell) ? cell.amtSen : null;
+          const bp = cell && !isAmountCell(cell) ? cell.bp : null;
+          return (
+            <Fragment key={m}>
+              <td className={f.cell}>
+                <AmountBox valueSen={amount} impliedSen={bp != null ? (fig?.amountSen ?? 0) : null} label={`${m} ${a.code} ${s.name} amount`} cellKey={`${m} ${a.code} ${s.id} amount`}
+                  onCommit={(sen) => setSupplierCell(m, a.code, s.id, sen == null ? null : { amtSen: sen })} />
+              </td>
+              <td className={f.pctCell}>
+                <PercentBox bp={bp} impliedBp={amount != null ? fig?.bp ?? null : null} label={`${m} ${a.code} ${s.name} percent`} cellKey={`${m} ${a.code} ${s.id} percent`}
+                  title={basisTitle(a)} onCommit={(next) => setSupplierCell(m, a.code, s.id, next == null ? null : { bp: next })} />
+              </td>
+            </Fragment>
+          );
+        })}
+      </tr>
+    ));
+    if (open) {
+      const listed = new Set(rows.map((s) => s.id));
+      const more = supplierList.filter((s) => s.active && !listed.has(s.id));
+      out.push(
+        <tr key={`${r.id}:sup:add`} data-row={`sup:${a.code}:add`} className={f.supRow}>
+          <td className={f.name} style={{ paddingLeft: pad }}>
+            <select className={f.supPick} value="" aria-label={`Add a supplier under ${a.code}`} disabled={more.length === 0} onChange={(e) => addSupplier(a.code, e.target.value)}>
+              <option value="">{more.length === 0 ? 'No other supplier' : 'Add supplier…'}</option>
+              {more.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </td>
+          <td colSpan={months.length * 2} />
+        </tr>,
+      );
+    }
+    return out;
   };
 
   return (
@@ -465,33 +658,10 @@ function ForecastGridPage() {
                         })}
                       </tr>
                     ) : (
-                      <tr key={r.id} data-row={r.id} className={f.row}>
-                        {/* One line, `code · name`, the report trees' own label (owner 2026-09-22:
-                            the two-line shape belongs to the journal and GL line tables). */}
-                        <td className={f.name} style={{ paddingLeft: 12 + (r.depth - 1) * 18 + 18 }}>{r.account.code} · {r.account.name}</td>
-                        {months.map((m) => {
-                          const cell = cellOf(m, r.account.code);
-                          const line = lineOf(m, r.account.code);
-                          const sales = isSalesAccount(r.account);
-                          const amount = cell && isAmountCell(cell) ? cell.amtSen : null;
-                          const bp = cell && !isAmountCell(cell) ? cell.bp : null;
-                          return (
-                            <Fragment key={m}>
-                              <td className={f.cell}>
-                                <AmountBox valueSen={amount} impliedSen={bp != null ? (line?.amountSen ?? 0) : null} label={`${m} ${r.account.code} amount`} cellKey={`${m} ${r.account.code} amount`}
-                                  onCommit={(sen) => setCell(m, r.account.code, sen == null ? null : { amtSen: sen })} />
-                              </td>
-                              <td className={f.pctCell}>
-                                {sales
-                                  ? <span>{cell ? pctOfSales(line?.amountSen ?? 0, figures[m]?.salesSen ?? 0) : ''}</span>
-                                  : <PercentBox bp={bp} impliedBp={amount != null ? line?.bp ?? null : null} label={`${m} ${r.account.code} percent`} cellKey={`${m} ${r.account.code} percent`}
-                                      title={basisTitle(r.account)}
-                                      onCommit={(next) => setCell(m, r.account.code, next == null ? null : { bp: next })} />}
-                              </td>
-                            </Fragment>
-                          );
-                        })}
-                      </tr>
+                      <Fragment key={r.id}>
+                        {accountRow(r)}
+                        {supplierRows(r)}
+                      </Fragment>
                     ))}
                     <TotalRow id={`total:${b.key}`} label={`TOTAL ${b.title.toUpperCase()}`} sen={(m) => blockTotal(b.key, m)} />
                     {after(b.key)}

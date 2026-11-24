@@ -23,6 +23,7 @@ import { buildDashboard, clearDashboardCache, dashboardHandler, parseDashboardQu
 import { balanceSheetReport, pnlReport } from '../src/scm/routes/accounting-reports';
 import { receiptsPaymentsReport } from '../src/scm/routes/accounting-rp';
 import { performanceReport } from '../src/scm/routes/accounting-performance';
+import { forecastFiguresHandler } from '../src/scm/routes/accounting-forecast';
 
 const CO = 2;
 const TODAY = '2026-09-21';
@@ -176,6 +177,28 @@ describe('parseDashboardQuery', () => {
     expect(parseDashboardQuery({ from: '2026-05', to: '2026-01' })).toMatchObject({ ok: false });
     expect(parseDashboardQuery({ from: '2020-01', to: '2026-01' })).toMatchObject({ ok: false });
     expect(parseDashboardQuery({ from: '2026-08', to: '2026-11', periods: '3' })).toEqual({ ok: true, query: { granularity: 'month', periods: 3, from: '2026-08', to: '2026-11' } });
+  });
+});
+
+/* Step 1 of the forecast port (2026-11-24): a purchase account split by
+   supplier is the sum of its suppliers on every reader — the Dashboard's
+   forecast totals and its per-group compare read what the Forecast P&L's own
+   figures door reads. Made-up figures. */
+describe('a purchase line split by supplier', () => {
+  test("November's sofa purchases are the sum of its suppliers in the forecast totals and the group compare, the figures door's own numbers", async () => {
+    const rows = FORECAST.map((r) => (r.month === '2026-11' ? { ...r, suppliers: { '601-0003': { 'sup-a': { amtSen: 70_000 }, other: { bp: 1000 } } } } : r));
+    const { sb, app } = harness(undefined, { acc_forecast_pnl: rows });
+    app.get('/accounting/forecast/figures', forecastFiguresHandler as never);
+    const r = await buildDashboard(sb, CO, [CO], { granularity: 'month', periods: 2, from: null, to: null }, TODAY);
+    if (!r.ok) throw new Error(r.reason);
+    const nov = r.payload.periods[3]!;
+    /* 700.00 + 10% of the 1,500.00 sofa sales = 850.00, not the account's own 60% (900.00). */
+    expect(nov.forecast).toMatchObject({ salesSen: 150_000, costOfSalesSen: 85_000, grossProfitSen: 65_000, netProfitSen: 65_000 });
+    expect(nov.compare!.groups.find((g) => g.key === 'sofa')).toMatchObject({ forecastSalesSen: 150_000, forecastCostSen: 85_000 });
+    const fig = await json<{ months: Array<{ totals: { costOfSalesSen: number; grossProfitSen: number; netProfitSen: number } }> }>(await app.request('/accounting/forecast/figures?from=2026-11&to=2026-11'));
+    expect(fig.months[0]!.totals).toMatchObject({ costOfSalesSen: nov.forecast!.costOfSalesSen, grossProfitSen: nov.forecast!.grossProfitSen, netProfitSen: nov.forecast!.netProfitSen });
+    /* September carries no supplier figure: its 60% stands, as before. */
+    expect(r.payload.periods[1]!.forecast).toMatchObject({ costOfSalesSen: 72_000 });
   });
 });
 
