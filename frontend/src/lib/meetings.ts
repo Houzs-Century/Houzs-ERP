@@ -54,6 +54,8 @@ export type Meeting = {
   guest: Guest | null;
   /** Outside guests invited by email. */
   guestEmails?: string[];
+  /** The emails sent for it; only the organiser and booker get this. */
+  emails?: { kind: string; to: string[]; sentAt: string | null; attempts: number; error: string | null }[];
 };
 export type Bootstrap = { me: string; canManage: boolean; rooms: Room[]; people: Person[]; unread: number; meetConnected?: boolean };
 export type Notice = { id: number; meetingId: number | null; text: string; at: string; read: boolean };
