@@ -5,8 +5,9 @@
 // of the month's processed total; the backlog at the 1st; the two backlog
 // cover rates (on the backlog, on the month's processed total), each by amount
 // and by number of orders, with their averages from a month the reader may
-// pick, by default the company's first month with a backlog; each month's
-// figures; and the orders, which a tile narrows to its part. The rules: so-backlog-cover-view.ts and, on the
+// pick, by default the company's first month with a backlog, each average a
+// card of its own beside its rate; each month's figures; and the orders, which
+// a tile narrows to its part. The rules: so-backlog-cover-view.ts and, on the
 // server, acc/so-backlog-cover.ts.
 // ----------------------------------------------------------------------------
 
@@ -71,13 +72,8 @@ const COLUMNS: Column<CoverRow>[] = [
   },
 ];
 
-/** A rate tile's line under the figure: what it is of, then the average. */
-const RateSub = ({ of, avg, period }: { of: string; avg: number | null; period: string }) => (
-  <span className={s.stack}>
-    <span>{of}</span>
-    <span>{`Average ${shareText(avg)} · ${period}`}</span>
-  </span>
-);
+/** A rate's average as a card of its own: the figure, and the months it is of. */
+const avgTile = (key: string, label: string, avg: number | null, period: string): ReportTile => ({ key, label, value: shareText(avg), sub: period });
 
 /** A month's amount with its order count under it. */
 const Both = ({ c }: { c: Count }) => (
@@ -158,28 +154,33 @@ export const SoBacklogCoverTab = () => {
     partTile('this_month'),
     partTile('backlog'),
   ] : [];
-  /* The owner wants both rates and their averages by amount and by quantity: a row each. */
+  /* The owner wants both rates and their averages by amount and by quantity, a row each, and
+     each average as a card of its own beside its rate (owner 2026-11-24). */
   const byAmount: ReportTile[] = d ? [
     { key: 'backlog-start', label: `Backlog at ${firstOfText(d.month)}`, value: fmtSenPlain(d.backlog.amountSen), sub: ordersText(d.backlog.orders) },
     {
       key: 'on-backlog', label: 'Cover rate · on backlog amount', value: shareText(d.cover.amount.onBacklog),
-      sub: <RateSub of={`${fmtSenPlain(d.parts.backlog.amountSen)} of ${fmtSenPlain(d.backlog.amountSen)}`} avg={d.average.amount.onBacklog} period={averagePeriod(d)} />,
+      sub: `${fmtSenPlain(d.parts.backlog.amountSen)} of ${fmtSenPlain(d.backlog.amountSen)}`,
     },
+    avgTile('avg-on-backlog', 'Average · on backlog amount', d.average.amount.onBacklog, averagePeriod(d)),
     {
       key: 'on-month', label: 'Cover rate · on month amount', value: shareText(d.cover.amount.onMonth),
-      sub: <RateSub of={`${fmtSenPlain(d.parts.backlog.amountSen)} of ${fmtSenPlain(d.total.amountSen)}`} avg={d.average.amount.onMonth} period={averagePeriod(d)} />,
+      sub: `${fmtSenPlain(d.parts.backlog.amountSen)} of ${fmtSenPlain(d.total.amountSen)}`,
     },
+    avgTile('avg-on-month', 'Average · on month amount', d.average.amount.onMonth, averagePeriod(d)),
   ] : [];
   const byOrders: ReportTile[] = d ? [
     { key: 'backlog-start-orders', label: `Backlog orders at ${firstOfText(d.month)}`, value: fmtQty(d.backlog.orders), sub: 'Not processed by the 1st' },
     {
       key: 'on-backlog-orders', label: 'Cover rate · on backlog orders', value: shareText(d.cover.orders.onBacklog),
-      sub: <RateSub of={`${fmtQty(d.parts.backlog.orders)} of ${ordersText(d.backlog.orders)}`} avg={d.average.orders.onBacklog} period={averagePeriod(d)} />,
+      sub: `${fmtQty(d.parts.backlog.orders)} of ${ordersText(d.backlog.orders)}`,
     },
+    avgTile('avg-on-backlog-orders', 'Average · on backlog orders', d.average.orders.onBacklog, averagePeriod(d)),
     {
       key: 'on-month-orders', label: 'Cover rate · on month orders', value: shareText(d.cover.orders.onMonth),
-      sub: <RateSub of={`${fmtQty(d.parts.backlog.orders)} of ${ordersText(d.total.orders)}`} avg={d.average.orders.onMonth} period={averagePeriod(d)} />,
+      sub: `${fmtQty(d.parts.backlog.orders)} of ${ordersText(d.total.orders)}`,
     },
+    avgTile('avg-on-month-orders', 'Average · on month orders', d.average.orders.onMonth, averagePeriod(d)),
   ] : [];
 
   return (

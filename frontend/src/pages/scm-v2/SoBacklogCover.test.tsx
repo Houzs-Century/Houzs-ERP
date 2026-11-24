@@ -6,7 +6,8 @@
      • the report reads the month picked, and the picker moves it;
      • the tiles give the processed total and each part's amount and share;
      • the backlog at the 1st and the two rates, a row by amount and a row by
-       orders, each rate with what it is of and its average;
+       orders, each rate with what it is of and its average on a card of its
+       own beside it;
      • each month's figures, amounts with their order counts, the four rates
        and the averages under them;
      • the average's start is picked in the URL, the default leaving it;
@@ -113,18 +114,22 @@ describe('SO conversion & backlog', () => {
     expect(tile(/^Backlog orders/).querySelector('[title="Share of the month\'s processed total"]')?.textContent).toBe('75.0%');
   });
 
-  test('the backlog at the 1st and each cover rate with what it is of and its average: a row by amount, a row by orders', async () => {
+  test('the backlog at the 1st, each cover rate with what it is of, and its average on a card beside it: a row by amount, a row by orders', async () => {
     draw(OCT_URL);
     await screen.findByText('HC-SO-T1');
     expect(amountTiles()).toEqual([
       'Backlog at 1 Oct 202630,000.005 orders',
-      'Cover rate · on backlog amount25.0%7,500.00 of 30,000.00Average 20.0% · Sep 2026 – Oct 2026',
-      'Cover rate · on month amount75.0%7,500.00 of 10,000.00Average 60.0% · Sep 2026 – Oct 2026',
+      'Cover rate · on backlog amount25.0%7,500.00 of 30,000.00',
+      'Average · on backlog amount20.0%Sep 2026 – Oct 2026',
+      'Cover rate · on month amount75.0%7,500.00 of 10,000.00',
+      'Average · on month amount60.0%Sep 2026 – Oct 2026',
     ]);
     expect(orderTiles()).toEqual([
       'Backlog orders at 1 Oct 20265Not processed by the 1st',
-      'Cover rate · on backlog orders40.0%2 of 5 ordersAverage 32.5% · Sep 2026 – Oct 2026',
-      'Cover rate · on month orders66.7%2 of 3 ordersAverage 58.4% · Sep 2026 – Oct 2026',
+      'Cover rate · on backlog orders40.0%2 of 5 orders',
+      'Average · on backlog orders32.5%Sep 2026 – Oct 2026',
+      'Cover rate · on month orders66.7%2 of 3 orders',
+      'Average · on month orders58.4%Sep 2026 – Oct 2026',
     ]);
   });
 
@@ -150,12 +155,12 @@ describe('SO conversion & backlog', () => {
     expect(pick.value).toBe('2026-09');
     fireEvent.change(pick, { target: { value: '2026-10' } });
     await waitFor(() => expect(lastPath()).toBe('/accounting/so-backlog-cover?month=2026-10&avgFrom=2026-10'));
-    await waitFor(() => expect(amountTiles()[1]).toContain('Average 25.0% · Oct 2026'));
-    expect(orderTiles()[1]).toContain('Average 40.0% · Oct 2026');
+    await waitFor(() => expect(amountTiles()[2]).toBe('Average · on backlog amount25.0%Oct 2026'));
+    expect(orderTiles()[2]).toBe('Average · on backlog orders40.0%Oct 2026');
     expect(search()).toContain('avg=2026-10');
     fireEvent.change(pick, { target: { value: '2026-09' } });
     await waitFor(() => expect(search()).not.toContain('avg='));
-    expect(amountTiles()[1]).toContain('Average 20.0% · Sep 2026 – Oct 2026');
+    expect(amountTiles()[2]).toBe('Average · on backlog amount20.0%Sep 2026 – Oct 2026');
   });
 
   test('a tile narrows the list to its part, and a second press shows every order again', async () => {
@@ -204,7 +209,8 @@ describe('SO conversion & backlog', () => {
     draw('tab=sotodo&from=2026-08-01&to=2026-08-31');
     await screen.findByText('No order has a Processing Date in Aug 2026.');
     expect(tile(/^This month's orders/).textContent).toContain('—');
-    expect(amountTiles()[2]).toContain('Cover rate · on month amount—');
-    expect(orderTiles()[2]).toContain('Cover rate · on month orders—');
+    expect(amountTiles()[3]).toContain('Cover rate · on month amount—');
+    expect(orderTiles()[3]).toContain('Cover rate · on month orders—');
+    expect(amountTiles()[4]).toBe(`Average · on month amount—Aug 2026`);
   });
 });
