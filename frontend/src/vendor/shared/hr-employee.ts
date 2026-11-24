@@ -22,28 +22,6 @@ export const PAYMENT_METHODS: ReadonlyArray<{ value: PaymentMethod; label: strin
   { value: "CASH", label: "Cash" },
 ];
 
-/** A fixed dropdown, not free text: a bank typed two ways is how a payment file gets rejected. */
-export const MALAYSIAN_BANKS: readonly string[] = [
-  "Maybank",
-  "CIMB Bank",
-  "Public Bank",
-  "RHB Bank",
-  "Hong Leong Bank",
-  "AmBank",
-  "Bank Islam",
-  "OCBC Bank",
-  "UOB Bank",
-  "HSBC Bank",
-  "Affin Bank",
-  "Alliance Bank",
-  "Bank Simpanan Nasional",
-  "Bank Rakyat",
-  "Agrobank",
-  "MBSB Bank",
-  "Standard Chartered",
-  "Citibank",
-];
-
 export type TaxResidency = "RESIDENT" | "NON_RESIDENT";
 export type TaxCategory = "SINGLE" | "MARRIED_SPOUSE_NOT_WORKING" | "MARRIED_SPOUSE_WORKING";
 export const TAX_RESIDENCIES: ReadonlyArray<{ value: TaxResidency; label: string }> = [

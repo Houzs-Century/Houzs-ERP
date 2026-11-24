@@ -1777,8 +1777,13 @@
     },
     {
       "check": "D1",
-      "key": "AFFIN BANK,AGROBANK,ALLIANCE BANK,AMBANK,BANK ISLAM,BANK RAKYAT,BANK SIMPANAN NASIONAL,CIMB BANK,CITIBANK,HONG LEONG BANK,HSBC BANK,MAYBANK,MBSB BANK,OCBC BANK,PUBLIC BANK,RHB BANK,STANDARD CHARTERED,UOB BANK|backend/src/scm/shared/hr-employee.ts frontend/src/vendor/shared/hr-employee.ts",
-      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: MALAYSIAN_BANKS."
+      "key": "AFFIN BANK,AGROBANK,ALLIANCE BANK,AMBANK,BANK ISLAM,BANK RAKYAT,BANK SIMPANAN NASIONAL,CIMB BANK,CITIBANK,HONG LEONG BANK,HSBC BANK,MAYBANK,MBSB BANK,OCBC BANK,PUBLIC BANK,RHB BANK,STANDARD CHARTERED,UOB BANK|backend/src/scm/shared/pick-lists.ts frontend/src/vendor/shared/pick-lists.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: MALAYSIAN_BANKS (moved out of hr-employee.ts so HR and the supplier forms share one bank list, 2026-11-24)."
+    },
+    {
+      "check": "D1",
+      "key": "30/70,50/50,ADVANCE PAYMENT,COD,NET 14,NET 30,NET 45,NET 60,NET 7,NET 90|backend/src/scm/shared/pick-lists.ts frontend/src/vendor/shared/pick-lists.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: PAYMENT_TERMS, the supplier forms' term list; the backend copy is what acc/cashflow-pnl-forecast.test.ts holds the forecast's term reader to."
     },
     {
       "check": "D1",
