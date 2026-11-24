@@ -238,6 +238,11 @@ export function useApprovalBadgeCounts(): Record<ApprovalBadgeSource, number> {
       wanted["payment-backdate-approvals"] && batchSettled,
       ownPoll,
     ),
+    "stock-take-approvals": usePendingCount(
+      "stock-take-approvals",
+      wanted["stock-take-approvals"] && batchSettled,
+      ownPoll,
+    ),
     "payment-requests-waiting": usePendingCount(
       "payment-requests-waiting",
       wanted["payment-requests-waiting"] && batchSettled,
