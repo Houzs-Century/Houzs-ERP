@@ -4,7 +4,7 @@
    less forecast. The page's own test drives them through the card
    (FinanceDashboard.test.tsx). Made-up figures. */
 import { describe, expect, it } from 'vitest';
-import { forecastSpan, gapOf, periodCashForecasts, pickCash } from './dashboardForecast';
+import { categoryAmounts, categoryRows, forecastSpan, gapOf, periodCashForecasts, periodCategoryForecast, pickCash } from './dashboardForecast';
 import type { CashFlowForecast } from '../../../vendor/scm/lib/cash-flow-forecast-queries';
 
 const m = (month: string, inSen: number, outSen: number) => ({ month, future: false, report: { totals: { receiptsTotalSen: inSen, paymentsTotalSen: outSen } } });
@@ -32,5 +32,28 @@ describe('the forecasts per period', () => {
     const f = { inSen: 10, outSen: 4, netSen: 6 };
     expect([pickCash(f, 'in'), pickCash(f, 'out'), pickCash(f, 'net'), pickCash(null, 'in')]).toEqual([10, 4, 6, null]);
     expect([gapOf(12, 10), gapOf(null, 10), gapOf(12, null)]).toEqual([2, null, null]);
+  });
+});
+
+describe("the Cash Flow card's Detail (part 3)", () => {
+  type N = { id: string; kind: string; label: string; amountSen: number; children: N[] };
+  const node = (id: string, label: string, amountSen: number, children: N[] = [], kind = 'category'): N => ({ id, kind, label, amountSen, children });
+  const treeOf = (inSen: number, buy: number) => [
+    node('cf:in', 'CASH IN', inSen, [node('cf:in:dep', 'DEPOSIT', inSen)]),
+    node('cf:ops', 'OPERATIONS OUTFLOWS', buy, [node('cf:ops:buy', 'PURCHASES', buy, [node('cf:ops:buy:x', 'deeper', buy)]), node('601-0003', 'PURCHASE OF SOFA', buy, [], 'account')]),
+  ];
+  it('the categories two levels down, each once, in the order they first come; their amounts by id', () => {
+    expect(categoryRows([treeOf(10, 4), [node('cf:funding', 'FUNDING', 1)]])).toEqual([
+      { id: 'cf:in', label: 'CASH IN', depth: 0 }, { id: 'cf:in:dep', label: 'DEPOSIT', depth: 1 },
+      { id: 'cf:ops', label: 'OPERATIONS OUTFLOWS', depth: 0 }, { id: 'cf:ops:buy', label: 'PURCHASES', depth: 1 },
+      { id: 'cf:funding', label: 'FUNDING', depth: 0 },
+    ]);
+    expect([...categoryAmounts(treeOf(10, 4))]).toEqual([['cf:in', 10], ['cf:in:dep', 10], ['cf:ops', 4], ['cf:ops:buy', 4]]);
+  });
+  it("a period's forecast categories: its months summed, nothing when a month is missing", () => {
+    const list = [{ month: '2026-11', report: { layout: { tree: treeOf(10, 4) } } }, { month: '2026-12', report: { layout: { tree: treeOf(20, 6) } } }];
+    expect(periodCategoryForecast(['2026-11', '2026-12'], list)?.get('cf:ops:buy')).toBe(10);
+    expect(periodCategoryForecast(['2026-10', '2026-11'], list)).toBeNull();
+    expect(periodCategoryForecast([], list)).toBeNull();
   });
 });

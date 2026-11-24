@@ -3,7 +3,7 @@
    quarter. The server half is backend/src/scm/routes/accounting-dashboard.ts;
    every actual figure there is the report's own builder, so a card can never
    disagree with its report. */
-import { useQuery } from '@tanstack/react-query';
+import { useQueries, useQuery } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 import type { LaidNode } from './report-layout';
@@ -83,4 +83,18 @@ export const useFinanceDashboard = (p: DashboardParams) => useQuery({
   queryFn: () => authedFetch<DashboardPayload>(dashboardPath(p)),
   staleTime: 30_000,
   retry: retryUnlessClientError,
+});
+
+/* ── A past month's forecast, back-calculated (step 7 of the forecast port, part 3) ── */
+
+export type DashboardForecastMonth = { month: string; balanceSheet: BalanceSummary | null; ratios: Ratios | null };
+
+/** Each month's back-calculated forecast, one read a month (the server keeps each 60 s). */
+export const useDashboardForecastMonths = (months: readonly string[]) => useQueries({
+  queries: months.map((month) => ({
+    queryKey: ['finance-dashboard-forecast-month', month],
+    queryFn: () => authedFetch<DashboardForecastMonth>(`/accounting/dashboard/forecast-month?month=${encodeURIComponent(month)}`),
+    staleTime: 60_000,
+    retry: retryUnlessClientError,
+  })),
 });

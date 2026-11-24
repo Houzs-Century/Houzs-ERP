@@ -88,7 +88,7 @@ import { collectionReport } from './accounting-collection';
 import { merchantChargesReport } from './accounting-merchant-charges';
 import { performanceMonthsHandler, performanceReport, savePerformanceSettingsHandler } from './accounting-performance';
 import { forecastFiguresHandler, forecastGetHandler, forecastPutHandler } from './accounting-forecast';
-import { dashboardHandler } from './accounting-dashboard';
+import { dashboardForecastMonthHandler, dashboardHandler } from './accounting-dashboard';
 import { financeTodoHandler, financeTodoCountHandler } from './accounting-todo';
 import {
   todoPeopleHandler, todoSettingsGetHandler, todoSettingsPutHandler, todoGroupAddHandler,
@@ -259,6 +259,7 @@ accounting.put('/forecast', forecastPutHandler);
 accounting.get('/forecast/figures', forecastFiguresHandler);
 /* The Financial Dashboard (owner 2026-09-21): the statements per period, beside the forecast. */
 accounting.get('/dashboard', dashboardHandler);
+accounting.get('/dashboard/forecast-month', dashboardForecastMonthHandler);
 /* Finance's To do (the owner's Claude Design redesign, 2026-11-02): the jobs
    the books raise, and their count for the sidebar badge (routes/accounting-todo.ts). */
 accounting.get('/todo', financeTodoHandler);

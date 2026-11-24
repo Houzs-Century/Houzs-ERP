@@ -19,7 +19,7 @@
 import { Hono } from 'hono';
 import { beforeEach, describe, expect, test } from 'vitest';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
-import { buildDashboard, clearDashboardCache, dashboardHandler, parseDashboardQuery, type DashboardPayload } from '../src/scm/routes/accounting-dashboard';
+import { buildDashboard, clearDashboardCache, dashboardForecastMonthHandler, dashboardHandler, parseDashboardQuery, type DashboardForecastMonth, type DashboardPayload } from '../src/scm/routes/accounting-dashboard';
 import { balanceSheetReport, pnlReport } from '../src/scm/routes/accounting-reports';
 import { receiptsPaymentsReport } from '../src/scm/routes/accounting-rp';
 import { performanceReport } from '../src/scm/routes/accounting-performance';
@@ -156,6 +156,7 @@ function harness(perms: string[] = ['scm.payment_voucher.post'], over: Record<st
     await next();
   });
   app.get('/accounting/dashboard', dashboardHandler as never);
+  app.get('/accounting/dashboard/forecast-month', dashboardForecastMonthHandler as never);
   app.get('/accounting/reports/pnl', pnlReport as never);
   app.get('/accounting/reports/balance-sheet', balanceSheetReport as never);
   app.get('/accounting/reports/receipts-payments', receiptsPaymentsReport as never);
@@ -421,6 +422,23 @@ describe('buildDashboard — reads', () => {
     });
     /* A month before the current one has no forecast sheet yet; its forecast margins still come off its Forecast P&L row, when it has one. */
     for (const p of r.payload.periods.filter((x) => x.key < '2026-09')) expect(p.forecastBalanceSheet).toBeNull();
+  });
+
+  test("a past month's forecast, back-calculated one month at a time: its sheet from the month-end before it, its ratios by the same formulas; none without a Forecast P&L row", async () => {
+    const { app } = harness();
+    const sep = await app.request('/accounting/dashboard/forecast-month?month=2026-09');
+    expect(sep.status, await sep.clone().text()).toBe(200);
+    const b = (await sep.json()) as DashboardForecastMonth;
+    expect(b.month).toBe('2026-09');
+    const fbs = b.balanceSheet!;
+    expect(fbs).not.toBeNull();
+    expect(b.ratios).toMatchObject({
+      grossMarginPct: 40,
+      currentRatio: fbs.currentLiabilitiesSen !== 0 ? Math.round((fbs.currentAssetsSen / fbs.currentLiabilitiesSen) * 100) / 100 : null,
+    });
+    const aug = (await (await app.request('/accounting/dashboard/forecast-month?month=2026-08')).json()) as DashboardForecastMonth;
+    expect(aug).toEqual({ month: '2026-08', balanceSheet: null, ratios: null });
+    expect((await app.request('/accounting/dashboard/forecast-month?month=2026-8')).status).toBe(400);
   });
 
   test('the number of reads does not grow with the number of periods', async () => {
