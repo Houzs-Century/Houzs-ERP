@@ -10,6 +10,8 @@ The pure calculator (`computeDeliveryCost`) prices, in order: positional tiers +
 
 Reconciliation (`GET /reconcile?from&to`) lists outsourced trips with a captured billed cost, matches each to its carrier's active card (`trip.lorry_id -> lorries.threepl_company_id -> card.carrier_company_id`, falling back to a per-lorry card), computes the expected cost ONCE per trip (not per drop and summed), and flags the delta. Set count and destination zone (the farthest zone the trip touches) are auto-derived from the trip's DO stops; every other billable stop (setup, dismantle, supplier, transfer, ASSR legs; an ASSR delivery back is a DELIVERY stop with `assr_case_id` and no DO) counts once toward its rule, its zone read from the stop address (`lib/trip-stop-jobs.ts`). Dispose and sofa compartments are NOT in the trip data model and default to 0 with `factsComplete=false` — the dispatcher fills them in manually. This is a deliberate, honest gap, not a stub. 3PL work is rarely planned as trips, so the Reconciliation tab leads with the per-DO billed cost from `/threepl-do-charges` (the 3PL invoices tab: keyed in, or read off an AP invoice's bill), rolled up per 3PL; the trip table follows. Keying in a DO that already has a row for that 3PL answers 409 `already_keyed` until the client resends with `replace: true`.
 
+Own fleet (`GET /own-fleet?from&to`, the Own fleet tab; owner 2026-11-24 「当做是一个3pl」): our lorries priced like a 3PL. One lorry's day is one trip: the DOs Trip Pay counts as ours (`lib/own-lorry-do-run.ts`, one rule for pay and cost) plus our own Delivery Planning trips' stops, read across the caller's allowed companies (one shared fleet), priced once by the active company's own fleet card (a lorry's own card first; two active whole-fleet cards price nothing until one is left), beside the paying company's 3PL bills on DOs that ran the same days (`lib/own-fleet-runs.ts`, `lib/own-fleet-load.ts`). Read-only, in no report.
+
 ## Permissions
 
 - Served under `/api/scm/delivery-rate-cards` behind `scmAreaGuard('scm.transportation.drivers')` — the same Transportation area as the rest of the fleet, for both cards and reconciliation.
@@ -35,6 +37,6 @@ Reconciliation (`GET /reconcile?from&to`) lists outsourced trips with a captured
 - `backend/src/scm/lib/delivery-rate-card.ts` — the pure calculator, `computeDeliveryCost`.
 - `backend/src/scm/lib/set-count.ts` — the reconciliation's sofa-inclusive `setCount` derivation.
 - `backend/src/scm/routes/delivery-rate-cards.ts` — card/rule CRUD, `/compute`, `/reconcile`, `/meta`.
-- `frontend/src/pages/scm-v2/DeliveryRateCards.tsx` — Carriers & Rates page (Rate Cards, 3PL invoices, Reconciliation tabs).
+- `frontend/src/pages/scm-v2/DeliveryRateCards.tsx` — Carriers & Rates page (Rate Cards, 3PL invoices, Reconciliation, Own fleet tabs).
 - `frontend/src/vendor/scm/lib/delivery-rate-card-queries.ts` — query hooks.
 - `backend/scripts/seed-delivery-rate-cards.mjs` — sample card seed (DRY-RUN by default).

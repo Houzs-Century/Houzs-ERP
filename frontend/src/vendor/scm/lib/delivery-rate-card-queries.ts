@@ -324,3 +324,64 @@ export function useReconcile(opts: { from?: string; to?: string }) {
     staleTime: 30_000,
   });
 }
+
+// ── Own fleet: our own lorries priced like a 3PL ─────────────────────────────
+/** One lorry's day (a trip), priced once by the own fleet card. */
+export type OwnFleetRun = {
+  key: string;
+  runDate: string;
+  lorryId: string | null;
+  plate: string;
+  /** Its Delivery Planning trips that day; none when Last Mile alone put orders on it. */
+  tripNos: string[];
+  dos: { doId: string; doNumber: string | null; companyCode: string | null }[];
+  setCount: number;
+  zones: string[];
+  /** Its other jobs, by job (SUPPLIER_PICKUP, TRANSFER, ...). */
+  jobs: Partial<Record<string, number>>;
+  cardName: string | null;
+  /** The card's price for the trip; null = no own fleet card prices this lorry. */
+  costSen: number | null;
+  otherJobsSen: number | null;
+  lines: { label: string; amountSen: number }[];
+};
+
+export type OwnFleetMonth = {
+  month: string;
+  trips: number;
+  dos: number;
+  sets: number;
+  pricedTrips: number;
+  pricedDos: number;
+  costSen: number;
+  deliveryCostSen: number;
+  threePlDos: number;
+  threePlSets: number;
+  threePlBilledSen: number;
+  threePlPricedDos: number;
+  threePlBilledPricedSen: number;
+  threePlCardSen: number;
+};
+
+export type OwnFleetCosts = {
+  from: string;
+  to: string;
+  /** The own fleet card for the whole fleet; null = none, or more than one active. */
+  card: { id: string; name: string } | null;
+  severalCards: { id: string; name: string }[];
+  lorryCards: { id: string; name: string; lorryId: string | null }[];
+  runs: OwnFleetRun[];
+  months: OwnFleetMonth[];
+};
+
+/* Under CARDS_KEY, so every card, price and area change (each invalidates it)
+   re-prices the trips: an edited price shows on the Own fleet tab at once. */
+export function useOwnFleetCosts(range: { from: string; to: string }) {
+  const { from, to } = range;
+  return useQuery({
+    queryKey: [...CARDS_KEY, 'own-fleet', from, to],
+    queryFn: () => authedFetch<OwnFleetCosts>(`/delivery-rate-cards/own-fleet?${new URLSearchParams({ from, to }).toString()}`),
+    enabled: !!from && !!to,
+    staleTime: 30_000,
+  });
+}

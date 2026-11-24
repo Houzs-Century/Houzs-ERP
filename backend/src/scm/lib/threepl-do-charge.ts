@@ -9,6 +9,25 @@
 import { computeDeliveryCost, type DeliveryFacts, type RateCardSpec } from './delivery-rate-card';
 import { deriveSetCount, type SetLine } from './set-count';
 
+type OrderRow = Record<string, unknown>;
+const text = (v: unknown): string | null => (v == null || v === '' ? null : String(v));
+
+/** One sales order line as the set count reads it: its group decides frame /
+ *  mattress / sofa, and its ordered quantity counts. Shared with the Own fleet
+ *  tab (own-fleet-load.ts), so our lorries and a 3PL count a DO's sets alike. */
+export function setLineOf(line: OrderRow): SetLine {
+  const g = String(line.item_group ?? '').toUpperCase();
+  return {
+    category: g.includes('BEDFRAME') ? 'BEDFRAME' : g.includes('SOFA') ? 'SOFA' : g.includes('MATTRESS') ? 'MATTRESS' : 'OTHERS',
+    qty: Number(line.qty ?? 1), cancelled: line.cancelled === true,
+  };
+}
+
+/** The words a town surcharge or a rate card area is found by: the order's whole address and its city. */
+export function orderAddressText(so: OrderRow): string {
+  return [text(so.address1), text(so.address2), text(so.address3), text(so.address4), text(so.city), text(so.postcode)].filter(Boolean).join(' ');
+}
+
 export function doFacts(lines: readonly SetLine[], zone: string | null, address: string | null): DeliveryFacts {
   const live = lines.filter((l) => !l.cancelled);
   const itemCount = live

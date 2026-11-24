@@ -3,7 +3,7 @@
 //
 // Build a delivery rate card per carrier (own-fleet + each 3PL), then verify a
 // 3PL's billed charge against the COMPUTED expected cost and roll the precise
-// delivery cost toward COGS. Three tabs:
+// delivery cost toward COGS. Four tabs:
 //   - Rate Cards: the carrier list and the card (owner 2026-11-11: 「看了很乱」):
 //     its settings as one line under its name (the boxes open from Edit
 //     settings), then one tab per category — prices as tiles, outstation towns
@@ -13,6 +13,8 @@
 //   - Reconciliation: 3PL trips carrying a captured billed cost, each matched to
 //     its carrier's card, with computed-expected vs billed and the flagged delta.
 //     COST verification + COGS attribution, NOT customer billing.
+//   - Own fleet: our own lorries priced like a 3PL by the own fleet card, each
+//     lorry's day one trip, beside the 3PL bills (carriers/OwnFleetView.tsx).
 // Styled after the Coverage & Fleet screens (owner design 2026-11-07).
 // ----------------------------------------------------------------------------
 
@@ -40,6 +42,7 @@ import { CardSettingsDrawer } from './carriers/CardSettingsDrawer';
 import { aggHint, cardKind, chargingUnit, settingsSentence } from './carriers/cardSettings';
 import { layoutRateCard } from './carriers/rateCardLayout';
 import { EMPTY_FORM, type PriceCheckForm } from './carriers/priceCheckFacts';
+import { OwnFleetView } from './carriers/OwnFleetView';
 import {
   BTN_PRI, BTN_QUIET, CARD, DiffPill, EYEBROW, Field, FilterBar, HINT, ICON_BTN, INPUT, Kpi, KpiStrip, LABEL, Pill, TableCard, diffTone,
 } from './carriers/ui';
@@ -51,8 +54,8 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
    minutes. Without this, registering a carrier in the drawer and then trying to
    price it would show a list that does not contain it. */
 const COMPANY_LIST_KEY = ['delivery-rate-card-meta'];
-type Tab = 'cards' | 'invoices' | 'reconcile';
-const TAB_LABEL: Record<Tab, string> = { cards: 'Rate Cards', invoices: '3PL invoices', reconcile: 'Reconciliation' };
+type Tab = 'cards' | 'invoices' | 'reconcile' | 'own';
+const TAB_LABEL: Record<Tab, string> = { cards: 'Rate Cards', invoices: '3PL invoices', reconcile: 'Reconciliation', own: 'Own fleet' };
 
 /* What the right-hand side shows: a card, or a carrier that has none yet. */
 type Selection = { kind: 'card'; id: string } | { kind: 'company'; id: string } | null;
@@ -65,7 +68,7 @@ export const DeliveryRateCards = ({ embedded = false }: {
   /* The card's open tab is kept while carriers are switched, so two carriers'
      outstation prices or price checks can be compared; a new visit starts on Delivery. */
   const [section, setSection] = useState<RateSection>('DELIVERY');
-  const [creating, setCreating] = useState<{ carrierCompanyId: string | null } | null>(null);
+  const [creating, setCreating] = useState<{ carrierCompanyId: string | null; name: string | null } | null>(null);
   const [companiesOpen, setCompaniesOpen] = useState(false);
   const cards = useRateCards();
   const meta = useRateCardMeta();
@@ -90,7 +93,7 @@ export const DeliveryRateCards = ({ embedded = false }: {
   const actions = tab === 'cards' ? (
     <div className="flex flex-wrap gap-2.5">
       <button type="button" className={BTN_QUIET} onClick={onCreateCompany}><Plus {...ICON} />New 3PL Company</button>
-      <button type="button" className={BTN_PRI} onClick={() => setCreating({ carrierCompanyId: null })}><Plus {...ICON} />New Card</button>
+      <button type="button" className={BTN_PRI} onClick={() => setCreating({ carrierCompanyId: null, name: null })}><Plus {...ICON} />New Card</button>
     </div>
   ) : null;
 
@@ -110,7 +113,7 @@ export const DeliveryRateCards = ({ embedded = false }: {
       )}
 
       <nav aria-label="Sections" className="flex items-center gap-1 overflow-x-auto border-b border-border">
-        {(['cards', 'invoices', 'reconcile'] as const).map((t) => (
+        {(['cards', 'invoices', 'reconcile', 'own'] as const).map((t) => (
           <button key={t} type="button" onClick={() => setTab(t)} aria-pressed={tab === t}
             className={cn('min-h-[44px] whitespace-nowrap border-b-2 px-4 text-[14px]',
               tab === t ? 'border-primary font-semibold text-primary' : 'border-transparent font-medium text-ink-muted hover:text-ink')}>
@@ -136,7 +139,7 @@ export const DeliveryRateCards = ({ embedded = false }: {
             {sel?.kind === 'card'
               ? <CardEditor key={sel.id} cardId={sel.id} section={section} onSection={setSection} onDeleted={() => setSel(null)} />
               : emptyCompany
-                ? <NoCardYet name={emptyCompany.name} onCreate={() => setCreating({ carrierCompanyId: emptyCompany.id })} />
+                ? <NoCardYet name={emptyCompany.name} onCreate={() => setCreating({ carrierCompanyId: emptyCompany.id, name: null })} />
                 : (
                   <div className={cn(CARD, 'flex flex-col items-center gap-2 px-6 py-12 text-center')}>
                     <p className="text-[15px] font-semibold text-ink">Pick a carrier on the left</p>
@@ -145,15 +148,16 @@ export const DeliveryRateCards = ({ embedded = false }: {
                 )}
           </div>
         </div>
-      ) : tab === 'invoices' ? <ThreePLInvoices /> : (
-        <ReconcileView />
+      ) : tab === 'invoices' ? <ThreePLInvoices /> : tab === 'reconcile' ? <ReconcileView /> : (
+        <OwnFleetView onCreateCard={() => setCreating({ carrierCompanyId: null, name: 'Own fleet' })} />
       )}
 
       {creating && (
         <CreateCardDrawer
           initialCarrierCompanyId={creating.carrierCompanyId}
+          initialName={creating.name}
           onClose={() => setCreating(null)}
-          onCreated={(id) => { setCreating(null); setSel({ kind: 'card', id }); }}
+          onCreated={(id) => { setCreating(null); setSel({ kind: 'card', id }); setTab('cards'); }}
         />
       )}
 
@@ -527,15 +531,17 @@ const ReconcileView = () => {
 };
 
 // ── Create-card drawer ─────────────────────────────────────────────────────────
-const CreateCardDrawer = ({ initialCarrierCompanyId, onClose, onCreated }: {
+const CreateCardDrawer = ({ initialCarrierCompanyId, initialName, onClose, onCreated }: {
   initialCarrierCompanyId: string | null;
+  /** The name typed in for an own fleet card opened from the Own fleet tab. */
+  initialName: string | null;
   onClose: () => void;
   onCreated: (id: string) => void;
 }) => {
   const create = useCreateRateCard();
   const meta = useRateCardMeta();
   const [err, setErr] = useState<string | null>(null);
-  const [form, setForm] = useState({ name: '', carrierCompanyId: initialCarrierCompanyId ?? '', basis: 'SET' as 'SET' | 'ITEM', aggregation: 'UNIT' as RateAggregation });
+  const [form, setForm] = useState({ name: initialName ?? '', carrierCompanyId: initialCarrierCompanyId ?? '', basis: 'SET' as 'SET' | 'ITEM', aggregation: 'UNIT' as RateAggregation });
   const set = <K extends keyof typeof form>(k: K, v: typeof form[K]) => { setErr(null); setForm((s) => ({ ...s, [k]: v })); };
 
   const submit = () => {
