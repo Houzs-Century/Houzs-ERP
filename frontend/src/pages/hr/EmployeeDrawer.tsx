@@ -12,9 +12,9 @@ import { useDialog } from "../../hooks/useDialog";
 import { useToast } from "../../hooks/useToast";
 import { cn, formatDate } from "../../lib/utils";
 import { todayMY } from "../../vendor/shared/format";
+import { MALAYSIAN_BANKS } from "../../vendor/shared/pick-lists";
 import {
   EMPLOYEE_STATUSES,
-  MALAYSIAN_BANKS,
   PAYMENT_METHODS,
   TAX_CATEGORIES,
   TAX_RESIDENCIES,

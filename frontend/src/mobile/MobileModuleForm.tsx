@@ -4,6 +4,8 @@ import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 import { api } from "../api/client";
 import "./mobile.css";
 import { PostcodeCascadeField } from "../vendor/scm/components/PostcodeCascadeField";
+import { PickListField } from "../vendor/scm/components/PickListField";
+import { PAYMENT_TERMS, PAYMENT_TERMS_CUSTOM, listEntryOf } from "../vendor/shared/pick-lists";
 
 /* ---------------------------------------------------------------------------
  * MobileModuleForm — ONE generic, config-driven mobile CREATE / EDIT form that
@@ -38,7 +40,16 @@ export type FormFieldType =
   | "textarea"
   /* The Sales Order postcode picker (my_localities): picking one also fills the
      form's "state" and "city" fields when the schema has them. */
-  | "postcode";
+  | "postcode"
+  /* One of PICK_LISTS with its free-text way out, the desktop's
+     PickListField: a stored value off the list shows in the typed box. */
+  | "pick";
+
+/** The fixed lists a "pick" field offers (vendor/shared/pick-lists), as the desktop forms do. */
+export const PICK_LISTS = {
+  paymentTerms: { list: PAYMENT_TERMS, other: PAYMENT_TERMS_CUSTOM, typePlaceholder: "Type the term" },
+} as const;
+export type PickListName = keyof typeof PICK_LISTS;
 
 /** A runtime-loaded option source — used when a select's options are real
  *  records (roles / departments / positions) that can't be a static list. */
@@ -69,6 +80,8 @@ export type FormField = {
   integer?: boolean;
   /** Optional helper line under the field. */
   hint?: string;
+  /** For "pick" fields: which of PICK_LISTS. */
+  pick?: PickListName;
 };
 
 export type FormSchema = {
@@ -136,6 +149,9 @@ function seedValue(field: FormField, row: any): string {
     return (n / scale).toFixed(2);
   }
   const value = typeof raw === "boolean" ? (raw ? "true" : "false") : String(raw);
+  // A pick list never blanks a value: one on the list in another spelling opens
+  // as that entry (Save sends what the screen shows), any other as typed.
+  if (field.type === "pick") return listEntryOf(field.pick ? PICK_LISTS[field.pick].list : [], value) ?? value;
   // A select shows its blank entry for a value it has no option for, so seeding
   // that value would make Save send what the screen never showed, e.g. an
   // invited member's status, which the save refuses
@@ -344,6 +360,23 @@ export function MobileModuleForm({
             {schema.fields.map((f) => {
               const err = touched && !!f.required && !String(values[f.key] ?? "").trim();
               const options = f.optionsSource ? remoteOptions[f.key] ?? [] : f.options ?? [];
+              if (f.type === "pick" && f.pick) {
+                const pick = PICK_LISTS[f.pick];
+                return (
+                  <PickListField
+                    key={f.key}
+                    label={f.required ? `${f.label} *` : f.label}
+                    options={pick.list}
+                    other={pick.other}
+                    value={values[f.key] ?? ""}
+                    onChange={(v) => set(f.key, v)}
+                    pickLabel={f.placeholder ?? "Select…"}
+                    typePlaceholder={pick.typePlaceholder}
+                    upper={false}
+                    classes={{ field: "fld", label: "fld-l", select: "fld-i", input: "fld-i" }}
+                  />
+                );
+              }
               if (f.type === "postcode") {
                 const has = (k: string) => schema.fields.some((x) => x.key === k);
                 return (

@@ -161,6 +161,7 @@ Process and UI
 - Server refusal sentences stay under 200 characters; curated codes (`payment_edit_locked`, `already_on_report`) are listed in `SERVER_SENTENCE_WINS`.
 - The Accounting page has no tab strip: tabs are `/scm/accounting?tab=<name>` from `accounting-tabs.ts`, reached from the sidebar; a new report joins Reports, a maintenance screen joins Setup.
 - Accounts display as code over name (`AccountCell`). Desktop only; no mobile surface.
+- A supplier's payment terms and bank are picked, not typed (`scm/shared/pick-lists.ts` and its vendored twin; `PickListField` on Supplier maintenance, purchasing's Supplier page and the phone supplier form): a term from `PAYMENT_TERMS` or Custom text, a bank from `MALAYSIAN_BANKS` (stored upper case) or Other text for a bank abroad; a stored value off the list opens in that text box, never blanked. The cash flow forecast must read every listed term (`cashflow-pnl-forecast.test.ts`).
 - Endpoints: see `docs/generated/route-capability-matrix.csv`.
 
 ## Gotchas
