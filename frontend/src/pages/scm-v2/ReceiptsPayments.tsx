@@ -118,7 +118,7 @@ const DRILL_COLUMNS: Column<DrillEntry>[] = [
 const FORECAST_DRILL_COLUMNS: Column<DrillEntry>[] = [
   { key: 'from', label: 'Forecast P&L', render: (e) => monthName(`${e.sourceDocNo ?? ''}-01`), getValue: (e) => e.sourceDocNo ?? '' },
   { key: 'party', label: 'Who', render: (e) => e.party ?? '—', getValue: (e) => e.party ?? '' },
-  { key: 'how', label: 'How it is timed', render: (e) => e.narration ?? '—', getValue: (e) => e.narration ?? '' },
+  { key: 'note', label: 'How it is timed', render: (e) => e.narration ?? '—', getValue: (e) => e.narration ?? '' },
   {
     key: 'amount', label: 'Amount', align: 'right', render: (e) => fmtRp(e.sen),
     getValue: (e) => e.sen, exportValue: (e) => e.sen / 100, exportFormat: 'money',
