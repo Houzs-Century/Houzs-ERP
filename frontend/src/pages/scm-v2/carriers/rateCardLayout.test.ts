@@ -118,3 +118,24 @@ describe('labels', () => {
     expect(trip).toMatchObject({ title: 'Per trip', cells: [{ label: 'Each trip' }] });
   });
 });
+
+/* Owner 2026-11-24, the Singapore carriers: shares of the goods value and a
+   permit per order — charges on each DO, by their own names. Made-up figures. */
+describe('charges on each DO', () => {
+  const charge = (id: string, label: string, extra: Partial<RateRule> = {}): RateRule => ({
+    id, cardId: 'c', ruleType: 'DO_CHARGE', tierPosition: null, bracketMin: null, bracketMax: null, zone: null,
+    amountSen: 0, params: null, sortOrder: 0, label, bps: 700, ...extra,
+  });
+  it('sit on Delivery under their own names, apart from the extras', () => {
+    const [delivery] = layoutRateCard([charge('a', 'Tax'), charge('b', 'Permit', { bps: 0, amountSen: 2_500 })], 'set');
+    const block = delivery!.blocks.find((b) => b.id === 'charges');
+    expect(block).toMatchObject({ kind: 'ladder', title: 'On each DO' });
+    expect(block?.kind === 'ladder' ? block.cells.map((c) => [c.label, c.duplicate]) : []).toEqual([['Permit', false], ['Tax', false]]);
+    expect(delivery!.blocks.some((b) => b.id === 'flat')).toBe(false);
+  });
+  it('a name used twice is flagged: both are charged', () => {
+    const [delivery] = layoutRateCard([charge('a', 'Tax'), charge('b', 'tax ')], 'set');
+    const block = delivery!.blocks.find((b) => b.id === 'charges');
+    expect(block?.kind === 'ladder' ? block.cells.map((c) => c.duplicate) : []).toEqual([true, true]);
+  });
+});

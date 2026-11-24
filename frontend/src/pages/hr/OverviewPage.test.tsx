@@ -12,10 +12,17 @@ const PERIOD = todayMY().slice(0, 7);
 const TODAY = todayMY().slice(0, 10);
 const q = <T,>(data: T) => ({ data, loading: false, fetching: false, placeholder: false, error: null, reload: vi.fn() });
 
+const plusDays = (ymd: string, n: number): string => {
+  const d = new Date(`${ymd}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
+
 const EMP = [
-  { id: 1, name: "Faslie Anak", status: "ACTIVE", isOutsource: false, userId: 11, position: "Lorry Driver" },
-  { id: 2, name: "Mohd Zaimir", status: "ACTIVE", isOutsource: false, userId: null, position: "Warehouse Crew" }, // not linked
-  { id: 3, name: "Abd Khalid", status: "ACTIVE", isOutsource: true, userId: 13, position: "Warehouse Crew" },
+  { id: 1, name: "Faslie Anak", status: "ACTIVE", isOutsource: false, userId: 11, position: "Lorry Driver", workPermitExpiry: "", confirmDueOn: "" },
+  { id: 2, name: "Mohd Zaimir", status: "ACTIVE", isOutsource: false, userId: null, position: "Warehouse Crew", workPermitExpiry: "", confirmDueOn: "" }, // not linked
+  // Foreign worker with a permit lapsing in ~30 days and a confirmation due in ~45.
+  { id: 3, name: "Abd Khalid", status: "ACTIVE", isOutsource: true, userId: 13, position: "Warehouse Crew", workPermitExpiry: plusDays(TODAY, 30), confirmDueOn: plusDays(TODAY, 45) },
 ];
 
 const wday = (employeeId: number, status: string, lateMin: number): WorkDay => ({
@@ -110,5 +117,14 @@ describe("HR Overview dashboard", () => {
     show();
     expect(screen.getByText("Christmas Day")).toBeTruthy();
     expect(screen.queryByText("No public holidays ahead.")).toBeNull();
+  });
+
+  it("flags a work permit expiring and lists the permit and confirmation dates in Coming up", () => {
+    show();
+    // Needs attention: the foreign worker's permit lapses within the 90-day window.
+    expect(screen.getByText(/work permits? expiring/i)).toBeTruthy();
+    // Coming up: both dated items appear beside the holiday.
+    expect(screen.getByText(/Abd Khalid.*work permit/)).toBeTruthy();
+    expect(screen.getByText(/Abd Khalid.*confirmation/)).toBeTruthy();
   });
 });

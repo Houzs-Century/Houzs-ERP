@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { coerceTransportBill, type TransportBillLine } from './threepl-bill-read';
 import {
-  billBreakdown, chargeNote, chargesPerDo, effectiveKind, foldTrips, isOpenLine, lineTotals, matchLines, orderKeys, pickDo, preselect,
-  type DoCandidate, type OrderKeys,
+  assignedLines, billBreakdown, chargeNote, chargesPerDo, effectiveKind, foldTrips, isOpenLine, lineTotals, matchLines, orderKeys, pickDo, preselect,
+  shareOrderTotals, type DoCandidate, type OrderKeys,
 } from './threepl-bill-match';
 
 /* The three bills the owner pointed at (2026-10-23): MSJ's handwritten sheet
@@ -74,13 +74,13 @@ describe('a trip\'s one price, and an order delivered twice', () => {
   it('shared in proportion to the rate card, evenly without one; the shares add up to the price', () => {
     const trip = foldTrips(matchLines([line({ text: 'trip', amountSen: 60_000, orders: [order({ doNo: 'DO-010676' }), order({ doNo: 'DO-010677' })] })],
       (k) => k.doNos.map((n) => DO(n.slice(-6)))));
-    const byCard = chargesPerDo(trip, (id) => (id === '010676' ? 30_000 : 10_000));
+    const byCard = chargesPerDo(trip, (id) => (id === '010676' ? 30_000 : 10_000), () => null);
     expect(byCard.map((c) => [c.doId, c.billedSen, c.split])).toEqual([['010676', 45_000, true], ['010677', 15_000, true]]);
-    const even = chargesPerDo(trip, (id) => (id === '010676' ? 30_000 : null));
+    const even = chargesPerDo(trip, (id) => (id === '010676' ? 30_000 : null), () => null);
     expect(even.map((c) => c.billedSen)).toEqual([30_000, 30_000]);
     const three = foldTrips(matchLines([line({ amountSen: 10_000, orders: ['1', '2', '3'].map((n) => order({ doNo: `DO-01000${n}` })) })],
       (k) => k.doNos.map((n) => DO(n.slice(-6)))));
-    expect(chargesPerDo(three, () => null).map((c) => c.billedSen)).toEqual([3_333, 3_333, 3_334]);
+    expect(chargesPerDo(three, () => null, () => null).map((c) => c.billedSen)).toEqual([3_333, 3_333, 3_334]);
   });
 
   it('a DO on two lines carries both; the note names the bill and its lines', () => {
@@ -89,9 +89,41 @@ describe('a trip\'s one price, and an order delivered twice', () => {
       line({ text: '6/10-SO-013216', amountSen: 12_000, orders: [order({ soNo: '6/10-SO-013216' })] }),
       line({ text: '6/10-SO-013216', amountSen: 10_000, orders: [order({ soNo: '6/10-SO-013216' })] }),
     ], resolve);
-    const [c] = chargesPerDo(lines, () => null);
+    const [c] = chargesPerDo(lines, () => null, () => null);
     expect(c!.billedSen).toBe(22_000);
     expect(chargeNote(c!, 'HC-API-2610-009')).toBe('HC-API-2610-009: 6/10-SO-013216 — RM 120.00 / 6/10-SO-013216 — RM 100.00');
+  });
+
+  /* Owner 2026-11-24, a Singapore carrier's bill: each order listed with its
+     goods value and no price, then one total line and one permit line. Made-up
+     figures. */
+  it('a bill that prices its orders together: its total and its permits go on all of them, shared by goods value', () => {
+    const resolve = (k: OrderKeys) => k.soNos.slice(0, 1).map((n) => DO(n.slice(-3)));
+    const lines = matchLines([
+      line({ text: 'SO-000101 - Rm 3000', amountSen: null, orders: [order({ soNo: 'SO-000101' })] }),
+      line({ text: 'SO-000102 - Rm 1000', amountSen: null, orders: [order({ soNo: 'SO-000102' })] }),
+      line({ text: 'Total = Rm 4000 x 11% = Rm 440-00', kind: 'other', amountSen: 44_000 }),
+      line({ text: 'Permit x 2 = Rm 50-00', kind: 'other', amountSen: 5_000 }),
+      line({ text: 'Storage', kind: 'storage', amountSen: 1_000 }),
+    ], resolve);
+    const assignments = shareOrderTotals(lines, lines.map((l) => preselect(l, [])));
+    expect(assignments.map((a) => [a.assign, a.doIds])).toEqual([
+      ['do', ['101']], ['do', ['102']], ['do', ['101', '102']], ['do', ['101', '102']], ['none', []],
+    ]);
+    const goods = new Map([['101', 300_000], ['102', 100_000]]);
+    const charges = chargesPerDo(assignedLines(lines, assignments, new Map([['101', DO('101')], ['102', DO('102')]])), () => null, (id) => goods.get(id) ?? null);
+    // 11% of each order's goods, and the RM 50 of permits in the same shares.
+    expect(charges.map((c) => [c.doId, c.billedSen])).toEqual([['101', 33_000 + 3_750], ['102', 11_000 + 1_250]]);
+  });
+
+  it('a bill that prices each order keeps every other line where it was', () => {
+    const resolve = (k: OrderKeys) => k.soNos.slice(0, 1).map((n) => DO(n.slice(-3)));
+    const lines = matchLines([
+      line({ text: 'SO-000101', amountSen: 45_000, orders: [order({ soNo: 'SO-000101' })] }),
+      line({ text: 'Fuel', kind: 'other', amountSen: 2_000 }),
+    ], resolve);
+    const assignments = shareOrderTotals(lines, lines.map((l) => preselect(l, [])));
+    expect(assignments.map((a) => a.assign)).toEqual(['do', null]);
   });
 
   it('an order delivered in several DOs: the DO dated nearest the line', () => {

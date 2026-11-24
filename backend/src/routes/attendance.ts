@@ -16,7 +16,7 @@
 // ----------------------------------------------------------------------------
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lte } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, lte } from "drizzle-orm";
 import type { Env } from "../types";
 import { getDb } from "../db/client";
 import { hr_attendance, hr_employees, hr_leave_requests, hr_ot_claims, hr_punch_corrections, hr_payslips, hr_working_hours } from "../db/schema";
@@ -357,12 +357,17 @@ attendance.get("/ot/admin", async (c: Ctx) => {
   if (!canConfirmOt(c)) return c.json({ error: "forbidden", message: "You cannot review overtime." }, 403);
   const month = c.req.query("month") ?? todayMyt().slice(0, 7);
   if (!/^\d{4}-\d{2}$/.test(month)) return c.json({ error: "bad_month", message: "Pick a month as YYYY-MM." }, 400);
+  // Upper bound is the first day of NEXT month (exclusive), not `${month}-31`:
+  // that literal is an invalid date for 30-day months and February, so Postgres
+  // threw and the whole OT month view 500'd (owner 2026-11-24).
+  const [my, mm] = month.split("-").map(Number);
+  const nextMonthFirst = mm === 12 ? `${my + 1}-01-01` : `${my}-${String(mm + 1).padStart(2, "0")}-01`;
   const db = getDb(c.env);
   const rows = await db
     .select({ c: hr_ot_claims, name: hr_employees.name, emp_no: hr_employees.emp_no })
     .from(hr_ot_claims)
     .innerJoin(hr_employees, eq(hr_employees.id, hr_ot_claims.employee_id))
-    .where(and(eq(hr_ot_claims.company_id, co.companyId), gte(hr_ot_claims.work_date, `${month}-01`), lte(hr_ot_claims.work_date, `${month}-31`), otScopeCond(c)))
+    .where(and(eq(hr_ot_claims.company_id, co.companyId), gte(hr_ot_claims.work_date, `${month}-01`), lt(hr_ot_claims.work_date, nextMonthFirst), otScopeCond(c)))
     .orderBy(asc(hr_ot_claims.work_date), asc(hr_ot_claims.id));
   const claims = rows.map((r) => ({ ...otOut(r.c), employeeName: r.name, empNo: r.emp_no, reviewedAt: r.c.reviewed_at ?? null }));
   return c.json({ month, claims });
