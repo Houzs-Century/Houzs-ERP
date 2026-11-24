@@ -43,9 +43,10 @@ export const dosText = (n: number): string => `${n} ${n === 1 ? 'DO' : 'DOs'}`;
 
 export const shareText = (pct: number | null): string => (pct === null ? '—' : fmtPct(pct));
 
-/** The parts the report shows, in order: Other DOs only when the month has one. */
+/** The parts the report shows, in the server's order (the parts are the
+ *  server's decision, acc/so-do-conversion.ts): Other DOs only when the month has one. */
 export const partsShown = (d: SoDoConversionData): ConversionPart[] =>
-  (d.parts.other.dos > 0 ? ['this_month', 'earlier', 'other'] : ['this_month', 'earlier']);
+  (Object.keys(d.parts) as ConversionPart[]).filter((p) => p !== 'other' || d.parts.other.dos > 0);
 
 export const CONVERSION_NOTES: readonly string[] = [
   'A delivery order counts in the month of its DO date once it has shipped: Draft and Cancelled DOs are left out.',
