@@ -5,9 +5,9 @@
    2026-09-29: RECEIVED · PAYMENT — paid today and pending · BALANCE — B/F,
    available, transit); the last section for
    what names no bank, only when there is some; the day's label. */
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import type { DailyBankBoard } from './accounting-phase1-queries';
-import { boardDayLabel, boardSourceLine, dailyBankSections, isDetailRow } from './daily-bank-report';
+import { DB_COLORS, boardDayLabel, boardSourceLine, dailyBankSections, drawDailyBankCanvas, isDetailRow } from './daily-bank-report';
 
 const block = (over: Partial<DailyBankBoard['blocks'][number]>): DailyBankBoard['blocks'][number] => ({
   accountCode: '310-0010', accountName: 'CASH AT BANK - MAYBANK', start: null,
@@ -87,5 +87,42 @@ describe('the cash book in the picture (owner 2026-11-23)', () => {
     expect(s!.rows.filter((r) => r.kind === 'received').map((r) => [r.who, r.doc, r.description, r.receivedSen])).toEqual([['', '', 'Hookka deposit', 500]]);
     expect(boardSourceLine(board({ book: 'cashbook', blocks: [cash] }))).toMatch(/^Cash book: each bank from its starting balance/);
     expect(boardSourceLine(board({ blocks: [block({})] }))).toMatch(/^Live from the ledger/);
+  });
+});
+
+/* The picture's lines (owner 2026-11-23, on the cash book's exported image: 线条).
+   jsdom has no canvas, so a stand-in context records what the drawing does. */
+describe('the exported picture', () => {
+  type Call = { op: string; args: number[]; fill: unknown };
+  const draw = (b: DailyBankBoard): Call[] => {
+    const calls: Call[] = [];
+    let fill: unknown = null;
+    const ctx = {
+      font: '', textAlign: '', strokeStyle: '', lineWidth: 1,
+      get fillStyle() { return fill; },
+      set fillStyle(v: unknown) { fill = v; },
+      scale: () => undefined,
+      fillText: () => undefined,
+      measureText: (t: string) => ({ width: t.length * 6 }),
+      fillRect: (...args: number[]) => { calls.push({ op: 'fillRect', args, fill }); },
+      strokeRect: (...args: number[]) => { calls.push({ op: 'strokeRect', args, fill }); },
+    };
+    const spy = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation((() => ctx) as unknown as HTMLCanvasElement['getContext']);
+    try { drawDailyBankCanvas(b); } finally { spy.mockRestore(); }
+    return calls;
+  };
+  const oneBank = block({ openingSen: 1_000, closingSen: 1_000, availableSen: 1_000 });
+  const lines = (calls: Call[]) => calls.filter((c) => c.op === 'fillRect' && c.args[3] === 1);
+
+  test('the cash book: a line you can see under the headings and every row, and a frame round each bank', () => {
+    const calls = draw(board({ book: 'cashbook', blocks: [{ ...oneBank, start: { date: '2026-09-28', balanceSen: 1_000 } }] }));
+    expect(lines(calls).map((c) => c.fill)).toEqual([DB_COLORS.line, DB_COLORS.line, DB_COLORS.line]);   // headings, B/F, available
+    expect(calls.filter((c) => c.op === 'strokeRect')).toHaveLength(1);
+  });
+
+  test('the original keeps its faint rules under the rows, and no frame', () => {
+    const calls = draw(board({ blocks: [oneBank] }));
+    expect(lines(calls).map((c) => c.fill)).toEqual([DB_COLORS.rule, DB_COLORS.rule]);
+    expect(calls.filter((c) => c.op === 'strokeRect')).toHaveLength(0);
   });
 });

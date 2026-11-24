@@ -33,6 +33,7 @@ import { CONVERT_SOURCE, backfillSoPayments, paymentEntryDisagreements, unbooked
 import { dailyBankHandler, cashbookBoardHandler } from './accounting-daily-bank';
 import {
   cashbookGet, cashbookStartPut, cashbookStartDelete, cashbookReceiptCreate, cashbookReceiptUpdate, cashbookReceiptDelete,
+  cashbookReceiptsDayPut,
 } from './accounting-daily-bank-cashbook';
 import { systemTakings, postCashOverShort } from '../../acc/daily-close';
 import { resolveRoles, piLines, DEFAULT_ROLE_CODES } from '../../acc/rules';
@@ -1294,6 +1295,8 @@ accounting.get('/daily-bank/cashbook', cashbookGet);
 accounting.put('/daily-bank/starts/:accountCode', cashbookStartPut);
 accounting.delete('/daily-bank/starts/:accountCode', cashbookStartDelete);
 accounting.post('/daily-bank/receipts', cashbookReceiptCreate);
+/* The day's income as a grid, bank by method (owner 2026-11-23). */
+accounting.put('/daily-bank/receipts/day', cashbookReceiptsDayPut);
 accounting.patch('/daily-bank/receipts/:id', cashbookReceiptUpdate);
 accounting.delete('/daily-bank/receipts/:id', cashbookReceiptDelete);
 
