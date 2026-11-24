@@ -51,7 +51,7 @@ export type Meeting = {
   linkId: number | null;
   guest: Guest | null;
 };
-export type Bootstrap = { me: string; canManage: boolean; rooms: Room[]; people: Person[]; unread: number };
+export type Bootstrap = { me: string; canManage: boolean; rooms: Room[]; people: Person[]; unread: number; meetConnected?: boolean };
 export type Notice = { id: number; meetingId: number | null; text: string; at: string; read: boolean };
 export type GuestLink = {
   id: number;
