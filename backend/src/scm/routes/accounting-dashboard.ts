@@ -42,7 +42,7 @@ import { bucketByWarehouse, foldStockByBucket, foldStockByItem, loadOwnedMovemen
 import { loadBooksOpening, type BooksOpening } from '../../acc/books-opening';
 import type { LaidNode, LayoutItem, ReportKey } from '../../acc/report-layout';
 import { PERFORMANCE_GROUPS, type PerfLine, type PerfOrder, type PerformanceSettings } from '../../acc/performance-pnl';
-import { monthFigures, sortedMonths, type ForecastAccount, type ForecastGrid } from '../shared/forecast-pnl';
+import { monthFigures, sortedMonths, type ForecastAccount, type ForecastGrid, type SupplierGrid } from '../shared/forecast-pnl';
 import { SO_NOT_AN_ORDER } from '../shared/so-deliverable-states';
 import { allowedIds, resolveLayout, type ResolvedLayout } from './accounting-report-layouts';
 import { buildBalanceSheet, buildPnl, loadAccounts, sectionResolver, sumGlRows, type AccountRow, type PnlReport, type ReportLine, type ReportSources, type SumRow } from './accounting-reports';
@@ -142,7 +142,8 @@ type Preload = {
   /** The day the books start and the stock they opened with (acc/books-opening.ts); null = no start day. */
   booksOpening: BooksOpening | null;
   layouts: Partial<Record<ReportKey, { ok: true } & ResolvedLayout>>;
-  forecast: { grid: ForecastGrid; accounts: ForecastAccount[] };
+  /** The Forecast P&L as stored — each month's lines and its supplier figures — and the accounts it names. */
+  forecast: { grid: ForecastGrid; suppliers: SupplierGrid; accounts: ForecastAccount[] };
   /** The purchase accounts bound to each cost group's item groups — one account counts once, where it was first bound. */
   purchaseAccountsOf: Map<CostGroupKey, Set<string>>;
   /** item code → the product's category, for the closing stock by group. */
@@ -161,7 +162,7 @@ type Preload = {
    trips a month, some 150 for a year, on a ledger the database answers in
    milliseconds). Wave 1 needs only the window; wave 2 needs what wave 1
    named. The figures are the builders' own either way. */
-async function preload(sb: Sb, companyId: number, layoutIds: number[], windowStart: string, windowEnd: string, grid: ForecastGrid): Promise<{ ok: true; pre: Preload } | Fail> {
+async function preload(sb: Sb, companyId: number, layoutIds: number[], windowStart: string, windowEnd: string, grid: ForecastGrid, suppliers: SupplierGrid): Promise<{ ok: true; pre: Preload } | Fail> {
   const perfDb = perfDbSources(sb, companyId, layoutIds);
   const rpDb = rpDbSources(sb, companyId, layoutIds);
   const readClosings = async (): Promise<{ ok: true; closingBooked: Map<string, boolean> } | Fail> => {
@@ -265,7 +266,7 @@ async function preload(sb: Sb, companyId: number, layoutIds: number[], windowSta
     pre: {
       gl: glRows,
       moves: moves.rows, bucketOf: wh.of, accounts: accs.accounts, roles, closingBooked: closings.closingBooked, booksOpening: books.opening, layouts,
-      forecast: { grid, accounts: fAccounts.accounts }, purchaseAccountsOf: bindings.purchaseAccountsOf, categoryOfItem, compareAccounts: bindings.compareAccounts,
+      forecast: { grid, suppliers, accounts: fAccounts.accounts }, purchaseAccountsOf: bindings.purchaseAccountsOf, categoryOfItem, compareAccounts: bindings.compareAccounts,
       perf: { settings: settings.settings, orders: orders.orders, lines: lines.lines, rateAccount: rateAccount.account },
       rp: { moneyAccounts: money.accounts, splits: splits.byPv, acquirerTransits: acquirers.codes, cardPayouts: cardPayouts.facts, orderPayments: orderPayments.facts },
     },
@@ -370,7 +371,7 @@ function forecastOf(pre: Preload, staffCodes: Set<string>, months: string[]): Fi
   const have = months.filter((m) => Object.prototype.hasOwnProperty.call(pre.forecast.grid, m));
   if (have.length === 0) return null;
   return addFigures(have.map((m) => {
-    const f = monthFigures(pre.forecast.grid[m] ?? {}, pre.forecast.accounts);
+    const f = monthFigures(pre.forecast.grid[m] ?? {}, pre.forecast.suppliers[m] ?? {}, pre.forecast.accounts);
     const staff = f.lines.filter((l) => staffCodes.has(l.code)).reduce((s, l) => s + l.amountSen, 0);
     return figuresOf(f.totals, staff);
   }));
@@ -411,7 +412,7 @@ function compareOf(pre: Preload, secOf: (r: SumRow) => string, sums: SumRow[], p
   }
   const have = months.filter((m) => Object.prototype.hasOwnProperty.call(pre.forecast.grid, m));
   for (const m of have) {
-    for (const l of monthFigures(pre.forecast.grid[m] ?? {}, pre.forecast.accounts).lines) {
+    for (const l of monthFigures(pre.forecast.grid[m] ?? {}, pre.forecast.suppliers[m] ?? {}, pre.forecast.accounts).lines) {
       if (l.block === 'tradingIncome') by[compareGroupOfSalesAccount(l.code, pre.compareAccounts)].forecastSalesSen += l.amountSen;
       else if (l.block === 'costOfSales') by[compareGroupOfPurchaseAccount(l.code, pre.compareAccounts)].forecastCostSen += l.amountSen;
     }
@@ -446,7 +447,7 @@ export async function buildDashboard(sb: Sb, companyId: number, layoutIds: numbe
   const wide = periodsFor({ granularity: q.granularity, periods: q.periods, from: q.from, to: q.to, today, forecastMonths });
   const windowStart = wide[0]!.from;
   const windowEnd = wide[wide.length - 1]!.to;
-  const loaded = await preload(sb, companyId, layoutIds, windowStart, windowEnd, grid.grid);
+  const loaded = await preload(sb, companyId, layoutIds, windowStart, windowEnd, grid.grid, grid.suppliers);
   if (!loaded.ok) return loaded;
   const pre = loaded.pre;
   const src = sourcesOf(pre);

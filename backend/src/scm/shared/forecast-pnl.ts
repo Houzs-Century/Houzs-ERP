@@ -18,6 +18,14 @@
 // month's percentages and starts its amounts blank. Nothing here touches the
 // books.
 //
+// A PURCHASE account's month may be split by supplier (owner 2026-11-24, the
+// Hookka port's first step, docs/forecast-port-spec.md): each supplier of the
+// company, or Other, an amount or a share of the account's own basis. An
+// account with any supplier figure that month IS their sum; its own cell is
+// superseded — kept, and counted again once the suppliers are cleared.
+// Supplier figures under an account that is not a purchase account count
+// nowhere.
+//
 // Byte-identical on both sides — backend/src/scm/shared and the frontend's
 // vendor/shared copy; the route test pins FORECAST_BLOCKS to the statement's
 // own REPORT_BLOCKS, so the two can never file a section apart.
@@ -31,8 +39,19 @@ export type ForecastGrid = Record<string, ForecastLines>;
 /** An account the grid may name: an active leaf of one of the P&L's sections,
     sectioned as the statement sections it. `basis` — the sales accounts a
     percentage on this line is OF (a purchase account's own group's sales, from
-    the item-group bindings); absent or empty = the month's whole sales. */
-export type ForecastAccount = { code: string; name: string; section: string; type: string; basis?: string[] };
+    the item-group bindings); absent or empty = the month's whole sales.
+    `purchase` — a purchase account (isPurchaseOfChart), whose month may be
+    split by supplier. */
+export type ForecastAccount = { code: string; name: string; section: string; type: string; basis?: string[]; purchase?: boolean };
+
+/** A month's supplier figures: purchase account code → supplier id (or
+    OTHER_SUPPLIER) → the cell, an amount in sen or a share in basis points of
+    the account's own basis. A supplier not keyed is not there. */
+export type SupplierLines = Record<string, Record<string, ForecastCell>>;
+/** 'YYYY-MM' → the month's supplier figures; a month with none may be absent. */
+export type SupplierGrid = Record<string, SupplierLines>;
+/** The supplier row for suppliers not in the list yet. */
+export const OTHER_SUPPLIER = 'other';
 
 export const FORECAST_MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 
@@ -49,14 +68,51 @@ export type ForecastBlockKey = (typeof FORECAST_BLOCKS)[number]['key'];
 export const blockOfSection = (section: string): ForecastBlockKey | null =>
   FORECAST_BLOCKS.find((b) => (b.sections as readonly string[]).includes(section))?.key ?? null;
 export const isSalesAccount = (a: ForecastAccount): boolean => blockOfSection(a.section) === 'tradingIncome';
+/** A purchase account: its month may be split by supplier. */
+export const isPurchaseAccount = (a: ForecastAccount): boolean => a.purchase === true;
+
+/** Which cost-of-sales lines are purchase accounts (step 1 of the forecast
+    port, 2026-11-24: the purchases under Cost of Goods Sold): a line an item
+    group's purchase invoices post to (`boundToGroup`, the item-group bindings
+    of the company), or one the chart names a purchase ("PURCHASE …" /
+    "PURCHASES …"), a purchases return left out. The other cost-of-sales
+    lines — opening and closing stock, discount received, purchases return,
+    carriage inwards, the deposit-based cost — stay one figure. */
+export function isPurchaseOfChart(a: { section: string; name: string }, boundToGroup: boolean): boolean {
+  if (blockOfSection(a.section) !== 'costOfSales') return false;
+  if (boundToGroup) return true;
+  const name = a.name.trim();
+  return /^PURCHASES?\b/i.test(name) && !/\bRETURNS?\b/i.test(name);
+}
 
 export const isAmountCell = (c: ForecastCell): c is { amtSen: number } => 'amtSen' in c;
 /** The name a refusal gives a cell: "2026-10 900-T003 amount". */
 export const cellLabel = (month: string, code: string, field: 'amount' | 'percent'): string => `${month} ${code} ${field}`;
+/** The name a refusal gives a supplier's cell: "2026-10 601-0003 <supplier id> amount" — the page's box carries the same. */
+export const supplierCellLabel = (month: string, code: string, supplierId: string, field: 'amount' | 'percent'): string => `${month} ${code} ${supplierId} ${field}`;
 
 const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v);
+const isPlainObject = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v);
 /** The cell a month keyed for an account, or nothing — a Record lookup that says so in its type. */
 const cellOf = (lines: ForecastLines, code: string): ForecastCell | undefined => (Object.prototype.hasOwnProperty.call(lines, code) ? lines[code] : undefined);
+
+type CellCheck = { ok: true; cell: ForecastCell } | { ok: false; field: 'amount' | 'percent' | null; reason: string };
+/** One cell as sent: exactly one of bp / amtSen, whole numbers, a percent zero
+    or more, a sales line an amount. `field` says which box a refusal is about. */
+function checkCell(raw: unknown, sales: boolean): CellCheck {
+  if (!isPlainObject(raw)) return { ok: false, field: null, reason: 'a cell is { bp } or { amtSen }' };
+  const hasBp = raw.bp !== undefined && raw.bp !== null;
+  const hasAmt = raw.amtSen !== undefined && raw.amtSen !== null;
+  if (hasBp && hasAmt) return { ok: false, field: null, reason: 'a cell is an amount OR a percent, never both' };
+  if (!hasBp && !hasAmt) return { ok: false, field: null, reason: 'an empty cell is left out, not sent' };
+  if (hasAmt) {
+    if (!isInt(raw.amtSen)) return { ok: false, field: 'amount', reason: 'amount must be a whole number of sen' };
+    return { ok: true, cell: { amtSen: raw.amtSen } };
+  }
+  if (sales) return { ok: false, field: 'percent', reason: 'a sales line takes an amount — it is what the percentages are of' };
+  if (!isInt(raw.bp) || raw.bp < 0) return { ok: false, field: 'percent', reason: 'percent must be a whole number of basis points, zero or more' };
+  return { ok: true, cell: { bp: raw.bp } };
+}
 
 export type ValidatedGrid = { ok: true; grid: ForecastGrid } | { ok: false; cell: string; reason: string };
 
@@ -65,35 +121,61 @@ export type ValidatedGrid = { ok: true; grid: ForecastGrid } | { ok: false; cell
     amount. The first bad cell is named and nothing is kept. */
 export function validateGrid(raw: unknown, accounts: ForecastAccount[]): ValidatedGrid {
   const byCode = new Map(accounts.map((a) => [a.code, a]));
-  const months = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : null;
+  const months = isPlainObject(raw) ? raw : null;
   if (!months) return { ok: false, cell: 'months', reason: 'months must be an object keyed YYYY-MM' };
   const grid: ForecastGrid = {};
   for (const month of Object.keys(months).sort()) {
     if (!FORECAST_MONTH_RE.test(month)) return { ok: false, cell: month, reason: 'not a month (YYYY-MM)' };
     const lines = months[month];
-    if (lines === null || typeof lines !== 'object' || Array.isArray(lines)) return { ok: false, cell: month, reason: 'a month holds an object of lines' };
+    if (!isPlainObject(lines)) return { ok: false, cell: month, reason: 'a month holds an object of lines' };
     const clean: ForecastLines = {};
-    for (const [code, cell] of Object.entries(lines as Record<string, unknown>)) {
+    for (const [code, cell] of Object.entries(lines)) {
       const acc = byCode.get(code);
       if (!acc) return { ok: false, cell: `${month} ${code}`, reason: 'not an account on the P&L' };
-      if (cell === null || typeof cell !== 'object' || Array.isArray(cell)) return { ok: false, cell: `${month} ${code}`, reason: 'a cell is { bp } or { amtSen }' };
-      const c = cell as Record<string, unknown>;
-      const hasBp = c.bp !== undefined && c.bp !== null;
-      const hasAmt = c.amtSen !== undefined && c.amtSen !== null;
-      if (hasBp && hasAmt) return { ok: false, cell: `${month} ${code}`, reason: 'a cell is an amount OR a percent, never both' };
-      if (!hasBp && !hasAmt) return { ok: false, cell: `${month} ${code}`, reason: 'an empty cell is left out, not sent' };
-      if (hasAmt) {
-        if (!isInt(c.amtSen)) return { ok: false, cell: cellLabel(month, code, 'amount'), reason: 'amount must be a whole number of sen' };
-        clean[code] = { amtSen: c.amtSen };
-      } else {
-        if (isSalesAccount(acc)) return { ok: false, cell: cellLabel(month, code, 'percent'), reason: 'a sales line takes an amount — it is what the percentages are of' };
-        if (!isInt(c.bp) || c.bp < 0) return { ok: false, cell: cellLabel(month, code, 'percent'), reason: 'percent must be a whole number of basis points, zero or more' };
-        clean[code] = { bp: c.bp };
-      }
+      const c = checkCell(cell, isSalesAccount(acc));
+      if (!c.ok) return { ok: false, cell: c.field ? cellLabel(month, code, c.field) : `${month} ${code}`, reason: c.reason };
+      clean[code] = c.cell;
     }
     grid[month] = clean;
   }
   return { ok: true, grid };
+}
+
+export type ValidatedSuppliers = { ok: true; suppliers: SupplierGrid } | { ok: false; cell: string; reason: string };
+
+/** The supplier figures as the page sends them, checked cell by cell: a month
+    the grid carries, a purchase account on the P&L, a supplier of the company
+    (`supplierIds`, read under the company predicate) or Other, and the cell
+    rules of a line. The first bad cell is named and nothing is kept; an
+    account or a month with no supplier left is dropped. */
+export function validateSuppliers(raw: unknown, grid: ForecastGrid, accounts: ForecastAccount[], supplierIds: ReadonlySet<string>): ValidatedSuppliers {
+  const byCode = new Map(accounts.map((a) => [a.code, a]));
+  if (!isPlainObject(raw)) return { ok: false, cell: 'suppliers', reason: 'suppliers must be an object keyed YYYY-MM' };
+  const out: SupplierGrid = {};
+  for (const month of Object.keys(raw).sort()) {
+    if (!FORECAST_MONTH_RE.test(month)) return { ok: false, cell: month, reason: 'not a month (YYYY-MM)' };
+    if (!Object.prototype.hasOwnProperty.call(grid, month)) return { ok: false, cell: month, reason: 'supplier figures for a month that is not on the grid' };
+    const byAccount = raw[month];
+    if (!isPlainObject(byAccount)) return { ok: false, cell: month, reason: 'a month holds an object of purchase accounts' };
+    const clean: SupplierLines = {};
+    for (const code of Object.keys(byAccount).sort()) {
+      const acc = byCode.get(code);
+      if (!acc) return { ok: false, cell: `${month} ${code}`, reason: 'not an account on the P&L' };
+      if (!isPurchaseAccount(acc)) return { ok: false, cell: `${month} ${code}`, reason: 'only a purchase account is split by supplier' };
+      const cells = byAccount[code];
+      if (!isPlainObject(cells)) return { ok: false, cell: `${month} ${code}`, reason: 'an account holds an object of suppliers' };
+      const kept: Record<string, ForecastCell> = {};
+      for (const id of Object.keys(cells).sort()) {
+        if (id !== OTHER_SUPPLIER && !supplierIds.has(id)) return { ok: false, cell: `${month} ${code} ${id}`, reason: 'not a supplier of this company' };
+        const c = checkCell(cells[id], false);
+        if (!c.ok) return { ok: false, cell: c.field ? supplierCellLabel(month, code, id, c.field) : `${month} ${code} ${id}`, reason: c.reason };
+        kept[id] = c.cell;
+      }
+      if (Object.keys(kept).length > 0) clean[code] = kept;
+    }
+    if (Object.keys(clean).length > 0) out[month] = clean;
+  }
+  return { ok: true, suppliers: out };
 }
 
 /** The month's forecast sales: the sum of what is keyed on the sales lines, signed as the P&L prints them (a discount keyed negative reduces it). */
@@ -110,15 +192,28 @@ export function forecastSalesSen(lines: ForecastLines, accounts: ForecastAccount
 /** Half-up rounding that keeps the sign. */
 const round = (v: number): number => Math.sign(v) * Math.round(Math.abs(v));
 
+/** One supplier's figure under a purchase line, worked out as the line's own cell would be. */
+export type SupplierFigure = {
+  supplierId: string;
+  /** Keyed, or the line's basis × bp / 10000. */
+  amountSen: number;
+  /** Keyed, or amount / the line's basis; null when the basis is zero. */
+  bp: number | null;
+  keyed: 'amount' | 'percent';
+};
+
 export type ForecastLine = {
   code: string; name: string; section: string; block: ForecastBlockKey;
-  /** The line's forecast amount in sen — keyed, or basis × bp / 10000. */
+  /** The line's forecast amount in sen — keyed, basis × bp / 10000, or the sum of its suppliers. */
   amountSen: number;
   /** The line's share of its basis in basis points — keyed, or amount / basis; null when the basis is zero. */
   bp: number | null;
   /** What the share is OF: the line's own group's sales when the account is bound to one, else the month's whole sales. */
   basisSen: number;
-  keyed: 'amount' | 'percent';
+  /** 'suppliers' — a purchase line split by supplier this month: its amount is theirs, its own cell is superseded. */
+  keyed: 'amount' | 'percent' | 'suppliers';
+  /** The suppliers that make the line, Other last; empty unless keyed by suppliers. */
+  bySupplier: SupplierFigure[];
 };
 export type ForecastTotals = {
   tradingIncomeSen: number; costOfSalesSen: number; grossProfitSen: number; otherIncomeSen: number;
@@ -140,20 +235,43 @@ export function basisSalesSen(lines: ForecastLines, account: ForecastAccount, sa
   return sum;
 }
 
-/** One month's figures: every keyed line's amount and share, and the P&L's totals over them. */
-export function monthFigures(lines: ForecastLines, accounts: ForecastAccount[]): ForecastFigures {
+/** A cell worked out against its basis: an amount as keyed with its share, or a share with its amount. */
+const workOut = (c: ForecastCell, basisSen: number): { amountSen: number; bp: number | null; keyed: 'amount' | 'percent' } => (isAmountCell(c)
+  ? { amountSen: c.amtSen, bp: basisSen !== 0 ? round((c.amtSen / basisSen) * 10000) : null, keyed: 'amount' }
+  : { amountSen: round((basisSen * c.bp) / 10000), bp: c.bp, keyed: 'percent' });
+
+/** The suppliers keyed under a line this month, worked out against the line's
+    basis, by supplier id with Other last; none for a line that is not a
+    purchase account (its supplier figures count nowhere). */
+export function supplierFigures(suppliers: SupplierLines, account: ForecastAccount, basisSen: number): SupplierFigure[] {
+  if (!isPurchaseAccount(account) || !Object.prototype.hasOwnProperty.call(suppliers, account.code)) return [];
+  const cells = suppliers[account.code] ?? {};
+  return Object.keys(cells)
+    .sort((x, y) => (x === OTHER_SUPPLIER ? 1 : y === OTHER_SUPPLIER ? -1 : x < y ? -1 : x > y ? 1 : 0))
+    .map((id) => ({ supplierId: id, ...workOut(cells[id]!, basisSen) }));
+}
+
+/** One month's figures: every keyed line's amount and share, and the P&L's
+    totals over them. A purchase line with supplier figures this month is
+    their sum; its own cell is superseded. Every reader — the page, the
+    figures door, the Dashboard — passes the month's supplier figures, so all
+    of them read the same totals. */
+export function monthFigures(lines: ForecastLines, suppliers: SupplierLines, accounts: ForecastAccount[]): ForecastFigures {
   const salesSen = forecastSalesSen(lines, accounts);
   const out: ForecastLine[] = [];
   for (const a of accounts) {
     const block = blockOfSection(a.section);
-    const c = cellOf(lines, a.code);
-    if (!block || !c) continue;
+    if (!block) continue;
     const basisSen = basisSalesSen(lines, a, salesSen);
-    if (isAmountCell(c)) {
-      out.push({ code: a.code, name: a.name, section: a.section, block, amountSen: c.amtSen, bp: basisSen !== 0 ? round((c.amtSen / basisSen) * 10000) : null, basisSen, keyed: 'amount' });
-    } else {
-      out.push({ code: a.code, name: a.name, section: a.section, block, amountSen: round((basisSen * c.bp) / 10000), bp: c.bp, basisSen, keyed: 'percent' });
+    const bySupplier = supplierFigures(suppliers, a, basisSen);
+    if (bySupplier.length > 0) {
+      const amountSen = bySupplier.reduce((s, f) => s + f.amountSen, 0);
+      out.push({ code: a.code, name: a.name, section: a.section, block, amountSen, bp: basisSen !== 0 ? round((amountSen / basisSen) * 10000) : null, basisSen, keyed: 'suppliers', bySupplier });
+      continue;
     }
+    const c = cellOf(lines, a.code);
+    if (!c) continue;
+    out.push({ code: a.code, name: a.name, section: a.section, block, ...workOut(c, basisSen), basisSen, bySupplier: [] });
   }
   const sum = (key: ForecastBlockKey): number => out.filter((l) => l.block === key).reduce((s, l) => s + l.amountSen, 0);
   const tradingIncomeSen = sum('tradingIncome');
@@ -173,6 +291,18 @@ export function monthFigures(lines: ForecastLines, accounts: ForecastAccount[]):
 export function inheritMonth(prev: ForecastLines | undefined): ForecastLines {
   const next: ForecastLines = {};
   for (const [code, c] of Object.entries(prev ?? {})) if (!isAmountCell(c)) next[code] = { bp: c.bp };
+  return next;
+}
+
+/** The same for the supplier figures: each supplier's percentage carries over,
+    its amount starts blank; an account left with no supplier is not there. */
+export function inheritSuppliers(prev: SupplierLines | undefined): SupplierLines {
+  const next: SupplierLines = {};
+  for (const [code, cells] of Object.entries(prev ?? {})) {
+    const kept: Record<string, ForecastCell> = {};
+    for (const [id, c] of Object.entries(cells)) if (!isAmountCell(c)) kept[id] = { bp: c.bp };
+    if (Object.keys(kept).length > 0) next[code] = kept;
+  }
   return next;
 }
 
