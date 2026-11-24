@@ -93,22 +93,19 @@ describe('Daily Bank (cash book) — its own page beside the original', () => {
     expect(screen.getByLabelText('Starting balances')).toBeTruthy();
   });
 
-  test('a voucher approved on another day than its own date says that date, on the Board and the Accounts sheet (owner 2026-11-24)', () => {
+  test('an old voucher approved today reads like any other line: its payee and amount, no voucher date (owner 2026-11-24: 过了就不需要显示了)', () => {
     const block = CASH.blocks[0]!;
     const kept = block.payouts;
-    block.payouts = [...kept, {
-      jeNo: '', sourceType: 'PV', sourceDocNo: 'pv-9', docNo: 'HPV-050', party: 'OLD BILL', note: 'Lorry rental · voucher dated 2026/09/29',
-      amountSen: 70_000, method: null, voucherDate: '2026-09-29',
-    }];
+    block.payouts = [...kept, { jeNo: '', sourceType: 'PV', sourceDocNo: 'pv-9', docNo: 'HPV-050', party: 'OLD BILL', note: 'Lorry rental', amountSen: 70_000, method: null }];
     try {
       renderAt('?view=board');
-      const accounts = screen.getByLabelText('Accounts');
-      const line = within(accounts).getByText('OLD BILL').parentElement!;
-      expect(line.textContent).toBe('OLD BILLdated 2026/09/29−700.00');
-      expect(within(accounts).getByText('UNICOM')).toBeTruthy();
+      const line = within(screen.getByLabelText('Accounts')).getByText('OLD BILL').parentElement!;
+      expect(line.textContent).toBe('OLD BILL−700.00');
       cleanup();
       renderAt('?view=accounts');
-      expect(screen.getByLabelText('310-0010 CASH AT BANK - MAYBANK').textContent).toContain('OLD BILL · Lorry rental · voucher dated 2026/09/29');
+      const may = screen.getByLabelText('310-0010 CASH AT BANK - MAYBANK').textContent!;
+      expect(may).toContain('OLD BILL · Lorry rental');
+      expect(may).not.toContain('dated');
     } finally {
       block.payouts = kept;
     }
