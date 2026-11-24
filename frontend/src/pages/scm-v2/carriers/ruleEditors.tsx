@@ -15,6 +15,7 @@ import {
 } from '../../../vendor/scm/lib/rate-rule-taxonomy';
 import { centiToRM, rmToSen } from './cardSettings';
 import { isDefaultJobs, jobsOf, toggleJob } from './appliesTo';
+import { bpsToPct, chargeText, readDoCharge } from './doCharge';
 import type { FlatRuleType, PriceCell } from './rateCardLayout';
 import { BTN_PRI, BTN_QUIET, CARD, HINT, INPUT, LABEL, Pill } from './ui';
 
@@ -93,6 +94,56 @@ export const PriceButton = ({ cardId, rule, name }: { cardId: string; rule: Rate
     <button type="button" onClick={() => setEditing(true)} aria-label={`Edit ${name}, ${fmtSen(rule.amountSen)}`}
       className="-my-1 min-h-[28px] w-full rounded-md px-1 text-right tabular-nums text-ink hover:bg-surface-2 hover:text-primary">
       {centiToRM(rule.amountSen)}
+    </button>
+  );
+};
+
+/** A charge on each DO being changed: its name, its % of the goods value, its
+ *  amount per DO — save, cancel, remove. */
+const DoChargeEditor = ({ cardId, rule, name, onDone }: { cardId: string; rule: RateRule; name: string; onDone: () => void }) => {
+  const update = useUpdateRateRule(cardId);
+  const del = useDeleteRateRule(cardId);
+  const [boxes, setBoxes] = useState({ name: rule.label ?? '', pct: bpsToPct(rule.bps), rm: rule.amountSen > 0 ? centiToRM(rule.amountSen) : '' });
+  const [err, setErr] = useState<string | null>(null);
+  const set = (k: keyof typeof boxes, v: string) => { setErr(null); setBoxes((b) => ({ ...b, [k]: v })); };
+  const save = () => {
+    const read = readDoCharge(boxes);
+    if (!read.ok) { setErr(read.error); return; }
+    update.mutate({ id: rule.id, ...read.rule }, { onSuccess: onDone }); // the hook's own onError (writeFailed) shows a refusal
+  };
+  const box = (k: keyof typeof boxes, label: string, mode: 'text' | 'decimal', placeholder: string) => (
+    <input className={CELL_INPUT} inputMode={mode} aria-label={`${label} for ${name}`} placeholder={placeholder}
+      value={boxes[k]} onChange={(e) => set(k, e.target.value)}
+      onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') onDone(); }} />
+  );
+  return (
+    <span className="flex flex-col items-end gap-1">
+      {box('name', 'Name', 'text', 'Name')}
+      {box('pct', '% of goods', 'decimal', '% of goods')}
+      {box('rm', 'RM per DO', 'decimal', 'RM per DO')}
+      <span className="flex items-center gap-1">
+        <button type="button" className={cn(SMALL_BTN, 'text-primary')} onClick={save} disabled={update.isPending} aria-label={`Save ${name}`}>
+          <Check size={15} strokeWidth={2} />
+        </button>
+        <button type="button" className={SMALL_BTN} onClick={onDone} aria-label={`Cancel ${name}`}><X size={15} strokeWidth={2} /></button>
+        <button type="button" className={cn(SMALL_BTN, 'hover:text-[color:var(--hz-dk-err,#8a2c2c)]')} disabled={del.isPending}
+          onClick={() => del.mutate(rule.id, { onSuccess: onDone, onError: writeFailedAs('The charge was not removed') })}
+          aria-label={`Remove ${name}`}><Trash2 size={14} strokeWidth={1.75} /></button>
+      </span>
+      {err && <span role="alert" className={ERR_TEXT}>{err}</span>}
+    </span>
+  );
+};
+
+/** A charge on each DO in a table cell: what it takes ("9% of goods",
+ *  "RM 30.00 per DO"), which a click opens to change or remove. */
+export const DoChargeButton = ({ cardId, rule, name }: { cardId: string; rule: RateRule; name: string }) => {
+  const [editing, setEditing] = useState(false);
+  if (editing) return <DoChargeEditor cardId={cardId} rule={rule} name={name} onDone={() => setEditing(false)} />;
+  return (
+    <button type="button" onClick={() => setEditing(true)} aria-label={`Edit ${name}, ${chargeText(rule)}`}
+      className="-my-1 min-h-[28px] w-full rounded-md px-1 text-right tabular-nums text-ink hover:bg-surface-2 hover:text-primary">
+      {chargeText(rule)}
     </button>
   );
 };
@@ -179,6 +230,8 @@ export const AppliesToEditor = ({ cardId, rule }: { cardId: string; rule: RateRu
 type AddForm = {
   ruleType: RateRuleType; tierPosition: string; bracketMin: string; bracketMax: string; zone: string; amountRM: string;
   appliesTo: BillableJobType[];
+  /* A charge on each DO: its name and its % of the goods value. */
+  name: string; pct: string;
 };
 
 /** Add a rule to one category: the rule type list holds only that category's.
@@ -191,15 +244,26 @@ export const AddRule = ({ cardId, category, zones, initialType, onDone }: {
   const [err, setErr] = useState<string | null>(null);
   const [form, setForm] = useState<AddForm>({
     ruleType: initialType ?? ((types[0] ?? 'POSITIONAL_TIER') as RateRuleType), tierPosition: '1', bracketMin: '', bracketMax: '', zone: '', amountRM: '',
-    appliesTo: [...OUTSTATION_DEFAULT_APPLIES_TO],
+    appliesTo: [...OUTSTATION_DEFAULT_APPLIES_TO], name: '', pct: '',
   });
   const set = <K extends keyof AddForm>(k: K, v: AddForm[K]) => { setErr(null); setForm((s) => ({ ...s, [k]: v })); };
 
   const needsPosition = form.ruleType === 'POSITIONAL_TIER' || form.ruleType === 'OVERAGE';
   const needsBracket = form.ruleType === 'SOFA_BRACKET';
   const needsZone = form.ruleType === 'OUTSTATION' || form.ruleType === 'OUTSTATION_TRIP';
+  const isCharge = form.ruleType === 'DO_CHARGE';
+
+  const addCharge = () => {
+    const read = readDoCharge({ name: form.name, pct: form.pct, rm: form.amountRM });
+    if (!read.ok) { setErr(read.error); return; }
+    create.mutate({ ruleType: 'DO_CHARGE', ...read.rule }, {
+      onSuccess: () => setForm((s) => ({ ...s, name: '', pct: '', amountRM: '' })),
+      onError: writeFailedAs('The charge was not added'),
+    });
+  };
 
   const addRule = () => {
+    if (isCharge) { addCharge(); return; }
     const amountSen = rmToSen(form.amountRM);
     if (amountSen == null || form.amountRM.trim() === '') { setErr(AMOUNT_ERROR); return; }
     const body: Parameters<typeof create.mutate>[0] = { ruleType: form.ruleType, amountSen };
@@ -258,7 +322,9 @@ export const AddRule = ({ cardId, category, zones, initialType, onDone }: {
       {needsZone && (
         <div className="basis-full"><AppliesToControl value={form.appliesTo} onChange={(jobs) => set('appliesTo', jobs)} /></div>
       )}
-      {field('Amount (RM)', 'flex-[0_1_140px]', <input className={INPUT} inputMode="decimal" value={form.amountRM} onChange={(e) => set('amountRM', e.target.value)} />)}
+      {isCharge && field('Name', 'flex-[1_1_160px]', <input className={INPUT} value={form.name} placeholder="SST" onChange={(e) => set('name', e.target.value)} />)}
+      {isCharge && field('% of goods value', 'flex-[0_1_140px]', <input className={INPUT} inputMode="decimal" value={form.pct} placeholder="9" onChange={(e) => set('pct', e.target.value)} />)}
+      {field(isCharge ? 'RM per DO' : 'Amount (RM)', 'flex-[0_1_140px]', <input className={INPUT} inputMode="decimal" value={form.amountRM} placeholder={isCharge ? '0.00' : undefined} onChange={(e) => set('amountRM', e.target.value)} />)}
       <div className="flex gap-2">
         <button type="button" className={BTN_PRI} onClick={addRule} disabled={create.isPending}><Plus size={16} strokeWidth={1.75} />{create.isPending ? 'Adding…' : 'Add rule'}</button>
         <button type="button" className={BTN_QUIET} onClick={onDone}>Done</button>

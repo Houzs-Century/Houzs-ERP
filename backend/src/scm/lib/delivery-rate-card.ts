@@ -18,6 +18,9 @@
 //   - DISPOSE / SETUP / DISMANTLE  occurrence charges (rate x count)
 //   - SERVICE / PICKUP / INSPECTION / TRANSFER  the owner's order-type charges,
 //      own rate each (rate x count)
+//   - DO_CHARGE        a named charge on each delivery order: an amount per DO
+//                      and/or a share of the DOs' goods value (the Singapore
+//                      carriers' SST 9% and cost 6% of the goods, a permit)
 // plus the card-level min-charge / cap / rounding envelope.
 //
 // SEPARATION OF CONCERNS. The charging units the positional tiers count over
@@ -118,7 +121,8 @@ export type RateRuleType =
   | 'PICKUP'
   | 'INSPECTION'
   | 'SUPPLIER_PICKUP'
-  | 'TRANSFER';
+  | 'TRANSFER'
+  | 'DO_CHARGE';
 
 export interface RateRuleSpec {
   ruleType: RateRuleType;
@@ -136,8 +140,12 @@ export interface RateRuleSpec {
    *  empty = OUTSTATION_DEFAULT_APPLIES_TO (delivery orders), what it reached
    *  before the setting existed. */
   appliesTo?: readonly string[] | null;
-  /** The price, integer sen. */
+  /** The price, integer sen. DO_CHARGE: the amount per delivery order. */
   amountSen: number;
+  /** DO_CHARGE: its share of the goods value, in basis points (900 = 9%). */
+  bps?: number | null;
+  /** DO_CHARGE: its name on the card and on the cost line ("SST", "Permit"). */
+  label?: string | null;
 }
 
 /** A drop/trip's delivery facts. The caller derives these; the tiers count over
@@ -183,6 +191,9 @@ export interface DeliveryFacts {
   /** The job being priced when no stops are given (the Price check names one).
    *  Absent = a delivery order. Only an outstation rule's appliesTo reads it. */
   jobType?: string | null;
+  /** The goods value of the delivery orders priced, in sen: their orders' goods
+   *  (no service lines), a DO's share of its order. Read by DO_CHARGE. */
+  goodsValueSen?: number | null;
   disposeCount?: number | null;
   setupCount?: number | null;
   dismantleCount?: number | null;
@@ -562,6 +573,27 @@ export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts, op
       label: `${count > 1 ? `${label} x${count}` : label}${at(rule)}`,
       amountSen: each * count,
       detail: { count, eachSen: each },
+    });
+  }
+
+  // ── Named charges on each delivery order (DO_CHARGE) ─────────────────────
+  // Owner 2026-11-24, the Singapore carriers: 「haohua应该也是 9% +6%， based on
+  // good」 — a share of the goods value, plus Hao Hua's RM 30 permit per order.
+  // The amount is per DO on the trip; the share is of all their goods.
+  const doCount = intOf(facts.dropCount);
+  const goodsSen = intOf(facts.goodsValueSen);
+  for (const rule of rulesOf('DO_CHARGE')) {
+    const each = intOf(rule.amountSen);
+    const bps = intOf(rule.bps);
+    const amountSen = each * doCount + Math.round((goodsSen * bps) / 10_000);
+    if (amountSen <= 0) continue;
+    const name = String(rule.label ?? '').trim() || 'Per DO charge';
+    const share = bps > 0 ? ` ${bps / 100}% of goods` : '';
+    lines.push({
+      ruleType: 'DO_CHARGE',
+      label: `${name}${share}${each > 0 && doCount > 1 ? ` x${doCount}` : ''}${at(rule)}`,
+      amountSen,
+      detail: { bps, goodsValueSen: goodsSen, eachSen: each, count: doCount },
     });
   }
 

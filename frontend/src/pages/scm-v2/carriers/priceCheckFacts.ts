@@ -32,8 +32,10 @@ export interface PriceCheckForm {
    *  '' is in town. */
   town: string;
   counts: Partial<Record<FlatRuleType, string>>;
+  /** The DO's goods value in RM, for a charge that is a % of it (Per DO charge). */
+  goods: string;
 }
-export const EMPTY_FORM: PriceCheckForm = { job: 'DELIVERY', count: '1', sofas: '', town: '', counts: {} };
+export const EMPTY_FORM: PriceCheckForm = { job: 'DELIVERY', count: '1', sofas: '', town: '', counts: {}, goods: '' };
 
 /**
  * The form after the job changes: a non-delivery job carries no sets, and its
@@ -61,7 +63,8 @@ export const COUNT_ERROR = `Enter a whole number from 0 to ${MAX_COUNT}.`;
 export const SOFA_ERROR = 'Enter each sofa’s compartments as a number, separated by commas, like 3, 6.';
 
 /** What is wrong with each box, by box. */
-export type CheckErrors = Partial<Record<'count' | 'sofas' | FlatRuleType, string>>;
+export type CheckErrors = Partial<Record<'count' | 'sofas' | 'goods' | FlatRuleType, string>>;
+export const GOODS_ERROR = 'Enter the goods value in RM, 0 or more.';
 export type FactsRead = { ok: true; facts: DeliveryFacts } | { ok: false; errors: CheckErrors };
 
 /** Which boxes this card prices: only those are shown and sent. */
@@ -94,6 +97,14 @@ export function readFacts(
   }
   for (const t of FLAT_ORDER) {
     if (priced.has(t)) facts[countFact(t)] = whole(t, form.counts[t] ?? '');
+  }
+  /* A charge on each DO: one delivery order, its goods value as typed. */
+  if (priced.has('DO_CHARGE') && form.job === 'DELIVERY') {
+    const t = form.goods.trim();
+    const sen = t === '' ? 0 : Number(t);
+    if (!Number.isFinite(sen) || sen < 0) errors.goods = GOODS_ERROR;
+    else facts.goodsValueSen = Math.round(sen * 100);
+    facts.dropCount = 1;
   }
   facts.destinationZone = form.town.trim() || null;
   /* Delivery order is what the engine assumes when no job is named, so the
@@ -161,6 +172,9 @@ export function lineLabel(line: CostLine, unit: ChargingUnit): string {
       const z = text(d.zone);
       return z == null ? line.label : `${z}, per trip`;
     }
+    /* Its own name and share, as the engine wrote them: "SST 9% of goods". */
+    case 'DO_CHARGE':
+      return line.label;
     default: {
       const name = (RULE_LABEL as Partial<Record<string, string>>)[line.ruleType];
       const count = num(d.count);

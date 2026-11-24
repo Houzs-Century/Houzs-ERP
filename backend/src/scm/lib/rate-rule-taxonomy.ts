@@ -60,13 +60,14 @@ export type DispatchableJobType = (typeof DISPATCHABLE_JOB_TYPES)[number];
  */
 export const NON_BILLABLE_JOB_TYPES = ['LORRY_SERVICE'] as const;
 
-/** Every rule type a card can carry. Mirrors the CHECK in mig 0243. */
+/** Every rule type a card can carry. Mirrors the CHECK in mig 20261124T2100. */
 export const RATE_RULE_TYPES = [
   'POSITIONAL_TIER', 'OVERAGE', 'SOFA_BRACKET',
   'OUTSTATION', 'OUTSTATION_TRIP',
   'SETUP', 'DISMANTLE',
   'SERVICE', 'PICKUP', 'INSPECTION', 'SUPPLIER_PICKUP', 'TRANSFER',
   'DISPOSE',
+  'DO_CHARGE',
 ] as const;
 export type RateRuleType = (typeof RATE_RULE_TYPES)[number];
 
@@ -82,7 +83,7 @@ export const CATEGORY_LABEL: Record<RateRuleCategory, string> = {
 };
 
 export const CATEGORY_HINT: Record<RateRuleCategory, string> = {
-  DELIVERY: 'Prices the Delivery order job: by position, with sofas on their own bracket.',
+  DELIVERY: 'Prices the Delivery order job: by position, with sofas on their own bracket, and named charges on each DO (an amount, or a % of its goods value).',
   SITE_WORK: 'Prices the Setup and Dismantle jobs, each time one is done.',
   SERVICE_CALL: 'Prices the Supplier, Transfer item and ASSR (Inspection, Pickup, Service) jobs, each time one is done.',
   OUTSTATION: 'A surcharge by the area a job goes to: its postcode zone or a town. Per order, per trip, or both.',
@@ -105,6 +106,7 @@ export const RULE_CATEGORY: Record<RateRuleType, RateRuleCategory> = {
   TRANSFER: 'SERVICE_CALL',
   OUTSTATION: 'OUTSTATION',
   OUTSTATION_TRIP: 'OUTSTATION',
+  DO_CHARGE: 'DELIVERY',
 };
 
 export const RULE_LABEL: Record<RateRuleType, string> = {
@@ -121,6 +123,7 @@ export const RULE_LABEL: Record<RateRuleType, string> = {
   TRANSFER: 'Transfer item',
   OUTSTATION: 'Outstation zone (per order)',
   OUTSTATION_TRIP: 'Outstation trip (fixed, per trip)',
+  DO_CHARGE: 'Per DO charge (RM or % of goods)',
 };
 
 /**
@@ -155,6 +158,9 @@ export const RULE_JOB_TYPE: Record<RateRuleType, string | null> = {
   TRANSFER: 'TRANSFER',
   OUTSTATION: null,
   OUTSTATION_TRIP: null,
+  /* A charge on each delivery order (Singapore's SST and cost shares of the
+     goods value, a permit): it prices the delivery, not a job of its own. */
+  DO_CHARGE: 'DELIVERY',
 };
 
 /** Rule types in category order, then in the order declared above — so the

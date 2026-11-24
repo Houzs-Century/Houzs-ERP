@@ -132,18 +132,20 @@ export function buildOwnRuns(dos: readonly OwnDo[], trips: readonly OwnTrip[]): 
   return [...runs.values()].sort((a, b) => b.runDate.localeCompare(a.runDate) || a.plate.localeCompare(b.plate) || a.key.localeCompare(b.key));
 }
 
-/** A trip's facts for the card, as /reconcile derives a 3PL trip's: the sets of
- *  its orders added up, every zone it touches (the card charges the farthest,
- *  once), each other job once with its address. `zoneOf` reads an address's
+/** A trip's facts for the card, as /reconcile derives a 3PL trip's: the sets
+ *  and goods value of its orders added up, every zone it touches (the card
+ *  charges the farthest, once), each other job once with its address. `zoneOf` reads an address's
  *  postcode zone (Delivery Zones). */
 export function runFacts(run: OwnRun, zoneOf: (address: string | null) => string | null): DeliveryFacts {
   let setCount = 0;
   let itemCount = 0;
+  let goodsValueSen = 0;
   const zones: string[] = [];
   const doStops: DeliveryStop[] = [];
   for (const d of run.dos) {
     setCount += d.facts?.setCount ?? 0;
     itemCount += d.facts?.itemCount ?? 0;
+    goodsValueSen += d.facts?.goodsValueSen ?? 0;
     const z = d.facts?.destinationZone ?? null;
     if (z && !zones.includes(z)) zones.push(z);
     doStops.push({ zone: z, addressText: d.facts?.addressText ?? '', jobType: 'DELIVERY' });
@@ -154,6 +156,7 @@ export function runFacts(run: OwnRun, zoneOf: (address: string | null) => string
     itemCount,
     dropCount: run.dos.length,
     customerCount: new Set(run.dos.map((d) => d.customerKey)).size,
+    goodsValueSen,
     destinationZone: zones[0] ?? null,
     destinationZones: zones,
     addressText: run.dos.map((d) => d.facts?.addressText ?? '').join(' | '),

@@ -64,7 +64,8 @@ import { loadPlaces, placeName, placeRefusal } from './delivery-places';
 import { MAP_COLS, toPrefixMap, type MapRow } from './delivery-zones';
 import { deriveSetCount, type SetLine } from '../lib/set-count';
 import { composeAddress } from '../lib/geocode';
-import { expectedSen } from '../lib/threepl-do-charge';
+import { doGoodsSen, expectedSen, orderGoodsSen } from '../lib/threepl-do-charge';
+import { DO_CHARGE, doChargeOf, doChargeProblem, withDoCharge } from '../lib/do-charge';
 import { buildOwnRuns, ownFleetCardChoice, ownFleetMonths, ownFleetWindow, priceOwnRuns, type ThreePlDo } from '../lib/own-fleet-runs';
 import { loadOwnFleet, type OwnFleetRead } from '../lib/own-fleet-load';
 
@@ -142,6 +143,8 @@ export function ruleOut(r: Row) {
     /* The jobs an outstation surcharge adds to (params.appliesTo, its default
        when unset); null for every other rule. */
     appliesTo: CARD_ONLY_TYPES.has(String(r.rule_type)) ? appliesToOf(r.params) : null,
+    /* A Per DO charge's name and share of the goods value (do-charge.ts); null for every other rule. */
+    ...doChargeOf(String(r.rule_type), r.params),
     sortOrder: Number(r.sort_order ?? 0),
   };
 }
@@ -171,6 +174,8 @@ function toRuleSpecs(rules: ReturnType<typeof ruleOut>[]): RateRuleSpec[] {
     areaId: r.areaId,
     appliesTo: r.appliesTo,
     amountSen: r.amountSen,
+    bps: r.bps,
+    label: r.label,
   }));
 }
 
@@ -436,8 +441,17 @@ const ruleCreateSchema = z.object({
   /* OUTSTATION / OUTSTATION_TRIP: the jobs the surcharge adds to, kept in
      params.appliesTo; null = back to the default (delivery orders). */
   appliesTo: z.array(z.enum(BILLABLE_JOB_TYPES as unknown as [BillableJobType, ...BillableJobType[]])).min(1).nullable().optional(),
+  /* DO_CHARGE: its name and its share of the goods value in basis points
+     (900 = 9%), kept in params as { label, bps } (do-charge.ts). */
+  label: z.string().trim().max(40).nullable().optional(),
+  bps: z.number().int().min(0).max(10_000).nullable().optional(),
   sortOrder: z.number().int().optional(),
 });
+
+const DO_CHARGE_ONLY = {
+  error: 'not_a_do_charge',
+  reason: 'A name and a % of the goods value belong to a Per DO charge.',
+} as const;
 
 const APPLIES_TO_ONLY_SURCHARGE = {
   error: 'applies_to_not_for_rule',
@@ -484,6 +498,11 @@ deliveryRateCards.post('/:id/rules', async (c) => {
   if (!parsed.success) return c.json({ error: 'invalid_body', issues: parsed.error.issues }, 400);
   const p = parsed.data;
   if (p.appliesTo != null && !CARD_ONLY_TYPES.has(p.ruleType)) return c.json(APPLIES_TO_ONLY_SURCHARGE, 400);
+  if (p.ruleType !== DO_CHARGE && (p.label != null || p.bps != null)) return c.json(DO_CHARGE_ONLY, 400);
+  if (p.ruleType === DO_CHARGE) {
+    const problem = doChargeProblem({ label: p.label ?? null, bps: p.bps ?? 0, amountSen: p.amountSen });
+    if (problem) return c.json({ error: 'do_charge_incomplete', reason: problem }, 400);
+  }
   if (!(await loadCardForWrite(c, id, co.companyId))) return c.json(NOT_THIS_COMPANY, 404);
   const noArea = await areaRefusal(c, id, co.companyId, p.areaId, p.ruleType);
   if (noArea) return c.json(noArea.body, noArea.status);
@@ -503,7 +522,9 @@ deliveryRateCards.post('/:id/rules', async (c) => {
     zone: (p.ruleType === 'OUTSTATION' || p.ruleType === 'OUTSTATION_TRIP') && p.zone ? p.zone.toUpperCase() : (p.zone ?? null),
     area_id: p.areaId ?? null,
     amount_sen: p.amountSen,
-    params: p.appliesTo !== undefined ? withAppliesTo(p.params ?? null, p.appliesTo) : (p.params ?? null),
+    params: p.ruleType === DO_CHARGE
+      ? withDoCharge(p.params ?? null, p.label ?? '', p.bps ?? 0)
+      : p.appliesTo !== undefined ? withAppliesTo(p.params ?? null, p.appliesTo) : (p.params ?? null),
     sort_order: p.sortOrder ?? 0,
   }).select(RULE_COLS).single();
   if (error) {
@@ -571,6 +592,28 @@ deliveryRateCards.patch('/:id/rules/:ruleId', async (c) => {
     if (!CARD_ONLY_TYPES.has(String(p.ruleType ?? (held as Row).rule_type))) return c.json(APPLIES_TO_ONLY_SURCHARGE, 400);
     const base = p.params !== undefined ? p.params : ((held as Row).params ?? null) as Record<string, unknown> | null;
     updates.params = withAppliesTo(base, p.appliesTo);
+  }
+  if (p.label !== undefined || p.bps !== undefined || p.amountSen !== undefined) {
+    /* A Per DO charge keeps a name and an amount or a share: read what it holds,
+       apply the change, and check what it would become. */
+    const { data: held, error: heldErr } = await scopeToCompanyId(
+      rc(c.get('supabase')).from('delivery_rate_rules').select('rule_type, params, amount_sen').eq('id', ruleId).eq('card_id', id), co.companyId,
+    ).maybeSingle();
+    if (heldErr) return c.json({ error: 'read_failed', reason: heldErr.message }, 500);
+    if (!held) return c.json(NOT_THIS_COMPANY, 404);
+    const type = String(p.ruleType ?? (held as Row).rule_type);
+    if (type === DO_CHARGE) {
+      const was = doChargeOf(DO_CHARGE, (held as Row).params);
+      const label = p.label !== undefined ? p.label : was.label;
+      const bps = p.bps !== undefined ? (p.bps ?? 0) : (was.bps ?? 0);
+      const amountSen = p.amountSen ?? Number((held as Row).amount_sen ?? 0);
+      const problem = doChargeProblem({ label, bps, amountSen });
+      if (problem) return c.json({ error: 'do_charge_incomplete', reason: problem }, 400);
+      const base = p.params !== undefined ? p.params : ((held as Row).params ?? null) as Record<string, unknown> | null;
+      updates.params = withDoCharge(base, label ?? '', bps);
+    } else if (p.label !== undefined || p.bps !== undefined) {
+      return c.json(DO_CHARGE_ONLY, 400);
+    }
   }
   if (p.sortOrder !== undefined) updates.sort_order = p.sortOrder;
   if (Object.keys(updates).length === 0) return c.json({ error: 'no_changes' }, 400);
@@ -698,6 +741,9 @@ const factsSchema = z.object({
   areaId: z.string().trim().min(1).max(64).nullable().optional(),
   /* The job being priced (Delivery order when absent): an outstation price adds only to the jobs it applies to. */
   jobType: z.enum(BILLABLE_JOB_TYPES as unknown as [BillableJobType, ...BillableJobType[]]).nullable().optional(),
+  /* A Per DO charge's share is of this goods value; the Price check prices one DO. */
+  goodsValueSen: z.number().int().min(0).nullable().optional(),
+  dropCount: z.number().int().min(0).nullable().optional(),
   disposeCount: z.number().int().min(0).nullable().optional(),
   setupCount: z.number().int().min(0).nullable().optional(),
   dismantleCount: z.number().int().min(0).nullable().optional(),
@@ -846,11 +892,13 @@ deliveryRateCards.get('/reconcile', async (c) => {
   }
   // DO -> SO doc no.
   const soDocByDoId = new Map<string, string>();
+  const doTotalById = new Map<string, number | null>();
   if (allDoIds.size > 0) {
-    const { data: doRows } = await sb.from('delivery_orders').select('id, so_doc_no').in('id', [...allDoIds]);
+    const { data: doRows } = await sb.from('delivery_orders').select('id, so_doc_no, local_total_sen').in('id', [...allDoIds]);
     for (const d of (doRows ?? []) as Row[]) {
       const idv = s(d.id); const soDoc = s(d.so_doc_no);
       if (idv && soDoc) soDocByDoId.set(idv, soDoc);
+      if (idv) doTotalById.set(idv, n(d.local_total_sen));
     }
   }
   const allSoDocs = new Set<string>([...soDocByDoId.values()]);
@@ -859,6 +907,8 @@ deliveryRateCards.get('/reconcile', async (c) => {
   const zoneBySo = new Map<string, string | null>();
   const customerKeyBySo = new Map<string, string>();
   const addressBySo = new Map<string, string>();
+  /* Each order's goods value and total, for a Per DO charge's share (do-charge.ts). */
+  const goodsBySo = new Map<string, { goods: number; total: number }>();
   if (allSoDocs.size > 0) {
     const { data: lineRows } = await paginateAll<Row>((lo, hi) =>
       scopeToAllowedCompanies(sb.from('mfg_sales_order_items').select('doc_no, item_group, cancelled'), c).in('doc_no', [...allSoDocs]).range(lo, hi),
@@ -870,12 +920,13 @@ deliveryRateCards.get('/reconcile', async (c) => {
       linesBySo.set(doc, arr);
     }
     const { data: soRows } = await paginateAll<Row>((lo, hi) =>
-      scopeToAllowedCompanies(sb.from('mfg_sales_orders').select('doc_no, postcode, address1, address2, address3, address4, city, debtor_code, debtor_name'), c).in('doc_no', [...allSoDocs]).range(lo, hi),
+      scopeToAllowedCompanies(sb.from('mfg_sales_orders').select('doc_no, postcode, address1, address2, address3, address4, city, debtor_code, debtor_name, local_total_sen, mattress_sofa_sen, bedframe_sen, accessories_sen, others_sen'), c).in('doc_no', [...allSoDocs]).range(lo, hi),
     );
     for (const so of soRows ?? []) {
       const doc = String(so.doc_no ?? '');
       const z = zoneForAddress({ postcode: s(so.postcode), address1: s(so.address1), address2: s(so.address2) }, zoneMapRules);
       zoneBySo.set(doc, z.zone);
+      goodsBySo.set(doc, { goods: orderGoodsSen(so), total: Number(so.local_total_sen ?? 0) });
       /* The "customer" a per-customer card charges once for: the SAME buyer at
          the SAME doorstep. Keyed on debtor + normalised address rather than
          debtor alone, because one buyer with two delivery addresses is two
@@ -918,6 +969,11 @@ deliveryRateCards.get('/reconcile', async (c) => {
        for. Two drops to the same buyer at the same address collapse to one. */
     const customerCount = new Set(soDocs.map((d) => customerKeyBySo.get(d) ?? d)).size;
     const dropCount = soDocs.length;
+    /* The trip's goods value: each DO's share of its order's goods. */
+    const goodsValueSen = [...new Set(doIdsByTrip.get(tripId) ?? [])].reduce((sum, doId) => {
+      const order = goodsBySo.get(soDocByDoId.get(doId) ?? '');
+      return sum + (order ? doGoodsSen(order.goods, order.total, doTotalById.get(doId) ?? null) : 0);
+    }, 0);
     let expectedSen: number | null = null;
     let breakdown: ReturnType<typeof computeDeliveryCost> | null = null;
     if (card) {
@@ -932,7 +988,7 @@ deliveryRateCards.get('/reconcile', async (c) => {
       /* perTrip: the FIXED per-trip outstation fee is now emitted INSIDE the
          calculator, before the min/cap/rounding envelope. It used to be added
          here afterwards, which let a capped card bill above its own cap. */
-      breakdown = computeDeliveryCost(spec, { setCount, dropCount, customerCount, destinationZone, destinationZones: zones, addressText: soDocs.map((d) => addressBySo.get(d) ?? '').join(' | '), stops, ...jobs.counts }, { perTrip: true });
+      breakdown = computeDeliveryCost(spec, { setCount, dropCount, customerCount, goodsValueSen, destinationZone, destinationZones: zones, addressText: soDocs.map((d) => addressBySo.get(d) ?? '').join(' | '), stops, ...jobs.counts }, { perTrip: true });
       expectedSen = breakdown.totalSen;
     }
     const deltaSen = expectedSen == null ? null : billedSen - expectedSen;

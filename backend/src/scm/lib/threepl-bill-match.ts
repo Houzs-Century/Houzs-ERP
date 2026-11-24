@@ -167,14 +167,18 @@ export type DoCharge = {
 /** What the carrier charged each DO. A line naming one DO charges it all; a
  *  line covering several shares its one price in proportion to each DO's
  *  rate-card amount — evenly when any of them has none — the rounding put on
- *  the last, so the shares add up to the line to the sen. A DO on two lines
- *  carries both. */
-export function chargesPerDo(lines: readonly MatchedLine[], expectedOf: (doId: string) => number | null): DoCharge[] {
+ *  the last, so the shares add up to the line to the sen. A bill's price for
+ *  its orders together (a line that is not a delivery, shareOrderTotals) is
+ *  shared by each DO's goods value instead. A DO on two lines carries both. */
+export function chargesPerDo(
+  lines: readonly MatchedLine[], expectedOf: (doId: string) => number | null, goodsOf: (doId: string) => number | null,
+): DoCharge[] {
   const by = new Map<string, DoCharge>();
   for (const l of lines) {
     if (l.status !== 'matched' || !l.amountSen) continue;
     const n = l.dos.length;
-    const weights = l.dos.map((d) => expectedOf(d.id));
+    const weightOf = l.kind === 'delivery' ? expectedOf : goodsOf;
+    const weights = l.dos.map((d) => weightOf(d.id));
     const weighted = n > 1 && weights.every((w) => w != null && w > 0);
     const total = weighted ? weights.reduce<number>((s, w) => s + (w ?? 0), 0) : n;
     let given = 0;
@@ -221,6 +225,32 @@ export function preselect(line: Pick<MatchedLine, 'status' | 'kind' | 'amountSen
   }
   if (line.kind === 'storage' || line.kind === 'handling' || line.kind === 'dispose') return { ...UNASSIGNED, assign: 'none' };
   return UNASSIGNED;
+}
+
+/** A bill that prices its orders together (owner 2026-11-24 on Hao Hua's bills:
+ *  each order is listed with its goods value and no price, then one line
+ *  "Total = Rm 51390 x 13%" and one "Permit x 8"). When the bill's DO lines
+ *  carry no amount, each line with an amount that is not a delivery and is
+ *  assigned nowhere is the price of all those DOs, so it is assigned to them
+ *  (chargesPerDo shares it by goods value). A person can still move it. */
+export function shareOrderTotals(lines: ReadonlyArray<Pick<MatchedLine, 'kind' | 'amountSen'>>, assignments: readonly Assignment[]): Assignment[] {
+  const onDos = assignments.flatMap((a, i) => (a.assign === 'do' && a.doIds.length > 0 ? [i] : []));
+  if (onDos.length === 0 || onDos.some((i) => (lines[i]?.amountSen ?? 0) > 0)) return [...assignments];
+  const doIds = [...new Set(onDos.flatMap((i) => assignments[i]!.doIds))];
+  return assignments.map((a, i) => {
+    const l = lines[i];
+    return a.assign == null && l && l.kind !== 'delivery' && (l.amountSen ?? 0) > 0 ? { ...a, assign: 'do', doIds } : a;
+  });
+}
+
+/** The lines as their assignments place them: a line assigned to DOs is a
+ *  matched line on those DOs, for chargesPerDo. */
+export function assignedLines(lines: readonly MatchedLine[], assignments: readonly Assignment[], dos: ReadonlyMap<string, DoCandidate>): MatchedLine[] {
+  return lines.map((l, i) => {
+    const a = assignments[i];
+    if (!a || a.assign !== 'do') return { ...l, dos: [] };
+    return { ...l, status: 'matched' as const, dos: a.doIds.map((id) => dos.get(id)).filter((d): d is DoCandidate => !!d) };
+  });
 }
 
 /** A line still waiting for a person: nothing assigned, a DO line with no DO,

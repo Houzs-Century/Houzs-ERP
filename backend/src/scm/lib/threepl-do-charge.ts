@@ -28,7 +28,24 @@ export function orderAddressText(so: OrderRow): string {
   return [text(so.address1), text(so.address2), text(so.address3), text(so.address4), text(so.city), text(so.postcode)].filter(Boolean).join(' ');
 }
 
-export function doFacts(lines: readonly SetLine[], zone: string | null, address: string | null): DeliveryFacts {
+/** An order's goods value in sen: its goods by category on the order (mattress
+ *  and sofa, bedframe, accessories, others), its service lines left out. What
+ *  the Singapore carriers charge their shares of: 30 of 30 orders on their
+ *  bills since September 2026 are exactly this figure. */
+export function orderGoodsSen(so: OrderRow): number {
+  const part = (v: unknown) => Math.max(0, Math.round(Number(v ?? 0)) || 0);
+  return part(so.mattress_sofa_sen) + part(so.bedframe_sen) + part(so.accessories_sen) + part(so.others_sen);
+}
+
+/** A DO's goods value: its order's, in the DO's share of the order's total when
+ *  the order goes out in more than one DO (a follow-up DO of RM 0 carries none). */
+export function doGoodsSen(orderGoods: number, orderTotalSen: number, doTotalSen: number | null): number {
+  if (orderGoods <= 0) return 0;
+  if (doTotalSen == null || orderTotalSen <= 0) return orderGoods;
+  return Math.round(orderGoods * Math.min(1, Math.max(0, doTotalSen / orderTotalSen)));
+}
+
+export function doFacts(lines: readonly SetLine[], zone: string | null, address: string | null, goodsValueSen: number | null): DeliveryFacts {
   const live = lines.filter((l) => !l.cancelled);
   const itemCount = live
     .filter((l) => String(l.category).toUpperCase() !== 'SOFA')
@@ -38,6 +55,7 @@ export function doFacts(lines: readonly SetLine[], zone: string | null, address:
     itemCount,
     dropCount: 1,
     customerCount: 1,
+    goodsValueSen,
     destinationZone: zone,
     destinationZones: zone ? [zone] : [],
     addressText: address,

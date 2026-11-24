@@ -23,8 +23,8 @@ const card: PricingCard = {
 };
 const zoneOf = () => null;
 
-const twoSets = doFacts([{ category: 'BEDFRAME', qty: 2 }, { category: 'MATTRESS', qty: 2 }], 'KL', 'JALAN AMPANG KUALA LUMPUR');
-const oneSetJohor = doFacts([{ category: 'BEDFRAME', qty: 1 }, { category: 'MATTRESS', qty: 1 }], 'JOHOR', 'TAMAN MOLEK JOHOR BAHRU');
+const twoSets = doFacts([{ category: 'BEDFRAME', qty: 2 }, { category: 'MATTRESS', qty: 2 }], 'KL', 'JALAN AMPANG KUALA LUMPUR', 300_000);
+const oneSetJohor = doFacts([{ category: 'BEDFRAME', qty: 1 }, { category: 'MATTRESS', qty: 1 }], 'JOHOR', 'TAMAN MOLEK JOHOR BAHRU', 100_000);
 const ownDo = (p: Partial<OwnDo> & { doId: string }): OwnDo => ({
   doNumber: `DO-${p.doId}`, companyId: 1, runDate: '2026-11-10', lorryId: 'lorry-a', plate: 'TST1234', tripId: null,
   facts: twoSets, customerKey: `cust-${p.doId}`, ...p,

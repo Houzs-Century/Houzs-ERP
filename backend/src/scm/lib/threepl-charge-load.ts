@@ -9,7 +9,8 @@ import { scopeToCompanyId } from './companyScope';
 import { DEFAULT_ZONE_PREFIX_MAP, zoneForAddress, type ZonePrefixRule } from './zone-classify';
 import type { SetLine } from './set-count';
 import type { DeliveryFacts, RateCardSpec } from './delivery-rate-card';
-import { doFacts, orderAddressText, setLineOf } from './threepl-do-charge';
+import { doFacts, doGoodsSen, orderAddressText, orderGoodsSen, setLineOf } from './threepl-do-charge';
+import { chunkIn } from './paginate-all';
 import { areaOut, cardOut, ruleOut, toCardSpec } from '../routes/delivery-rate-cards';
 import { loadPlacesFor } from '../routes/delivery-places';
 import { MAP_COLS, toPrefixMap, type MapRow } from '../routes/delivery-zones';
@@ -61,7 +62,8 @@ export async function loadCarrierCards(sb: unknown, companyId: number): Promise<
 export type CompanyScopeFn = <Q>(query: Q) => Q;
 
 /** Each DO's facts for the rate card, read from its order: the order's lines
- *  (sets / items) and its address (zone). A DO with no order has none. */
+ *  (sets / items), its address (zone) and its goods value (the DO's share of
+ *  the order's goods). A DO with no order has none. */
 export async function loadDoFacts(
   scope: CompanyScopeFn, sb: unknown, dos: ReadonlyArray<{ id: string; soDocNo: string | null }>,
   zoneMap: readonly ZonePrefixRule[] = DEFAULT_ZONE_PREFIX_MAP,
@@ -70,12 +72,16 @@ export async function loadDoFacts(
   const linesBySo = new Map<string, SetLine[]>();
   const zoneBySo = new Map<string, string | null>();
   const addressBySo = new Map<string, string>();
+  const goodsBySo = new Map<string, { goods: number; total: number }>();
+  const doTotal = new Map<string, number | null>();
   if (soDocs.length) {
-    const [{ data: lineRows, error: e5 }, { data: soRows, error: e6 }] = await Promise.all([
+    const [{ data: lineRows, error: e5 }, { data: soRows, error: e6 }, doRows] = await Promise.all([
       scope(db(sb).from('mfg_sales_order_items').select('doc_no, item_group, qty, cancelled')).in('doc_no', soDocs),
-      scope(db(sb).from('mfg_sales_orders').select('doc_no, postcode, address1, address2, address3, address4, city')).in('doc_no', soDocs),
+      scope(db(sb).from('mfg_sales_orders').select('doc_no, postcode, address1, address2, address3, address4, city, local_total_sen, mattress_sofa_sen, bedframe_sen, accessories_sen, others_sen')).in('doc_no', soDocs),
+      chunkIn<Row>(dos.map((d) => d.id), (b, from, to) => scope(db(sb).from('delivery_orders').select('id, local_total_sen')).in('id', b).order('id').range(from, to)),
     ]);
-    if (e5 || e6) return { ok: false, reason: (e5 ?? e6)!.message };
+    if (e5 || e6 || doRows.error) return { ok: false, reason: (e5 ?? e6 ?? doRows.error)!.message };
+    for (const d of doRows.data) doTotal.set(String(d.id), d.local_total_sen == null ? null : Number(d.local_total_sen));
     for (const l of (lineRows ?? []) as Row[]) {
       const arr = linesBySo.get(String(l.doc_no)) ?? [];
       arr.push(setLineOf(l));
@@ -84,12 +90,15 @@ export async function loadDoFacts(
     for (const so of (soRows ?? []) as Row[]) {
       addressBySo.set(String(so.doc_no), orderAddressText(so));
       zoneBySo.set(String(so.doc_no), zoneForAddress({ postcode: str(so.postcode), address1: str(so.address1), address2: str(so.address2) }, zoneMap).zone);
+      goodsBySo.set(String(so.doc_no), { goods: orderGoodsSen(so), total: Number(so.local_total_sen ?? 0) });
     }
   }
   const facts = new Map<string, DeliveryFacts>();
   for (const d of dos) {
     if (!d.soDocNo) continue;
-    facts.set(d.id, doFacts(linesBySo.get(d.soDocNo) ?? [], zoneBySo.get(d.soDocNo) ?? null, addressBySo.get(d.soDocNo) ?? null));
+    const order = goodsBySo.get(d.soDocNo);
+    const goods = order ? doGoodsSen(order.goods, order.total, doTotal.get(d.id) ?? null) : null;
+    facts.set(d.id, doFacts(linesBySo.get(d.soDocNo) ?? [], zoneBySo.get(d.soDocNo) ?? null, addressBySo.get(d.soDocNo) ?? null, goods));
   }
   return { ok: true, facts };
 }
