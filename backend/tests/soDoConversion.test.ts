@@ -139,4 +139,18 @@ describe('buildSoDoConversion', () => {
     expect(shareOf(2, 3)).toBe(66.7);
     expect(shareOf(0, 0)).toBeNull();
   });
+
+  test('the shares add up to 100.0, the rounding left over going to the largest part', () => {
+    /* Three near-equal thirds round to 33.3 each, 99.9 in all; the largest part takes the 0.1 left over. */
+    const out = buildSoDoConversion({
+      month: '2026-11', from: '2026-11-01', to: '2026-11-30',
+      dos: [doRow('A', 'SO-NOW', '2026-11-15', 10_000), doRow('B', 'SO-OLD', '2026-11-15', 10_000), doRow('C', null, '2026-11-15', 10_001)],
+      orders: [
+        { doc_no: 'SO-NOW', so_date: '2026-11-02', debtor_name: null, linked_ac_docno: null },
+        { doc_no: 'SO-OLD', so_date: '2026-10-02', debtor_name: null, linked_ac_docno: null },
+      ],
+    });
+    expect([out.parts.this_month.pct, out.parts.earlier.pct, out.parts.other.pct]).toEqual([33.3, 33.3, 33.4]);
+    expect(out.total.pct).toBe(100);
+  });
 });

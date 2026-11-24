@@ -31,7 +31,7 @@ const FIRST_MONTH = '2026-06';
 
 const COLUMNS: Column<ConversionRow>[] = [
   {
-    key: 'do_number', label: 'DO', width: '160px', getValue: (r) => r.doNumber, searchValue: (r) => r.doNumber,
+    key: 'do_number', label: 'DO', width: '200px', getValue: (r) => r.doNumber, searchValue: (r) => r.doNumber,
     /* Its own tab of the strip, so the DO's Back returns to this report as it was. */
     render: (r) => <FinanceDocLink to={`/scm/delivery-orders/${encodeURIComponent(r.id)}`}>{r.doNumber}</FinanceDocLink>,
   },
@@ -88,9 +88,9 @@ export const SoDoConversionTab = () => {
       onClick: () => setView('all'), on: view === 'all',
     },
     ...partsShown(d).map((p): ReportTile => ({
-      key: p, label: PART_LABEL[p], value: fmtSenPlain(d.parts[p].amountSen),
-      sub: `${shareText(d.parts[p].pct)} of the total · ${dosText(d.parts[p].dos)}`,
-      tone: p === 'other' ? 'late' : 'plain',
+      key: p, label: PART_LABEL[p],
+      value: <>{fmtSenPlain(d.parts[p].amountSen)}<span className={s.share} title="Share of the month's DO total">{shareText(d.parts[p].pct)}</span></>,
+      sub: dosText(d.parts[p].dos),
       onClick: () => setView(view === p ? 'all' : p), on: view === p,
     })),
   ] : [];

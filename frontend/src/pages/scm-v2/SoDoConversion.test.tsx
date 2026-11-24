@@ -78,9 +78,11 @@ describe('SO to DO conversion', () => {
     await screen.findByText('DO-u1');
     expect(lastPath()).toBe('/accounting/so-do-conversion?month=2026-10');
     expect(tile(/^Total amount/).textContent).toBe('Total amount10,000.004 DOs in Oct 2026');
-    expect(tile(/^This month's orders/).textContent).toBe("This month's orders2,500.0025.0% of the total · 1 DO");
-    expect(tile(/^Earlier orders/).textContent).toBe('Earlier orders7,000.0070.0% of the total · 2 DOs');
-    expect(tile(/^Other DOs/).textContent).toBe('Other DOs500.005.0% of the total · 1 DO');
+    expect(tile(/^This month's orders/).textContent).toBe("This month's orders2,500.0025.0%1 DO");
+    expect(tile(/^Earlier orders/).textContent).toBe('Earlier orders7,000.0070.0%2 DOs');
+    expect(tile(/^Other DOs/).textContent).toBe('Other DOs500.005.0%1 DO');
+    /* The share says what it is a share of. */
+    expect(tile(/^Earlier orders/).querySelector('[title="Share of the month\'s DO total"]')?.textContent).toBe('70.0%');
   });
 
   test('a tile narrows the list to its part, and a second press shows every DO again', async () => {
@@ -123,7 +125,7 @@ describe('SO to DO conversion', () => {
     fireEvent.change(screen.getByRole('combobox', { name: 'Month' }), { target: { value: '2026-09' } });
     await screen.findByText('DO-s1');
     expect(lastPath()).toBe('/accounting/so-do-conversion?month=2026-09');
-    expect(tile(/^This month's orders/).textContent).toContain('100.0% of the total');
+    expect(tile(/^This month's orders/).textContent).toContain('100.0%');
     expect(screen.queryByRole('button', { name: /^Other DOs/ })).toBeNull();
   });
 

@@ -83,6 +83,22 @@ const day = (v: string | null | undefined): string | null => (v ? String(v).slic
 export const shareOf = (part: number, whole: number): number | null =>
   (whole === 0 ? null : Math.round((part / whole) * 1000) / 10);
 
+const PARTS: readonly ConversionPart[] = ['this_month', 'earlier', 'other'];
+
+/** Each part's share, one decimal, adding up to 100.0: what rounding leaves
+ *  over goes to the largest part, as a statement's rounding line would, so a
+ *  reader adding the shares never lands on 99.9. */
+function sharesOf(amounts: Record<ConversionPart, number>, whole: number): Record<ConversionPart, number | null> {
+  if (whole === 0) return { this_month: null, earlier: null, other: null };
+  const tenths = Object.fromEntries(PARTS.map((p) => [p, Math.round((amounts[p] / whole) * 1000)])) as Record<ConversionPart, number>;
+  const left = 1000 - PARTS.reduce((s, p) => s + tenths[p], 0);
+  if (left !== 0) {
+    const largest = PARTS.reduce((a, b) => (amounts[b] > amounts[a] ? b : a));
+    tenths[largest] += left;
+  }
+  return { this_month: tenths.this_month / 10, earlier: tenths.earlier / 10, other: tenths.other / 10 };
+}
+
 function partOf(soDate: string | null, from: string, to: string): { part: ConversionPart; otherReason: OtherReason | null } {
   if (soDate === null) return { part: 'other', otherReason: 'order_not_found' };
   if (soDate < from) return { part: 'earlier', otherReason: null };
@@ -126,16 +142,18 @@ export function buildSoDoConversion(input: {
 
   const add = (rs: readonly ConversionRow[]) => ({ dos: rs.length, amountSen: rs.reduce((s, r) => s + r.amountSen, 0) });
   const all = add(rows);
-  const part = (p: ConversionPart): ConversionTotal => {
-    const t = add(rows.filter((r) => r.part === p));
-    return { ...t, pct: shareOf(t.amountSen, all.amountSen) };
-  };
+  const sums = Object.fromEntries(PARTS.map((p) => [p, add(rows.filter((r) => r.part === p))])) as Record<ConversionPart, { dos: number; amountSen: number }>;
+  const pct = sharesOf({ this_month: sums.this_month.amountSen, earlier: sums.earlier.amountSen, other: sums.other.amountSen }, all.amountSen);
   return {
     month: input.month,
     from: input.from,
     to: input.to,
     total: { ...all, pct: all.amountSen === 0 ? null : 100 },
-    parts: { this_month: part('this_month'), earlier: part('earlier'), other: part('other') },
+    parts: {
+      this_month: { ...sums.this_month, pct: pct.this_month },
+      earlier: { ...sums.earlier, pct: pct.earlier },
+      other: { ...sums.other, pct: pct.other },
+    },
     rows,
   };
 }
