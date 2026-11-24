@@ -124,8 +124,8 @@ export type CashLeg = {
   fromYm: string;
   /** The document behind it: an order's or a bill's number; none for the Forecast P&L or a keyed amount. */
   ref: string | null;
-  /** The Forecast P&L, an amount keyed in the Capex & financing table, an open order, a supplier's bill. */
-  source: 'pnl' | 'input' | 'order' | 'bill';
+  /** The Forecast P&L, an amount keyed in the Capex & financing table, an open order, a supplier's bill, the trade-finance plan. */
+  source: 'pnl' | 'input' | 'order' | 'bill' | 'tf';
   flow: 'in' | 'out';
   /** The account it lands on, and the row's own key (the code, or the debtor control's kind row). */
   code: string;

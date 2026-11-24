@@ -46,6 +46,8 @@ import { linesVisible, pctOf, type LaidNode } from '../../vendor/scm/lib/report-
 import { useReportTree, type Level } from './ReportLayoutTree';
 import { ReportLayoutEditor } from './ReportLayoutEditor';
 import { balanceSheetLines, monthlyDepth, pnlLines } from '../../vendor/scm/lib/report-monthly';
+import { useBalanceSheetForecast } from '../../vendor/scm/lib/bs-forecast-queries';
+import { bsForecastColumns, bsForecastNote, fbKey } from './reports/bsForecast';
 import type { ReportSheet } from '../../vendor/scm/lib/report-sheet';
 import { FinanceDateRange } from './reports/FinanceDateRange';
 import { useReportRange } from './reports/useReportRange';
@@ -279,6 +281,8 @@ export const BalanceSheetTab = () => {
   const [level, setLevel] = useState<Level>('all');
   const [showPct, setShowPct] = useState(true);
   const [editing, setEditing] = useState(false);
+  /* The Forecast Balance Sheet beside the month-ends (step 6) — By month only. */
+  const [forecast, setForecast] = useState(false);
   const { can } = useAuth();
   const canArrange = can('scm.payment_voucher.post');
   const tree = useReportTree(level);
@@ -287,7 +291,14 @@ export const BalanceSheetTab = () => {
 
   const columns = useMemo(() => (usable ? balanceColumns(view, asAt, r.today, months) : []), [usable, view, asAt, r.today, months]);
   const reads = useColumnReads<BsResponse>(columns, (c) => ['report-bs', c.to], (c) => fetchBalanceSheet(c.to));
-  const lines = useMemo(() => statementLines(columns, Object.fromEntries(Object.entries(reads.byKey).map(([k, d]) => [k, balanceSheetLines(d!)]))), [columns, reads.byKey]);
+  const forecastOn = forecast && view === 'month';
+  const fq = useBalanceSheetForecast<BsResponse>(forecastOn);
+  const shownCols = useMemo(() => (forecastOn && fq.data ? bsForecastColumns(columns, fq.data) : columns), [forecastOn, fq.data, columns]);
+  const byKey = useMemo(() => ({
+    ...reads.byKey,
+    ...(forecastOn && fq.data ? Object.fromEntries(fq.data.months.map((m) => [fbKey(m.month), m.report])) : {}),
+  }), [reads.byKey, forecastOn, fq.data]);
+  const lines = useMemo(() => statementLines(shownCols, Object.fromEntries(Object.entries(byKey).flatMap(([k, d]) => (d ? [[k, balanceSheetLines(d)]] : [])))), [shownCols, byKey]);
   const depth = monthlyDepth(lines);
   const shown = linesVisible(lines, level, tree.open);
   const head = reads.byKey[columns[0]?.key ?? ''];
@@ -302,9 +313,9 @@ export const BalanceSheetTab = () => {
     title: 'Balance Sheet',
     subtitle: `${periodText} · ${showPct ? '% of total assets beside' : 'amounts'}${layoutWord(stored)}${levelText}`,
     meta: [{ label: 'As at', value: fmtDate(asAt) }],
-    tables: [sheetTable(view, columns, shown, showPct, '% of total assets')],
+    tables: [sheetTable(view, shownCols, shown, showPct, '% of total assets')],
   } : null);
-  const fileBase = view === 'month' ? `balance-sheet-monthly-${span.from.slice(0, 7)}-${span.to.slice(0, 7)}` : `balance-sheet-${asAt}`;
+  const fileBase = view === 'month' ? `balance-sheet-monthly${forecastOn ? '-forecast' : ''}-${span.from.slice(0, 7)}-${span.to.slice(0, 7)}` : `balance-sheet-${asAt}`;
 
   return (
     <>
@@ -321,6 +332,7 @@ export const BalanceSheetTab = () => {
         )}
         <LevelTool depth={depth} level={level} onLevel={setLevel} />
         <ReportSwitch on={showPct} onChange={setShowPct}>% beside</ReportSwitch>
+        {view === 'month' && <ReportSwitch on={forecastOn} onChange={setForecast}>Forecast</ReportSwitch>}
       </ReportToolbar>
       {editing && <ReportLayoutEditor report="balance_sheet" onClose={() => setEditing(false)} />}
       {usable && <ReportTiles label="Balance sheet figures" tiles={balanceTiles(head)} pending={!head && reads.loading} />}
@@ -330,12 +342,13 @@ export const BalanceSheetTab = () => {
           {view === 'single' ? 'The statement did not load — pick the date again to retry.' : `${reads.failed} column(s) did not load — pick the date again to retry.`}
         </ReportMessage>
       )}
-      {usable && reads.loading && <StatementSkeleton label="Adding the ledger up" />}
-      {usable && !reads.loading && lines.length > 0 && (
+      {usable && forecastOn && fq.isError && <ReportMessage tone="error">The forecast did not load — switch it off and on to retry.</ReportMessage>}
+      {usable && (reads.loading || (forecastOn && fq.isLoading)) && <StatementSkeleton label="Adding the ledger up" />}
+      {usable && !reads.loading && !(forecastOn && fq.isLoading) && lines.length > 0 && (
         <StatementTable
-          widthsKey={view === 'month' ? 'month' : 'single'}
+          widthsKey={view === 'month' ? (forecastOn ? 'month-forecast' : 'month') : 'single'}
           head="Account"
-          columns={columns}
+          columns={shownCols}
           lines={lines}
           shown={shown}
           level={level}
@@ -344,8 +357,8 @@ export const BalanceSheetTab = () => {
           finalId="net:check"
           strongIds={STRONG_BS}
           onCategoryFigure={openLedger}
-          note="Every line’s % is of total assets, on both sides. Click an account’s name or a figure for its lines in that month."
-          drillKey={`${view}|${asAt}|${months}`}
+          note={`Every line’s % is of total assets, on both sides. Click an account’s name or a figure for its lines in that month.${forecastOn && fq.data ? ` ${bsForecastNote(fq.data)}` : ''}`}
+          drillKey={`${view}|${asAt}|${months}|${forecastOn}`}
           ariaLabel="Balance sheet"
         />
       )}

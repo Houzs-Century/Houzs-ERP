@@ -70,6 +70,10 @@ export type EmployeeInput = {
   nationality: string;
   icNumber: string;
   passportNumber: string;
+  /** Work permit expiry (YMD) for a foreign worker, "" if none. Feeds the Overview "permits expiring" reminder. */
+  workPermitExpiry: string;
+  /** The day this person is due to be confirmed off probation (YMD), "" if none. Feeds the Overview "confirmation due" reminder. */
+  confirmDueOn: string;
   isOutsource: boolean;
   payMode: PayMode;
   basicSalarySen: number;
@@ -106,6 +110,8 @@ export function emptyEmployeeInput(todayYmd: string): EmployeeInput {
     nationality: "",
     icNumber: "",
     passportNumber: "",
+    workPermitExpiry: "",
+    confirmDueOn: "",
     isOutsource: false,
     payMode: "MONTHLY",
     basicSalarySen: 180000,
@@ -171,6 +177,8 @@ export function parseEmployeeInput(raw: unknown, todayYmd: string): EmployeeInpu
     nationality: s(r.nationality),
     icNumber: s(r.icNumber),
     passportNumber: s(r.passportNumber),
+    workPermitExpiry: s(r.workPermitExpiry),
+    confirmDueOn: s(r.confirmDueOn),
     isOutsource: r.isOutsource === true,
     payMode: oneOf<PayMode>(r.payMode, ["MONTHLY", "DAILY"], "MONTHLY"),
     basicSalarySen: n(r.basicSalarySen, d.basicSalarySen),
@@ -207,6 +215,8 @@ export function employeeInputProblem(e: EmployeeInput): string | null {
   if (!/^[A-Z0-9][A-Z0-9-]{0,19}$/.test(e.empNo)) return "Employee No: letters, digits and dashes only (max 20).";
   if (!e.name) return "Name is required.";
   if (e.joinDate && !YMD.test(e.joinDate)) return "Join date must be a date.";
+  if (e.workPermitExpiry && !YMD.test(e.workPermitExpiry)) return "Work permit expiry must be a date.";
+  if (e.confirmDueOn && !YMD.test(e.confirmDueOn)) return "Confirmation due date must be a date.";
   if (e.status === "RESIGNED" && !YMD.test(e.resignedOn)) return "Pick the date they resigned.";
   if (e.status !== "RESIGNED" && e.resignedOn) return "Only a resigned employee has a resigned date.";
   if (e.status === "RESIGNED" && e.joinDate && e.resignedOn < e.joinDate) return "Resigned date is before the join date.";

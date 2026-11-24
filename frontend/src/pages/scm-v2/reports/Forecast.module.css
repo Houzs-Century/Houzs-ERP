@@ -101,3 +101,8 @@
 .supPick:disabled { color: var(--fin-muted); cursor: default; }
 
 .note { padding: 10px 16px; border-top: 1px solid var(--fin-rule-soft); font-size: 12px; line-height: 1.5; color: var(--fin-muted); }
+
+/* The Trade finance table: a due from a bill the books owe (blue), from the Forecast P&L (beige); unticked, faded. */
+.dueBill { background: var(--fin-info-bg); }
+.dueForecast { background: var(--fin-warn-bg); }
+.dueOff { opacity: 0.45; }

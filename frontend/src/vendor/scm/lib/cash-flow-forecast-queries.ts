@@ -35,6 +35,12 @@ export type CashFlowForecast = {
     /** Suppliers a bill of which was timed a month later for want of a payment term. */
     flagged: string[];
   } | null;
+  /** The trade-finance plan in both forecasts (step 5); null without a facility or before the current month. */
+  tf: {
+    facilities: Array<{ code: string; lender: string; tenorDays: number; rateBp: number; owedNowSen: number; suppliers: string[] }>;
+    /** The Forecast P&L's interest lines left out: the interest comes with each repayment. */
+    interestLeftOut: Array<{ code: string; name: string }>;
+  } | null;
 };
 
 export const cashFlowForecastPath = (from: string, to: string): string =>
@@ -81,6 +87,60 @@ export const useSaveForecastInputs = () => {
       authedFetch<{ ok: boolean; months: KeyedInputs }>('/accounting/reports/cash-flow-forecast/inputs', { method: 'PUT', body: JSON.stringify({ months }) }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [INPUTS_KEY] });
+      void qc.invalidateQueries({ queryKey: ['report-rp-forecast'] });
+    },
+  });
+};
+
+/* ── The Trade finance table (step 5) ─────────────────────────────────────── */
+
+/** What a chosen supplier is due in a month: from bills the books owe, and from the Forecast P&L. */
+export type TfDue = { billSen: number; forecastSen: number };
+/** Month → supplier ids unticked by hand. */
+export type TfOff = Record<string, string[]>;
+export type TfMonth = { ym: string; drawSen: number; repaySen: number; interestSen: number; owedSen: number };
+export type TfFacility = {
+  code: string; name: string; lender: string;
+  /** Finance's own tenor and rate per draw; null = the default. */
+  tenorSet: number | null; rateSet: number | null;
+  tenorDays: number; rateBp: number; defaultRateBp: number;
+  interest: { code: string; name: string } | null;
+  owedNowSen: number;
+  /** The draws still owed, oldest first. */
+  open: Array<{ date: string; sen: number }>;
+  suppliers: string[];
+  off: TfOff;
+  /** Supplier id → month → what is due. */
+  dues: Record<string, Record<string, TfDue>>;
+  schedule: TfMonth[];
+};
+export type TradeFinance = {
+  currentMonth: string;
+  /** The months the table shows: the current one and the eleven after it. */
+  shown: string[];
+  facilities: TfFacility[];
+  suppliers: Array<{ id: string; code: string; name: string; term: string | null }>;
+};
+/** Account code → the plan to keep. */
+export type TfPlans = Record<string, { tenorDays: number | null; rateBp: number | null; suppliers: string[]; off: TfOff }>;
+
+const TF_KEY = 'cash-flow-forecast-tf';
+export const useTradeFinance = (enabled: boolean) => useQuery({
+  queryKey: [TF_KEY],
+  queryFn: () => authedFetch<TradeFinance>('/accounting/reports/cash-flow-forecast/tf'),
+  enabled,
+  staleTime: 0,
+  retry: retryUnlessClientError,
+});
+
+/** PUT each facility's plan; the table and the forecast are read again. */
+export const useSaveTradeFinance = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (facilities: TfPlans) =>
+      authedFetch<{ ok: boolean }>('/accounting/reports/cash-flow-forecast/tf', { method: 'PUT', body: JSON.stringify({ facilities }) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: [TF_KEY] });
       void qc.invalidateQueries({ queryKey: ['report-rp-forecast'] });
     },
   });
