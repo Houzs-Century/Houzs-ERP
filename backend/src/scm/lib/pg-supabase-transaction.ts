@@ -87,13 +87,21 @@ const JSON_COLUMNS = new Set([
   'addons', 'allowed_options', 'auto_actions', 'cart', 'config',
   'custom_specials', 'default_free_gifts', 'default_variants', 'eligible',
   'eligible_reward_model_ids', 'field_changes', 'gifts', 'heights_sub_assemblies',
-  'included_addons', 'lines', 'meta', 'modules', 'new_variants', 'old_snapshot',
+  'before_lines', 'included_addons', 'lines', 'meta', 'modules', 'new_variants', 'old_snapshot',
   'option_groups', 'payload', 'pieces', 'price_matrix', 'prices_by_height',
   'pwp_prices_by_height', 'reward_combo_ids', 'seat_height_prices', 'selling_prices_by_height',
   'snapshot', 'sub_assemblies', 'trigger_combo_ids', 'variants',
 ]);
 
 const NATIVE_TEXT_ARRAY_COLUMNS = new Set(['photo_urls']);
+/* text[] columns whose names are too common to treat as arrays on every table
+   (approved_by is a scalar elsewhere). HC-0256: missing, every rule-2 amendment
+   approve threw "Unsupported structured value" and rolled back. */
+const TABLE_TEXT_ARRAY_COLUMNS = new Map<string, ReadonlySet<string>>([
+  ['so_product_changes', new Set(['changed_by', 'approved_by', 'amendment_nos', 'change_types'])],
+]);
+const isTextArrayColumn = (table: string, column: string): boolean =>
+  NATIVE_TEXT_ARRAY_COLUMNS.has(column) || TABLE_TEXT_ARRAY_COLUMNS.get(table)?.has(column) === true;
 const TEXT_ARRAY_OID = 1009;
 
 const encodePgTextArray = (values: unknown[]): string => `{${values.map((value) => {
@@ -126,16 +134,16 @@ const parsePgTextArray = (value: unknown): unknown => {
   return out;
 };
 
-const normalizeReturnedRows = (rows: unknown[]): unknown[] => rows.map((row) => {
+const normalizeReturnedRows = (rows: unknown[], table: string): unknown[] => rows.map((row) => {
   if (row == null || typeof row !== 'object' || Array.isArray(row)) return row;
   const normalized = { ...(row as Record<string, unknown>) };
-  for (const column of NATIVE_TEXT_ARRAY_COLUMNS) {
-    if (column in normalized) normalized[column] = parsePgTextArray(normalized[column]);
+  for (const column of Object.keys(normalized)) {
+    if (isTextArrayColumn(table, column)) normalized[column] = parsePgTextArray(normalized[column]);
   }
   return normalized;
 });
 
-const commandParameter = (sql: Sql, column: string, value: unknown): unknown => {
+const commandParameter = (sql: Sql, table: string, column: string, value: unknown): unknown => {
   if (value === undefined || value === null || value instanceof Date) return value;
   if (JSON_COLUMNS.has(column)) {
     // Explicit OID 3802 is essential with postgres.js unsafe(): PostgreSQL's
@@ -143,7 +151,7 @@ const commandParameter = (sql: Sql, column: string, value: unknown): unknown => 
     // stringified value a second time.
     return sql.json(value as never);
   }
-  if (NATIVE_TEXT_ARRAY_COLUMNS.has(column)) {
+  if (isTextArrayColumn(table, column)) {
     if (!Array.isArray(value)) throw new Error(`${column} must be a text array`);
     // fetch_types:false deliberately does not discover array serializers. Send
     // a correctly escaped text[] literal with the explicit built-in text[] OID.
@@ -289,7 +297,7 @@ class PgPostgrestQuery implements PromiseLike<QueryResult<any>> {
     } else if (this.operation === 'update') {
       const patch = this.payload as Record<string, unknown>;
       const entries = Object.entries(patch).filter(([, value]) => value !== undefined);
-      values = entries.map(([column, value]) => commandParameter(this.sql, column, value));
+      values = entries.map(([column, value]) => commandParameter(this.sql, this.table, column, value));
       const where = this.compilePredicates(values.length + 1);
       values.push(...where.values);
       text = `UPDATE ${table} SET ${entries.map(([key], index) => `${ident(key)} = $${index + 1}`).join(', ')}${where.text}${this.returning()}`;
@@ -303,7 +311,7 @@ class PgPostgrestQuery implements PromiseLike<QueryResult<any>> {
       let index = 1;
       const tuples = rows.map((row) => `(${columns.map((column) => {
         if (row[column] === undefined) return 'DEFAULT';
-        values.push(commandParameter(this.sql, column, row[column]));
+        values.push(commandParameter(this.sql, this.table, column, row[column]));
         return `$${index++}`;
       }).join(', ')})`);
       text = `INSERT INTO ${table} (${columns.map(ident).join(', ')}) VALUES ${tuples.join(', ')}`;
@@ -332,7 +340,7 @@ class PgPostgrestQuery implements PromiseLike<QueryResult<any>> {
         try {
           await settleScmStatements(this.sql);
           await opened;
-          const rows = normalizeReturnedRows(await run as unknown[]);
+          const rows = normalizeReturnedRows(await run as unknown[], this.table);
           pendingReleases.set(this.sql as unknown as object, send(this.sql.unsafe(`RELEASE SAVEPOINT ${savepoint}`)));
           return { rows, error: null as { message: string; code?: string } | null };
         } catch (error) {
