@@ -3,18 +3,18 @@
 // 2026-11-24). The month's orders by the Processing Date written on them:
 // this month's orders and the backlog orders, each with its amount and share
 // of the month's processed total; the backlog at the 1st; the two backlog
-// cover rates (on the backlog amount, on the month's processed amount) with
-// their average from a month the reader may pick, by default the company's
-// first month with a backlog; each month's figures; and the orders, which a
-// tile narrows to its part. The rules: so-backlog-cover-view.ts and, on the
+// cover rates (on the backlog, on the month's processed total), each by amount
+// and by number of orders, with their averages from a month the reader may
+// pick, by default the company's first month with a backlog; each month's
+// figures; and the orders, which a tile narrows to its part. The rules: so-backlog-cover-view.ts and, on the
 // server, acc/so-backlog-cover.ts.
 // ----------------------------------------------------------------------------
 
 import { useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { DataTable, type Column } from '../../components/DataTable';
-import { useSoBacklogCover, type CoverPart, type CoverRow, type SoBacklogCoverData } from '../../vendor/scm/lib/so-backlog-cover-queries';
-import { fmtDate, fmtSenPlain } from '../../vendor/shared/format';
+import { useSoBacklogCover, type Count, type CoverPart, type CoverRow, type SoBacklogCoverData } from '../../vendor/scm/lib/so-backlog-cover-queries';
+import { fmtDate, fmtQty, fmtSenPlain } from '../../vendor/shared/format';
 import { FinanceDocLink } from './finance/FinanceDocLink';
 import { MonthSelect } from './ProductChanges';
 import { monthBounds, periodText, pickableMonths } from './product-changes-view';
@@ -72,11 +72,16 @@ const COLUMNS: Column<CoverRow>[] = [
 ];
 
 /** A rate tile's line under the figure: what it is of, then the average. */
-const RateSub = ({ part, whole, avg, period }: { part: number; whole: number; avg: number | null; period: string }) => (
+const RateSub = ({ of, avg, period }: { of: string; avg: number | null; period: string }) => (
   <span className={s.stack}>
-    <span>{`${fmtSenPlain(part)} of ${fmtSenPlain(whole)}`}</span>
+    <span>{of}</span>
     <span>{`Average ${shareText(avg)} · ${period}`}</span>
   </span>
+);
+
+/** A month's amount with its order count under it. */
+const Both = ({ c }: { c: Count }) => (
+  <span className={s.stack}><span>{fmtSenPlain(c.amountSen)}</span><span className={s.muted}>{ordersText(c.orders)}</span></span>
 );
 
 function MonthsTable({ d }: { d: SoBacklogCoverData }) {
@@ -86,24 +91,28 @@ function MonthsTable({ d }: { d: SoBacklogCoverData }) {
         <thead>
           <tr>
             <th>Month</th><th>Backlog at the 1st</th><th>Backlog processed</th><th>Processed in month</th>
-            <th>On backlog amount</th><th>On month amount</th>
+            <th>On backlog · amount</th><th>On backlog · orders</th><th>On month · amount</th><th>On month · orders</th>
           </tr>
         </thead>
         <tbody>
           {d.months.map((m) => (
             <tr key={m.month} className={m.month === d.month ? s.current : undefined}>
               <td>{monthName(`${m.month}-01`)}</td>
-              <td className={s.num}>{fmtSenPlain(m.backlog.amountSen)}</td>
-              <td className={s.num}>{fmtSenPlain(m.backlogProcessed.amountSen)}</td>
-              <td className={s.num}>{fmtSenPlain(m.processed.amountSen)}</td>
-              <td className={s.num}>{shareText(m.onBacklog)}</td>
-              <td className={s.num}>{shareText(m.onMonth)}</td>
+              <td className={s.num}><Both c={m.backlog} /></td>
+              <td className={s.num}><Both c={m.backlogProcessed} /></td>
+              <td className={s.num}><Both c={m.processed} /></td>
+              <td className={s.num}>{shareText(m.amount.onBacklog)}</td>
+              <td className={s.num}>{shareText(m.orders.onBacklog)}</td>
+              <td className={s.num}>{shareText(m.amount.onMonth)}</td>
+              <td className={s.num}>{shareText(m.orders.onMonth)}</td>
             </tr>
           ))}
           <tr className={s.average}>
             <td>Average</td><td /><td /><td />
-            <td className={s.num}>{shareText(d.average.onBacklog)}</td>
-            <td className={s.num}>{shareText(d.average.onMonth)}</td>
+            <td className={s.num}>{shareText(d.average.amount.onBacklog)}</td>
+            <td className={s.num}>{shareText(d.average.orders.onBacklog)}</td>
+            <td className={s.num}>{shareText(d.average.amount.onMonth)}</td>
+            <td className={s.num}>{shareText(d.average.orders.onMonth)}</td>
           </tr>
         </tbody>
       </table>
@@ -149,15 +158,27 @@ export const SoBacklogCoverTab = () => {
     partTile('this_month'),
     partTile('backlog'),
   ] : [];
-  const coverTiles: ReportTile[] = d ? [
+  /* The owner wants both rates and their averages by amount and by quantity: a row each. */
+  const byAmount: ReportTile[] = d ? [
     { key: 'backlog-start', label: `Backlog at ${firstOfText(d.month)}`, value: fmtSenPlain(d.backlog.amountSen), sub: ordersText(d.backlog.orders) },
     {
-      key: 'on-backlog', label: 'Cover rate · on backlog amount', value: shareText(d.cover.onBacklog),
-      sub: <RateSub part={d.parts.backlog.amountSen} whole={d.backlog.amountSen} avg={d.average.onBacklog} period={averagePeriod(d)} />,
+      key: 'on-backlog', label: 'Cover rate · on backlog amount', value: shareText(d.cover.amount.onBacklog),
+      sub: <RateSub of={`${fmtSenPlain(d.parts.backlog.amountSen)} of ${fmtSenPlain(d.backlog.amountSen)}`} avg={d.average.amount.onBacklog} period={averagePeriod(d)} />,
     },
     {
-      key: 'on-month', label: 'Cover rate · on month amount', value: shareText(d.cover.onMonth),
-      sub: <RateSub part={d.parts.backlog.amountSen} whole={d.total.amountSen} avg={d.average.onMonth} period={averagePeriod(d)} />,
+      key: 'on-month', label: 'Cover rate · on month amount', value: shareText(d.cover.amount.onMonth),
+      sub: <RateSub of={`${fmtSenPlain(d.parts.backlog.amountSen)} of ${fmtSenPlain(d.total.amountSen)}`} avg={d.average.amount.onMonth} period={averagePeriod(d)} />,
+    },
+  ] : [];
+  const byOrders: ReportTile[] = d ? [
+    { key: 'backlog-start-orders', label: `Backlog orders at ${firstOfText(d.month)}`, value: fmtQty(d.backlog.orders), sub: 'Not processed by the 1st' },
+    {
+      key: 'on-backlog-orders', label: 'Cover rate · on backlog orders', value: shareText(d.cover.orders.onBacklog),
+      sub: <RateSub of={`${fmtQty(d.parts.backlog.orders)} of ${ordersText(d.backlog.orders)}`} avg={d.average.orders.onBacklog} period={averagePeriod(d)} />,
+    },
+    {
+      key: 'on-month-orders', label: 'Cover rate · on month orders', value: shareText(d.cover.orders.onMonth),
+      sub: <RateSub of={`${fmtQty(d.parts.backlog.orders)} of ${ordersText(d.total.orders)}`} avg={d.average.orders.onMonth} period={averagePeriod(d)} />,
     },
   ] : [];
 
@@ -178,7 +199,8 @@ export const SoBacklogCoverTab = () => {
       {d && (
         <>
           <ReportTiles tiles={tiles} label="Processed" />
-          <ReportTiles tiles={coverTiles} label="Backlog cover" />
+          <ReportTiles tiles={byAmount} label="Backlog cover by amount" />
+          <ReportTiles tiles={byOrders} label="Backlog cover by orders" />
           <MonthsTable d={d} />
           {d.rows.length === 0 ? (
             <ReportMessage>{`No order has a Processing Date in ${period}.`}</ReportMessage>

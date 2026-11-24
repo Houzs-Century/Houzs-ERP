@@ -5,10 +5,10 @@
 // Print are made from. The figures are the server's (acc/so-backlog-cover.ts).
 // ----------------------------------------------------------------------------
 
-import type { CoverPart, CoverRow, SoBacklogCoverData } from '../../vendor/scm/lib/so-backlog-cover-queries';
-import { AMOUNT_COLUMN, PCT_COLUMN, type ReportSheet, type SheetRow } from '../../vendor/scm/lib/report-sheet';
+import type { Count, CoverPart, CoverRates, CoverRow, SoBacklogCoverData } from '../../vendor/scm/lib/so-backlog-cover-queries';
+import { AMOUNT_COLUMN, PCT_COLUMN, type ReportSheet, type SheetRow, type SheetTable } from '../../vendor/scm/lib/report-sheet';
 import { fmtPct } from '../../vendor/scm/lib/report-layout';
-import { fmtSenPlain } from '../../vendor/shared/format';
+import { fmtQty, fmtSenPlain } from '../../vendor/shared/format';
 import { monthName } from './reports/statementColumns';
 
 export const PART_LABEL: Readonly<Record<CoverPart, string>> = {
@@ -27,7 +27,7 @@ export const rowsOfPart = (rows: readonly CoverRow[], view: PartView): CoverRow[
 /** Where an order sits: this month's, or the backlog with the month it was raised in. */
 export const partText = (r: CoverRow): string => (r.part === 'this_month' ? 'This month' : `Backlog · ${monthName(r.soDate)}`);
 
-export const ordersText = (n: number): string => `${n} ${n === 1 ? 'order' : 'orders'}`;
+export const ordersText = (n: number): string => `${fmtQty(n)} ${n === 1 ? 'order' : 'orders'}`;
 
 export const shareText = (pct: number | null): string => (pct === null ? '—' : fmtPct(pct));
 
@@ -49,11 +49,32 @@ export const COVER_NOTES: readonly string[] = [
   'An order counts in the month of its Processing Date: the date written on the order, not the day it was entered. Draft and Cancelled orders are left out.',
   'An order with no Processing Date that has gone out on a delivery order counts on its first DO date (marked First DO).',
   'Backlog: orders raised before the month that had not been processed by its 1st, orders brought over from AutoCount included.',
-  'Cover rate on backlog amount: backlog processed in the month ÷ the backlog at its 1st. On month amount: backlog processed ÷ everything processed in the month.',
+  'Cover rate on backlog: backlog processed in the month ÷ the backlog at its 1st. On month: backlog processed ÷ everything processed in the month. Each is shown by amount and by number of orders.',
   "Average: each month's rate added up and divided by the months, from the Average from month to this one. By default it starts at the company's first month in the ERP with a backlog; a month with no backlog is left out.",
 ];
 
 const TEXT = (label: string) => ({ label, kind: 'text' as const, align: 'left' as const });
+const COUNT = (label: string) => ({ label, kind: 'text' as const, align: 'right' as const });
+
+/** A by-month table of the sheet: each month's backlog, processed and the two rates, the average under them. */
+function monthsTable(d: SoBacklogCoverData, by: 'amount' | 'orders'): SheetTable {
+  const cell = (c: Count) => (by === 'amount' ? c.amountSen : fmtQty(c.orders));
+  const rates = (r: CoverRates) => [r.onBacklog, r.onMonth];
+  const rows: SheetRow[] = d.months.map((m) => ({
+    kind: 'row', depth: 0, label: monthName(`${m.month}-01`),
+    cells: [cell(m.backlog), cell(m.backlogProcessed), cell(m.processed), ...rates(m[by])],
+  }));
+  rows.push({ kind: 'total', depth: 0, label: 'Average', cells: [null, null, null, ...rates(d.average[by])] });
+  const base = by === 'amount'
+    ? [AMOUNT_COLUMN('Backlog at the 1st'), AMOUNT_COLUMN('Backlog processed'), AMOUNT_COLUMN('Processed in month')]
+    : [COUNT('Backlog orders at the 1st'), COUNT('Backlog orders processed'), COUNT('Orders processed')];
+  return {
+    title: `Backlog cover by month · by ${by}`,
+    labelHeader: 'Month',
+    columns: [...base, PCT_COLUMN('On backlog'), PCT_COLUMN('On month')],
+    rows,
+  };
+}
 
 /** Excel, PDF and Print: the parts, the backlog cover by month with its average, then the orders. */
 export function coverSheet(d: SoBacklogCoverData, view: PartView): ReportSheet {
@@ -62,11 +83,6 @@ export function coverSheet(d: SoBacklogCoverData, view: PartView): ReportSheet {
     kind: 'row', depth: 0, label: PART_LABEL[p], cells: [ordersText(d.parts[p].orders), d.parts[p].amountSen, d.parts[p].pct],
   }));
   parts.push({ kind: 'total', depth: 0, label: 'Processed in the month', cells: [ordersText(d.total.orders), d.total.amountSen, d.total.amountSen === 0 ? null : 100] });
-  const months: SheetRow[] = d.months.map((m) => ({
-    kind: 'row', depth: 0, label: monthName(`${m.month}-01`),
-    cells: [m.backlog.amountSen, m.backlogProcessed.amountSen, m.processed.amountSen, m.onBacklog, m.onMonth],
-  }));
-  months.push({ kind: 'total', depth: 0, label: 'Average', cells: [null, null, null, d.average.onBacklog, d.average.onMonth] });
   const listed = rowsOfPart(d.rows, view);
   const lines: SheetRow[] = listed.map((r) => ({
     kind: 'row', depth: 0, label: r.docNo,
@@ -84,12 +100,8 @@ export function coverSheet(d: SoBacklogCoverData, view: PartView): ReportSheet {
     ],
     tables: [
       { title: 'Summary', labelHeader: 'Orders', columns: [TEXT('Orders'), AMOUNT_COLUMN(), PCT_COLUMN('% of processed')], rows: parts },
-      {
-        title: 'Backlog cover by month',
-        labelHeader: 'Month',
-        columns: [AMOUNT_COLUMN('Backlog at the 1st'), AMOUNT_COLUMN('Backlog processed'), AMOUNT_COLUMN('Processed in month'), PCT_COLUMN('On backlog amount'), PCT_COLUMN('On month amount')],
-        rows: months,
-      },
+      monthsTable(d, 'amount'),
+      monthsTable(d, 'orders'),
       {
         title: view === 'all' ? 'Orders processed' : `Orders processed · ${PART_LABEL[view]}`,
         labelHeader: 'Order',

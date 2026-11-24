@@ -2,7 +2,8 @@
 // so-backlog-cover-queries — Finance › Reports › SO conversion & backlog (owner
 // 2026-11-24): the month's orders by Processing Date, this month's and the
 // backlog's, the backlog at the 1st, the two backlog cover rates and their
-// average. Server: backend/src/scm/routes/accounting-so-backlog-cover.ts over
+// averages, by amount and by order count. Server:
+// backend/src/scm/routes/accounting-so-backlog-cover.ts over
 // acc/so-backlog-cover.ts.
 // ----------------------------------------------------------------------------
 
@@ -36,14 +37,22 @@ export type CoverTotal = Count & {
   pct: number | null;
 };
 
+/** The two cover rates, one decimal, of amounts or of order counts. */
+export type CoverRates = {
+  /** Backlog processed ÷ the backlog at the 1st; null with no backlog. */
+  onBacklog: number | null;
+  /** Backlog processed ÷ everything processed in the month; null when nothing was processed. */
+  onMonth: number | null;
+};
+
 export type CoverMonth = {
   month: string;
   /** Orders raised before the month and not processed by its 1st. */
   backlog: Count;
   backlogProcessed: Count;
   processed: Count;
-  onBacklog: number | null;
-  onMonth: number | null;
+  amount: CoverRates;
+  orders: CoverRates;
 };
 
 export type SoBacklogCoverData = {
@@ -54,8 +63,8 @@ export type SoBacklogCoverData = {
   parts: Record<CoverPart, CoverTotal>;
   /** The backlog at the month's 1st. */
   backlog: Count;
-  cover: { onBacklog: number | null; onMonth: number | null };
-  average: { from: string; to: string; onBacklog: number | null; onMonth: number | null };
+  cover: { amount: CoverRates; orders: CoverRates };
+  average: { from: string; to: string; amount: CoverRates; orders: CoverRates };
   /** Where the average starts when the reader picks nothing. */
   defaultFrom: string;
   /** The months the average covers, oldest first; the last is this month. */

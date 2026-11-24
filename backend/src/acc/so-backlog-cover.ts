@@ -12,7 +12,9 @@
 //     process 的总额」, everything processed in the month;
 //   • the average 「default 从系统，我也可以自己根据情况放」 — the plain mean of
 //     each month's rate from a start month the reader may pick, by default the
-//     company's first month in the ERP that had a backlog.
+//     company's first month in the ERP that had a backlog;
+//   • both rates and their averages 「要by amount和by quantities」 — by amount,
+//     and by the number of orders.
 // An order with no Processing Date that has shipped on a delivery order counts
 // on its first shipped DO's date: the cutover never mapped AutoCount's PDate
 // (docs/modules/delivery-sheet-sync.md), and an order that went out was
@@ -57,6 +59,14 @@ export type CoverTotal = Count & {
   pct: number | null;
 };
 
+/** The two cover rates, one decimal, of amounts or of order counts. */
+export type CoverRates = {
+  /** Backlog processed ÷ the backlog at the 1st; null with no backlog. */
+  onBacklog: number | null;
+  /** Backlog processed ÷ everything processed in the month; null when nothing was processed. */
+  onMonth: number | null;
+};
+
 export type CoverMonth = {
   month: string;
   /** Orders raised before the month and not processed by its 1st. */
@@ -65,10 +75,8 @@ export type CoverMonth = {
   backlogProcessed: Count;
   /** Everything processed in the month. */
   processed: Count;
-  /** backlogProcessed ÷ backlog, one decimal; null with no backlog. */
-  onBacklog: number | null;
-  /** backlogProcessed ÷ processed, one decimal; null when nothing was processed. */
-  onMonth: number | null;
+  amount: CoverRates;
+  orders: CoverRates;
 };
 
 export type SoBacklogCoverData = {
@@ -79,9 +87,9 @@ export type SoBacklogCoverData = {
   parts: Record<CoverPart, CoverTotal>;
   /** The backlog at the month's 1st. */
   backlog: Count;
-  cover: { onBacklog: number | null; onMonth: number | null };
+  cover: { amount: CoverRates; orders: CoverRates };
   /** Each rate's plain mean over the months from `from` to `to`; a month with no rate is left out. */
-  average: { from: string; to: string; onBacklog: number | null; onMonth: number | null };
+  average: { from: string; to: string; amount: CoverRates; orders: CoverRates };
   /** Where the average starts when the reader picks nothing. */
   defaultFrom: string;
   /** The months the average covers, oldest first; the last is this month. */
@@ -135,8 +143,8 @@ function monthOf(placed: readonly Placed[], month: string): { cover: CoverMonth;
   return {
     cover: {
       month, backlog, backlogProcessed, processed,
-      onBacklog: pctOf(backlogProcessed.amountSen, backlog.amountSen),
-      onMonth: pctOf(backlogProcessed.amountSen, processed.amountSen),
+      amount: { onBacklog: pctOf(backlogProcessed.amountSen, backlog.amountSen), onMonth: pctOf(backlogProcessed.amountSen, processed.amountSen) },
+      orders: { onBacklog: pctOf(backlogProcessed.orders, backlog.orders), onMonth: pctOf(backlogProcessed.orders, processed.orders) },
     },
     inMonth,
   };
@@ -169,6 +177,11 @@ function meanOf(rates: readonly (number | null)[]): number | null {
   const xs = rates.filter((r): r is number => r !== null);
   return xs.length === 0 ? null : Math.round((xs.reduce((s, r) => s + r, 0) / xs.length) * 10) / 10;
 }
+
+const meanRates = (rates: readonly CoverRates[]): CoverRates => ({
+  onBacklog: meanOf(rates.map((r) => r.onBacklog)),
+  onMonth: meanOf(rates.map((r) => r.onMonth)),
+});
 
 export function buildSoBacklogCover(input: {
   month: string;
@@ -206,12 +219,12 @@ export function buildSoBacklogCover(input: {
       backlog: { ...now.backlogProcessed, pct: shares.backlog },
     },
     backlog: now.backlog,
-    cover: { onBacklog: now.onBacklog, onMonth: now.onMonth },
+    cover: { amount: now.amount, orders: now.orders },
     average: {
       from: avgFrom,
       to: month,
-      onBacklog: meanOf(months.map((m) => m.onBacklog)),
-      onMonth: meanOf(months.map((m) => m.onMonth)),
+      amount: meanRates(months.map((m) => m.amount)),
+      orders: meanRates(months.map((m) => m.orders)),
     },
     defaultFrom,
     months,

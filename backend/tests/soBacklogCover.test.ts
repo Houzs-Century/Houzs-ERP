@@ -5,8 +5,9 @@
    answers at this end; a bad month or average start is refused; only the active
    company's live orders and DOs are read; an order counts in its Processing
    Date's month, or on its first shipped DO when it has none; the backlog at the
-   1st, the two cover rates and their average from the company's first month
-   with a backlog, or from the month the reader picks. Amounts are made up. */
+   1st, the two cover rates by amount and by order count (「这个average要by amount
+   和by quantities」) and their averages from the company's first month with a
+   backlog, or from the month the reader picks. Amounts are made up. */
 import { Hono } from 'hono';
 import { describe, expect, test } from 'vitest';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
@@ -95,24 +96,37 @@ describe('GET /accounting/so-backlog-cover', () => {
     });
   });
 
-  test('the backlog at the 1st, the two cover rates, and their average from the first month with a backlog', async () => {
+  test('the backlog at the 1st, the two cover rates by amount and by orders, and their averages from the first month with a backlog', async () => {
     const r = await read(harness(), 'month=2026-11');
     // Not processed by 1 Nov: SO-B and HC-SO-000888 have no date at all, SO-E and HC-SO-000777 count later.
     expect(r.body.backlog).toEqual({ orders: 4, amountSen: 2_200_000 });
-    expect(r.body.cover).toEqual({ onBacklog: 54.5, onMonth: 66.7 });
+    expect(r.body.cover).toEqual({ amount: { onBacklog: 54.5, onMonth: 66.7 }, orders: { onBacklog: 50, onMonth: 66.7 } });
     expect(r.body.defaultFrom).toBe('2026-09');
-    expect(r.body.months.map((m: any) => [m.month, m.backlog.amountSen, m.backlogProcessed.amountSen, m.processed.amountSen, m.onBacklog, m.onMonth])).toEqual([
-      ['2026-09', 1_500_000, 0, 100_000, 0, 0],
-      ['2026-10', 2_000_000, 300_000, 700_000, 15, 42.9],
-      ['2026-11', 2_200_000, 1_200_000, 1_800_000, 54.5, 66.7],
+    expect(r.body.months.map((m: any) => [m.month, m.backlog, m.backlogProcessed, m.processed])).toEqual([
+      ['2026-09', { orders: 2, amountSen: 1_500_000 }, { orders: 0, amountSen: 0 }, { orders: 1, amountSen: 100_000 }],
+      ['2026-10', { orders: 4, amountSen: 2_000_000 }, { orders: 1, amountSen: 300_000 }, { orders: 2, amountSen: 700_000 }],
+      ['2026-11', { orders: 4, amountSen: 2_200_000 }, { orders: 2, amountSen: 1_200_000 }, { orders: 3, amountSen: 1_800_000 }],
     ]);
-    expect(r.body.average).toEqual({ from: '2026-09', to: '2026-11', onBacklog: 23.2, onMonth: 36.5 });
+    expect(r.body.months.map((m: any) => [m.month, m.amount.onBacklog, m.amount.onMonth, m.orders.onBacklog, m.orders.onMonth])).toEqual([
+      ['2026-09', 0, 0, 0, 0],
+      ['2026-10', 15, 42.9, 25, 50],
+      ['2026-11', 54.5, 66.7, 50, 66.7],
+    ]);
+    expect(r.body.average).toEqual({
+      from: '2026-09', to: '2026-11',
+      amount: { onBacklog: 23.2, onMonth: 36.5 },
+      orders: { onBacklog: 25, onMonth: 38.9 },
+    });
   });
 
   test('the reader picks where the average starts', async () => {
     const r = await read(harness(), 'month=2026-11&avgFrom=2026-10');
     expect(r.body.months.map((m: any) => m.month)).toEqual(['2026-10', '2026-11']);
-    expect(r.body.average).toEqual({ from: '2026-10', to: '2026-11', onBacklog: 34.8, onMonth: 54.8 });
+    expect(r.body.average).toEqual({
+      from: '2026-10', to: '2026-11',
+      amount: { onBacklog: 34.8, onMonth: 54.8 },
+      orders: { onBacklog: 37.5, onMonth: 58.4 },
+    });
     expect(r.body.defaultFrom).toBe('2026-09');
   });
 
@@ -122,7 +136,7 @@ describe('GET /accounting/so-backlog-cover', () => {
     expect(r.body.rows).toEqual([]);
     expect(r.body.total).toEqual({ orders: 0, amountSen: 0 });
     expect(r.body.parts.this_month.pct).toBeNull();
-    expect(r.body.cover).toEqual({ onBacklog: 0, onMonth: null });
+    expect(r.body.cover).toEqual({ amount: { onBacklog: 0, onMonth: null }, orders: { onBacklog: 0, onMonth: null } });
   });
 });
 
@@ -145,7 +159,7 @@ describe('buildSoBacklogCover', () => {
       orders: [o('A', '2026-06-11', '2026-06-11', 10_000), o('B', '2026-06-20', '2026-07-02', 20_000), o('C', '2026-07-05', '2026-08-01', 30_000)],
     });
     expect(out.defaultFrom).toBe('2026-07');
-    expect(out.months.map((m) => [m.month, m.onBacklog, m.onMonth])).toEqual([['2026-07', 100, 100], ['2026-08', 100, 100]]);
+    expect(out.months.map((m) => [m.month, m.amount.onBacklog, m.amount.onMonth])).toEqual([['2026-07', 100, 100], ['2026-08', 100, 100]]);
   });
 
   test('a start the reader picks before any backlog leaves that month out of the backlog rate only', () => {
@@ -153,8 +167,22 @@ describe('buildSoBacklogCover', () => {
       month: '2026-07', avgFrom: '2026-06', firstDo: new Map(),
       orders: [o('A', '2026-06-11', '2026-06-11', 10_000), o('B', '2026-06-20', '2026-07-02', 20_000), o('C', '2026-07-05', '2026-07-06', 20_000)],
     });
-    expect(out.months.map((m) => [m.month, m.onBacklog, m.onMonth])).toEqual([['2026-06', null, 0], ['2026-07', 100, 50]]);
-    expect(out.average).toMatchObject({ onBacklog: 100, onMonth: 25 });
+    expect(out.months.map((m) => [m.month, m.amount.onBacklog, m.amount.onMonth])).toEqual([['2026-06', null, 0], ['2026-07', 100, 50]]);
+    expect(out.average.amount).toEqual({ onBacklog: 100, onMonth: 25 });
+    expect(out.average.orders).toEqual({ onBacklog: 100, onMonth: 25 });
+  });
+
+  test('by orders counts each order once, whatever its amount', () => {
+    /* One big backlog order of three is processed: a third of the orders, most of the amount. */
+    const out = buildSoBacklogCover({
+      month: '2026-11', avgFrom: null, firstDo: new Map(),
+      orders: [
+        o('BIG', '2026-10-02', '2026-11-03', 900_000), o('S1', '2026-10-05', null, 50_000), o('S2', '2026-10-06', null, 50_000),
+        o('NEW', '2026-11-04', '2026-11-04', 100_000),
+      ],
+    });
+    expect(out.cover.amount).toEqual({ onBacklog: 90, onMonth: 90 });
+    expect(out.cover.orders).toEqual({ onBacklog: 33.3, onMonth: 50 });
   });
 
   test("the two parts' shares add up to 100.0, the rounding left over going to the larger", () => {
