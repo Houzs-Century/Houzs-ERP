@@ -9,7 +9,7 @@ import { scopeToCompanyId } from './companyScope';
 import { DEFAULT_ZONE_PREFIX_MAP, zoneForAddress, type ZonePrefixRule } from './zone-classify';
 import type { SetLine } from './set-count';
 import type { DeliveryFacts, RateCardSpec } from './delivery-rate-card';
-import { doFacts } from './threepl-do-charge';
+import { doFacts, orderAddressText, setLineOf } from './threepl-do-charge';
 import { areaOut, cardOut, ruleOut, toCardSpec } from '../routes/delivery-rate-cards';
 import { loadPlacesFor } from '../routes/delivery-places';
 import { MAP_COLS, toPrefixMap, type MapRow } from '../routes/delivery-zones';
@@ -78,16 +78,11 @@ export async function loadDoFacts(
     if (e5 || e6) return { ok: false, reason: (e5 ?? e6)!.message };
     for (const l of (lineRows ?? []) as Row[]) {
       const arr = linesBySo.get(String(l.doc_no)) ?? [];
-      const g = String(l.item_group ?? '').toUpperCase();
-      arr.push({
-        category: g.includes('BEDFRAME') ? 'BEDFRAME' : g.includes('SOFA') ? 'SOFA' : g.includes('MATTRESS') ? 'MATTRESS' : 'OTHERS',
-        qty: Number(l.qty ?? 1), cancelled: l.cancelled === true,
-      });
+      arr.push(setLineOf(l));
       linesBySo.set(String(l.doc_no), arr);
     }
     for (const so of (soRows ?? []) as Row[]) {
-      /* The words a town surcharge or a rate card area is found by: the whole address and its city. */
-      addressBySo.set(String(so.doc_no), [str(so.address1), str(so.address2), str(so.address3), str(so.address4), str(so.city), str(so.postcode)].filter(Boolean).join(' '));
+      addressBySo.set(String(so.doc_no), orderAddressText(so));
       zoneBySo.set(String(so.doc_no), zoneForAddress({ postcode: str(so.postcode), address1: str(so.address1), address2: str(so.address2) }, zoneMap).zone);
     }
   }
