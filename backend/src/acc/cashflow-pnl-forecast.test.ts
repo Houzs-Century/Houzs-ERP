@@ -151,7 +151,7 @@ describe('the Forecast P&L as cash', () => {
 });
 
 describe('the months a forecast column covers', () => {
-  const leg = (ym: string): CashLeg => ({ ym, fromYm: '2026-11', source: 'pnl', flow: 'out', code: 'x', key: 'x', name: 'x', sen: 1, party: 'x', note: 'x' });
+  const leg = (ym: string): CashLeg => ({ ym, fromYm: '2026-11', ref: null, source: 'pnl', flow: 'out', code: 'x', key: 'x', name: 'x', sen: 1, party: 'x', note: 'x' });
   it("the range; reaching the current month, every later month the money reaches, a year at most", () => {
     expect(forecastMonths('2026-09', '2026-11', '2026-11', [leg('2027-02'), leg('2026-10'), leg('2028-01')])).toEqual([
       { month: '2026-09', future: false }, { month: '2026-10', future: false }, { month: '2026-11', future: false },

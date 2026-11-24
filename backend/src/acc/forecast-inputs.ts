@@ -99,7 +99,7 @@ export function keyedInputLegs(inputs: KeyedInputs, nameOf: (code: string) => st
     for (const [code, sen] of Object.entries(inputs[ym] ?? {})) {
       if (!sen) continue;
       legs.push({
-        ym, fromYm: ym, source: 'input', flow: sen > 0 ? 'in' : 'out', code, key: code, name: nameOf(code), sen: Math.abs(sen),
+        ym, fromYm: ym, ref: null, source: 'input', flow: sen > 0 ? 'in' : 'out', code, key: code, name: nameOf(code), sen: Math.abs(sen),
         party: KEYED_PARTY, note: 'Keyed on the Cash Flow · forecast only, nothing posted',
       });
     }

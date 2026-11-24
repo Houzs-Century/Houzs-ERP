@@ -37,8 +37,9 @@ export type StatementColumn = {
       Deposit under each month): the heading's key, its name, its small grey line. */
   group?: { key: string; label: string; sub?: string };
   /** A small coloured mark before the column's name, so two columns of one heading tell
-      apart at a glance (the Cash Flow's Settlement petrol, Deposit gold — owner 2026-11-10). */
-  mark?: 'petrol' | 'gold';
+      apart at a glance (the Cash Flow's Settlement petrol, Deposit gold — owner 2026-11-10;
+      the forecast's Actual petrol, Orders & bills brass, P&L forecast gold). */
+  mark?: 'petrol' | 'gold' | 'brass';
 };
 
 export type StatementLine = MonthlyLine;
