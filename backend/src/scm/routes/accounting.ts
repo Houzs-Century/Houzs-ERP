@@ -83,7 +83,7 @@ import { pnlReport, balanceSheetReport } from './accounting-reports';
 import { journalEntryEdit } from './accounting-journal-edit';
 import { reportLayoutGet, reportLayoutPut, reportLayoutReset } from './accounting-report-layouts';
 import { receiptsPaymentsReport } from './accounting-rp';
-import { cashFlowForecastHandler, forecastInputsGetHandler, forecastInputsPutHandler, tfGetHandler, tfPutHandler } from './accounting-cashflow-forecast';
+import { cashFlowForecastHandler, forecastInputsGetHandler, forecastInputsPutHandler, tfGetHandler, tfPutHandler, balanceSheetForecastHandler } from './accounting-cashflow-forecast';
 import { collectionReport } from './accounting-collection';
 import { merchantChargesReport } from './accounting-merchant-charges';
 import { performanceMonthsHandler, performanceReport, savePerformanceSettingsHandler } from './accounting-performance';
@@ -223,6 +223,7 @@ accounting.get('/reports/cash-flow-forecast/inputs', forecastInputsGetHandler);
 accounting.put('/reports/cash-flow-forecast/inputs', forecastInputsPutHandler);
 accounting.get('/reports/cash-flow-forecast/tf', tfGetHandler);
 accounting.put('/reports/cash-flow-forecast/tf', tfPutHandler);
+accounting.get('/reports/balance-sheet-forecast', balanceSheetForecastHandler);
 /* Deposit and balance collected per salesman (owner 2026-09-12; docs/bugs/0825). */
 accounting.get('/reports/collection', collectionReport);
 /* What each acquirer charged against the gross, per month and per merchant (owner 2026-09-12; docs/bugs/0826). */

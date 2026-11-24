@@ -40,6 +40,8 @@ export type StatementColumn = {
       apart at a glance (the Cash Flow's Settlement petrol, Deposit gold — owner 2026-11-10;
       the forecast's Actual petrol, Orders & bills brass, P&L forecast gold). */
   mark?: 'petrol' | 'gold' | 'brass';
+  /** A column with no ledger lines behind it (the Forecast Balance Sheet's): its figures do not open. */
+  noDrill?: boolean;
 };
 
 export type StatementLine = MonthlyLine;
