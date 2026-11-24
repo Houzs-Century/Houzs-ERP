@@ -58,12 +58,16 @@ import {
   FORECAST_MONTHS_AHEAD, addMonthsYm, buildPnlCashLegs, forecastMonths, measuredWindow, monthsBetween, parseTermMonths, receiptMixOf, termMixOf,
   type CashLeg, type ReceiptMix, type TermInfo, type TermMix,
 } from '../../acc/cashflow-pnl-forecast';
-import { buildDocsLegs, owedBills, type DueBill, type OpenOrder, type OwedBill } from '../../acc/cashflow-docs-forecast';
+import { billMonth, buildDocsLegs, owedBills, type DueBill, type OpenOrder, type OwedBill } from '../../acc/cashflow-docs-forecast';
+import {
+  DEFAULT_TENOR_DAYS, defaultRateBp, isFacilityAccount, lenderOf, openDraws, supplierDues, tfPlan,
+  type Dues, type FacilityLine, type Off, type OpenDraw, type TfMonth,
+} from '../../acc/trade-finance-forecast';
 import { ageEntries } from '../../acc/aging';
 import { loadApAging } from '../../acc/aging-load';
 import { countsInTheBooks } from '../../acc/reversal-pairs';
 import { KEYED_MONTHS, keyableAccounts, keyedInputLegs, keyedNotOffered, validateKeyedInputs, type KeyableAccount, type KeyedInputs } from '../../acc/forecast-inputs';
-import { isPurchaseAccount } from '../shared/forecast-pnl';
+import { OTHER_SUPPLIER, isPurchaseAccount, monthFigures, type ForecastAccount, type ForecastGrid, type SupplierGrid } from '../shared/forecast-pnl';
 import { SO_NOT_AN_ORDER } from '../shared/so-deliverable-states';
 import { allowedIds, resolveLayout } from './accounting-report-layouts';
 import { cashFlowLines, type RpEntry, type RpRow } from './accounting-rp';
@@ -85,7 +89,7 @@ export const FORECAST_COLUMN = 'FORECAST';
 const PNL_COLUMN_NAME = 'P&L forecast';
 const DOCS_COLUMN_NAME = 'Orders & bills';
 /** What a forecast figure's entry says it came from. */
-const SOURCE_TYPE: Record<CashLeg['source'], string> = { pnl: 'FORECAST', input: 'FORECAST_INPUT', order: 'FORECAST_ORDER', bill: 'FORECAST_BILL' };
+const SOURCE_TYPE: Record<CashLeg['source'], string> = { pnl: 'FORECAST', input: 'FORECAST_INPUT', order: 'FORECAST_ORDER', bill: 'FORECAST_BILL', tf: 'FORECAST_TF' };
 /** Customer payments that are not customers' money coming in: carried over from AutoCount, moved between orders. */
 const NOT_RECEIPTS = new Set(['imported', 'converted']);
 const failed = (e: unknown): string => String((e as { message?: string }).message ?? e);
@@ -130,6 +134,13 @@ export type CashFlowForecastPayload = {
     beyond: { orders: number; orderSen: number; bills: number; billSen: number };
     /** Suppliers a bill of which was timed a month later for want of a payment term. */
     flagged: string[];
+  } | null;
+  /** The trade-finance plan in both forecasts (step 5); null when the range ends before the
+      current month or the company has no facility. */
+  tf: {
+    facilities: Array<{ code: string; lender: string; tenorDays: number; rateBp: number; owedNowSen: number; suppliers: string[] }>;
+    /** The Forecast P&L's interest lines left out: the interest comes with each repayment. */
+    interestLeftOut: Array<{ code: string; name: string }>;
   } | null;
 };
 
@@ -207,13 +218,22 @@ async function loadReceiptMix(sb: Sb, companyId: number, win: { from: string; to
   return { ok: true, mix: receiptMixOf(rows) };
 }
 
-/** The company's active leaf accounts, code → name: what a keyed amount may name and is called by. */
-async function loadChartLeaves(sb: Sb, companyId: number): Promise<{ ok: true; names: Map<string, string> } | Fail> {
-  const { data, error } = await sb.from('accounts').select('account_code, account_name, parent_code, is_active').eq('company_id', companyId);
+type Chart = { names: Map<string, string>; money: Set<string>; facilities: Array<{ code: string; name: string; lender: string }> };
+/** The company's active leaf accounts, code → name: what a keyed amount may name and is called by; its
+    bank and cash accounts; its trade-finance facilities (a liability named TRADE FINANCE). */
+async function loadChartLeaves(sb: Sb, companyId: number): Promise<({ ok: true } & Chart) | Fail> {
+  const { data, error } = await sb.from('accounts').select('account_code, account_name, account_type, parent_code, is_active, acc_money').eq('company_id', companyId);
   if (error) return { ok: false, reason: `chart: ${failed(error)}` };
-  const rows = (data ?? []) as Array<{ account_code: string; account_name: string | null; parent_code: string | null; is_active: boolean | null }>;
+  const rows = (data ?? []) as Array<{ account_code: string; account_name: string | null; account_type: string | null; parent_code: string | null; is_active: boolean | null; acc_money: boolean | null }>;
   const parents = new Set(rows.map((r) => r.parent_code).filter((p): p is string => p != null && p !== ''));
-  return { ok: true, names: new Map(rows.filter((r) => r.is_active !== false && !parents.has(r.account_code)).map((r) => [r.account_code, r.account_name ?? r.account_code])) };
+  const leaves = rows.filter((r) => r.is_active !== false && !parents.has(r.account_code));
+  return {
+    ok: true,
+    names: new Map(leaves.map((r) => [r.account_code, r.account_name ?? r.account_code])),
+    money: new Set(rows.filter((r) => r.acc_money === true).map((r) => r.account_code)),
+    facilities: leaves.filter((r) => isFacilityAccount({ name: r.account_name ?? '', type: r.account_type, money: r.acc_money === true }))
+      .map((r) => ({ code: r.account_code, name: r.account_name ?? r.account_code, lender: lenderOf(r.account_name ?? r.account_code) })),
+  };
 }
 
 /** The company's Capex & financing table as stored. */
@@ -337,40 +357,199 @@ async function billFacts(
   };
 }
 
-/** The Orders & bills column's months, as Cash Flow reports on the same tree. */
-async function buildDocsColumn(sb: Sb, companyId: number, a: {
-  today: string; currentMonth: string; ar: string; ap: string; apOther: string | null; tree: LayoutItem[]; stored: boolean;
-  nameOf: (code: string) => string; termOf: (supplierCode: string | null) => TermInfo; costs: CashLeg[]; inputs: CashLeg[];
-}): Promise<{ ok: true; docs: NonNullable<CashFlowForecastPayload['docs']> } | Fail> {
+/** The bills the books owe today, each timed and placed. */
+async function loadNowBills(sb: Sb, companyId: number, a: { today: string; controls: string[]; nameOf: (code: string) => string; termOf: (supplierCode: string | null) => TermInfo }): Promise<{ ok: true; bills: DueBill[] } | Fail> {
+  const now = await loadOwedBills(sb, companyId, a.controls, a.today);
+  if (!now.ok) return now;
+  const facts = await billFacts(sb, companyId, now.bills, new Set(a.controls), a.nameOf, a.termOf);
+  if (!facts.ok) return facts;
+  return { ok: true, bills: now.bills.map(facts.due) };
+}
+
+type DocsFacts = { orders: { live: OpenOrder[]; baseline: OpenOrder[] }; then: DueBill[]; now: DueBill[] };
+
+/** What the Orders & bills column reads: the open orders today and on the current month's 1st, the bills owed then and today. */
+async function loadDocsFacts(sb: Sb, companyId: number, a: {
+  today: string; currentMonth: string; controls: string[]; nameOf: (code: string) => string; termOf: (supplierCode: string | null) => TermInfo;
+}): Promise<({ ok: true } & DocsFacts) | Fail> {
   const first = `${a.currentMonth}-01`;
-  const controls = [a.ap, a.apOther].filter((c): c is string => c != null && c !== '');
   const [orders, then, now] = await Promise.all([
     loadOpenOrders(sb, companyId, first),
-    loadOwedBills(sb, companyId, controls, monthEnd(addMonthsYm(a.currentMonth, -1))),
-    loadOwedBills(sb, companyId, controls, a.today),
+    loadOwedBills(sb, companyId, a.controls, monthEnd(addMonthsYm(a.currentMonth, -1))),
+    loadOwedBills(sb, companyId, a.controls, a.today),
   ]);
   if (!orders.ok) return orders;
   if (!then.ok) return then;
   if (!now.ok) return now;
-  const facts = await billFacts(sb, companyId, [...then.bills, ...now.bills], new Set(controls), a.nameOf, a.termOf);
+  const facts = await billFacts(sb, companyId, [...then.bills, ...now.bills], new Set(a.controls), a.nameOf, a.termOf);
   if (!facts.ok) return facts;
+  return { ok: true, orders, then: then.bills.map(facts.due), now: now.bills.map(facts.due) };
+}
+
+/** The Orders & bills column's months, as Cash Flow reports on the same tree. */
+function docsColumn(companyId: number, facts: DocsFacts, a: {
+  currentMonth: string; ar: string; ap: string; nameOf: (code: string) => string; tree: LayoutItem[]; stored: boolean; costs: CashLeg[]; inputs: CashLeg[];
+}): NonNullable<CashFlowForecastPayload['docs']> {
   const built = buildDocsLegs({
     currentYm: a.currentMonth, lastYm: addMonthsYm(a.currentMonth, FORECAST_MONTHS_AHEAD),
     arCode: a.ar, ap: { code: a.ap, name: a.nameOf(a.ap) },
-    baseline: { orders: orders.baseline, bills: then.bills.map(facts.due) },
-    live: { orders: orders.live, bills: now.bills.map(facts.due) },
+    baseline: { orders: facts.orders.baseline, bills: facts.then },
+    live: { orders: facts.orders.live, bills: facts.now },
     costs: a.costs, inputs: a.inputs,
   });
   return {
-    ok: true,
-    docs: {
-      months: built.months.map((month) => ({
-        month, future: month > a.currentMonth,
-        report: forecastMonthReport(month, built.legs.filter((l) => l.ym === month), a.tree, a.stored, companyId, DOCS_COLUMN_NAME),
-      })),
-      asAt: first, undated: built.undated, beyond: built.beyond, flagged: built.flagged,
-    },
+    months: built.months.map((month) => ({
+      month, future: month > a.currentMonth,
+      report: forecastMonthReport(month, built.legs.filter((l) => l.ym === month), a.tree, a.stored, companyId, DOCS_COLUMN_NAME),
+    })),
+    asAt: `${a.currentMonth}-01`, undated: built.undated, beyond: built.beyond, flagged: built.flagged,
   };
+}
+
+/* ── The trade-finance plan (step 5) ──────────────────────────────────────── */
+
+/** One facility as the Trade finance table shows it and the forecasts use it. */
+export type TfFacilityPayload = {
+  code: string; name: string; lender: string;
+  /** Finance's own tenor and rate per draw; null = the default. */
+  tenorSet: number | null; rateSet: number | null;
+  tenorDays: number; rateBp: number;
+  /** The last six repayments' interest over their principal. */
+  defaultRateBp: number;
+  /** Where the repayment vouchers book the interest. */
+  interest: { code: string; name: string } | null;
+  owedNowSen: number;
+  /** The draws still owed, oldest first. */
+  open: OpenDraw[];
+  /** The suppliers the facility pays, and the months unticked by hand. */
+  suppliers: string[];
+  off: Off;
+  /** Every supplier's dues by month — the chosen ones are drawn. */
+  dues: Dues;
+  schedule: TfMonth[];
+};
+
+type GlMoveRow = { je_no: string; entry_date: string; account_code: string; debit_sen: number | string | null; credit_sen: number | string | null; posted: boolean | null; reversed: boolean | null; reversed_by_je: string | null };
+const GL_MOVE_COLS = 'je_no, entry_date, account_code, debit_sen, credit_sen, posted, reversed, reversed_by_je';
+const ids = (raw: unknown): string[] => (Array.isArray(raw) ? [...new Set(raw.filter((x): x is string => typeof x === 'string' && x.trim() !== '').map((x) => x.trim()))] : []);
+const offOf = (raw: unknown): Off => {
+  const out: Off = {};
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    for (const [ym, list] of Object.entries(raw as Record<string, unknown>)) {
+      const clean = ids(list);
+      if (MONTH.test(ym) && clean.length > 0) out[ym] = clean;
+    }
+  }
+  return out;
+};
+
+/** Each facility's lines as at today and its repayments: the principal, and the interest
+    booked beside it (a debit on neither the facility nor a bank or cash account). */
+async function loadFacilityBooks(sb: Sb, companyId: number, codes: string[], money: ReadonlySet<string>, today: string): Promise<{
+  ok: true; lines: Map<string, FacilityLine[]>; repayments: Map<string, Array<{ date: string; principalSen: number; interestSen: number }>>; interestCode: Map<string, string>;
+} | Fail> {
+  const got = await paginateAll<GlMoveRow>((f: number, t: number) => sb.from('v_gl_entries').select(GL_MOVE_COLS)
+    .eq('company_id', companyId).in('account_code', codes).lte('entry_date', today).order('line_id').range(f, t));
+  if (got.error) return { ok: false, reason: `trade finance: ${failed(got.error)}` };
+  const own = (got.data ?? []).filter((l) => countsInTheBooks(l));
+  const lines = new Map<string, FacilityLine[]>();
+  const repaidIn = new Map<string, string>();
+  for (const l of own) {
+    const list = lines.get(l.account_code) ?? [];
+    list.push({ date: String(l.entry_date).slice(0, 10), debitSen: Number(l.debit_sen ?? 0), creditSen: Number(l.credit_sen ?? 0) });
+    lines.set(l.account_code, list);
+    if (Number(l.debit_sen ?? 0) > 0) repaidIn.set(l.je_no, l.account_code);
+  }
+  const repayments = new Map<string, Array<{ date: string; principalSen: number; interestSen: number }>>();
+  const interestCode = new Map<string, string>();
+  if (repaidIn.size === 0) return { ok: true, lines, repayments, interestCode };
+  const jes = await chunkIn<GlMoveRow>([...repaidIn.keys()], (batch, f, t) => sb.from('v_gl_entries').select(GL_MOVE_COLS)
+    .eq('company_id', companyId).in('je_no', batch).order('line_id').range(f, t));
+  if (jes.error) return { ok: false, reason: `trade finance repayments: ${failed(jes.error)}` };
+  const byJe = new Map<string, GlMoveRow[]>();
+  for (const l of jes.data.filter((x) => countsInTheBooks(x))) byJe.set(l.je_no, [...(byJe.get(l.je_no) ?? []), l]);
+  const counts = new Map<string, Map<string, number>>();
+  for (const [je, code] of repaidIn) {
+    const ls = byJe.get(je) ?? [];
+    let principalSen = 0;
+    let interestSen = 0;
+    for (const l of ls) {
+      const dr = Number(l.debit_sen ?? 0);
+      if (dr <= 0) continue;
+      if (l.account_code === code) { principalSen += dr; continue; }
+      if (money.has(l.account_code) || codes.includes(l.account_code)) continue;
+      interestSen += dr;
+      const c = counts.get(code) ?? new Map<string, number>();
+      c.set(l.account_code, (c.get(l.account_code) ?? 0) + 1);
+      counts.set(code, c);
+    }
+    const list = repayments.get(code) ?? [];
+    list.push({ date: String(ls[0]?.entry_date ?? '').slice(0, 10), principalSen, interestSen });
+    repayments.set(code, list);
+  }
+  for (const [code, c] of counts) {
+    const top = [...c].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]))[0];
+    if (top) interestCode.set(code, top[0]);
+  }
+  return { ok: true, lines, repayments, interestCode };
+}
+
+/** Each facility's plan: its legs for both forecasts and what the Trade finance table shows. */
+async function buildTf(sb: Sb, companyId: number, a: {
+  today: string; currentMonth: string; chart: Chart; master: SupplierMasterRow[]; nowBills: DueBill[];
+  grid: ForecastGrid; suppliers: SupplierGrid; accounts: ForecastAccount[];
+}): Promise<{ ok: true; facilities: TfFacilityPayload[]; legs: CashLeg[]; interestCodes: Set<string> } | Fail> {
+  if (a.chart.facilities.length === 0) return { ok: true, facilities: [], legs: [], interestCodes: new Set() };
+  const codes = a.chart.facilities.map((f) => f.code);
+  const [books, plans] = await Promise.all([
+    loadFacilityBooks(sb, companyId, codes, a.chart.money, a.today),
+    sb.from('acc_tf_plans').select('account_code, tenor_days, rate_bp, suppliers, off').eq('company_id', companyId),
+  ]);
+  if (!books.ok) return books;
+  if (plans.error) return { ok: false, reason: `trade finance plans: ${failed(plans.error)}` };
+  const planOf = new Map(((plans.data ?? []) as Array<{ account_code: string; tenor_days: number | null; rate_bp: number | null; suppliers: unknown; off: unknown }>).map((p) => [p.account_code, p]));
+  const byId = new Map(a.master.map((s) => [String(s.id), s]));
+  const byCode = new Map(a.master.map((s) => [String(s.code), s]));
+  const termMonths = (id: string): number => parseTermMonths(byId.get(id)?.payment_terms ?? null).months;
+  const shown = shownMonths(a.currentMonth);
+  const lastYm = shown[shown.length - 1] ?? a.currentMonth;
+  /* What each supplier is due: the bills the books owe, then the Forecast P&L's supplier figures from this month on. */
+  const billDues = a.nowBills.flatMap((b) => {
+    const s = b.supplierCode == null ? undefined : byCode.get(b.supplierCode);
+    return s ? [{ supplierId: String(s.id), ym: billMonth(b).ym, sen: b.sen }] : [];
+  });
+  const forecastDues = Object.keys(a.grid).filter((S) => S >= a.currentMonth).flatMap((S) =>
+    monthFigures(a.grid[S] ?? {}, a.suppliers[S] ?? {}, a.accounts).lines.flatMap((l) => (l.keyed === 'suppliers'
+      ? l.bySupplier.filter((x) => x.supplierId !== OTHER_SUPPLIER).map((x) => ({ supplierId: x.supplierId, ym: addMonthsYm(S, termMonths(x.supplierId)), sen: x.amountSen }))
+      : [])));
+  /* Every supplier's dues, so the table can show one the moment Finance adds it; the plan draws the chosen ones'. */
+  const everyone = new Set([...billDues, ...forecastDues].map((d) => d.supplierId));
+  const allDues = supplierDues({ currentYm: a.currentMonth, lastYm, chosen: everyone, bills: billDues, forecast: forecastDues });
+  const facilities: TfFacilityPayload[] = [];
+  const legs: CashLeg[] = [];
+  const interestCodes = new Set<string>();
+  for (const f of a.chart.facilities) {
+    const plan = planOf.get(f.code);
+    const tenorSet = plan?.tenor_days ?? null;
+    const rateSet = plan?.rate_bp ?? null;
+    const defaultRate = defaultRateBp(books.repayments.get(f.code) ?? []);
+    const tenorDays = tenorSet ?? DEFAULT_TENOR_DAYS;
+    const rateBp = rateSet ?? defaultRate;
+    const ic = books.interestCode.get(f.code);
+    const interest = ic ? { code: ic, name: a.chart.names.get(ic) ?? ic } : null;
+    if (interest) interestCodes.add(interest.code);
+    const open = openDraws(books.lines.get(f.code) ?? []);
+    const chosen = ids(plan?.suppliers).filter((id) => byId.has(id));
+    const off = offOf(plan?.off);
+    const dues: Dues = Object.fromEntries(chosen.flatMap((id) => (allDues[id] ? [[id, allDues[id]]] : [])));
+    const built = tfPlan({ currentYm: a.currentMonth, facility: f, interest, tenorDays, rateBp, open, dues, off, supplierName: (id) => String(byId.get(id)?.name ?? id) }, shown);
+    legs.push(...built.legs);
+    facilities.push({
+      ...f, tenorSet, rateSet, tenorDays, rateBp, defaultRateBp: defaultRate, interest,
+      owedNowSen: open.reduce((s, d) => s + d.sen, 0), open, suppliers: chosen, off, dues: allDues, schedule: built.schedule,
+    });
+  }
+  return { ok: true, facilities, legs, interestCodes };
 }
 
 export async function buildCashFlowForecast(sb: Sb, companyId: number, layoutIds: number[], from: string, to: string, today: string): Promise<{ ok: true; payload: CashFlowForecastPayload } | Fail> {
@@ -432,27 +611,37 @@ export async function buildCashFlowForecast(sb: Sb, companyId: number, layoutIds
   /* The Capex & financing table's amounts, on their own accounts in their own months. */
   const nameOf = (code: string): string => chart.names.get(code) ?? code;
   const inputLegs = keyedInputLegs(inputs.months, nameOf);
-  const legs = [...built.legs, ...inputLegs];
-
   const currentMonth = today.slice(0, 7);
   const tree = blockOf(rpLayout.layout.blocks, 'accounts');
+  const controls = [roles.AP, roles.AP_OTHER].filter((c): c is string => c != null && c !== '');
+  const supplierTermOf = (code: string | null): TermInfo => termOf(code == null ? undefined : byCode.get(code));
+
+  /* From the current month on: the orders and bills in hand, and the trade-finance plan, which
+     pays its interest with each repayment — so the Forecast P&L's own line for it steps aside. */
+  let facts: DocsFacts | null = null;
+  let tf: { facilities: TfFacilityPayload[]; legs: CashLeg[]; interestCodes: Set<string> } = { facilities: [], legs: [], interestCodes: new Set() };
+  if (to >= currentMonth) {
+    const got = await loadDocsFacts(sb, companyId, { today, currentMonth, controls, nameOf, termOf: supplierTermOf });
+    if (!got.ok) return got;
+    facts = got;
+    const t = await buildTf(sb, companyId, { today, currentMonth, chart, master: master.rows, nowBills: got.now, grid: grid.grid, suppliers: grid.suppliers, accounts: accs.accounts });
+    if (!t.ok) return t;
+    tf = t;
+  }
+  const pnlLegs = built.legs.filter((l) => !tf.interestCodes.has(l.code));
+  const interestLeftOut = [...new Set(built.legs.filter((l) => tf.interestCodes.has(l.code)).map((l) => l.code))].map((code) => ({ code, name: nameOf(code) }));
+  const legs = [...pnlLegs, ...inputLegs, ...tf.legs];
   const months = forecastMonths(from, to, currentMonth, legs).map(({ month, future }) => ({
     month, future, report: forecastMonthReport(month, legs.filter((l) => l.ym === month), tree, rpLayout.stored, companyId, PNL_COLUMN_NAME),
   }));
   /* Orders & bills: sales and purchases come from the open orders and the owed bills, so of
      the Forecast P&L only its other lines join them. */
   const purchaseCodes = new Set(accs.accounts.filter(isPurchaseAccount).map((a) => a.code));
-  let docs: CashFlowForecastPayload['docs'] = null;
-  if (to >= currentMonth) {
-    const got = await buildDocsColumn(sb, companyId, {
-      today, currentMonth, ar: roles.AR, ap: roles.AP, apOther: roles.AP_OTHER, tree, stored: rpLayout.stored, nameOf,
-      termOf: (code) => termOf(code == null ? undefined : byCode.get(code)),
-      costs: built.legs.filter((l) => l.group == null && !purchaseCodes.has(l.code)),
-      inputs: inputLegs,
-    });
-    if (!got.ok) return got;
-    docs = got.docs;
-  }
+  const docs = facts == null ? null : docsColumn(companyId, facts, {
+    currentMonth, ar: roles.AR, ap: roles.AP, nameOf, tree, stored: rpLayout.stored,
+    costs: pnlLegs.filter((l) => l.group == null && !purchaseCodes.has(l.code)),
+    inputs: [...inputLegs, ...tf.legs],
+  });
   const mixTotal = receipts.mix.reduce((s, m) => s + m.weight, 0);
   return {
     ok: true,
@@ -465,6 +654,13 @@ export async function buildCashFlowForecast(sb: Sb, companyId: number, layoutIds
         .sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' })),
       nonCash: built.nonCash,
       docs,
+      tf: tf.facilities.length === 0 ? null : {
+        facilities: tf.facilities.map((f) => ({
+          code: f.code, lender: f.lender, tenorDays: f.tenorDays, rateBp: f.rateBp, owedNowSen: f.owedNowSen,
+          suppliers: f.suppliers.map((id) => String(byId.get(id)?.name ?? id)),
+        })),
+        interestLeftOut,
+      },
     },
   };
 }
@@ -581,4 +777,105 @@ export const forecastInputsPutHandler = async (c: Ctx): Promise<Response> => {
   }
   forgetCompany(co.companyId);
   return c.json({ ok: true, months: checked.months });
+};
+
+/* ── The Trade finance table (step 5) ─────────────────────────────────────── */
+
+export type TfPayload = {
+  currentMonth: string;
+  /** The months the table shows: the current one and the eleven after it. */
+  shown: string[];
+  facilities: TfFacilityPayload[];
+  /** The company's suppliers to choose from, by name, with their payment term. */
+  suppliers: Array<{ id: string; code: string; name: string; term: string | null }>;
+};
+
+const MAX_SUPPLIERS = 200;
+
+/** GET: each facility's plan and what its chosen suppliers are due. */
+export const tfGetHandler = async (c: Ctx): Promise<Response> => {
+  if (!hasHouzsPerm(c, READ_PERM)) return c.json(NO_PERM, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const sb = c.get('supabase');
+  const today = todayMyt();
+  const currentMonth = today.slice(0, 7);
+  const [chart, master, accs, grid, roles] = await Promise.all([
+    loadChartLeaves(sb, co.companyId), loadSupplierMaster(sb, co.companyId), loadForecastAccounts(sb, co.companyId), loadGrid(sb, co.companyId), resolveRoles(sb, co.companyId),
+  ]);
+  if (!chart.ok) return c.json({ error: 'load_failed', reason: chart.reason }, 500);
+  if (!master.ok) return c.json({ error: 'load_failed', reason: master.reason }, 500);
+  if (!accs.ok) return c.json({ error: 'load_failed', reason: accs.reason }, 500);
+  if (!grid.ok) return c.json({ error: 'load_failed', reason: grid.reason }, 500);
+  const byCode = new Map(master.rows.map((s) => [String(s.code), s]));
+  const nameOf = (code: string): string => chart.names.get(code) ?? code;
+  let nowBills: DueBill[] = [];
+  if (chart.facilities.length > 0) {
+    const got = await loadNowBills(sb, co.companyId, {
+      today, controls: [roles.AP, roles.AP_OTHER].filter((x): x is string => x != null && x !== ''), nameOf,
+      termOf: (code) => parseTermMonths(code == null ? null : (byCode.get(code)?.payment_terms ?? null)),
+    });
+    if (!got.ok) return c.json({ error: 'load_failed', reason: got.reason }, 500);
+    nowBills = got.bills;
+  }
+  const t = await buildTf(sb, co.companyId, { today, currentMonth, chart, master: master.rows, nowBills, grid: grid.grid, suppliers: grid.suppliers, accounts: accs.accounts });
+  if (!t.ok) return c.json({ error: 'load_failed', reason: t.reason }, 500);
+  const payload: TfPayload = {
+    currentMonth, shown: shownMonths(currentMonth), facilities: t.facilities,
+    suppliers: master.rows.filter((s) => String(s.status ?? 'ACTIVE').toUpperCase() !== 'INACTIVE')
+      .map((s) => ({ id: String(s.id), code: String(s.code), name: String(s.name ?? s.code), term: s.payment_terms ?? null }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' })),
+  };
+  return c.json(payload);
+};
+
+type TfBody = Record<string, { tenorDays: number | null; rateBp: number | null; suppliers: string[]; off: Off }>;
+
+/** Each facility's plan as sent, or the first thing wrong with it. */
+export function validateTfPlans(raw: unknown, facilities: ReadonlySet<string>, supplierIds: ReadonlySet<string>): { ok: true; plans: TfBody } | { ok: false; message: string } {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, message: 'facilities must be a map of account code to plan.' };
+  const plans: TfBody = {};
+  for (const [code, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (!facilities.has(code)) return { ok: false, message: `${code}: not a trade-finance account of this company.` };
+    const o = (v ?? {}) as { tenorDays?: unknown; rateBp?: unknown; suppliers?: unknown; off?: unknown };
+    const whole = (x: unknown, lo: number, hi: number): number | null | undefined =>
+      (x == null ? null : Number.isInteger(x) && (x as number) >= lo && (x as number) <= hi ? (x as number) : undefined);
+    const tenorDays = whole(o.tenorDays, 1, 400);
+    if (tenorDays === undefined) return { ok: false, message: `${code}: the tenor is a whole number of days, 1 to 400.` };
+    const rateBp = whole(o.rateBp, 0, 10_000);
+    if (rateBp === undefined) return { ok: false, message: `${code}: the interest per draw is 0% to 100%.` };
+    if (!Array.isArray(o.suppliers)) return { ok: false, message: `${code}: suppliers must be a list.` };
+    const chosen = ids(o.suppliers);
+    if (chosen.length > MAX_SUPPLIERS) return { ok: false, message: `${code}: at most ${MAX_SUPPLIERS} suppliers.` };
+    const stranger = chosen.find((id) => !supplierIds.has(id));
+    if (stranger) return { ok: false, message: `${code}: supplier ${stranger} is not one of this company's.` };
+    const off = offOf(o.off);
+    for (const [ym, list] of Object.entries(off)) off[ym] = list.filter((id) => chosen.includes(id));
+    plans[code] = { tenorDays, rateBp, suppliers: chosen, off: Object.fromEntries(Object.entries(off).filter(([, list]) => list.length > 0)) };
+  }
+  return { ok: true, plans };
+}
+
+/** PUT { facilities }: each facility sent is kept as sent. */
+export const tfPutHandler = async (c: Ctx): Promise<Response> => {
+  if (!hasHouzsPerm(c, WRITE_PERM)) return c.json(NO_WRITE, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const sb = c.get('supabase');
+  const body = (await c.req.json().catch(() => null)) as { facilities?: unknown } | null;
+  const [chart, master] = await Promise.all([loadChartLeaves(sb, co.companyId), loadSupplierMaster(sb, co.companyId)]);
+  if (!chart.ok) return c.json({ error: 'load_failed', reason: chart.reason }, 500);
+  if (!master.ok) return c.json({ error: 'load_failed', reason: master.reason }, 500);
+  const checked = validateTfPlans(body?.facilities, new Set(chart.facilities.map((f) => f.code)), new Set(master.rows.map((s) => String(s.id))));
+  if (!checked.ok) return c.json({ error: 'bad_plan', message: checked.message }, 400);
+  const rows = Object.entries(checked.plans).map(([code, p]) => ({
+    company_id: co.companyId, account_code: code, tenor_days: p.tenorDays, rate_bp: p.rateBp, suppliers: p.suppliers, off: p.off,
+    updated_at: new Date().toISOString(), updated_by: who(c),
+  }));
+  if (rows.length > 0) {
+    const { error } = await sb.from('acc_tf_plans').upsert(rows, { onConflict: 'company_id,account_code' });
+    if (error) return c.json({ error: 'save_failed', reason: failed(error) }, 500);
+  }
+  forgetCompany(co.companyId);
+  return c.json({ ok: true });
 };
