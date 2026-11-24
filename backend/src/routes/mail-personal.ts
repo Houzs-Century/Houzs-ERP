@@ -5,21 +5,12 @@
 //   POST /mail-host/:id/confirm   an admin marks one as added
 //   GET  /directory               the org-chart recipient picker (P4, A5)
 //   GET  /recipients/history      addresses the caller's mailboxes used (HC-0247)
-//   GET  /claim                   what the caller may claim (HC-0157 A)
-//   POST /claim                   the caller claims their own address
+//   Claiming an address lives in mail-claim.ts.
 import { Hono } from "hono";
 import type { Env } from "../types";
 import { activeCompanyId, activeCompanySql, requireActiveCompanyId } from "../scm/lib/companyScope";
 import { loadRecipientHistory, rankRecipientHistory } from "../lib/mail-recipient-history";
 import { loadRoster, type RosterUser } from "../lib/announcementAudience";
-import {
-  AliasMailboxCollisionError,
-  changePersonalMailboxAliasAtomically,
-  companyMailboxDomain,
-  freePersonalAddress,
-  isPersonalAddressTaken,
-  markMailHostPending,
-} from "../lib/mail-provision";
 import { subtreeUserIds, uplineChainSteps } from "../services/orgScope";
 import { hasPermission } from "../services/permissions";
 import { getMailScope, isMailAdmin, ownAliasFor } from "./mail-center";
@@ -185,111 +176,6 @@ app.get("/visibility", async (c) => {
   });
 });
 
-// HC-0157 A: a member with no company address claims one themselves, once.
-// Changing it afterwards stays an admin action on the member screen. The
-// department is only a request when the Org Chart has none for them yet: a
-// department opens that department's mailboxes, so an admin applies it.
-const LOCAL_PART_RE = /^[a-z0-9]+(?:[._-][a-z0-9]+)*$/;
-
-type ClaimCaller = {
-  name: string | null;
-  email_alias: string | null;
-  department_id: number | null;
-  department_name: string | null;
-};
-
-async function claimCaller(c: { env: Env }, userId: number): Promise<ClaimCaller | null> {
-  return c.env.DB.prepare(
-    `SELECT u.name, u.email_alias, u.department_id, d.name AS department_name
-       FROM users u LEFT JOIN departments d ON d.id = u.department_id
-      WHERE u.id = ? LIMIT 1`,
-  )
-    .bind(userId)
-    .first<ClaimCaller>();
-}
-
-app.get("/claim", async (c) => {
-  if (!hasPermission(c.get("user").permissions_set, "mail_center.read")) {
-    return c.json({ error: "You do not have access to Mail Center." }, 403);
-  }
-  const userId = Number(c.get("userId"));
-  const me = await claimCaller(c, userId);
-  if (!me) return c.json({ error: "Account not found." }, 404);
-  const domain = await companyMailboxDomain(c.env);
-  const alias = (me.email_alias ?? "").trim().toLowerCase();
-  const departments = await c.env.DB.prepare(`SELECT id, name FROM departments ORDER BY sort_order, name`).all<{
-    id: number;
-    name: string;
-  }>();
-  c.header("Cache-Control", "no-store");
-  return c.json({
-    domain,
-    address: alias.endsWith(`@${domain}`) ? alias : null,
-    suggestion: (await freePersonalAddress(c.env, userId, me.name))?.split("@")[0] ?? "",
-    department: me.department_id == null ? null : { id: Number(me.department_id), name: me.department_name ?? "" },
-    departments: departments.results.map((d) => ({ id: Number(d.id), name: d.name })),
-  });
-});
-
-app.post("/claim", async (c) => {
-  if (!hasPermission(c.get("user").permissions_set, "mail_center.read")) {
-    return c.json({ error: "You do not have access to Mail Center." }, 403);
-  }
-  const userId = Number(c.get("userId"));
-  const body = await c.req
-    .json<{ localPart?: string; departmentId?: number | null }>()
-    .catch(() => ({}) as { localPart?: string; departmentId?: number | null });
-  const me = await claimCaller(c, userId);
-  if (!me) return c.json({ error: "Account not found." }, 404);
-  const domain = await companyMailboxDomain(c.env);
-  const current = (me.email_alias ?? "").trim().toLowerCase();
-  if (current.endsWith(`@${domain}`)) {
-    return c.json({ error: `You already have ${current}. Ask an admin to change it.` }, 409);
-  }
-
-  const local = (body.localPart ?? "").trim().toLowerCase();
-  if (local.length < 2 || local.length > 40 || !LOCAL_PART_RE.test(local)) {
-    return c.json(
-      { error: "Use 2 to 40 letters or digits, with single dots, dashes or underscores between them." },
-      400,
-    );
-  }
-  const address = `${local}@${domain}`;
-
-  let requestedDepartmentId: number | null = null;
-  if (me.department_id == null) {
-    if (body.departmentId == null) return c.json({ error: "Pick the department you work in." }, 400);
-    const dept = await c.env.DB.prepare(`SELECT id FROM departments WHERE id = ? LIMIT 1`)
-      .bind(Number(body.departmentId))
-      .first<{ id: number }>();
-    if (!dept) return c.json({ error: "That department no longer exists." }, 400);
-    requestedDepartmentId = Number(dept.id);
-  }
-
-  if (await isPersonalAddressTaken(c.env.DB, address, userId)) {
-    return c.json({ error: `${address} is already taken. Try another.` }, 409);
-  }
-  let change;
-  try {
-    change = await changePersonalMailboxAliasAtomically(c.env, userId, me.email_alias, address, me.name);
-  } catch (e) {
-    if (e instanceof AliasMailboxCollisionError) {
-      return c.json({ error: `${address} is already taken. Try another.` }, 409);
-    }
-    throw e;
-  }
-  if (change?.mailbox_id) {
-    await markMailHostPending(c.env.DB, change.mailbox_id);
-    if (requestedDepartmentId != null) {
-      // company-scope: the id is the mailbox this claim just provisioned for the caller.
-      await c.env.DB.prepare(`UPDATE email_addresses SET requested_department_id = ? WHERE id = ?`)
-        .bind(requestedDepartmentId, change.mailbox_id)
-        .run();
-    }
-  }
-  return c.json({ ok: true, address, requestedDepartmentId }, 201);
-});
-
 app.get("/mail-host/pending", async (c) => {
   if (!isMailAdmin(c.get("user"))) return c.json({ error: "Mail Center admins only." }, 403);
   const res = await c.env.DB.prepare(
@@ -299,7 +185,7 @@ app.get("/mail-host/pending", async (c) => {
        FROM email_addresses a
        LEFT JOIN departments rd ON rd.id = a.requested_department_id
        LEFT JOIN users u ON u.id = a.assigned_user_id
-      WHERE a.mail_host_status = 'pending' AND a.active = 1${activeCompanySql(c, "a.company_id")}
+      WHERE a.mail_host_status IN ('pending', 'removed') AND a.active = 1${activeCompanySql(c, "a.company_id")}
       ORDER BY a.created_at ASC`,
   ).all<{
     id: string;
@@ -333,7 +219,7 @@ app.post("/mail-host/:id/confirm", async (c) => {
   if (!isMailAdmin(c.get("user"))) return c.json({ error: "Mail Center admins only." }, 403);
   const res = await c.env.DB.prepare(
     `UPDATE email_addresses SET mail_host_status = 'live', mail_host_confirmed_at = ?, mail_host_confirmed_by = ?
-      WHERE id = ? AND mail_host_status = 'pending'${activeCompanySql(c)}`,
+      WHERE id = ? AND active = 1 AND mail_host_status IN ('pending', 'removed')${activeCompanySql(c)}`,
   )
     .bind(new Date().toISOString(), c.get("userId") ?? null, c.req.param("id"))
     .run();
