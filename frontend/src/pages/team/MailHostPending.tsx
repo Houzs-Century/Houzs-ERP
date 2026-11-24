@@ -24,6 +24,7 @@ type Pending = {
 export function MailHostPending() {
   const toast = useToast();
   const [busy, setBusy] = useState<string | null>(null);
+  const [confirmOff, setConfirmOff] = useState<string | null>(null);
   const { data, reload } = useQuery<Pending[]>("/api/mail-center/mail-host/pending", () =>
     api.get("/api/mail-center/mail-host/pending"),
   );
@@ -38,6 +39,22 @@ export function MailHostPending() {
       reload();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not mark it");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /* Owner 2026-11-24: an address nobody needs leaves the list without going to Google. It was never added
+   * there, so it frees no alias and does not join the "still in Google" list; it can be turned on again. */
+  async function turnOff(row: Pending) {
+    setBusy(row.id);
+    try {
+      await api.patch(`/api/mail-center/addresses/${encodeURIComponent(row.id)}`, { active: false });
+      toast.success(`${row.address} turned off`);
+      setConfirmOff(null);
+      reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not turn it off");
     } finally {
       setBusy(null);
     }
@@ -81,9 +98,25 @@ export function MailHostPending() {
                   Put in {r.requestedDepartment.name}
                 </Button>
               )}
-              <Button variant="secondary" disabled={busy === r.id} onClick={() => void confirm(r)}>
-                {busy === r.id ? "Saving…" : "Mark added"}
-              </Button>
+              {confirmOff === r.id ? (
+                <>
+                  <Button variant="secondary" disabled={busy === r.id} onClick={() => setConfirmOff(null)}>
+                    Keep it
+                  </Button>
+                  <Button variant="danger" disabled={busy === r.id} onClick={() => void turnOff(r)}>
+                    {busy === r.id ? "Saving…" : `Turn off ${r.address}`}
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button variant="secondary" disabled={busy === r.id} onClick={() => setConfirmOff(r.id)}>
+                    Turn off
+                  </Button>
+                  <Button variant="secondary" disabled={busy === r.id} onClick={() => void confirm(r)}>
+                    {busy === r.id ? "Saving…" : "Mark added"}
+                  </Button>
+                </>
+              )}
             </span>
           </div>
         ))}
