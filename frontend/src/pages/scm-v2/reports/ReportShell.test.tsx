@@ -70,7 +70,7 @@ describe('the report catalog', () => {
       'Statements', 'Who owes whom', 'Sales & collection', 'Events & logistics', 'Card money', 'Plan', 'Books', 'Audit',
     ]);
     expect(REPORT_CATALOG.map((r) => r.id)).toEqual([
-      'pnl', 'departments', 'bs', 'rp', 'tb', 'ar', 'ap', 'collection', 'fair', 'performance', 'products', 'changes', 'changesum',
+      'pnl', 'departments', 'bs', 'rp', 'tb', 'ar', 'ap', 'collection', 'fair', 'performance', 'products', 'changes', 'changesum', 'sotodo',
       'events', 'commission', 'logistics', 'charges', 'forecast', 'dashboard', 'je', 'gl', 'corrections',
     ]);
     for (const r of REPORT_CATALOG) {
