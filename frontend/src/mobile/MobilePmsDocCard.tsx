@@ -582,11 +582,6 @@ export function SalesDocsCard({
           const editable = canTick && !t.readOnly;
           const remarkText = (t.item?.notes ?? "").trim();
           const isDefect = isDefectTile(t);
-          // N/A toggle eligibility (owner 2026-11-24): defect lists mark
-          // "no defect"; Setup Image marks "not applicable" when a setup needs
-          // no photo. Both drive the same checklist status="na" toggle below.
-          const isSetupImage = /^setup image/i.test((t.item?.title ?? "").trim());
-          const allowNA = isDefect || isSetupImage;
           const compactRows = isStockTransferTitle(t.item?.title);
           return (
             <div key={t.label} style={{ border: "1px solid var(--hz-c-border)", borderRadius: 12, background: "var(--hz-c-surface)", padding: "10px 11px", display: "flex", flexDirection: "column", gap: 8 }}>
@@ -696,10 +691,11 @@ export function SalesDocsCard({
                 </button>
               )}
 
-              {/* N/A (owner 2026-07-29, extended 2026-11-24): defect lists mark
-                  "no defect"; Setup Image marks "not applicable" when a setup
-                  needs no photo. Tap again undoes. */}
-              {allowNA && t.item && editable && (
+              {/* N/A (owner 2026-07-29, extended 2026-11-24): every document a
+                  cohort may edit carries N/A, matching the desktop DocRow where
+                  every row has the Attach / Remark / N/A trio. Defect lists read
+                  "no defect"; other docs read "not applicable". Tap again undoes. */}
+              {t.item && editable && (
                 <button
                   className="tinybtn"
                   style={{ width: "100%", background: t.item.status === "na" ? "var(--hz-c-surface-2)" : "var(--hz-c-surface)", color: "var(--hz-c-ink-muted)" }}
