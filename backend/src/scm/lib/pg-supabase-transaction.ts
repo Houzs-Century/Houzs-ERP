@@ -134,14 +134,28 @@ const parsePgTextArray = (value: unknown): unknown => {
   return out;
 };
 
-const normalizeReturnedRows = (rows: unknown[], table: string): unknown[] => rows.map((row) => {
-  if (row == null || typeof row !== 'object' || Array.isArray(row)) return row;
-  const normalized = { ...(row as Record<string, unknown>) };
-  for (const column of Object.keys(normalized)) {
-    if (isTextArrayColumn(table, column)) normalized[column] = parsePgTextArray(normalized[column]);
-  }
-  return normalized;
-});
+const PG_DATE_OID = 1082;
+
+/* `columns` is postgres.js's result metadata. A `date` column comes back as
+   "YYYY-MM-DD", as PostgREST returns it: postgres.js parses it to a JS Date
+   (UTC midnight), and callers written for PostgREST do String(day).slice(0, 10). */
+const normalizeReturnedRows = (
+  rows: unknown[], table: string, columns: ReadonlyArray<{ name: string; type: number }> | undefined,
+): unknown[] => {
+  const dateColumns = (columns ?? []).filter((c) => c.type === PG_DATE_OID).map((c) => c.name);
+  return rows.map((row) => {
+    if (row == null || typeof row !== 'object' || Array.isArray(row)) return row;
+    const normalized = { ...(row as Record<string, unknown>) };
+    for (const column of Object.keys(normalized)) {
+      if (isTextArrayColumn(table, column)) normalized[column] = parsePgTextArray(normalized[column]);
+    }
+    for (const column of dateColumns) {
+      const value = normalized[column];
+      if (value instanceof Date && !Number.isNaN(value.getTime())) normalized[column] = value.toISOString().slice(0, 10);
+    }
+    return normalized;
+  });
+};
 
 const commandParameter = (sql: Sql, table: string, column: string, value: unknown): unknown => {
   if (value === undefined || value === null || value instanceof Date) return value;
@@ -340,7 +354,8 @@ class PgPostgrestQuery implements PromiseLike<QueryResult<any>> {
         try {
           await settleScmStatements(this.sql);
           await opened;
-          const rows = normalizeReturnedRows(await run as unknown[], this.table);
+          const result = await run as unknown[] & { columns?: Array<{ name: string; type: number }> };
+          const rows = normalizeReturnedRows(result, this.table, result.columns);
           pendingReleases.set(this.sql as unknown as object, send(this.sql.unsafe(`RELEASE SAVEPOINT ${savepoint}`)));
           return { rows, error: null as { message: string; code?: string } | null };
         } catch (error) {
