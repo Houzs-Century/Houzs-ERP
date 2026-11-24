@@ -83,7 +83,10 @@
 }
 .box::placeholder { color: var(--hz-dk-ink-soft, #a9ada3); opacity: 1; }
 .box:hover, .box:focus { border-color: var(--fin-input); background: var(--fin-surface); outline: none; }
+/* The Capex & financing table: a box open for typing shows its edge at rest; money out reads red. */
+.boxOpen { border-color: var(--fin-rule); }
 .boxTyped { border-color: var(--fin-input); background: var(--fin-surface); font-weight: 600; }
+.box.loss { color: var(--fin-late-fg); }
 .pctBox { width: 58px; font-size: 11.5px; }
 /* A purchase line split by supplier that month: its boxes show their sum, read-only. */
 .sumBox, .sumBox:hover, .sumBox:focus { border-color: transparent; background: transparent; color: var(--fin-muted); font-style: italic; cursor: default; }

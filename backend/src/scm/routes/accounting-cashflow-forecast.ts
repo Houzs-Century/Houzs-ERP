@@ -4,6 +4,8 @@
 // 2026-11-24 「开始做第 2 步」).
 //
 //   GET /accounting/reports/cash-flow-forecast?from=YYYY-MM&to=YYYY-MM
+//   GET /accounting/reports/cash-flow-forecast/inputs       the Capex & financing table (step 3)
+//   PUT /accounting/reports/cash-flow-forecast/inputs { months }  the whole table, replaced
 //
 // Each month of the range — and, when the range reaches the current month,
 // every later month the forecast's money reaches (a year at most) — as a Cash
@@ -15,6 +17,15 @@
 // column is the report's one money column, FORECAST; its entries say where
 // each figure comes from. The page rolls Balance b/f and c/f through it from
 // the actual reports it reads beside it.
+//
+// The Capex & financing table (step 3, docs/forecast-port-spec.md part 2;
+// acc/forecast-inputs): amounts Finance keys per account and month for the
+// accounts the Cash Flow layout places under FUNDING IN / (OUT), trade finance
+// aside — + money in, − money out — kept in scm.acc_forecast_inputs and shown
+// in the forecast column on their own account in their own month, a past
+// month beside its actual. Writing takes the vouchers' write key; a save
+// replaces the company's whole table and refuses, by name, an account the
+// layout no longer offers.
 //
 // The timings are measured over the 3 complete months before today: the
 // customers' receipts against their order month (imported and converted
@@ -39,6 +50,7 @@ import {
   buildPnlCashLegs, forecastMonths, measuredWindow, monthsBetween, parseTermMonths, receiptMixOf, termMixOf,
   type CashLeg, type ReceiptMix, type TermInfo, type TermMix,
 } from '../../acc/cashflow-pnl-forecast';
+import { KEYED_MONTHS, keyableAccounts, keyedInputLegs, keyedNotOffered, validateKeyedInputs, type KeyableAccount, type KeyedInputs } from '../../acc/forecast-inputs';
 import { isPurchaseAccount } from '../shared/forecast-pnl';
 import { allowedIds, resolveLayout } from './accounting-report-layouts';
 import { cashFlowLines, type RpEntry, type RpRow } from './accounting-rp';
@@ -50,7 +62,10 @@ type Sb = Parameters<typeof resolveRoles>[0];
 type Fail = { ok: false; reason: string };
 
 const READ_PERM = 'scm.payment_voucher.post';
+const WRITE_PERM = 'scm.payment_voucher.write';
 const NO_PERM = { error: "You don't have permission to read the financial statements." };
+const NO_WRITE = { error: "You don't have permission to change the forecast." };
+const who = (c: Ctx): string => String((c.get('houzsUser') as { name?: string } | undefined)?.name ?? (c.get('user') as { id?: string } | undefined)?.id ?? '');
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 /** The forecast's one money column. */
 export const FORECAST_COLUMN = 'FORECAST';
@@ -107,7 +122,7 @@ export function forecastMonthReport(month: string, legs: readonly CashLeg[], tre
     row.totalSen += l.sen;
     book.set(l.key, row);
     entries.push({
-      jeNo: '', entryDate: `${month}-01`, sourceType: 'FORECAST', sourceDocNo: l.fromYm, narration: l.note,
+      jeNo: '', entryDate: `${month}-01`, sourceType: l.source === 'input' ? 'FORECAST_INPUT' : 'FORECAST', sourceDocNo: l.fromYm, narration: l.note,
       party: l.party, side: l.flow === 'in' ? 'R' : 'P', rowKey: l.key, column: FORECAST_COLUMN, sen: l.sen,
     });
   }
@@ -163,9 +178,30 @@ async function loadReceiptMix(sb: Sb, companyId: number, win: { from: string; to
   return { ok: true, mix: receiptMixOf(rows) };
 }
 
+/** The company's active leaf accounts, code → name: what a keyed amount may name and is called by. */
+async function loadChartLeaves(sb: Sb, companyId: number): Promise<{ ok: true; names: Map<string, string> } | Fail> {
+  const { data, error } = await sb.from('accounts').select('account_code, account_name, parent_code, is_active').eq('company_id', companyId);
+  if (error) return { ok: false, reason: `chart: ${failed(error)}` };
+  const rows = (data ?? []) as Array<{ account_code: string; account_name: string | null; parent_code: string | null; is_active: boolean | null }>;
+  const parents = new Set(rows.map((r) => r.parent_code).filter((p): p is string => p != null && p !== ''));
+  return { ok: true, names: new Map(rows.filter((r) => r.is_active !== false && !parents.has(r.account_code)).map((r) => [r.account_code, r.account_name ?? r.account_code])) };
+}
+
+/** The company's Capex & financing table as stored. */
+async function loadForecastInputs(sb: Sb, companyId: number): Promise<{ ok: true; months: KeyedInputs } | Fail> {
+  const { data, error } = await sb.from('acc_forecast_inputs').select('month, account_code, amount_sen').eq('company_id', companyId);
+  if (error) return { ok: false, reason: `capex and financing: ${failed(error)}` };
+  const months: KeyedInputs = {};
+  for (const r of (data ?? []) as Array<{ month: string; account_code: string; amount_sen: number | string }>) {
+    const sen = Number(r.amount_sen);
+    if (sen) (months[String(r.month)] ??= {})[String(r.account_code)] = sen;
+  }
+  return { ok: true, months };
+}
+
 export async function buildCashFlowForecast(sb: Sb, companyId: number, layoutIds: number[], from: string, to: string, today: string): Promise<{ ok: true; payload: CashFlowForecastPayload } | Fail> {
   const win = measuredWindow(today);
-  const [accs, grid, rpLayout, pnlLayout, roles, master, bills, receipts] = await Promise.all([
+  const [accs, grid, rpLayout, pnlLayout, roles, master, bills, receipts, chart, inputs] = await Promise.all([
     loadForecastAccounts(sb, companyId),
     loadGrid(sb, companyId),
     resolveLayout(sb, layoutIds, 'rp'),
@@ -174,6 +210,8 @@ export async function buildCashFlowForecast(sb: Sb, companyId: number, layoutIds
     loadSupplierMaster(sb, companyId),
     loadSupplierBills(sb, companyId, win.from, win.to),
     loadReceiptMix(sb, companyId, win),
+    loadChartLeaves(sb, companyId),
+    loadForecastInputs(sb, companyId),
   ]);
   if (!accs.ok) return { ok: false, reason: `forecast accounts: ${accs.reason}` };
   if (!grid.ok) return { ok: false, reason: `forecast: ${grid.reason}` };
@@ -182,6 +220,8 @@ export async function buildCashFlowForecast(sb: Sb, companyId: number, layoutIds
   if (!master.ok) return { ok: false, reason: master.reason };
   if (!bills.ok) return { ok: false, reason: bills.reason };
   if (!receipts.ok) return { ok: false, reason: receipts.reason };
+  if (!chart.ok) return { ok: false, reason: chart.reason };
+  if (!inputs.ok) return { ok: false, reason: inputs.reason };
 
   const byId = new Map(master.rows.map((s) => [String(s.id), s]));
   const byCode = new Map(master.rows.map((s) => [String(s.code), s]));
@@ -215,11 +255,13 @@ export async function buildCashFlowForecast(sb: Sb, companyId: number, layoutIds
     salaryCodes,
   });
   for (const id of built.flagged) flaggedIds.add(id);
+  /* The Capex & financing table's amounts, on their own accounts in their own months. */
+  const legs = [...built.legs, ...keyedInputLegs(inputs.months, (code) => chart.names.get(code) ?? code)];
 
   const currentMonth = today.slice(0, 7);
   const tree = blockOf(rpLayout.layout.blocks, 'accounts');
-  const months = forecastMonths(from, to, currentMonth, built.legs).map(({ month, future }) => ({
-    month, future, report: forecastMonthReport(month, built.legs.filter((l) => l.ym === month), tree, rpLayout.stored, companyId),
+  const months = forecastMonths(from, to, currentMonth, legs).map(({ month, future }) => ({
+    month, future, report: forecastMonthReport(month, legs.filter((l) => l.ym === month), tree, rpLayout.stored, companyId),
   }));
   const mixTotal = receipts.mix.reduce((s, m) => s + m.weight, 0);
   return {
@@ -243,6 +285,10 @@ const CACHE_MAX = 64;
 const cache = new Map<string, { at: number; payload: CashFlowForecastPayload }>();
 /** For the tests. */
 export const clearCashFlowForecastCache = (): void => cache.clear();
+/** A company's answers, after its Capex & financing table changed. */
+const forgetCompany = (companyId: number): void => {
+  for (const key of [...cache.keys()]) if (key.startsWith(`${companyId}|`)) cache.delete(key);
+};
 
 export const cashFlowForecastHandler = async (c: Ctx): Promise<Response> => {
   if (!hasHouzsPerm(c, READ_PERM)) return c.json(NO_PERM, 403);
@@ -265,3 +311,83 @@ export const cashFlowForecastHandler = async (c: Ctx): Promise<Response> => {
   return c.json(r.payload);
 };
 
+
+/* ── The Capex & financing table (step 3) ─────────────────────────────────── */
+
+export type ForecastInputsPayload = {
+  currentMonth: string;
+  /** The months the table shows: the current one and the eleven after it. */
+  shown: string[];
+  months: KeyedInputs;
+  accounts: KeyableAccount[];
+  /** Accounts keyed in some month that the layout no longer offers: to be cleared before a save. */
+  notOffered: Array<{ code: string; name: string }>;
+};
+
+const shownMonths = (current: string): string[] => {
+  const out: string[] = [];
+  let [y, m] = current.split('-').map(Number) as [number, number];
+  for (let i = 0; i < KEYED_MONTHS; i += 1) {
+    out.push(`${y}-${String(m).padStart(2, '0')}`);
+    m += 1;
+    if (m > 12) { m = 1; y += 1; }
+  }
+  return out;
+};
+
+/** The accounts on offer for the active company: its layout's funding block over its own chart. */
+async function loadOffered(sb: Sb, companyId: number, layoutIds: number[]): Promise<{ ok: true; accounts: KeyableAccount[]; names: Map<string, string> } | Fail> {
+  const [laid, chart] = await Promise.all([resolveLayout(sb, layoutIds, 'rp'), loadChartLeaves(sb, companyId)]);
+  if (!laid.ok) return { ok: false, reason: laid.reason };
+  if (!chart.ok) return { ok: false, reason: chart.reason };
+  return { ok: true, accounts: keyableAccounts(blockOf(laid.layout.blocks, 'accounts'), chart.names), names: chart.names };
+}
+
+export const forecastInputsGetHandler = async (c: Ctx): Promise<Response> => {
+  if (!hasHouzsPerm(c, READ_PERM)) return c.json(NO_PERM, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const sb = c.get('supabase');
+  const [offered, stored] = await Promise.all([loadOffered(sb, co.companyId, allowedIds(c)), loadForecastInputs(sb, co.companyId)]);
+  if (!offered.ok) return c.json({ error: 'load_failed', reason: offered.reason }, 500);
+  if (!stored.ok) return c.json({ error: 'load_failed', reason: stored.reason }, 500);
+  const currentMonth = todayMyt().slice(0, 7);
+  const payload: ForecastInputsPayload = {
+    currentMonth, shown: shownMonths(currentMonth), months: stored.months, accounts: offered.accounts,
+    notOffered: keyedNotOffered(stored.months, new Set(offered.accounts.map((a) => a.code))).map((code) => ({ code, name: offered.names.get(code) ?? code })),
+  };
+  return c.json(payload);
+};
+
+export const forecastInputsPutHandler = async (c: Ctx): Promise<Response> => {
+  if (!hasHouzsPerm(c, WRITE_PERM)) return c.json(NO_WRITE, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  let raw: unknown;
+  try { raw = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const body = (raw !== null && typeof raw === 'object' ? raw : {}) as { months?: unknown };
+  const sb = c.get('supabase');
+  const [offered, stored] = await Promise.all([loadOffered(sb, co.companyId, allowedIds(c)), loadForecastInputs(sb, co.companyId)]);
+  if (!offered.ok) return c.json({ error: 'load_failed', reason: offered.reason }, 500);
+  if (!stored.ok) return c.json({ error: 'load_failed', reason: stored.reason }, 500);
+  const checked = validateKeyedInputs(body.months, new Set(offered.accounts.map((a) => a.code)));
+  if (!checked.ok) return c.json({ error: 'bad_cell', cell: checked.cell, message: `${checked.cell}: ${checked.reason}` }, 400);
+  /* Kept first, then the cleared cells removed: a failure between the two leaves an extra amount, never a lost one. */
+  const at = new Date().toISOString();
+  const rows = Object.entries(checked.months).flatMap(([month, cells]) => Object.entries(cells).map(([code, sen]) => ({
+    company_id: co.companyId, month, account_code: code, amount_sen: sen, updated_at: at, updated_by: who(c),
+  })));
+  if (rows.length > 0) {
+    const { error } = await sb.from('acc_forecast_inputs').upsert(rows, { onConflict: 'company_id,month,account_code' });
+    if (error) return c.json({ error: 'save_failed', reason: failed(error) }, 500);
+  }
+  const kept: Partial<Record<string, Partial<Record<string, number>>>> = checked.months;
+  for (const [month, cells] of Object.entries(stored.months)) {
+    const gone = Object.keys(cells).filter((code) => kept[month]?.[code] === undefined);
+    if (gone.length === 0) continue;
+    const { error } = await sb.from('acc_forecast_inputs').delete().eq('company_id', co.companyId).eq('month', month).in('account_code', gone);
+    if (error) return c.json({ error: 'save_failed', reason: failed(error) }, 500);
+  }
+  forgetCompany(co.companyId);
+  return c.json({ ok: true, months: checked.months });
+};

@@ -1,8 +1,10 @@
-/* The Cash Flow's P&L forecast column (step 2 of the forecast port): the
-   Forecast P&L as cash, each month a Cash Flow report of its own on the same
-   tree, from GET /accounting/reports/cash-flow-forecast (server half:
+/* The Cash Flow's forecast column (steps 2 and 3 of the forecast port): the
+   Forecast P&L as cash and the Capex & financing table, each month a Cash
+   Flow report of its own on the same tree, from GET
+   /accounting/reports/cash-flow-forecast; the table itself from GET / PUT
+   /accounting/reports/cash-flow-forecast/inputs (server half:
    backend/src/scm/routes/accounting-cashflow-forecast.ts). */
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 import type { RpReport } from './rp-report-queries';
@@ -32,3 +34,40 @@ export const useCashFlowForecast = (from: string, to: string) => useQuery({
   staleTime: 30_000,
   retry: retryUnlessClientError,
 });
+
+/* ── The Capex & financing table (step 3) ─────────────────────────────────── */
+
+/** 'YYYY-MM' → account code → whole sen, + money in, − money out. */
+export type KeyedInputs = Record<string, Record<string, number>>;
+export type KeyableAccount = { code: string; name: string; group: { id: string; label: string } };
+export type ForecastInputs = {
+  currentMonth: string;
+  /** The months the table shows: the current one and the eleven after it. */
+  shown: string[];
+  months: KeyedInputs;
+  accounts: KeyableAccount[];
+  /** Keyed in some month but no longer on the layout's funding block: to be cleared before a save. */
+  notOffered: Array<{ code: string; name: string }>;
+};
+
+const INPUTS_KEY = 'cash-flow-forecast-inputs';
+export const useForecastInputs = (enabled: boolean) => useQuery({
+  queryKey: [INPUTS_KEY],
+  queryFn: () => authedFetch<ForecastInputs>('/accounting/reports/cash-flow-forecast/inputs'),
+  enabled,
+  staleTime: 0,
+  retry: retryUnlessClientError,
+});
+
+/** PUT the whole table: every month sent is kept as sent, everything else is cleared. */
+export const useSaveForecastInputs = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (months: KeyedInputs) =>
+      authedFetch<{ ok: boolean; months: KeyedInputs }>('/accounting/reports/cash-flow-forecast/inputs', { method: 'PUT', body: JSON.stringify({ months }) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: [INPUTS_KEY] });
+      void qc.invalidateQueries({ queryKey: ['report-rp-forecast'] });
+    },
+  });
+};
