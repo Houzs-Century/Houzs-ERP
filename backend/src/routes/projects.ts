@@ -1123,12 +1123,15 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
       // their list. (They do NOT hold projects.approve, so they previously
       // fell through to SALES PIC.)
       // Which stock documents = which keys this director explicitly holds
-      // (2026-08-21): stock_transfer.approve -> Stock Out,
-      // stock_in.approve -> Stock In. Historical default (no keys, legacy
-      // config) keeps Stock Out only.
+      // (2026-08-21): stock_transfer.approve -> Stock Out. Historical default
+      // (no keys, legacy config) keeps Stock Out only.
+      // Stock IN approval was removed as a feature (owner 2026-11-24): the Stock
+      // In Transfer Record is no longer a reviewable document, so stock_in.approve
+      // surfaces no approval duty here even when a director holds it. The key
+      // stays declared/toggleable (see GATING_APPROVE_PERMS note above) but, like
+      // stock_transfer.approve historically, it now only ever subtracts.
       const stockTitles = [
         ...(heldExplicit.includes("stock_transfer.approve") ? ["Stock Out Transfer Record"] : []),
-        ...(heldExplicit.includes("stock_in.approve") ? ["Stock In Transfer Record"] : []),
       ];
       pendingDirector = {
         stock: true,

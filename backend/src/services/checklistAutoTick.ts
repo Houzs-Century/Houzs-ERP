@@ -10,13 +10,19 @@ import { setChecklistStatus } from "./projects";
 // Scope, shared by both doors: a PLAIN evidence row only. We never force-done
 //   * a gated row (required_perm) — its "done" is the approver's call
 //     (completion = review_status='approved', see checklistProgress.ts), nor
-//   * a review-document row — Agreement / Quotation, Stock Out/In Transfer
-//     Record, Display Floor Plan, 3D/2D Design, Exchange List — which carry the
+//   * a review-document row — Agreement / Quotation, Stock Out Transfer Record,
+//     Display Floor Plan, 3D/2D Design, Exchange List — which carry the
 //     submit/approve/reject loop. The regex is the exact one the frontend uses
-//     in vendor/scm/lib/pms-reviewable-titles.ts.
+//     in vendor/scm/lib/pms-reviewable-titles.ts, kept in sync by hand (backend
+//     can't import across packages).
+// Stock IN Transfer Record was dropped from the review set (owner 2026-11-24),
+// so it is now a PLAIN evidence row: uploading it auto-ticks the bullet done,
+// no approval round. Stock OUT keeps its review loop. If the two regexes ever
+// drift again, Stock In would silently stop auto-ticking — so both must change
+// together.
 // Only a 'pending' row is touched, so N/A, blocked and already-done rows stand.
 const REVIEW_DOC_TITLE_RE =
-  /^(agreement|stock\s*(out|in)\s*transfer|display\s*floor\s*plan|3d\s*design|2d\s*design|exchange\s*list)/i;
+  /^(agreement|stock\s*out\s*transfer|display\s*floor\s*plan|3d\s*design|2d\s*design|exchange\s*list)/i;
 
 /** Task-attachment upload (PUT /checklist/:id/attachments). The row is already
  *  loaded by the route, so take its fields rather than re-reading. */

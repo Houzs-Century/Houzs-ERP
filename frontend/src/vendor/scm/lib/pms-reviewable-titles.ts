@@ -31,13 +31,21 @@
 // surfaces follow — which is the point of there being one of it.
 // ----------------------------------------------------------------------------
 
-/** The seven documents the review workflow applies to, as the tasklist
- *  templates spell them. Kept as data so the test can PROVE the prefix rule is
- *  a superset of the exact set rather than asserting it by hand. */
+/** The documents the review workflow applies to, as the tasklist templates
+ *  spell them. Kept as data so the test can PROVE the prefix rule is a superset
+ *  of the exact set rather than asserting it by hand.
+ *
+ *  "Stock In Transfer Record" was REMOVED from this set (owner 2026-11-24):
+ *  the stock-in doc returning to the warehouse after dismantle no longer
+ *  carries an approval round — the purchaser just uploads it (or marks N/A)
+ *  like any ordinary document. Stock OUT keeps its approval. Dropping it here
+ *  removes the submit/approve/reject/"gated" controls on BOTH surfaces at once
+ *  and stops upload-auto-submit; the backend approver lanes that surfaced it by
+ *  title were cut in the same change (routes/projects.ts, services/projects.ts),
+ *  and migration (migrations-pg) 20261124T1000 clears leftover review state. */
 export const REVIEWABLE_TITLES = [
   "Agreement / Quotation",
   "Stock Out Transfer Record",
-  "Stock In Transfer Record",
   "Display Floor Plan",
   "3D Design",
   "2D Design",
@@ -45,9 +53,10 @@ export const REVIEWABLE_TITLES = [
 ];
 
 /** Prefix match, case-insensitive, tolerant of the spacing staff actually
- *  type ("3D  Design", "Stock  Out Transfer"). */
+ *  type ("3D  Design", "Stock  Out Transfer"). Stock IN is intentionally NOT
+ *  matched (see REVIEWABLE_TITLES note) — only Stock OUT transfer is reviewable. */
 const REVIEWABLE_TITLE_RE =
-  /^(agreement|stock\s*(out|in)\s*transfer|display\s*floor\s*plan|3d\s*design|2d\s*design|exchange\s*list)/i;
+  /^(agreement|stock\s*out\s*transfer|display\s*floor\s*plan|3d\s*design|2d\s*design|exchange\s*list)/i;
 
 export function isReviewableTitle(title: string | null | undefined): boolean {
   return REVIEWABLE_TITLE_RE.test((title ?? "").trim());
