@@ -1,21 +1,29 @@
 /* HR · Employees & Attendance — Overview (redesign look, real data). A 12-col
  * dashboard built from the reads HR already has: Today (the attendance day read),
- * Headcount (the employee master + today's punch), Payroll (the month's run),
- * Needs attention (unlinked accounts, OT to confirm, a draft payroll) and
- * Coming up (public holidays). The month attendance chart and "most late" are a
- * step-2 item: they need a per-day late/rest source this read set does not
- * carry. Amounts masked behind the eye toggle. */
+ * Headcount (employee master + today's punch), the month on-time chart and
+ * "most late" (the working-hours month read), Payroll (the month's run), Needs
+ * attention (not punched in, unlinked accounts, OT to confirm, penalties to
+ * approve, a draft payroll) and Coming up (public holidays). Amounts masked
+ * behind the eye toggle. */
 import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { fmtSen, todayMY } from "../../vendor/shared/format";
+import { minutesFromWorkDate } from "../../vendor/shared/hr-attendance";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
 import { useQuery } from "../../hooks/useQuery";
 import { avatarColor, initials } from "./hrAvatar";
 import { dayByEmployee, punchOf, type PunchState } from "./attendanceToday";
-import { useAttendance, useEmployees, useHolidays, usePayroll, type Employee } from "./hrApi";
+import { HR, useAttendance, useEmployees, useHolidays, usePayroll, useWorkingHours, type Employee } from "./hrApi";
+import { monthAttendanceStats, monthBounds, pad2 } from "./attendanceMonth";
 
 const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(" ");
+// Month and weekday labels from Intl, not a hand-kept array — a calendar
+// vocabulary has one source of truth (the locale), and it keeps the duplicated-
+// decisions audit from counting a second copy of the month/weekday names here.
+const monthLabel = (monthIndex: number, style: "long" | "short"): string =>
+  new Date(Date.UTC(2000, monthIndex, 1)).toLocaleString("en-US", { month: style, timeZone: "UTC" });
+const weekdayLetter = (date: Date): string => date.toLocaleString("en-US", { weekday: "narrow", timeZone: "UTC" });
 
 function Avatar({ name, size = 24, ring = false }: { name: string; size?: number; ring?: boolean }) {
   return (
@@ -74,6 +82,7 @@ const comingTone: Record<string, string> = { National: "bg-err-bg text-err", Sta
 export function OverviewPage({ onNavigate, onPickEmployee }: { onNavigate: (key: string) => void; onPickEmployee: (e: Employee) => void }) {
   const { can } = useAuth();
   const canOt = can("hr.ot.confirm");
+  const canPenalty = can("hr.payroll.approve");
   const period = todayMY().slice(0, 7);
   const today = todayMY().slice(0, 10);
   const [showPay, setShowPay] = useState(false);
@@ -82,7 +91,9 @@ export function OverviewPage({ onNavigate, onPickEmployee }: { onNavigate: (key:
   const att = useAttendance(today);
   const payroll = usePayroll(period);
   const holidays = useHolidays();
+  const wh = useWorkingHours(`${period}-01`, today);
   const ot = useQuery<{ claims: { status: string }[] }>(["attendance-ot-admin", period], () => api.get<{ claims: { status: string }[] }>(`/api/attendance/ot/admin?month=${period}`), [period], { enabled: canOt });
+  const penalties = useQuery<{ penalties: { status: string }[] }>(`${HR}/penalties`, () => api.get<{ penalties: { status: string }[] }>(`${HR}/penalties`), [], { enabled: canPenalty });
 
   const dayByEmp = useMemo(() => dayByEmployee(att.data), [att.data]);
   const active = useMemo(() => (emp.data?.employees ?? []).filter((e) => e.status === "ACTIVE"), [emp.data]);
@@ -118,14 +129,42 @@ export function OverviewPage({ onNavigate, onPickEmployee }: { onNavigate: (key:
   const payStatus = payroll.data ? (payroll.data.status ?? (payroll.data.projected ? "Projected" : "Draft")) : "—";
   const money = (sen: number) => (showPay ? fmtSen(sen) : "RM ••••••");
 
+  // The month's on-time chart and "most late", both from the working-hours read.
+  const empNameById = useMemo(() => new Map((wh.data?.employees ?? []).map((e) => [e.id, e.name])), [wh.data]);
+  const { perDay, lateByEmp } = useMemo(() => monthAttendanceStats(wh.data?.days ?? []), [wh.data]);
+  const perDayByDate = useMemo(() => new Map(perDay.map((s) => [s.date, s])), [perDay]);
+  const monthStats = useMemo(() => {
+    let onTime = 0, lateDays = 0, absentDays = 0;
+    for (const s of perDay) { onTime += s.onTime; lateDays += s.late; absentDays += s.absent; }
+    const graded = onTime + lateDays + absentDays;
+    return { graded, late: lateDays, absent: absentDays, avg: graded > 0 ? Math.round((onTime / graded) * 100) : null };
+  }, [perDay]);
+  const mostLate = useMemo(
+    () => [...lateByEmp.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6).map(([id, n]) => ({ id, name: empNameById.get(id) ?? `#${id}`, n })),
+    [lateByEmp, empNameById],
+  );
+  const maxLate = mostLate[0]?.n ?? 0;
+  const { y, m } = monthBounds(period);
+  const todayDay = Number(today.slice(8, 10));
+  const chartDays = Array.from({ length: todayDay }, (_, i) => i + 1);
+  const isWeekend = (d: number) => { const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); return dow === 0 || dow === 6; };
+  const openEmp = (id: number) => { const e = active.find((a) => a.id === id); if (e) onPickEmployee(e); else onNavigate("attendance"); };
+
+  // Someone still out after the shift (plus the grace) has started is worth
+  // flagging; before then everyone is simply "not in yet", which is normal.
+  const shift = att.data?.shift ?? null;
+  const pastShiftStart = shift != null && minutesFromWorkDate(today, new Date()) > shift.startMin + shift.lateGraceMin;
   const otPending = canOt ? (ot.data?.claims.filter((c) => c.status === "PENDING").length ?? 0) : 0;
+  const penaltyPending = canPenalty ? (penalties.data?.penalties.filter((p) => p.status === "PENDING_APPROVAL").length ?? 0) : 0;
   const needs = useMemo(() => {
     const items: { tone: string; title: string; sub: string; action: string; to: string }[] = [];
+    if (attReady && notIn > 0 && pastShiftStart) items.push({ tone: "err", title: `${notIn} not punched in`, sub: "The shift has started", action: "View", to: "attendance" });
     if (notLinked > 0) items.push({ tone: "warning", title: `${notLinked} without an ERP account`, sub: "Cannot punch in until linked", action: "Link", to: "employees" });
     if (otPending > 0) items.push({ tone: "primary", title: `${otPending} overtime to confirm`, sub: "Confirm before payroll closes", action: "Review", to: "ot-requests" });
+    if (penaltyPending > 0) items.push({ tone: "warning", title: `${penaltyPending} ${penaltyPending > 1 ? "penalties" : "penalty"} to approve`, sub: "Waiting for your sign-off", action: "Review", to: "penalties" });
     if (payroll.data && (payStatus === "DRAFT" || payStatus === "Draft" || payStatus === "MIXED")) items.push({ tone: "accent", title: "Payroll is still in draft", sub: `${period} run`, action: "Open", to: "payroll" });
     return items;
-  }, [notLinked, otPending, payroll.data, payStatus, period]);
+  }, [attReady, notIn, pastShiftStart, notLinked, otPending, penaltyPending, payroll.data, payStatus, period]);
 
   const upcoming = useMemo(() => {
     const list = (holidays.data?.holidays ?? []).filter((h) => h.date >= today).sort((a, b) => a.date.localeCompare(b.date)).slice(0, 5);
@@ -205,8 +244,55 @@ export function OverviewPage({ onNavigate, onPickEmployee }: { onNavigate: (key:
         )}
       </Card>
 
+      {/* Attendance · month — on-time rate per working day */}
+      <Card
+        title={`Attendance · ${monthLabel(m - 1, "long")}`}
+        className="col-span-12"
+        right={monthStats.avg != null ? (
+          <div className="flex items-center gap-4 text-[11px]">
+            <span className="flex items-baseline gap-1"><span className="text-[16px] font-bold text-ink">{monthStats.avg}%</span><span className="text-ink-muted">on-time</span></span>
+            <span className="flex items-baseline gap-1"><span className="text-[15px] font-bold text-time">{monthStats.late}</span><span className="text-ink-muted">late</span></span>
+            <span className="flex items-baseline gap-1"><span className="text-[15px] font-bold text-err">{monthStats.absent}</span><span className="text-ink-muted">absent</span></span>
+          </div>
+        ) : undefined}
+      >
+        {!wh.data ? (
+          <div className="py-10 text-center text-[12px] text-ink-muted">{wh.error ?? "Loading attendance…"}</div>
+        ) : monthStats.graded === 0 ? (
+          <div className="py-10 text-center text-[12px] text-ink-muted">No attendance recorded this month yet — the bars fill in as people punch each day.</div>
+        ) : (
+          <div className="flex items-stretch gap-[3px]" style={{ height: 156 }}>
+            {chartDays.map((d) => {
+              const s = perDayByDate.get(`${period}-${pad2(d)}`);
+              const rate = s?.rate ?? null;
+              const weekend = isWeekend(d);
+              return (
+                <div key={d} className="flex min-w-0 flex-1 flex-col items-center">
+                  <div className="flex h-3 items-end text-[8.5px] font-semibold text-ink-muted">{rate != null ? Math.round(rate * 100) : ""}</div>
+                  <div className="flex w-full flex-1 items-end justify-center pt-1">
+                    <div className="flex h-full w-full max-w-[18px] items-end overflow-hidden rounded bg-surface-2">
+                      {rate != null && (
+                        <div
+                          className={cx("w-full rounded", rate >= 0.85 ? "bg-synced" : rate >= 0.6 ? "bg-time" : "bg-err")}
+                          style={{ height: `${Math.max(rate * 100, 3)}%` }}
+                          title={`${s?.onTime ?? 0} on time, ${s?.late ?? 0} late, ${s?.absent ?? 0} absent`}
+                        />
+                      )}
+                    </div>
+                  </div>
+                  <div className="mt-1 flex flex-col items-center leading-none">
+                    <span className={cx("text-[8.5px]", weekend ? "text-ink-muted/70" : "text-ink-muted")}>{weekdayLetter(new Date(Date.UTC(y, m - 1, d)))}</span>
+                    <span className="text-[9px] font-semibold text-ink-secondary">{d}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Card>
+
       {/* Needs attention */}
-      <Card title="Needs attention" className="col-span-7" right={needs.length > 0 ? <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-err px-1 text-[11px] font-bold text-white">{needs.length}</span> : undefined}>
+      <Card title="Needs attention" className="col-span-4" right={needs.length > 0 ? <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-err px-1 text-[11px] font-bold text-white">{needs.length}</span> : undefined}>
         {needs.length === 0 ? (
           <div className="py-4 text-[12px] text-ink-muted">{emp.loading ? "Loading…" : "Nothing needs attention right now."}</div>
         ) : (
@@ -225,8 +311,32 @@ export function OverviewPage({ onNavigate, onPickEmployee }: { onNavigate: (key:
         )}
       </Card>
 
+      {/* Most late this month */}
+      <Card title="Most late this month" className="col-span-4">
+        {!wh.data ? (
+          <div className="py-4 text-[12px] text-ink-muted">{wh.error ?? "Loading…"}</div>
+        ) : mostLate.length === 0 ? (
+          <div className="py-4 text-[12px] text-ink-muted">No late days this month.</div>
+        ) : (
+          <div className="flex flex-col gap-2.5">
+            {mostLate.map((r) => (
+              <button key={r.id} type="button" onClick={() => openEmp(r.id)} className="flex items-center gap-2.5 text-left">
+                <Avatar name={r.name} size={26} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[12px] font-semibold text-ink">{r.name}</span>
+                  <span className="mt-1 block h-1.5 overflow-hidden rounded-full bg-surface-2">
+                    <span className="block h-full rounded-full bg-time" style={{ width: `${maxLate ? (r.n / maxLate) * 100 : 0}%` }} />
+                  </span>
+                </span>
+                <span className="shrink-0 text-[13px] font-bold text-time">{r.n}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </Card>
+
       {/* Coming up */}
-      <Card title="Coming up" className="col-span-5">
+      <Card title="Coming up" className="col-span-4">
         {upcoming.length === 0 ? (
           <div className="py-4 text-[12px] text-ink-muted">{holidays.loading ? "Loading…" : "No public holidays ahead."}</div>
         ) : (
@@ -235,7 +345,7 @@ export function OverviewPage({ onNavigate, onPickEmployee }: { onNavigate: (key:
               <div key={i} className="flex items-center gap-3">
                 <div className="flex w-10 shrink-0 flex-col items-center">
                   <span className="text-[17px] font-bold leading-none text-ink">{c.day}</span>
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-accent">{c.mon}</span>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-accent">{monthLabel(Number(c.mon) - 1, "short").toUpperCase()}</span>
                 </div>
                 <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink">{c.label}</span>
                 <span className={cx("shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold", comingTone.National)}>{c.kind}</span>
