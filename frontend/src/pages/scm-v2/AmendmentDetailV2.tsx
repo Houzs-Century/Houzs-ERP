@@ -64,7 +64,7 @@ import {
   useWithdrawAmendment,
   type AmendmentLine,
 } from "../../vendor/scm/lib/so-amendment-queries";
-import { failedWriteTail, humanApiError } from "../../vendor/scm/lib/authed-fetch";
+import { failedWriteTail, humanApiError, itDetailOf } from "../../vendor/scm/lib/authed-fetch";
 import { useSalesOrderAuditLog } from "../../vendor/scm/lib/sales-order-queries";
 import {
   buildAmendmentDecisionHistory,
@@ -108,7 +108,7 @@ const asStr = (v: unknown): string | null => {
 const plainError = (e: unknown): string => {
   const err = e as { status?: number; body?: string; message?: string };
   if (typeof err?.status === "number" && typeof err?.body === "string") {
-    return humanApiError(err.status, err.body);
+    return `${humanApiError(err.status, err.body)}${itDetailOf(e)}`;
   }
   return err?.message ?? "Something went wrong. Please try again.";
 };

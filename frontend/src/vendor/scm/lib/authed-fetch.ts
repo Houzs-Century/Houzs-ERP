@@ -970,3 +970,22 @@ export function humanApiError(status: number, body: string): string {
   if (status >= 500) return 'The system hit a problem. Please try again — if it keeps happening, let IT know.';
   return 'Something went wrong. Please try again.';
 }
+
+/* HC-0256: a 5xx keeps its friendly sentence, but the server's own reason was
+   thrown away with it, so IT had nothing to go on. Give it back, labelled. */
+export function itDetailOf(e: unknown): string {
+  const err = e as { status?: unknown; body?: unknown } | null;
+  if (typeof err?.status !== 'number' || err.status < 500 || typeof err.body !== 'string') return '';
+  let said: unknown;
+  try {
+    const j = JSON.parse(err.body) as { reason?: unknown; message?: unknown };
+    said = j.reason ?? j.message;
+  } catch {
+    return '';
+  }
+  if (typeof said !== 'string' || !said.trim() || said.trim().startsWith('{')) return '';
+  if (humanApiError(err.status, err.body).includes(said.trim())) return '';
+  const t = said.trim().slice(0, 300);
+  // ends in a full stop so a tail sentence after it still reads
+  return ` Details for IT: ${t}${/[.!?]$/.test(t) ? '' : '.'}`;
+}

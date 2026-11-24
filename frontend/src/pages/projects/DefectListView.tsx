@@ -212,7 +212,14 @@ export function DefectListView() {
     { keepPreviousData: true },
   );
 
-  const rows = useMemo(() => q.data?.rows ?? [], [q.data]);
+  // Solo events only (owner 2026-11-24): the mall-management ("MALL MGMT")
+  // events are handled elsewhere, so this list hides any event whose name
+  // carries the MALL MGMT organizer and shows only the solo roadshows. Filtered
+  // at the row level so the count, the grouping and the photo viewer all agree.
+  const rows = useMemo(
+    () => (q.data?.rows ?? []).filter((r) => !/mall\s*mgmt/i.test(r.name)),
+    [q.data],
+  );
   const groups = useMemo(() => groupByProject(rows), [rows]);
   const mediaItems = useMemo(
     () => rows.map((r) => ({ r2_key: r.r2_key, content_type: r.content_type, caption: r.caption })),
