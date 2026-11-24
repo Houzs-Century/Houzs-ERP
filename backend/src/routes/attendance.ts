@@ -605,8 +605,8 @@ const canApproveLeave = (c: Ctx): boolean => {
   return hasPermission(u.permissions_set ?? u.permissions, "hr.leave.approve");
 };
 
-type LrRow = { id: number; leave_status: string; start_date: string; end_date: string; reason: string; status: string; reject_reason: string | null };
-const lrOut = (r: LrRow) => ({ id: r.id, leaveStatus: r.leave_status, startDate: r.start_date, endDate: r.end_date, reason: r.reason, status: r.status, rejectReason: r.reject_reason });
+type LrRow = { id: number; leave_status: string; start_date: string; end_date: string; reason: string; status: string; reject_reason: string | null; reviewed_by_name: string | null; reviewed_at: string | null };
+const lrOut = (r: LrRow) => ({ id: r.id, leaveStatus: r.leave_status, startDate: r.start_date, endDate: r.end_date, reason: r.reason, status: r.status, rejectReason: r.reject_reason, reviewedByName: r.reviewed_by_name, reviewedAt: r.reviewed_at });
 
 attendance.get("/leave", async (c: Ctx) => {
   const co = requireActiveCompanyId(c);
@@ -634,7 +634,21 @@ attendance.get("/leave", async (c: Ctx) => {
       .orderBy(asc(hr_leave_requests.start_date), asc(hr_leave_requests.id));
     pending = rows.map((r) => ({ ...lrOut(r.c as LrRow), employeeName: r.name, empNo: r.emp_no }));
   }
-  return c.json({ types: APPLICABLE_LEAVE_TYPES, canApprove, mine, pending });
+  // Team history: the reviewed team requests (approved / rejected) an approver
+  // can look back on, with who reviewed them. The pending queue above stays the
+  // actionable list; this is the record. Additive — the phone ignores it.
+  let teamHistory: Array<ReturnType<typeof lrOut> & { employeeName: string; empNo: string }> = [];
+  if (canApprove) {
+    const rows = await db
+      .select({ c: hr_leave_requests, name: hr_employees.name, emp_no: hr_employees.emp_no })
+      .from(hr_leave_requests)
+      .innerJoin(hr_employees, eq(hr_employees.id, hr_leave_requests.employee_id))
+      .where(and(eq(hr_leave_requests.company_id, co.companyId), inArray(hr_leave_requests.status, ["APPROVED", "REJECTED"]), gte(hr_leave_requests.start_date, since)))
+      .orderBy(desc(hr_leave_requests.reviewed_at), desc(hr_leave_requests.id))
+      .limit(200);
+    teamHistory = rows.map((r) => ({ ...lrOut(r.c as LrRow), employeeName: r.name, empNo: r.emp_no }));
+  }
+  return c.json({ types: APPLICABLE_LEAVE_TYPES, canApprove, mine, pending, teamHistory });
 });
 
 attendance.post("/leave", async (c: Ctx) => {
@@ -685,10 +699,13 @@ attendance.post("/leave/:id/review", async (c: Ctx) => {
   const db = getDb(c.env);
   const at = new Date().toISOString();
   const by = c.get("user").id;
+  // Stamp the reviewer's name now: reviewed_by is a user id in a different store
+  // than this table, so the name cannot be joined back later.
+  const byName = (c.get("user").name ?? "").trim().slice(0, 120) || null;
   // Claim the pending row atomically, so two approvers cannot both act on it.
   const claimed = await db
     .update(hr_leave_requests)
-    .set({ status: decision === "approve" ? "APPROVED" : "REJECTED", reject_reason: decision === "reject" ? rejectReason || null : null, reviewed_by: by, reviewed_at: at, updated_at: at })
+    .set({ status: decision === "approve" ? "APPROVED" : "REJECTED", reject_reason: decision === "reject" ? rejectReason || null : null, reviewed_by: by, reviewed_by_name: byName, reviewed_at: at, updated_at: at })
     .where(and(eq(hr_leave_requests.id, id), eq(hr_leave_requests.company_id, co.companyId), eq(hr_leave_requests.status, "PENDING")))
     .returning();
   const lr = claimed.at(0) as (LrRow & { employee_id: number }) | undefined;

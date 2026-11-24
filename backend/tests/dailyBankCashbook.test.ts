@@ -23,7 +23,7 @@ import { dailyBankHandler } from '../src/scm/routes/accounting';
 import { cashbookBoardHandler } from '../src/scm/routes/accounting-daily-bank';
 import {
   calendarDay, cashbookGet, cashbookReceiptCreate, cashbookReceiptDelete, cashbookReceiptUpdate,
-  cashbookStartDelete, cashbookStartPut,
+  cashbookReceiptsDayPut, cashbookStartDelete, cashbookStartPut,
 } from '../src/scm/routes/accounting-daily-bank-cashbook';
 
 const CO = 1;
@@ -104,6 +104,7 @@ function harness(perms: string[] = [WRITE]) {
   app.post('/accounting/daily-bank/receipts', cashbookReceiptCreate as never);
   app.patch('/accounting/daily-bank/receipts/:id', cashbookReceiptUpdate as never);
   app.delete('/accounting/daily-bank/receipts/:id', cashbookReceiptDelete as never);
+  app.put('/accounting/daily-bank/receipts/day', cashbookReceiptsDayPut as never);
   const send = (method: string, path: string, body?: unknown) => app.request(path, {
     method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body),
   });
@@ -312,6 +313,102 @@ describe('Daily Bank cash book — the audit trail and the day view', () => {
     expect(day.deleted.map((x) => [x.id, x.deletedBy])).toEqual([[r2.id, 'Chew']]);
     /* A deleted receipt cannot be edited back to life. */
     expect((await h.send('PATCH', `/accounting/daily-bank/receipts/${r2.id}`, { amountSen: 1 })).status).toBe(409);
+  });
+});
+
+/* The day's income as a grid (owner 2026-11-23: 不能做成这样的表格给我keyin income？):
+   bank by method, one total per cell; 0 clears a cell, a cell not sent stays. */
+describe('Daily Bank cash book — the day as a grid', () => {
+  const withTerminals = (h: ReturnType<typeof harness>) => {
+    h.t.acc_acquirers!.push(
+      { company_id: CO, code: 'HLB', transit_account_code: '326-0000', bank_account_code: '310-0020', is_active: true },
+      { company_id: CO, code: 'GHL', transit_account_code: '326-0000', bank_account_code: '310-0020', is_active: true },
+      { company_id: CO, code: 'AEON', transit_account_code: '326-0000', bank_account_code: null, is_active: false },
+      { company_id: OTHER, code: 'CIMB', transit_account_code: '326-0000', bank_account_code: null, is_active: true },
+    );
+    return h;
+  };
+  const save = (h: ReturnType<typeof harness>, cells: Row[], date = TODAY) => h.send('PUT', '/accounting/daily-bank/receipts/day', { date, cells });
+
+  test('its columns: Online, Cash, Cheque, then the company\'s active card terminals', async () => {
+    const h = withTerminals(harness());
+    const res = await h.app.request(`/accounting/daily-bank/cashbook?date=${TODAY}`);
+    const body = await res.json() as { methods: Array<{ key: string; label: string }> };
+    expect(body.methods).toEqual([
+      { key: 'online', label: 'Online' }, { key: 'cash', label: 'Cash' }, { key: 'cheque', label: 'Cheque' },
+      { key: 'card:GHL', label: 'GHL' }, { key: 'card:HLB', label: 'HLB' },
+    ]);
+  });
+
+  test('typed, changed and cleared cell by cell; the board counts what is there; every change on the trail', async () => {
+    const h = withTerminals(harness());
+    await h.send('PUT', '/accounting/daily-bank/starts/310-0010', { startDate: '2026-11-24', balanceSen: 1_000_000 });
+    const first = await save(h, [
+      { accountCode: '310-0010', method: 'online', amountSen: 512_300 },
+      { accountCode: '310-0010', method: 'card:GHL', amountSen: 903_150 },
+      { accountCode: '310-0010', method: 'cash', amountSen: 0 },
+    ]);
+    expect(first.status, await first.clone().text()).toBe(200);
+    expect(await first.json()).toEqual({ ok: true, created: 2, updated: 0, deleted: 0 });
+    const may = blockOf(await board(h), '310-0010');
+    expect(may.receipts.map((m) => [m.note, m.amountSen, m.typedBy])).toEqual([['Online', 512_300, 'Chew'], ['GHL card', 903_150, 'Chew']]);
+    expect(may.inSen).toBe(512_300 + 903_150);
+
+    /* Sending the same again changes nothing. */
+    expect(await (await save(h, [{ accountCode: '310-0010', method: 'online', amountSen: 512_300 }])).json()).toEqual({ ok: true, created: 0, updated: 0, deleted: 0 });
+
+    const second = await save(h, [
+      { accountCode: '310-0010', method: 'online', amountSen: 700_000 },
+      { accountCode: '310-0010', method: 'card:GHL', amountSen: 0 },
+    ]);
+    expect(await second.json()).toEqual({ ok: true, created: 0, updated: 1, deleted: 1 });
+    const view = await (await h.app.request(`/accounting/daily-bank/cashbook?date=${TODAY}`)).json() as {
+      receipts: Array<{ method: string | null; amountSen: number; note: string; updatedBy: string | null }>;
+      deleted: Array<{ method: string | null; amountSen: number; deletedBy: string | null }>;
+    };
+    expect(view.receipts.map((r) => [r.method, r.amountSen, r.note, r.updatedBy])).toEqual([['online', 700_000, 'Online', 'Chew']]);
+    expect(view.deleted.map((r) => [r.method, r.amountSen, r.deletedBy])).toEqual([['card:GHL', 903_150, 'Chew']]);
+    const trail = h.t.entity_audit_log!.filter((a) => a.entity_type === 'DAILY_BANK_RECEIPT').map((a) => a.action);
+    expect(trail).toEqual(['CREATE', 'CREATE', 'UPDATE', 'DELETE']);
+    expect(h.t.entity_audit_log!.find((a) => a.action === 'UPDATE')!.field_changes).toContainEqual({ field: 'amount_sen', from: 512_300, to: 700_000 });
+  });
+
+  test('a terminal turned off later keeps its column on a day that holds money from it, to change or clear', async () => {
+    const h = withTerminals(harness());
+    await h.send('PUT', '/accounting/daily-bank/starts/310-0010', { startDate: '2026-11-24', balanceSen: 0 });
+    expect((await save(h, [{ accountCode: '310-0010', method: 'card:GHL', amountSen: 903_150 }])).status).toBe(200);
+    h.t.acc_acquirers!.find((a) => a.company_id === CO && a.code === 'GHL')!.is_active = false;
+    const columns = async (date: string) =>
+      ((await (await h.app.request(`/accounting/daily-bank/cashbook?date=${date}`)).json()) as { methods: Array<{ key: string }> }).methods.map((m) => m.key);
+
+    expect(await columns(TODAY)).toEqual(['online', 'cash', 'cheque', 'card:HLB', 'card:GHL']);
+    expect(await columns('2026-11-24')).toEqual(['online', 'cash', 'cheque', 'card:HLB']);
+    expect(await (await save(h, [{ accountCode: '310-0010', method: 'card:GHL', amountSen: 100_000 }])).json()).toEqual({ ok: true, created: 0, updated: 1, deleted: 0 });
+    const elsewhere = await save(h, [{ accountCode: '310-0010', method: 'card:GHL', amountSen: 1 }], '2026-11-24');
+    expect([elsewhere.status, (await elsewhere.json() as { error: string }).error]).toEqual([400, 'bad_method']);
+    expect(await (await save(h, [{ accountCode: '310-0010', method: 'card:GHL', amountSen: 0 }])).json()).toEqual({ ok: true, created: 0, updated: 0, deleted: 1 });
+    expect(await columns(TODAY)).toEqual(['online', 'cash', 'cheque', 'card:HLB']);
+  });
+
+  test('refused: a method not offered, a bank not on the cash book that day, a day to come, a negative or doubled cell, no write key', async () => {
+    const h = withTerminals(harness());
+    await h.send('PUT', '/accounting/daily-bank/starts/310-0010', { startDate: '2026-11-24', balanceSen: 0 });
+    const cases: Array<[Row[], string, number, string]> = [
+      [[{ accountCode: '310-0010', method: 'card:AEON', amountSen: 1 }], TODAY, 400, 'bad_method'],   // inactive terminal
+      [[{ accountCode: '310-0010', method: 'card:CIMB', amountSen: 1 }], TODAY, 400, 'bad_method'],   // another company's
+      [[{ accountCode: '310-0020', method: 'online', amountSen: 1 }], TODAY, 409, 'not_open'],        // no start
+      [[{ accountCode: '310-0010', method: 'online', amountSen: 1 }], '2026-11-23', 409, 'not_open'], // before its start
+      [[{ accountCode: '310-0010', method: 'online', amountSen: 1 }], '2026-11-26', 400, 'future_date'],
+      [[{ accountCode: '310-0010', method: 'online', amountSen: -1 }], TODAY, 400, 'bad_amount'],
+      [[{ accountCode: '310-0010', method: 'online', amountSen: 1 }, { accountCode: '310-0010', method: 'online', amountSen: 2 }], TODAY, 400, 'duplicate_cell'],
+    ];
+    for (const [cells, date, status, error] of cases) {
+      const res = await save(h, cells, date);
+      expect([res.status, (await res.json() as { error: string }).error], JSON.stringify(cells)).toEqual([status, error]);
+    }
+    expect(h.t.acc_daily_bank_receipts!.filter((r) => r.company_id === CO)).toEqual([]);
+    const viewer = withTerminals(harness([]));
+    expect((await save(viewer, [{ accountCode: '310-0010', method: 'online', amountSen: 1 }])).status).toBe(403);
   });
 });
 

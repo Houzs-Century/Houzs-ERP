@@ -54,14 +54,31 @@ function ClaimMyAddress() {
   const claim = useMailClaim();
   const offer = claim.offer;
   if (!offer || offer.address) return null;
+  if (claim.waiting) {
+    return (
+      <div className="space-y-1 border-b border-border/60 px-3 pb-3">
+        <p className="m-0 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-ink-muted/70">
+          <UserIcon className="h-3 w-3" />
+          My address
+        </p>
+        <p className="m-0 truncate font-mono text-[12px] text-ink" title={claim.waiting.address}>{claim.waiting.address}</p>
+        <p className="m-0 text-[11px] leading-snug text-warning-text">Waiting for an admin to approve it. You can send from it once approved.</p>
+      </div>
+    );
+  }
   return (
     <div className="space-y-2 border-b border-border/60 px-3 pb-3">
       <p className="m-0 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-ink-muted/70">
         <UserIcon className="h-3 w-3" />
         Claim my address
       </p>
+      {claim.rejected && (
+        <p className="m-0 rounded-md bg-err/10 px-2 py-1 text-[11px] leading-snug text-err">
+          {claim.rejected.address} was not approved: {claim.rejected.reason}. Pick another.
+        </p>
+      )}
       <p className="m-0 text-[11.5px] leading-snug text-ink-secondary">
-        Pick your company address. You can claim it once; an admin can change it later.
+        Pick your company address. An admin approves it before you can use it.
       </p>
       <div className="flex items-center overflow-hidden rounded-md border border-border bg-surface focus-within:border-primary">
         <input
@@ -96,7 +113,7 @@ function ClaimMyAddress() {
         onClick={() => void claim.submit()}
         className="w-full rounded-md bg-primary px-3 py-1.5 text-[12px] font-semibold text-white transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {claim.busy ? "Claiming…" : `Claim ${claim.value.trim().toLowerCase() || "…"}@${offer.domain}`}
+        {claim.busy ? "Sending…" : `Ask for ${claim.value.trim().toLowerCase() || "…"}@${offer.domain}`}
       </button>
       {claim.needsDepartment && (
         <p className="m-0 text-[10.5px] leading-snug text-ink-muted">An admin confirms your department.</p>

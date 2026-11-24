@@ -1189,6 +1189,7 @@ export const hr_leave_requests = pgTable(
     status: text("status").notNull().default("PENDING"),
     reject_reason: text("reject_reason"),
     reviewed_by: integer("reviewed_by"),
+    reviewed_by_name: text("reviewed_by_name"),
     reviewed_at: timestamp("reviewed_at", { withTimezone: true, mode: "string" }),
     created_by: integer("created_by"),
     created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),

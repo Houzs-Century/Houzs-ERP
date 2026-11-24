@@ -8,8 +8,7 @@ import { openLoadedTab } from "../../lib/openLoadedTab";
 import { cn } from "../../lib/utils";
 import {
   DAY, MONTH_NAMES, addDays, atHour, draftBody, draftFrom, emptyDraft, fmtDayLong, isMeetingsTab, isoDay, isView, VIEWS, ms, nextStart, peopleOf, readConflict, startOfDay, startOfWeek,
-  companyColor, meetingColor, type Bootstrap, type CalView, type ColorBy, type ConflictReply, type Draft, type GuestLink, type Meeting, type MeetingsTab, type Notice, type Room,
-} from "../../lib/meetings";
+  companyColor, meetingColor, type Bootstrap, type CalView, type ColorBy, type ConflictReply, type Draft, type GuestLink, type Meeting, type MeetingsTab, type Notice, type Room, bestRoom } from "../../lib/meetings";
 import { ListView, MiniMonth, MonthView, RoomsTimeline, TimeGrid } from "./MeetingsCalendar";
 import { BTN, ConflictDialog, MeetingDetail, MeetingEditor, PersonSearch, PRI, QuickBook, ScopeQuestion, type MeetingFile } from "./MeetingsDialogs";
 import { EmailPage, LinkDialog, LinksPage, LogPage, MyMeetings, RoomDialog, RoomsPage, roomForm, type LinkForm, type RoomForm } from "./MeetingsAdmin";
@@ -140,7 +139,8 @@ export function Meetings({ erpName = "Houzs ERP", embedded = false }: { erpName?
     return true;
   });
   const busyRoomsFor = (d: Draft) => new Set(meetings.filter((m) => m.id !== d.id && m.roomId && m.status !== "ended" && ms(m.start) < d.end && d.start < ms(m.end)).map((m) => m.roomId as number));
-  const freeRoomFor = (s: number, e: number) => rooms.find((r) => r.active && !meetings.some((m) => m.roomId === r.id && m.status !== "ended" && ms(m.start) < e && s < ms(m.end)))?.id ?? null;
+  const freeRoomFor = (s: number, e: number) =>
+    bestRoom(rooms, 1, new Set(meetings.filter((m) => m.roomId && m.status !== "ended" && ms(m.start) < e && s < ms(m.end)).map((m) => m.roomId as number)))?.id ?? null;
 
   const uploadFiles = async (meetingId: number) => {
     if (!pendingFiles.length) return;

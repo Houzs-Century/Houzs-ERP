@@ -22,9 +22,9 @@ import { HrPageHeader, hrPrimaryBtn, hrSecondaryBtn } from "./HrPageHeader";
 const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(" ");
 
 type LeaveType = { value: string; label: string; paid: boolean };
-type LeaveRow = { id: number; leaveStatus: string; startDate: string; endDate: string; reason: string; status: string; rejectReason: string | null };
+type LeaveRow = { id: number; leaveStatus: string; startDate: string; endDate: string; reason: string; status: string; rejectReason: string | null; reviewedByName: string | null; reviewedAt: string | null };
 type PendingRow = LeaveRow & { employeeName: string; empNo: string };
-type LeaveData = { types: LeaveType[]; canApprove: boolean; mine: LeaveRow[]; pending: PendingRow[] };
+type LeaveData = { types: LeaveType[]; canApprove: boolean; mine: LeaveRow[]; pending: PendingRow[]; teamHistory: PendingRow[] };
 
 const LEAVE_URL = "/api/attendance/leave";
 const useLeave = () => useQuery(LEAVE_URL, () => api.get<LeaveData>(LEAVE_URL), [], { refetchOnMount: "always", staleTime: 0 });
@@ -60,6 +60,7 @@ export function LeavePage() {
   const canApprove = data?.canApprove ?? false;
   const mine = data?.mine ?? [];
   const pending = data?.pending ?? [];
+  const teamHistory = data?.teamHistory ?? [];
   const today = todayMY().slice(0, 10);
 
   const counts = useMemo(
@@ -192,7 +193,7 @@ export function LeavePage() {
                 <table className="w-full text-[12px]">
                   <thead>
                     <tr className="border-b border-border-subtle text-left text-[10px] font-bold uppercase tracking-wide text-ink-muted">
-                      <Th>Leave Type</Th><Th>Start</Th><Th>End</Th><Th>Days</Th><Th>Backdated</Th><Th>Reason</Th><Th>Status</Th><Th right>Actions</Th>
+                      <Th>Leave Type</Th><Th>Start</Th><Th>End</Th><Th>Days</Th><Th>Backdated</Th><Th>Reason</Th><Th>Status</Th><Th>Reviewed by</Th><Th right>Actions</Th>
                     </tr>
                   </thead>
                   <tbody>
@@ -208,14 +209,47 @@ export function LeavePage() {
                           {r.status === "REJECTED" && r.rejectReason && <span className="mt-0.5 block text-[10px] text-err">Rejected: {r.rejectReason}</span>}
                         </Td>
                         <Td><StatusPill status={r.status} /></Td>
+                        <Td>{r.status !== "PENDING" && r.reviewedByName ? r.reviewedByName : <span className="text-ink-muted">--</span>}</Td>
                         <Td right>{r.status === "PENDING" && <button type="button" className={ghostBtn} onClick={() => void cancelMine(r)}>Cancel</button>}</Td>
                       </tr>
                     ))}
-                    {filteredMine.length === 0 && <tr><td colSpan={8} className="px-4 py-10 text-center text-[12px] text-ink-muted">{mine.length === 0 ? "No leave requests yet. Use “Apply for leave”." : "No requests match the filters."}</td></tr>}
+                    {filteredMine.length === 0 && <tr><td colSpan={9} className="px-4 py-10 text-center text-[12px] text-ink-muted">{mine.length === 0 ? "No leave requests yet. Use “Apply for leave”." : "No requests match the filters."}</td></tr>}
                   </tbody>
                 </table>
               </div>
             </section>
+
+            {canApprove && teamHistory.length > 0 && (
+              <section className="overflow-hidden rounded-xl border border-border bg-surface">
+                <div className="flex items-center gap-2 border-b border-border-subtle px-4 py-2.5">
+                  <span className="text-[13px] font-semibold text-ink">Team history</span>
+                  <span className="text-[11px] text-ink-muted">reviewed leave across the team</span>
+                </div>
+                <div className="thin-scroll overflow-x-auto">
+                  <table className="w-full text-[12px]">
+                    <thead>
+                      <tr className="border-b border-border-subtle text-left text-[10px] font-bold uppercase tracking-wide text-ink-muted">
+                        <Th>Employee</Th><Th>Leave Type</Th><Th>Start</Th><Th>End</Th><Th>Days</Th><Th>Status</Th><Th>Reviewed by</Th><Th>Reviewed on</Th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {teamHistory.map((r) => (
+                        <tr key={r.id} className="border-b border-border-subtle last:border-0 hover:bg-row-hover">
+                          <Td><span className="font-semibold text-ink">{r.employeeName}</span><span className="ml-1 font-mono text-[10px] text-accent">{r.empNo}</span></Td>
+                          <Td>{typeLabel(r.leaveStatus, types)}</Td>
+                          <Td>{formatDate(r.startDate)}</Td>
+                          <Td>{formatDate(r.endDate)}</Td>
+                          <Td>{dayCount(r.startDate, r.endDate)}</Td>
+                          <Td><StatusPill status={r.status} />{r.status === "REJECTED" && r.rejectReason && <span className="mt-0.5 block text-[10px] text-err">{r.rejectReason}</span>}</Td>
+                          <Td>{r.reviewedByName ?? <span className="text-ink-muted">--</span>}</Td>
+                          <Td>{r.reviewedAt ? formatDate(r.reviewedAt.slice(0, 10)) : <span className="text-ink-muted">--</span>}</Td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            )}
           </>
         )}
       </div>

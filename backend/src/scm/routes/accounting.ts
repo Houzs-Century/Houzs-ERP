@@ -33,6 +33,7 @@ import { CONVERT_SOURCE, backfillSoPayments, paymentEntryDisagreements, unbooked
 import { dailyBankHandler, cashbookBoardHandler } from './accounting-daily-bank';
 import {
   cashbookGet, cashbookStartPut, cashbookStartDelete, cashbookReceiptCreate, cashbookReceiptUpdate, cashbookReceiptDelete,
+  cashbookReceiptsDayPut,
 } from './accounting-daily-bank-cashbook';
 import { systemTakings, postCashOverShort } from '../../acc/daily-close';
 import { resolveRoles, piLines, DEFAULT_ROLE_CODES } from '../../acc/rules';
@@ -68,6 +69,7 @@ import { previousPaymentsList, previousPaymentsMark, previousPaymentsUndo } from
 import { arAgingHandler, apAgingHandler } from './accounting-aging';
 import { productProfitHandler } from './accounting-product-profit';
 import { productChangesHandler } from './accounting-product-changes';
+import { soDoConversionHandler } from './accounting-so-do-conversion';
 import { bankConfigList, bankConfigSave } from './accounting-bank-config';
 import { payoutUpload, payoutList, payoutCharge, payoutChargeUndo, chargeAccountsHandler } from './accounting-payouts';
 import {
@@ -238,6 +240,10 @@ accounting.get('/product-profit', productProfitHandler);
    sales order with its selling and cost before and after, by the month of its
    change day. accounting-product-changes.ts; acc/product-changes.ts. */
 accounting.get('/product-changes', productChangesHandler);
+/* The SO to DO conversion report (owner 2026-11-24): the month's shipped DOs,
+   from this month's orders and from earlier ones, each part's total and share.
+   accounting-so-do-conversion.ts; acc/so-do-conversion.ts. */
+accounting.get('/so-do-conversion', soDoConversionHandler);
 /* The Forecast P&L (owner 2026-09-21): a planning grid beside the statements; nothing posts. */
 accounting.get('/forecast', forecastGetHandler);
 accounting.put('/forecast', forecastPutHandler);
@@ -1294,6 +1300,8 @@ accounting.get('/daily-bank/cashbook', cashbookGet);
 accounting.put('/daily-bank/starts/:accountCode', cashbookStartPut);
 accounting.delete('/daily-bank/starts/:accountCode', cashbookStartDelete);
 accounting.post('/daily-bank/receipts', cashbookReceiptCreate);
+/* The day's income as a grid, bank by method (owner 2026-11-23). */
+accounting.put('/daily-bank/receipts/day', cashbookReceiptsDayPut);
 accounting.patch('/daily-bank/receipts/:id', cashbookReceiptUpdate);
 accounting.delete('/daily-bank/receipts/:id', cashbookReceiptDelete);
 

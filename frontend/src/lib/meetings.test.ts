@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  busySentences, daysLabel, directoryTree, draftBody, emptyDraft, guestLinkUrl, inUsualHours, layoutDay, meetingColor, nextStart, occupancy, readConflict,
+  bestRoom, busySentences, daysLabel, directoryTree, draftBody, emptyDraft, guestLinkUrl, inUsualHours, layoutDay, meetingColor, nextStart, occupancy, readConflict,
   type Meeting, type Person, type Room,
 } from "./meetings";
 
@@ -88,5 +88,15 @@ describe("meetings helpers", () => {
     expect(daysLabel([1, 2, 3, 4, 5])).toBe("Mon - Fri");
     expect(daysLabel([2, 4])).toBe("Tue, Thu");
     expect(guestLinkUrl("https://erp.houzscentury.com/", "hc-abc123")).toBe("https://erp.houzscentury.com/book/hc-abc123");
+  });
+});
+
+describe("bestRoom (owner 2026-11-24: smallest free room that fits)", () => {
+  it("picks the smallest free room with enough seats, skips taken and inactive ones", () => {
+    const rooms = [room({ id: 1, name: "Big", seats: 12 }), room({ id: 2, name: "Small", seats: 4 }), room({ id: 3, name: "Tiny", seats: 2, active: false }), room({ id: 4, name: "Mid", seats: 6 })];
+    expect(bestRoom(rooms, 2, new Set())?.name).toBe("Small");
+    expect(bestRoom(rooms, 2, new Set([2]))?.name).toBe("Mid");
+    expect(bestRoom(rooms, 5, new Set())?.name).toBe("Mid");
+    expect(bestRoom(rooms, 20, new Set())).toBeNull();
   });
 });

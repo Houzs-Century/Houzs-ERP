@@ -11,10 +11,25 @@ function MobileClaimAddress() {
   const claim = useMailClaim();
   const offer = claim.offer;
   if (!offer || offer.address) return null;
+  const box = { marginBottom: 10, padding: "10px 12px", borderRadius: 12, background: "var(--hz-c-surface-2)", fontSize: 12, color: "var(--hz-c-ink-secondary)" };
+  if (claim.waiting) {
+    return (
+      <div style={box}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: "var(--mut)", marginBottom: 4 }}>My address</div>
+        <div style={{ fontFamily: "monospace", fontSize: 13, color: "var(--hz-c-ink)" }}>{claim.waiting.address}</div>
+        <div style={{ marginTop: 4, color: "var(--hz-c-warning-text)" }}>Waiting for an admin to approve it. You can send from it once approved.</div>
+      </div>
+    );
+  }
   return (
-    <div style={{ marginBottom: 10, padding: "10px 12px", borderRadius: 12, background: "var(--hz-c-surface-2)", fontSize: 12, color: "var(--hz-c-ink-secondary)" }}>
+    <div style={box}>
       <div style={{ fontSize: 11, fontWeight: 700, color: "var(--mut)", marginBottom: 4 }}>Claim my address</div>
-      <div style={{ marginBottom: 8 }}>Pick your company address. You can claim it once; an admin can change it later.</div>
+      {claim.rejected && (
+        <div style={{ marginBottom: 6, color: "#b42318" }}>
+          {claim.rejected.address} was not approved: {claim.rejected.reason}. Pick another.
+        </div>
+      )}
+      <div style={{ marginBottom: 8 }}>Pick your company address. An admin approves it before you can use it.</div>
       <div style={{ ...field, display: "flex", alignItems: "center", gap: 4, padding: 0 }}>
         <input
           value={claim.value}
@@ -50,7 +65,7 @@ function MobileClaimAddress() {
         onClick={() => void claim.submit()}
         style={{ width: "100%", marginTop: 8, opacity: claim.ready ? 1 : 0.5 }}
       >
-        {claim.busy ? "Claiming…" : `Claim ${claim.value.trim().toLowerCase() || "…"}@${offer.domain}`}
+        {claim.busy ? "Sending..." : `Ask for ${claim.value.trim().toLowerCase() || "..."}@${offer.domain}`}
       </button>
       {claim.needsDepartment && <div style={{ marginTop: 6, fontSize: 11, color: "var(--mut)" }}>An admin confirms your department.</div>}
     </div>

@@ -6,7 +6,7 @@
 // day still to come, gets no form. The routes and the board's arithmetic are
 // pinned in backend/tests/dailyBankCashbook.test.ts and src/acc/daily-bank.test.ts.
 
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import type { CashbookDay } from './daily-bank-cashbook-queries';
 
@@ -15,6 +15,7 @@ const edit = vi.fn();
 const del = vi.fn();
 const save = vi.fn();
 const remove = vi.fn();
+const saveDay = vi.fn();
 const confirm = vi.fn(async () => true);
 let day: CashbookDay;
 
@@ -25,6 +26,7 @@ vi.mock('./daily-bank-cashbook-queries', () => ({
   useDeleteCashbookReceipt: () => ({ mutate: del, isPending: false }),
   useSaveCashbookStart: () => ({ mutate: save, isPending: false }),
   useRemoveCashbookStart: () => ({ mutate: remove, isPending: false }),
+  useSaveCashbookDay: () => ({ mutate: saveDay, isPending: false }),
 }));
 vi.mock('../../vendor/scm/components/ConfirmDialog', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../vendor/scm/components/ConfirmDialog')>()),
@@ -36,13 +38,13 @@ vi.mock('./EntityHistoryPanel', () => ({
   ),
 }));
 
-import { DailyBankCashbook, openOn, rmToSen, typedLine } from './DailyBankCashbook';
+import { DailyBankCashbook, openOn, rmToSen, shortBank, typedLine } from './DailyBankCashbook';
 
 const DAY = '2026-11-25';
 const receipt = (over: Partial<CashbookDay['receipts'][number]>): CashbookDay['receipts'][number] => ({
   id: 'r1', accountCode: '310-0010', accountName: 'CASH AT BANK - MAYBANK', date: DAY, amountSen: 300_000, note: 'Hookka deposit',
   createdBy: 'Chew', createdAt: '2026-11-25T02:15:00Z', updatedBy: null, updatedAt: '2026-11-25T02:15:00Z',
-  deletedBy: null, deletedAt: null, counted: true, ...over,
+  deletedBy: null, deletedAt: null, counted: true, method: null, ...over,
 });
 
 beforeEach(() => {
@@ -56,6 +58,10 @@ beforeEach(() => {
     ],
     receipts: [receipt({}), receipt({ id: 'r2', amountSen: 12_000, note: 'Cash sales showroom', updatedBy: 'Mei' })],
     deleted: [receipt({ id: 'r3', amountSen: 9_000, note: 'typo', deletedBy: 'Chew', deletedAt: '2026-11-25T03:00:00Z', counted: false })],
+    methods: [
+      { key: 'online', label: 'Online' }, { key: 'cash', label: 'Cash' }, { key: 'cheque', label: 'Cheque' },
+      { key: 'card:GHL', label: 'GHL' }, { key: 'card:HLB', label: 'HLB' },
+    ],
   };
 });
 
@@ -85,18 +91,57 @@ describe('rmToSen', () => {
 });
 
 describe('DailyBankCashbook — money received', () => {
-  test('type a receipt: the started account, the amount in sen, the note trimmed', () => {
+  test('the day as a table: the started banks by Online, Cash, Cheque and the card terminals, with totals', () => {
+    day.receipts.push(receipt({ id: 'g1', method: 'online', amountSen: 512_300, note: 'Online' }), receipt({ id: 'g2', method: 'card:GHL', amountSen: 903_150, note: 'GHL card' }));
     renderTab();
-    const form = screen.getByRole('form', { name: 'Type a receipt' });
-    const account = within(form).getByLabelText('Account received into') as HTMLSelectElement;
-    expect([...account.options].map((o) => o.value)).toEqual(['310-0010']);
-    const addButton = within(form).getByRole('button', { name: /Add receipt/ }) as HTMLButtonElement;
-    expect(addButton.disabled).toBe(true);
-    fireEvent.change(within(form).getByLabelText('Amount received'), { target: { value: '3,000.00' } });
-    expect(addButton.disabled).toBe(true);   // no note yet
-    fireEvent.change(within(form).getByLabelText('Who paid or what for'), { target: { value: '  Hookka deposit SO-1234 ' } });
-    fireEvent.click(addButton);
-    expect(add).toHaveBeenCalledWith({ accountCode: '310-0010', date: DAY, amountSen: 300_000, note: 'Hookka deposit SO-1234' }, expect.anything());
+    const grid = screen.getByRole('table', { name: 'Income by bank and method' });
+    expect([...grid.querySelectorAll('thead th')].map((th) => th.textContent)).toEqual(['Bank \\ method', 'Online', 'Cash', 'Cheque', 'GHL', 'HLB', 'Total']);
+    expect([...grid.querySelectorAll('tbody tr')].map((tr) => tr.querySelector('td')!.textContent)).toEqual(['MAYBANK 310-0010']);
+    expect((within(grid).getByLabelText('310-0010 Online') as HTMLInputElement).value).toBe('5,123.00');
+    expect((within(grid).getByLabelText('310-0010 GHL') as HTMLInputElement).value).toBe('9,031.50');
+    expect((within(grid).getByLabelText('310-0010 Cash') as HTMLInputElement).value).toBe('');
+    expect(grid.querySelector('tfoot')!.textContent).toBe('Total5,123.00——9,031.50—14,154.50');
+    expect(screen.getByRole('button', { name: /Saved/ }).hasAttribute('disabled')).toBe(true);
+  });
+
+  test('Save sends only the cells that changed, in sen; a cleared cell goes as 0', () => {
+    day.receipts.push(receipt({ id: 'g1', method: 'online', amountSen: 512_300, note: 'Online' }));
+    renderTab();
+    const grid = screen.getByRole('table', { name: 'Income by bank and method' });
+    fireEvent.change(within(grid).getByLabelText('310-0010 GHL'), { target: { value: '9,031.50' } });
+    fireEvent.change(within(grid).getByLabelText('310-0010 Online'), { target: { value: '' } });
+    fireEvent.change(within(grid).getByLabelText('310-0010 Cash'), { target: { value: '0' } });   // was empty, still nothing
+    expect(grid.querySelector('tbody tr td:last-child')!.textContent).toBe('9,031.50');
+    fireEvent.click(screen.getByRole('button', { name: 'Save 2 changes' }));
+    expect(saveDay).toHaveBeenCalledWith({ date: DAY, cells: [
+      { accountCode: '310-0010', method: 'online', amountSen: 0 },
+      { accountCode: '310-0010', method: 'card:GHL', amountSen: 903_150 },
+    ] }, expect.anything());
+  });
+
+  test('each saved cell says who typed and changed it, and opens its history', () => {
+    day.receipts.push(receipt({ id: 'g1', method: 'card:GHL', amountSen: 903_150, note: 'GHL card', updatedBy: 'Mei' }));
+    renderTab();
+    const list = screen.getByText('Who typed each cell (1)').closest('details')!;
+    expect(list.textContent).toContain('310-0010 GHL card');
+    expect(list.textContent).toContain('9,031.50');
+    expect(list.textContent).toContain('Chew · 10:15 · changed by Mei');
+    fireEvent.click(within(list).getByRole('button', { name: 'History of 310-0010 GHL card' }));
+    expect(screen.getByRole('dialog', { name: 'History' }).textContent).toBe('DAILY_BANK_RECEIPT|g1|310-0010 · GHL card · 2026/11/25');
+  });
+
+  test('a cell that is not a plain amount stops the save and says why', () => {
+    renderTab();
+    fireEvent.change(screen.getByLabelText('310-0010 Cheque'), { target: { value: '12.345' } });
+    expect(screen.getByText('Fix the cells in red: a plain amount with at most two decimals.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Saved|Save/ }).hasAttribute('disabled')).toBe(true);
+    expect(saveDay).not.toHaveBeenCalled();
+  });
+
+  test('a bank name loses the chart\'s "CASH AT BANK -"', () => {
+    expect(shortBank('CASH AT BANK - HLBB')).toBe('HLBB');
+    expect(shortBank('CASH BANK - SCB (312409588841)')).toBe('SCB (312409588841)');
+    expect(shortBank('CASH IN HAND')).toBe('CASH IN HAND');
   });
 
   test('the day lists what was typed, who typed it, and what was deleted', () => {
@@ -137,15 +182,17 @@ describe('DailyBankCashbook — money received', () => {
     expect(screen.getByRole('dialog', { name: 'History' }).textContent).toBe('DAILY_BANK_RECEIPT|r1|310-0010 · 2026/11/25 · RM 3,000.00');
   });
 
-  test('no form without the Finance write key, nor for a day still to come', () => {
+  test('a read-only table without the Finance write key, and none for a day still to come', () => {
     day.canWrite = false;
     renderTab();
-    expect(screen.queryByRole('form', { name: 'Type a receipt' })).toBeNull();
+    expect((screen.getByLabelText('310-0010 Online') as HTMLInputElement).disabled).toBe(true);
+    expect(screen.queryByRole('button', { name: /Save/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /Change receipt/ })).toBeNull();
     expect(screen.getByText(/changing it needs Finance’s posting permission/)).toBeTruthy();
+    cleanup();
     day.canWrite = true;
     renderTab('2026-11-26', DAY);
-    expect(screen.queryByRole('form', { name: 'Type a receipt' })).toBeNull();
+    expect(screen.queryByRole('table', { name: 'Income by bank and method' })).toBeNull();
     expect(screen.getByText('This day hasn’t happened yet. Money is typed once it is received.')).toBeTruthy();
   });
 });

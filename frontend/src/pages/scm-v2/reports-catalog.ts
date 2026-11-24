@@ -29,7 +29,7 @@ export type ReportGroupId = 'statements' | 'owes' | 'sales' | 'events' | 'cards'
 export type ReportId =
   | 'pnl' | 'departments' | 'bs' | 'rp' | 'tb'
   | 'ar' | 'ap'
-  | 'collection' | 'fair' | 'performance' | 'products' | 'changes' | 'changesum'
+  | 'collection' | 'fair' | 'performance' | 'products' | 'changes' | 'changesum' | 'sotodo'
   | 'events' | 'commission' | 'logistics'
   | 'charges'
   | 'forecast' | 'dashboard'
@@ -119,6 +119,8 @@ export const REPORT_CATALOG: readonly ReportItem[] = [
   tabItem('changes', 'sales'),
   // The same changes added up P&L-style, by month and by salesperson (owner 2026-11-23: 类似 p&L).
   tabItem('changesum', 'sales'),
+  // The month's shipped DOs: how much came from this month's orders, the rest from earlier ones (owner 2026-11-24).
+  tabItem('sotodo', 'sales'),
   // What each event cost, from the ledger — voucher and AP invoice lines tagged with it (owner 2026-09-30, 5a).
   tabItem('events', 'events'),
   // Each fair's commission and each order's under it — goods × brand rate once 30% is paid (owner 2026-10-20).

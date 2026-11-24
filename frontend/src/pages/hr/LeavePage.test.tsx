@@ -12,12 +12,15 @@ const DATA = {
   ],
   canApprove: true,
   mine: [
-    { id: 1, leaveStatus: "ANNUAL_LEAVE", startDate: "2026-11-20", endDate: "2026-11-21", reason: "family trip", status: "APPROVED", rejectReason: null },
-    { id: 2, leaveStatus: "MEDICAL_LEAVE", startDate: "2026-11-25", endDate: "2026-11-25", reason: "fever", status: "PENDING", rejectReason: null },
-    { id: 3, leaveStatus: "UNPAID_LEAVE", startDate: "2026-10-01", endDate: "2026-10-02", reason: "errand", status: "REJECTED", rejectReason: "short-staffed that week" },
+    { id: 1, leaveStatus: "ANNUAL_LEAVE", startDate: "2026-11-20", endDate: "2026-11-21", reason: "family trip", status: "APPROVED", rejectReason: null, reviewedByName: "Sana Khan", reviewedAt: "2026-11-19T10:00:00Z" },
+    { id: 2, leaveStatus: "MEDICAL_LEAVE", startDate: "2026-11-25", endDate: "2026-11-25", reason: "fever", status: "PENDING", rejectReason: null, reviewedByName: null, reviewedAt: null },
+    { id: 3, leaveStatus: "UNPAID_LEAVE", startDate: "2026-10-01", endDate: "2026-10-02", reason: "errand", status: "REJECTED", rejectReason: "short-staffed that week", reviewedByName: "Sana Khan", reviewedAt: "2026-09-30T09:00:00Z" },
   ],
   pending: [
-    { id: 9, leaveStatus: "ANNUAL_LEAVE", startDate: "2026-12-01", endDate: "2026-12-02", reason: "holiday", status: "PENDING", rejectReason: null, employeeName: "Bilal Yousaf", empNo: "HCFW0002" },
+    { id: 9, leaveStatus: "ANNUAL_LEAVE", startDate: "2026-12-01", endDate: "2026-12-02", reason: "holiday", status: "PENDING", rejectReason: null, reviewedByName: null, reviewedAt: null, employeeName: "Bilal Yousaf", empNo: "HCFW0002" },
+  ],
+  teamHistory: [
+    { id: 20, leaveStatus: "ANNUAL_LEAVE", startDate: "2026-11-10", endDate: "2026-11-11", reason: "wedding", status: "APPROVED", rejectReason: null, reviewedByName: "Sana Khan", reviewedAt: "2026-11-09T08:00:00Z", employeeName: "Ravi Kumar", empNo: "HCFW0005" },
   ],
 };
 
@@ -77,5 +80,17 @@ describe("HR Leave desktop page", () => {
     render(<LeavePage />);
     fireEvent.click(screen.getByRole("button", { name: "Apply for leave" }));
     expect(screen.getByText("A supervisor approves it; approval marks the days on attendance.")).toBeTruthy();
+  });
+
+  it("shows who reviewed a reviewed request", () => {
+    render(<LeavePage />);
+    expect(screen.getAllByText("Sana Khan").length).toBeGreaterThanOrEqual(1); // reviewer name on approved/rejected rows
+  });
+
+  it("shows team history for approvers", () => {
+    render(<LeavePage />);
+    expect(screen.getByText("Team history")).toBeTruthy();
+    expect(screen.getByText("Ravi Kumar")).toBeTruthy(); // the team member whose reviewed leave shows
+    expect(screen.getByText("HCFW0005")).toBeTruthy(); // their emp no, only in the team-history row
   });
 });
