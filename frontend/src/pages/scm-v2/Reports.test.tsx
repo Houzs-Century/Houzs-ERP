@@ -54,6 +54,8 @@ const bsData = {
 
 /* Every column is one read: the P&L for its dates (September sold less), the balance sheet for its day. */
 const reads = vi.hoisted(() => ({ keys: [] as unknown[][], fail: false }));
+/* The Forecast Balance Sheet's one read, when a test sets it. */
+const bsForecast = vi.hoisted(() => ({ value: undefined as unknown }));
 vi.mock('@tanstack/react-query', () => ({
   useQueries: ({ queries }: { queries: Array<{ queryKey: unknown[] }> }) => queries.map((q) => {
     reads.keys.push(q.queryKey);
@@ -61,7 +63,7 @@ vi.mock('@tanstack/react-query', () => ({
     const [k, from] = q.queryKey as [string, string];
     return { isLoading: false, isError: false, data: k === 'report-pnl' ? pnl(String(from).startsWith('2026-09') ? 80_000 : 100_000) : bsData };
   }),
-  useQuery: () => ({ isLoading: false, isError: false, data: undefined }),
+  useQuery: (o: { queryKey: unknown[] }) => ({ isLoading: false, isError: false, data: o.queryKey[0] === 'report-bs-forecast' ? bsForecast.value : undefined }),
   useMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useQueryClient: () => ({ invalidateQueries: vi.fn() }),
 }));
@@ -283,6 +285,28 @@ describe('the balance sheet', () => {
     expect(heads[1]).toBe('Sep 2026%');
     expect(heads).not.toContain('Total');
     expect(reads.keys).toContainEqual(['report-bs', '2026-08-31']);
+  });
+
+  test('By month with the forecast: each month after the last month-end as its forecast alone, newest first; the note says what moves it', () => {
+    const month = (bank: number) => ({ ...bsData, layout: { ...bsData.layout, assets: [{ ...bsData.layout.assets[0]!, children: [acc('310-0010', 'BANK', bank, 90), acc('330-0000', 'STOCK', 10_000, 10)] }] } });
+    bsForecast.value = {
+      start: '2026-10-31', currentMonth: '2026-11', accrual: { code: '410-0010', name: 'ACCRUAL - SALARIES' },
+      receipts: { orders: 3, sen: 50_000, capSen: 0, countedSen: 0 },
+      months: [{ month: '2026-11', report: month(95_000) }, { month: '2026-12', report: month(97_000) }],
+    };
+    at(BS, <BalanceSheetTab />);
+    fireEvent.click(within(screen.getByRole('group', { name: 'View' })).getByRole('button', { name: 'By month' }));
+    fireEvent.click(screen.getByRole('switch', { name: 'Forecast' }));
+    const heads = screen.getAllByRole('columnheader').map((h) => h.textContent);
+    expect(heads.slice(1, 4)).toEqual(['Dec 2026Forecast only', 'Nov 2026Forecast only', 'Oct 2026%']);
+    expect(heads.slice(-2)).toEqual(['Forecast%', 'Forecast%']);
+    const bank = [...screen.getByText('BANK').closest('tr')!.querySelectorAll('td')].map((td) => td.textContent);
+    /* December's forecast, November's, then October's actual: amount and % of total assets. */
+    expect(bank.slice(0, 3)).toEqual(['970.0090.0%', '950.0090.0%', '930.0090.3%']);
+    expect(document.body.textContent).toContain('Forecast: from the actual sheet at the end of Oct 2026');
+    expect(document.body.textContent).toContain('its salaries owed on 410-0010 ACCRUAL - SALARIES and paid the month after');
+    expect(document.body.textContent).toContain('are not counted: the debtors on the start sheet were not above zero');
+    bsForecast.value = undefined;
   });
 
   test('Excel carries the statement as shown', async () => {

@@ -317,7 +317,7 @@ export function StatementTable({
                          Settlement / Deposit view busy); a column of its own keeps its dash. */
                       const text = cell ? fmt(cell.amountSen) : c.group ? '' : DASH;
                       const pct = c.pct && showPct ? (cell ? fmtPct(cell.pct) : DASH) : null;
-                      const opens = Boolean(cell) && c.kind !== 'change' && (drillable || ((folder || sub) && onCategoryFigure))
+                      const opens = Boolean(cell) && c.kind !== 'change' && c.noDrill !== true && (drillable || ((folder || sub) && onCategoryFigure))
                         && (figureOpens?.(own, c, across > 1) ?? true);
                       return (
                         <td key={c.key} className={cls} colSpan={across > 1 ? across : undefined}>

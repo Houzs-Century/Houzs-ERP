@@ -51,11 +51,11 @@ import { requireActiveCompanyId } from '../lib/companyScope';
 import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { todayMyt } from '../lib/my-time';
 import { resolveRoles } from '../../acc/rules';
-import { codesUnder, layOutCashFlow, type LaidNode, type LayoutItem, type SplitTo } from '../../acc/report-layout';
+import { codesUnder, layOutBlock, layOutCashFlow, type LaidNode, type LayoutItem, type SplitTo } from '../../acc/report-layout';
 import { loadOrderPaymentFacts, paymentKinds } from '../../acc/order-payment-kind';
 import { STAFF_COST_CATEGORY_ID } from '../../acc/dashboard';
 import {
-  FORECAST_MONTHS_AHEAD, addMonthsYm, buildPnlCashLegs, forecastMonths, measuredWindow, monthsBetween, parseTermMonths, receiptMixOf, termMixOf,
+  FORECAST_MONTHS_AHEAD, addMonthsYm, buildPnlCashLegs, forecastMonths, isNonCashName, measuredWindow, monthsBetween, parseTermMonths, receiptMixOf, termMixOf,
   type CashLeg, type ReceiptMix, type TermInfo, type TermMix,
 } from '../../acc/cashflow-pnl-forecast';
 import { billMonth, buildDocsLegs, owedBills, type DueBill, type OpenOrder, type OwedBill } from '../../acc/cashflow-docs-forecast';
@@ -67,9 +67,11 @@ import { ageEntries } from '../../acc/aging';
 import { loadApAging } from '../../acc/aging-load';
 import { countsInTheBooks } from '../../acc/reversal-pairs';
 import { KEYED_MONTHS, keyableAccounts, keyedInputLegs, keyedNotOffered, validateKeyedInputs, type KeyableAccount, type KeyedInputs } from '../../acc/forecast-inputs';
-import { OTHER_SUPPLIER, isPurchaseAccount, monthFigures, type ForecastAccount, type ForecastGrid, type SupplierGrid } from '../shared/forecast-pnl';
+import { OTHER_SUPPLIER, blockOfSection, isPurchaseAccount, monthFigures, type ForecastAccount, type ForecastGrid, type SupplierGrid } from '../shared/forecast-pnl';
 import { SO_NOT_AN_ORDER } from '../shared/so-deliverable-states';
 import { allowedIds, resolveLayout } from './accounting-report-layouts';
+import { buildBalanceSheet, dbSources, type BalanceSheetReport } from './accounting-reports';
+import { FC_PROFIT, bsDeltas, capReceipts, cumulate, forecastSheet, type Accrual, type BsMove, type Side, type StartSheet } from '../../acc/forecast-balance-sheet';
 import { cashFlowLines, type RpEntry, type RpRow } from './accounting-rp';
 import { loadForecastAccounts, loadGrid, loadSupplierBills, loadSupplierMaster, netBilledBySupplier, type SupplierMasterRow } from './accounting-forecast';
 
@@ -218,13 +220,17 @@ async function loadReceiptMix(sb: Sb, companyId: number, win: { from: string; to
   return { ok: true, mix: receiptMixOf(rows) };
 }
 
-type Chart = { names: Map<string, string>; money: Set<string>; facilities: Array<{ code: string; name: string; lender: string }> };
+type Chart = {
+  names: Map<string, string>; money: Set<string>; facilities: Array<{ code: string; name: string; lender: string }>;
+  /** Every account's type and section — where the Forecast Balance Sheet files an account new to it. */
+  kinds: Map<string, { name: string; type: string; section: string | null }>;
+};
 /** The company's active leaf accounts, code → name: what a keyed amount may name and is called by; its
     bank and cash accounts; its trade-finance facilities (a liability named TRADE FINANCE). */
 async function loadChartLeaves(sb: Sb, companyId: number): Promise<({ ok: true } & Chart) | Fail> {
-  const { data, error } = await sb.from('accounts').select('account_code, account_name, account_type, parent_code, is_active, acc_money').eq('company_id', companyId);
+  const { data, error } = await sb.from('accounts').select('account_code, account_name, account_type, section, parent_code, is_active, acc_money').eq('company_id', companyId);
   if (error) return { ok: false, reason: `chart: ${failed(error)}` };
-  const rows = (data ?? []) as Array<{ account_code: string; account_name: string | null; account_type: string | null; parent_code: string | null; is_active: boolean | null; acc_money: boolean | null }>;
+  const rows = (data ?? []) as Array<{ account_code: string; account_name: string | null; account_type: string | null; section: string | null; parent_code: string | null; is_active: boolean | null; acc_money: boolean | null }>;
   const parents = new Set(rows.map((r) => r.parent_code).filter((p): p is string => p != null && p !== ''));
   const leaves = rows.filter((r) => r.is_active !== false && !parents.has(r.account_code));
   return {
@@ -233,6 +239,7 @@ async function loadChartLeaves(sb: Sb, companyId: number): Promise<({ ok: true }
     money: new Set(rows.filter((r) => r.acc_money === true).map((r) => r.account_code)),
     facilities: leaves.filter((r) => isFacilityAccount({ name: r.account_name ?? '', type: r.account_type, money: r.acc_money === true }))
       .map((r) => ({ code: r.account_code, name: r.account_name ?? r.account_code, lender: lenderOf(r.account_name ?? r.account_code) })),
+    kinds: new Map(rows.map((r) => [r.account_code, { name: r.account_name ?? r.account_code, type: String(r.account_type ?? '').toUpperCase(), section: r.section }])),
   };
 }
 
@@ -497,6 +504,8 @@ async function loadFacilityBooks(sb: Sb, companyId: number, codes: string[], mon
 /** Each facility's plan: its legs for both forecasts and what the Trade finance table shows. */
 async function buildTf(sb: Sb, companyId: number, a: {
   today: string; currentMonth: string; chart: Chart; master: SupplierMasterRow[]; nowBills: DueBill[];
+  /** The draws owed as at this day: today for the Cash Flow; the start for the Forecast Balance Sheet. */
+  openAsOf: string;
   grid: ForecastGrid; suppliers: SupplierGrid; accounts: ForecastAccount[];
 }): Promise<{ ok: true; facilities: TfFacilityPayload[]; legs: CashLeg[]; interestCodes: Set<string> } | Fail> {
   if (a.chart.facilities.length === 0) return { ok: true, facilities: [], legs: [], interestCodes: new Set() };
@@ -538,7 +547,7 @@ async function buildTf(sb: Sb, companyId: number, a: {
     const ic = books.interestCode.get(f.code);
     const interest = ic ? { code: ic, name: a.chart.names.get(ic) ?? ic } : null;
     if (interest) interestCodes.add(interest.code);
-    const open = openDraws(books.lines.get(f.code) ?? []);
+    const open = openDraws((books.lines.get(f.code) ?? []).filter((l) => l.date <= a.openAsOf));
     const chosen = ids(plan?.suppliers).filter((id) => byId.has(id));
     const off = offOf(plan?.off);
     const dues: Dues = Object.fromEntries(chosen.flatMap((id) => { const found = (allDues as Partial<Dues>)[id]; return found ? [[id, found]] : []; }));
@@ -552,7 +561,17 @@ async function buildTf(sb: Sb, companyId: number, a: {
   return { ok: true, facilities, legs, interestCodes };
 }
 
-export async function buildCashFlowForecast(sb: Sb, companyId: number, layoutIds: number[], from: string, to: string, today: string): Promise<{ ok: true; payload: CashFlowForecastPayload } | Fail> {
+type Resolved = Extract<Awaited<ReturnType<typeof resolveLayout>>, { ok: true }>;
+/** What both forecasts stand on: the Forecast P&L as cash legs, the keyed table, the company's chart, suppliers and roles. */
+type Basis = {
+  win: { from: string; to: string }; accounts: ForecastAccount[]; grid: ForecastGrid; suppliers: SupplierGrid;
+  rpLayout: Resolved; pnlLayout: Resolved; roles: Awaited<ReturnType<typeof resolveRoles>>; master: SupplierMasterRow[];
+  receiptMix: ReceiptMix; chart: Chart; byId: Map<string, SupplierMasterRow>; byCode: Map<string, SupplierMasterRow>;
+  flaggedIds: Set<string>; salaryCodes: Set<string>; built: ReturnType<typeof buildPnlCashLegs>; nameOf: (code: string) => string;
+  inputLegs: CashLeg[]; currentMonth: string; controls: string[]; supplierTermOf: (code: string | null) => TermInfo; purchaseCodes: Set<string>;
+};
+
+async function forecastBasis(sb: Sb, companyId: number, layoutIds: number[], today: string): Promise<({ ok: true } & Basis) | Fail> {
   const win = measuredWindow(today);
   const [accs, grid, rpLayout, pnlLayout, roles, master, bills, receipts, chart, inputs] = await Promise.all([
     loadForecastAccounts(sb, companyId),
@@ -612,9 +631,23 @@ export async function buildCashFlowForecast(sb: Sb, companyId: number, layoutIds
   const nameOf = (code: string): string => chart.names.get(code) ?? code;
   const inputLegs = keyedInputLegs(inputs.months, nameOf);
   const currentMonth = today.slice(0, 7);
-  const tree = blockOf(rpLayout.layout.blocks, 'accounts');
   const controls = [roles.AP, roles.AP_OTHER].filter((c) => c !== '');
   const supplierTermOf = (code: string | null): TermInfo => termOf(code == null ? undefined : byCode.get(code));
+  return {
+    ok: true, win, accounts: accs.accounts, grid: grid.grid, suppliers: grid.suppliers, rpLayout, pnlLayout, roles, master: master.rows,
+    receiptMix: receipts.mix, chart, byId, byCode, flaggedIds, salaryCodes, built, nameOf, inputLegs, currentMonth, controls, supplierTermOf,
+    purchaseCodes: new Set(accs.accounts.filter(isPurchaseAccount).map((a) => a.code)),
+  };
+}
+
+export async function buildCashFlowForecast(sb: Sb, companyId: number, layoutIds: number[], from: string, to: string, today: string): Promise<{ ok: true; payload: CashFlowForecastPayload } | Fail> {
+  const b = await forecastBasis(sb, companyId, layoutIds, today);
+  if (!b.ok) return b;
+  const { win, roles, master, chart, byId, flaggedIds, built, nameOf, inputLegs, currentMonth, controls, supplierTermOf, rpLayout, purchaseCodes } = b;
+  const accs = { accounts: b.accounts };
+  const grid = { grid: b.grid, suppliers: b.suppliers };
+  const receipts = { mix: b.receiptMix };
+  const tree = blockOf(rpLayout.layout.blocks, 'accounts');
 
   /* From the current month on: the orders and bills in hand, and the trade-finance plan, which
      pays its interest with each repayment — so the Forecast P&L's own line for it steps aside. */
@@ -624,7 +657,7 @@ export async function buildCashFlowForecast(sb: Sb, companyId: number, layoutIds
     const got = await loadDocsFacts(sb, companyId, { today, currentMonth, controls, nameOf, termOf: supplierTermOf });
     if (!got.ok) return got;
     facts = got;
-    const t = await buildTf(sb, companyId, { today, currentMonth, chart, master: master.rows, nowBills: got.now, grid: grid.grid, suppliers: grid.suppliers, accounts: accs.accounts });
+    const t = await buildTf(sb, companyId, { today, openAsOf: today, currentMonth, chart, master, nowBills: got.now, grid: grid.grid, suppliers: grid.suppliers, accounts: accs.accounts });
     if (!t.ok) return t;
     tf = t;
   }
@@ -636,7 +669,6 @@ export async function buildCashFlowForecast(sb: Sb, companyId: number, layoutIds
   }));
   /* Orders & bills: sales and purchases come from the open orders and the owed bills, so of
      the Forecast P&L only its other lines join them. */
-  const purchaseCodes = new Set(accs.accounts.filter(isPurchaseAccount).map((a) => a.code));
   const docs = facts == null ? null : docsColumn(companyId, facts, {
     currentMonth, ar: roles.AR, ap: roles.AP, nameOf, tree, stored: rpLayout.stored,
     costs: pnlLegs.filter((l) => l.group == null && !purchaseCodes.has(l.code)),
@@ -670,11 +702,12 @@ export async function buildCashFlowForecast(sb: Sb, companyId: number, layoutIds
 const CACHE_TTL_MS = 60_000;
 const CACHE_MAX = 64;
 const cache = new Map<string, { at: number; payload: CashFlowForecastPayload }>();
+const bsCache = new Map<string, { at: number; payload: BsForecastPayload }>();
 /** For the tests. */
-export const clearCashFlowForecastCache = (): void => cache.clear();
-/** A company's answers, after its Capex & financing table changed. */
+export const clearCashFlowForecastCache = (): void => { cache.clear(); bsCache.clear(); };
+/** A company's answers, after its Capex & financing table or trade-finance plan changed. */
 const forgetCompany = (companyId: number): void => {
-  for (const key of [...cache.keys()]) if (key.startsWith(`${companyId}|`)) cache.delete(key);
+  for (const m of [cache, bsCache] as Array<Map<string, unknown>>) for (const key of [...m.keys()]) if (key.startsWith(`${companyId}|`)) m.delete(key);
 };
 
 export const cashFlowForecastHandler = async (c: Ctx): Promise<Response> => {
@@ -818,7 +851,7 @@ export const tfGetHandler = async (c: Ctx): Promise<Response> => {
     if (!got.ok) return c.json({ error: 'load_failed', reason: got.reason }, 500);
     nowBills = got.bills;
   }
-  const t = await buildTf(sb, co.companyId, { today, currentMonth, chart, master: master.rows, nowBills, grid: grid.grid, suppliers: grid.suppliers, accounts: accs.accounts });
+  const t = await buildTf(sb, co.companyId, { today, openAsOf: today, currentMonth, chart, master: master.rows, nowBills, grid: grid.grid, suppliers: grid.suppliers, accounts: accs.accounts });
   if (!t.ok) return c.json({ error: 'load_failed', reason: t.reason }, 500);
   const payload: TfPayload = {
     currentMonth, shown: shownMonths(currentMonth), facilities: t.facilities,
@@ -879,4 +912,153 @@ export const tfPutHandler = async (c: Ctx): Promise<Response> => {
   }
   forgetCompany(co.companyId);
   return c.json({ ok: true });
+};
+
+/* ── The Forecast Balance Sheet (step 6) ──────────────────────────────────── */
+
+export type BsForecastPayload = {
+  /** The last month-end: the actual sheet the forecast starts from. */
+  start: string;
+  currentMonth: string;
+  /** From the current month to the last the Forecast P&L has figures for, a year at most. */
+  months: Array<{ month: string; report: BalanceSheetReport }>;
+  /** The salary accrual the forecast moves, when the chart has one. */
+  accrual: { code: string; name: string } | null;
+  /** The open orders' balances at the start, and what of them was counted: never beyond the debtors on the start sheet. */
+  receipts: { orders: number; sen: number; capSen: number; countedSen: number };
+};
+
+const SALARY_ACCRUAL = /ACCRU\w*\W*SALAR/i;
+const STOCK_LINE = /\bSTOCKS?\b/i;
+const ACCUMULATED = /ACCUM/i;
+
+export async function buildBalanceSheetForecast(sb: Sb, companyId: number, layoutIds: number[], today: string): Promise<{ ok: true; payload: BsForecastPayload } | Fail> {
+  const b = await forecastBasis(sb, companyId, layoutIds, today);
+  if (!b.ok) return b;
+  const { currentMonth, chart, roles } = b;
+  const start = monthEnd(addMonthsYm(currentMonth, -1));
+  const src = dbSources(sb, companyId, layoutIds);
+  const [sheet, laid, facts] = await Promise.all([
+    buildBalanceSheet(src, companyId, start),
+    src.layout('balance_sheet'),
+    loadDocsFacts(sb, companyId, { today, currentMonth, controls: b.controls, nameOf: b.nameOf, termOf: b.supplierTermOf }),
+  ]);
+  if (!sheet.ok) return { ok: false, reason: `balance sheet: ${sheet.reason}` };
+  if (!laid.ok) return { ok: false, reason: laid.reason };
+  if (!facts.ok) return facts;
+  const tf = await buildTf(sb, companyId, { today, openAsOf: start, currentMonth, chart, master: b.master, nowBills: facts.now, grid: b.grid, suppliers: b.suppliers, accounts: b.accounts });
+  if (!tf.ok) return tf;
+
+  /* The months: from this one to the last the Forecast P&L has figures for, a year at most. */
+  const lastFigure = Object.keys(b.grid).sort().at(-1) ?? '';
+  const cap = addMonthsYm(currentMonth, KEYED_MONTHS - 1);
+  const months: string[] = [];
+  for (let ym = currentMonth; ym <= lastFigure && ym <= cap; ym = addMonthsYm(ym, 1)) months.push(ym);
+
+  const accrualLine = sheet.report.liabilities.find((l) => SALARY_ACCRUAL.test(l.name));
+  const accrualCode = accrualLine?.code ?? [...chart.kinds].find(([, k]) => k.type === 'LIABILITY' && SALARY_ACCRUAL.test(k.name))?.[0] ?? null;
+  const byCodeAcc = new Map(b.accounts.map((a) => [a.code, a]));
+  const isPurchase = (code: string): boolean => b.purchaseCodes.has(code) && blockOfSection(byCodeAcc.get(code)?.section ?? '') === 'costOfSales';
+  /* What each month earns and spends before money moves. */
+  const accruals: Record<string, Accrual> = {};
+  for (const ym of months) {
+    const f = monthFigures(b.grid[ym] ?? {}, b.suppliers[ym] ?? {}, b.accounts);
+    const a: Accrual = { salesSen: f.salesSen, purchasesSen: 0, salariesSen: 0, depnSen: 0 };
+    for (const l of f.lines) {
+      if (l.block === 'tradingIncome' || l.amountSen === 0 || tf.interestCodes.has(l.code)) continue;
+      if (isPurchase(l.code)) a.purchasesSen += l.amountSen;
+      else if (accrualCode && l.block === 'expenses' && b.salaryCodes.has(l.code)) a.salariesSen += l.amountSen;
+      else if (isNonCashName(l.name) && !STOCK_LINE.test(l.name)) a.depnSen += l.amountSen;
+    }
+    accruals[ym] = a;
+  }
+  /* The money, as the P&L forecast moves it (its own months from this one on), the plan and the table. */
+  const moves: BsMove[] = [];
+  const facilities = new Set(chart.facilities.map((x) => x.code));
+  for (const l of b.built.legs) {
+    if (l.fromYm < currentMonth || tf.interestCodes.has(l.code)) continue;
+    if (l.group) { moves.push({ ym: l.ym, sen: l.sen, against: roles.AR, flow: 'in' }); continue; }
+    if (isPurchase(l.code)) { moves.push({ ym: l.ym, sen: l.sen, against: roles.AP, flow: 'out' }); continue; }
+    if (accrualCode && b.salaryCodes.has(l.code)) continue;
+    moves.push({ ym: l.ym, sen: l.sen, against: FC_PROFIT, flow: l.flow });
+  }
+  for (const l of b.inputLegs) moves.push({ ym: l.ym, sen: l.sen, against: l.code, flow: l.flow });
+  for (const l of tf.legs) moves.push({ ym: l.ym, sen: l.sen, against: facilities.has(l.code) ? l.code : FC_PROFIT, flow: l.flow });
+
+  /* What was open at the start. */
+  const arOnSheet = sheet.report.assets.filter((l) => l.code === roles.AR).reduce((s, l) => s + l.amountSen, 0);
+  const due = facts.orders.baseline.flatMap((o) => (o.deliveryDate ? [{ ym: o.deliveryDate.slice(0, 7), sen: o.balanceSen }] : []));
+  const openingReceipts = capReceipts(due, arOnSheet);
+  const deltas = bsDeltas({
+    months, accounts: { ar: roles.AR, ap: roles.AP, accrual: accrualCode },
+    accruals, moves,
+    openingBills: facts.then.map((x) => ({ ym: billMonth(x).ym, sen: x.sen })),
+    openingReceipts,
+    openingSalarySen: accrualLine ? Math.max(0, accrualLine.amountSen) : 0,
+  });
+  const running = cumulate(months, deltas);
+
+  /* Each month as the Balance Sheet's own shape, on its own layout. */
+  const lineOf = (side: StartSheet['assets']) => side.map((l) => ({ ...l }));
+  const startSheet: StartSheet = {
+    assets: lineOf(sheet.report.assets), liabilities: lineOf(sheet.report.liabilities), equity: lineOf(sheet.report.equity), earningsSen: sheet.report.totals.earningsSen,
+  };
+  const anchorFrom = (ls: StartSheet['assets'], pick: (l: StartSheet['assets'][number]) => boolean) => {
+    const l = ls.filter(pick).sort((x, y) => x.code.localeCompare(y.code)).at(0);
+    return l ? { code: l.code, section: l.section } : null;
+  };
+  const anchors = {
+    cash: anchorFrom(startSheet.assets, (l) => chart.money.has(l.code)),
+    depn: anchorFrom(startSheet.assets, (l) => ACCUMULATED.test(l.name)) ?? anchorFrom(startSheet.assets, (l) => /FIXED/i.test(l.section)),
+  };
+  const chartOf = (code: string): { name: string; side: Side; section: string } | null => {
+    const k = chart.kinds.get(code);
+    if (!k) return null;
+    const side: Side = k.type === 'LIABILITY' ? 'liabilities' : k.type === 'EQUITY' ? 'equity' : 'assets';
+    return { name: k.name, side, section: k.section ?? (side === 'assets' ? 'CURRENT ASSETS' : side === 'liabilities' ? 'CURRENT LIABILITIES' : 'CAPITAL') };
+  };
+  const report = (ym: string): BalanceSheetReport => {
+    const f = forecastSheet(startSheet, running[ym] ?? {}, chartOf, anchors);
+    const sum = (ls: StartSheet['assets']): number => ls.reduce((s, l) => s + l.amountSen, 0);
+    const assetsSen = sum(f.assets);
+    const liabilitiesSen = sum(f.liabilities);
+    const equitySen = sum(f.equity);
+    const baseSen = assetsSen !== 0 ? assetsSen : null;
+    const onTree = (block: string, ls: StartSheet['assets']): LaidNode[] => layOutBlock(blockOf(laid.layout.blocks, block), ls, companyId, baseSen);
+    return {
+      asOf: monthEnd(ym), assets: f.assets, liabilities: f.liabilities, equity: f.equity,
+      stock: sheet.report.stock,
+      layout: { stored: laid.stored, baseSen, assets: onTree('assets', f.assets), liabilities: onTree('liabilities', f.liabilities), equity: onTree('equity', f.equity) },
+      totals: { assetsSen, liabilitiesSen, equitySen, earningsSen: f.earningsSen, checkSen: assetsSen - liabilitiesSen - equitySen - f.earningsSen },
+    };
+  };
+  return {
+    ok: true,
+    payload: {
+      start, currentMonth,
+      months: months.map((month) => ({ month, report: report(month) })),
+      accrual: accrualCode ? { code: accrualCode, name: b.nameOf(accrualCode) } : null,
+      receipts: {
+        orders: due.length, sen: due.reduce((s, d) => s + d.sen, 0), capSen: Math.max(0, arOnSheet),
+        countedSen: openingReceipts.reduce((s, r) => s + r.sen, 0),
+      },
+    },
+  };
+}
+
+/** GET /accounting/reports/balance-sheet-forecast — the statements' read key; the Worker keeps an answer 60 s. */
+export const balanceSheetForecastHandler = async (c: Ctx): Promise<Response> => {
+  if (!hasHouzsPerm(c, READ_PERM)) return c.json(NO_PERM, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const ids = allowedIds(c);
+  const today = todayMyt();
+  const key = [co.companyId, 'bs', ids.join('.'), today].join('|');
+  const hit = bsCache.get(key);
+  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return c.json({ ...hit.payload, cached: true });
+  const r = await buildBalanceSheetForecast(c.get('supabase'), co.companyId, ids, today);
+  if (!r.ok) return c.json({ error: 'load_failed', reason: r.reason }, 500);
+  if (bsCache.size >= CACHE_MAX) bsCache.delete(bsCache.keys().next().value as string);
+  bsCache.set(key, { at: Date.now(), payload: r.payload });
+  return c.json(r.payload);
 };

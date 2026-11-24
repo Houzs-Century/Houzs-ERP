@@ -12,7 +12,7 @@
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
-import { cashFlowForecastHandler, clearCashFlowForecastCache, forecastInputsGetHandler, forecastInputsPutHandler, tfGetHandler, tfPutHandler, type CashFlowForecastPayload, type ForecastInputsPayload, type TfPayload } from '../src/scm/routes/accounting-cashflow-forecast';
+import { cashFlowForecastHandler, clearCashFlowForecastCache, forecastInputsGetHandler, forecastInputsPutHandler, tfGetHandler, tfPutHandler, balanceSheetForecastHandler, type BsForecastPayload, type CashFlowForecastPayload, type ForecastInputsPayload, type TfPayload } from '../src/scm/routes/accounting-cashflow-forecast';
 import type { LaidNode } from '../src/acc/report-layout';
 
 const CO = 1;
@@ -127,6 +127,7 @@ function harness(perms: string[] = ['scm.payment_voucher.post'], inputs: Row[] =
   app.put('/accounting/reports/cash-flow-forecast/inputs', forecastInputsPutHandler as never);
   app.get('/accounting/reports/cash-flow-forecast/tf', tfGetHandler as never);
   app.put('/accounting/reports/cash-flow-forecast/tf', tfPutHandler as never);
+  app.get('/accounting/reports/balance-sheet-forecast', balanceSheetForecastHandler as never);
   return { app, sb };
 }
 const get = async (app: Hono, q: string): Promise<CashFlowForecastPayload & { cached?: boolean }> => {
@@ -456,5 +457,28 @@ describe('the Orders & bills column', () => {
     expect((sb.tables.acc_tf_plans as Row[]).map((r) => [r.company_id, r.account_code, r.tenor_days, r.rate_bp, r.suppliers, r.off, r.updated_by])).toEqual([
       [CO, '460-0009', 90, null, ['sup-a', 'sup-b'], { '2027-01': ['sup-a'] }, 'Chew'],
     ]);
+  });
+
+  /* Step 6 (2026-11-24): the Forecast Balance Sheet, from October's month-end sheet. */
+  test('the Forecast Balance Sheet: from the last month-end, a month a sheet to the last Forecast P&L month, still balanced; the profit, the facility, the cash on their lines', async () => {
+    const { app } = harness(undefined, [], tfTables());
+    const res = await app.request('/accounting/reports/balance-sheet-forecast');
+    expect(res.status, await res.clone().text()).toBe(200);
+    const b = (await res.json()) as BsForecastPayload;
+    expect(b.start).toBe('2026-10-31');
+    expect(b.months.map((m) => m.month)).toEqual(['2026-11', '2026-12']);
+    expect(b.accrual).toEqual({ code: '410-0010', name: 'ACCRUAL - SALARIES' });
+    /* The books owed customers nothing at the start, so no order balance is counted as money to come. */
+    expect(b.receipts).toMatchObject({ capSen: 0, countedSen: 0 });
+    const [nov, dec] = b.months.map((m) => m.report);
+    expect(nov!.asOf).toBe('2026-11-30');
+    /* Double entry: the check stays where the start left it. */
+    expect(dec!.totals.checkSen).toBe(nov!.totals.checkSen);
+    /* December earns its sales less its purchases: 80,000.00 − 4,000.00. */
+    expect(dec!.totals.earningsSen - nov!.totals.earningsSen).toBe(7_600_000);
+    /* The facility owed 1,500.00 at the start, repaid in November; December's planned draw of 9,000.00. */
+    expect(nov!.liabilities.find((l) => l.code === '460-0009')).toBeUndefined();
+    expect(dec!.liabilities.find((l) => l.code === '460-0009')?.amountSen).toBe(900_000);
+    expect(nov!.assets.find((l) => (l as { key?: string }).key === 'FC-CASH')).toMatchObject({ name: 'Forecast cash in / out (since the start)' });
   });
 });
