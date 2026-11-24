@@ -46,6 +46,8 @@ export type EmailPurpose =
   // clientErrors.ts). Internal channel — default ON when the toggle row is
   // missing, like the other digests.
   | "client_error_digest"
+  // Meeting emails written by the IT Hub and sent from here (services/meetingMail.ts). Internal: default ON.
+  | "meeting"
   | "generic";
 
 export interface SendOptions {
@@ -125,6 +127,7 @@ const PURPOSE_TOGGLE_KEYS: Record<EmailPurpose, string> = {
   document_report: "email.document_report",
   purchase_order: "email.purchase_order",
   client_error_digest: "email.client_error_digest",
+  meeting: "email.meeting",
   // No toggle for 'generic' — caller opted in explicitly.
   generic: "email.enabled",
 };
