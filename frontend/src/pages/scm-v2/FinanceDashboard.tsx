@@ -31,7 +31,7 @@ import { fmtSenPlain } from '../../vendor/shared/format';
 import type { LaidNode } from '../../vendor/scm/lib/report-layout';
 import {
   useFinanceDashboard,
-  type CompareGroup, type CompareTotals, type CostStructureGroup, type DashboardFigures, type DashboardPeriod, type Granularity,
+  type CompareGroup, type CompareTotals, type CostStructureGroup, type DashboardFigures, type DashboardPeriod, type Granularity, type Ratios,
 } from '../../vendor/scm/lib/dashboard-queries';
 import { DashboardChart, type ChartLine, type ChartSeries } from './DashboardChart';
 import { useCashFlowForecast } from '../../vendor/scm/lib/cash-flow-forecast-queries';
@@ -98,7 +98,8 @@ export const periodName = (p: Pick<DashboardPeriod, 'months' | 'label'>): string
   return `Q${Math.floor((Number(first.slice(5, 7)) - 1) / 3) + 1} ${first.slice(2, 4)}`;
 };
 /** The period's label as the cards print it — " *" on one not finished. */
-const labelOf = (p: DashboardPeriod): string => (p.partial ? `${periodName(p)} *` : periodName(p));
+/** A period ahead (no actual yet) is a forecast: "(F)"; one not finished is starred. */
+const labelOf = (p: DashboardPeriod): string => (p.partial && p.actual == null ? `${periodName(p)} (F)` : p.partial ? `${periodName(p)} *` : periodName(p));
 /** The head of a period's hover: its name and, when it is not finished, which way. */
 const tipHead = (p: DashboardPeriod): string => `${periodName(p)}${p.partial ? (p.actual == null ? ' · Forecast only' : ' · Not finished') : ''}`;
 
@@ -520,52 +521,79 @@ const CashFlowCard = ({ periods }: { periods: DashboardPeriod[] }) => {
 /* ── 5 · Balance Sheet ───────────────────────────────────────────────────── */
 
 const BalanceSheetCard = ({ periods }: { periods: DashboardPeriod[] }) => {
+  /* A period ahead shows its Forecast Balance Sheet (faded); a month that has happened, its actual. */
+  const sheetOf = (p: DashboardPeriod) => p.balanceSheet ?? p.forecastBalanceSheet;
+  const faded = periods.map((p) => p.balanceSheet == null && p.forecastBalanceSheet != null);
   const bars: ChartSeries[] = [
-    { key: 'assets', label: 'Assets', color: PETROL, values: periods.map((p) => p.balanceSheet?.assetsSen ?? null) },
-    { key: 'liabilities', label: 'Liabilities', color: OUT, values: periods.map((p) => p.balanceSheet?.liabilitiesSen ?? null) },
+    { key: 'assets', label: 'Assets', color: PETROL, values: periods.map((p) => sheetOf(p)?.assetsSen ?? null), faded },
+    { key: 'liabilities', label: 'Liabilities', color: OUT, values: periods.map((p) => sheetOf(p)?.liabilitiesSen ?? null), faded },
   ];
-  const lines: ChartLine[] = [{ key: 'debt-to-asset', label: 'Debt / assets %', color: RED, axis: 'right', values: periods.map((p) => p.balanceSheet?.debtToAssetPct ?? null) }];
+  const lines: ChartLine[] = [{ key: 'debt-to-asset', label: 'Debt / assets %', color: RED, axis: 'right', values: periods.map((p) => sheetOf(p)?.debtToAssetPct ?? null) }];
+  /* A month that has happened and the forecast also reaches: its forecast beside it. */
+  const beside = (p: DashboardPeriod) => (p.balanceSheet != null ? p.forecastBalanceSheet : null);
+  const besideAny = periods.some((p) => beside(p) != null);
   const rows: TableRow[] = [
-    { id: 'assets', label: 'Total assets', cells: periods.map((p) => fmtOrDash(p.balanceSheet?.assetsSen)), strong: true },
-    { id: 'liabilities', label: 'Total liabilities', cells: periods.map((p) => fmtOrDash(p.balanceSheet?.liabilitiesSen)), strong: true },
-    { id: 'equity', label: 'Equity incl. current earnings', cells: periods.map((p) => (p.balanceSheet ? fmtSenPlain(p.balanceSheet.equitySen + p.balanceSheet.earningsSen) : '—')) },
-    { id: 'current-assets', label: 'Current assets', cells: periods.map((p) => fmtOrDash(p.balanceSheet?.currentAssetsSen)) },
-    { id: 'current-liabilities', label: 'Current liabilities', cells: periods.map((p) => fmtOrDash(p.balanceSheet?.currentLiabilitiesSen)) },
-    { id: 'inventory', label: 'Stock (the engine as at the period end)', cells: periods.map((p) => fmtOrDash(p.balanceSheet?.inventorySen)) },
-    { id: 'debt-to-asset', label: 'Debt / assets', cells: periods.map((p) => fmtPct(p.balanceSheet?.debtToAssetPct)) },
-    { id: 'check', label: 'Self-check (must be 0.00)', cells: periods.map((p) => fmtOrDash(p.balanceSheet?.checkSen)), tone: periods.map((p) => (p.balanceSheet == null || p.balanceSheet.checkSen === 0 ? null : 'bad')) },
+    { id: 'assets', label: 'Total assets', cells: periods.map((p) => fmtOrDash(sheetOf(p)?.assetsSen)), strong: true },
+    { id: 'liabilities', label: 'Total liabilities', cells: periods.map((p) => fmtOrDash(sheetOf(p)?.liabilitiesSen)), strong: true },
+    { id: 'equity', label: 'Equity incl. current earnings', cells: periods.map((p) => { const b = sheetOf(p); return b ? fmtSenPlain(b.equitySen + b.earningsSen) : '—'; }) },
+    { id: 'current-assets', label: 'Current assets', cells: periods.map((p) => fmtOrDash(sheetOf(p)?.currentAssetsSen)) },
+    { id: 'current-liabilities', label: 'Current liabilities', cells: periods.map((p) => fmtOrDash(sheetOf(p)?.currentLiabilitiesSen)) },
+    { id: 'inventory', label: 'Stock (the engine as at the period end)', cells: periods.map((p) => fmtOrDash(sheetOf(p)?.inventorySen)) },
+    { id: 'debt-to-asset', label: 'Debt / assets', cells: periods.map((p) => fmtPct(sheetOf(p)?.debtToAssetPct)) },
+    { id: 'check', label: 'Self-check (must be 0.00)', cells: periods.map((p) => fmtOrDash(sheetOf(p)?.checkSen)), tone: periods.map((p) => { const b = sheetOf(p); return b == null || b.checkSen === 0 ? null : 'bad'; }) },
+    ...(besideAny ? [
+      { id: 'fc-assets', label: 'Forecast total assets', cells: periods.map((p) => fmtOrDash(beside(p)?.assetsSen)) },
+      { id: 'fc-liabilities', label: 'Forecast total liabilities', cells: periods.map((p) => fmtOrDash(beside(p)?.liabilitiesSen)) },
+      { id: 'fc-debt-to-asset', label: 'Forecast debt / assets', cells: periods.map((p) => fmtPct(beside(p)?.debtToAssetPct)) },
+      { id: 'vs-assets', label: 'vs forecast (assets)', cells: periods.map((p) => fmtOrDash(gapOf(p.balanceSheet?.assetsSen ?? null, beside(p)?.assetsSen ?? null))) },
+      { id: 'vs-liabilities', label: 'vs forecast (liabilities)', cells: periods.map((p) => fmtOrDash(gapOf(p.balanceSheet?.liabilitiesSen ?? null, beside(p)?.liabilitiesSen ?? null))) },
+    ] : []),
   ];
   return (
     <CardShell title="Balance Sheet">
       <DashboardChart labels={periods.map(labelOf)} bars={bars} lines={lines} ariaLabel="Assets and liabilities, debt-to-asset % on the right axis" />
       <FiguresTable periods={periods} rows={rows} ariaLabel="Balance sheet figures" />
+      <div style={soft}>
+        (F) = the Forecast Balance Sheet at that month-end, its bars faded. A month that has happened shows its forecast beside it, vs = actual less forecast; a month to date (*) is set against its month-end forecast, so the gap closes as the month runs.
+      </div>
     </CardShell>
   );
 };
 
 /* ── 6 · Financial Ratios ────────────────────────────────────────────────── */
 
-type RatioDef = { key: string; label: string; unit: 'pct' | 'ratio'; of: (p: DashboardPeriod) => number | null };
+type RatioDef = { key: string; label: string; unit: 'pct' | 'ratio'; pick: (r: Ratios) => number | null };
 const RATIOS: RatioDef[] = [
-  { key: 'gross-margin', label: 'Gross Margin', unit: 'pct', of: (p) => p.ratios.grossMarginPct },
-  { key: 'net-margin', label: 'Net Margin', unit: 'pct', of: (p) => p.ratios.netMarginPct },
-  { key: 'current', label: 'Current Ratio', unit: 'ratio', of: (p) => p.ratios.currentRatio },
-  { key: 'quick', label: 'Quick Ratio', unit: 'ratio', of: (p) => p.ratios.quickRatio },
-  { key: 'roe', label: 'ROE', unit: 'pct', of: (p) => p.ratios.roePct },
-  { key: 'roa', label: 'ROA', unit: 'pct', of: (p) => p.ratios.roaPct },
+  { key: 'gross-margin', label: 'Gross Margin', unit: 'pct', pick: (r) => r.grossMarginPct },
+  { key: 'net-margin', label: 'Net Margin', unit: 'pct', pick: (r) => r.netMarginPct },
+  { key: 'current', label: 'Current Ratio', unit: 'ratio', pick: (r) => r.currentRatio },
+  { key: 'quick', label: 'Quick Ratio', unit: 'ratio', pick: (r) => r.quickRatio },
+  { key: 'roe', label: 'ROE', unit: 'pct', pick: (r) => r.roePct },
+  { key: 'roa', label: 'ROA', unit: 'pct', pick: (r) => r.roaPct },
 ];
 
 const RatiosCard = ({ periods }: { periods: DashboardPeriod[] }) => {
   const [key, setKey] = useState('gross-margin');
   const def = RATIOS.find((r) => r.key === key) ?? RATIOS[0]!;
-  const values = periods.map(def.of);
-  const lines: ChartLine[] = [{ key: def.key, label: def.label, color: PETROL, values }];
-  const rows: TableRow[] = [{ id: def.key, label: def.label, cells: values.map((v) => (def.unit === 'pct' ? fmtPct(v) : fmtRatio(v))), strong: true }];
+  const fmt = (v: number | null | undefined): string => (def.unit === 'pct' ? fmtPct(v) : fmtRatio(v));
+  const values = periods.map((p) => def.pick(p.ratios));
+  /* The same ratio off the Forecast P&L and the Forecast Balance Sheet, by the same formula. */
+  const forecast = periods.map((p) => (p.forecastRatios ? def.pick(p.forecastRatios) : null));
+  const gap = periods.map((_, i) => gapOf(values[i] ?? null, forecast[i] ?? null));
+  const lines: ChartLine[] = [
+    { key: def.key, label: def.label, color: PETROL, values },
+    ...(forecast.some((v) => v != null) ? [{ key: `fc-${def.key}`, label: `Forecast ${def.label.toLowerCase()}`, color: RED, dashed: true, values: forecast }] : []),
+  ];
+  const rows: TableRow[] = [
+    { id: def.key, label: def.label, cells: values.map(fmt), strong: true },
+    { id: `fc-${def.key}`, label: 'Forecast', cells: forecast.map(fmt) },
+    { id: `vs-${def.key}`, label: def.unit === 'pct' ? 'vs forecast (points)' : 'vs forecast', cells: gap.map((v) => (v == null ? '—' : def.unit === 'pct' ? v.toFixed(1) : v.toFixed(2))) },
+  ];
   return (
     <CardShell title="Financial Ratios" controls={<Tabs options={RATIOS} value={key} onChange={setKey} />}>
       <DashboardChart labels={periods.map(labelOf)} bars={[]} lines={lines} unit={def.unit} ariaLabel={`${def.label} per period`} />
       <FiguresTable periods={periods} rows={rows} ariaLabel="Ratio figures" />
-      <div style={soft}>Margins off the period's P&L; current and quick ratios, ROE and ROA off the balance sheet at the period's end (ROE and ROA on the period's net profit, not annualised).</div>
+      <div style={soft}>Margins off the period's P&L; current and quick ratios, ROE and ROA off the balance sheet at the period's end (ROE and ROA on the period's net profit, not annualised). The dashed line is the same ratio off the Forecast P&L and, from the current month on, the Forecast Balance Sheet; vs = actual less forecast.</div>
     </CardShell>
   );
 };

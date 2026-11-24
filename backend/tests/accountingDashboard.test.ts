@@ -391,13 +391,36 @@ describe('buildDashboard — reads', () => {
   test('the window is read once — the orders, their lines, the settings and the ledger a single time, not once per period', async () => {
     const reads = await countReads(6);
     const count = (table: string) => reads.filter((n) => n === table).length;
-    expect(count('mfg_sales_orders')).toBe(1);
+    /* Each count is the window's own read plus, when the periods reach the
+       current month, the Forecast Balance Sheet's (step 7 of the forecast
+       port), built once for the whole answer: its open orders, its grid, the
+       start sheet's stock settings, and its ledger reads (the start sheet,
+       the supplier aging then and now, the trade-finance facility). */
+    expect(count('mfg_sales_orders')).toBe(1 + 1);
     expect(count('mfg_sales_order_items')).toBe(1);
-    /* Twice, both in the first wave: the Performance P&L's rate, and the
-       books' opening (acc/books-opening.ts) — never once per period. */
-    expect(count('acc_company_settings')).toBe(2);
-    expect(count('v_gl_entries')).toBe(1);
-    expect(count('acc_forecast_pnl')).toBe(1);
+    /* The Performance P&L's rate and the books' opening (acc/books-opening.ts), then the forecast's start sheet. */
+    expect(count('acc_company_settings')).toBe(2 + 1);
+    expect(count('v_gl_entries')).toBe(1 + 5);
+    expect(count('acc_forecast_pnl')).toBe(1 + 1);
+  });
+
+  test('the Forecast Balance Sheet and the forecast ratios: from the current month on, by the same formulas as the actual ones', async () => {
+    const { sb } = harness();
+    const r = await buildDashboard(sb, CO, [CO], { granularity: 'month', periods: 6, from: null, to: null }, TODAY);
+    if (!r.ok) throw new Error(r.reason);
+    const by = new Map(r.payload.periods.map((p) => [p.key, p]));
+    const sep = by.get('2026-09')!;
+    /* September is the current month: its month-end forecast beside its actual. */
+    const fbs = sep.forecastBalanceSheet!;
+    expect(fbs).not.toBeNull();
+    expect(fbs.debtToAssetPct).toBe(fbs.assetsSen !== 0 ? Math.round((fbs.liabilitiesSen / fbs.assetsSen) * 1000) / 10 : null);
+    expect(sep.forecastRatios).toMatchObject({
+      grossMarginPct: 40,
+      currentRatio: fbs.currentLiabilitiesSen !== 0 ? Math.round((fbs.currentAssetsSen / fbs.currentLiabilitiesSen) * 100) / 100 : null,
+      quickRatio: fbs.currentLiabilitiesSen !== 0 ? Math.round(((fbs.currentAssetsSen - fbs.inventorySen) / fbs.currentLiabilitiesSen) * 100) / 100 : null,
+    });
+    /* A month before the current one has no forecast sheet yet; its forecast margins still come off its Forecast P&L row, when it has one. */
+    for (const p of r.payload.periods.filter((x) => x.key < '2026-09')) expect(p.forecastBalanceSheet).toBeNull();
   });
 
   test('the number of reads does not grow with the number of periods', async () => {
