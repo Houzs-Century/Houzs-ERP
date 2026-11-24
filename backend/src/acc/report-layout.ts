@@ -342,6 +342,22 @@ export type LaidNode = {
 export const pctOf = (sen: number, baseSen: number | null): number | null =>
   baseSen === null || baseSen === 0 ? null : Math.round((sen / baseSen) * 1000) / 10;
 
+/** Every account code under the layout category `id` (its header account, its lines, its sub-categories'). */
+export const codesUnder = (items: LayoutItem[], id: string, inside = false): string[] => {
+  const out: string[] = [];
+  for (const it of items) {
+    if (it.kind === 'account') {
+      if (inside) out.push(it.code);
+      continue;
+    }
+    if (it.kind === 'subtotal') continue;
+    const hit = inside || it.id === id;
+    if (hit && it.code) out.push(it.code);
+    out.push(...codesUnder(it.children, id, hit));
+  }
+  return out;
+};
+
 const keyOf = (l: LaidLine): string => l.key ?? l.code;
 
 /** One line as a leaf of the tree — named "code · name", the Cash Flow's own

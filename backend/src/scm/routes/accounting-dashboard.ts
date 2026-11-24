@@ -40,7 +40,7 @@ import { countsInTheBooks } from '../../acc/reversal-pairs';
 import { resolveRoles, type AccountRole } from '../../acc/rules';
 import { bucketByWarehouse, foldStockByBucket, foldStockByItem, loadOwnedMovementsUpTo, type OwnedMovement } from '../../acc/stock-close';
 import { loadBooksOpening, type BooksOpening } from '../../acc/books-opening';
-import type { LaidNode, LayoutItem, ReportKey } from '../../acc/report-layout';
+import { codesUnder, type LaidNode, type ReportKey } from '../../acc/report-layout';
 import { PERFORMANCE_GROUPS, type PerfLine, type PerfOrder, type PerformanceSettings } from '../../acc/performance-pnl';
 import { monthFigures, sortedMonths, type ForecastAccount, type ForecastGrid, type SupplierGrid } from '../shared/forecast-pnl';
 import { SO_NOT_AN_ORDER } from '../shared/so-deliverable-states';
@@ -340,21 +340,6 @@ const nodeAmount = (nodes: LaidNode[], id: string): number | null => {
     if (inner != null) return inner;
   }
   return null;
-};
-/** Every account code under the layout category `id`. */
-const codesUnder = (items: LayoutItem[], id: string, inside = false): string[] => {
-  const out: string[] = [];
-  for (const it of items) {
-    if (it.kind === 'account') {
-      if (inside) out.push(it.code);
-      continue;
-    }
-    if (it.kind === 'subtotal') continue;
-    const hit = inside || it.id === id;
-    if (hit && it.code) out.push(it.code);
-    out.push(...codesUnder(it.children, id, hit));
-  }
-  return out;
 };
 
 const figuresOf = (t: PnlReport['totals'], staffCostSen: number): Figures => ({
