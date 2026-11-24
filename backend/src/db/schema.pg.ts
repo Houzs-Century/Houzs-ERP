@@ -996,6 +996,8 @@ export const hr_employees = pgTable("hr_employees", {
   nationality: text("nationality"),
   ic_number: text("ic_number"),
   passport_number: text("passport_number"),
+  work_permit_expiry: date("work_permit_expiry", { mode: "string" }),
+  confirm_due_on: date("confirm_due_on", { mode: "string" }),
   is_outsource: boolean("is_outsource").notNull().default(false),
   pay_mode: text("pay_mode").notNull().default("MONTHLY"),
   basic_salary_sen: bigint("basic_salary_sen", { mode: "number" }).notNull().default(0),

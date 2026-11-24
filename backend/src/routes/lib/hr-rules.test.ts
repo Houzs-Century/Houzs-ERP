@@ -27,6 +27,15 @@ describe("employeeColumns", () => {
     expect("basic_salary_sen" in cols).toBe(false);
     expect(cols.working_hours_per_day).toBe("9");
   });
+
+  test("the permit and confirmation dates write through, blank as NULL", () => {
+    const base = { ...emptyEmployeeInput("2026-10-21"), empNo: "EMP-001", name: "A" };
+    expect(employeeColumns(base).work_permit_expiry).toBeNull();
+    expect(employeeColumns(base).confirm_due_on).toBeNull();
+    const filled = employeeColumns({ ...base, workPermitExpiry: "2027-03-01", confirmDueOn: "2026-12-15" });
+    expect(filled.work_permit_expiry).toBe("2027-03-01");
+    expect(filled.confirm_due_on).toBe("2026-12-15");
+  });
 });
 
 describe("employeeDiff", () => {

@@ -268,8 +268,14 @@ export function EmployeeDrawer({ employee, canManage, onClose, onSaved }: { empl
           <Field label="Passport number">
             <input className={inputCls} value={d.passportNumber} onChange={(e) => set("passportNumber", e.target.value)} />
           </Field>
+          <Field label="Work permit expiry" hint="For a foreign worker. The Overview flags permits expiring within 90 days.">
+            <DateField fullWidth value={d.workPermitExpiry} onChange={(iso) => set("workPermitExpiry", iso)} aria-label="Work permit expiry" />
+          </Field>
           <Field label="Join date">
             <DateField fullWidth value={d.joinDate} onChange={(iso) => set("joinDate", iso)} aria-label="Join date" />
+          </Field>
+          <Field label="Confirmation due" hint="The day they should be confirmed off probation. Shown in the Overview's Coming up.">
+            <DateField fullWidth value={d.confirmDueOn} onChange={(iso) => set("confirmDueOn", iso)} aria-label="Confirmation due" />
           </Field>
           <Field label="Status">
             <select
