@@ -5,13 +5,13 @@
  * preview until a supervisor reviews it. */
 import { useMemo, useState } from "react";
 import { todayMY } from "../../vendor/shared/format";
+import { DAY_NAMES } from "../../lib/meetings";
 
 export type CalEntry = { id: number; name: string; type: string; startDate: string; endDate: string; status: string };
 type LeaveType = { value: string; label: string; paid: boolean };
 
 const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(" ");
 const pad2 = (n: number) => String(n).padStart(2, "0");
-const WD = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 const TONE = new Map<string, string>([["ANNUAL_LEAVE", "bg-synced"], ["MEDICAL_LEAVE", "bg-time"], ["UNPAID_LEAVE", "bg-ink-muted"]]);
 const SHORT = new Map<string, string>([["ANNUAL_LEAVE", "AL"], ["MEDICAL_LEAVE", "ML"], ["UNPAID_LEAVE", "UL"]]);
@@ -72,7 +72,7 @@ export function LeaveCalendar({ entries, types }: { entries: CalEntry[]; types: 
       </div>
 
       <div className="grid grid-cols-7 border-b border-border-subtle bg-surface-2/50">
-        {WD.map((w) => <div key={w} className="px-2 py-1 text-center text-[10px] font-bold uppercase tracking-wide text-ink-muted">{w}</div>)}
+        {DAY_NAMES.map((w) => <div key={w} className="px-2 py-1 text-center text-[10px] font-bold uppercase tracking-wide text-ink-muted">{w}</div>)}
       </div>
 
       <div className="grid grid-cols-7">
