@@ -55,10 +55,15 @@ const bigintAsNumber = {
   serialize: (x: number | string) => String(x),
 };
 
+// Hyperdrive's binding host was `<id>.hyperdrive.local`; it is now `<id>.workers.alt`.
+export function isHyperdriveUrl(databaseUrl: string): boolean {
+  return /hyperdrive\.local|\.workers\.alt[:/]/i.test(databaseUrl);
+}
+
 /**
  * Returns a fresh postgres.js client for the given connection URL.
  *
- * Detects a Hyperdrive-backed URL by its `*.hyperdrive.local` host. In prod
+ * Detects a Hyperdrive-backed URL by its host (see isHyperdriveUrl). In prod
  * the Worker reads `c.env.HYPERDRIVE.connectionString`; locally it reads the
  * direct Supabase pooler URL from `c.env.DATABASE_URL`.
  */
@@ -70,7 +75,7 @@ export function getSql(databaseUrl: string): Sql {
     );
   }
 
-  const isHyperdrive = /hyperdrive\.local/i.test(databaseUrl);
+  const isHyperdrive = isHyperdriveUrl(databaseUrl);
 
   return isHyperdrive
     ? postgres(databaseUrl, {
