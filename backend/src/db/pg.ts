@@ -56,9 +56,19 @@ const bigintAsNumber = {
 };
 
 /**
+ * True when the URL is a Hyperdrive binding. The binding host was
+ * `<id>.hyperdrive.local`; Cloudflare now hands out `<id>.workers.alt`. A miss
+ * here sends the direct-DB options (TLS + 10s connect cap) to Hyperdrive's
+ * local socket, which does not speak TLS, so every DB call hangs and 500s.
+ */
+export function isHyperdriveUrl(databaseUrl: string): boolean {
+  return /hyperdrive\.local|\.workers\.alt[:/]/i.test(databaseUrl);
+}
+
+/**
  * Returns a fresh postgres.js client for the given connection URL.
  *
- * Detects a Hyperdrive-backed URL by its `*.hyperdrive.local` host. In prod
+ * Detects a Hyperdrive-backed URL with isHyperdriveUrl(). In prod
  * the Worker reads `c.env.HYPERDRIVE.connectionString`; locally it reads the
  * direct Supabase pooler URL from `c.env.DATABASE_URL`.
  */
@@ -70,9 +80,7 @@ export function getSql(databaseUrl: string): Sql {
     );
   }
 
-  const isHyperdrive = /hyperdrive\.local/i.test(databaseUrl);
-
-  return isHyperdrive
+  return isHyperdriveUrl(databaseUrl)
     ? postgres(databaseUrl, {
         // max:1 — one socket per request; Hyperdrive pools origin-side.
         // Higher values risk "Cannot perform I/O on behalf of a different
