@@ -16,6 +16,7 @@ import { doRunDate, isOwnLorryDoRun } from './own-lorry-do-run';
 import { normalizePlate } from './plate-normalize';
 import { zoneForAddress, type ZonePrefixRule } from './zone-classify';
 import { doFacts, orderAddressText, setLineOf } from './threepl-do-charge';
+import { loadDoGoods } from './do-goods';
 import type { SetLine } from './set-count';
 import type { TripStopRow } from './trip-stop-jobs';
 import { customerKeyOf, type OwnDo, type OwnTrip } from './own-fleet-runs';
@@ -220,28 +221,32 @@ export async function loadOwnFleet(input: {
   }
   const lineRows = await need<Row>('order lines', chunkIn<Row>(factDocs, (b, lo, hi) =>
     scope(db(sb).from('mfg_sales_order_items').select('doc_no, company_id, item_group, qty, cancelled')).in('doc_no', b).order('doc_no').range(lo, hi)));
+  /* Each DO's own goods value (do-goods.ts), for a card's Per DO charge. */
+  const doGoods = await loadDoGoods(scope, sb, [...ownDos.map((d) => d.doId), ...threePlRan.map(({ d }) => String(d.id))]);
+  if (!doGoods.ok) throw new Error(`delivery order lines: ${doGoods.reason}`);
   const linesBySo = new Map<string, SetLine[]>();
   for (const l of lineRows) {
     const k = byCo(l.company_id, l.doc_no);
     (linesBySo.get(k) ?? linesBySo.set(k, []).get(k)!).push(setLineOf(l));
   }
-  const factsOf = (companyId: number, doc: string | null): DeliveryFacts | null => {
+  /* A DO's facts: its order's lines and address, and its own goods value. */
+  const factsOf = (doId: string, companyId: number, doc: string | null): DeliveryFacts | null => {
     const so = doc ? soByKey.get(byCo(companyId, doc)) : undefined;
     if (!so || !doc) return null;
     const zone = zoneForAddress({ postcode: str(so.postcode), address1: str(so.address1), address2: str(so.address2) }, zoneMap).zone;
-    return doFacts(linesBySo.get(byCo(companyId, doc)) ?? [], zone, orderAddressText(so));
+    return doFacts(linesBySo.get(byCo(companyId, doc)) ?? [], zone, orderAddressText(so), doGoods.goods.get(doId) ?? null);
   };
 
   return {
     trips,
     dos: ownDos.map(({ so, ...d }) => {
       const order = so ? soByKey.get(byCo(d.companyId, so)) : undefined;
-      return { ...d, facts: factsOf(d.companyId, so), customerKey: order ? customerKeyOf(order) : `do:${d.doId}` };
+      return { ...d, facts: factsOf(d.doId, d.companyId, so), customerKey: order ? customerKeyOf(order) : `do:${d.doId}` };
     }),
     threePl: threePlRan.map(({ d, runDate }) => ({
       doId: String(d.id),
       runDate,
-      facts: factsOf(Number(d.company_id), str(d.so_doc_no)),
+      facts: factsOf(String(d.id), Number(d.company_id), str(d.so_doc_no)),
       charges: [...(charges.get(String(d.id)) ?? new Map<string, number>())].map(([carrierId, billedSen]) => ({ carrierId, billedSen })),
     })),
   };

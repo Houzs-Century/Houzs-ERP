@@ -94,6 +94,7 @@ function harness(extra: Partial<Record<string, Row[]>> = {}) {
     delivery_rate_areas: [],
     delivery_zone_postcodes: [],
     delivery_places: [],
+    delivery_order_items: [],
     ...extra,
   });
   const app = new Hono();
