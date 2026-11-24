@@ -79,6 +79,14 @@ describe("planAutoOtClaim", () => {
   test("does nothing when there is no overtime and no auto claim", () => {
     expect(planAutoOtClaim({ existingAuto: null, reportedOwnsDay: false, shiftEndMin: SHIFT_END, otMin: 0 })).toEqual({ kind: "none" });
   });
+  test("ignores sub-30-minute overtime: no claim created, a pending one removed", () => {
+    expect(planAutoOtClaim({ existingAuto: null, reportedOwnsDay: false, shiftEndMin: SHIFT_END, otMin: 20 })).toEqual({ kind: "none" });
+    expect(planAutoOtClaim({ existingAuto: null, reportedOwnsDay: false, shiftEndMin: SHIFT_END, otMin: 29 })).toEqual({ kind: "none" });
+    expect(planAutoOtClaim({ existingAuto: { id: 7, status: "PENDING" }, reportedOwnsDay: false, shiftEndMin: SHIFT_END, otMin: 20 })).toEqual({ kind: "delete", id: 7 });
+  });
+  test("counts overtime from exactly 30 minutes", () => {
+    expect(planAutoOtClaim({ existingAuto: null, reportedOwnsDay: false, shiftEndMin: SHIFT_END, otMin: 30 })).toEqual({ kind: "insert", startMin: 1080, endMin: 1110 });
+  });
   test("never re-raises or overwrites a supervisor's confirm or reject", () => {
     for (const status of ["CONFIRMED", "REJECTED"]) {
       expect(planAutoOtClaim({ existingAuto: { id: 7, status }, reportedOwnsDay: false, shiftEndMin: SHIFT_END, otMin: 120 })).toEqual({ kind: "none" });
