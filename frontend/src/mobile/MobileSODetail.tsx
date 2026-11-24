@@ -6,7 +6,7 @@ import { MobileRelationshipMap } from "./MobileRelationshipMap";
 import { ADD_LINE_LABEL } from "../vendor/scm/lib/add-line-handoff";
 import type { FlowNav } from "./relationship-map-model";
 import { fmtAmt } from "../lib/scm";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query"; import { itDetailOf } from "../vendor/scm/lib/authed-fetch";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog"; import { passesSoffioReminder } from "../vendor/scm/lib/soffio-reminder";
 import { useNotify } from "../vendor/scm/components/NotifyDialog"; import { notifySaveProblems } from "../vendor/scm/components/SaveProblemsList"; import { MobileSoDoDraftButton } from "./MobileSoDoDraftButton";
 import { usePrompt } from "../vendor/scm/components/PromptDialog"; import { CancelRequestPanel } from "../vendor/scm/components/CancelRequestPanel"; import { useCancelRequestAction } from "../pages/scm-v2/use-cancel-request-action"; import { WrongApproverFlagButton } from "../pages/scm-v2/WrongApproverFlagButton";
@@ -642,7 +642,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
           : undefined,
       });
     } catch (e) {
-      void notifyTop({ title: "Could not approve the revision", body: e instanceof Error ? e.message : "Something went wrong.", tone: "error" });
+      void notifyTop({ title: "Could not approve the revision", body: e instanceof Error ? `${e.message}${itDetailOf(e)}` : "Something went wrong.", tone: "error" });
     } finally {
       setBusy(false);
     }
