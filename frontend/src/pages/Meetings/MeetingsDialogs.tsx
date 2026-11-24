@@ -382,7 +382,7 @@ export function FindTime({ d, rooms, people, meetings, now, onPick }: { d: Draft
         <label className={LABEL}>To<DateField aria-label="To" fullWidth value={to} onChange={(v) => { if (v) setTo(v); }} /></label>
         <label className={LABEL}>Length<select className={CONTROL} value={len} onChange={(e) => setLen(Number(e.target.value))}>{[30, 45, 60, 90, 120, 180].map((v) => <option key={v} value={v}>{v < 60 ? `${v} min` : `${v / 60} h`}</option>)}</select></label>
       </div>
-      <div className="text-[13px] text-ink-secondary">{who.length} {who.length === 1 ? "person" : "people"} · times when everyone is free and a room with {who.length}+ seats is open.</div>
+      <div className="text-[13px] text-ink-secondary">{who.length} {who.length === 1 ? "person" : "people"} · times when everyone is free{d.roomId === null ? "" : ` and a room with ${who.length}+ seats is open`}.</div>
       {result.map(({ day, slots }) => (
         <div key={day}>
           <div className="mb-1.5 text-[11.5px] font-semibold uppercase tracking-wide text-ink-muted">{fmtDay(day)}{slots.length ? "" : " · no common time"}</div>
@@ -439,9 +439,26 @@ function DayColumns({ d, rooms, people, busy, who, onPick }: { d: Draft; rooms: 
 export function MeetingEditor(p: {
   draft: Draft; isNew: boolean; me: string; rooms: Room[]; people: Person[]; peopleMap: Map<string, Person>; meetings: Meeting[]; now: number;
   busyRooms: Set<number>; saving: boolean; pendingFiles: File[]; onFiles: (f: File[]) => void;
+  /** Creates a Google Meet link; null while Google Meet is not connected. */
+  makeMeet: (() => Promise<string>) | null;
   onClose: () => void; onSave: (d: Draft) => void;
 }) {
   const [d, setD] = useState<Draft>(p.draft);
+  const [meetBusy, setMeetBusy] = useState(false);
+  const [meetError, setMeetError] = useState<string | null>(null);
+  const newMeet = async () => {
+    if (!p.makeMeet) return;
+    setMeetBusy(true);
+    setMeetError(null);
+    try {
+      const url = await p.makeMeet();
+      setD((v) => ({ ...v, videoType: "meet", videoUrl: url }));
+    } catch (e) {
+      setMeetError((e instanceof Error ? e.message : "Google Meet did not answer.").replace(/^\d+:\s*/, ""));
+    } finally {
+      setMeetBusy(false);
+    }
+  };
   const [tab, setTab] = useState<"people" | "find">("people");
   const fileRef = useRef<HTMLInputElement>(null);
   const set = (x: Partial<Draft>) => setD((v) => ({ ...v, ...x }));
@@ -481,10 +498,17 @@ export function MeetingEditor(p: {
               <span className="mt-1.5 text-ink-secondary"><Video size={18} /></span>
               <div className="flex flex-col gap-2">
                 <div className="flex flex-wrap gap-1.5">
-                  {([["meet", "Google Meet"], ["zoom", "Zoom"], ["link", "Paste a link"], ["none", "None"]] as const).map(([k, l]) => <button key={k} type="button" className={chip(d.videoType === k)} onClick={() => set({ videoType: k })}>{l}</button>)}
+                  {([["meet", "Google Meet"], ["zoom", "Zoom"], ["link", "Paste a link"], ["none", "None"]] as const).map(([k, l]) => <button key={k} type="button" className={chip(d.videoType === k)} onClick={() => { set({ videoType: k }); if (k === "meet" && p.makeMeet && !d.videoUrl) void newMeet(); }}>{l}</button>)}
                 </div>
                 {d.videoType !== "none" && <input className={CONTROL} aria-label="Video link" placeholder={d.videoType === "zoom" ? "https://zoom.us/j/..." : d.videoType === "meet" ? "https://meet.google.com/..." : "https://..."} value={d.videoUrl} onChange={(e) => set({ videoUrl: e.target.value })} />}
-                {d.videoType !== "none" && <div className="text-[12px] text-ink-muted">Paste the link from {d.videoType === "meet" ? "Google Meet" : d.videoType === "zoom" ? "Zoom" : "your video app"}. You can also add it later; everyone in the meeting is told. Creating the link automatically comes when Google is connected.</div>}
+                {d.videoType === "meet" && p.makeMeet && (
+                  <div className="flex flex-wrap items-center gap-2 text-[12px] text-ink-muted">
+                    <button type="button" className={chip(false)} disabled={meetBusy} onClick={() => void newMeet()}>{meetBusy ? "Creating..." : d.videoUrl ? "New Meet link" : "Create Meet link"}</button>
+                    <span>Anyone with the link can join, outside guests too. Send it to them from Mail Center.</span>
+                  </div>
+                )}
+                {meetError && <div className="text-[12.5px] text-warning-text">{meetError}</div>}
+                {d.videoType !== "none" && !(d.videoType === "meet" && p.makeMeet) && <div className="text-[12px] text-ink-muted">Paste the link from {d.videoType === "meet" ? "Google Meet" : d.videoType === "zoom" ? "Zoom" : "your video app"}. You can also add it later; everyone in the meeting is told.</div>}
               </div>
               <span className="mt-1.5 text-ink-secondary"><Bell size={18} /></span>
               <div className="flex flex-col gap-2">

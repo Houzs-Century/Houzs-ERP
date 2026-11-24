@@ -43,7 +43,7 @@ const BUCKETS: ReadonlyArray<{ value: BucketView; label: string }> = [
 const bucketOf = (v: string | null): BucketView => (v === 'SELLING' || v === 'COST_ONLY' ? v : 'all');
 
 /** A month from a list, with the month before and after one press away. The
- *  SO to DO conversion report picks its month with it too. */
+ *  SO conversion & backlog report picks its months with it too. */
 export function MonthSelect({ label, value, months, onChange }: { label: string; value: string; months: readonly string[]; onChange: (ym: string) => void }) {
   const options = months.includes(value) ? months : [value, ...months];
   const i = options.indexOf(value);

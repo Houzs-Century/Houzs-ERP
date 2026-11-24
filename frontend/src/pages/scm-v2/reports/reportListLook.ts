@@ -31,7 +31,7 @@ export const REPORT_LOOK: Readonly<Record<ReportId, { icon: LucideIcon; desc: st
   products: { icon: Package, desc: 'Every product the month sold, ranked by gross profit after its share of the gifts' },
   changes: { icon: Replace, desc: 'Every product change on an order in a month: selling and cost before and after, and whether the price covered the cost' },
   changesum: { icon: ArrowLeftRight, desc: 'Product changes added up by month and by salesperson: selling, cost and margin change, and the shortfall' },
-  sotodo: { icon: PieChart, desc: "The month's delivery orders: the amount and % from this month's orders, the rest from earlier orders" },
+  sotodo: { icon: PieChart, desc: "The month's orders by Processing Date, this month's and the backlog's, and the backlog cover rates with their average" },
   events: { icon: CalendarDays, desc: 'What each event cost, from the voucher and bill lines tagged with it' },
   commission: { icon: Users, desc: 'Each fair’s commission and the orders under it' },
   logistics: { icon: Truck, desc: 'What delivery cost: by region, per trip, and setup & dismantle' },
