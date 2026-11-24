@@ -30,6 +30,10 @@
 // from and how it was timed. Capex & financing (step 3): a button in By month opens
 // the table of money planned outside the trading cycle (reports/CapexFinancingDialog);
 // its amounts sit in the forecast column on their own account in their month.
+// Orders & bills (step 4): the switch, now Forecast, also puts the money already in
+// hand beside the current month and after it — open orders' balances by delivery
+// date, the bills the books owe by their due dates — Actual | Orders & bills | P&L
+// forecast; a figure opens the order or the bill behind it.
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -117,9 +121,17 @@ const DRILL_COLUMNS: Column<DrillEntry>[] = [
     getValue: (e) => e.sen, exportValue: (e) => e.sen / 100, exportFormat: 'money',
   },
 ];
-/** A P&L forecast figure's entries: the Forecast P&L month it comes from, who, how it was timed. */
+/** Where a forecast figure comes from: the Capex & financing table, an open order, a bill, or a Forecast P&L month. */
+const forecastFrom = (e: DrillEntry, month: (ym: string) => string): string => {
+  const doc = e.sourceDocNo ?? '';
+  if (e.sourceType === 'FORECAST_INPUT') return 'Capex & financing';
+  if (e.sourceType === 'FORECAST_ORDER') return `Order ${doc}`;
+  if (e.sourceType === 'FORECAST_BILL') return `Bill ${doc}`;
+  return `Forecast P&L ${month(doc)}`;
+};
+/** A forecast figure's entries: where it comes from, who, how it was timed. */
 const FORECAST_DRILL_COLUMNS: Column<DrillEntry>[] = [
-  { key: 'from', label: 'From', render: (e) => (e.sourceType === 'FORECAST_INPUT' ? 'Capex & financing' : `Forecast P&L ${monthName(`${e.sourceDocNo ?? ''}-01`)}`), getValue: (e) => (e.sourceType === 'FORECAST_INPUT' ? 'Capex & financing' : `Forecast P&L ${e.sourceDocNo ?? ''}`) },
+  { key: 'from', label: 'From', render: (e) => forecastFrom(e, (ym) => monthName(`${ym}-01`)), getValue: (e) => forecastFrom(e, (ym) => ym) },
   { key: 'party', label: 'Who', render: (e) => e.party ?? '—', getValue: (e) => e.party ?? '' },
   { key: 'note', label: 'How it is timed', render: (e) => e.narration ?? '—', getValue: (e) => e.narration ?? '' },
   {
@@ -185,7 +197,7 @@ export const ReceiptsPaymentsTab = () => {
   const r = useReportRange();
   const [view, setView] = useState<CashView>('total');
   const [byParty, setByParty] = useState(false);
-  /* The P&L forecast beside each month — By month, by account. */
+  /* The forecasts beside each month — By month, by account. */
   const [forecast, setForecast] = useState(false);
   const [inputsOpen, setInputsOpen] = useState(false);
   const [months, setMonths] = useState<number>(6);
@@ -246,7 +258,7 @@ export const ReceiptsPaymentsTab = () => {
   const periodText = monthly ? `${monthName(span.from)} – ${monthName(span.to)} · ${months} months` : `${fmtDate(r.from)} – ${fmtDate(r.to)}`;
   const layoutWord = head ? (head.layout.stored ? ' · on the saved layout' : " · on the chart's own tree") : '';
   const splitWord = view === 'split' ? ' · each month Settlement | Deposit as the layout splits each group' : '';
-  const forecastWord = forecastOn ? ' · each month Actual | P&L forecast' : '';
+  const forecastWord = forecastOn ? (fq.data?.docs ? ' · each month Actual | Orders & bills | P&L forecast' : ' · each month Actual | P&L forecast') : '';
   useReportSubtitle(r.usable ? `${periodText} · every bank and cash account · ${rowsWord} · % of the side's total${splitWord}${forecastWord}${layoutWord}` : 'Pick dates.');
 
   /* The entries behind a figure: the rows under it (one, or a whole category's), the column or the total. */
@@ -279,7 +291,7 @@ export const ReceiptsPaymentsTab = () => {
       title: 'Cash Flow',
       subtitle: split
         ? `Settlement / Deposit · ${periodText} · every bank and cash account · ${rowsWord} · ${showPct ? "% of the side's total beside Total" : 'amounts'}`
-        : `By month${forecastOn ? ' with the P&L forecast' : ''} · ${periodText} · every bank and cash account · ${rowsWord} · ${showPct ? "% of the side's total beside" : 'amounts'}`,
+        : `By month${forecastOn ? ' with the forecasts' : ''} · ${periodText} · every bank and cash account · ${rowsWord} · ${showPct ? "% of the side's total beside" : 'amounts'}`,
       meta: [{ label: 'Months', value: `${monthName(span.from)} – ${monthName(span.to)}` }, { label: 'Rows', value: rowsWord }],
       tables: [statementColumnsTable(sheetCols.map((c) => ({
         key: c.key, label: c.label, pct: showPct && c.pct, edge: c.kind === 'total', ...(c.group ? { group: c.group.label } : {}),
@@ -310,7 +322,7 @@ export const ReceiptsPaymentsTab = () => {
           <Segmented options={ROWS} value={byParty ? 'party' : 'accounts'} onChange={(v) => { setByParty(v === 'party'); if (v === 'party') setForecast(false); }} label="Show debtor and creditor names" />
         </ReportTool>
         {view === 'month' && (
-          <ReportSwitch on={forecastOn} onChange={(v) => { setForecast(v); if (v) setByParty(false); }}>P&amp;L forecast</ReportSwitch>
+          <ReportSwitch on={forecastOn} onChange={(v) => { setForecast(v); if (v) setByParty(false); }}>Forecast</ReportSwitch>
         )}
         {view === 'month' && (
           <button type="button" className={s.pickerButton} onClick={() => setInputsOpen(true)}>Capex &amp; financing</button>

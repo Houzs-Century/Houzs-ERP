@@ -1,5 +1,6 @@
-/* The Cash Flow's forecast column (steps 2 and 3 of the forecast port): the
-   Forecast P&L as cash and the Capex & financing table, each month a Cash
+/* The Cash Flow's forecast columns (steps 2 to 4 of the forecast port): the
+   Forecast P&L as cash, the Capex & financing table, and the money already
+   in hand from open orders and owed bills, each month a Cash
    Flow report of its own on the same tree, from GET
    /accounting/reports/cash-flow-forecast; the table itself from GET / PUT
    /accounting/reports/cash-flow-forecast/inputs (server half:
@@ -21,6 +22,19 @@ export type CashFlowForecast = {
   flagged: Array<{ id: string; code: string; name: string }>;
   /** Forecast lines left out as moving no cash. */
   nonCash: Array<{ code: string; name: string }>;
+  /** The Orders & bills column (step 4): the current month as at its 1st, then each later month
+      the open orders and owed bills reach; null when the range ends before the current month. */
+  docs: {
+    months: Array<{ month: string; future: boolean; report: RpReport }>;
+    /** The day the current month's orders and bills are taken as at. */
+    asAt: string;
+    /** Open orders with no delivery date, by the year ordered: in no month. */
+    undated: Array<{ year: string; orders: number; sen: number }>;
+    /** Orders and bills expected after the last month shown. */
+    beyond: { orders: number; orderSen: number; bills: number; billSen: number };
+    /** Suppliers a bill of which was timed a month later for want of a payment term. */
+    flagged: string[];
+  } | null;
 };
 
 export const cashFlowForecastPath = (from: string, to: string): string =>

@@ -96,7 +96,7 @@ const PAYMENTS: Row[] = [
   pay('p8', 'SO-X', '2026-09-01', 900_000, { company_id: 2 }),              // another company's
 ];
 
-function harness(perms: string[] = ['scm.payment_voucher.post'], inputs: Row[] = []) {
+function harness(perms: string[] = ['scm.payment_voucher.post'], inputs: Row[] = [], extra: Record<string, Row[]> = {}) {
   const sb = fakeSb({
     accounts: ACCOUNTS.map((r) => ({ ...r })),
     acc_item_group_accounts: [{ company_id: CO, group_code: 'SOFA', sales_account: '500-0003', purchase_account: '601-0003' }],
@@ -111,6 +111,7 @@ function harness(perms: string[] = ['scm.payment_voucher.post'], inputs: Row[] =
     mfg_sales_orders: ORDERS.map((r) => ({ ...r })),
     mfg_sales_order_payments: PAYMENTS.map((r) => ({ ...r })),
     acc_forecast_inputs: inputs.map((r) => ({ ...r })),
+    ...extra,
   });
   const app = new Hono();
   app.use('*', async (c, next) => {
@@ -199,6 +200,7 @@ describe('GET /accounting/reports/cash-flow-forecast', () => {
     const { app } = harness();
     const past = await get(app, 'from=2026-09&to=2026-10');
     expect(past.months.map((m) => m.month)).toEqual(['2026-09', '2026-10']);
+    expect(past.docs).toBeNull();
     expect(past.cached).toBeUndefined();
     expect((await get(app, 'from=2026-09&to=2026-10')).cached).toBe(true);
   });
@@ -261,5 +263,104 @@ describe('the Capex & financing table', () => {
     const jan = flat(after.months[3]!.report.layout.tree);
     expect(jan.slice(jan.indexOf('cf:funding = -1500000'))).toEqual(['cf:funding = -1500000', 'cf:funding:loan-out = -1500000', 'out:acc:460-0001 = -1500000']);
     expect(after.months[4]!.report.entries.find((e) => e.rowKey === '202-1000')).toMatchObject({ sourceType: 'FORECAST_INPUT', party: 'Keyed on Cash Flow (Capex & financing)', side: 'P', sen: 2_000_000 });
+  });
+});
+
+/* Step 4 of the Hookka forecast port (2026-11-24): the Orders & bills column.
+   Pinned: the current month as at its 1st — an order's balance with what was
+   paid on it since added back, an order placed since then left out, one whose
+   delivery date had passed on its own row; the bills the books owe, a
+   supplier's payment that names no bill paying its oldest, each bill paid on
+   its plan, its due date or its supplier's term on the accounts it was bought
+   on, a past-due one and an opening balance on the creditor control's own
+   row; the later months from today's orders and bills; an order with no
+   delivery date in no month, by the year ordered; the Forecast P&L's rent
+   less the rent bill already counted; another company's orders never read.
+   Made-up names and figures. */
+describe('the Orders & bills column', () => {
+  const order = (doc: string, soDate: string, balance: number, delivery: string | null, over: Row = {}): Row => ({
+    company_id: CO, doc_no: doc, so_date: soDate, local_total_sen: balance, balance_sen: balance, status: 'IN_PRODUCTION',
+    debtor_name: `Customer ${doc}`, customer_delivery_date: delivery, amended_delivery_date: null, ...over,
+  });
+  const api = (doc: string, date: string, sen: number): Row[] =>
+    bill(doc, date, '900-R001', '400-D001', sen).map((r) => ({ ...r, source_type: 'API', source_doc_no: doc }));
+  const extra = (): Record<string, Row[]> => ({
+    suppliers: [...SUPPLIERS, { id: 'sup-d', company_id: CO, code: '400-D001', name: 'Delta Property', status: 'ACTIVE', payment_terms: 'NET 30' }].map((r) => ({ ...r })),
+    mfg_sales_orders: [
+      ...ORDERS,
+      order('SO-10', '2026-10-05', 200_000, '2026-11-20'),
+      order('SO-11', '2026-09-01', 300_000, '2026-10-15', { status: 'DELIVERED' }),
+      order('SO-12', '2026-11-05', 400_000, '2026-12-10'),
+      order('SO-13', '2026-06-01', 100_000, null),
+      order('SO-14', '2025-03-01', 70_000, null),
+      order('SO-15', '2026-10-01', 500_000, '2028-01-01'),
+      order('SO-16', '2026-10-01', 999, '2026-11-02', { status: 'CANCELLED' }),
+      order('SO-17', '2026-10-10', 0, '2026-11-03'),
+      order('SO-18', '2026-10-10', 50_000, '2026-11-01', { amended_delivery_date: '2026-12-01' }),
+      order('SO-Y', '2026-10-01', 777_000, '2026-11-15', { company_id: 2 }),
+    ].map((r) => ({ ...r })),
+    mfg_sales_order_payments: [...PAYMENTS, pay('p9', 'SO-10', '2026-11-10', 50_000), pay('p10', 'SO-17', '2026-11-03', 80_000)].map((r) => ({ ...r })),
+    v_gl_entries: [
+      ...LEDGER.map((r) => ({ ...r, source_doc_no: r.je_no })),
+      /* Cedar paid in October by a voucher that names no bill: its oldest bill is the one paid. */
+      gl('PV-1', '2026-10-20', '400-0000', 300_000, 0, { source_type: 'PV', source_doc_no: 'PV-1', party_type: 'SUPPLIER', party_code: '400-C001' }),
+      gl('PV-1', '2026-10-20', '310-0001', 0, 300_000, { source_type: 'PV', source_doc_no: 'PV-1' }),
+      /* Beta's balance brought over when the books began. */
+      gl('OB-1', '2026-08-31', '400-0000', 0, 50_000, { source_type: 'OB', source_doc_no: null, party_type: 'SUPPLIER', party_code: '400-B001' }),
+      /* Delta's rent: October's due on 5 November, November's on 5 December. */
+      ...api('API-0', '2026-10-28', 200_000),
+      ...api('API-1', '2026-11-10', 120_000),
+    ],
+    purchase_invoices: ['PI-1', 'PI-2', 'PI-3'].map((no) => ({ id: no.toLowerCase(), company_id: CO, invoice_number: no, due_date: null, exchange_rate: null, status: 'POSTED', total_sen: 1, paid_sen: 0, migrated_no_stock: false })),
+    ap_invoices: [
+      { id: 'api-0', company_id: CO, invoice_number: 'API-0', due_date: '2026-11-05' },
+      { id: 'api-1', company_id: CO, invoice_number: 'API-1', due_date: '2026-12-05' },
+    ],
+    ap_invoice_lines: [
+      { company_id: CO, invoice_id: 'api-0', debit_account_code: '900-R001', amount_sen: 200_000 },
+      { company_id: CO, invoice_id: 'api-1', debit_account_code: '900-R001', amount_sen: 120_000 },
+    ],
+    payment_vouchers: [{ id: 'pv-1', company_id: CO, pv_number: 'PV-1', voucher_date: '2026-10-20' }],
+    /* Alpha's November bill (NET 60) is planned for 15 December. */
+    acc_bill_plans: [{ company_id: CO, bill_kind: 'PI', bill_id: 'pi-3', planned_on: '2026-12-15' }],
+  });
+  const rows = (r: { receipts: Array<{ key: string; name: string; totalSen: number }>; payments: Array<{ key: string; name: string; totalSen: number }> }) => ({
+    in: r.receipts.map((x) => [x.key, x.name, x.totalSen]),
+    out: r.payments.map((x) => [x.key, x.name, x.totalSen]),
+  });
+
+  test('the current month as at its 1st; the later months from today; what is in no month is said', async () => {
+    const { app } = harness(undefined, [], extra());
+    const b = await get(app, 'from=2026-09&to=2026-11');
+    const docs = b.docs!;
+    expect(docs.asAt).toBe('2026-11-01');
+    expect(docs.months.map((m) => [m.month, m.future])).toEqual([['2026-11', false], ['2026-12', true]]);
+    const nov = docs.months[0]!.report;
+    expect(nov.columns).toEqual([{ code: 'FORECAST', name: 'Orders & bills' }]);
+    expect(rows(nov)).toEqual({
+      in: [
+        ['300-0000:BAL:LATE', 'Past delivery date, not paid', 300_000],
+        ['300-0000:BAL:ORD', 'Open orders (balance on delivery)', 330_000],
+      ],
+      out: [
+        ['400-0000:LATE', 'Supplier bills past due', 50_000],
+        ['601-0001', 'PURCHASES OF BEDDING', 300_000],
+        ['900-R001', 'RENTAL', 500_000],
+      ],
+    });
+    expect(nov.entries.filter((e) => e.rowKey === '900-R001').map((e) => [e.sourceType, e.sourceDocNo, e.party, e.sen, e.narration])).toEqual([
+      ['FORECAST_BILL', 'API-0', 'Delta Property', 200_000, 'due 2026-11-05'],
+      ['FORECAST', '2026-11', 'RENTAL', 300_000, 'Nov 2026 Forecast P&L · less the bills already counted'],
+    ]);
+    expect(nov.entries.find((e) => e.sourceDocNo === 'SO-10')).toMatchObject({ sourceType: 'FORECAST_ORDER', party: 'Customer SO-10', sen: 250_000, side: 'R', narration: 'delivery 2026-11-20 · balance on delivery' });
+    const dec = docs.months[1]!.report;
+    expect(rows(dec)).toEqual({
+      in: [['300-0000:BAL:ORD', 'Open orders (balance on delivery)', 450_000]],
+      out: [['601-0001', 'PURCHASES OF BEDDING', 900_000], ['900-R001', 'RENTAL', 120_000], ['900-S100', 'STAFF SALARIES & OVERTIME', 2_000_000]],
+    });
+    expect(dec.entries.find((e) => e.sourceDocNo === 'PI-3')).toMatchObject({ party: 'Alpha Trading', narration: 'planned for 2026-12-15' });
+    expect(docs.undated).toEqual([{ year: '2025', orders: 1, sen: 70_000 }, { year: '2026', orders: 1, sen: 100_000 }]);
+    expect(docs.beyond).toEqual({ orders: 1, orderSen: 500_000, bills: 0, billSen: 0 });
+    expect(docs.flagged).toEqual(['Beta Supplies']);
   });
 });

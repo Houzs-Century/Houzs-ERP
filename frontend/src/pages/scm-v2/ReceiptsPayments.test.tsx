@@ -450,6 +450,7 @@ describe('the P&L forecast', () => {
     receiptMix: [{ kind: 'DEP', months: 0, pct: 70 }, { kind: 'BAL', months: 1, pct: 30 }],
     flagged: [{ id: 's1', code: '400-S001', name: 'Sample Sofa Works' }],
     nonCash: [],
+    docs: null,
   };
   beforeEach(() => { forecastAnswer.value = ANSWER; });
   afterEach(() => { forecastAnswer.value = null; });
@@ -458,7 +459,7 @@ describe('the P&L forecast', () => {
     at();
     fireEvent.click(within(screen.getByRole('group', { name: 'Columns' })).getByRole('button', { name: 'By month' }));
     fireEvent.click(within(screen.getByRole('group', { name: 'Months' })).getByRole('button', { name: '3' }));
-    fireEvent.click(screen.getByRole('switch', { name: 'P&L forecast' }));
+    fireEvent.click(screen.getByRole('switch', { name: 'Forecast' }));
     await waitFor(() => expect(heads()).toEqual([
       'Account', 'Total3 months%', 'Aug 2026Forecast only', 'Jul 2026', 'Jun 2026', 'May 2026',
       'P&L forecast', 'Actual', 'P&L forecast', 'Actual', 'P&L forecast', 'Actual', 'P&L forecast',
@@ -501,6 +502,50 @@ describe('the P&L forecast', () => {
     expect(within(dialog).getByLabelText('2026-07 202-1000 amount')).toBeTruthy();
   });
 
+  /* Step 4 (2026-11-24): Orders & bills from the current month on, between the actual and the P&L forecast. */
+  const docsTree = (inSen: number): LaidNode[] => [
+    { kind: 'category', id: 'side:in', label: 'RECEIPTS', flow: 'in', totalLabel: 'Total receipts', amountSen: inSen, pct: 100, cells: { FORECAST: inSen }, children: [
+      { kind: 'category', id: 'in:sec:CURRENT ASSETS', label: 'CURRENT ASSETS', amountSen: inSen, pct: 100, cells: { FORECAST: inSen }, children: [
+        line('300-0000:BAL:ORD', '300-0000', 'Open orders (balance on delivery)', { FORECAST: inSen }, 100, 'in'),
+      ] },
+    ] },
+  ];
+  const withDocs = () => ({
+    ...ANSWER,
+    docs: {
+      months: [
+        fc('2026-07', docsTree(20000), 20000, 0, [
+          { jeNo: '', entryDate: '2026-07-01', sourceType: 'FORECAST_ORDER', sourceDocNo: 'SO-0001', narration: 'delivery 2026-07-20 · balance on delivery', party: 'Customer One', side: 'R', rowKey: '300-0000:BAL:ORD', column: 'FORECAST', sen: 20000 },
+        ]),
+        fc('2026-08', docsTree(5000), 5000, 0),
+      ],
+      asAt: '2026-07-01',
+      undated: [{ year: '2026', orders: 2, sen: 150000 }],
+      beyond: { orders: 0, orderSen: 0, bills: 0, billSen: 0 },
+      flagged: [],
+    },
+  });
+
+  test('Orders & bills from the current month on: Actual | Orders & bills | P&L forecast; an order opens behind its figure; the orders in no month are said', async () => {
+    forecastAnswer.value = withDocs();
+    at();
+    fireEvent.click(within(screen.getByRole('group', { name: 'Columns' })).getByRole('button', { name: 'By month' }));
+    fireEvent.click(within(screen.getByRole('group', { name: 'Months' })).getByRole('button', { name: '3' }));
+    fireEvent.click(screen.getByRole('switch', { name: 'Forecast' }));
+    await waitFor(() => expect(heads()).toEqual([
+      'Account', 'Total3 months%', 'Aug 2026Forecast only', 'Jul 2026', 'Jun 2026', 'May 2026',
+      'Orders & bills', 'P&L forecast', 'Actual', 'Orders & bills', 'P&L forecast', 'Actual', 'P&L forecast', 'Actual', 'P&L forecast',
+    ]));
+    /* Aug: Orders & bills | P&L forecast, then Jul: Actual | Orders & bills | P&L forecast, Jun and May Actual | P&L forecast. */
+    expect(cells('Open orders (balance on delivery)').slice(1)).toEqual(['50.00', '', '', '200.00', '', '', '', '', '']);
+    fireEvent.click(screen.getByRole('button', { name: 'Open orders (balance on delivery) · Jul 2026 Orders & bills' }));
+    const region = screen.getByRole('region', { name: 'Entries of Open orders (balance on delivery)' });
+    expect(region.textContent).toContain('Order SO-0001');
+    expect(region.textContent).toContain('Customer One');
+    expect(region.textContent).toContain('delivery 2026-07-20');
+    expect(document.body.textContent).toContain('Open orders with no delivery date, in no month (2): 2 ordered in 2026, RM 1,500.00.');
+  });
+
   test('by debtor / creditor the forecast steps aside; Excel carries the forecast columns as shown', async () => {
     await open();
     fireEvent.click(screen.getByRole('button', { name: 'Excel' }));
@@ -510,6 +555,6 @@ describe('the P&L forecast', () => {
     expect(xs.tables[0]!.columns.map((c) => `${c.group ?? ''}|${c.label}`).slice(0, 5)).toEqual(['|Total', '|%', 'Aug 2026|P&L forecast', 'Jul 2026|Actual', 'Jul 2026|P&L forecast']);
     fireEvent.click(within(screen.getByRole('group', { name: 'Show debtor and creditor names' })).getByRole('button', { name: 'By debtor / creditor' }));
     await waitFor(() => expect(heads()).toEqual(['Account', 'Total3 months%', 'Jul 2026%', 'Jun 2026%', 'May 2026%']));
-    expect(screen.getByRole('switch', { name: 'P&L forecast' }).getAttribute('aria-checked')).toBe('false');
+    expect(screen.getByRole('switch', { name: 'Forecast' }).getAttribute('aria-checked')).toBe('false');
   });
 });
