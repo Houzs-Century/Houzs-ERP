@@ -79,6 +79,12 @@ export type AutoOtPlan =
  *     refreshed while it is still pending, removed when the punch no longer earns
  *     any (a corrected or forgotten punch).
  */
+/* Auto overtime under this many minutes is not worth a claim: a punch-out a few
+ * minutes past the shift should not create OT for a supervisor to review (owner
+ * 2026-11-24). A worker who really did short OT still reports the exact window,
+ * which is not capped. */
+export const MIN_AUTO_OT_MIN = 30;
+
 export function planAutoOtClaim(input: {
   existingAuto: { id: number; status: string } | null;
   reportedOwnsDay: boolean;
@@ -88,7 +94,7 @@ export function planAutoOtClaim(input: {
   const { existingAuto, reportedOwnsDay, shiftEndMin, otMin } = input;
   const pendingAuto = existingAuto && existingAuto.status === "PENDING" ? existingAuto : null;
   if (existingAuto && existingAuto.status !== "PENDING") return { kind: "none" };
-  if (reportedOwnsDay || otMin <= 0) return pendingAuto ? { kind: "delete", id: pendingAuto.id } : { kind: "none" };
+  if (reportedOwnsDay || otMin < MIN_AUTO_OT_MIN) return pendingAuto ? { kind: "delete", id: pendingAuto.id } : { kind: "none" };
   const { startMin, endMin } = autoOtWindow(shiftEndMin, otMin);
   return pendingAuto ? { kind: "update", id: pendingAuto.id, startMin, endMin } : { kind: "insert", startMin, endMin };
 }
