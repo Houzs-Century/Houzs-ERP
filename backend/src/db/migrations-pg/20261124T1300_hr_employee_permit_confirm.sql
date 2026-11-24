@@ -1,4 +1,4 @@
--- 20261123T1300_hr_employee_permit_confirm.sql
+-- 20261124T1300_hr_employee_permit_confirm.sql
 -- HR employee record: two compliance dates the master never held (owner
 -- 2026-11-23). Until now an employee had IC and passport numbers but no way to
 -- say when a foreign worker's work permit lapses, nor when someone on probation
@@ -24,6 +24,6 @@ ALTER TABLE public.hr_employees
   ADD COLUMN IF NOT EXISTS confirm_due_on date;
 
 COMMENT ON COLUMN public.hr_employees.work_permit_expiry IS
-  'Foreign worker''s work permit expiry date; Overview flags permits expiring within 90 days or already lapsed (20261123T1300).';
+  'Foreign worker''s work permit expiry date; Overview flags permits expiring within 90 days or already lapsed (20261124T1300).';
 COMMENT ON COLUMN public.hr_employees.confirm_due_on IS
-  'Day the employee is due to be confirmed off probation; Overview lists upcoming confirmations (20261123T1300).';
+  'Day the employee is due to be confirmed off probation; Overview lists upcoming confirmations (20261124T1300).';
