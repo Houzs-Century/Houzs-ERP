@@ -70,7 +70,7 @@ export function forecastNote(forecast: CashFlowForecast): string {
   const parts = [
     `P&L forecast: the Forecast P&L as cash. Sales come in as the customers paid from ${monthName(forecast.measured.from)} to ${monthName(forecast.measured.to)}: ${mix}.`,
     'A purchase line split by supplier is paid after each supplier’s payment term; Other, and a supplier without a term, a month later; a purchase line keyed whole by its recent suppliers’ terms.',
-    'Salaries are paid the month after; every other line in its month.',
+    'Salaries are paid the month after; every other line in its month. Capex & financing keyed on this page is in its month, on its own account.',
     'A month after this one shows the forecast alone; its Balance b/f runs on from the month before.',
   ];
   if (forecast.nonCash.length > 0) parts.push(`Left out as moving no cash: ${forecast.nonCash.map((l) => `${l.code} ${l.name}`).join(', ')}.`);

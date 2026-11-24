@@ -85,6 +85,9 @@ const forecastAnswer = vi.hoisted(() => ({ value: null as unknown }));
 vi.mock('../../vendor/scm/lib/authed-fetch', () => ({
   authedFetch: async (path: string) => {
     columnPaths.push(path);
+    if (path.includes('/cash-flow-forecast/inputs')) {
+      return { currentMonth: '2026-07', shown: ['2026-07'], months: {}, notOffered: [], accounts: [{ code: '202-1000', name: 'EQUIPMENT (OFFICE)', group: { id: 'cf:funding:capex', label: 'CAPITAL EXPENDITURE (CAPEX)' } }] };
+    }
     if (path.includes('/cash-flow-forecast')) return forecastAnswer.value;
     return shownReport.value ?? report;
   },
@@ -488,6 +491,14 @@ describe('the P&L forecast', () => {
     expect(region.textContent).toContain('a month later (no payment term set)');
     expect(document.body.textContent).toContain('70% as deposits in the order month, 30% as settlements a month after');
     expect(document.body.textContent).toContain('No payment term on the supplier, counted a month later (1): Sample Sofa Works');
+  });
+
+  test('Capex & financing opens its table from By month', async () => {
+    await open();
+    fireEvent.click(screen.getByRole('button', { name: 'Capex & financing' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Capex & financing' });
+    expect(await within(dialog).findByText('CAPITAL EXPENDITURE (CAPEX)')).toBeTruthy();
+    expect(within(dialog).getByLabelText('2026-07 202-1000 amount')).toBeTruthy();
   });
 
   test('by debtor / creditor the forecast steps aside; Excel carries the forecast columns as shown', async () => {

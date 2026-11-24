@@ -12,7 +12,7 @@
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
-import { cashFlowForecastHandler, clearCashFlowForecastCache, type CashFlowForecastPayload } from '../src/scm/routes/accounting-cashflow-forecast';
+import { cashFlowForecastHandler, clearCashFlowForecastCache, forecastInputsGetHandler, forecastInputsPutHandler, type CashFlowForecastPayload, type ForecastInputsPayload } from '../src/scm/routes/accounting-cashflow-forecast';
 import type { LaidNode } from '../src/acc/report-layout';
 
 const CO = 1;
@@ -26,6 +26,10 @@ const ACCOUNTS: Row[] = [
   acc('601-0001', 'PURCHASES OF BEDDING', 'EXPENSE', 'COST OF GOODS SOLD'),
   acc('900-S100', 'STAFF SALARIES & OVERTIME', 'EXPENSE', 'EXPENSES'),
   acc('900-R001', 'RENTAL', 'EXPENSE', 'EXPENSES'),
+  acc('202-1000', 'EQUIPMENT (OFFICE)', 'ASSET', 'FIXED ASSETS'),
+  acc('202-1005', 'ACCUM. DEPRN. - EQUIPMENT (OFFICE)', 'ASSET', 'FIXED ASSETS'),
+  acc('460-0001', 'LOAN - SAMPLE BANK', 'LIABILITY', 'LONG TERM LIABILITIES'),
+  acc('460-0009', 'TRADE FINANCE - SAMPLE BANK', 'LIABILITY', 'CURRENT LIABILITIES'),
 ];
 const RP_TREE = { version: 1, blocks: { accounts: [
   { kind: 'category', id: 'cf:in', label: 'CASH IN', flow: 'in', totalLabel: 'TOTAL CASH IN', children: [
@@ -35,6 +39,12 @@ const RP_TREE = { version: 1, blocks: { accounts: [
     { kind: 'category', id: 'cf:ops:purchases', label: 'PURCHASES', children: [{ kind: 'account', code: '601-0003', flow: 'out' }, { kind: 'account', code: '601-0001', flow: 'out' }] },
     { kind: 'category', id: 'cf:ops:salary', label: 'SALARY & RELATED', children: [{ kind: 'account', code: '410-0010', flow: 'out' }, { kind: 'account', code: '900-S100', flow: 'out' }] },
     { kind: 'category', id: 'cf:ops:rental', label: 'RENTAL', children: [{ kind: 'account', code: '900-R001', flow: 'out' }] },
+  ] },
+  { kind: 'category', id: 'cf:funding', label: 'FUNDING IN / (OUT)', flow: 'in', totalLabel: 'TOTAL FUNDING', children: [
+    { kind: 'category', id: 'cf:funding:capex', label: 'CAPITAL EXPENDITURE (CAPEX)', children: [{ kind: 'account', code: '202-1000', flow: 'net' }, { kind: 'account', code: '202-1005', flow: 'net' }] },
+    { kind: 'category', id: 'cf:funding:loan', label: 'LOAN & HP DRAWDOWN', children: [{ kind: 'account', code: '460-0001', flow: 'in' }] },
+    { kind: 'category', id: 'cf:funding:loan-out', label: 'LOAN & HP REPAYMENT', children: [{ kind: 'account', code: '460-0001', flow: 'out' }] },
+    { kind: 'category', id: 'cf:funding:tf', label: 'TRADE FINANCE', children: [{ kind: 'account', code: '460-0009', flow: 'net' }] },
   ] },
 ] } };
 const PNL_TREE = { version: 1, blocks: { expenses: [
@@ -86,7 +96,7 @@ const PAYMENTS: Row[] = [
   pay('p8', 'SO-X', '2026-09-01', 900_000, { company_id: 2 }),              // another company's
 ];
 
-function harness(perms: string[] = ['scm.payment_voucher.post']) {
+function harness(perms: string[] = ['scm.payment_voucher.post'], inputs: Row[] = []) {
   const sb = fakeSb({
     accounts: ACCOUNTS.map((r) => ({ ...r })),
     acc_item_group_accounts: [{ company_id: CO, group_code: 'SOFA', sales_account: '500-0003', purchase_account: '601-0003' }],
@@ -100,6 +110,7 @@ function harness(perms: string[] = ['scm.payment_voucher.post']) {
     v_gl_entries: LEDGER.map((r) => ({ ...r })),
     mfg_sales_orders: ORDERS.map((r) => ({ ...r })),
     mfg_sales_order_payments: PAYMENTS.map((r) => ({ ...r })),
+    acc_forecast_inputs: inputs.map((r) => ({ ...r })),
   });
   const app = new Hono();
   app.use('*', async (c, next) => {
@@ -111,6 +122,8 @@ function harness(perms: string[] = ['scm.payment_voucher.post']) {
     await next();
   });
   app.get('/accounting/reports/cash-flow-forecast', cashFlowForecastHandler as never);
+  app.get('/accounting/reports/cash-flow-forecast/inputs', forecastInputsGetHandler as never);
+  app.put('/accounting/reports/cash-flow-forecast/inputs', forecastInputsPutHandler as never);
   return { app, sb };
 }
 const get = async (app: Hono, q: string): Promise<CashFlowForecastPayload & { cached?: boolean }> => {
@@ -188,5 +201,65 @@ describe('GET /accounting/reports/cash-flow-forecast', () => {
     expect(past.months.map((m) => m.month)).toEqual(['2026-09', '2026-10']);
     expect(past.cached).toBeUndefined();
     expect((await get(app, 'from=2026-09&to=2026-10')).cached).toBe(true);
+  });
+});
+
+/* Step 3 of the Hookka forecast port (2026-11-24): the Capex & financing
+   table. Pinned: the accounts on offer are the funding block's, trade finance
+   and accumulated depreciation aside; the table shows twelve months from this
+   one; a save takes the vouchers' write key, replaces the company's whole
+   table, refuses an account the layout does not offer, never touches another
+   company's rows and is seen by the forecast at once; a keyed amount sits in
+   the forecast on its own account in its own month, a past month too, and
+   carries the later months as far as it reaches. Made-up figures. */
+describe('the Capex & financing table', () => {
+  const W = ['scm.payment_voucher.post', 'scm.payment_voucher.write'];
+  const row = (company: number, month: string, code: string, sen: number): Row => ({ company_id: company, month, account_code: code, amount_sen: sen, updated_at: '2026-11-20T00:00:00Z', updated_by: 'T' });
+  const put = (app: Hono, months: unknown) => app.request('/accounting/reports/cash-flow-forecast/inputs', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ months }) });
+
+  test('reading: the offered accounts grouped as the layout places them, twelve months from this one, the stored amounts, what is left to clear', async () => {
+    const { app } = harness(undefined, [row(CO, '2026-12', '460-0001', 50_000_000), row(CO, '2027-02', '460-0009', -100), row(2, '2026-12', '202-1000', -1)]);
+    const res = await app.request('/accounting/reports/cash-flow-forecast/inputs');
+    expect(res.status).toBe(200);
+    const b = (await res.json()) as ForecastInputsPayload;
+    expect(b.currentMonth).toBe('2026-11');
+    expect(b.shown).toEqual(['2026-11', '2026-12', '2027-01', '2027-02', '2027-03', '2027-04', '2027-05', '2027-06', '2027-07', '2027-08', '2027-09', '2027-10']);
+    expect(b.accounts.map((a) => [a.code, a.group.label])).toEqual([
+      ['202-1000', 'CAPITAL EXPENDITURE (CAPEX)'],
+      ['460-0001', 'LOAN & HP DRAWDOWN / LOAN & HP REPAYMENT'],
+    ]);
+    /* Company 2's row is never read. */
+    expect(b.months).toEqual({ '2026-12': { '460-0001': 50_000_000 }, '2027-02': { '460-0009': -100 } });
+    expect(b.notOffered).toEqual([{ code: '460-0009', name: 'TRADE FINANCE - SAMPLE BANK' }]);
+  });
+
+  test('saving: the write key; the whole table replaced; an account not offered refused by name; another company untouched; the forecast sees it at once', async () => {
+    expect((await put(harness().app, {})).status).toBe(403);
+    const { app, sb } = harness(W, [row(CO, '2026-12', '460-0001', 50_000_000), row(CO, '2026-10', '202-1000', -300_000), row(2, '2026-12', '202-1000', -1)]);
+    /* Read the forecast once, so the minute's memory holds it. */
+    const before = await get(app, 'from=2026-10&to=2026-11');
+    expect(before.months.find((m) => m.month === '2026-12')!.report.layout.tree.some((n) => n.id === 'cf:funding')).toBe(true);
+    const bad = await put(app, { '2026-12': { '460-0009': -100 } });
+    expect(bad.status).toBe(400);
+    expect(await bad.json()).toMatchObject({ error: 'bad_cell', cell: '2026-12 460-0009' });
+    /* December's drawdown cleared, a January repayment and a February purchase of equipment keyed; October kept. */
+    const ok = await put(app, { '2026-10': { '202-1000': -300_000 }, '2027-01': { '460-0001': -1_500_000 }, '2027-02': { '202-1000': -2_000_000, '460-0001': 0 } });
+    expect(ok.status, await ok.clone().text()).toBe(200);
+    const rows = (sb.tables.acc_forecast_inputs as Row[]).map((r) => [r.company_id, r.month, r.account_code, r.amount_sen, r.updated_by]).sort();
+    expect(rows).toEqual([
+      [1, '2026-10', '202-1000', -300_000, 'Chew'],
+      [1, '2027-01', '460-0001', -1_500_000, 'Chew'],
+      [1, '2027-02', '202-1000', -2_000_000, 'Chew'],
+      [2, '2026-12', '202-1000', -1, 'T'],
+    ]);
+    const after = await get(app, 'from=2026-10&to=2026-11');
+    expect(after.cached).toBeUndefined();
+    expect(after.months.map((m) => m.month)).toEqual(['2026-10', '2026-11', '2026-12', '2027-01', '2027-02']);
+    /* A past month keeps what was keyed for it; the repayment sits on the loan's Out line, the capex on its Net line. */
+    expect(flat(after.months[0]!.report.layout.tree)).toEqual(['cf:funding = -300000', 'cf:funding:capex = -300000', 'net:acc:202-1000 = -300000']);
+    /* Under the funding block (an In side), money out prints negative, as the actual report prints it. */
+    const jan = flat(after.months[3]!.report.layout.tree);
+    expect(jan.slice(jan.indexOf('cf:funding = -1500000'))).toEqual(['cf:funding = -1500000', 'cf:funding:loan-out = -1500000', 'out:acc:460-0001 = -1500000']);
+    expect(after.months[4]!.report.entries.find((e) => e.rowKey === '202-1000')).toMatchObject({ sourceType: 'FORECAST_INPUT', party: 'Keyed on Cash Flow (Capex & financing)', side: 'P', sen: 2_000_000 });
   });
 });
