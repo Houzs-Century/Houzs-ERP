@@ -2,9 +2,9 @@
  * dashboard built from the reads HR already has: Today (the attendance day read),
  * Headcount (employee master + today's punch), the month on-time chart and
  * "most late" (the working-hours month read), Payroll (the month's run), Needs
- * attention (not punched in, unlinked accounts, OT to confirm, penalties to
- * approve, a draft payroll) and Coming up (public holidays). Amounts masked
- * behind the eye toggle. */
+ * attention (not punched in, unlinked accounts, work permits expiring, OT to
+ * confirm, penalties to approve, a draft payroll) and Coming up (holidays,
+ * work-permit expiry, confirmation due). Amounts masked behind the eye toggle. */
 import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { fmtSen, todayMY } from "../../vendor/shared/format";
@@ -16,6 +16,7 @@ import { avatarColor, initials } from "./hrAvatar";
 import { dayByEmployee, punchOf, type PunchState } from "./attendanceToday";
 import { HR, useAttendance, useEmployees, useHolidays, usePayroll, useWorkingHours, type Employee } from "./hrApi";
 import { monthAttendanceStats, monthBounds, pad2 } from "./attendanceMonth";
+import { buildUpcoming, permitAlert } from "./overviewReminders";
 
 const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(" ");
 // Month and weekday labels from Intl, not a hand-kept array — a calendar
@@ -77,7 +78,9 @@ function StatusCell({ state, rows, onPick }: { state: PunchState; rows: Row[]; o
 }
 
 const toneBar: Record<string, string> = { err: "bg-err", warning: "bg-time", primary: "bg-primary", accent: "bg-accent" };
-const comingTone: Record<string, string> = { National: "bg-err-bg text-err", State: "bg-accent-soft text-accent" };
+const comingTone: Record<string, string> = { Holiday: "bg-err-bg text-err", Permit: "bg-warning-bg text-warning-text", Confirm: "bg-primary-soft text-primary" };
+/** Flag a work permit this many days before it lapses (owner 2026-11-23). */
+const PERMIT_WINDOW_DAYS = 90;
 
 export function OverviewPage({ onNavigate, onPickEmployee }: { onNavigate: (key: string) => void; onPickEmployee: (e: Employee) => void }) {
   const { can } = useAuth();
@@ -96,7 +99,8 @@ export function OverviewPage({ onNavigate, onPickEmployee }: { onNavigate: (key:
   const penalties = useQuery<{ penalties: { status: string }[] }>(`${HR}/penalties`, () => api.get<{ penalties: { status: string }[] }>(`${HR}/penalties`), [], { enabled: canPenalty });
 
   const dayByEmp = useMemo(() => dayByEmployee(att.data), [att.data]);
-  const active = useMemo(() => (emp.data?.employees ?? []).filter((e) => e.status === "ACTIVE"), [emp.data]);
+  const allEmps = useMemo(() => emp.data?.employees ?? [], [emp.data]);
+  const active = useMemo(() => allEmps.filter((e) => e.status === "ACTIVE"), [allEmps]);
   const rows = useMemo<Row[]>(() => active.map((e) => ({ e, punch: punchOf(dayByEmp.get(e.id) ?? null).state })), [active, dayByEmp]);
   const attReady = att.data != null;
 
@@ -160,16 +164,28 @@ export function OverviewPage({ onNavigate, onPickEmployee }: { onNavigate: (key:
     const items: { tone: string; title: string; sub: string; action: string; to: string }[] = [];
     if (attReady && notIn > 0 && pastShiftStart) items.push({ tone: "err", title: `${notIn} not punched in`, sub: "The shift has started", action: "View", to: "attendance" });
     if (notLinked > 0) items.push({ tone: "warning", title: `${notLinked} without an ERP account`, sub: "Cannot punch in until linked", action: "Link", to: "employees" });
+    const permit = permitAlert(allEmps, today, PERMIT_WINDOW_DAYS);
+    if (permit.count > 0)
+      items.push({
+        tone: permit.anyExpired ? "err" : "warning",
+        title: `${permit.count} work permit${permit.count === 1 ? "" : "s"} expiring`,
+        sub: permit.anyExpired ? "Some have already lapsed — renew now" : `Expiring within ${PERMIT_WINDOW_DAYS} days`,
+        action: "Review",
+        to: "employees",
+      });
     if (otPending > 0) items.push({ tone: "primary", title: `${otPending} overtime to confirm`, sub: "Confirm before payroll closes", action: "Review", to: "ot-requests" });
     if (penaltyPending > 0) items.push({ tone: "warning", title: `${penaltyPending} ${penaltyPending > 1 ? "penalties" : "penalty"} to approve`, sub: "Waiting for your sign-off", action: "Review", to: "penalties" });
     if (payroll.data && (payStatus === "DRAFT" || payStatus === "Draft" || payStatus === "MIXED")) items.push({ tone: "accent", title: "Payroll is still in draft", sub: `${period} run`, action: "Open", to: "payroll" });
     return items;
-  }, [attReady, notIn, pastShiftStart, notLinked, otPending, penaltyPending, payroll.data, payStatus, period]);
+  }, [attReady, notIn, pastShiftStart, notLinked, allEmps, today, otPending, penaltyPending, payroll.data, payStatus, period]);
 
-  const upcoming = useMemo(() => {
-    const list = (holidays.data?.holidays ?? []).filter((h) => h.date >= today).sort((a, b) => a.date.localeCompare(b.date)).slice(0, 5);
-    return list.map((h) => ({ day: h.date.slice(8, 10), mon: h.date.slice(5, 7), label: h.name ?? "Public holiday", kind: "Holiday" as const }));
-  }, [holidays.data, today]);
+  const upcoming = useMemo(
+    () =>
+      buildUpcoming(holidays.data?.holidays ?? [], allEmps, today)
+        .slice(0, 5)
+        .map((u) => ({ day: u.date.slice(8, 10), mon: u.date.slice(5, 7), label: u.label, kind: u.kind })),
+    [holidays.data, allEmps, today],
+  );
 
   return (
     <div className="grid min-w-[960px] grid-cols-12 gap-[14px] px-6 py-4" style={{ gridAutoRows: "min-content" }}>
@@ -338,7 +354,7 @@ export function OverviewPage({ onNavigate, onPickEmployee }: { onNavigate: (key:
       {/* Coming up */}
       <Card title="Coming up" className="col-span-4">
         {upcoming.length === 0 ? (
-          <div className="py-4 text-[12px] text-ink-muted">{holidays.loading ? "Loading…" : "No public holidays ahead."}</div>
+          <div className="py-4 text-[12px] text-ink-muted">{holidays.loading ? "Loading…" : "Nothing coming up."}</div>
         ) : (
           <div className="flex flex-col gap-3">
             {upcoming.map((c, i) => (
@@ -348,7 +364,7 @@ export function OverviewPage({ onNavigate, onPickEmployee }: { onNavigate: (key:
                   <span className="text-[10px] font-bold uppercase tracking-wider text-accent">{monthLabel(Number(c.mon) - 1, "short").toUpperCase()}</span>
                 </div>
                 <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink">{c.label}</span>
-                <span className={cx("shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold", comingTone.National)}>{c.kind}</span>
+                <span className={cx("shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold", comingTone[c.kind])}>{c.kind}</span>
               </div>
             ))}
           </div>

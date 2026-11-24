@@ -40,6 +40,13 @@ describe("parseEmployeeInput", () => {
     const e = parseEmployeeInput({ empNo: "EMP-1", name: "A", basicSalarySen: "abc" }, TODAY);
     expect(employeeInputProblem(e)).toMatch(/Salary/);
   });
+
+  test("keeps the work-permit and confirmation dates, trimmed; absent ones stay blank", () => {
+    const e = parseEmployeeInput({ empNo: "EMP-1", name: "A", workPermitExpiry: " 2027-03-01 ", confirmDueOn: "2026-12-15" }, TODAY);
+    expect(e.workPermitExpiry).toBe("2027-03-01");
+    expect(e.confirmDueOn).toBe("2026-12-15");
+    expect(parseEmployeeInput({ empNo: "EMP-1", name: "A" }, TODAY).workPermitExpiry).toBe("");
+  });
 });
 
 describe("employeeInputProblem", () => {
@@ -58,6 +65,12 @@ describe("employeeInputProblem", () => {
     expect(employeeInputProblem({ ...valid(), status: "RESIGNED", resignedOn: "2026-01-01", joinDate: "2026-02-01" })).toMatch(/before the join/);
     expect(employeeInputProblem({ ...valid(), status: "RESIGNED", resignedOn: "2026-11-30" })).toBeNull();
     expect(employeeInputProblem({ ...valid(), resignedOn: "2026-11-30" })).toMatch(/Only a resigned/);
+  });
+
+  test("the permit and confirmation dates, when given, must be real YMD dates", () => {
+    expect(employeeInputProblem({ ...valid(), workPermitExpiry: "soon" })).toMatch(/Work permit expiry/);
+    expect(employeeInputProblem({ ...valid(), confirmDueOn: "2026/12/15" })).toMatch(/Confirmation due/);
+    expect(employeeInputProblem({ ...valid(), workPermitExpiry: "2027-03-01", confirmDueOn: "2026-12-15" })).toBeNull();
   });
 
   test("pay basis limits", () => {
