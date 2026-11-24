@@ -23,6 +23,11 @@
 // splits each group and each customer's payment goes by its own kind (a payment
 // that completes an order on a later day than the first one is the Settlement);
 // a line not split prints one figure across its month (reports/cashFlowSplit).
+// P&L forecast (2026-11-24, step 2 of the forecast port): in By month, a switch puts
+// the Forecast P&L as cash beside each month — Actual | P&L forecast — and the months
+// after this one as the forecast alone, on the same tree, its balances running on
+// from the actual (reports/cashFlowForecast); a forecast figure opens where it came
+// from and how it was timed.
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -48,6 +53,8 @@ import {
 import { StatementSkeleton, StatementTable } from './reports/StatementTable';
 import { MONTH_COUNTS, columnsSpan, monthColumns, monthName, type StatementColumn, type StatementLine } from './reports/statementColumns';
 import { splitColumns, splitLines } from './reports/cashFlowSplit';
+import { forecastColumns, forecastNote, isForecastKey, rollForecast } from './reports/cashFlowForecast';
+import { useCashFlowForecast } from '../../vendor/scm/lib/cash-flow-forecast-queries';
 import {
   REPORT_CHART_COLORS, ReportBarChart, chartMonths, thousands, useChartMonths, useChartPeriods,
   type ChartBarSeries, type ChartMonth,
@@ -102,6 +109,16 @@ const DRILL_COLUMNS: Column<DrillEntry>[] = [
   { key: 'document', label: 'Document', render: docText, getValue: docText },
   { key: 'party', label: 'Party', render: (e) => e.party ?? '—', getValue: (e) => e.party ?? '' },
   { key: 'account', label: 'Account', render: (e) => e.column, getValue: (e) => e.column },
+  {
+    key: 'amount', label: 'Amount', align: 'right', render: (e) => fmtRp(e.sen),
+    getValue: (e) => e.sen, exportValue: (e) => e.sen / 100, exportFormat: 'money',
+  },
+];
+/** A P&L forecast figure's entries: the Forecast P&L month it comes from, who, how it was timed. */
+const FORECAST_DRILL_COLUMNS: Column<DrillEntry>[] = [
+  { key: 'from', label: 'Forecast P&L', render: (e) => monthName(`${e.sourceDocNo ?? ''}-01`), getValue: (e) => e.sourceDocNo ?? '' },
+  { key: 'party', label: 'Who', render: (e) => e.party ?? '—', getValue: (e) => e.party ?? '' },
+  { key: 'how', label: 'How it is timed', render: (e) => e.narration ?? '—', getValue: (e) => e.narration ?? '' },
   {
     key: 'amount', label: 'Amount', align: 'right', render: (e) => fmtRp(e.sen),
     getValue: (e) => e.sen, exportValue: (e) => e.sen / 100, exportFormat: 'money',
@@ -165,6 +182,8 @@ export const ReceiptsPaymentsTab = () => {
   const r = useReportRange();
   const [view, setView] = useState<CashView>('total');
   const [byParty, setByParty] = useState(false);
+  /* The P&L forecast beside each month — By month, by account. */
+  const [forecast, setForecast] = useState(false);
   const [months, setMonths] = useState<number>(6);
   const [level, setLevel] = useState<Level>('all');
   const [showPct, setShowPct] = useState(true);
@@ -193,6 +212,12 @@ export const ReceiptsPaymentsTab = () => {
   });
   const byKey: Partial<Record<string, RpReport>> = {};
   columns.forEach((c, i) => { const d = monthReads[i]?.data; if (d) byKey[c.key] = d; });
+  const forecastOn = forecast && view === 'month' && !byParty;
+  const periodKeys = columns.filter((c) => c.kind === 'period').map((c) => c.key);
+  const fq = useCashFlowForecast(forecastOn ? (periodKeys[periodKeys.length - 1] ?? '') : '', forecastOn ? (periodKeys[0] ?? '') : '');
+  const fcColumns = useMemo(() => (forecastOn && fq.data ? forecastColumns(columns, fq.data) : null), [forecastOn, fq.data, columns]);
+  /* The forecast's own reports beside the actual ones, their balances run on from the actual. */
+  const allByKey: Partial<Record<string, RpReport>> = forecastOn && fq.data ? { ...byKey, ...rollForecast(fq.data, byKey) } : byKey;
 
   const report = q.data;
   const codes = useMemo(() => (report ? report.columns.map((c) => c.code).filter((c) => ticked.includes(c)) : []), [report, ticked]);
@@ -200,32 +225,36 @@ export const ReceiptsPaymentsTab = () => {
     ...codes.map((code): StatementColumn => ({ key: code, label: code, sub: report?.columns.find((c) => c.code === code)?.name ?? '', kind: 'period', from: r.from, to: r.to, pct: false })),
     { key: 'total', label: 'Total', sub: 'Every bank and cash account', kind: 'total', from: r.from, to: r.to, pct: true },
   ], [codes, report, r.from, r.to]);
-  const shownColumns = view === 'total' ? totalColumns : view === 'split' ? splitCols : columns;
+  const monthCols = fcColumns ?? columns;
+  const shownColumns = view === 'total' ? totalColumns : view === 'split' ? splitCols : monthCols;
   const lines = view === 'total'
     ? (report ? cashFlowLines(report, codes) : [])
-    : view === 'split' ? splitLines(cashFlowMonthLines(columns, byKey), columns) : cashFlowMonthLines(columns, byKey);
+    : view === 'split' ? splitLines(cashFlowMonthLines(columns, byKey), columns) : cashFlowMonthLines(monthCols, allByKey);
   const shown = linesVisible(lines, level, tree.open);
   const depth = lines.reduce((d, l) => Math.max(d, l.depth), 0);
-  const loading = view === 'total' ? q.isLoading : monthReads.some((x) => x.isLoading);
-  const failed = view === 'total' ? (q.isError ? 1 : 0) : monthReads.filter((x) => x.isError).length;
+  const loading = view === 'total' ? q.isLoading : monthReads.some((x) => x.isLoading) || (forecastOn && fq.isLoading);
+  const failed = view === 'total' ? (q.isError ? 1 : 0) : monthReads.filter((x) => x.isError).length + (forecastOn && fq.isError ? 1 : 0);
   const head = view === 'total' ? report : byKey.total;
-  const span = columnsSpan(shownColumns);
+  /* The months read — a forecast-only month after them is beside the period, not in it. */
+  const span = columnsSpan(monthly ? columns : shownColumns);
   const rowsWord = byParty ? 'by debtor / creditor' : "by the owner's accounts";
   const periodText = monthly ? `${monthName(span.from)} – ${monthName(span.to)} · ${months} months` : `${fmtDate(r.from)} – ${fmtDate(r.to)}`;
   const layoutWord = head ? (head.layout.stored ? ' · on the saved layout' : " · on the chart's own tree") : '';
   const splitWord = view === 'split' ? ' · each month Settlement | Deposit as the layout splits each group' : '';
-  useReportSubtitle(r.usable ? `${periodText} · every bank and cash account · ${rowsWord} · % of the side's total${splitWord}${layoutWord}` : 'Pick dates.');
+  const forecastWord = forecastOn ? ' · each month Actual | P&L forecast' : '';
+  useReportSubtitle(r.usable ? `${periodText} · every bank and cash account · ${rowsWord} · % of the side's total${splitWord}${forecastWord}${layoutWord}` : 'Pick dates.');
 
   /* The entries behind a figure: the rows under it (one, or a whole category's), the column or the total. */
   const entriesFor = (l: StatementLine, col: StatementColumn | null): { entries: DrillEntry[]; label: string } => {
     /* Total: the one read, an account's column filtering by account. By month:
        the column's own read — the name opens the Total column's, the whole span.
        Settlement / Deposit: a figure across a month opens that month's read. */
-    const month = col?.group ?? col;
-    const src = view === 'total' ? report : byKey[month?.key ?? 'total'];
+    const fromForecast = col != null && isForecastKey(col.key);
+    const month = fromForecast ? col : (col?.group ?? col);
+    const src = view === 'total' ? report : allByKey[month?.key ?? 'total'];
     if (l.id === AUTOCOUNT_LINE_ID) return { entries: (src?.autoCount?.entries ?? []).map((e, idx) => ({ ...e, idx })), label: month?.label ?? 'Total' };
     const node = nodesById(src).get(l.id);
-    const label = month?.label ?? 'Total';
+    const label = fromForecast ? `${col.group?.label ?? ''} ${col.label}`.trim() : (month?.label ?? 'Total');
     if (!src || !node) return { entries: [], label };
     const sides = sidesOf(node);
     const keys = leafKeys(node);
@@ -240,20 +269,21 @@ export const ReceiptsPaymentsTab = () => {
     if (view === 'total') return report ? cashFlowSheet(report, { columns: codes, level, open: tree.open, pct: showPct }) : null;
     if (columns.some((c) => !byKey[c.key])) return null;
     const split = view === 'split';
+    const sheetCols = split ? splitCols : monthCols;
     return {
       title: 'Cash Flow',
       subtitle: split
         ? `Settlement / Deposit · ${periodText} · every bank and cash account · ${rowsWord} · ${showPct ? "% of the side's total beside Total" : 'amounts'}`
-        : `By month · ${periodText} · every bank and cash account · ${rowsWord} · ${showPct ? "% of the side's total beside" : 'amounts'}`,
+        : `By month${forecastOn ? ' with the P&L forecast' : ''} · ${periodText} · every bank and cash account · ${rowsWord} · ${showPct ? "% of the side's total beside" : 'amounts'}`,
       meta: [{ label: 'Months', value: `${monthName(span.from)} – ${monthName(span.to)}` }, { label: 'Rows', value: rowsWord }],
-      tables: [statementColumnsTable((split ? splitCols : columns).map((c) => ({
+      tables: [statementColumnsTable(sheetCols.map((c) => ({
         key: c.key, label: c.label, pct: showPct && c.pct, edge: c.kind === 'total', ...(c.group ? { group: c.group.label } : {}),
       })), shown)],
       fmt: fmtRp,
     };
   };
   const monthsInName = `${span.from.slice(0, 7)}-${span.to.slice(0, 7)}`;
-  const fileBase = view === 'month' ? `cash-flow-monthly-${monthsInName}` : view === 'split' ? `cash-flow-settlement-deposit-${monthsInName}` : `cash-flow-${r.from}-to-${r.to}`;
+  const fileBase = view === 'month' ? `cash-flow-monthly${forecastOn ? '-forecast' : ''}-${monthsInName}` : view === 'split' ? `cash-flow-settlement-deposit-${monthsInName}` : `cash-flow-${r.from}-to-${r.to}`;
 
   return (
     <>
@@ -272,8 +302,11 @@ export const ReceiptsPaymentsTab = () => {
           <ReportTool label="Months"><Segmented options={MONTH_OPTIONS} value={months} onChange={setMonths} label="Months" /></ReportTool>
         )}
         <ReportTool label="Rows">
-          <Segmented options={ROWS} value={byParty ? 'party' : 'accounts'} onChange={(v) => setByParty(v === 'party')} label="Show debtor and creditor names" />
+          <Segmented options={ROWS} value={byParty ? 'party' : 'accounts'} onChange={(v) => { setByParty(v === 'party'); if (v === 'party') setForecast(false); }} label="Show debtor and creditor names" />
         </ReportTool>
+        {view === 'month' && (
+          <ReportSwitch on={forecastOn} onChange={(v) => { setForecast(v); if (v) setByParty(false); }}>P&amp;L forecast</ReportSwitch>
+        )}
         {depth >= 2 && (
           <ReportTool label="Levels">
             <Segmented
@@ -300,7 +333,7 @@ export const ReceiptsPaymentsTab = () => {
       )}
       {r.usable && !loading && lines.length > 0 && (monthly || (report && report.columns.length > 0)) && (
         <StatementTable
-          widthsKey={view === 'total' ? 'cf-total' : view === 'split' ? 'cf-split' : 'cf-month'}
+          widthsKey={view === 'total' ? 'cf-total' : view === 'split' ? 'cf-split' : forecastOn ? 'cf-month-forecast' : 'cf-month'}
           head="Account"
           columns={shownColumns}
           lines={lines}
@@ -315,12 +348,13 @@ export const ReceiptsPaymentsTab = () => {
           figureOpens={view === 'split' ? (_l, col, across) => !col.group || across : undefined}
           renderLines={(l, col, close, colSpan) => {
             const { entries, label } = entriesFor(l, col);
-            return <EntriesRow key={`e:${l.id}`} title={l.label} sub={label} entries={entries} colSpan={colSpan} onClose={close} />;
+            return <EntriesRow key={`e:${l.id}`} title={l.label} sub={label} entries={entries} columns={col != null && isForecastKey(col.key) ? FORECAST_DRILL_COLUMNS : DRILL_COLUMNS} colSpan={colSpan} onClose={close} />;
           }}
           note={view === 'split'
             ? 'Each month in Settlement and Deposit as the layout splits each group (Layout); a customer’s payment is the Settlement when it completes the order on a later day than the first payment, else a Deposit. A line not split prints one figure across its month. % beside Total is of the side’s total. Click a Total, or a figure across a month, for the entries behind it.'
-            : '% beside each receipt is of the receipts, beside each payment of the payments; the surplus’s is of the receipts. Click a figure for the entries behind it.'}
-          drillKey={`${view}|${r.from}|${r.to}|${byParty}|${months}|${codes.join(',')}`}
+            : forecastOn && fq.data ? `${forecastNote(fq.data)} Click a figure for what is behind it.`
+              : '% beside each receipt is of the receipts, beside each payment of the payments; the surplus’s is of the receipts. Click a figure for the entries behind it.'}
+          drillKey={`${view}|${r.from}|${r.to}|${byParty}|${months}|${codes.join(',')}|${forecastOn}`}
           ariaLabel="Cash flow"
         />
       )}
@@ -331,7 +365,7 @@ export const ReceiptsPaymentsTab = () => {
 const STRONG = new Set(['net:surplus']);
 
 /** The entries behind a figure, under its row: the six columns of today's list, its own Export. */
-function EntriesRow({ title, sub, entries, colSpan, onClose }: { title: string; sub: string; entries: DrillEntry[]; colSpan: number; onClose: () => void }) {
+function EntriesRow({ title, sub, entries, columns, colSpan, onClose }: { title: string; sub: string; entries: DrillEntry[]; columns: Column<DrillEntry>[]; colSpan: number; onClose: () => void }) {
   return (
     <tr className={st.linesRow}>
       <td colSpan={colSpan}>
@@ -350,7 +384,7 @@ function EntriesRow({ title, sub, entries, colSpan, onClose }: { title: string; 
             tableId="rp-drill-entries"
             exportName="receipts-payments-entries"
             exportXlsx
-            columns={DRILL_COLUMNS}
+            columns={columns}
             rows={entries}
             emptyLabel="No entry behind this figure."
             getRowKey={(e) => e.idx}
