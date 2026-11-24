@@ -253,6 +253,9 @@ stockTakes.get('/', async (c) => {
       .order('take_date', { ascending: false })
       .order('created_at', { ascending: false });
     if (status && VALID_STATUS.has(status)) q = q.eq('status', status);
+    /* The approvals inbox "All" scope: every take that was ever submitted for
+       approval, whatever its status now (pending, or the POSTED/OPEN it became). */
+    if (c.req.query('submitted') === 'true') q = q.not('submitted_at', 'is', null);
     if (warehouseId) q = q.eq('warehouse_id', warehouseId);
     if (dateFrom)    q = q.gte('take_date', dateFrom);
     if (dateTo)      q = q.lte('take_date', dateTo);
@@ -396,6 +399,26 @@ const lineLotFacts = async (
   }
   return { costByKey, posByKey };
 };
+
+// ── Pending-approval count (sidebar badge; 0 for non-supervisors) ──────
+// The approvals inbox's red count. Registered before /:id so "pending-count" is
+// never read as a take id. Mirrors the backdate request badge: a supervise-key
+// holder gets the live count of PENDING_APPROVAL takes in their company; anyone
+// else gets 0, so no badge shows.
+/* Exported for the vitest harness, as the sibling handlers are. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Supabase client / Hono context without generated types; same as every handler in this file
+export const pendingApprovalCountHandler = async (c: any) => {
+  if (!hasHouzsPerm(c, SUPERVISE_PERM)) return c.json({ count: 0 });
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json({ count: 0 });
+  const { count, error } = await scopeToCompany(
+    c.get('supabase').from('stock_takes').select('id', { count: 'exact', head: true }).eq('status', 'PENDING_APPROVAL'),
+    c,
+  );
+  if (error) return c.json({ count: 0 });
+  return c.json({ count: count ?? 0 });
+};
+stockTakes.get('/pending-count', pendingApprovalCountHandler);
 
 // ── Detail ────────────────────────────────────────────────────────────
 /* Exported for the vitest harness (precedent: postStockTakeHandler below —
@@ -1848,6 +1871,13 @@ export const approveStockTakeHandler = async (c: any) => {
   if (h0Err)  return c.json({ error: 'approve_failed', reason: h0Err.message }, 500);
   if (!head0) { const r = await notOpenOrNotOurs(sb, id, co.companyId, 'PENDING_APPROVAL'); return c.json(r.body, r.status); }
   const header = head0 as unknown as PostingHeader;
+  /* Nobody approves their own submission (parity with the backdate request
+     inbox). In practice the submitter lacks the supervise key and never reaches
+     here, but a mid-flight grant could — refuse it. */
+  const submittedBy = (head0 as unknown as { submitted_by?: string | null }).submitted_by;
+  if (submittedBy && String(submittedBy) === String(performedBy)) {
+    return c.json({ error: 'own_submission', message: 'You submitted this count — another supervisor has to approve it.' }, 403);
+  }
 
   const plan = await computeStockTakePosting(sb, c, header, performedBy);
   if (plan.costlessSkus.length > 0) return c.json(costRequiredBody(plan.costlessSkus), 422);
