@@ -2,7 +2,7 @@
 // Mail Center admin — the "Mailboxes" tab inside User Management (Team.tsx).
 //
 // Three subpages (owner 2026-11-21), ?mail= in the URL:
-//   Mailboxes        - the address list, "New mailbox", edit a row.
+//   Mailboxes        - what to act on (address requests, Google Admin steps), the address list, "New mailbox", edit a row.
 //   Gmail connection - newest mail each mailbox has received.
 //   Access           - each person's level and ticks (mail-access-levels.tsx).
 //
@@ -11,6 +11,9 @@
 // the dept picker sends the dept NAME (assigned_dept is string-matched).
 // ---------------------------------------------------------------------------
 import { useEffect, useMemo, useRef, useState } from "react";
+import { MailClaimRequests } from "./team/MailClaimRequests";
+import { MailHostPending } from "./team/MailHostPending";
+import { MailHostRemove } from "./team/MailHostRemove";
 import {
   Plus,
   Mail,
@@ -118,6 +121,12 @@ export function MailboxesTab() {
 
       {sub === "mailboxes" && (
       <section>
+        {/* What an admin has to act on: address requests, then the Google Admin steps both ways. */}
+        <div className="mb-4 flex flex-col gap-3 empty:hidden">
+          <MailClaimRequests />
+          <MailHostPending />
+          <MailHostRemove />
+        </div>
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <span className="h-px w-5 bg-accent" />
           <h2 className="text-[10px] font-bold uppercase tracking-brand text-accent">
