@@ -69,7 +69,7 @@ import { previousPaymentsList, previousPaymentsMark, previousPaymentsUndo } from
 import { arAgingHandler, apAgingHandler } from './accounting-aging';
 import { productProfitHandler } from './accounting-product-profit';
 import { productChangesHandler } from './accounting-product-changes';
-import { soDoConversionHandler } from './accounting-so-do-conversion';
+import { soBacklogCoverHandler } from './accounting-so-backlog-cover';
 import { bankConfigList, bankConfigSave } from './accounting-bank-config';
 import { payoutUpload, payoutList, payoutCharge, payoutChargeUndo, chargeAccountsHandler } from './accounting-payouts';
 import {
@@ -240,10 +240,10 @@ accounting.get('/product-profit', productProfitHandler);
    sales order with its selling and cost before and after, by the month of its
    change day. accounting-product-changes.ts; acc/product-changes.ts. */
 accounting.get('/product-changes', productChangesHandler);
-/* The SO to DO conversion report (owner 2026-11-24): the month's shipped DOs,
-   from this month's orders and from earlier ones, each part's total and share.
-   accounting-so-do-conversion.ts; acc/so-do-conversion.ts. */
-accounting.get('/so-do-conversion', soDoConversionHandler);
+/* The SO conversion & backlog report (owner 2026-11-24): the month's orders by
+   Processing Date, this month's and the backlog's, and the backlog cover rates
+   with their average. accounting-so-backlog-cover.ts; acc/so-backlog-cover.ts. */
+accounting.get('/so-backlog-cover', soBacklogCoverHandler);
 /* The Forecast P&L (owner 2026-09-21): a planning grid beside the statements; nothing posts. */
 accounting.get('/forecast', forecastGetHandler);
 accounting.put('/forecast', forecastPutHandler);
