@@ -93,12 +93,26 @@ const PAYLOAD: DashboardPayload = {
   periods: [AUG, SEP, OCT],
 };
 const lastParams: { value: DashboardParams | null } = { value: null };
+/* A past month's back-calculated forecast (step 7, part 3): August's, when asked. */
+const pastAsked: { value: readonly string[] } = { value: [] };
+const PAST_AUG = {
+  month: '2026-08',
+  balanceSheet: { assetsSen: 13_500_000, liabilitiesSen: 6_900_000, equitySen: 5_000_000, earningsSen: 1_600_000, currentAssetsSen: 13_500_000, currentLiabilitiesSen: 6_900_000, inventorySen: 1_000_000, debtToAssetPct: 51.1, checkSen: 0 },
+  ratios: { grossMarginPct: 41, netMarginPct: 18, currentRatio: 1.96, quickRatio: 1.81, roePct: 24.6, roaPct: 11.9 },
+};
 vi.mock('../../vendor/scm/lib/dashboard-queries', async (importOriginal) => ({
   ...(await importOriginal() as object),
   useFinanceDashboard: (p: DashboardParams) => { lastParams.value = p; return { data: PAYLOAD, isLoading: false, isFetching: false, isError: false, error: null }; },
+  useDashboardForecastMonths: (months: readonly string[]) => { pastAsked.value = months; return months.map((m) => ({ data: m === '2026-08' ? PAST_AUG : undefined })); },
 }));
 /* The Cash Flow's two forecasts (step 7): the P&L forecast for August to October, Orders & bills for October only. */
-const fm = (month: string, inSen: number, outSen: number) => ({ month, future: false, report: { totals: { receiptsTotalSen: inSen, paymentsTotalSen: outSen } } });
+const fm = (month: string, inSen: number, outSen: number) => ({
+  month, future: false,
+  report: {
+    totals: { receiptsTotalSen: inSen, paymentsTotalSen: outSen },
+    layout: { tree: [{ kind: 'category', id: 'side:in', label: 'Receipts', amountSen: inSen, children: [] }, { kind: 'category', id: 'side:out', label: 'Payments', amountSen: outSen, children: [] }] },
+  },
+});
 const CASH_FORECAST = {
   months: [fm('2026-08', 10_000_000, 4_000_000), fm('2026-09', 6_000_000, 2_000_000), fm('2026-10', 7_000_000, 3_000_000)],
   docs: { months: [fm('2026-10', 6_500_000, 2_500_000)] },
@@ -305,7 +319,10 @@ describe('the Financial Dashboard page', () => {
     expect(document.querySelectorAll('[data-group="out"]').length).toBe(2);
     expect(screen.queryByText('Receipts')).toBeNull();
     fireEvent.click(screen.getByText('Detail'));
-    expect(cells('cat:Receipts')).toEqual(['103,000.00', '—', '—']);
+    /* Each category, each period Actual | Forecast: the P&L forecast by default, Orders & bills on the switch. */
+    expect(side('cat:side:in')).toEqual(['103,000.00', '100,000.00', '0.00', '60,000.00', '—', '70,000.00']);
+    fireEvent.click(screen.getByRole('tab', { name: 'Orders & bills' }));
+    expect(side('cat:side:in')).toEqual(['103,000.00', '—', '0.00', '—', '—', '65,000.00']);
   });
 
   test("the cash flow's two forecasts follow the tab: dashed lines, their rows and actual less forecast", () => {
@@ -333,19 +350,30 @@ describe('the Financial Dashboard page', () => {
     expect(cells('current')).toEqual(['2.01', '2.01', '—']);
   });
 
+  test("a past month's back-calculated forecast: asked one month at a time, then beside its actual on the balance sheet and the ratios", () => {
+    render(<MemoryRouter><FinanceDashboard /></MemoryRouter>);
+    expect(pastAsked.value).toEqual(['2026-08']);
+    expect(cells('fc-assets')).toEqual(['135,000.00', '140,000.00', '—']);
+    expect(cells('vs-assets')).toEqual(['2,000.00', '(3,000.00)', '—']);
+    expect(cells('fc-gross-margin')).toEqual(['41.0%', '40.0%', '40.0%']);
+    expect(cells('vs-gross-margin')).toEqual(['1.0', '2.0', '—']);
+    expect(document.body.textContent).toContain("A past month's forecast is worked out from the month-end before it");
+  });
+
   test('the forecast beside the balance sheet and the ratios: a month that has happened against its forecast, a month ahead its forecast faded', () => {
     render(<MemoryRouter><FinanceDashboard /></MemoryRouter>);
     expect(screen.getAllByText('Oct 2026 (F)').length).toBeGreaterThan(0);
-    expect(cells('fc-assets')).toEqual(['—', '140,000.00', '—']);
-    expect(cells('vs-assets')).toEqual(['—', '(3,000.00)', '—']);
-    expect(cells('vs-liabilities')).toEqual(['—', '(2,000.00)', '—']);
-    expect(cells('fc-debt-to-asset')).toEqual(['—', '50.0%', '—']);
+    /* August's is back-calculated (the past-month test), September's is this month's, October is ahead. */
+    expect(cells('fc-assets')).toEqual(['135,000.00', '140,000.00', '—']);
+    expect(cells('vs-assets')).toEqual(['2,000.00', '(3,000.00)', '—']);
+    expect(cells('vs-liabilities')).toEqual(['(1,000.00)', '(2,000.00)', '—']);
+    expect(cells('fc-debt-to-asset')).toEqual(['51.1%', '50.0%', '—']);
     expect(screen.getByLabelText('Balance Sheet').querySelectorAll('[data-faded="true"]').length).toBe(2);
-    expect(cells('fc-gross-margin')).toEqual(['—', '40.0%', '40.0%']);
-    expect(cells('vs-gross-margin')).toEqual(['—', '2.0', '—']);
+    expect(cells('fc-gross-margin')).toEqual(['41.0%', '40.0%', '40.0%']);
+    expect(cells('vs-gross-margin')).toEqual(['1.0', '2.0', '—']);
     expect(document.querySelectorAll('[data-line="fc-gross-margin"] [data-segment]').length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole('tab', { name: 'Quick Ratio' }));
-    expect(cells('fc-quick')).toEqual(['—', '1.86', '1.87']);
-    expect(cells('vs-quick')).toEqual(['—', '0.01', '—']);
+    expect(cells('fc-quick')).toEqual(['1.81', '1.86', '1.87']);
+    expect(cells('vs-quick')).toEqual(['0.06', '0.01', '—']);
   });
 });

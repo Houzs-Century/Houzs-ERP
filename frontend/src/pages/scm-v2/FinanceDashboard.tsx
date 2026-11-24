@@ -28,14 +28,13 @@ import { ReportShell } from './reports/ReportShell';
 import { ReportMessage, ReportTool, ReportToolbar, useReportSubtitle } from './reports/reportParts';
 import { monthName } from './reports/statementColumns';
 import { fmtSenPlain } from '../../vendor/shared/format';
-import type { LaidNode } from '../../vendor/scm/lib/report-layout';
 import {
-  useFinanceDashboard,
+  useDashboardForecastMonths, useFinanceDashboard,
   type CompareGroup, type CompareTotals, type CostStructureGroup, type DashboardFigures, type DashboardPeriod, type Granularity, type Ratios,
 } from '../../vendor/scm/lib/dashboard-queries';
 import { DashboardChart, type ChartLine, type ChartSeries } from './DashboardChart';
 import { useCashFlowForecast } from '../../vendor/scm/lib/cash-flow-forecast-queries';
-import { forecastSpan, gapOf, periodCashForecasts, pickCash } from './reports/dashboardForecast';
+import { categoryAmounts, categoryRows, forecastSpan, gapOf, periodCashForecasts, periodCategoryForecast, pickCash } from './reports/dashboardForecast';
 
 const errText = (e: unknown): string => (e instanceof Error && e.message ? e.message : 'That was not accepted.');
 const soft: React.CSSProperties = { fontSize: 12, color: 'var(--fin-muted)' };
@@ -465,7 +464,8 @@ const CostStructureCard = ({ periods, groups }: { periods: DashboardPeriod[]; gr
 /* ── 4 · Cash Flow ───────────────────────────────────────────────────────── */
 
 const CASH_TABS = [{ key: 'in', label: 'In' }, { key: 'out', label: 'Out' }, { key: 'net', label: 'Net' }];
-const topCategories = (tree: LaidNode[]): LaidNode[] => tree.filter((n) => n.kind === 'category' || n.kind === 'unassigned' || n.kind === 'subtotal');
+const CASH_SOURCES = [{ key: 'pnl', label: 'P&L forecast' }, { key: 'docs', label: 'Orders & bills' }];
+const DETAIL_SOURCES = [{ key: 'actual', label: 'Actual' }, { key: 'forecast', label: 'Forecast' }];
 
 const CashFlowCard = ({ periods }: { periods: DashboardPeriod[] }) => {
   const [tab, setTab] = useState('in');
@@ -491,9 +491,20 @@ const CashFlowCard = ({ periods }: { periods: DashboardPeriod[] }) => {
     { id: 'fc-docs', label: `${tabName} forecast (orders & bills)`, cells: docs.map(fmtOrDash) },
     { id: 'vs-docs', label: 'vs forecast (orders & bills)', cells: periods.map((p, i) => fmtOrDash(gapOf(pick(p), docs[i] ?? null))) },
   ];
-  /* Detail: the Cash Flow tree's top categories, one row each, in the order they first appear. */
-  const labels: string[] = [];
-  for (const p of periods) for (const n of topCategories(p.cashFlow?.tree ?? [])) if (!labels.includes(n.label)) labels.push(n.label);
+  /* Detail (part 3): the Cash Flow tree's categories two levels down, each period Actual | Forecast,
+     the forecast from the P&L forecast or from Orders & bills. */
+  const [source, setSource] = useState('pnl');
+  const forecastTrees = (source === 'pnl' ? fq.data?.months : fq.data?.docs?.months) ?? [];
+  const cats = categoryRows([...periods.map((p) => p.cashFlow?.tree ?? []), ...forecastTrees.map((m) => m.report.layout.tree)]);
+  const actualCats = periods.map((p) => (p.cashFlow ? categoryAmounts(p.cashFlow.tree) : null));
+  const forecastCats = periods.map((p) => periodCategoryForecast(p.months, forecastTrees));
+  const detailRows: SideRow[] = cats.map((c) => ({
+    id: `cat:${c.id}`, label: c.depth === 0 ? c.label : `· ${c.label}`, strong: c.depth === 0,
+    cells: periods.map((_, i) => [
+      { text: actualCats[i] ? fmtSenPlain(actualCats[i].get(c.id) ?? 0) : '—', pct: null },
+      { text: forecastCats[i] ? fmtSenPlain(forecastCats[i].get(c.id) ?? 0) : '—', pct: null },
+    ]),
+  }));
   const rows: TableRow[] = [
     { id: 'in', label: 'Cash in', cells: periods.map((p) => fmtOrDash(p.cashFlow?.inSen)), strong: tab === 'in' },
     { id: 'out', label: 'Cash out', cells: periods.map((p) => fmtOrDash(p.cashFlow?.outSen)), strong: tab === 'out' },
@@ -501,15 +512,20 @@ const CashFlowCard = ({ periods }: { periods: DashboardPeriod[] }) => {
     { id: 'opening', label: 'Balance b/f', cells: periods.map((p) => fmtOrDash(p.cashFlow?.openingSen)) },
     { id: 'closing', label: 'Balance c/f', cells: periods.map((p) => fmtOrDash(p.cashFlow?.closingSen)) },
     ...forecastRows,
-    ...(detail ? labels.map((label) => ({
-      id: `cat:${label}`, label,
-      cells: periods.map((p) => { const n = topCategories(p.cashFlow?.tree ?? []).find((x) => x.label === label); return n ? fmtSenPlain(n.amountSen) : '—'; }),
-    })) : []),
   ];
   return (
     <CardShell title="Cash Flow" controls={<><Tabs options={CASH_TABS} value={tab} onChange={setTab} /><button type="button" style={resetBtn} onClick={() => setDetail((d) => !d)}>{detail ? 'Summary' : 'Detail'}</button></>}>
       <DashboardChart labels={periods.map(labelOf)} bars={bars} lines={lines} ariaLabel={`Cash ${tab} per period`} />
       <FiguresTable periods={periods} rows={rows} ariaLabel="Cash flow figures" />
+      {detail && (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 'var(--space-3)' }}>
+            <span style={soft}>Forecast from</span>
+            <Tabs options={CASH_SOURCES} value={source} onChange={setSource} />
+          </div>
+          <SideBySideTable periods={periods} sources={DETAIL_SOURCES} rows={detailRows} spans={[]} ariaLabel="Cash flow by category, actual beside forecast" />
+        </>
+      )}
       <div style={soft}>
         {fq.isLoading ? 'Loading forecast… ' : ''}
         The dashed lines are the Cash Flow&apos;s two forecasts of the tab&apos;s figure: P&amp;L = the Forecast P&amp;L as cash; orders &amp; bills = the money already in hand, from the current month on. vs = actual less forecast.
@@ -554,7 +570,7 @@ const BalanceSheetCard = ({ periods }: { periods: DashboardPeriod[] }) => {
       <DashboardChart labels={periods.map(labelOf)} bars={bars} lines={lines} ariaLabel="Assets and liabilities, debt-to-asset % on the right axis" />
       <FiguresTable periods={periods} rows={rows} ariaLabel="Balance sheet figures" />
       <div style={soft}>
-        (F) = the Forecast Balance Sheet at that month-end, its bars faded. A month that has happened shows its forecast beside it, vs = actual less forecast; a month to date (*) is set against its month-end forecast, so the gap closes as the month runs.
+        (F) = the Forecast Balance Sheet at that month-end, its bars faded. A month that has happened shows its forecast beside it, vs = actual less forecast; a month to date (*) is set against its month-end forecast, so the gap closes as the month runs. A past month&apos;s forecast is worked out from the month-end before it with that month&apos;s Forecast P&amp;L; a month without one has none.
       </div>
     </CardShell>
   );
@@ -619,6 +635,16 @@ function DashboardBody() {
   const ranged = MONTH_RE.test(from) && MONTH_RE.test(to) && from <= to;
   const q = useFinanceDashboard({ granularity, from: ranged ? from : null, to: ranged ? to : null });
   const periods = useMemo(() => q.data?.periods ?? [], [q.data]);
+  /* Part 3: each past month shown, by month, its forecast back-calculated — one read a month (a
+     month with no Forecast P&L row comes back without one). */
+  const currentMonth = (q.data?.today ?? '').slice(0, 7);
+  const pastMonths = useMemo(() => (granularity === 'month' ? periods.filter((p) => p.actual != null && p.key < currentMonth).map((p) => p.key) : []), [granularity, periods, currentMonth]);
+  const past = useDashboardForecastMonths(pastMonths);
+  const pastBy = new Map(past.flatMap((r) => (r.data ? [[r.data.month, r.data] as const] : [])));
+  const withPast = periods.map((p) => {
+    const f = pastBy.get(p.key);
+    return f ? { ...p, forecastBalanceSheet: f.balanceSheet, forecastRatios: f.ratios ?? p.forecastRatios } : p;
+  });
   const provisional = periods.filter((p) => p.actual != null && p.stock.closingProvisional).map(labelOf);
   useReportSubtitle(SUBTITLE);
 
@@ -647,8 +673,8 @@ function DashboardBody() {
           <PerformanceCard periods={periods} groups={q.data.groups.compare} />
           <CostStructureCard periods={periods} groups={q.data.groups.costStructure} />
           <CashFlowCard periods={periods} />
-          <BalanceSheetCard periods={periods} />
-          <RatiosCard periods={periods} />
+          <BalanceSheetCard periods={withPast} />
+          <RatiosCard periods={withPast} />
         </>
       )}
     </>

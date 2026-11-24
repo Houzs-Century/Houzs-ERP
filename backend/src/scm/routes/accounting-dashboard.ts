@@ -536,7 +536,7 @@ const CACHE_TTL_MS = 60_000;
 const CACHE_MAX = 64;
 const cache = new Map<string, { at: number; payload: DashboardPayload }>();
 /** For the tests. */
-export const clearDashboardCache = (): void => cache.clear();
+export const clearDashboardCache = (): void => { cache.clear(); monthCache.clear(); };
 
 export const dashboardHandler = async (c: Ctx): Promise<Response> => {
   if (!requirePerm(c)) return c.json(NO_PERM, 403);
@@ -553,5 +553,51 @@ export const dashboardHandler = async (c: Ctx): Promise<Response> => {
   if (!r.ok) return c.json({ error: 'load_failed', reason: r.reason }, 500);
   if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value as string);
   cache.set(key, { at: Date.now(), payload: r.payload });
+  return c.json(r.payload);
+};
+
+/* ── A past month's forecast, back-calculated (step 7 of the forecast port, part 3) ── */
+
+export type DashboardForecastMonth = { month: string; balanceSheet: BalanceSummary | null; ratios: Ratios | null };
+
+/** A month's forecast as it would have been worked out then: the Forecast
+    Balance Sheet run with "today" its 1st — the month-end before it as the
+    start, the papers open at its 1st, the timings measured over the three
+    months before it, its own Forecast P&L — and the six ratios off it and that
+    month's Forecast P&L, by the same functions as the actual ones. A month
+    with no Forecast P&L row has none: only its bills would move the sheet. */
+export async function buildForecastMonth(sb: Sb, companyId: number, layoutIds: number[], month: string): Promise<{ ok: true; payload: DashboardForecastMonth } | Fail> {
+  const [grid, accs, pnl] = await Promise.all([loadGrid(sb, companyId), loadForecastAccounts(sb, companyId), resolveLayout(sb, layoutIds, 'pnl')]);
+  if (!grid.ok) return { ok: false, reason: `forecast: ${grid.reason}` };
+  if (!accs.ok) return { ok: false, reason: `forecast accounts: ${accs.reason}` };
+  if (!pnl.ok) return { ok: false, reason: pnl.reason };
+  if (!Object.prototype.hasOwnProperty.call(grid.grid, month)) return { ok: true, payload: { month, balanceSheet: null, ratios: null } };
+  const staffCodes = new Set(codesUnder(pnl.layout.blocks.expenses ?? [], STAFF_COST_CATEGORY_ID));
+  const f = monthFigures(grid.grid[month] ?? {}, grid.suppliers[month] ?? {}, accs.accounts);
+  const figures = figuresOf(f.totals, f.lines.filter((l) => staffCodes.has(l.code)).reduce((s, l) => s + l.amountSen, 0));
+  const fbs = await buildBalanceSheetForecast(sb, companyId, layoutIds, `${month}-01`);
+  if (!fbs.ok) return { ok: false, reason: `forecast balance sheet: ${fbs.reason}` };
+  const sheet = fbs.payload.months.find((m) => m.month === month);
+  const balanceSheet = sheet ? balanceSummaryOf(sheet.report, fbs.payload.stockTotalSen) : null;
+  return { ok: true, payload: { month, balanceSheet, ratios: ratiosOf(figures, balanceSheet) } };
+}
+
+const monthCache = new Map<string, { at: number; payload: DashboardForecastMonth }>();
+
+/** GET /accounting/dashboard/forecast-month?month=YYYY-MM — the statements' read key; an answer kept 60 s. */
+export const dashboardForecastMonthHandler = async (c: Ctx): Promise<Response> => {
+  if (!requirePerm(c)) return c.json(NO_PERM, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const month = String(c.req.query('month') ?? '').trim();
+  if (!MONTH_RE.test(month)) return c.json({ error: 'bad_month', message: 'month must be YYYY-MM.' }, 400);
+  const ids = allowedIds(c);
+  const key = [co.companyId, ids.join('.'), month, todayMyt()].join('|');
+  const hit = monthCache.get(key);
+  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return c.json({ ...hit.payload, cached: true });
+  const r = await buildForecastMonth(c.get('supabase'), co.companyId, ids, month);
+  if (!r.ok) return c.json({ error: 'load_failed', reason: r.reason }, 500);
+  if (monthCache.size >= CACHE_MAX) monthCache.delete(monthCache.keys().next().value as string);
+  monthCache.set(key, { at: Date.now(), payload: r.payload });
   return c.json(r.payload);
 };
