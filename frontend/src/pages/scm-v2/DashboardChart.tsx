@@ -23,6 +23,8 @@ export type ChartSeries = {
   tips?: Array<string | null>;
   /** Series naming the same stack pile up in one column; one without a stack stands in its own (the Performance card: an actual bar beside the groups' stack). */
   stack?: string;
+  /** Per period, a bar drawn faded: a forecast figure, not an actual. */
+  faded?: Array<boolean>;
 };
 export type ChartLine = ChartSeries & {
   dashed?: boolean;
@@ -145,7 +147,7 @@ export const DashboardChart = ({
   const slot = n > 0 ? plotW / n : plotW;
   const xCenter = (i: number): number => PAD.left + slot * i + slot / 2;
 
-  const barRects: Array<{ key: string; x: number; y: number; w: number; h: number; color: string; tip: string; group: string; period: number }> = [];
+  const barRects: Array<{ key: string; x: number; y: number; w: number; h: number; color: string; tip: string; group: string; period: number; faded: boolean }> = [];
   const groupW = Math.min(slot * 0.72, 64);
   const each = columns.length > 0 ? groupW / columns.length : groupW;
   const colW = columns.length > 1 ? Math.max(each - 2, 2) : groupW;
@@ -159,7 +161,7 @@ export const DashboardChart = ({
         const to = from + v;
         if (v >= 0) up = to; else down = to;
         const y1 = yOf(from, left); const y2 = yOf(to, left);
-        barRects.push({ key: `${s.key}:${i}`, x: xCenter(i) - groupW / 2 + each * j, y: Math.min(y1, y2), w: colW, h: Math.abs(y2 - y1), color: s.color, tip: s.tips?.[i] ?? `${label} · ${s.label}: ${fmtAxis(v, unit)}`, group: s.key, period: i });
+        barRects.push({ key: `${s.key}:${i}`, x: xCenter(i) - groupW / 2 + each * j, y: Math.min(y1, y2), w: colW, h: Math.abs(y2 - y1), color: s.color, tip: s.tips?.[i] ?? `${label} · ${s.label}: ${fmtAxis(v, unit)}`, group: s.key, period: i, faded: s.faded?.[i] === true });
       }
     });
   });
@@ -219,7 +221,7 @@ export const DashboardChart = ({
         ) : null))}
         {/* The bars. */}
         {barRects.map((r) => (
-          <rect key={r.key} x={r.x} y={r.y} width={r.w} height={Math.max(r.h, r.h === 0 ? 0 : 1)} fill={r.color} rx={1.5} data-group={r.group} data-period={r.period}>
+          <rect key={r.key} x={r.x} y={r.y} width={r.w} height={Math.max(r.h, r.h === 0 ? 0 : 1)} fill={r.color} rx={1.5} opacity={r.faded ? 0.45 : undefined} data-group={r.group} data-period={r.period} data-faded={r.faded ? 'true' : undefined}>
             <title>{r.tip}</title>
           </rect>
         ))}

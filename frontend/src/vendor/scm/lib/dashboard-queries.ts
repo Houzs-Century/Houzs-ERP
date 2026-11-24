@@ -52,6 +52,10 @@ export type DashboardPeriod = {
   cashFlow: DashboardCashFlow | null;
   balanceSheet: BalanceSummary | null;
   ratios: Ratios;
+  /** The Forecast Balance Sheet at the period's last month-end: from the current month on. */
+  forecastBalanceSheet: BalanceSummary | null;
+  /** The same six ratios off the Forecast P&L and the Forecast Balance Sheet; null without a Forecast P&L row. */
+  forecastRatios: Ratios | null;
   stock: { closingProvisional: boolean };
 };
 export type DashboardPayload = {
