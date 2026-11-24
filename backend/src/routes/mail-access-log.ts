@@ -111,7 +111,7 @@ app.get("/sync-status", async (c) => {
       const t = byBox.get(b.address.toLowerCase());
       return {
         address: b.address,
-        pending: b.mail_host_status === "pending",
+        pending: b.mail_host_status === "pending" || b.mail_host_status === "removed",
         lastInboundAt: t?.last_in ?? null,
         threads: Number(t?.n ?? 0),
       };

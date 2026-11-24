@@ -16,11 +16,11 @@ import { HrPageHeader, hrPrimaryBtn, hrSecondaryBtn } from "./HrPageHeader";
 import { avatarColor, initials } from "./hrAvatar";
 import { punchOf, type PunchState } from "./attendanceToday";
 import { HR, useAttendance, useWorkingHours, type WorkDay } from "./hrApi";
+import { cellOf, monthBounds, pad2, type Cell } from "./attendanceMonth";
 import { todayMY } from "../../vendor/shared/format";
 
 const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(" ");
 const WD = ["S", "M", "T", "W", "T", "F", "S"];
-const pad2 = (n: number) => String(n).padStart(2, "0");
 
 const STATUSES: { value: string; label: string }[] = [
   { value: "PRESENT", label: "Present" },
@@ -33,11 +33,6 @@ const STATUSES: { value: string; label: string }[] = [
 ];
 const hasTimes = (s: string) => s === "PRESENT" || s === "HALF_DAY";
 
-function monthBounds(month: string): { y: number; m: number; days: number } {
-  const [y, m] = month.split("-").map(Number);
-  const days = new Date(Date.UTC(y, m, 0)).getUTCDate();
-  return { y, m, days };
-}
 const weekdayLetter = (y: number, m: number, day: number) => WD[new Date(Date.UTC(y, m - 1, day)).getUTCDay()];
 const shiftMonth = (month: string, by: number): string => {
   const [y, m] = month.split("-").map(Number);
@@ -45,16 +40,6 @@ const shiftMonth = (month: string, by: number): string => {
   return `${Math.floor(idx / 12)}-${pad2((idx % 12) + 1)}`;
 };
 
-type Cell = "present" | "late" | "absent" | "leave" | "rest" | "notin" | "future";
-const LEAVE_STATUSES = new Set(["MEDICAL_LEAVE", "ANNUAL_LEAVE", "UNPAID_LEAVE"]);
-function cellOf(day: WorkDay | undefined, future: boolean): Cell {
-  if (future) return "future";
-  if (!day) return "notin";
-  if (day.status === "REST_DAY") return "rest";
-  if (LEAVE_STATUSES.has(day.status)) return "leave";
-  if (day.status === "ABSENT") return "absent";
-  return day.lateMin > 0 ? "late" : "present";
-}
 const CELL: Record<Cell, { bg: string; letter: string; color: string; dot: boolean }> = {
   present: { bg: "bg-synced-bg", letter: "", color: "text-synced", dot: true },
   late: { bg: "bg-time/15", letter: "L", color: "text-time", dot: false },

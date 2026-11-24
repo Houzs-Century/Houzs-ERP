@@ -691,9 +691,11 @@ export function SalesDocsCard({
                 </button>
               )}
 
-              {/* N/A — no defect (owner 2026-07-29): sales PIC + driver mark a
-                  defect list N/A when nothing is defective. Tap again undoes. */}
-              {isDefect && t.item && editable && (
+              {/* N/A (owner 2026-07-29, extended 2026-11-24): every document a
+                  cohort may edit carries N/A, matching the desktop DocRow where
+                  every row has the Attach / Remark / N/A trio. Defect lists read
+                  "no defect"; other docs read "not applicable". Tap again undoes. */}
+              {t.item && editable && (
                 <button
                   className="tinybtn"
                   style={{ width: "100%", background: t.item.status === "na" ? "var(--hz-c-surface-2)" : "var(--hz-c-surface)", color: "var(--hz-c-ink-muted)" }}
@@ -711,7 +713,9 @@ export function SalesDocsCard({
                     }
                   }}
                 >
-                  {t.item.status === "na" ? "Marked N/A — tap to undo" : "N/A — no defect"}
+                  {t.item.status === "na"
+                    ? "Marked N/A — tap to undo"
+                    : isDefect ? "N/A — no defect" : "N/A — not applicable"}
                 </button>
               )}
 

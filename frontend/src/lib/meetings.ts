@@ -259,6 +259,11 @@ export function nextStart(now: number, anchor: number): number {
   return Math.ceil(now / (30 * MIN)) * 30 * MIN;
 }
 
+/** The smallest free room that seats everyone (owner 2026-11-24: do not put two people in a 12-seat room). */
+export function bestRoom(rooms: Room[], people: number, busy: Set<number>): Room | null {
+  return rooms.filter((r) => r.active && !busy.has(r.id) && r.seats >= people).sort((a, b) => a.seats - b.seats || a.name.localeCompare(b.name))[0] ?? null;
+}
+
 export function emptyDraft(me: string, start: number, end: number, roomId: number | null): Draft {
   return { id: null, title: "", start, end, roomId, organizer: me, attendees: [], videoType: "none", videoUrl: "", notes: "", reminders: [{ min: 15, ch: ["erp"] }], repeat: "none", repeatUntil: null, seriesId: null };
 }
