@@ -32,5 +32,18 @@ CREATE TABLE IF NOT EXISTS scm.acc_forecast_inputs (
   PRIMARY KEY (company_id, month, account_code)
 );
 
+-- Only the Worker reads or writes it, like the newest acc tables: row level
+-- security on with no policy (the Worker's roles bypass it), the service role
+-- granted by name.
+ALTER TABLE scm.acc_forecast_inputs ENABLE ROW LEVEL SECURITY;
+
+DO $grant$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+    GRANT SELECT, INSERT, UPDATE, DELETE ON scm.acc_forecast_inputs TO service_role;
+  END IF;
+END
+$grant$;
+
 COMMENT ON TABLE scm.acc_forecast_inputs IS
   'Cash Flow forecast: capex and financing keyed per company, month and account; + money in, - money out, whole sen. Forecast only, nothing posts.';
