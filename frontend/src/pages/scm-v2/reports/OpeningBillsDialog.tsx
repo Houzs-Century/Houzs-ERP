@@ -59,30 +59,30 @@ function SupplierBills({ data, supplier, canWrite, onSave, saving }: {
   const same = `Same as the supplier (${own === null ? 'Creditor control' : placeText(own)})`;
   return (
     <tr className={f.row} data-row={`bills:${supplier.id}`}>
-      <td className={f.name} colSpan={5} style={{ paddingLeft: 28 }}>
+      <td colSpan={5} style={{ padding: '6px 12px 10px 28px' }}>
         {q.isError && <p role="alert" className={f.alert}>Its bills did not load. Close this and try again.</p>}
         {!q.data && !q.isError && <p className={f.empty}>Loading its bills…</p>}
         {q.data && (
           <table className={f.table} aria-label={`${supplier.name} opening bills`}>
             <thead>
               <tr>
-                <th className={`${f.name} ${f.nameHead}`}>Bill</th>
+                <th className={`${f.th} ${f.textHead}`}>Bill</th>
                 <th className={f.th}>Date</th>
-                <th className={`${f.name} ${f.nameHead}`}>What it says</th>
+                <th className={`${f.th} ${f.textHead}`}>What it says</th>
                 <th className={f.th}>Amount</th>
                 <th className={f.th}>Paid</th>
-                <th className={`${f.name} ${f.nameHead}`}>Cash Flow line</th>
+                <th className={`${f.th} ${f.textHead}`}>Cash Flow line</th>
               </tr>
             </thead>
             <tbody>
               {q.data.bills.map((b) => (
                 <tr key={b.id} className={f.row} data-row={`bill:${b.id}`}>
-                  <td className={f.name}>{b.number}</td>
+                  <td className={f.text} style={{ whiteSpace: 'nowrap' }}>{b.number}</td>
                   <td className={f.cell}>{fmtDate(b.date)}</td>
-                  <td className={f.name} style={{ whiteSpace: 'normal', maxWidth: 420 }}>{b.text || '-'}</td>
+                  <td className={f.text} style={{ maxWidth: 420 }}>{b.text || '-'}</td>
                   <td className={f.cell}>{fmtSenPlain(b.totalSen)}</td>
                   <td className={f.cell}>{fmtSenPlain(b.paidSen)}</td>
-                  <td className={f.name}>
+                  <td className={f.text}>
                     <PlacePick
                       data={data} value={valueOf(b.set)} first={same} label={`${b.number} Cash Flow line`} disabled={!canWrite || saving}
                       onPick={(v) => onSave({ supplierId: null, billId: b.id, ...changeOf(v) })}
@@ -123,18 +123,18 @@ export function OpeningBillsDialog({ onClose, canWrite }: { onClose: () => void;
               <table className={f.table} aria-label="Opening bills by supplier">
                 <thead>
                   <tr>
-                    <th className={`${f.name} ${f.nameHead}`}>Supplier</th>
+                    <th className={`${f.th} ${f.textHead}`}>Supplier</th>
                     <th className={f.th}>Opening bills</th>
                     <th className={f.th}>Still owed</th>
-                    <th className={`${f.name} ${f.nameHead}`}>Automatic</th>
-                    <th className={`${f.name} ${f.nameHead}`}>Cash Flow line</th>
+                    <th className={`${f.th} ${f.textHead}`}>Automatic</th>
+                    <th className={`${f.th} ${f.textHead}`}>Cash Flow line</th>
                   </tr>
                 </thead>
                 <tbody>
                   {q.data.suppliers.flatMap((s) => {
                     const rows = [(
                       <tr key={s.id} className={f.row} data-row={`sup:${s.id}`}>
-                        <td className={f.name}>
+                        <td className={f.text} style={{ whiteSpace: 'nowrap' }}>
                           {s.name}<span className={f.hint}> · {s.code}</span>
                           <button
                             type="button" className={f.toggle} style={{ marginLeft: 10 }} aria-expanded={open === s.id}
@@ -146,8 +146,8 @@ export function OpeningBillsDialog({ onClose, canWrite }: { onClose: () => void;
                         </td>
                         <td className={f.cell}>{s.openBills} open of {s.bills}</td>
                         <td className={f.cell}>{fmtSenPlain(s.owingSen)}</td>
-                        <td className={f.name}>{autoText(s)}</td>
-                        <td className={f.name}>
+                        <td className={f.text} style={{ whiteSpace: 'nowrap' }}>{autoText(s)}</td>
+                        <td className={f.text}>
                           <PlacePick
                             data={q.data!} value={valueOf(s.set)} first={`Automatic (${autoText(s)})`} label={`${s.name} Cash Flow line`} disabled={!canWrite || save.isPending}
                             onPick={(v) => keep({ supplierId: s.id, billId: null, ...changeOf(v) })}
