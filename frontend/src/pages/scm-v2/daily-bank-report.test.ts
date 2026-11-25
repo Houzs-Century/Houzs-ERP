@@ -93,7 +93,7 @@ describe('the cash book in the picture (owner 2026-11-23)', () => {
 /* The picture's lines (owner 2026-11-23, on the cash book's exported image: 线条).
    jsdom has no canvas, so a stand-in context records what the drawing does. */
 describe('the exported picture', () => {
-  type Call = { op: string; args: number[]; fill: unknown };
+  type Call = { op: string; args: number[]; fill: unknown; text?: string; font?: string };
   const draw = (b: DailyBankBoard): Call[] => {
     const calls: Call[] = [];
     let fill: unknown = null;
@@ -102,7 +102,7 @@ describe('the exported picture', () => {
       get fillStyle() { return fill; },
       set fillStyle(v: unknown) { fill = v; },
       scale: () => undefined,
-      fillText: () => undefined,
+      fillText(t: string, x: number, y: number) { calls.push({ op: 'fillText', args: [x, y], fill, text: t, font: this.font }); },
       measureText: (t: string) => ({ width: t.length * 6 }),
       fillRect: (...args: number[]) => { calls.push({ op: 'fillRect', args, fill }); },
       strokeRect: (...args: number[]) => { calls.push({ op: 'strokeRect', args, fill }); },
@@ -111,18 +111,66 @@ describe('the exported picture', () => {
     try { drawDailyBankCanvas(b); } finally { spy.mockRestore(); }
     return calls;
   };
-  const oneBank = block({ openingSen: 1_000, closingSen: 1_000, availableSen: 1_000 });
+  const quietBank = block({ openingSen: 1_000, closingSen: 1_000, availableSen: 1_000 });
+  const paidBank = (party: string, note: string) => block({
+    openingSen: 1_000, outSen: 400, closingSen: 600, availableSen: 600,
+    payouts: [{ jeNo: 'J2', sourceType: 'PV', sourceDocNo: 'HPV-1', docNo: 'HPV-1', party, note, amountSen: 400 }],
+  });
   const lines = (calls: Call[]) => calls.filter((c) => c.op === 'fillRect' && c.args[3] === 1);
+  const texts = (calls: Call[]) => calls.filter((c) => c.op === 'fillText');
 
   test('the cash book: a line you can see under the headings and every row, and a frame round each bank', () => {
-    const calls = draw(board({ book: 'cashbook', blocks: [{ ...oneBank, start: { date: '2026-09-28', balanceSen: 1_000 } }] }));
-    expect(lines(calls).map((c) => c.fill)).toEqual([DB_COLORS.line, DB_COLORS.line, DB_COLORS.line]);   // headings, B/F, available
+    const calls = draw(board({ book: 'cashbook', blocks: [{ ...paidBank('UNICOM', 'Bill'), start: { date: '2026-09-28', balanceSen: 1_000 } }] }));
+    expect(lines(calls).map((c) => c.fill)).toEqual(Array(5).fill(DB_COLORS.line));   // headings, B/F, paid today, its line, available
     expect(calls.filter((c) => c.op === 'strokeRect')).toHaveLength(1);
   });
 
   test('the original keeps its faint rules under the rows, and no frame', () => {
-    const calls = draw(board({ blocks: [oneBank] }));
-    expect(lines(calls).map((c) => c.fill)).toEqual([DB_COLORS.rule, DB_COLORS.rule]);
+    const calls = draw(board({ blocks: [paidBank('UNICOM', 'Bill')] }));
+    expect(lines(calls).map((c) => c.fill)).toEqual(Array(4).fill(DB_COLORS.rule));   // B/F, paid today, its line, available
     expect(calls.filter((c) => c.op === 'strokeRect')).toHaveLength(0);
+  });
+
+  /* Owner 2026-11-25 (这个0 不要有dash): the monospace figures drew their 0 with a stroke through it. */
+  test('every figure and document number is in the page\'s sans, never a monospace', () => {
+    const drawn = texts(draw(board({ book: 'cashbook', blocks: [paidBank('UNICOM', 'Bill'), quietBank] })));
+    expect(drawn.find((c) => c.text === '4.00')?.font).toMatch(/'IBM Plex Sans', system-ui, sans-serif$/);
+    expect(drawn.find((c) => c.text === 'HPV-1')?.font).toMatch(/'IBM Plex Sans'/);
+    expect(drawn.filter((c) => /mono|Menlo/i.test(c.font ?? ''))).toEqual([]);
+  });
+
+  /* Owner 2026-11-25: background 颜色可以换成白色, then 看起来还是米色 — the warm greys read as beige. */
+  test('the picture is on white, and its bands, lines and bar are neutral greys, not beige', () => {
+    const [background] = draw(board({ blocks: [quietBank] }));
+    expect(background).toMatchObject({ op: 'fillRect', args: [0, 0, 980, expect.any(Number)], fill: '#FFFFFF' });
+    const warmth = (hex: string) => { const [r, , b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)); return r! - b!; };
+    for (const c of [DB_COLORS.sectionBg, DB_COLORS.rule, DB_COLORS.line, DB_COLORS.bar, DB_COLORS.barText, DB_COLORS.soft, DB_COLORS.ink]) {
+      expect(warmth(c), c).toBeLessThanOrEqual(0);
+    }
+  });
+
+  /* Owner 2026-11-25 (可以优化一下): names and descriptions were cut short with "…". */
+  test('a party or description too long for its column wraps onto a second line', () => {
+    const party = 'NORTHWIND EXHIBITION SERVICES SDN BHD';           // 37 characters, past the column at 6 px each
+    const calls = draw(board({ book: 'cashbook', blocks: [paidBank(party, 'Rental of booth A1 and A2')] }));
+    const first = texts(calls).find((c) => c.text?.startsWith('· NORTHWIND'))!;
+    const second = texts(calls).find((c) => c.text === 'BHD')!;
+    expect(first.text).toBe('· NORTHWIND EXHIBITION SERVICES SDN');
+    expect(second.args[1]! - first.args[1]!).toBe(14);
+    expect(texts(calls).some((c) => c.text?.includes('…'))).toBe(false);
+    /* The row below moves down by the second line. */
+    const available = texts(calls).find((c) => c.text === 'Available (after pending)')!;
+    expect(available.args[1]! - first.args[1]!).toBe(24 + 14);
+  });
+
+  test('a bank with no movement and nothing pending is one line: its name, the note and its balance', () => {
+    const calls = draw(board({ book: 'cashbook', blocks: [quietBank] }));
+    const words = texts(calls).map((c) => c.text);
+    expect(words).toContain('No movement today · nothing pending');
+    expect(words).toContain('Bank Balance  10.00');
+    expect(words).not.toContain('Balance B/F');
+    expect(words).not.toContain('PAY TO / FROM');
+    expect(lines(calls)).toEqual([]);
+    expect(calls.filter((c) => c.op === 'strokeRect')).toHaveLength(1);
   });
 });
