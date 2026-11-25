@@ -18,11 +18,13 @@ import { hasHouzsPerm } from '../lib/houzs-perms';
 import { requireActiveCompanyId } from '../lib/companyScope';
 import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { SO_NOT_AN_ORDER } from '../shared/so-deliverable-states';
+import { countsInTheBooks } from '../../acc/reversal-pairs';
+import { isManpowerLine, pnlAccountsOf } from '../lib/logistics-pnl';
 import { loadAccounts, loadSums, sectionResolver, type AccountRow, type SumRow } from './accounting-reports';
 import { allowedIds, resolveLayout, type ResolvedLayout } from './accounting-report-layouts';
 import {
-  accountsUnder, buildPerformanceReport, loadPerformanceSettings, normaliseAlso, performanceLayout, savePerformanceSettings,
-  type PerfExpense, type PerfLine, type PerfOrder, type PerformanceLayout, type PerformanceReport, type PerformanceSettings,
+  FAIR_RATE_KEYS, accountsUnder, buildPerformanceReport, loadPerformanceSettings, normaliseAlso, performanceLayout, saveFairRates, savePerformanceSettings,
+  type FairInputs, type FairRateKey, type PerfExpense, type PerfLine, type PerfOrder, type PerformanceLayout, type PerformanceReport, type PerformanceSettings,
 } from '../../acc/performance-pnl';
 import { commissionForPeriod, loadCommissionFacts, type CommissionFacts } from '../../acc/performance-commission';
 
@@ -51,7 +53,38 @@ export type PerfSources = {
   rateAccount: (code: string) => Promise<{ ok: true; account: { code: string; name: string } | null } | { ok: false; reason: string }>;
   /** The commission bills on the prepayment and what the release booked (owner 2026-11-25); null facts = none kept. */
   commission: () => Promise<{ ok: true; facts: CommissionFacts | null } | { ok: false; reason: string }>;
+  /** The drivers' and helpers' pay lines on these payroll accounts in [from, to] (the
+      Logistics P&L's manpower lines) — read only for a company with a fair block. */
+  logisticsPay: (codes: readonly string[], from: string, to: string) => Promise<{ ok: true; lines: PayLine[] } | { ok: false; reason: string }>;
 };
+/** One driver's or helper's pay line: its account, its day, its amount (debit less credit). */
+export type PayLine = { code: string; day: string; sen: number };
+
+/** The drivers' and helpers' pay lines the books count, read from the ledger. */
+export async function readLogisticsPay(sb: Sb, companyId: number, codes: readonly string[], from: string, to: string): Promise<{ ok: true; lines: PayLine[] } | { ok: false; reason: string }> {
+  if (codes.length === 0) return { ok: true, lines: [] };
+  const res = await chunkIn<Record<string, unknown>>([...codes], (b, f, t) => sb.from('v_gl_entries')
+    .select('line_id, account_code, entry_date, debit_sen, credit_sen, notes, posted, reversed, reversed_by_je')
+    .eq('company_id', companyId).in('account_code', b).gte('entry_date', from).lte('entry_date', to)
+    .order('line_id').range(f, t));
+  if (res.error) return { ok: false, reason: failed(res.error) };
+  return {
+    ok: true,
+    lines: res.data
+      .filter((l) => countsInTheBooks(l as { posted?: boolean | null; reversed?: boolean | null; reversed_by_je?: string | null }) && isManpowerLine(l.notes == null ? null : String(l.notes)))
+      .map((l) => ({ code: String(l.account_code), day: String(l.entry_date).slice(0, 10), sen: Number(l.debit_sen ?? 0) - Number(l.credit_sen ?? 0) })),
+  };
+}
+
+/** The accounts the fair block works from, out of the chart: the Logistics P&L's own
+    expense accounts and its payroll accounts (where the drivers' and helpers' lines are). */
+export function fairChartOf(accounts: readonly AccountRow[]): { logistics: Set<string>; payroll: string[] } {
+  const a = pnlAccountsOf(accounts.map((x) => ({
+    account_code: x.account_code, account_name: x.account_name ?? null, account_type: x.account_type,
+    is_active: x.is_active ?? null, parent_code: x.parent_code ?? null, logistics_row: x.logistics_row ?? null,
+  })));
+  return { logistics: new Set([...a.outsource.keys(), ...a.petrol, ...a.upkeep, ...a.otherLorry, ...a.roadTax]), payroll: [...a.salary].sort() };
+}
 /** The database, as the route reads it. Every read the report needs is a
     source, so the Dashboard can answer all of them from one preloaded window
     (2026-09-22, the owner's "loading 很慢": the orders, their lines, the
@@ -95,6 +128,7 @@ export const perfDbSources = (sb: Sb, companyId: number, layoutIds: number[]): P
     return { ok: true, account: row ? { code: String(row.account_code), name: String(row.account_name ?? '') } : null };
   },
   commission: () => (commission ??= loadCommissionFacts(sb, companyId)),
+  logisticsPay: (codes, from, to) => readLogisticsPay(sb, companyId, codes, from, to),
   };
 };
 export type PerformancePayload = PerformanceReport & { layout: PerformanceLayout };
@@ -141,7 +175,23 @@ export async function buildPerformance(companyId: number, from: string, to: stri
   const cf = await src.commission();
   if (!cf.ok) return { ok: false, reason: cf.reason };
   const commission = commissionForPeriod(cf.facts, from, to);
-  const report = buildPerformanceReport({ from, to, orders, lines, expenses, otherIncome, settings: st.settings, account: acct.account, alsoCodes, alsoNamed, commission });
+  /* The fair block (owner 2026-11-25), for a company that keeps one. */
+  let fair: FairInputs | null = null;
+  const fs = st.settings.fair;
+  if (fs) {
+    const fc = fairChartOf(accs.accounts);
+    const pay = await src.logisticsPay(fc.payroll, from, to);
+    if (!pay.ok) return { ok: false, reason: pay.reason };
+    const byCode = new Map<string, number>();
+    for (const l of pay.lines) byCode.set(l.code, (byCode.get(l.code) ?? 0) + l.sen);
+    fair = {
+      settings: fs,
+      rental: accountsUnder(fs.rental, accs.accounts), setup: accountsUnder(fs.setup, accs.accounts),
+      setupDismantle: accountsUnder(fs.setupDismantle, accs.accounts), merchandise: accountsUnder(fs.merchandise, accs.accounts),
+      logistics: fc.logistics, pay: byCode,
+    };
+  }
+  const report = buildPerformanceReport({ from, to, orders, lines, expenses, otherIncome, settings: st.settings, account: acct.account, alsoCodes, alsoNamed, commission, fair });
   return { ok: true, report: { ...report, layout: performanceLayout(report, laid.layout, companyId, laid.stored) } };
 }
 
@@ -212,9 +262,13 @@ export async function windowPerfSources(db: PerfSources, from: string, to: strin
   if (!laid.ok) return { ok: false, reason: laid.reason };
   if (!sos.ok) return { ok: false, reason: sos.reason };
   const live = sos.orders.filter((o) => !SO_NOT_AN_ORDER.has(String(o.status))).map((o) => o.doc_no);
-  const [its, acct] = await Promise.all([db.lines(live), db.rateAccount(st.settings.account)]);
+  const [its, acct, pay] = await Promise.all([
+    db.lines(live), db.rateAccount(st.settings.account),
+    st.settings.fair ? db.logisticsPay(fairChartOf(accs.accounts).payroll, from, to) : Promise.resolve({ ok: true as const, lines: [] as PayLine[] }),
+  ]);
   if (!its.ok) return { ok: false, reason: its.reason };
   if (!acct.ok) return { ok: false, reason: acct.reason };
+  if (!pay.ok) return { ok: false, reason: pay.reason };
   return {
     ok: true,
     src: {
@@ -229,6 +283,10 @@ export async function windowPerfSources(db: PerfSources, from: string, to: strin
       },
       rateAccount: () => Promise.resolve(acct),
       commission: () => Promise.resolve(cf),
+      logisticsPay: (codes, f, t) => {
+        const wanted = new Set(codes);
+        return Promise.resolve({ ok: true, lines: pay.lines.filter((l) => wanted.has(l.code) && l.day >= f && l.day <= t) });
+      },
     },
   };
 }
@@ -249,7 +307,7 @@ export async function buildPerformanceMonths(companyId: number, from: string, to
     out.push({
       month: m.month, from: m.from, to: m.to,
       salesSen: p.totals.salesSen, cogsSen: p.totals.cogsSen, gpSen: p.totals.gpSen, gpPct: p.totals.gpPct,
-      otherIncomeSen: p.otherIncomeSen, expensesSen: p.operatingExpense.amountSen + p.otherExpensesSen,
+      otherIncomeSen: p.otherIncomeSen, expensesSen: p.operatingExpense.amountSen + (p.fair?.totalSen ?? 0) + p.otherExpensesSen,
       netSen: p.netSen, netPct: p.netPct,
       orders: p.orders,
       groups: p.groups.map((g) => ({ key: g.key, label: g.label, salesSen: g.salesSen, cogsSen: g.cogsSen })),
@@ -282,7 +340,7 @@ export const savePerformanceSettingsHandler = async (c: Ctx): Promise<Response> 
   if (!requirePerm(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-  let body: { rateBp?: unknown; account?: unknown; also?: unknown };
+  let body: { rateBp?: unknown; account?: unknown; also?: unknown; fair?: unknown };
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
   const rateBp = Number(body.rateBp);
   if (!Number.isInteger(rateBp) || rateBp < 0 || rateBp > 10000) {
@@ -296,7 +354,27 @@ export const savePerformanceSettingsHandler = async (c: Ctx): Promise<Response> 
   if (also.length > 40 || also.some((code) => code.length > 32 || !/^[A-Z0-9-]+$/.test(code))) {
     return c.json({ error: 'bad_also', message: 'The other accounts the rate covers are account codes (900-T004), at most 40.' }, 400);
   }
-  const saved = await savePerformanceSettings(c.get('supabase'), co.companyId, { rateBp, account, also }, who(c));
+  /* The fair block's three rates (owner 2026-11-25), when sent: whole basis points, the accounts kept. */
+  let rates: Record<FairRateKey, number> | null = null;
+  if (body.fair != null) {
+    const f = body.fair as Record<string, unknown>;
+    const bad = typeof f !== 'object' || FAIR_RATE_KEYS.some((k) => !Number.isInteger(f[k]) || Number(f[k]) < 0 || Number(f[k]) > 10000);
+    if (bad) return c.json({ error: 'bad_fair_rate', message: 'Each fair rate is whole basis points from 0 to 10000 (0% to 100%).' }, 400);
+    rates = { transportBp: Number(f.transportBp), setupDismantleBp: Number(f.setupDismantleBp), merchandiseBp: Number(f.merchandiseBp) };
+  }
+  const sb = c.get('supabase');
+  let fair = null as PerformanceSettings['fair'];
+  if (rates) {
+    const now = await loadPerformanceSettings(sb, co.companyId);
+    if (!now.ok) return c.json({ error: 'load_failed', reason: now.reason }, 500);
+    if (!now.settings.fair) return c.json({ error: 'no_fair_block', message: 'This company keeps no fair costs.' }, 400);
+    fair = { ...now.settings.fair, ...rates };
+  }
+  const saved = await savePerformanceSettings(sb, co.companyId, { rateBp, account, also }, who(c));
   if (!saved.ok) return c.json({ error: 'save_failed', reason: saved.reason }, 500);
-  return c.json({ ok: true, settings: { rateBp, account, also } });
+  if (fair && rates) {
+    const f = await saveFairRates(sb, co.companyId, fair, rates, who(c));
+    if (!f.ok) return c.json({ error: 'save_failed', reason: f.reason }, 500);
+  }
+  return c.json({ ok: true, settings: { rateBp, account, also, ...(fair ? { fair } : {}) } });
 };

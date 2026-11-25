@@ -15,9 +15,20 @@ import { fmtDateOrDash, fmtSenPlain } from '../../shared/format';
 import { flattenLaid, type LaidNode } from './report-layout';
 
 /** `also`: the accounts the rate covers besides `account`, each with the accounts under it. */
-export type PerformanceSettings = { rateBp: number; account: string; also?: string[] };
+/** The fair costs a company keeps (owner 2026-11-25): rental and setup accounts as booked,
+    and three rates of sales excluding service with what each stands in for. */
+export type FairSettings = {
+  rental: string[]; setup: string[];
+  transportBp: number; setupDismantleBp: number; setupDismantle: string[]; merchandiseBp: number; merchandise: string[];
+};
+export type FairRates = Pick<FairSettings, 'transportBp' | 'setupDismantleBp' | 'merchandiseBp'>;
+export type PerformanceSettings = { rateBp: number; account: string; also?: string[]; fair?: FairSettings | null };
 export type PerformanceGroup = { key: string; label: string; lines: number; salesSen: number; cogsSen: number; gpSen: number; gpPct: number | null };
 export type PerformanceExpense = { code: string; name: string; amountSen: number };
+/** A line of the fair block: accounts as booked, or a rate standing in for what the books carry. */
+export type FairLine =
+  | { key: 'rental' | 'setup' | 'commission'; kind: 'booked'; accounts: PerformanceExpense[]; amountSen: number }
+  | { key: 'transport' | 'setupDismantle' | 'merchandise'; kind: 'rate'; rateBp: number; amountSen: number; replaced: PerformanceExpense[]; replacedSen: number };
 export type PerformanceReport = {
   from: string; to: string;
   orders: { counted: number; notDelivered: number; excludedDraft: number; excludedCancelled: number };
@@ -46,6 +57,8 @@ export type PerformanceReport = {
       commission expense, whenever they were booked, in place of what the monthly
       release booked there; null when the company keeps no commission prepayment. */
   commission?: { code: string; name: string | null; billSen: number; months: string[]; releaseSen: number } | null;
+  /** The fair costs (owner 2026-11-25), the first block of the expenses; null when the company keeps none. */
+  fair?: { lines: FairLine[]; totalSen: number } | null;
 };
 
 const KEY = 'report-performance';
@@ -64,7 +77,7 @@ export const usePerformanceReport = (from: string, to: string) => useQuery({
 export const useSavePerformanceSettings = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (s: PerformanceSettings) =>
+    mutationFn: (s: Omit<PerformanceSettings, 'fair'> & { fair?: FairRates }) =>
       authedFetch<{ ok: boolean; settings: PerformanceSettings }>('/accounting/reports/performance/settings', { method: 'POST', body: JSON.stringify(s) }),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: [KEY] }); },
   });
@@ -121,13 +134,17 @@ export const performanceSummaryLines = (r: PerformanceReport): PerformanceSummar
   const ofSales = (sen: number): number | null => (r.totals.salesSen > 0 ? Math.round((sen / r.totals.salesSen) * 1000) / 10 : null);
   const tree = (nodes: LaidNode[]): PerformanceSummaryLine[] =>
     flattenLaid(nodes).map(({ node, depth }) => ({ id: node.id, kind: node.kind === 'account' ? 'row' : 'category', label: node.label, amountSen: node.amountSen, pct: node.pct, depth, ...(node.code ? { code: node.code } : {}) }));
-  const expensesSen = r.operatingExpense.amountSen + r.otherExpensesSen;
+  const fairSen = r.fair?.totalSen ?? 0;
+  const expensesSen = r.operatingExpense.amountSen + fairSen + r.otherExpensesSen;
+  const totalWords = r.fair
+    ? `Total expenses (fair costs, operating expense at ${ratePct(r.operatingExpense.rateBp)}, the rest as booked)`
+    : `Total expenses (operating expense at ${ratePct(r.operatingExpense.rateBp)} + as booked)`;
   return [
     { id: 'sum:gross', kind: 'total', label: 'Gross profit', amountSen: r.totals.gpSen, pct: r.totals.gpPct, depth: 0 },
     ...tree(r.layout.otherIncome),
     { id: 'sum:otherIncome', kind: 'total', label: 'Total other income (as booked)', amountSen: r.otherIncomeSen, pct: ofSales(r.otherIncomeSen), depth: 0 },
     ...tree(r.layout.expenses),
-    { id: 'sum:expenses', kind: 'total', label: `Total expenses (operating expense at ${ratePct(r.operatingExpense.rateBp)} + as booked)`, amountSen: expensesSen, pct: ofSales(expensesSen), depth: 0 },
+    { id: 'sum:expenses', kind: 'total', label: totalWords, amountSen: expensesSen, pct: ofSales(expensesSen), depth: 0 },
     { id: 'sum:net', kind: 'net', label: 'NET PERFORMANCE', amountSen: r.netSen, pct: r.netPct, depth: 0 },
   ];
 };
@@ -156,6 +173,18 @@ export const performanceNotes = (r: PerformanceReport): string[] => {
   if (c) {
     const months = c.months.map((m) => new Date(`${m}-01T00:00:00Z`).toLocaleString('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' })).join(', ');
     notes.push(`Commission on ${c.code}${c.name ? ` ${c.name}` : ''} is the commission bills for ${months || 'no month in the period'} (${fmtPerf(c.billSen)}), whenever they were booked, in place of the monthly release booked on the account in the period (${fmtPerf(c.releaseSen)}); anything else booked there stays as booked.`);
+  }
+  const fair = r.fair;
+  if (fair) {
+    const rate = (key: string) => fair.lines.find((l): l is Extract<FairLine, { kind: 'rate' }> => l.kind === 'rate' && l.key === key);
+    const t = rate('transport'); const sd = rate('setupDismantle'); const m = rate('merchandise');
+    const part = (l: Extract<FairLine, { kind: 'rate' }> | undefined, name: string, what: string) =>
+      (l ? `${name} ${ratePct(l.rateBp)} in place of ${what} (${fmtPerf(l.replacedSen)} booked, left out)` : null);
+    notes.push(`Fair costs: rental and booth setup as booked, the commission its bills; ${[
+      part(t, 'transport', "the logistics accounts (the Chart of Accounts' Logistics column) and the drivers' and helpers' pay"),
+      part(sd, 'setup & dismantle', 'the fair transport accounts'),
+      part(m, 'merchandise', 'the terminal charges'),
+    ].filter(Boolean).join('; ')} — each rate of sales excluding service / transport income.`);
   }
   const accessory = r.groups.find((g) => g.key === 'accessory');
   if (accessory && accessory.cogsSen > accessory.salesSen) notes.push('Accessory lines are largely free gifts — no sales against their cost — so a negative margin there is expected.');

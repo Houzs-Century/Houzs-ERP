@@ -36,6 +36,7 @@ import { requireActiveCompanyId } from '../lib/companyScope';
 import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { todayMyt } from '../lib/my-time';
 import type { StockBucket } from '../lib/stock-bucket';
+import { isManpowerLine } from '../lib/logistics-pnl';
 import { countsInTheBooks } from '../../acc/reversal-pairs';
 import { resolveRoles, type AccountRole } from '../../acc/rules';
 import { bucketByWarehouse, foldStockByBucket, foldStockByItem, loadOwnedMovementsUpTo, type OwnedMovement } from '../../acc/stock-close';
@@ -336,6 +337,15 @@ function sourcesOf(pre: Preload): { report: ReportSources; rp: RpSources; perf: 
     },
     rateAccount: async () => ({ ok: true as const, account: pre.perf.rateAccount }),
     commission: async () => ({ ok: true as const, facts: pre.perf.commission }),
+    /* The drivers' and helpers' pay lines, out of the window's ledger (it carries the notes). */
+    logisticsPay: async (codes, from, to) => {
+      const want = new Set(codes);
+      return {
+        ok: true as const,
+        lines: pre.gl.filter((r) => want.has(String(r.account_code)) && r.entry_date >= from && r.entry_date <= to && isManpowerLine(r.notes == null ? null : String(r.notes)))
+          .map((r) => ({ code: String(r.account_code), day: String(r.entry_date).slice(0, 10), sen: Number(r.debit_sen) - Number(r.credit_sen) })),
+      };
+    },
   };
   return { report, rp, perf };
 }

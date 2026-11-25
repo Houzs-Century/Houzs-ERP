@@ -22,13 +22,19 @@
      • the rate may also cover other accounts (owner 2026-10-06: 2990's
        transport is inside the 16%), each with every account under it: left
        out of the expenses, printed at nil where they sit, named on the rate's
-       line; a company that names none (Houzs) keeps them as booked.
+       line; a company that names none (Houzs) keeps them as booked;
+     • the fair costs (owner 2026-11-25), for a company that keeps them: rental,
+       booth setup and the commission bills as booked, transport 3% / setup &
+       dismantle 1% / merchandise 2% of sales excluding service in place of the
+       Logistics P&L's own accounts and the drivers' and helpers' pay, the fair
+       transport and the terminal charges — one block, first of the expenses;
+       Finance's rates saved with the accounts kept.
    Real handlers, fake PostgREST (fakeSb). */
 
 import { Hono } from 'hono';
 import { describe, expect, test } from 'vitest';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
-import { performanceReport, savePerformanceSettingsHandler } from '../src/scm/routes/accounting-performance';
+import { performanceMonthsHandler, performanceReport, savePerformanceSettingsHandler } from '../src/scm/routes/accounting-performance';
 import { buildPerformanceReport, performanceGroupOf } from '../src/acc/performance-pnl';
 
 const CO = 2;
@@ -152,7 +158,8 @@ describe('the Performance P&L', () => {
     expect(body.otherIncomeSen).toBe(50000);
     expect(body.netSen).toBe(222000 + 50000 - 80000 - 4600000);
     expect(body.netPct).toBe(-842.8);
-    expect(body.settings).toEqual({ rateBp: 1600, account: '900-O001', also: [] });
+    expect(body.settings).toEqual({ rateBp: 1600, account: '900-O001', also: [], fair: null });
+    expect(body.fair).toBeNull();
     /* The account part on the report's tree (docs/bugs/0912): the chart's
        own — every expense at the root here — the computed operating expense
        standing where 900-O001 sits, under its own sentence, % of SALES on
@@ -252,8 +259,9 @@ describe('the Performance P&L', () => {
       orders: [{ doc_no: 'SO-9', so_date: '2026-07-03', status: 'DELIVERED', delivery_fee_sen: null }],
       lines: [{ doc_no: 'SO-9', item_group: 'sofa', item_code: 'SOFA-L3', qty: 2, total_sen: 200000, unit_cost_sen: 70000, line_cost_sen: null, cancelled: false }],
       expenses: [],
-      settings: { rateBp: 1600, account: '900-O001', also: [] },
+      settings: { rateBp: 1600, account: '900-O001', also: [], fair: null },
       account: { code: '900-O001', name: 'OPERATIING EXPENSE' },
+      fair: null,
     });
     expect(r.groups.map((g) => g.key)).toEqual(['bedframe', 'mattress', 'sofa', 'dining', 'accessory', 'service']);
     expect(r.groups.find((g) => g.key === 'sofa')).toMatchObject({ salesSen: 200000, cogsSen: 140000, gpSen: 60000, gpPct: 30 });
@@ -376,5 +384,108 @@ describe('the commission is the month\'s bills, not the release', () => {
     const { body } = await read(app, 'from=2026-07-01&to=2026-07-31');
     expect(body.commission).toBeNull();
     expect(body.otherExpenses.some((e: any) => e.code === '900-C003')).toBe(false);
+  });
+});
+
+describe('the fair costs (owner 2026-11-25): one block, rental, setup, commission, transport, merchandise', () => {
+  const FAIR = {
+    rental: ['900-R031', '900-R032'], setup: ['900-B003'], transportBp: 300,
+    setupDismantleBp: 100, setupDismantle: ['900-T030'], merchandiseBp: 200, merchandise: ['900-T009'],
+  };
+  const fairAcct = (code: string, name: string, over: Row = {}): Row => ({ ...acct(code, name, 'EXPENSE', 'EXPENSES'), logistics_row: null, ...over });
+  let gid = 0;
+  const g = (code: string, name: string, dr: number, over: Row = {}): Row => ({ ...gl(code, name, 'EXPENSE', '2026-07-15', dr, 0), line_id: `f${++gid}`, notes: null, ...over });
+  function fairHarness(fair: unknown = FAIR) {
+    lineNo = 0;
+    const sb = fakeSb({
+      mfg_sales_orders: [so('SO-1', '2026-07-02', 'CONFIRMED')],
+      mfg_sales_order_items: [line('SO-1', 'mattress', 'MAT-Q', 1, 1_000_000, 400_000), line('SO-1', 'service', 'SVC-DELIVERY', 1, 20_000, 0)],
+      accounts: [
+        fairAcct('900-R032', 'RENTAL - EXHIBITION'), fairAcct('900-B003', 'BOOTH SET UP'), fairAcct('900-C003', 'COMMISSION ( EVENT )'),
+        fairAcct('900-T005', 'TRANSPORT (PNG)', { logistics_row: 'outsource_pg' }), fairAcct('900-P006', 'PETROL - LORI VNB 9058', { logistics_row: 'petrol' }),
+        fairAcct('900-T030', 'TRANSPORT FAIR - SETUP&DISMANTLE'), fairAcct('900-T009', 'TERMINAL INTEREST CHARGES'),
+        fairAcct('900-T008', 'TRANSPORTATION FEES - OTHERS'), fairAcct('900-R048', 'RENTAL OF SHOWROOM'), fairAcct('900-S100', 'STAFF SALARIES & OVERTIME'),
+        { ...acct('360-0050', 'PREPAYMENT COMMISSION', 'ASSET', 'CURRENT ASSETS') },
+      ],
+      v_gl_entries: [
+        g('900-R032', 'RENTAL - EXHIBITION', 300_000), g('900-B003', 'BOOTH SET UP', 50_000),
+        g('900-T005', 'TRANSPORT (PNG)', 40_000), g('900-P006', 'PETROL - LORI VNB 9058', 10_000),
+        g('900-T030', 'TRANSPORT FAIR - SETUP&DISMANTLE', 8_000), g('900-T009', 'TERMINAL INTEREST CHARGES', 18_000),
+        g('900-T008', 'TRANSPORTATION FEES - OTHERS', 1_000), g('900-R048', 'RENTAL OF SHOWROOM', 20_000),
+        g('900-S100', 'STAFF SALARIES & OVERTIME', 25_000, { notes: "OPERATION DELIVERY SALARY - JUL'26" }),
+        g('900-S100', 'STAFF SALARIES & OVERTIME', 30_000, { notes: "FINANCE - SALARY - JUL'26" }),
+        /* July's commission bill on the prepayment. */
+        { ...gl('360-0050', 'PREPAYMENT COMMISSION', 'ASSET', '2026-08-15', 120_000, 0), line_id: 'bill-1', je_no: 'HC-API-1', source_type: 'API', source_doc_no: 'HC-API-1', notes: "REVENUE TEAM PAYROLL TO COLLECT BACK - JUL'26" },
+      ],
+      acc_company_settings: [{ company_id: CO, performance_opex_rate_bp: 0, performance_opex_account: '0', performance_opex_also: [], performance_fair: fair }],
+      acc_report_layouts: [],
+    });
+    const app = new Hono();
+    app.use('*', async (c, next) => {
+      c.set('supabase' as never, sb as never);
+      c.set('companyId' as never, CO as never);
+      c.set('houzsUser' as never, { name: 'Chew', permissions_set: [GL_PERM] } as never);
+      c.set('allowedCompanyIds' as never, [1, 2] as never);
+      await next();
+    });
+    app.get('/accounting/reports/performance', performanceReport as never);
+    app.get('/accounting/reports/performance/months', performanceMonthsHandler as never);
+    app.post('/accounting/reports/performance/settings', savePerformanceSettingsHandler as never);
+    return { app, sb };
+  }
+
+  test('rental, setup and the commission bill as booked; transport, setup & dismantle and merchandise at their rates in place of what the books carry', async () => {
+    const { app } = fairHarness();
+    const { status, body } = await read(app, 'from=2026-07-01&to=2026-07-31');
+    expect(status).toBe(200);
+    expect(body.totals).toMatchObject({ salesSen: 1_020_000, cogsSen: 400_000, gpSen: 620_000, salesExServiceSen: 1_000_000 });
+    expect(body.fair.lines.map((l: any) => [l.key, l.kind, l.amountSen, l.replacedSen ?? null])).toEqual([
+      ['rental', 'booked', 300_000, null],
+      ['setup', 'booked', 50_000, null],
+      ['commission', 'booked', 120_000, null],
+      /* 3% of 1,000,000 in place of the logistics accounts (40,000 + 10,000) and the driver's pay (25,000). */
+      ['transport', 'rate', 30_000, 75_000],
+      ['setupDismantle', 'rate', 10_000, 8_000],
+      ['merchandise', 'rate', 20_000, 18_000],
+    ]);
+    expect(body.fair.totalSen).toBe(530_000);
+    /* What is left as booked: the showroom, the gift-box freight, the payroll less the driver's line. */
+    expect(body.otherExpenses).toEqual([
+      { code: '900-R048', name: 'RENTAL OF SHOWROOM', amountSen: 20_000 },
+      { code: '900-S100', name: 'STAFF SALARIES & OVERTIME', amountSen: 30_000 },
+      { code: '900-T008', name: 'TRANSPORTATION FEES - OTHERS', amountSen: 1_000 },
+    ]);
+    expect(body.netSen).toBe(620_000 - 530_000 - 51_000);
+    /* One block, first of the expenses: the booked accounts open their lines, the rates say what they stand in for. */
+    const block = body.layout.expenses[0];
+    expect(block).toMatchObject({ kind: 'category', id: 'perf:fair', label: 'Fair costs', amountSen: 530_000 });
+    expect(block.children.map((n: any) => [n.code ?? null, n.amountSen])).toEqual([
+      ['900-R032', 300_000], ['900-B003', 50_000], ['900-C003', 120_000], [null, 30_000], [null, 10_000], [null, 20_000],
+    ]);
+    expect(block.children[2].label).toBe('900-C003 COMMISSION ( EVENT ) — the commission bills for Jul 2026, in place of the monthly release');
+    expect(block.children[3].label).toContain("Transport — 3.00% of sales excluding service (10,000.00), in place of the logistics accounts (the Chart of Accounts' Logistics column) and the drivers' and helpers' pay (750.00 booked)");
+    expect(block.children[5].label).toContain('in place of 900-T009 TERMINAL INTEREST CHARGES (180.00 booked)');
+    /* Nothing the block took prints again on the tree. */
+    const codes = (ns: any[]): string[] => ns.flatMap((n: any) => [...(n.code ? [n.code] : []), ...codes(n.children ?? [])]);
+    const rest = codes(body.layout.expenses.slice(1));
+    for (const c of ['900-R032', '900-B003', '900-C003', '900-T005', '900-P006', '900-T030', '900-T009']) expect(rest).not.toContain(c);
+    /* The chart's month carries the same expenses. */
+    const months = await (await app.request('/accounting/reports/performance/months?from=2026-07&to=2026-07')).json() as any;
+    expect(months.months[0]).toMatchObject({ expensesSen: 530_000 + 51_000, netSen: body.netSen });
+  });
+
+  test("Finance's three rates saved, the accounts kept; a rate out of range refused; a company with no fair block refused", async () => {
+    const { app, sb } = fairHarness();
+    const res = await post(app, { rateBp: 0, account: '0', also: [], fair: { transportBp: 350, setupDismantleBp: 100, merchandiseBp: 180 } });
+    expect(res.status).toBe(200);
+    expect(sb.tables.acc_company_settings![0]!.performance_fair).toEqual({ ...FAIR, transportBp: 350, merchandiseBp: 180 });
+    const { body } = await read(app, 'from=2026-07-01&to=2026-07-31');
+    expect(body.fair.lines.find((l: any) => l.key === 'transport').amountSen).toBe(35_000);
+    expect((await post(app, { rateBp: 0, account: '0', also: [], fair: { transportBp: 10_001, setupDismantleBp: 100, merchandiseBp: 200 } })).status).toBe(400);
+    const none = fairHarness(null);
+    const refused = await post(none.app, { rateBp: 0, account: '0', also: [], fair: { transportBp: 300, setupDismantleBp: 100, merchandiseBp: 200 } });
+    expect(refused.status).toBe(400);
+    expect(((await refused.json()) as any).error).toBe('no_fair_block');
+    expect((await read(none.app, 'from=2026-07-01&to=2026-07-31')).body.fair).toBeNull();
   });
 });

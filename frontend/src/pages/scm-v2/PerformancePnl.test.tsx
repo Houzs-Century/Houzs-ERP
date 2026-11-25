@@ -190,6 +190,68 @@ describe('the Performance P&L — Single', () => {
   });
 });
 
+describe('the fair costs (owner 2026-11-25): one block first of the expenses, its three rates kept by Finance', () => {
+  const FAIR = { rental: ['900-R032'], setup: ['900-B003'], transportBp: 300, setupDismantleBp: 100, setupDismantle: ['900-T030'], merchandiseBp: 200, merchandise: ['900-T009'] };
+  const TRANSPORT = "Transport — 3.00% of sales excluding service (5,000.00), in place of the logistics accounts (the Chart of Accounts' Logistics column) and the drivers' and helpers' pay (750.00 booked)";
+  const fairReport = (): PerformanceReport => ({
+    ...report,
+    settings: { rateBp: 1600, account: '900-O001', fair: FAIR },
+    fair: {
+      lines: [
+        { key: 'rental', kind: 'booked', accounts: [{ code: '900-R032', name: 'RENTAL - EXHIBITION', amountSen: 300000 }], amountSen: 300000 },
+        { key: 'setup', kind: 'booked', accounts: [], amountSen: 0 },
+        { key: 'commission', kind: 'booked', accounts: [], amountSen: 0 },
+        { key: 'transport', kind: 'rate', rateBp: 300, amountSen: 15000, replaced: [], replacedSen: 75000 },
+        { key: 'setupDismantle', kind: 'rate', rateBp: 100, amountSen: 5000, replaced: [], replacedSen: 0 },
+        { key: 'merchandise', kind: 'rate', rateBp: 200, amountSen: 10000, replaced: [{ code: '900-T009', name: 'TERMINAL INTEREST CHARGES', amountSen: 18000 }], replacedSen: 18000 },
+      ],
+      totalSen: 330000,
+    },
+    netSen: report.netSen - 330000,
+    layout: {
+      ...report.layout,
+      expenses: [
+        { kind: 'category', id: 'perf:fair', label: 'Fair costs', amountSen: 330000, pct: 63.1, children: [
+          acc('900-R032', '900-R032 · RENTAL - EXHIBITION', 300000, 57.4),
+          { kind: 'account', id: 'fair:transport', label: TRANSPORT, amountSen: 15000, pct: 2.9, children: [] },
+          { kind: 'account', id: 'fair:setupDismantle', label: 'Setup & dismantle — 1.00% of sales excluding service (5,000.00), in place of nothing booked (0.00 booked)', amountSen: 5000, pct: 1, children: [] },
+          { kind: 'account', id: 'fair:merchandise', label: 'Merchandise — 2.00% of sales excluding service (5,000.00), in place of 900-T009 TERMINAL INTEREST CHARGES (180.00 booked)', amountSen: 10000, pct: 1.9, children: [] },
+        ] },
+        ...report.layout.expenses,
+      ],
+    },
+  });
+
+  test('the block prints first with its rates saying what they stand in for; the expenses total counts it; the notes name it', () => {
+    served.report = fairReport();
+    draw();
+    expect(within(rowOf(/^Total Fair costs/)).getByText('3,300.00')).toBeTruthy();
+    expect(rowOf(/^Transport — 3\.00%/).textContent).toContain("in place of the logistics accounts (the Chart of Accounts' Logistics column) and the drivers' and helpers' pay");
+    const expenses = rowOf(/^Total expenses \(fair costs, operating expense at 16\.00%, the rest as booked\)/);
+    expect(within(expenses).getByText('50,100.00')).toBeTruthy();
+    expect(screen.getByLabelText('Performance notes').textContent).toContain('Fair costs: rental and booth setup as booked, the commission its bills; transport 3.00% in place of');
+  });
+
+  test('the fair costs line: Change edits the three rates, Save sends basis points with the operating expense kept', () => {
+    served.report = fairReport();
+    draw();
+    const line = screen.getByLabelText('Fair costs settings');
+    expect(line.textContent).toContain('Transport 3.00% · Setup & dismantle 1.00% · Merchandise 2.00% of sales excluding service');
+    fireEvent.click(within(line).getByRole('button', { name: 'Change' }));
+    fireEvent.change(within(line).getByLabelText('Transport rate percent'), { target: { value: '101' } });
+    fireEvent.click(within(line).getByRole('button', { name: 'Save' }));
+    expect(within(line).getByRole('alert').textContent).toBe('Each rate must be between 0% and 100%.');
+    fireEvent.change(within(line).getByLabelText('Transport rate percent'), { target: { value: '3.5' } });
+    fireEvent.click(within(line).getByRole('button', { name: 'Save' }));
+    expect(saveMutate.mock.calls[0]?.[0]).toEqual({ rateBp: 1600, account: '900-O001', also: [], fair: { transportBp: 350, setupDismantleBp: 100, merchandiseBp: 200 } });
+  });
+
+  test('a company with no fair block has no fair costs line', () => {
+    draw();
+    expect(screen.queryByLabelText('Fair costs settings')).toBeNull();
+  });
+});
+
 describe('the Performance P&L — By month and the chart', () => {
   test('By month reads a column per month and the Total, under the design\'s head and captions', async () => {
     draw('/scm/accounting?tab=performance&from=2026-07-01&to=2026-07-31');

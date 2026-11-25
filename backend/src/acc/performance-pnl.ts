@@ -28,22 +28,62 @@
 // already inside the 16% — counting it again double-counts): those are left
 // out of the expenses, show at nil, and the rate's line names them. Houzs
 // names none (its performance is figured differently — 不做先).
-// The rate and the accounts live on scm.acc_company_settings; the figures are
+// FAIR COSTS (owner 2026-11-25:「帮我把这些fair的费用单独放一块 就是rental, setup,
+// commission, transport 和 merchandise」) — a company that keeps them (Houzs) gets
+// them as the first block of its expenses: rental and setup as booked on their
+// accounts, the commission its bills, and three rates of sales excluding service,
+// each IN PLACE OF what the books carry for it — transport (3%: the Logistics
+// P&L's own accounts and the drivers' and helpers' pay,「driver helper的薪水其实都包括
+// 在 logistic的3 % 了」), setup & dismantle (1%:「多1% 是 for setup & dismantle」, the
+// fair-transport accounts) and merchandise (2%: his fair P&L's rate for every brand,
+// in place of the card terminal charges).
+// The rates and the accounts live on scm.acc_company_settings; the figures are
 // computed live on every read and stored nowhere. The building is pure
 // (buildPerformanceReport) so the contract test feeds it worlds directly.
 // ----------------------------------------------------------------------------
 
 import { isDeliveryFeeServiceCode, isServiceLine } from '../scm/shared/service-sku';
 import { SO_DELIVERED_OR_BEYOND, SO_NOT_AN_ORDER } from '../scm/shared/so-deliverable-states';
-import { layOutBlock, type LaidLine, type LaidNode, type Layout, type LayoutItem } from './report-layout';
+import { laidLineNode, layOutBlock, pctOf, type LaidLine, type LaidNode, type Layout, type LayoutItem } from './report-layout';
 import type { PeriodCommission } from './performance-commission';
 
 type Db = any;
 
-/** `also`: accounts the rate covers besides `account` — each with the accounts under it. */
-export type PerformanceSettings = { rateBp: number; account: string; also: string[] };
+/** The fair costs a company keeps (scm.acc_company_settings.performance_fair): the
+    accounts read as booked (rental, setup), and three rates of sales excluding service,
+    each with the accounts it stands in for (transport: the Logistics P&L's own accounts
+    and the drivers' and helpers' pay, from the chart). Codes each with the accounts under them. */
+export type FairCostSettings = {
+  rental: string[]; setup: string[];
+  transportBp: number;
+  setupDismantleBp: number; setupDismantle: string[];
+  merchandiseBp: number; merchandise: string[];
+};
+export type FairRateKey = 'transportBp' | 'setupDismantleBp' | 'merchandiseBp';
+export const FAIR_RATE_KEYS: readonly FairRateKey[] = ['transportBp', 'setupDismantleBp', 'merchandiseBp'];
+
+const codesOf = (v: unknown): string[] => (Array.isArray(v) ? [...new Set(v.map((c) => String(c ?? '').trim().toUpperCase()).filter(Boolean))] : []);
+const bpOf = (v: unknown): number => {
+  const n = Number(v);
+  return Number.isInteger(n) && n >= 0 && n <= 10_000 ? n : 0;
+};
+/** The stored fair costs, checked; anything that is not an object is no fair block. */
+export function parseFairSettings(raw: unknown): FairCostSettings | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  return {
+    rental: codesOf(r.rental), setup: codesOf(r.setup),
+    transportBp: bpOf(r.transportBp),
+    setupDismantleBp: bpOf(r.setupDismantleBp), setupDismantle: codesOf(r.setupDismantle),
+    merchandiseBp: bpOf(r.merchandiseBp), merchandise: codesOf(r.merchandise),
+  };
+}
+
+/** `also`: accounts the rate covers besides `account` — each with the accounts under it.
+    `fair`: the fair costs the company keeps, or null. */
+export type PerformanceSettings = { rateBp: number; account: string; also: string[]; fair: FairCostSettings | null };
 /** 16% of sales excluding service, in place of 900-O001 — the owner's numbers (2026-09-12). */
-export const DEFAULT_PERFORMANCE_SETTINGS: PerformanceSettings = { rateBp: 1600, account: '900-O001', also: [] };
+export const DEFAULT_PERFORMANCE_SETTINGS: PerformanceSettings = { rateBp: 1600, account: '900-O001', also: [], fair: null };
 
 /** The covered accounts as the settings hold them: trimmed, upper case, each
     once, never the rate's own account. A list or a comma/space-separated text. */
@@ -70,11 +110,11 @@ export function accountsUnder(codes: readonly string[], chart: ReadonlyArray<{ a
     no settings row yet reads the same numbers the migration defaulted). */
 export async function loadPerformanceSettings(sb: Db, companyId: number): Promise<{ ok: true; settings: PerformanceSettings } | { ok: false; reason: string }> {
   const { data, error } = await sb.from('acc_company_settings')
-    .select('performance_opex_rate_bp, performance_opex_account, performance_opex_also')
+    .select('performance_opex_rate_bp, performance_opex_account, performance_opex_also, performance_fair')
     .eq('company_id', companyId)
     .maybeSingle();
   if (error) return { ok: false, reason: error.message };
-  const row = (data ?? null) as { performance_opex_rate_bp?: number | null; performance_opex_account?: string | null; performance_opex_also?: string[] | null } | null;
+  const row = (data ?? null) as { performance_opex_rate_bp?: number | null; performance_opex_account?: string | null; performance_opex_also?: string[] | null; performance_fair?: unknown } | null;
   const rate = Number(row?.performance_opex_rate_bp);
   const account = String(row?.performance_opex_account ?? '').trim() || DEFAULT_PERFORMANCE_SETTINGS.account;
   return {
@@ -83,13 +123,14 @@ export async function loadPerformanceSettings(sb: Db, companyId: number): Promis
       rateBp: row?.performance_opex_rate_bp != null && Number.isFinite(rate) ? rate : DEFAULT_PERFORMANCE_SETTINGS.rateBp,
       account,
       also: normaliseAlso(row?.performance_opex_also ?? [], account),
+      fair: parseFairSettings(row?.performance_fair),
     },
   };
 }
 
 /** Save the pair on the company's row — the deposit-invoice switch beside it
     is left as it is (the upsert names only these columns). */
-export async function savePerformanceSettings(sb: Db, companyId: number, s: PerformanceSettings, actor: string | null): Promise<{ ok: true } | { ok: false; reason: string }> {
+export async function savePerformanceSettings(sb: Db, companyId: number, s: Pick<PerformanceSettings, 'rateBp' | 'account' | 'also'>, actor: string | null): Promise<{ ok: true } | { ok: false; reason: string }> {
   const { error } = await sb.from('acc_company_settings').upsert({
     company_id: companyId,
     performance_opex_rate_bp: s.rateBp,
@@ -98,6 +139,17 @@ export async function savePerformanceSettings(sb: Db, companyId: number, s: Perf
     updated_at: new Date().toISOString(),
     updated_by: actor,
   }, { onConflict: 'company_id' });
+  if (error) return { ok: false, reason: error.message };
+  return { ok: true };
+}
+
+/** Finance's three fair rates, saved on the company's fair costs; the accounts stay. */
+export async function saveFairRates(sb: Db, companyId: number, fair: FairCostSettings, rates: Record<FairRateKey, number>, actor: string | null): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const { error } = await sb.from('acc_company_settings').update({
+    performance_fair: { ...fair, ...rates },
+    updated_at: new Date().toISOString(),
+    updated_by: actor,
+  }).eq('company_id', companyId);
   if (error) return { ok: false, reason: error.message };
   return { ok: true };
 }
@@ -147,6 +199,23 @@ export const soLineCostSen = (l: Pick<PerfLine, 'qty' | 'unit_cost_sen' | 'line_
 export type PerfExpense = { code: string; name: string; amountSen: number };
 
 export type PerformanceGroup = { key: PerformanceGroupKey; label: string; lines: number; salesSen: number; cogsSen: number; gpSen: number; gpPct: number | null };
+
+/** What the fair block reads, worked out from the chart and the ledger for the period:
+    each line's accounts with the accounts under them, the Logistics P&L's own expense
+    accounts (the Chart of Accounts' Logistics column) and the drivers' and helpers' pay
+    in the period by payroll account (the Logistics P&L's manpower lines). */
+export type FairInputs = {
+  settings: FairCostSettings;
+  rental: ReadonlySet<string>; setup: ReadonlySet<string>; setupDismantle: ReadonlySet<string>; merchandise: ReadonlySet<string>;
+  logistics: ReadonlySet<string>;
+  pay: ReadonlyMap<string, number>;
+};
+/** A line of the fair block: accounts as booked, or a rate of sales excluding service
+    standing in for what the books carry (`replacedSen`, left out of the expenses). */
+export type FairLine =
+  | { key: 'rental' | 'setup' | 'commission'; kind: 'booked'; accounts: PerfExpense[]; amountSen: number }
+  | { key: 'transport' | 'setupDismantle' | 'merchandise'; kind: 'rate'; rateBp: number; amountSen: number; replaced: PerfExpense[]; replacedSen: number };
+export type FairCosts = { lines: FairLine[]; totalSen: number };
 export type PerformanceReport = {
   from: string; to: string;
   orders: { counted: number; notDelivered: number; excludedDraft: number; excludedCancelled: number };
@@ -177,6 +246,8 @@ export type PerformanceReport = {
       expense, in place of what the monthly release booked there (owner
       2026-11-25); null when the company keeps no commission prepayment. */
   commission: PeriodCommission | null;
+  /** The fair costs, the first block of the expenses; null when the company keeps none. */
+  fair: FairCosts | null;
 };
 
 const pct = (part: number, whole: number): number | null => (whole > 0 ? Math.round((part / whole) * 1000) / 10 : null);
@@ -195,6 +266,8 @@ export function buildPerformanceReport(p: {
   alsoNamed?: Array<{ code: string; name: string | null }>;
   /** The period's commission bills and what the release booked (acc/performance-commission.ts). */
   commission?: PeriodCommission | null;
+  /** The fair block's inputs, or null for a company that keeps no fair block. */
+  fair: FairInputs | null;
 }): PerformanceReport {
   const excludedDraft = p.orders.filter((o) => String(o.status) === 'DRAFT').length;
   const excludedCancelled = p.orders.filter((o) => String(o.status) === 'CANCELLED').length;
@@ -252,14 +325,16 @@ export function buildPerformanceReport(p: {
   const alsoCodes = p.alsoCodes ?? new Set<string>();
   const inRate = booked.filter((e) => alsoCodes.has(e.code) && e.code !== code && e.amountSen !== 0)
     .sort((a, b) => a.code.localeCompare(b.code));
-  const otherExpenses = (accountFound ? booked.filter((e) => e.code !== code) : booked)
-    .filter((e) => !alsoCodes.has(e.code))
+  const beside = (accountFound ? booked.filter((e) => e.code !== code) : booked).filter((e) => !alsoCodes.has(e.code));
+  const fair = fairCostsOf(p.fair, beside, salesExServiceSen, commission?.code ?? null);
+  const otherExpenses = fair.rest
     .filter((e) => e.amountSen !== 0)
     .sort((a, b) => a.code.localeCompare(b.code));
   const otherExpensesSen = otherExpenses.reduce((s, e) => s + e.amountSen, 0);
   const otherIncome = (p.otherIncome ?? []).filter((e) => e.amountSen !== 0).sort((a, b) => a.code.localeCompare(b.code));
   const otherIncomeSen = otherIncome.reduce((s, e) => s + e.amountSen, 0);
-  const netSen = gpSen + otherIncomeSen - opexSen - otherExpensesSen;
+  const fairSen = fair.costs?.totalSen ?? 0;
+  const netSen = gpSen + otherIncomeSen - opexSen - fairSen - otherExpensesSen;
 
   return {
     from: p.from, to: p.to,
@@ -283,7 +358,42 @@ export function buildPerformanceReport(p: {
     netSen, netPct: pct(netSen, salesSen),
     settings: p.settings,
     commission,
+    fair: fair.costs,
   };
+}
+
+/** The fair block out of the expenses as booked: rental, setup and the commission
+    as they stand (the commission already its bills); transport, setup & dismantle and
+    merchandise at their rates of sales excluding service, what the books carry for
+    them left out — the drivers' and helpers' pay taken off their payroll accounts.
+    `rest`: every other expense, for the tree. */
+export function fairCostsOf(fair: FairInputs | null, booked: readonly PerfExpense[], baseSen: number, commissionCode: string | null): { costs: FairCosts | null; rest: PerfExpense[] } {
+  if (!fair) return { costs: null, rest: [...booked] };
+  const sum = (xs: readonly PerfExpense[]) => xs.reduce((s, e) => s + e.amountSen, 0);
+  const on = (codes: ReadonlySet<string>) => booked.filter((e) => codes.has(e.code));
+  const commission = new Set(commissionCode ? [commissionCode] : []);
+  const booked3 = (key: 'rental' | 'setup' | 'commission', codes: ReadonlySet<string>): FairLine => {
+    const accounts = on(codes).filter((e) => e.amountSen !== 0).sort((a, b) => a.code.localeCompare(b.code));
+    return { key, kind: 'booked', accounts, amountSen: sum(accounts) };
+  };
+  const paySen = [...fair.pay.values()].reduce((s, v) => s + v, 0);
+  const rate = (key: 'transport' | 'setupDismantle' | 'merchandise', bp: number, codes: ReadonlySet<string>, extraSen: number): FairLine => {
+    const replaced = on(codes).filter((e) => e.amountSen !== 0).sort((a, b) => a.code.localeCompare(b.code));
+    return { key, kind: 'rate', rateBp: bp, amountSen: Math.round((baseSen * bp) / 10_000), replaced, replacedSen: sum(replaced) + extraSen };
+  };
+  const s = fair.settings;
+  const lines: FairLine[] = [
+    booked3('rental', fair.rental),
+    booked3('setup', fair.setup),
+    booked3('commission', commission),
+    rate('transport', s.transportBp, fair.logistics, paySen),
+    rate('setupDismantle', s.setupDismantleBp, fair.setupDismantle, 0),
+    rate('merchandise', s.merchandiseBp, fair.merchandise, 0),
+  ];
+  const moved = new Set([...fair.rental, ...fair.setup, ...commission, ...fair.logistics, ...fair.setupDismantle, ...fair.merchandise]);
+  const rest = booked.filter((e) => !moved.has(e.code))
+    .map((e) => (fair.pay.has(e.code) ? { ...e, amountSen: e.amountSen - (fair.pay.get(e.code) ?? 0) } : e));
+  return { costs: { lines, totalSen: lines.reduce((t, l) => t + l.amountSen, 0) }, rest };
 }
 
 /* ── The account part on the report's layout (docs/bugs/0912) ──────────── */
@@ -322,6 +432,34 @@ const monthWord = (ym: string): string => {
 export const commissionLabel = (c: PeriodCommission): string =>
   `${c.code}${c.name ? ` ${c.name}` : ''} — the commission bills for ${c.months.length > 0 ? c.months.map(monthWord).join(', ') : 'no month in the period'}, in place of the monthly release`;
 
+const FAIR_RATE_WORDS: Record<'transport' | 'setupDismantle' | 'merchandise', string> = {
+  transport: 'Transport', setupDismantle: 'Setup & dismantle', merchandise: 'Merchandise',
+};
+/** The sentence a fair rate prints under: its rate, its base, what it stands in for. */
+export const fairRateLabel = (l: Extract<FairLine, { kind: 'rate' }>, baseSen: number): string => {
+  const what = l.key === 'transport'
+    ? "the logistics accounts (the Chart of Accounts' Logistics column) and the drivers' and helpers' pay"
+    : l.replaced.length > 0 ? l.replaced.map((e) => `${e.code} ${e.name}`).join(', ') : 'nothing booked';
+  return `${FAIR_RATE_WORDS[l.key]} — ${ratePct(l.rateBp)} of sales excluding service (${fmtRm2(baseSen)}), in place of ${what} (${fmtRm2(l.replacedSen)} booked)`;
+};
+
+/** The fair block, the first category of the expenses: the booked accounts as rows
+    (they open their lines), each rate a row of its own saying what it stands in for. */
+function fairNode(r: PerformanceReport, baseSen: number | null): LaidNode | null {
+  if (!r.fair) return null;
+  const kids: LaidNode[] = [];
+  for (const l of r.fair.lines) {
+    if (l.kind === 'booked') {
+      for (const e of l.accounts) kids.push(laidLineNode(l.key === 'commission' && r.commission ? { ...e, label: commissionLabel(r.commission) } : e, baseSen));
+    } else if (l.amountSen !== 0 || l.replacedSen !== 0) {
+      kids.push({ kind: 'account', id: `fair:${l.key}`, label: fairRateLabel(l, r.totals.salesExServiceSen), amountSen: l.amountSen, pct: pctOf(l.amountSen, baseSen), children: [] });
+    }
+  }
+  if (kids.length === 0) return null;
+  const amountSen = kids.reduce((t, n) => t + n.amountSen, 0);
+  return { kind: 'category', id: 'perf:fair', label: 'Fair costs', amountSen, pct: pctOf(amountSen, baseSen), children: kids };
+}
+
 /**
  * The lower part of the Performance P&L — the other income as booked, the
  * computed operating expense, every other expense as booked — on the
@@ -335,16 +473,20 @@ export function performanceLayout(r: PerformanceReport, layout: Layout, companyI
   const o = r.operatingExpense;
   const opex: LaidLine = { code: o.account, name: o.accountName ?? o.account, label: operatingExpenseLabel(o), amountSen: o.amountSen };
   const block = (key: string): LayoutItem[] => layout.blocks[key] ?? [];
+  const fair = fairNode(r, baseSen);
   return {
     stored,
     baseSen,
     otherIncome: layOutBlock(block('otherIncome'), r.otherIncome, companyId, baseSen),
-    /* A covered account that booked something prints where it always sits,
-       at nil — the money is inside the rate's line. */
-    expenses: layOutBlock(block('expenses'), [
-      opex,
-      ...r.otherExpenses.map((e): LaidLine => (r.commission && e.code === r.commission.code ? { ...e, label: commissionLabel(r.commission) } : e)),
-      ...r.inRate.map((e) => ({ code: e.code, name: e.name, amountSen: 0 })),
-    ], companyId, baseSen),
+    /* The fair costs first, as one block; a covered account that booked something
+       prints where it always sits, at nil — the money is inside the rate's line. */
+    expenses: [
+      ...(fair ? [fair] : []),
+      ...layOutBlock(block('expenses'), [
+        opex,
+        ...r.otherExpenses.map((e): LaidLine => (r.commission && e.code === r.commission.code ? { ...e, label: commissionLabel(r.commission) } : e)),
+        ...r.inRate.map((e) => ({ code: e.code, name: e.name, amountSen: 0 })),
+      ], companyId, baseSen),
+    ],
   };
 }

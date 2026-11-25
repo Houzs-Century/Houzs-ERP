@@ -27,7 +27,7 @@ import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { fmtDate, fmtSenPlain } from '../../vendor/shared/format';
 import {
   fmtPerf, performanceNotes, performanceReportPath, performanceSummaryLines, usePerformanceMonths, usePerformanceReport,
-  useSavePerformanceSettings, type PerformanceMonth, type PerformanceReport,
+  useSavePerformanceSettings, type FairRates, type PerformanceMonth, type PerformanceReport,
 } from '../../vendor/scm/lib/performance-report-queries';
 import { performanceSheet } from '../../vendor/scm/lib/performance-pnl-pdf';
 import { linesVisible } from '../../vendor/scm/lib/report-layout';
@@ -234,6 +234,72 @@ function OperatingExpenseLine({ r }: { r: PerformanceReport }) {
   );
 }
 
+/* ── The fair costs line (owner 2026-11-25): the three rates of sales excluding
+   service the fair block uses — transport, setup & dismantle, merchandise —
+   Change to edit them; the accounts each stands in for stay as set. ── */
+const FAIR_RATES: ReadonlyArray<{ key: keyof FairRates; label: string }> = [
+  { key: 'transportBp', label: 'Transport' },
+  { key: 'setupDismantleBp', label: 'Setup & dismantle' },
+  { key: 'merchandiseBp', label: 'Merchandise' },
+];
+function FairCostsLine({ r, fair }: { r: PerformanceReport; fair: NonNullable<PerformanceReport['settings']['fair']> }) {
+  const save = useSavePerformanceSettings();
+  const toast = useBooksToast();
+  const [draft, setDraft] = useState<Record<keyof FairRates, string> | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const start = () => {
+    setError(null);
+    setDraft(Object.fromEntries(FAIR_RATES.map((x) => [x.key, (fair[x.key] / 100).toFixed(2)])) as Record<keyof FairRates, string>);
+  };
+  const submit = () => {
+    if (!draft) return;
+    const rates = Object.fromEntries(FAIR_RATES.map((x) => [x.key, Math.round(Number(draft[x.key]) * 100)])) as FairRates;
+    if (FAIR_RATES.some((x) => draft[x.key].trim() === '' || !Number.isFinite(rates[x.key]) || rates[x.key] < 0 || rates[x.key] > 10000)) {
+      setError('Each rate must be between 0% and 100%.');
+      return;
+    }
+    save.mutate({ rateBp: r.settings.rateBp, account: r.settings.account, also: r.settings.also ?? [], fair: rates }, {
+      onSuccess: () => {
+        setDraft(null);
+        toast.say(`Saved · ${FAIR_RATES.map((x) => `${x.label} ${ratePct(rates[x.key])}`).join(' · ')}`);
+      },
+      onError: (e) => setError(errText(e)),
+    });
+  };
+  return (
+    <section className={css.line} aria-label="Fair costs settings">
+      {toast.node}
+      <SlidersHorizontal size={15} strokeWidth={1.75} className={css.icon} aria-hidden />
+      <span className={css.title}>Fair costs</span>
+      {draft == null ? (
+        <>
+          <span className={css.what}>
+            {FAIR_RATES.map((x) => `${x.label} ${ratePct(fair[x.key])}`).join(' · ')} of sales excluding service; rental, booth setup and the commission as booked
+          </span>
+          <span className={css.spacer} />
+          <button type="button" className={css.btn} onClick={start}>Change</button>
+        </>
+      ) : (
+        <>
+          {FAIR_RATES.map((x) => (
+            <span key={x.key}>
+              {x.label}{' '}
+              <input type="number" min={0} max={100} step="0.01" value={draft[x.key]} onChange={(e) => setDraft({ ...draft, [x.key]: e.target.value })}
+                aria-label={`${x.label} rate percent`} className={`${css.input} ${css.rate}`} />
+              %
+            </span>
+          ))}
+          <span>of sales excluding service</span>
+          <span className={css.spacer} />
+          <button type="button" className={css.btn} onClick={() => { setDraft(null); setError(null); }}>Cancel</button>
+          <button type="button" className={`${css.btn} ${css.solid}`} disabled={save.isPending} onClick={submit}>{save.isPending ? 'Saving…' : 'Save'}</button>
+          {error && <p className={css.error} role="alert">{error}</p>}
+        </>
+      )}
+    </section>
+  );
+}
+
 /** "October runs to the 29th" when the period's last month is still running. */
 function runsTo(lastDay: string, today: string): string {
   if (monthStart(lastDay) !== monthStart(today)) return '';
@@ -306,6 +372,7 @@ export const PerformanceTab = () => {
         <LevelTool depth={depth} level={level} onLevel={setLevel} />
       </ReportToolbar>
       {rep && <OperatingExpenseLine r={rep} />}
+      {rep?.settings.fair && <FairCostsLine r={rep} fair={rep.settings.fair} />}
       {editing && <ReportLayoutEditor report="performance" onClose={() => setEditing(false)} />}
       {chartWin && <PerformanceChart win={chartWin} onOpen={() => setView('single')} />}
       {!r.usable && <ReportMessage>Pick dates.</ReportMessage>}
