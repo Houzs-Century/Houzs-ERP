@@ -4,8 +4,8 @@ import { getUserBySession, timingSafeEqualStr, type AuthUser, mintSessionPassFor
 import { tryPassAuth } from "../services/session-pass";
 import { hasPermission } from "../services/permissions";
 import { MCP_TOKEN_PREFIX } from "../services/mcp-store";
-import { MCP_INNER_HEADER, isMcpInner } from "../services/mcp-inner";
-import { mcpIdentity } from "../routes/mcp";
+import { MCP_INNER_HEADER, isMcpInner, recallVerified } from "../services/mcp-inner";
+import { mcpIdentity, type McpIdentity } from "../routes/mcp";
 import { hasScmUmbrella } from "../services/scmUmbrella";
 import { canViewItPages } from "../services/itAccess";
 import { isSalesDirectorUser, isSalesUser, isDirectorUser } from "../services/pmsAccess";
@@ -197,7 +197,8 @@ export const auth: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
     if (c.req.method !== "GET" && c.req.method !== "HEAD") {
       return c.json({ error: "The AI Connector is read-only." }, 403);
     }
-    const id = await mcpIdentity(c.env, token);
+    // Verified at the door of this same tool call (routes/mcp.ts); else check now.
+    const id = recallVerified<McpIdentity>(token, Date.now()) ?? (await mcpIdentity(c.env, token));
     if (!id) return c.json({ error: "Your session has expired. Please sign in again." }, 401);
     c.set("authPath", "session-db");
     c.set("user", id.user);
