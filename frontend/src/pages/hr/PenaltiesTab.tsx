@@ -37,14 +37,14 @@ export function PenaltiesTab() {
   const monthTotal = rows.reduce((s, p) => s + total(p), 0);
 
   const columns: HrCol<Penalty>[] = [
-    { key: "no", label: "No", render: (p) => <span className="font-mono text-[11px] font-semibold text-accent">{p.penaltyNo}</span> },
-    { key: "date", label: "Date", render: (p) => <span className="font-mono">{formatDate(p.date)}</span> },
-    { key: "reference", label: "Reference", render: (p) => <span className="text-ink-secondary">{p.reference || "—"}</span> },
-    { key: "reason", label: "Reason", render: (p) => p.reason },
-    { key: "who", label: "Who pays", render: (p) => <span className="text-[11px] text-ink-secondary">{p.lines.map((l) => l.empNo).join(", ")}</span> },
-    { key: "total", label: "Total", align: "right", render: (p, show) => <span className="font-money text-err">-{mask(fmtSen(total(p)), show)}</span> },
-    { key: "period", label: "Payroll", render: (p) => <span className="text-ink-secondary">{p.lines.at(0)?.payrollPeriod ?? "—"}</span> },
-    { key: "status", label: "Status", render: (p) => <Tag tone={STATUS[p.status].tone}>{STATUS[p.status].label}</Tag> },
+    { key: "no", label: "No", getValue: (p) => p.penaltyNo, render: (p) => <span className="font-mono text-[11px] font-semibold text-accent">{p.penaltyNo}</span> },
+    { key: "date", label: "Date", filterType: "date", getValue: (p) => p.date, render: (p) => <span className="font-mono">{formatDate(p.date)}</span> },
+    { key: "reference", label: "Reference", getValue: (p) => p.reference ?? "", render: (p) => <span className="text-ink-secondary">{p.reference || "—"}</span> },
+    { key: "reason", label: "Reason", getValue: (p) => p.reason, render: (p) => p.reason },
+    { key: "who", label: "Who pays", getValue: (p) => p.lines.map((l) => l.empNo).join(", "), render: (p) => <span className="text-[11px] text-ink-secondary">{p.lines.map((l) => l.empNo).join(", ")}</span> },
+    { key: "total", label: "Total", align: "right", filterType: "number", getValue: (p) => total(p) / 100, render: (p, show) => <span className="font-money text-err">-{mask(fmtSen(total(p)), show)}</span> },
+    { key: "period", label: "Payroll", getValue: (p) => p.lines.at(0)?.payrollPeriod ?? "", render: (p) => <span className="text-ink-secondary">{p.lines.at(0)?.payrollPeriod ?? "—"}</span> },
+    { key: "status", label: "Status", getValue: (p) => STATUS[p.status].label, render: (p) => <Tag tone={STATUS[p.status].tone}>{STATUS[p.status].label}</Tag> },
   ];
 
   return (
