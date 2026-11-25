@@ -2233,18 +2233,27 @@ export async function setChecklistStatus(
     .first<{ project_id: number; title: string; status: string }>();
   if (!item) return false;
 
-  if (status === "done") {
+  if (status === "done" || status === "na") {
+    // Completing an item (done or N/A) ends its review: clear any
+    // 'pending_review'/'amended' flag so it leaves the approver's review queue.
+    // Without this a submitted item ticked done/N/A kept a dangling review flag
+    // and sat in the Inbox Review Queue forever (loadReviewQueue filters on
+    // review_status, not status). A manual tick is not an approval decision, so
+    // the flag is cleared to NULL, not set to 'approved'.
     await env.DB.prepare(
       `UPDATE project_checklist
-          SET status = 'done',
-              completed_by = ?,
-              completed_at = datetime('now'),
+          SET status = ?,
+              completed_by = CASE WHEN ? = 'done' THEN ? ELSE NULL END,
+              completed_at = CASE WHEN ? = 'done' THEN datetime('now') ELSE NULL END,
+              review_status = NULL,
+              rejection_reason = NULL,
               updated_at = datetime('now')
         WHERE id = ?`
     )
-      .bind(userId, itemId)
+      .bind(status, status, userId, status, itemId)
       .run();
   } else {
+    // pending / blocked: not a completion, so review state is left untouched.
     await env.DB.prepare(
       `UPDATE project_checklist
           SET status = ?,
