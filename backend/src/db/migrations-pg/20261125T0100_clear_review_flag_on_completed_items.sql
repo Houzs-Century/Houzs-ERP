@@ -10,8 +10,8 @@
 --
 -- No seed here.
 --
--- IRREVERSIBLE -- a stale review flag carries no information to restore (the row
--- is already done/na), so there is nothing to put back.
+-- REVERSAL: IRREVERSIBLE — a stale review flag on an already-completed row
+-- carries no information to restore, so there is nothing to put back.
 
 UPDATE public.project_checklist
    SET review_status = NULL,
