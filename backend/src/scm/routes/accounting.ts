@@ -90,6 +90,7 @@ import { collectionReport } from './accounting-collection';
 import { merchantChargesReport } from './accounting-merchant-charges';
 import { performanceMonthsHandler, performanceReport, savePerformanceSettingsHandler } from './accounting-performance';
 import { forecastFiguresHandler, forecastGetHandler, forecastPutHandler } from './accounting-forecast';
+import { pnlViewsReport } from './accounting-pnl-views';
 import { dashboardForecastMonthHandler, dashboardHandler } from './accounting-dashboard';
 import { financeTodoHandler, financeTodoCountHandler } from './accounting-todo';
 import {
@@ -223,6 +224,8 @@ accounting.post('/commission-release/settings', commissionReleaseSettings);
 /* The standard statements (GL redesign item 6) — one source (v_gl_entries),
    AutoCount arithmetic; handlers in accounting-reports.ts. */
 accounting.get('/reports/pnl', pnlReport);
+/* The Overall P&L's views side by side — Actual, Performance, Forecast on the P&L's tree (owner 2026-11-25). */
+accounting.get('/reports/pnl-views', pnlViewsReport);
 accounting.get('/reports/receipts-payments', receiptsPaymentsReport);
 accounting.get('/reports/receipts-payments/opening-bills', openingBillsGet);
 accounting.put('/reports/receipts-payments/opening-bills/place', openingBillPlacePut);

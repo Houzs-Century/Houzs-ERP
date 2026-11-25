@@ -1,10 +1,10 @@
 // ----------------------------------------------------------------------------
-// LogisticsCost — the Logistics cost report, the design the owner approved on
-// 2026-11-05 (demo https://claude.ai/artifact/JoQSYerQXoWd7gQgWLrZQw), drawn as
-// the Department P&L's Logistics, every company's (owner 2026-11-25: 把整个
-// logistic cost 搬进来; 2990 too, though its plan folds logistics into its
-// Showroom): the Department P&L lends its department picker, and the switches
-// keep the Department P&L's names in the URL (dm, dsplit, dpct). Four views,
+// LogisticsCost — the Logistics cost report by DO, the design the owner approved
+// on 2026-11-05 (demo https://claude.ai/artifact/JoQSYerQXoWd7gQgWLrZQw), an
+// entry of its own in the report list, `?tab=logistics` (owner 2026-11-25: 现有
+// 的logistics by DO的放side bar 先). A page that lends it a picker (the Department
+// P&L, its department picker) gets it drawn after the dates; the switches keep
+// the Department P&L's names in the URL (dm, dsplit, dpct). Four views,
 // all report style (FinanceGrid — the statement look, the owner's "finance
 // table"), each Whole range (regions across the top) or By month (Total first,
 // then a column per month; optionally each month split by region):
@@ -61,7 +61,7 @@ const MODES: ReadonlyArray<{ value: Mode; label: string }> = [{ value: 'single',
 export type ViewProps = { p: LogisticsPnl; mode: Mode; split: boolean; showPct: boolean; period: string; months: string[] };
 
 export const LogisticsCostTab = ({ departmentPicker }: {
-  /** The Department P&L's department picker, after the dates. */
+  /** A picker the page lends, drawn after the dates (the Department P&L's departments); null on its own. */
   departmentPicker: ReactNode;
 }) => {
   const r = useReportRange();
@@ -83,7 +83,7 @@ export const LogisticsCostTab = ({ departmentPicker }: {
   const to = r.usable ? monthEnd(r.to) : monthEnd(r.today);
   const period = from.slice(0, 7) === to.slice(0, 7) ? monthName(from) : `${monthName(from)} – ${monthName(to)}`;
   const partMonths = r.usable && (r.from !== from || r.to !== to);
-  useReportSubtitle(`${period}${partMonths ? ' · whole months' : ''}${mode === 'months' ? ' · by month' : ''} · Logistics · RM`);
+  useReportSubtitle(`${period}${partMonths ? ' · whole months' : ''}${mode === 'months' ? ' · by month' : ''}${departmentPicker ? ' · Logistics' : ''} · RM`);
 
   const q = useLogisticsPnl(from, to, true);
   const p = q.data;

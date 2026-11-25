@@ -19,13 +19,14 @@
 // so the Finance group's own gate still applies). Journal entries, the General
 // ledger and the Trial balance keep their Books entries' gates.
 //
-// THE P&Ls ARE ONE ENTRY (owner 2026-11-25: 几份P&L, 可以combine 起来 … 我在这里
-// 选): the list shows them as P&L, and a picker across the top of each opens the
-// others (`pnlPick`, its name there). Each stays a report of its own here — its
-// address, its gate, its method and data — so old links land where they did and
-// a reader is offered only the P&Ls they may open. The Forecast P&L is a plan and
-// sits under Plan with the Dashboard; the Logistics cost report is the Department
-// P&L's Logistics, not an entry of its own (owner, the same day).
+// THE P&Ls ARE TWO ENTRIES, each with three views (owner 2026-11-25: 入口可以改成
+// 根据overall P&L, Department P&L 每个P&L 有三个view): Overall P&L and
+// Department P&L, and across the top of each its views, Actual (by sales
+// invoice: the books) | Performance (by sales order) | Forecast (PNL_CHOICES).
+// Each view stays a report of its own here — its address, its gate, its method
+// and data — so old links land where they did and a reader is offered only the
+// views they may open. Logistics cost (by DO) and the Product changes P&L are
+// entries of their own (「现有的logistics by DO的放side bar 先」).
 // ----------------------------------------------------------------------------
 
 import type { LucideIcon } from 'lucide-react';
@@ -35,10 +36,10 @@ import { ACCOUNTING_TAB_TITLES, type AccountingTab } from './accounting-tabs';
 export type ReportGroupId = 'statements' | 'owes' | 'sales' | 'events' | 'cards' | 'plan' | 'books' | 'audit';
 
 export type ReportId =
-  | 'pnl' | 'departments' | 'bs' | 'rp' | 'tb'
+  | 'pnl' | 'pnlviews' | 'departments' | 'bs' | 'rp' | 'tb'
   | 'ar' | 'ap'
   | 'collection' | 'fair' | 'performance' | 'products' | 'changes' | 'changesum' | 'sotodo'
-  | 'events' | 'commission'
+  | 'events' | 'commission' | 'logistics'
   | 'charges'
   | 'forecast' | 'dashboard'
   | 'je' | 'gl'
@@ -63,8 +64,6 @@ export type ReportItem = {
   /** Who sees it — the gate its own sidebar entry had (batch 6 §1.1: "keep
    *  every member's own gate"). Absent on the Books pages, gated in Books. */
   gate?: ReportGate;
-  /** A P&L: its name in the P&L picker. The list shows the P&Ls as one entry, P&L. */
-  pnlPick?: string;
 };
 
 /** A sidebar entry's gate fields (components/Sidebar NavTab), as the reports keep them. */
@@ -105,19 +104,21 @@ const tabItem = (tab: AccountingTab & ReportId, group: ReportGroupId, books = fa
   navTo: `${ACCOUNTING}?tab=${tab}`,
 });
 
-const asPnl = (item: ReportItem, pick: string): ReportItem => ({ ...item, pnlPick: pick });
-
 /** Every report, in the design's order (the list draws them group by group). */
 export const REPORT_CATALOG: readonly ReportItem[] = [
-  // The P&Ls, in the picker's order, each with its own method and data (owner 2026-11-25: 我会有很多个不同的p&L,
-  // 每个的算法和提取的资料不一样). The books' P&L.
-  asPnl(tabItem('pnl', 'statements'), 'Actual'),
-  // G&A, Operation (his "Operation PNL - Auto" sheet) and every account split across the departments (owner 2026-11-19).
-  asPnl(tabItem('departments', 'statements'), 'Department'),
-  // The month's orders per group against a budgeted operating expense (owner 2026-09-12; docs/bugs/0835).
-  asPnl(tabItem('performance', 'statements'), 'Performance'),
-  // The product changes added up P&L-style, by month and by salesperson (owner 2026-11-23: 类似 p&L).
-  asPnl(tabItem('changesum', 'statements'), 'Product changes'),
+  // The Overall P&L's three views, each with its own method and data (owner 2026-11-25: 我会有很多个不同的p&L,
+  // 每个的算法和提取的资料不一样). Actual: the books' P&L.
+  tabItem('pnl', 'statements'),
+  // Performance: the month's orders per group against a budgeted operating expense (owner 2026-09-12; docs/bugs/0835).
+  tabItem('performance', 'statements'),
+  // Forecast: the Forecast P&L (owner 2026-09-21: the Hookka Forecast P&L, trading edition — a target per account on
+  // the P&L's own tree; the Dashboard reads them beside the actuals).
+  { id: 'forecast', label: 'Forecast P&L', group: 'statements', path: '/scm/forecast', navTo: '/scm/forecast', gate: FORECAST_GATE },
+  // The Overall P&L's views side by side, two or three on the P&L's own rows (owner 2026-11-25: 一张表并排).
+  tabItem('pnlviews', 'statements'),
+  // The Department P&L: each department by its own P&L, Actual on the invoices or Performance on the orders
+  // (`dbasis`; owner 2026-11-19, 2026-11-25).
+  tabItem('departments', 'statements'),
   tabItem('bs', 'statements'),
   tabItem('rp', 'statements'),
   tabItem('tb', 'statements', true),
@@ -133,17 +134,21 @@ export const REPORT_CATALOG: readonly ReportItem[] = [
   tabItem('products', 'sales'),
   // Every product change on a sales order: did the selling change cover the cost change? By month (owner 2026-11-23).
   tabItem('changes', 'sales'),
+  // The same changes added up P&L-style, by month and by salesperson (owner 2026-11-23: 类似 p&L).
+  tabItem('changesum', 'sales'),
   // The month's shipped DOs: how much came from this month's orders, the rest from earlier ones (owner 2026-11-24).
   tabItem('sotodo', 'sales'),
   // What each event cost, from the ledger — voucher and AP invoice lines tagged with it (owner 2026-09-30, 5a).
   tabItem('events', 'events'),
   // Each fair's commission and each order's under it — goods × brand rate once 30% is paid (owner 2026-10-20).
   tabItem('commission', 'events'),
+  // What delivery cost by DO — by region, per trip (our lorries overall: the month's lorry cost ÷ its trips; 3PL
+  // bill lines), setup & dismantle, repairs by lorry (owner 2026-10-29).
+  tabItem('logistics', 'events'),
   // What each acquirer charged against the gross, per month (owner 2026-09-12; docs/bugs/0826).
   tabItem('charges', 'cards'),
-  // The Forecast P&L and the Dashboard (owner 2026-09-21: the Hookka Forecast P&L + Dashboard, trading
-  // edition — targets per account on the P&L's own tree; the Dashboard reads them beside the actuals).
-  { id: 'forecast', label: 'Forecast P&L', group: 'plan', path: '/scm/forecast', navTo: '/scm/forecast', gate: FORECAST_GATE },
+  // The Dashboard (owner 2026-09-21: the Hookka Dashboard, trading edition — the statements' actuals beside the
+  // Forecast P&L).
   { id: 'dashboard', label: 'Dashboard', group: 'plan', path: '/scm/finance-dashboard', navTo: '/scm/finance-dashboard', gate: FORECAST_GATE },
   tabItem('je', 'books', true),
   tabItem('gl', 'books', true),
@@ -151,6 +156,51 @@ export const REPORT_CATALOG: readonly ReportItem[] = [
   // sales order 的报告).
   tabItem('corrections', 'audit'),
 ];
+
+/** The two P&L entries and their views (owner 2026-11-25): Overall P&L and
+ *  Department P&L, each Actual by sales invoice (the books), Performance by
+ *  sales order, Forecast. A view opens a report of the list; the Department
+ *  P&L takes its basis from `dbasis` (none reads as Performance there). A view
+ *  with no row is not built yet (the Department P&L's Forecast). */
+export type PnlFamily = 'overall' | 'department';
+export type PnlView = 'actual' | 'performance' | 'forecast';
+export type PnlChoice = { family: PnlFamily; view: PnlView; report: ReportId; dbasis: 'actual' | 'performance' | null };
+
+export const PNL_FAMILIES: ReadonlyArray<{ id: PnlFamily; label: string }> = [
+  { id: 'overall', label: 'Overall P&L' },
+  { id: 'department', label: 'Department P&L' },
+];
+export const PNL_VIEWS: ReadonlyArray<{ id: PnlView; label: string }> = [
+  { id: 'actual', label: 'Actual' },
+  { id: 'performance', label: 'Performance' },
+  { id: 'forecast', label: 'Forecast' },
+];
+export const PNL_CHOICES: readonly PnlChoice[] = [
+  { family: 'overall', view: 'actual', report: 'pnl', dbasis: null },
+  { family: 'overall', view: 'performance', report: 'performance', dbasis: null },
+  { family: 'overall', view: 'forecast', report: 'forecast', dbasis: null },
+  { family: 'department', view: 'actual', report: 'departments', dbasis: 'actual' },
+  { family: 'department', view: 'performance', report: 'departments', dbasis: 'performance' },
+];
+
+/** The Overall P&L's views side by side (`?tab=pnlviews&views=actual,forecast`): two or three on one table. */
+export const PNL_SIDE_BY_SIDE: { family: PnlFamily; report: ReportId } = { family: 'overall', report: 'pnlviews' };
+
+/** The P&L a report is a view of: the list shows each P&L's views as one entry. */
+export const pnlFamilyOf = (id: ReportId): PnlFamily | null =>
+  PNL_CHOICES.find((c) => c.report === id)?.family ?? (id === PNL_SIDE_BY_SIDE.report ? PNL_SIDE_BY_SIDE.family : null);
+
+/** The views an address names (`views=actual,forecast`), each once, in the picker's order. */
+export const pnlViewsOf = (raw: string | null): PnlView[] => {
+  const named = new Set((raw ?? '').split(',').map((v) => v.trim()));
+  return PNL_VIEWS.filter((v) => named.has(v.id)).map((v) => v.id);
+};
+
+/** The view a page is: its report, and on the Department P&L its basis. */
+export function pnlChoiceOf(id: ReportId, dbasis: string | null): PnlChoice | null {
+  const basis = dbasis === 'actual' ? 'actual' : 'performance';
+  return PNL_CHOICES.find((c) => c.report === id && (c.dbasis == null || c.dbasis === basis)) ?? null;
+}
 
 /** A member of the sidebar's one Reports entry: a sidebar entry (NavTab) in
  *  all but name — its address, name, icon and gate. */
