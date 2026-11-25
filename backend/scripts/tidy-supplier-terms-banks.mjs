@@ -10,7 +10,12 @@
      · a bank — "HLBB" → HONG LEONG BANK, "PUBLIC BANK BERHAD" → PUBLIC BANK:
        the list's bank in upper case, as the database stores a supplier's bank.
    A value no rule knows is left as typed (it stays the form's Custom / Other
-   text) and named. The Actions log is public: supplier codes and values, no
+   text) and named.
+
+   SET_TERM="400-T002=NET 30[,CODE=TERM…]" also sets the term picked for a
+   supplier (owner 2026-11-25: T.H.L. SOFA 「30 days」), in each company that
+   has that code; the term must be on the list, and a code no company has is
+   refused. The Actions log is public: supplier codes and values, no
    names, and a phone number is never printed.
 
    MODE=plan (default) prints every change and the plan's PLAN_ID, and writes
@@ -23,14 +28,15 @@
    plan left as typed.
 
    RE-RUN: inert once applied. A changed value is a list entry, which no rule
-   changes again, so a second plan lists nothing to change.
+   changes again, and a SET_TERM supplier already holds its term, so a second
+   plan lists nothing to change.
 
    Run: Actions → "Run a backend script on production" (tsx: the rules import
    the shared list, src/scm/shared/pick-lists.ts). */
 import './lib/public-log-guard.mjs';
 import { createHash } from 'node:crypto';
 import postgres from 'postgres';
-import { bankIsOnList, looksLikePhone, planFor, shown, termIsOnList } from './lib/supplier-pick-tidy.mjs';
+import { bankIsOnList, looksLikePhone, parseSetTerms, planFor, shown, termIsOnList } from './lib/supplier-pick-tidy.mjs';
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error('need DATABASE_URL'); process.exit(2); }
@@ -50,6 +56,8 @@ if (ONLY !== null && !(Number.isInteger(ONLY) && ONLY > 0)) {
   bad(`COMPANY_ID must be a company id, not "${process.env.COMPANY_ID}"`);
   process.exit(2);
 }
+let SET_TERMS;
+try { SET_TERMS = parseSetTerms(process.env.SET_TERM); } catch (e) { bad(e.message); process.exit(2); }
 
 const sql = postgres(DSN, { ssl: 'require', prepare: false, max: 1 });
 
@@ -91,17 +99,24 @@ function shapeProblems(rows, changes, leftAsTyped) {
 async function main() {
   const companies = await companiesOf(sql);
   if (companies.length === 0) throw new Error(`no company${ONLY === null ? '' : ` ${ONLY}`} found`);
-  note(`mode=${APPLY ? 'APPLY' : 'PLAN (writes nothing)'} companies=${companies.join(',')}`);
+  note(`mode=${APPLY ? 'APPLY' : 'PLAN (writes nothing)'} companies=${companies.join(',')}${SET_TERMS.size ? ` set=${[...SET_TERMS].map(([c, t]) => `${c}=${t}`).join(',')}` : ''}`);
 
   const plans = [];
   for (const co of companies) {
     const rows = await suppliersOf(sql, co);
-    const plan = planFor(co, rows);
+    const plan = planFor(co, rows, SET_TERMS);
     plans.push({ co, ...plan });
     say(`\n=== company ${co}: ${rows.length} suppliers, ${rows.filter((r) => String(r.payment_terms ?? '').trim()).length} with a term, ${rows.filter((r) => String(r.bank_name ?? '').trim()).length} with a bank ===`);
     for (const c of plan.changes) say(`  ${String(c.code).padEnd(10)} ${c.field.padEnd(13)} ${shown(c.from)} -> ${shown(c.to)}   (${c.why})`);
     if (plan.changes.length === 0) say('  nothing to change');
     for (const l of plan.leftAsTyped) say(`  ${String(l.code).padEnd(10)} ${l.field.padEnd(13)} ${shown(l.value)} LEFT AS TYPED (no rule; stays Custom / Other)`);
+  }
+  const found = new Set(plans.flatMap((p) => p.setFound));
+  const missing = [...SET_TERMS.keys()].filter((c) => !found.has(c));
+  if (missing.length) {
+    bad(`SET_TERM names a code no company has: ${missing.join(', ')}. Nothing written.`);
+    await sql.end({ timeout: 5 });
+    process.exit(1);
   }
   const changes = plans.flatMap((p) => p.changes);
   const leftAsTyped = plans.flatMap((p) => p.leftAsTyped);
