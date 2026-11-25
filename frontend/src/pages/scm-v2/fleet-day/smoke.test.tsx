@@ -51,6 +51,20 @@ describe('Last Mile board — render smoke', () => {
     expect(getByText(/Late only/)).toBeTruthy();
   });
 
+  test('filter row shows one All chip when the region list already carries one', () => {
+    const { getAllByRole } = wrap(
+      <FleetDayFilterRow
+        filters={EMPTY_FILTERS}
+        onChange={vi.fn()}
+        regionTabs={[{ key: 'ALL', label: 'All' }, { key: 'KL', label: 'KL/SEL' }]}
+        salespeople={[]}
+        lateCount={0}
+      />,
+    );
+    expect(getAllByRole('button', { name: /^All$/i })).toHaveLength(1);
+    expect(getAllByRole('button', { name: 'KL/SEL' })).toHaveLength(1);
+  });
+
   test('all-orders empty state mounts', () => {
     const { getByText } = wrap(<AllOrdersTab rows={[]} onOpen={vi.fn()} />);
     expect(getByText(/No orders match/)).toBeTruthy();
