@@ -33,7 +33,7 @@ import { useDebouncedSearchTerm, useSearchResultTransition } from '../../hooks/u
 import { adjustmentReasonLabel, fmtSen, fmtDate, fmtDateTime, fmtQty, formatVariantKey } from '@2990s/shared';
 import { DataTable, type Column } from '../../components/DataTable';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
-import { mfgCategoryLabel } from '../../vendor/shared/product-categories';
+import { mfgCategoryLabel, MFG_CATEGORY_LABELS, MFG_PRODUCT_CATEGORIES, type MfgProductCategory } from '../../vendor/shared/product-categories';
 import {
   useWarehouses,
   useInventoryProductTotals,
@@ -96,15 +96,12 @@ const BANNER_ERR =
   'rounded-lg border border-err/40 bg-err/10 px-4 py-3 text-[13px] text-err';
 
 type Tab = 'balances' | 'batches' | 'reservations' | 'warehouses' | 'analytics';
-type Category = 'all' | 'ACCESSORY' | 'BEDFRAME' | 'SOFA' | 'MATTRESS' | 'SERVICE';
+type Category = 'all' | MfgProductCategory;
 
+// Every product category gets a chip, so Dining / Carpet / ... stock is findable (HC-0258).
 const CATEGORIES: { value: Category; label: string }[] = [
-  { value: 'all',       label: 'All' },
-  { value: 'ACCESSORY', label: 'Accessory' },
-  { value: 'BEDFRAME',  label: 'Bedframe' },
-  { value: 'SOFA',      label: 'Sofa' },
-  { value: 'MATTRESS',  label: 'Mattress' },
-  { value: 'SERVICE',   label: 'Service' },
+  { value: 'all', label: 'All' },
+  ...MFG_PRODUCT_CATEGORIES.map((c) => ({ value: c, label: MFG_CATEGORY_LABELS[c] })),
 ];
 
 const fmtRm = (sen: number | null | undefined): string => fmtSen(sen);
