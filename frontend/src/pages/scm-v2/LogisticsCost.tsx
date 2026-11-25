@@ -75,7 +75,7 @@ export const LogisticsCostTab = () => {
   const partMonths = r.usable && (r.from !== from || r.to !== to);
   useReportSubtitle(`${period}${partMonths ? ' · whole months' : ''}${mode === 'months' ? ' · by month' : ''} · RM`);
 
-  const q = useLogisticsPnl(from, to);
+  const q = useLogisticsPnl(from, to, true);
   const p = q.data;
   const months = p?.months ?? [];
 
