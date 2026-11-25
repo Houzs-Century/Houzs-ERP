@@ -483,6 +483,125 @@ describe('Settlement / Deposit on the Cash Flow tree', () => {
   });
 });
 
+/* Owner 2026-11-25 (这里我可以自己调per account 的 percentage吗 … 我希望每个都可以自由调): an
+   account line may carry its own Settlement / Deposit split, by a category's rule. It wins
+   over its category's; a line without one follows its category as before; a customer's
+   order payment still goes by its kind; a tree saved before reads and prints as it did. */
+describe('an account line\'s own Settlement / Deposit split', () => {
+  const sd = (n: LaidNode | undefined): unknown => (n?.sd ? [n.sd.settlementSen, n.sd.depositSen] : null);
+  const showrooms = (lines: unknown[]) => ({ version: 1, blocks: { accounts: [
+    { kind: 'category', id: 'ops', label: 'OPERATIONS OUTFLOWS', flow: 'out', split: { settlement: 1, deposit: 2 }, children: [
+      { kind: 'category', id: 'show', label: 'SHOWROOMS EXPENSE', split: { settlement: 0, deposit: 1 }, children: lines },
+    ] },
+  ] } });
+
+  test('the line keeps its parts; a bad split is refused by the line\'s code; other reports carry none', () => {
+    const ok = validateLayout('rp', showrooms([
+      { kind: 'account', code: '900-R006', flow: 'net', split: { settlement: 1, deposit: 0, note: 'dropped' } },
+      { kind: 'account', code: '900-R007', flow: 'net' },
+    ]));
+    if (!ok.ok) throw new Error(ok.reason);
+    const lines = ((ok.layout.blocks.accounts![0] as LayoutCategory).children[0] as LayoutCategory).children;
+    expect(lines).toEqual([
+      { kind: 'account', code: '900-R006', flow: 'net', split: { settlement: 1, deposit: 0 } },
+      { kind: 'account', code: '900-R007', flow: 'net' },
+    ]);
+    expect(lines[1]).not.toHaveProperty('split');
+    const bad = (split: unknown) => (validateLayout('rp', showrooms([{ kind: 'account', code: '900-R006', flow: 'net', split }])) as { ok: false; reason: string }).reason;
+    for (const split of [{ settlement: 0, deposit: 0 }, { settlement: -1, deposit: 2 }, { settlement: 1.5, deposit: 2 }, { settlement: 100, deposit: 1 }, 'half', null, { deposit: 1 }]) {
+      expect(bad(split)).toBe('900-R006: the Settlement / Deposit split is two whole parts from 0 to 99, not both 0.');
+    }
+    const pnl = validateLayout('pnl', { version: 1, blocks: { expenses: [
+      { kind: 'category', id: 'e', label: 'E', children: [{ kind: 'account', code: '900-R006', split: { settlement: 1, deposit: 0 } }] },
+    ] } });
+    expect(((pnl as { layout: Layout }).layout.blocks.expenses![0] as LayoutCategory).children[0]).toEqual({ kind: 'account', code: '900-R006' });
+  });
+
+  test('laid out: the line\'s own parts win, its neighbours follow the category, a customer payment its kind; groups and subtotals sum', () => {
+    const tree: LayoutItem[] = [
+      { kind: 'category', id: 'in', label: 'CASH IN', flow: 'in', split: { settlement: 0, deposit: 1 }, children: [
+        { kind: 'account', code: '300-0000', flow: 'in', split: { settlement: 1, deposit: 0 } },
+        { kind: 'account', code: '500-0003', flow: 'net', split: { settlement: 3, deposit: 1 } },
+      ] },
+      { kind: 'category', id: 'ops', label: 'OPERATIONS OUTFLOWS', flow: 'out', split: { settlement: 1, deposit: 2 }, children: [
+        { kind: 'category', id: 'show', label: 'SHOWROOMS EXPENSE', split: { settlement: 0, deposit: 1 }, children: [
+          { kind: 'account', code: '900-R006', flow: 'net', split: { settlement: 1, deposit: 0 } },
+          { kind: 'account', code: '900-R007', flow: 'net' },
+        ] },
+      ] },
+      { kind: 'subtotal', id: 'net-ops', label: 'NET OPERATION SURPLUS / (DEFICIT)' },
+      { kind: 'category', id: 'tax', label: 'TAXATION', flow: 'out', children: [
+        { kind: 'account', code: '910-0000', flow: 'out', split: { settlement: 1, deposit: 1 } },
+        { kind: 'account', code: '950-0000', flow: 'out' },
+      ] },
+      { kind: 'category', id: 'fin', label: 'FINANCE COST', flow: 'out', children: [
+        { kind: 'account', code: '900-F001', flow: 'net', split: { settlement: 0, deposit: 1 } },
+      ] },
+    ];
+    const receipts: LaidLine[] = [
+      { code: '300-0000', key: '300-0000:DEP:CASH', name: 'Transfer / cash', label: 'Transfer / cash', amountSen: 100_000, group: { id: 'DEP', label: 'Deposit' }, splitTo: 'deposit' },
+      { code: '300-0000', key: '300-0000:OTHER', name: 'Other receipts (not order payments)', label: 'Other receipts (not order payments)', amountSen: 7_000 },
+      { code: '500-0003', name: 'SALES OF SOFA', amountSen: 9_000 },
+    ];
+    const payments: LaidLine[] = [
+      { code: '900-R006', name: 'RENTAL - SHOWROOM', amountSen: 12_000 },
+      { code: '900-R007', name: 'UPKEEP - SHOWROOM', amountSen: 6_000 },
+      { code: '910-0000', name: 'INCOME TAX', amountSen: 5_001 },
+      { code: '950-0000', name: 'TAX PENALTY', amountSen: 1_000 },
+      { code: '900-F001', name: 'BANK CHARGES', amountSen: 300 },
+    ];
+    const laid = layOutCashFlow(tree, receipts, payments, 1);
+    const [cashIn, ops, netOps, tax, fin] = laid.nodes;
+    /* 300-0000 set to Settlement: its deposit payment stays Deposit by its kind, its other receipts
+       go Settlement; the sales line's own 3 : 1 beats CASH IN's all-Deposit. */
+    expect(cashIn!.children.map((n) => [n.label, sd(n)])).toEqual([
+      ['Deposit', [0, 100_000]], ['Other receipts (not order payments)', [7_000, 0]], ['500-0003 · SALES OF SOFA', [6_750, 2_250]],
+    ]);
+    expect(sd(cashIn)).toEqual([13_750, 102_250]);
+    /* Inside the all-Deposit showrooms, the rental set to Settlement; the upkeep follows the group. */
+    expect(ops!.children[0]!.children.map((n) => [n.label, sd(n)])).toEqual([
+      ['900-R006 · RENTAL - SHOWROOM', [12_000, 0]], ['900-R007 · UPKEEP - SHOWROOM', [0, 6_000]],
+    ]);
+    expect([sd(ops!.children[0]), sd(ops)]).toEqual([[12_000, 6_000], [12_000, 6_000]]);
+    /* The running subtotal, in less out, column by column. */
+    expect([netOps!.amountSen, sd(netOps)]).toEqual([98_000, [1_750, 96_250]]);
+    /* An unsplit group with one line split by its own: the line splits (Settlement rounded to
+       the sen), its neighbour prints whole, so the group prints whole. */
+    expect([sd(tax!.children[0]), sd(tax!.children[1]), sd(tax)]).toEqual([[2_501, 2_500], null, null]);
+    /* An unsplit group whose every line has its own: the group sums them. */
+    expect([fin!.amountSen, sd(fin)]).toEqual([300, [0, 300]]);
+  });
+
+  test('a tree saved before line splits reads back unchanged and prints as before, every line by its category', () => {
+    const stored = { version: 1, blocks: { accounts: [
+      { kind: 'category', id: 'in', label: 'CASH IN', flow: 'in', split: { settlement: 0, deposit: 1 }, children: [
+        { kind: 'category', id: 'dep', label: 'DEPOSIT RECEIVED', children: [{ kind: 'account', code: '300-0000', flow: 'in' }] },
+        { kind: 'category', id: 'sales', label: 'SALES & TRADE RECEIPTS', children: [{ kind: 'account', code: '500-0003', flow: 'net' }] },
+      ] },
+      { kind: 'category', id: 'ops', label: 'OPERATIONS OUTFLOWS', flow: 'out', split: { settlement: 1, deposit: 2 }, children: [
+        { kind: 'category', id: 'show', label: 'SHOWROOMS EXPENSE', split: { settlement: 0, deposit: 1 }, children: [{ kind: 'account', code: '900-R006', flow: 'net' }] },
+        { kind: 'category', id: 'wh', label: 'WAREHOUSE EXPENSE', children: [{ kind: 'account', code: '900-R002', flow: 'net' }] },
+      ] },
+      { kind: 'subtotal', id: 'net-ops', label: 'NET OPERATION SURPLUS / (DEFICIT)' },
+    ] } };
+    const ok = validateLayout('rp', stored);
+    if (!ok.ok) throw new Error(ok.reason);
+    expect(ok.layout).toEqual(stored);
+    const laid = layOutCashFlow(ok.layout.blocks.accounts!, [
+      { code: '300-0000', key: '300-0000:BAL:CASH', name: 'Transfer / cash', label: 'Transfer / cash', amountSen: 40_000, group: { id: 'BAL', label: 'Settlement' }, splitTo: 'settlement' },
+      { code: '300-0000', key: '300-0000:OTHER', name: 'Other receipts (not order payments)', label: 'Other receipts (not order payments)', amountSen: 7_000 },
+      { code: '500-0003', name: 'SALES OF SOFA', amountSen: 9_000 },
+    ], [
+      { code: '900-R006', name: 'RENTAL - SHOWROOM', amountSen: 12_000 },
+      { code: '900-R002', name: 'RENTAL - WAREHOUSE', amountSen: 10_000 },
+    ], 1);
+    const [cashIn, ops, netOps] = laid.nodes;
+    expect(cashIn!.children.map((n) => [n.label, sd(n)])).toEqual([['DEPOSIT RECEIVED', [40_000, 7_000]], ['SALES & TRADE RECEIPTS', [0, 9_000]]]);
+    expect(ops!.children.map((n) => [n.label, sd(n)])).toEqual([['SHOWROOMS EXPENSE', [0, 12_000]], ['WAREHOUSE EXPENSE', [3_333, 6_667]]]);
+    expect([netOps!.amountSen, sd(netOps)]).toEqual([34_000, [36_667, -2_667]]);
+  });
+});
+
 /* Owner 2026-11-05 (L5 with a subtotal under each): any category, in any report and
    at any depth, may name its Total line; the name rides onto the laid node. */
 describe('a Total name at any depth', () => {

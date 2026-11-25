@@ -20,7 +20,7 @@
 // column: a swipe is Cash In on its own day, owner 2026-11-05).
 // Settlement / Deposit (owner 2026-11-09, his Receipt & Payment workbook): the By
 // month reads with each month as two columns, Settlement | Deposit, as the layout
-// splits each group and each customer's payment goes by its own kind (a payment
+// splits each group or line and each customer's payment goes by its own kind (a payment
 // that completes an order on a later day than the first one is the Settlement);
 // a line not split prints one figure across its month (reports/cashFlowSplit).
 // P&L forecast (2026-11-24, step 2 of the forecast port): in By month, a switch puts
@@ -263,7 +263,7 @@ export const ReceiptsPaymentsTab = () => {
   const rowsWord = byParty ? 'by debtor / creditor' : "by the owner's accounts";
   const periodText = monthly ? `${monthName(span.from)} – ${monthName(span.to)} · ${months} months` : `${fmtDate(r.from)} – ${fmtDate(r.to)}`;
   const layoutWord = head ? (head.layout.stored ? ' · on the saved layout' : " · on the chart's own tree") : '';
-  const splitWord = view === 'split' ? ' · each month Settlement | Deposit as the layout splits each group' : '';
+  const splitWord = view === 'split' ? ' · each month Settlement | Deposit as the layout splits each group or line' : '';
   const forecastWord = forecastOn ? (fq.data?.docs ? ' · each month Actual | Orders & bills | P&L forecast' : ' · each month Actual | P&L forecast') : '';
   useReportSubtitle(r.usable ? `${periodText} · every bank and cash account · ${rowsWord} · % of the side's total${splitWord}${forecastWord}${layoutWord}` : 'Pick dates.');
 
@@ -382,7 +382,7 @@ export const ReceiptsPaymentsTab = () => {
             return <EntriesRow key={`e:${l.id}`} title={l.label} sub={label} entries={entries} columns={col != null && isForecastKey(col.key) ? FORECAST_DRILL_COLUMNS : DRILL_COLUMNS} colSpan={colSpan} onClose={close} />;
           }}
           note={view === 'split'
-            ? 'Each month in Settlement and Deposit as the layout splits each group (Layout); a customer’s payment is the Settlement when it completes the order on a later day than the first payment, else a Deposit. A line not split prints one figure across its month. % beside Total is of the side’s total. Click a Total, or a figure across a month, for the entries behind it.'
+            ? 'Each month in Settlement and Deposit as the layout splits each group or line (Layout); a customer’s payment is the Settlement when it completes the order on a later day than the first payment, else a Deposit. A line not split prints one figure across its month. % beside Total is of the side’s total. Click a Total, or a figure across a month, for the entries behind it.'
             : forecastOn && fq.data ? `${forecastNote(fq.data)} Click a figure for what is behind it.`
               : '% beside each receipt is of the receipts, beside each payment of the payments; the surplus’s is of the receipts. Click a figure for the entries behind it.'}
           drillKey={`${view}|${r.from}|${r.to}|${byParty}|${months}|${codes.join(',')}|${forecastOn}`}

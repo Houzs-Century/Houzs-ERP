@@ -89,7 +89,8 @@ export const SIDES: readonly Side[] = ['in', 'out'];
     money splits between the Settlement and the Deposit columns, in whole parts —
     1 : 0 all Settlement, 0 : 1 all Deposit, 1 : 2 a third and two thirds. A category
     without one follows the category above it; with none anywhere above, its lines are
-    not split and print one figure a month. */
+    not split and print one figure a month. An account line may carry its own (owner
+    2026-11-25: 我希望每个都可以自由调), which wins over its category's. */
 export type CashSplit = { settlement: number; deposit: number };
 export const SPLIT_MAX_PART = 99;
 /** Where a line's money goes when the line itself says (a customer's order payment by its kind). */
@@ -102,6 +103,8 @@ export type LayoutAccount = {
   code: string;
   /** Cash Flow only: the line's direction (always set on a checked Cash Flow tree). */
   flow?: Flow;
+  /** Cash Flow only: the line's own Settlement / Deposit split; absent = its category's. */
+  split?: CashSplit;
 };
 export type LayoutCategory = {
   kind: 'category';
@@ -183,6 +186,16 @@ export type LayoutCheck = { ok: true; layout: Layout } | { ok: false; reason: st
    and slashes are in — a tree the chart built must always be savable. */
 const ID_RE = /^[A-Za-z0-9:_./ -]{1,64}$/;
 
+/* The Settlement / Deposit split, a category's or an account line's alike (owner 2026-11-09). */
+const splitPart = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= SPLIT_MAX_PART;
+const readSplit = (raw: unknown): CashSplit | null => {
+  const sp = raw as Record<string, unknown> | null;
+  if (!sp || typeof sp !== 'object' || !splitPart(sp.settlement) || !splitPart(sp.deposit) || sp.settlement + sp.deposit === 0) return null;
+  return { settlement: sp.settlement, deposit: sp.deposit };
+};
+const splitRefused = (who: string): string =>
+  `${who}: the Settlement / Deposit split is two whole parts from 0 to ${SPLIT_MAX_PART}, not both 0.`;
+
 export function validateLayout(report: ReportKey, rawIn: unknown): LayoutCheck {
   /* A Cash Flow tree saved before directions existed is the old two-sided
      report: read as RECEIPTS (In) over PAYMENTS (Out), never refused. */
@@ -221,7 +234,13 @@ export function validateLayout(report: ReportKey, rawIn: unknown): LayoutCheck {
           if (flow !== 'in' && outPlaced.has(code)) return `${code}'s money out is placed twice.`;
           if (flow !== 'out') inPlaced.add(code);
           if (flow !== 'in') outPlaced.add(code);
-          out.push({ kind: 'account', code, flow });
+          const line: LayoutAccount = { kind: 'account', code, flow };
+          if (o.split !== undefined) {
+            const split = readSplit(o.split);
+            if (!split) return splitRefused(code);
+            line.split = split;
+          }
+          out.push(line);
         } else {
           if (codes.has(code)) return `${code} is placed twice.`;
           codes.add(code);
@@ -265,12 +284,9 @@ export function validateLayout(report: ReportKey, rawIn: unknown): LayoutCheck {
         /* Cash Flow only, at any depth: the Settlement / Deposit split, in whole parts (owner 2026-11-09). */
         let split: CashSplit | undefined;
         if (cashFlow && o.split !== undefined) {
-          const sp = o.split as Record<string, unknown> | null;
-          const part = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= SPLIT_MAX_PART;
-          if (!sp || typeof sp !== 'object' || !part(sp.settlement) || !part(sp.deposit) || sp.settlement + sp.deposit === 0) {
-            return `${label}: the Settlement / Deposit split is two whole parts from 0 to ${SPLIT_MAX_PART}, not both 0.`;
-          }
-          split = { settlement: sp.settlement, deposit: sp.deposit };
+          const sp = readSplit(o.split);
+          if (!sp) return splitRefused(label);
+          split = sp;
         }
         const children = walk(o.children ?? [], depth + 1, `Category ${label}`, cashFlow ? (catSide ?? side) : null);
         if (typeof children === 'string') return children;
@@ -331,8 +347,8 @@ export type LaidNode = {
   flow?: Flow;
   /** Cash Flow: what a top category's subtotal line prints. */
   totalLabel?: string;
-  /** Cash Flow: the figure in the Settlement and Deposit columns — on a line its category
-      splits, a group whose lines all split, a running subtotal over such groups. */
+  /** Cash Flow: the figure in the Settlement and Deposit columns — on a line split by its
+      own parts or its category's, a group whose lines all split, a running subtotal over such groups. */
   sd?: SettleDeposit;
   children: LaidNode[];
 };
@@ -574,7 +590,7 @@ export function layOutCashFlow(items: LayoutItem[], receipts: LaidLine[], paymen
     }
     return out.map((o) => ('gid' in o ? groupNode('category', o.gid, o.label, o.kids, null) : o));
   };
-  /* The lines an account line takes, oriented to its side, split by its category's parts. */
+  /* The lines an account line takes, oriented to its side, split by its own parts or its category's. */
   const take = (code: string, flow: Flow, side: Side, split: CashSplit | undefined): LaidNode[] => {
     if (flow === 'in' || flow === 'out') {
       const placed = flow === 'in' ? inPlaced : outPlaced;
@@ -603,11 +619,12 @@ export function layOutCashFlow(items: LayoutItem[], receipts: LaidLine[], paymen
       return { line: src, node };
     }), 'net', code);
   };
-  /* `split`: the parts the category above passes down (owner 2026-11-09). */
+  /* `split`: the parts the category above passes down (owner 2026-11-09); an account
+     line's own parts win over them (owner 2026-11-25). */
   const walk = (list: LayoutItem[], side: Side, split: CashSplit | undefined): LaidNode[] => {
     const out: LaidNode[] = [];
     for (const it of list) {
-      if (it.kind === 'account') { out.push(...take(it.code, it.flow ?? side, side, split)); continue; }
+      if (it.kind === 'account') { out.push(...take(it.code, it.flow ?? side, side, it.split ?? split)); continue; }
       if (it.kind === 'subtotal') continue;
       if (it.hiddenFor?.includes(companyId)) continue;
       const mine = it.split ?? split;
