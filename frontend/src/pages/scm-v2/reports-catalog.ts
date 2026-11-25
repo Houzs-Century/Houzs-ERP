@@ -18,6 +18,14 @@
 // report where the sidebar would show its entry (`navTo`, through makeNavFilter,
 // so the Finance group's own gate still applies). Journal entries, the General
 // ledger and the Trial balance keep their Books entries' gates.
+//
+// THE P&Ls ARE ONE ENTRY (owner 2026-11-25: 几份P&L, 可以combine 起来 … 我在这里
+// 选): the list shows them as P&L, and a picker across the top of each opens the
+// others (`pnlPick`, its name there). Each stays a report of its own here — its
+// address, its gate, its method and data — so old links land where they did and
+// a reader is offered only the P&Ls they may open. The Forecast P&L is a plan and
+// sits under Plan with the Dashboard; the Logistics cost report is the Department
+// P&L's Logistics, not an entry of its own (owner, the same day).
 // ----------------------------------------------------------------------------
 
 import type { LucideIcon } from 'lucide-react';
@@ -29,8 +37,8 @@ export type ReportGroupId = 'statements' | 'owes' | 'sales' | 'events' | 'cards'
 export type ReportId =
   | 'pnl' | 'departments' | 'bs' | 'rp' | 'tb'
   | 'ar' | 'ap'
-  | 'collection' | 'fair' | 'performance' | 'products' | 'changes' | 'changesum'
-  | 'events' | 'commission' | 'logistics'
+  | 'collection' | 'fair' | 'performance' | 'products' | 'changes' | 'changesum' | 'sotodo'
+  | 'events' | 'commission'
   | 'charges'
   | 'forecast' | 'dashboard'
   | 'je' | 'gl'
@@ -55,6 +63,8 @@ export type ReportItem = {
   /** Who sees it — the gate its own sidebar entry had (batch 6 §1.1: "keep
    *  every member's own gate"). Absent on the Books pages, gated in Books. */
   gate?: ReportGate;
+  /** A P&L: its name in the P&L picker. The list shows the P&Ls as one entry, P&L. */
+  pnlPick?: string;
 };
 
 /** A sidebar entry's gate fields (components/Sidebar NavTab), as the reports keep them. */
@@ -95,11 +105,19 @@ const tabItem = (tab: AccountingTab & ReportId, group: ReportGroupId, books = fa
   navTo: `${ACCOUNTING}?tab=${tab}`,
 });
 
+const asPnl = (item: ReportItem, pick: string): ReportItem => ({ ...item, pnlPick: pick });
+
 /** Every report, in the design's order (the list draws them group by group). */
 export const REPORT_CATALOG: readonly ReportItem[] = [
-  tabItem('pnl', 'statements'),
+  // The P&Ls, in the picker's order, each with its own method and data (owner 2026-11-25: 我会有很多个不同的p&L,
+  // 每个的算法和提取的资料不一样). The books' P&L.
+  asPnl(tabItem('pnl', 'statements'), 'Actual'),
   // G&A, Operation (his "Operation PNL - Auto" sheet) and every account split across the departments (owner 2026-11-19).
-  tabItem('departments', 'statements'),
+  asPnl(tabItem('departments', 'statements'), 'Department'),
+  // The month's orders per group against a budgeted operating expense (owner 2026-09-12; docs/bugs/0835).
+  asPnl(tabItem('performance', 'statements'), 'Performance'),
+  // The product changes added up P&L-style, by month and by salesperson (owner 2026-11-23: 类似 p&L).
+  asPnl(tabItem('changesum', 'statements'), 'Product changes'),
   tabItem('bs', 'statements'),
   tabItem('rp', 'statements'),
   tabItem('tb', 'statements', true),
@@ -111,21 +129,16 @@ export const REPORT_CATALOG: readonly ReportItem[] = [
     id: 'fair', label: 'Sales report · fairs', title: 'Sales report', group: 'sales',
     path: '/reports/fair-report', navTo: '/reports/fair-report', gate: SALES_REPORT_GATE,
   },
-  // The month's orders per group against a budgeted operating expense (owner 2026-09-12; docs/bugs/0835).
-  tabItem('performance', 'sales'),
   // Every product the month sold, ranked by gross profit after its share of the gifts (owner 2026-10-05).
   tabItem('products', 'sales'),
   // Every product change on a sales order: did the selling change cover the cost change? By month (owner 2026-11-23).
   tabItem('changes', 'sales'),
-  // The same changes added up P&L-style, by month and by salesperson (owner 2026-11-23: 类似 p&L).
-  tabItem('changesum', 'sales'),
+  // The month's shipped DOs: how much came from this month's orders, the rest from earlier ones (owner 2026-11-24).
+  tabItem('sotodo', 'sales'),
   // What each event cost, from the ledger — voucher and AP invoice lines tagged with it (owner 2026-09-30, 5a).
   tabItem('events', 'events'),
   // Each fair's commission and each order's under it — goods × brand rate once 30% is paid (owner 2026-10-20).
   tabItem('commission', 'events'),
-  // What delivery cost — by region, per trip (our lorries overall: the month's lorry cost ÷ its trips; 3PL bill
-  // lines), setup & dismantle (owner 2026-10-29).
-  tabItem('logistics', 'events'),
   // What each acquirer charged against the gross, per month (owner 2026-09-12; docs/bugs/0826).
   tabItem('charges', 'cards'),
   // The Forecast P&L and the Dashboard (owner 2026-09-21: the Hookka Forecast P&L + Dashboard, trading

@@ -35,7 +35,7 @@ import {
   assignmentOf, carrierFor, fileStampOf, loadApBill, loadCarriers, readBill, rederiveCharges, saveBill,
   type AssignInput, type BillDeps, type BillFail, type KeptLine,
 } from '../lib/threepl-bill-import';
-import { chargeNote, chargesPerDo, isOpenLine, lineTotals, type Assignment, type LineAssign } from '../lib/threepl-bill-match';
+import { assignedLines, chargeNote, chargesPerDo, isOpenLine, lineTotals, type Assignment, type LineAssign } from '../lib/threepl-bill-match';
 import { varianceSen } from '../lib/threepl-do-charge';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- PostgREST client and Hono context, untyped as in every SCM route */
@@ -137,7 +137,8 @@ export const readApBillHandler = async (c: any) => {
 
   const codes = companyCodeMap(c);
   const apNo = String(bill.inv.invoice_number);
-  const charges = chargesPerDo(reading.lines, reading.expectedOf);
+  /* As the reading assigns the lines: a bill's shared price is on its DOs too. */
+  const charges = chargesPerDo(assignedLines(reading.lines, reading.assignments, reading.dos), reading.expectedOf, reading.goodsOf);
   return c.json({
     invoice: {
       id: String(bill.inv.id), invoiceNumber: apNo, supplierRef: str(bill.inv.supplier_invoice_ref), invoiceDate: str(bill.inv.invoice_date),

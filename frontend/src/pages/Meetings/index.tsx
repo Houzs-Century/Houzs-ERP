@@ -8,8 +8,7 @@ import { openLoadedTab } from "../../lib/openLoadedTab";
 import { cn } from "../../lib/utils";
 import {
   DAY, MONTH_NAMES, addDays, atHour, draftBody, draftFrom, emptyDraft, fmtDayLong, isMeetingsTab, isoDay, isView, VIEWS, ms, nextStart, peopleOf, readConflict, startOfDay, startOfWeek,
-  companyColor, meetingColor, type Bootstrap, type CalView, type ColorBy, type ConflictReply, type Draft, type GuestLink, type Meeting, type MeetingsTab, type Notice, type Room,
-} from "../../lib/meetings";
+  companyColor, meetingColor, type Bootstrap, type CalView, type ColorBy, type ConflictReply, type Draft, type GuestLink, type Meeting, type MeetingsTab, type Notice, type Room, bestRoom } from "../../lib/meetings";
 import { ListView, MiniMonth, MonthView, RoomsTimeline, TimeGrid } from "./MeetingsCalendar";
 import { BTN, ConflictDialog, MeetingDetail, MeetingEditor, PersonSearch, PRI, QuickBook, ScopeQuestion, type MeetingFile } from "./MeetingsDialogs";
 import { EmailPage, LinkDialog, LinksPage, LogPage, MyMeetings, RoomDialog, RoomsPage, roomForm, type LinkForm, type RoomForm } from "./MeetingsAdmin";
@@ -140,7 +139,8 @@ export function Meetings({ erpName = "Houzs ERP", embedded = false }: { erpName?
     return true;
   });
   const busyRoomsFor = (d: Draft) => new Set(meetings.filter((m) => m.id !== d.id && m.roomId && m.status !== "ended" && ms(m.start) < d.end && d.start < ms(m.end)).map((m) => m.roomId as number));
-  const freeRoomFor = (s: number, e: number) => rooms.find((r) => r.active && !meetings.some((m) => m.roomId === r.id && m.status !== "ended" && ms(m.start) < e && s < ms(m.end)))?.id ?? null;
+  const freeRoomFor = (s: number, e: number) =>
+    bestRoom(rooms, 1, new Set(meetings.filter((m) => m.roomId && m.status !== "ended" && ms(m.start) < e && s < ms(m.end)).map((m) => m.roomId as number)))?.id ?? null;
 
   const uploadFiles = async (meetingId: number) => {
     if (!pendingFiles.length) return;
@@ -208,7 +208,7 @@ export function Meetings({ erpName = "Houzs ERP", embedded = false }: { erpName?
     setSaving(true);
     setDialogError(null);
     try {
-      const body = { name: f.name, location: f.location, floor: f.floor, seats: f.seats, equipment: f.equipment, days: f.days, openFrom: f.openFrom, openTo: f.openTo, color: f.color, bufferMin: f.bufferMin, maxHours: f.maxHours, advanceDays: f.advanceDays, active: f.active, closures: f.closures };
+      const body = { name: f.name, location: f.location, address: f.address, floor: f.floor, seats: f.seats, equipment: f.equipment, days: f.days, openFrom: f.openFrom, openTo: f.openTo, color: f.color, bufferMin: f.bufferMin, maxHours: f.maxHours, advanceDays: f.advanceDays, active: f.active, closures: f.closures };
       if (f.id) await api.patch(`/api/meetings/rooms/${f.id}`, body); else await api.post("/api/meetings/rooms", body);
       flash(`Saved room ${f.name}`);
       setRoomEdit(null);
@@ -350,6 +350,7 @@ export function Meetings({ erpName = "Houzs ERP", embedded = false }: { erpName?
       {quick && <QuickBook draft={quick} rooms={rooms} people={boot?.people ?? []} busyRooms={busyRoomsFor(quick)} saving={saving} onClose={() => setQuick(null)} onMore={(d) => { setQuick(null); setPendingFiles([]); setEditor({ draft: d, isNew: true }); }} onSave={(d) => void save(d, true)} />}
       {editor && (
         <MeetingEditor draft={editor.draft} isNew={editor.isNew} me={me} rooms={rooms} people={boot?.people ?? []} peopleMap={people} meetings={meetings} now={now}
+          makeMeet={boot?.meetConnected ? () => api.post<{ url: string }>("/api/meetings/meet-link").then((r) => r.url) : null}
           busyRooms={busyRoomsFor(editor.draft)} saving={saving} pendingFiles={pendingFiles} onFiles={setPendingFiles} onClose={() => setEditor(null)}
           onSave={(d) => {
             const orig = meetings.find((m) => m.id === d.id);

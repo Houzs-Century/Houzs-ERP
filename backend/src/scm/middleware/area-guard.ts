@@ -120,6 +120,10 @@ export interface ScmAreaGuardOpts {
    * Reads are unaffected.
    */
   writeBypass?: (c: Context<{ Bindings: Env; Variables: Variables }>) => boolean;
+  /** READS admitted without the area level when this returns true (e.g. a Sales
+   *  Director on Procurement Overview, owner 2026-11-24). Writes never pass. Runs
+   *  after the JD / money rules, so it cannot widen past a code rule. */
+  readBypass?: (user: AuthUser) => boolean;
 }
 
 export function scmAreaGuard(area: string, opts?: ScmAreaGuardOpts): MiddlewareHandler<{
@@ -177,6 +181,11 @@ export function scmAreaGuard(area: string, opts?: ScmAreaGuardOpts): MiddlewareH
     //      the two finance areas are in scope, so nothing else can be narrowed.
     const moneyDenial = moneyWriteDenial(user, area, c.req.method);
     if (moneyDenial) return c.json({ error: moneyDenial }, 403);
+
+    if (!isWrite(c.req.method) && opts?.readBypass?.(user)) {
+      await next();
+      return;
+    }
 
     // 3) No explicit SCM L2 config → fall back to the coarse scm.access umbrella
     //    (already enforced upstream). Never lock out a current scm.access holder.

@@ -135,16 +135,22 @@ export type PunchPlan =
   | { kind: "stamp-in"; rowId: number }
   | { kind: "already-in"; rowId: number }
   | { kind: "already-out"; rowId: number; clock: string }
+  | { kind: "reopen"; rowId: number }
   | { kind: "stamp-out"; rowId: number }
   | { kind: "no-open-punch" };
 
 /* What a phone punch does. `today` is the employee's row for today's work
  * date; `open` is their newest row with a clock-in and no clock-out that is
  * NOT forgotten (forgotten ones are closed before this is asked).
- *   CLOCK_IN : a second tap is a no-op; a day already clocked out is refused
- *              (HR corrects it), not silently reopened.
+ *   CLOCK_IN : a second tap while clocked in is a no-op; a day already clocked
+ *              out REOPENS (HC-0125 multi-punch, owner 2026-11-25) — a worker
+ *              who clocked out and goes back on duty taps in again, so the day
+ *              runs from the first clock-in to the last clock-out and overtime
+ *              counts the whole span. The reopen keeps the first clock-in (and
+ *              its lateness) and drops the last clock-out, re-stamped on the
+ *              next clock-out.
  *   CLOCK_OUT: closes the open punch even when it started yesterday, which is
- *              the driver back after midnight. */
+ *              the driver back after midnight; a day already closed is refused. */
 export function planPunch(
   action: "CLOCK_IN" | "CLOCK_OUT",
   today: { id: number; clock_in_at: string | null; clock_out_at: string | null; work_date: string } | null,
@@ -154,9 +160,7 @@ export function planPunch(
     if (open) return { kind: "already-in", rowId: open.id };
     if (!today) return { kind: "insert" };
     if (!today.clock_in_at) return { kind: "stamp-in", rowId: today.id };
-    if (today.clock_out_at) {
-      return { kind: "already-out", rowId: today.id, clock: workClock(minutesFromWorkDate(today.work_date, asDate(today.clock_out_at))) };
-    }
+    if (today.clock_out_at) return { kind: "reopen", rowId: today.id };
     return { kind: "already-in", rowId: today.id };
   }
   if (open) return { kind: "stamp-out", rowId: open.id };
@@ -178,7 +182,7 @@ export function punchGateRefusal(
   hasPhoto: boolean,
   loc: { geo: GeoResult | null; siteName: string | null; distanceM: number | null },
 ): { error: string; message: string } | null {
-  const recording = planKind === "insert" || planKind === "stamp-in" || planKind === "stamp-out";
+  const recording = planKind === "insert" || planKind === "stamp-in" || planKind === "stamp-out" || planKind === "reopen";
   if (!recording) return null;
   if (gates.requireSelfie && !hasPhoto) {
     return { error: "photo_required", message: "A photo is required to clock in or out. Tap again and take the selfie." };

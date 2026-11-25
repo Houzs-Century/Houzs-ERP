@@ -599,7 +599,7 @@ export const NAV_TABS: NavTab[] = [
         anyPerm: ["*", "scm.access"],
         anyAccess: ["scm.procurement", "scm.procurement.products", "scm.procurement.suppliers", "scm.procurement.mrp", "scm.procurement.po", "scm.procurement.grn", "scm.procurement.pi", "scm.procurement.pr"],
         children: [
-          { to: "/scm/procurement-overview", label: "Procurement Overview", icon: LayoutDashboard, anyPerm: ["*", "scm.access"], anyAccess: ["scm.procurement.po"], hideForSalesRep: true },
+          { to: "/scm/procurement-overview", label: "Procurement Overview", icon: LayoutDashboard, anyPerm: ["*", "scm.access"], anyAccess: ["scm.procurement.po"], hideForSalesRep: true, showForSalesDirector: true },
           { to: "/scm/products", label: "Products & Maintenance", icon: Sofa, anyPerm: ["*", "scm.access"], anyAccess: ["scm.procurement.products"], hideForSalesRep: true },
           { to: "/scm/suppliers", label: "Suppliers", icon: Truck, anyPerm: ["*", "scm.access"], anyAccess: ["scm.procurement.suppliers"], hideForSalesRep: true },
           { to: "/scm/mrp", label: "MRP · Stock Status", icon: Calculator, anyPerm: ["*", "scm.access"], anyAccess: ["scm.procurement.mrp"], hideForSalesRep: true },
@@ -715,6 +715,7 @@ export const NAV_TABS: NavTab[] = [
           { to: "/scm/stock-adjustments", label: "Adjustments", icon: SlidersHorizontal, anyPerm: ["*", "scm.access"], anyAccess: ["scm.warehouse.adjustments"], hideForSalesRep: true },
           { to: "/scm/stock-transfers", label: "Transfers", icon: ArrowLeftRight, anyPerm: ["*", "scm.access"], anyAccess: ["scm.warehouse.transfers"], hideForSalesRep: true },
           { to: "/scm/stock-takes", label: "Stock Take", icon: ClipboardCheck, anyPerm: ["*", "scm.access"], anyAccess: ["scm.warehouse.stock_take"], hideForSalesRep: true },
+          { to: "/scm/stock-take-approvals", label: "Stock Take Approvals", icon: ClipboardCheck, anyPerm: ["*", "scm.stock_take.supervise"], anyAccess: ["scm.warehouse.stock_take"], hideForSalesRep: true, badge: "stock-take-approvals" },
         ],
       },
     ],
@@ -846,6 +847,7 @@ export const NAV_TABS: NavTab[] = [
           { to: "/scm/accounting?tab=tb", label: "Trial balance", icon: Receipt, notWithParam: "in", anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.books"] },
           { to: "/scm/accounting?tab=check", label: "Self-check", icon: ClipboardCheck, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.books"] },
           { to: "/scm/accounting?tab=close", label: "Stock close", icon: History, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.books"] },
+          { to: "/scm/accounting?tab=commrel", label: "Commission release", icon: History, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.books"] },
         ],
       },
       {

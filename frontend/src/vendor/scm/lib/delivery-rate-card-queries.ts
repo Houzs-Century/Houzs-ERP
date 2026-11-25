@@ -17,7 +17,8 @@ export type RateAggregation = 'UNIT' | 'DROP' | 'CUSTOMER' | 'TRIP';
 export type RateRounding = 'NONE' | 'NEAREST_10C' | 'NEAREST_RM';
 export type RateRuleType =
   | 'POSITIONAL_TIER' | 'OVERAGE' | 'SOFA_BRACKET' | 'OUTSTATION' | 'OUTSTATION_TRIP'
-  | 'DISPOSE' | 'SETUP' | 'DISMANTLE' | 'SERVICE' | 'PICKUP' | 'INSPECTION' | 'SUPPLIER_PICKUP' | 'TRANSFER';
+  | 'DISPOSE' | 'SETUP' | 'DISMANTLE' | 'SERVICE' | 'PICKUP' | 'INSPECTION' | 'SUPPLIER_PICKUP' | 'TRANSFER'
+  | 'DO_CHARGE';
 
 export type RateCard = {
   id: string;
@@ -51,6 +52,10 @@ export type RateRule = {
   /** An outstation price's jobs (its default, Delivery order, when it names
    *  none); null for every other price. */
   appliesTo?: string[] | null;
+  /** A Per DO charge's name ("SST", "Permit") and its share of the goods value
+   *  in basis points (100 = 1%); null for every other price. */
+  label?: string | null;
+  bps?: number | null;
   sortOrder: number;
   /** Set when the price belongs to one AREA of the card (its own towns), absent
    *  or null for the card's own price. Area prices are shown with their area,
@@ -95,6 +100,9 @@ export type DeliveryFacts = {
   areaId?: string | null;
   /** The job being priced; absent = Delivery order. */
   jobType?: string | null;
+  /** A Per DO charge prices this goods value (sen) and this many DOs. */
+  goodsValueSen?: number | null;
+  dropCount?: number | null;
   disposeCount?: number | null;
   setupCount?: number | null;
   dismantleCount?: number | null;
@@ -213,6 +221,9 @@ export type NewRateRule = {
   areaId?: string | null;
   /** Outstation only: the jobs it adds to; null = back to Delivery order. */
   appliesTo?: string[] | null;
+  /** Per DO charge only: its name and its share of the goods value (basis points). */
+  label?: string | null;
+  bps?: number | null;
 };
 
 export function useCreateRateRule(cardId: string) {
@@ -321,6 +332,67 @@ export function useReconcile(opts: { from?: string; to?: string }) {
       const qs = p.toString();
       return authedFetch<{ rows: ReconcileRow[] }>(`/delivery-rate-cards/reconcile${qs ? `?${qs}` : ''}`).then((r) => r.rows);
     },
+    staleTime: 30_000,
+  });
+}
+
+// ── Own fleet: our own lorries priced like a 3PL ─────────────────────────────
+/** One lorry's day (a trip), priced once by the own fleet card. */
+export type OwnFleetRun = {
+  key: string;
+  runDate: string;
+  lorryId: string | null;
+  plate: string;
+  /** Its Delivery Planning trips that day; none when Last Mile alone put orders on it. */
+  tripNos: string[];
+  dos: { doId: string; doNumber: string | null; companyCode: string | null }[];
+  setCount: number;
+  zones: string[];
+  /** Its other jobs, by job (SUPPLIER_PICKUP, TRANSFER, ...). */
+  jobs: Partial<Record<string, number>>;
+  cardName: string | null;
+  /** The card's price for the trip; null = no own fleet card prices this lorry. */
+  costSen: number | null;
+  otherJobsSen: number | null;
+  lines: { label: string; amountSen: number }[];
+};
+
+export type OwnFleetMonth = {
+  month: string;
+  trips: number;
+  dos: number;
+  sets: number;
+  pricedTrips: number;
+  pricedDos: number;
+  costSen: number;
+  deliveryCostSen: number;
+  threePlDos: number;
+  threePlSets: number;
+  threePlBilledSen: number;
+  threePlPricedDos: number;
+  threePlBilledPricedSen: number;
+  threePlCardSen: number;
+};
+
+export type OwnFleetCosts = {
+  from: string;
+  to: string;
+  /** The own fleet card for the whole fleet; null = none, or more than one active. */
+  card: { id: string; name: string } | null;
+  severalCards: { id: string; name: string }[];
+  lorryCards: { id: string; name: string; lorryId: string | null }[];
+  runs: OwnFleetRun[];
+  months: OwnFleetMonth[];
+};
+
+/* Under CARDS_KEY, so every card, price and area change (each invalidates it)
+   re-prices the trips: an edited price shows on the Own fleet tab at once. */
+export function useOwnFleetCosts(range: { from: string; to: string }) {
+  const { from, to } = range;
+  return useQuery({
+    queryKey: [...CARDS_KEY, 'own-fleet', from, to],
+    queryFn: () => authedFetch<OwnFleetCosts>(`/delivery-rate-cards/own-fleet?${new URLSearchParams({ from, to }).toString()}`),
+    enabled: !!from && !!to,
     staleTime: 30_000,
   });
 }

@@ -174,6 +174,7 @@ const ScmStockTransferDetailV2 = lazyPage(() => import("./pages/scm-v2/StockTran
 const ScmStockTakesV2 = lazyPage(() => import("./pages/scm-v2/StockTakesListV2").then((m) => ({ default: m.StockTakesListV2 })));
 const ScmStockTakeNewV2 = lazyPage(() => import("./pages/scm-v2/StockTakeNew").then((m) => ({ default: m.StockTakeNew })));
 const ScmStockTakeDetailV2 = lazyPage(() => import("./pages/scm-v2/StockTakeDetail").then((m) => ({ default: m.StockTakeDetail })));
+const ScmStockTakeApprovalsV2 = lazyPage(() => import("./pages/scm-v2/StockTakeApprovals").then((m) => ({ default: m.StockTakeApprovals })));
 // HR / Commission — the payroll surface over /api/scm/hr.
 const ScmHrCommission = lazyPage(() => import("./pages/scm-v2/HrCommission").then((m) => ({ default: m.HrCommission })));
 const ScmHrSettings = lazyPage(() => import("./pages/scm-v2/HrSettings").then((m) => ({ default: m.HrSettings })));
@@ -392,6 +393,7 @@ function ScmGuard({
   allowSales = false,
   allowDirector = false,
   allowCapability,
+  allowSalesDirector = false,
   children,
 }: {
   area: string;
@@ -407,10 +409,13 @@ function ScmGuard({
    * confirm page though scm.sales.delivery is none; the page's one action still
    * hits the capability-gated status endpoint. */
   allowCapability?: string;
+  /** A Sales Director only (owner 2026-11-24: Procurement Overview); the backend guard's readBypass mirrors it. */
+  allowSalesDirector?: boolean;
   children: React.ReactNode;
 }) {
   const { user } = useAuth();
   if (allowSales && isSalesStaff(user)) return <>{children}</>;
+  if (allowSalesDirector && isSalesDirectorUser(user)) return <>{children}</>;
   if (allowDirector && isDirectorUser(user)) return <>{children}</>;
   if (allowCapability && (user?.position_capabilities ?? []).includes(allowCapability))
     return <>{children}</>;
@@ -807,7 +812,7 @@ const APP_ROUTES = (
             the literal segments match before the param route. Each page is wrapped
             in <Scm2990Shell> for the Notify/Confirm/dialog-service providers. */}
         <Route path="/scm/logistic-overview" element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmLogisticOverview embedded={false} /></Scm2990Shell></ScmGuard>} />
-        <Route path="/scm/procurement-overview" element={<ScmGuard area="scm.procurement.po"><Scm2990Shell><ScmProcurementOverview embedded={false} /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/procurement-overview" element={<ScmGuard area="scm.procurement.po" allowSalesDirector><Scm2990Shell><ScmProcurementOverview embedded={false} /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/purchase-orders" element={<ScmGuard area="scm.procurement.po"><Scm2990Shell><ScmPurchaseOrdersV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/purchase-orders/new" element={<ScmGuard area="scm.procurement.po"><Scm2990Shell><ScmPurchaseOrderNewV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/purchase-orders/from-so" element={<ScmGuard area="scm.procurement.po"><Scm2990Shell><ScmPurchaseOrderFromSoV2 /></Scm2990Shell></ScmGuard>} />
@@ -935,6 +940,7 @@ const APP_ROUTES = (
         <Route path="/scm/stock-takes" element={<ScmGuard area="scm.warehouse.stock_take"><Scm2990Shell><ScmStockTakesV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/stock-takes/new" element={<ScmGuard area="scm.warehouse.stock_take"><Scm2990Shell><ScmStockTakeNewV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/stock-takes/:id" element={<ScmGuard area="scm.warehouse.stock_take"><Scm2990Shell><ScmStockTakeDetailV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/stock-take-approvals" element={<Guard anyPerm={["*", "scm.stock_take.supervise"]}><Scm2990Shell><ScmStockTakeApprovalsV2 /></Scm2990Shell></Guard>} />
         {/* HR / Commission. Flat <Guard>, NOT <ScmGuard>: HR has no L2 page-access
             area, and the report returns every colleague's pay — it must not ride
             the broad scm.access umbrella. Same two keys the backend checks.

@@ -69,7 +69,8 @@ interface PendingCountResponse {
 /** The badge sources a nav entry can name. Mirrored by NavTab["badge"]. */
 export type ApprovalBadgeSource =
   | "amendment-approvals" | "po-amendment-approvals" | "payment-backdate-approvals" | "payment-requests-waiting" | "it-support-replies"
-  | "fair-links-to-settle" | "product-request-approvals" | "finance-todo" | "mail-waiting" | "meetings-unread";
+  | "fair-links-to-settle" | "product-request-approvals" | "finance-todo" | "mail-waiting" | "meetings-unread"
+  | "stock-take-approvals";
 
 /** What the count is, in the entry's tooltip ("Payment Requests · 3 waiting for Finance"). */
 export const BADGE_MEANING: Record<ApprovalBadgeSource, string> = {
@@ -83,6 +84,7 @@ export const BADGE_MEANING: Record<ApprovalBadgeSource, string> = {
   "finance-todo": "waiting on you",
   "mail-waiting": "customer emails waiting for your reply",
   "meetings-unread": "new meeting updates",
+  "stock-take-approvals": "awaiting your approval",
 };
 
 /** How often the sidebar counts are re-read while the tab is visible. */
@@ -105,6 +107,7 @@ const SOURCES: Record<ApprovalBadgeSource, { key: readonly string[]; path: strin
   "finance-todo": { key: FINANCE_TODO_COUNT_KEY, path: FINANCE_TODO_COUNT_PATH },
   "mail-waiting": { key: ["mail-waiting-count"], path: "/api/mail-center/waiting-count" },
   "meetings-unread": { key: MEETINGS_UNREAD_KEY, path: "/api/meetings/unread-count" },
+  "stock-take-approvals": { key: ["scm", "stock-take-approvals"], path: "/api/scm/stock-takes/pending-count" },
 };
 
 /** Sidebar order; also the order of the combined request's `sources`. */
@@ -191,6 +194,8 @@ export function useApprovalBadgeCounts(): Record<ApprovalBadgeSource, number> {
     "mail-waiting": enabled && can("mail_center.read"),
     /* Every signed-in user books rooms; the row (and so the count) exists only where the hub is connected. */
     "meetings-unread": enabled && itConnected,
+    /* Only a stock-take supervisor can approve an over-limit count, so only they are polled. */
+    "stock-take-approvals": enabled && can("scm.stock_take.supervise"),
   };
   const sources = SOURCE_ORDER.filter((s) => wanted[s]);
   const sourcesParam = sources.join(",");
@@ -231,6 +236,11 @@ export function useApprovalBadgeCounts(): Record<ApprovalBadgeSource, number> {
     "payment-backdate-approvals": usePendingCount(
       "payment-backdate-approvals",
       wanted["payment-backdate-approvals"] && batchSettled,
+      ownPoll,
+    ),
+    "stock-take-approvals": usePendingCount(
+      "stock-take-approvals",
+      wanted["stock-take-approvals"] && batchSettled,
       ownPoll,
     ),
     "payment-requests-waiting": usePendingCount(

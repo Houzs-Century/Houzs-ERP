@@ -63,6 +63,9 @@
 }
 .nameHead { z-index: 2; background: var(--fin-paper); font-size: 12px; font-weight: 600; color: var(--fin-text); vertical-align: bottom; padding-bottom: 8px; }
 .cell { padding: 3px 6px; border-left: 1px solid var(--fin-rule-soft); text-align: right; white-space: nowrap; font-size: 12.5px; }
+/* A column of words that scrolls with the figures (only the first column stays put). */
+.text { padding: 3px 8px; border-left: 1px solid var(--fin-rule-soft); text-align: left; font-size: 12.5px; }
+.textHead { text-align: left; }
 .pctCell { padding: 3px 8px 3px 2px; text-align: right; white-space: nowrap; font-size: 11.5px; color: var(--fin-muted); }
 .row td { height: 34px; border-top: 1px solid var(--fin-rule-soft); }
 .blockRow td { height: 32px; border-top: 1px solid var(--fin-rule); font-weight: 600; color: var(--fin-ink); }
@@ -83,7 +86,26 @@
 }
 .box::placeholder { color: var(--hz-dk-ink-soft, #a9ada3); opacity: 1; }
 .box:hover, .box:focus { border-color: var(--fin-input); background: var(--fin-surface); outline: none; }
+/* The Capex & financing table: a box open for typing shows its edge at rest; money out reads red. */
+.boxOpen { border-color: var(--fin-rule); }
 .boxTyped { border-color: var(--fin-input); background: var(--fin-surface); font-weight: 600; }
+.box.loss { color: var(--fin-late-fg); }
 .pctBox { width: 58px; font-size: 11.5px; }
+/* A purchase line split by supplier that month: its boxes show their sum, read-only. */
+.sumBox, .sumBox:hover, .sumBox:focus { border-color: transparent; background: transparent; color: var(--fin-muted); font-style: italic; cursor: default; }
+
+/* A purchase line's supplier rows, under it and indented; the Add supplier picker last. */
+.supRow td { height: 30px; border-top: 1px dashed var(--fin-rule-soft); }
+.supRow .name { font-size: 12.5px; color: var(--fin-text); }
+.supPick {
+  height: 26px; box-sizing: border-box; padding: 0 6px; border: 1px dashed var(--fin-input); border-radius: 5px; background: var(--fin-surface);
+  font: 500 12px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-petrol); cursor: pointer;
+}
+.supPick:disabled { color: var(--fin-muted); cursor: default; }
 
 .note { padding: 10px 16px; border-top: 1px solid var(--fin-rule-soft); font-size: 12px; line-height: 1.5; color: var(--fin-muted); }
+
+/* The Trade finance table: a due from a bill the books owe (blue), from the Forecast P&L (beige); unticked, faded. */
+.dueBill { background: var(--fin-info-bg); }
+.dueForecast { background: var(--fin-warn-bg); }
+.dueOff { opacity: 0.45; }

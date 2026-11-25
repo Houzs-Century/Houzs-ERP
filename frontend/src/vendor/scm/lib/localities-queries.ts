@@ -1,6 +1,6 @@
 // Vendored SLICE of apps/backend/src/lib/localities-queries.ts — only the
 // pieces SupplierDetail's edit form reads: useLocalities (drives the Malaysia
-// State <select>), distinctStates, COUNTRIES, PAYMENT_TERMS_OPTIONS.
+// State <select>), distinctStates, COUNTRIES.
 //
 // HOUZS VENDOR NOTE (supabase slice): the source useLocalities reads the
 // `my_localities` reference table DIRECTLY via the Supabase JS client (paged
@@ -254,22 +254,6 @@ export const useDeleteLocality = () => {
 /* PR #47 — Country dropdown options. Only Malaysia today. */
 export const COUNTRIES = ['Malaysia'] as const;
 export type CountryName = typeof COUNTRIES[number];
-
-/* PR #47 — Payment term presets. "Custom" lets user enter free text. */
-export const PAYMENT_TERMS_OPTIONS = [
-  'COD',
-  'NET 7',
-  'NET 14',
-  'NET 30',
-  'NET 45',
-  'NET 60',
-  'NET 90',
-  '50/50',
-  '30/70',
-  'Advance Payment',
-  'Custom',
-] as const;
-export type PaymentTermOption = typeof PAYMENT_TERMS_OPTIONS[number];
 
 /* Postcode -> locality rows, built once per localities load, so a board with
    hundreds of rows does not scan the whole table per cell. */

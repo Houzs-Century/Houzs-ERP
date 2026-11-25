@@ -3,6 +3,7 @@
 One line per open item: what — waiting on — since. Delete the line when it is done. Older items were dropped on 2026-09-15; they are in tag `archive/docs-2026-09-15`.
 
 ## Waiting on owner
+- HC-API-2610-035 (Houzs, overriding commission Jun-Aug 2026) is booked to 410-0070 ACCRUAL - COMMISSION, but the books' opening carries no accrual on it, so 410-0070 shows a debit and the overriding never reached the P&L. Owner 2026-11-25: overriding goes straight to commission. Finance points the bill's lines at 900-C003 COMMISSION ( EVENT ) (an edit re-posts the bill on its own date) — Finance — 2026-11-25
 - The GitHub Actions secret `ANTHROPIC_API_KEY` is rejected by Anthropic (401 invalid x-api-key, run 43420961221), so model-calling tools in `run-script.yml` cannot run; the Worker's own key works. Owner re-enters a current key in GitHub repo secrets (since 2026-11-13).
 - STOCK WORK ON HOLD (owner 2026-11-11: "don't touch stock; someone else checks"). Nothing below may be applied until that person signs off:
   - Half-done documents, `repair-half-done-documents-2026-11.mjs` (PLAN run 42965040246, refusals 0): HC-GRN-2609-118 (IN +1 8030-2A(LHF), linked to HC-DO-2610-329's uncosted OUT), HC-GRN-2610-045 (IN +1 each 8030-1A(LHF) / 8030-2A(RHF), lots closed at once; the cancel-then-repost bug, fixed for the future by #5645), HC-DO-2610-319 (5 units OUT, LOADED since 2026-10-22 with no OUT; confirm the goods really left). `DOC_NOS=` limits a run (#5654)
@@ -50,7 +51,7 @@ One line per open item: what — waiting on — since. Delete the line when it i
 - Old service cases have no Postcode / City / State of their own yet (new table `assr_case_address`, empty at migration; readers fall back to the linked SO as before). Run `backfill-assr-case-address.mjs` on production through "Run a backend script on production": plan first, read the refusals, then apply — owner — 2026-11-17
 
 ## Waiting on others
-- Meetings email and WhatsApp: invitations and reminders reach people only as ERP notifications until Gmail (Google setup for the company mailboxes) and Houzs Connect WhatsApp templates are connected; then add per-ERP sending and Meet/Zoom link creation — Google admin — 2026-11-23
+- Meetings WhatsApp reminders: shown as "Coming soon" until Houzs Connect WhatsApp templates are connected — owner — 2026-11-23
 - PR #5448 (service case Operation Dept): staging already ran its `20261110T1300` / `T1400` files; if they merge under new numbers, add the two old names to `backend/scripts/lib/migration-retirements.mjs` — Laphii1206 — 2026-11-11
 - Accountant: start date for the customer receipt (OR) write-back — 2026-09-14
 - Office: Remark 2 run in AutoCount for receipts after 2026-09-10 18:25 — 2026-09-15

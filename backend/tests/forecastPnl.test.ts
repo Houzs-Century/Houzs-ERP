@@ -6,9 +6,9 @@
    blocks are the statement's own; the keys are the statements' read key and
    the vouchers' write key. Same fake-PostgREST harness as accountingReports. */
 import { Hono } from 'hono';
-import { describe, expect, test } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
-import { forecastFiguresHandler, forecastGetHandler, forecastPutHandler } from '../src/scm/routes/accounting-forecast';
+import { billedAccountsBySupplier, forecastFiguresHandler, forecastGetHandler, forecastPutHandler, recentFrom } from '../src/scm/routes/accounting-forecast';
 import { FORECAST_BLOCKS } from '../src/scm/shared/forecast-pnl';
 import { REPORT_BLOCKS } from '../src/acc/report-layout';
 
@@ -29,8 +29,11 @@ const ACCOUNTS: Row[] = [
   acc('950-0000', 'TAXATION', 'EXPENSE', 'TAXATION'),
 ];
 
-function harness(perms: string[] = ['scm.payment_voucher.post', 'scm.payment_voucher.write'], rows: Row[] = [], bindings: Row[] = []) {
-  const sb = fakeSb({ accounts: ACCOUNTS.map((r) => ({ ...r })), acc_forecast_pnl: rows.map((r) => ({ ...r })), acc_report_layouts: [], acc_item_group_accounts: bindings.map((r) => ({ ...r })) });
+function harness(perms: string[] = ['scm.payment_voucher.post', 'scm.payment_voucher.write'], rows: Row[] = [], bindings: Row[] = [], extra: Record<string, Row[]> = {}) {
+  const sb = fakeSb({
+    accounts: ACCOUNTS.map((r) => ({ ...r })), acc_forecast_pnl: rows.map((r) => ({ ...r })), acc_report_layouts: [], acc_item_group_accounts: bindings.map((r) => ({ ...r })),
+    ...Object.fromEntries(Object.entries(extra).map(([t, rs]) => [t, rs.map((r) => ({ ...r }))])),
+  });
   const app = new Hono();
   app.use('*', async (c, next) => {
     c.set('supabase' as never, sb as never);
@@ -82,7 +85,7 @@ describe('PUT /accounting/forecast', () => {
     const { app, sb } = harness();
     const saved = await put(app, { months: { '2026-11': NOV, '2026-10': OCT } });
     expect(saved.status, await saved.clone().text()).toBe(200);
-    expect(await saved.json()).toEqual({ ok: true, months: { '2026-10': OCT, '2026-11': NOV }, removed: [] });
+    expect(await saved.json()).toEqual({ ok: true, months: { '2026-10': OCT, '2026-11': NOV }, suppliers: {}, removed: [] });
     const rows = sb.tables.acc_forecast_pnl as Row[];
     expect(rows.map((r) => [r.company_id, r.month, r.updated_by])).toEqual([[CO, '2026-10', 'Chew'], [CO, '2026-11', 'Chew']]);
     expect(rows[0]!.lines).toEqual(OCT);
@@ -182,5 +185,132 @@ describe('GET /accounting/forecast/figures', () => {
     expect(dec.months).toEqual([{ month: '2026-12', salesSen: 0, lines: [], totals: { tradingIncomeSen: 0, costOfSalesSen: 0, grossProfitSen: 0, otherIncomeSen: 0, expensesSen: 0, profitBeforeTaxSen: 0, taxationSen: 0, netProfitSen: 0 } }]);
     expect((await app.request('/accounting/forecast/figures?from=2026-11&to=2026-10')).status).toBe(400);
     expect((await app.request('/accounting/forecast/figures?from=2026-1&to=2026-10')).status).toBe(400);
+  });
+});
+
+/* Step 1 of the Hookka forecast port (2026-11-24): a purchase account's month
+   split by supplier. Pinned: which lines are purchase accounts; the supplier
+   figures round-trip beside the lines; only the active company's suppliers
+   (or Other) are taken; a page that sends no suppliers keeps the stored ones;
+   the figures door reads a split line as the sum of its suppliers; each
+   supplier comes with the purchase accounts its bills landed on lately.
+   Made-up suppliers and figures. */
+describe('a purchase account split by supplier', () => {
+  const SUPPLIERS: Row[] = [
+    { id: 'sup-a', company_id: CO, code: '400-A001', name: 'Alpha Trading', status: 'ACTIVE' },
+    { id: 'sup-b', company_id: CO, code: '400-B001', name: 'beta Supplies', status: 'ACTIVE' },
+    { id: 'sup-c', company_id: CO, code: '400-C001', name: 'Gamma Works', status: 'INACTIVE' },
+    { id: 'sup-x', company_id: 1, code: '400-X001', name: 'Another Company Supplier', status: 'ACTIVE' },
+  ];
+  const gl = (je: string, date: string, source: string, code: string, dr: number, cr: number, over: Row = {}): Row => ({
+    company_id: CO, line_id: `${je}:${code}`, je_no: je, entry_date: date, source_type: source, account_code: code, debit_sen: dr, credit_sen: cr,
+    party_type: null, party_code: null, posted: true, reversed: false, reversed_by_je: null, ...over,
+  });
+  const bill = (je: string, date: string, source: string, code: string, supplier: string, sen: number, over: Row = {}): Row[] => [
+    gl(je, date, source, code, sen, 0, over),
+    gl(je, date, source, '400-0000', 0, sen, { party_type: 'SUPPLIER', party_code: supplier, ...over }),
+  ];
+  const LEDGER: Row[] = [
+    ...bill('PI-1', '2026-10-05', 'PI', '601-0003', '400-A001', 500_000),                         // Alpha billed sofa purchases lately
+    ...bill('API-1', '2026-08-01', 'API', '601-0003', '400-B001', 80_000),                        // beta too, on an AP invoice, the window's first day
+    ...bill('PI-2', '2026-11-02', 'PI', '615-0000', '400-B001', 20_000),                          // carriage is not a purchase account
+    ...bill('PI-3', '2026-11-03', 'PI', '601-0003', '400-C001', 300_000, { reversed: true }),    // a reversed bill counts nowhere
+    ...bill('PI-0', '2026-07-31', 'PI', '601-0003', '400-C001', 100_000),                         // before the window
+    ...bill('PI-9', '2026-10-05', 'PI', '601-0003', '400-X001', 100_000, { company_id: 1 }),      // another company's bill
+  ];
+  const world = (rows: Row[] = []) => harness(undefined, rows, [], { suppliers: SUPPLIERS, v_gl_entries: LEDGER });
+
+  beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-11-24T04:00:00Z')); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  test('GET marks the purchase accounts and lists the company\'s own suppliers, each with the purchase accounts its bills landed on lately', async () => {
+    const { app } = world();
+    const b = await (await app.request('/accounting/forecast')).json() as {
+      suppliers: Record<string, unknown>;
+      accounts: Array<{ code: string; purchase?: boolean }>;
+      supplierList: Array<{ id: string; code: string; name: string; active: boolean; recent: string[] }>;
+    };
+    expect(b.accounts.filter((a) => a.purchase).map((a) => a.code)).toEqual(['601-0003']);
+    expect(b.suppliers).toEqual({});
+    expect(b.supplierList).toEqual([
+      { id: 'sup-a', code: '400-A001', name: 'Alpha Trading', active: true, recent: ['601-0003'] },
+      { id: 'sup-b', code: '400-B001', name: 'beta Supplies', active: true, recent: ['601-0003'] },
+      { id: 'sup-c', code: '400-C001', name: 'Gamma Works', active: false, recent: [] },
+    ]);
+  });
+
+  test('the window starts on the first day of the month three months back; a bill nets per supplier and account', () => {
+    expect(recentFrom('2026-11-24')).toBe('2026-08-01');
+    expect(recentFrom('2026-02-10')).toBe('2025-11-01');
+    expect(recentFrom('2026-03-01')).toBe('2025-12-01');
+    const billed = billedAccountsBySupplier([
+      { je_no: 'J1', account_code: '601-0003', debit_sen: 100, credit_sen: 0, party_type: null, party_code: null, posted: true },
+      { je_no: 'J1', account_code: '400-0000', debit_sen: 0, credit_sen: 100, party_type: 'SUPPLIER', party_code: 'S1', posted: true },
+      { je_no: 'J2', account_code: '601-0001', debit_sen: 0, credit_sen: 40, party_type: null, party_code: null, posted: true },     // a bill that nets to a credit is not a purchase
+      { je_no: 'J2', account_code: '400-0000', debit_sen: 40, credit_sen: 0, party_type: 'SUPPLIER', party_code: 'S1', posted: true },
+      { je_no: 'J3', account_code: '601-0001', debit_sen: 70, credit_sen: 0, party_type: null, party_code: null, posted: true },     // no supplier on the journal: nobody's
+      { je_no: 'J4', account_code: '601-0001', debit_sen: 90, credit_sen: 0, party_type: null, party_code: null, posted: false },    // a draft is not in the books
+      { je_no: 'J4', account_code: '400-0000', debit_sen: 0, credit_sen: 90, party_type: 'SUPPLIER', party_code: 'S2', posted: false },
+    ], new Set(['601-0003', '601-0001']));
+    expect([...billed].map(([s, codes]) => [s, [...codes]])).toEqual([['S1', ['601-0003']]]);
+  });
+
+  test('PUT stores the supplier figures beside the lines; GET and the figures read them back; the split line is the sum of its suppliers', async () => {
+    const { app, sb } = world();
+    const SUP = { '2026-10': { '601-0003': { 'sup-a': { amtSen: 3_000_000 }, 'sup-c': { bp: 1000 }, other: { amtSen: 200_000 } } } };
+    const saved = await put(app, { months: { '2026-10': OCT, '2026-11': NOV }, suppliers: SUP });
+    expect(saved.status, await saved.clone().text()).toBe(200);
+    expect(await saved.json()).toMatchObject({ ok: true, suppliers: SUP });
+    const rows = sb.tables.acc_forecast_pnl as Row[];
+    expect(rows.map((r) => [r.month, r.suppliers])).toEqual([['2026-10', SUP['2026-10']], ['2026-11', {}]]);
+    /* The account's own 55% stays stored, superseded while its suppliers carry figures. */
+    expect((rows[0]!.lines as Record<string, unknown>)['601-0003']).toEqual({ bp: 5500 });
+
+    const read = await (await app.request('/accounting/forecast')).json() as { months: Record<string, unknown>; suppliers: Record<string, unknown> };
+    expect(read.suppliers).toEqual(SUP);
+    expect(read.months).toEqual({ '2026-10': OCT, '2026-11': NOV });
+
+    const fig = await (await app.request('/accounting/forecast/figures?from=2026-10&to=2026-11')).json() as { months: Array<{ month: string; lines: Array<{ code: string; amountSen: number; keyed: string; bySupplier: Array<{ supplierId: string; amountSen: number }> }>; totals: { costOfSalesSen: number; grossProfitSen: number } }> };
+    const oct = fig.months[0]!;
+    /* Sales 100,000.00: Alpha 30,000.00 + Gamma 10% = 10,000.00 + Other 2,000.00 = 42,000.00, not the account's own 55,000.00. */
+    expect(oct.lines.find((l) => l.code === '601-0003')).toMatchObject({ amountSen: 4_200_000, keyed: 'suppliers' });
+    expect(oct.lines.find((l) => l.code === '601-0003')!.bySupplier.map((x) => [x.supplierId, x.amountSen])).toEqual([['sup-a', 3_000_000], ['sup-c', 1_000_000], ['other', 200_000]]);
+    expect(oct.totals.costOfSalesSen).toBe(4_200_000 + 100_000);
+    expect(oct.totals.grossProfitSen).toBe(10_000_000 - 4_300_000);
+    /* November has no supplier figure: its own 55% stands. */
+    expect(fig.months[1]!.lines.find((l) => l.code === '601-0003')).toMatchObject({ amountSen: 4_950_000, keyed: 'percent' });
+  });
+
+  test('PUT refuses by name a supplier of another company, an unknown one, a line that is not a purchase account, a month off the grid — and keeps nothing', async () => {
+    const { app, sb } = world([{ company_id: CO, month: '2026-10', lines: OCT, suppliers: { '601-0003': { 'sup-a': { amtSen: 1 } } } }]);
+    const cases: Array<[unknown, string]> = [
+      [{ '2026-10': { '601-0003': { 'sup-x': { amtSen: 1 } } } }, '2026-10 601-0003 sup-x'],
+      [{ '2026-10': { '601-0003': { 'sup-gone': { amtSen: 1 } } } }, '2026-10 601-0003 sup-gone'],
+      [{ '2026-10': { '615-0000': { 'sup-a': { amtSen: 1 } } } }, '2026-10 615-0000'],
+      [{ '2026-12': { '601-0003': { 'sup-a': { amtSen: 1 } } } }, '2026-12'],
+      [{ '2026-10': { '601-0003': { 'sup-a': { amtSen: 1.5 } } } }, '2026-10 601-0003 sup-a amount'],
+    ];
+    for (const [suppliers, cell] of cases) {
+      const res = await put(app, { months: { '2026-10': OCT }, suppliers });
+      expect(res.status, JSON.stringify(suppliers)).toBe(400);
+      expect(await res.json()).toMatchObject({ error: 'bad_cell', cell });
+    }
+    expect((sb.tables.acc_forecast_pnl as Row[])[0]!.suppliers).toEqual({ '601-0003': { 'sup-a': { amtSen: 1 } } });
+  });
+
+  test('a page that sends no suppliers keeps each kept month\'s supplier figures; sending them empty clears them', async () => {
+    const stored = { '601-0003': { 'sup-a': { amtSen: 3_000_000 } } };
+    const { app, sb } = world([
+      { company_id: CO, month: '2026-10', lines: OCT, suppliers: stored },
+      { company_id: CO, month: '2026-11', lines: NOV, suppliers: { '601-0003': { 'sup-b': { amtSen: 5 } } } },
+    ]);
+    const res = await put(app, { months: { '2026-10': { ...OCT, '900-T003': { bp: 200 } } } });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ suppliers: { '2026-10': stored }, removed: ['2026-11'] });
+    const rows = sb.tables.acc_forecast_pnl as Row[];
+    expect(rows.map((r) => [r.month, r.suppliers])).toEqual([['2026-10', stored]]);
+    expect((rows[0]!.lines as Record<string, unknown>)['900-T003']).toEqual({ bp: 200 });
+    await put(app, { months: { '2026-10': OCT }, suppliers: {} });
+    expect((sb.tables.acc_forecast_pnl as Row[])[0]!.suppliers).toEqual({});
   });
 });

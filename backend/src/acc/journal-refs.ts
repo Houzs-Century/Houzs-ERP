@@ -38,6 +38,7 @@
 //                   charge kept off a credit (SETTLECHARGE-R<receipt>) reads the
 //                   credit's day, doc2 = its bank ref
 //   STOCKADJ        doc = "Stock mm/yyyy"
+//   COMMREL         doc = "Commission mm/yyyy"
 //   MANUAL          nothing — the narration says what it is
 // ----------------------------------------------------------------------------
 
@@ -77,6 +78,12 @@ const KEPT_CHARGE = /^SETTLECHARGE-R(\d+)$/;
 export const stockMonthLabel = (doc: string): string => {
   const m = /(\d{4})-(\d{2})$/.exec(doc);
   return m ? `Stock ${m[2]}/${m[1]}` : doc;
+};
+
+/** "Commission 10/2026" off a COMMREL key (COMMREL-<company>-<yyyy>-<mm>). */
+export const commissionMonthLabel = (doc: string): string => {
+  const m = /(\d{4})-(\d{2})$/.exec(doc);
+  return m ? `Commission ${m[2]}/${m[1]}` : doc;
 };
 
 /** Read one lookup table in chunks and fold it into a map. */
@@ -228,6 +235,8 @@ export async function resolveJournalRefs(sb: Db, companyId: number, entries: Jou
       ref = { reference: doc, who: party ?? acquirer, doc: ch ? `${acquirer} charge${ch.settled_on ? ` ${fmtDate(ch.settled_on)}` : ''}` : doc, doc2: null };
     } else if (base === 'STOCKADJ' && doc) {
       ref = { reference: doc, who: party ?? note, doc: stockMonthLabel(doc), doc2: null };
+    } else if (base === 'COMMREL' && doc) {
+      ref = { reference: doc, who: party ?? note, doc: commissionMonthLabel(doc), doc2: null };
     } else if (base === 'PI' && doc) {
       ref = { reference: doc, who: party ?? note, doc, doc2: str(pis.rows.get(doc)?.supplier_invoice_ref) };
     } else if (base === 'API' && doc) {

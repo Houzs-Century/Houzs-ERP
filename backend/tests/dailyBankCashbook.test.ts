@@ -5,15 +5,19 @@
      • the original board (GET /daily-bank) does not move, whatever is typed;
      • the cash-book board (GET /daily-bank/cashbook/board) carries each account
        with a start: the start + the receipts typed for it − the approved
-       (POSTED) vouchers paying out of it, on their voucher date and from the
-       start date on; a deleted receipt, a draft or cancelled voucher and another
+       (POSTED) vouchers paying out of it, on the Malaysia day each was approved
+       (owner 2026-11-24), those approved before the start (or on it, dated
+       before it) inside the start; a deleted receipt, a draft or cancelled voucher and another
        company's rows never count; an account without a start is listed as not
        started;
      • a receipt is refused for an account with no start, before its start, on a
        day still to come, without a note or an amount; edit and delete keep the
        row and write the change, from -> to, on the audit trail;
+     • an approved voucher ticked as already in the starting balance (owner
+       2026-11-25: 要，加勾选) is listed apart on its day and never taken off;
+       unticked it comes off again; both on the trail;
      • only the Finance write key (scm.payment_voucher.post) changes anything, and
-       another company's account or receipt is never touched.
+       another company's account, receipt, voucher or tick is never touched.
    The arithmetic itself is pinned in backend/src/acc/daily-bank.test.ts. */
 
 import { Hono } from 'hono';
@@ -23,7 +27,7 @@ import { dailyBankHandler } from '../src/scm/routes/accounting';
 import { cashbookBoardHandler } from '../src/scm/routes/accounting-daily-bank';
 import {
   calendarDay, cashbookGet, cashbookReceiptCreate, cashbookReceiptDelete, cashbookReceiptUpdate,
-  cashbookReceiptsDayPut, cashbookStartDelete, cashbookStartPut,
+  cashbookReceiptsDayPut, cashbookSkipDelete, cashbookSkipPut, cashbookStartDelete, cashbookStartPut,
 } from '../src/scm/routes/accounting-daily-bank-cashbook';
 
 const CO = 1;
@@ -62,8 +66,8 @@ function tables(): Record<string, Row[]> {
     acc_acquirers: [],
     acc_account_roles: [],
     payment_vouchers: [
-      pv({ id: 'pv-1', pv_number: 'HPV-101', payee_name: 'UNICOM', credit_account_code: '310-0010', voucher_date: '2026-11-24', total_sen: 40_000, bank_charge_sen: 100 }),
-      pv({ id: 'pv-2', pv_number: 'HPV-102', payee_name: 'TAN YONG HONG', notes: 'Truck rental', credit_account_code: '310-0010', voucher_date: TODAY, total_sen: 25_000 }),
+      pv({ id: 'pv-1', pv_number: 'HPV-101', payee_name: 'UNICOM', credit_account_code: '310-0010', voucher_date: '2026-11-24', total_sen: 40_000, bank_charge_sen: 100, approved_at: '2026-11-24T03:00:00Z' }),
+      pv({ id: 'pv-2', pv_number: 'HPV-102', payee_name: 'TAN YONG HONG', notes: 'Truck rental', credit_account_code: '310-0010', voucher_date: TODAY, total_sen: 25_000, approved_at: `${TODAY}T02:00:00Z` }),
       /* Before the start: already inside the starting balance. */
       pv({ id: 'pv-3', pv_number: 'HPV-090', payee_name: 'OLD', credit_account_code: '310-0010', voucher_date: '2026-11-20', total_sen: 99_999 }),
       /* Checked, not approved: pending, never paid as well. */
@@ -80,6 +84,7 @@ function tables(): Record<string, Row[]> {
       /* Another company's receipt on the same account code and day. */
       { id: 'r-other', company_id: OTHER, account_code: '310-0010', receipt_date: TODAY, amount_sen: 5_555, note: 'not ours', created_by: 'X', created_at: '2026-11-25T01:00:00Z', updated_by: null, updated_at: '2026-11-25T01:00:00Z', deleted_by: null, deleted_at: null },
     ],
+    acc_daily_bank_voucher_skips: [],
     entity_audit_log: [],
     staff: [],
   };
@@ -105,6 +110,8 @@ function harness(perms: string[] = [WRITE]) {
   app.patch('/accounting/daily-bank/receipts/:id', cashbookReceiptUpdate as never);
   app.delete('/accounting/daily-bank/receipts/:id', cashbookReceiptDelete as never);
   app.put('/accounting/daily-bank/receipts/day', cashbookReceiptsDayPut as never);
+  app.put('/accounting/daily-bank/skips/:pvId', cashbookSkipPut as never);
+  app.delete('/accounting/daily-bank/skips/:pvId', cashbookSkipDelete as never);
   const send = (method: string, path: string, body?: unknown) => app.request(path, {
     method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body),
   });
@@ -116,11 +123,13 @@ type Block = {
   openingSen: number; inSen: number; outSen: number; closingSen: number; pendingSen: number; availableSen: number;
   receipts: Array<{ sourceType: string; note: string; amountSen: number; typedBy?: string | null }>;
   payouts: Array<{ docNo: string; party: string | null; note: string; amountSen: number }>;
+  notDeducted?: Array<{ pvId: string; pvNumber: string; party: string | null; amountSen: number; tickedBy: string | null; tickedAt: string | null }>;
 };
 type Board = {
   book: string; blocks: Block[]; totalClosingSen: number; pendingApprovalSen: number; availableSen: number; note: string;
   transit: Array<{ acquirerCode: string; balanceSen: number }>; unassignedTransit: Array<{ acquirerCode: string }>;
   notStarted: Array<{ accountCode: string; startDate: string | null }>;
+  canWrite?: boolean;
 };
 const fetchBoard = async (h: ReturnType<typeof harness>, path: string, date: string) => {
   const res = await h.app.request(`${path}?date=${date}`);
@@ -148,7 +157,7 @@ describe('Daily Bank cash book — the board', () => {
     expect(blockOf(o, '310-0020')).toMatchObject({ closingSen: -81_164_858 });
   });
 
-  test('set a start, type receipts, and the approved vouchers come off on their voucher date — on the new board only', async () => {
+  test('set a start, type receipts, and the approved vouchers come off on the day they were approved — on the new board only', async () => {
     const h = harness();
     const before = await original(h);
     expect((await h.send('PUT', '/accounting/daily-bank/starts/310-0010', { startDate: '2026-11-24', balanceSen: 77_408_649 })).status).toBe(200);
@@ -185,6 +194,37 @@ describe('Daily Bank cash book — the board', () => {
     const earlier = await board(h, '2026-11-23');
     expect(earlier.blocks).toEqual([]);
     expect(earlier.notStarted.map((x) => [x.accountCode, x.startDate])).toEqual([['310-0010', '2026-11-24'], ['310-0020', null]]);
+  });
+
+  /* Owner 2026-11-24, approving old vouchers that are being paid now: 其实就是我approved了
+     就当做一件过了要扣，不可以吗？ — then 照这样改. */
+  test('an approved voucher comes off on the Malaysia day it was approved, whatever its own date; one already inside the start stays out', async () => {
+    const h = harness();
+    await h.send('PUT', '/accounting/daily-bank/starts/310-0010', { startDate: '2026-11-24', balanceSen: 1_000_000 });
+    h.t.payment_vouchers!.push(
+      /* Dated long before the start, approved today: comes off today, like any other line. */
+      pv({ id: 'pv-old', pv_number: 'HPV-050', payee_name: 'OLD BILL', credit_account_code: '310-0010', voucher_date: '2026-09-29', total_sen: 70_000, bank_charge_sen: 100, approved_at: `${TODAY}T01:00:00Z` }),
+      /* Dated on the start day, approved today: moves from the 24th to today. */
+      pv({ id: 'pv-moved', pv_number: 'HPV-105', payee_name: 'MOVED', credit_account_code: '310-0010', voucher_date: '2026-11-24', total_sen: 11_000, approved_at: '2026-11-24T23:30:00Z' }),
+      /* Approved on the start day but dated before it: inside the start. */
+      pv({ id: 'pv-in', pv_number: 'HPV-060', payee_name: 'IN THE START', credit_account_code: '310-0010', voucher_date: '2026-11-02', total_sen: 888, approved_at: '2026-11-24T02:00:00Z' }),
+      /* Posted without an approval stamp: the day it was posted. */
+      pv({ id: 'pv-unstamped', pv_number: 'HPV-106', payee_name: 'NO STAMP', credit_account_code: '310-0010', voucher_date: '2026-11-03', total_sen: 4_000, approved_at: null, posted_at: `${TODAY}T05:00:00Z` }),
+    );
+    const may = blockOf(await board(h), '310-0010');
+    /* B/F: the start less HPV-101 (approved on the start day, dated on it, with its charge). */
+    expect(may.openingSen).toBe(1_000_000 - 40_100);
+    expect(may.payouts.map((m) => [m.docNo, m.party, m.note, m.amountSen])).toEqual([
+      ['HPV-050', 'OLD BILL', 'Other · incl. bank charge RM 1.00', 70_100],
+      ['HPV-102', 'TAN YONG HONG', 'Truck rental', 25_000],
+      ['HPV-105', 'MOVED', 'Other', 11_000],
+      ['HPV-106', 'NO STAMP', 'Other', 4_000],
+    ]);
+    expect(may.closingSen).toBe(1_000_000 - 40_100 - 70_100 - 25_000 - 11_000 - 4_000);
+    /* The start day itself: HPV-101 then; HPV-105 not yet, the old ones never. */
+    const startDay = blockOf(await board(h, '2026-11-24'), '310-0010');
+    expect(startDay.payouts.map((m) => m.docNo)).toEqual(['HPV-101']);
+    expect(startDay.closingSen).toBe(1_000_000 - 40_100);
   });
 
   test('a deleted receipt stops counting; an edited one counts as edited', async () => {
@@ -409,6 +449,95 @@ describe('Daily Bank cash book — the day as a grid', () => {
     expect(h.t.acc_daily_bank_receipts!.filter((r) => r.company_id === CO)).toEqual([]);
     const viewer = withTerminals(harness([]));
     expect((await save(viewer, [{ accountCode: '310-0010', method: 'online', amountSen: 1 }])).status).toBe(403);
+  });
+});
+
+/* Owner 2026-11-25, on a voucher whose money left in October but which was re-created and
+   approved after the bank's start: 这个是例外，因为他们不小心cancel了 — offered a tick, 要，加勾选. */
+describe('Daily Bank cash book — a voucher ticked as already in the starting balance', () => {
+  const again = () => pv({
+    id: 'pv-again', pv_number: 'HPV-200', payee_name: 'OWN TRANSFER', credit_account_code: '310-0010',
+    voucher_date: '2026-10-02', total_sen: 3_100_000, approved_at: `${TODAY}T02:30:00Z`,
+  });
+  const started = async (perms?: string[]) => {
+    const h = harness(perms);
+    h.t.acc_daily_bank_starts!.push({ id: 's-may', company_id: CO, account_code: '310-0010', start_date: '2026-11-24', balance_sen: 1_000_000, note: null, set_by: 'Chew', updated_at: '2026-11-24T00:00:00Z' });
+    h.t.payment_vouchers!.push(again());
+    return h;
+  };
+  const skipsOf = (h: ReturnType<typeof harness>) => h.t.acc_daily_bank_voucher_skips!.filter((s) => s.company_id === CO);
+
+  test('ticked, it is listed apart on its day and not taken off; unticked, it comes off again; the original board never moves', async () => {
+    const h = await started();
+    const ledgerBefore = blockOf(await original(h), '310-0010');
+    const before = blockOf(await board(h), '310-0010');
+    expect(before.payouts.map((m) => m.docNo)).toEqual(['HPV-102', 'HPV-200']);
+    expect(before.notDeducted).toEqual([]);
+
+    expect((await h.send('PUT', '/accounting/daily-bank/skips/pv-again')).status).toBe(200);
+    const b = await board(h);
+    expect(b.canWrite).toBe(true);
+    const may = blockOf(b, '310-0010');
+    expect(may.payouts.map((m) => m.docNo)).toEqual(['HPV-102']);
+    expect(may.notDeducted).toEqual([{
+      pvId: 'pv-again', pvNumber: 'HPV-200', party: 'OWN TRANSFER', note: 'Other', amountSen: 3_100_000,
+      tickedBy: 'Chew', tickedAt: expect.any(String) as unknown as string,
+    }]);
+    expect(may.outSen).toBe(25_000);
+    expect(may.closingSen).toBe(before.closingSen + 3_100_000);
+    expect(skipsOf(h)).toEqual([expect.objectContaining({ pv_id: 'pv-again', ticked_by: 'Chew' })]);
+    /* Ticked twice is one tick. */
+    expect(await (await h.send('PUT', '/accounting/daily-bank/skips/pv-again')).json()).toEqual({ ok: true, alreadyTicked: true });
+    expect(skipsOf(h)).toHaveLength(1);
+
+    expect((await h.send('DELETE', '/accounting/daily-bank/skips/pv-again')).status).toBe(200);
+    const back = blockOf(await board(h), '310-0010');
+    expect(back.payouts.map((m) => m.docNo)).toEqual(['HPV-102', 'HPV-200']);
+    expect(back.notDeducted).toEqual([]);
+    expect(back.closingSen).toBe(before.closingSen);
+    /* The untick stamps the row; it stays for the trail. */
+    expect(skipsOf(h)).toEqual([expect.objectContaining({ pv_id: 'pv-again', ticked_by: 'Chew', unticked_by: 'Chew' })]);
+    expect(skipsOf(h)[0]!.unticked_at).toBeTruthy();
+    expect(await (await h.send('DELETE', '/accounting/daily-bank/skips/pv-again')).json()).toEqual({ ok: true, alreadyUnticked: true });
+
+    expect(h.t.entity_audit_log!.map((a) => [a.entity_type, a.entity_id, a.entity_doc_no, a.action, a.company_id, a.actor_name_snapshot, a.field_changes])).toEqual([
+      ['DAILY_BANK_SKIP', 'pv-again', 'HPV-200', 'CREATE', CO, 'Chew', [{ field: 'deducted', from: 'Yes', to: 'No' }]],
+      ['DAILY_BANK_SKIP', 'pv-again', 'HPV-200', 'DELETE', CO, 'Chew', [{ field: 'deducted', from: 'No', to: 'Yes' }]],
+    ]);
+    expect(blockOf(await original(h), '310-0010')).toEqual(ledgerBefore);
+  });
+
+  test('refused: not approved, cancelled, another company\'s, no such voucher, not on the cash book, already inside the start, no write key', async () => {
+    const h = await started();
+    h.t.payment_vouchers!.push(pv({ id: 'pv-hlbb', pv_number: 'HPV-300', payee_name: 'HLBB PAYEE', credit_account_code: '310-0020', voucher_date: TODAY, total_sen: 1_000, approved_at: `${TODAY}T02:00:00Z` }));
+    const cases: Array<[string, number, string]> = [
+      ['pv-4', 409, 'not_approved'],        // checked, not approved
+      ['pv-5', 409, 'not_approved'],        // cancelled
+      ['pv-6', 404, 'not_found'],           // another company's voucher
+      ['no-such-voucher', 404, 'not_found'],
+      ['pv-hlbb', 409, 'not_on_cashbook'],  // HLBB has no start
+      ['pv-3', 409, 'inside_start'],        // approved before the start: never taken off anyway
+    ];
+    for (const [id, status, error] of cases) {
+      const res = await h.send('PUT', `/accounting/daily-bank/skips/${id}`);
+      expect([res.status, (await res.json() as { error: string }).error], id).toEqual([status, error]);
+    }
+    expect(h.t.acc_daily_bank_voucher_skips).toEqual([]);
+    expect(h.t.entity_audit_log).toEqual([]);
+
+    const viewer = await started([]);
+    expect((await viewer.send('PUT', '/accounting/daily-bank/skips/pv-again')).status).toBe(403);
+    expect((await viewer.send('DELETE', '/accounting/daily-bank/skips/pv-again')).status).toBe(403);
+    expect((await board(viewer)).canWrite).toBe(false);
+    expect(viewer.t.acc_daily_bank_voucher_skips).toEqual([]);
+  });
+
+  test('another company\'s tick neither counts here nor can be unticked from here', async () => {
+    const h = await started();
+    h.t.acc_daily_bank_voucher_skips!.push({ id: 'k-other', company_id: OTHER, pv_id: 'pv-again', ticked_by: 'X', ticked_at: '2026-11-25T01:00:00Z', unticked_by: null, unticked_at: null });
+    expect(blockOf(await board(h), '310-0010').payouts.map((m) => m.docNo)).toEqual(['HPV-102', 'HPV-200']);
+    expect(await (await h.send('DELETE', '/accounting/daily-bank/skips/pv-again')).json()).toEqual({ ok: true, alreadyUnticked: true });
+    expect(h.t.acc_daily_bank_voucher_skips!.find((s) => s.id === 'k-other')).toMatchObject({ unticked_at: null });
   });
 });
 

@@ -8,7 +8,7 @@ import { and, asc, eq, gte, inArray, isNotNull, isNull, lte, ne, sql } from "dri
 import { APPROVED_LEAVE_STATUSES } from "../../scm/shared/hr-attendance";
 import { asDate } from "./hr-attendance-view";
 import { ASSR_LEG_BY_STOP, assrBoardLocation } from "../../scm/lib/assr-board-scope";
-import { doCountsAsDelivered } from "../../scm/shared/do-shipped-states";
+import { doRunDate, isOwnLorryDoRun } from "../../scm/lib/own-lorry-do-run";
 import { getDb } from "../../db/client";
 import { hr_attendance, hr_employees, hr_payslips, hr_public_holidays, hr_trip_missed_days, hr_trip_rate_versions, hr_trip_rows, hr_working_hours } from "../../db/schema";
 import {
@@ -391,29 +391,9 @@ export type PlanningDo = {
   h2_name: string | null;
 };
 
-const ymdOf = (v: string | null): string | null => (/^\d{4}-\d{2}-\d{2}/.test(String(v ?? "")) ? String(v).slice(0, 10) : null);
-
-/** The day a DO ran, the day Last Mile shows it on its lorry: an SO assigned to a
- *  lorry with no trip sits on the lorry's card on the SO's due date (amended, else
- *  the customer's; lorry-day-runs.ts, isAssignedNoTripRow), shown with its newest
- *  live DO. An older DO of the SO (a partial delivery Last Mile no longer shows)
- *  ran the day it was delivered (Malaysia date), else its DO date. Pure. */
-export function doRunDate(d: Pick<PlanningDo, "so_due_date" | "is_latest_live" | "delivered_day" | "do_date">): string | null {
-  const due = ymdOf(d.so_due_date);
-  if (d.is_latest_live === true && due) return due;
-  return ymdOf(d.delivered_day) ?? ymdOf(d.do_date);
-}
-
-/** Does this DO count as a run of one of our own lorries? Shipped (not draft,
- *  not cancelled), a run date, not drop-shipped, not billed by a 3PL, a lorry on
- *  its crew that is not an outsourced lorry, and on no live trip stop (`stopDoIds`
- *  or `on_live_trip`: that stop is its row). Pure. */
-export function isOwnLorryDoRun(d: PlanningDo, stopDoIds: ReadonlySet<string>): boolean {
-  if (!doCountsAsDelivered(d.do_status) || !doRunDate(d)) return false;
-  if (d.is_dropship === true || d.has_3pl === true || d.lorry_internal === false) return false;
-  if (!(d.lorry_plate || d.crew_plate || "").trim()) return false;
-  return d.on_live_trip !== true && !stopDoIds.has(d.do_id);
-}
+/* Which DOs our own lorries ran, and the day each ran: the rule the Own fleet
+   cost reads too (scm/lib/own-lorry-do-run.ts). */
+export { doRunDate, isOwnLorryDoRun };
 
 /** Each delivery order our own lorries ran on a day of [first, last], as a
  *  Delivery order row: the date is its run date (doRunDate), the amount its Local

@@ -1,10 +1,20 @@
 // ----------------------------------------------------------------------------
-// department-pnl — the Department P&L's arithmetic (owner 2026-11-19). Three
-// views, each from the books, nothing typed (「不要我填」):
+// department-pnl — the Department P&L's arithmetic (owner 2026-11-19). Each
+// department by its own method, nothing typed (「不要我填」):
 //
-//   ALL — the whole P&L, every account on the P&L's own tree, its figure split
-//     across G&A | Operation | Logistics | not in a department, the Total being
-//     the P&L's own figure (splitLine). Booked amounts only: no shares, no spreads.
+//   THE SPLIT — every P&L line split across the company's departments as booked
+//     (splitLine): what a department's own P&L reads its books from.
+//
+//   ALL — every department's own P&L side by side, a few figures each (owner
+//     2026-11-25: the books split again 「就和我的actual重复了」; 「我会有很多个不同的
+//     p&L, 每个的算法和提取的资料不一样」): the Exhibition on its orders, Operation by
+//     its sheet, Logistics by the Logistics P&L, G&A against its share. Their total
+//     is the departments added up, not the company's profit (the P&L is).
+//
+//   ONE DEPARTMENT (Exhibition, Showroom) — its column of the split, month by month;
+//     the Exhibition's sales and cost of sales are the Performance P&L's own, from
+//     the sales orders by SO date, and its commission the month's commission bills
+//     in place of the release, as the Performance P&L shows it (owner 2026-11-25).
 //
 //   OPERATION — the owner's "Operation PNL - Auto" sheet (Sept26 - Logistic &
 //     Operation Cost.xlsx), by region PG | KL (Singapore goes out of KL) | SBH & SWK:
@@ -541,33 +551,103 @@ export type DeptViewMonth = {
   month: string; salesSen: number; costOfSalesSen: number; grossSen: number; otherIncomeSen: number;
   expensesSen: number; taxationSen: number; netSen: number;
 };
-export type DeptView = { dept: DeptKey; months: string[]; perMonth: DeptViewMonth[]; tree: Record<PnlBlock, LaidNode[]> };
+/** `books` — sales and cost of sales as booked; `orders` — the Performance P&L's own,
+    from the sales orders by SO date (owner 2026-11-25, the Exhibition). */
+export type DeptBasis = 'books' | 'orders';
+export type DeptView = {
+  dept: DeptKey; basis: DeptBasis; months: string[]; perMonth: DeptViewMonth[]; tree: Record<PnlBlock, LaidNode[]>;
+  /** On orders: the orders counted and how many are not delivered yet. */
+  orders: { counted: number; notDelivered: number } | null;
+};
+
+/** The departments that read their sales and cost of sales from the orders, not the books
+    (owner 2026-11-25:「deparment 的 exhibition的sales我也想要根据 订单的」). */
+export const basisOf = (dept: DeptKey): DeptBasis => (dept === 'exhibition' ? 'orders' : 'books');
+
+/** One month of the Performance P&L as a department on orders reads it: the product
+    groups' sales and cost, the orders, and the commission account's bills for the month
+    against what the monthly release booked on it (acc/performance-commission.ts). */
+export type OrdersMonthIn = {
+  month: string;
+  groups: ReadonlyArray<{ key: string; label: string; salesSen: number; cogsSen: number }>;
+  orders: { counted: number; notDelivered: number };
+  commission: { billSen: number; releaseSen: number } | null;
+};
+export type DeptOrders = {
+  months: readonly OrdersMonthIn[];
+  /** The commission account when it counts in this department: its line reads each month's
+      bills in place of the release, as the Performance P&L does (「要包括commission」). */
+  commission: { code: string; name: string; label: string } | null;
+};
+
+/** The product groups as tree rows (no account: a group's figure is the orders'), each
+    month's figure in `cells`; a group with nothing in any month is left out. */
+function orderGroupNodes(months: readonly OrdersMonthIn[], pick: 'salesSen' | 'cogsSen'): LaidNode[] {
+  const byKey = new Map<string, { label: string; cells: Record<string, number> }>();
+  for (const m of months) {
+    for (const g of m.groups) {
+      const cur = byKey.get(g.key) ?? { label: g.label, cells: {} };
+      cur.cells[m.month] = (cur.cells[m.month] ?? 0) + g[pick];
+      byKey.set(g.key, cur);
+    }
+  }
+  return [...byKey.entries()]
+    .filter(([, x]) => Object.values(x.cells).some((v) => v !== 0))
+    .map(([key, x]) => ({
+      kind: 'account' as const, id: `order:${key}`, key: `order:${key}`, label: x.label, pct: null, children: [],
+      cells: x.cells, amountSen: Object.values(x.cells).reduce((a, b) => a + b, 0),
+    }));
+}
 
 /** One department's own P&L (the Exhibition P&L, the Showroom P&L): each block's
-    lines as that department took them month by month — the All view's column, by
-    month — laid on the P&L's own tree, every node's figure per month in `cells`. */
+    lines as that department took them month by month — the books split as All splits
+    them — laid on the P&L's own tree, every node's figure per month in `cells`. On
+    orders, sales and cost of sales are the product groups' from the orders and the
+    commission account reads its bills, the rest as booked. */
 export function buildDeptView(input: {
   dept: DeptKey; months: readonly string[]; split: readonly DeptMonthSplit[];
   layout: Readonly<Record<string, readonly LayoutItem[]>>; companyId: number;
+  orders: DeptOrders | null;
 }): DeptView {
   const tree = {} as Record<PnlBlock, LaidNode[]>;
   const perBlock = {} as Record<PnlBlock, Record<string, number>>;
+  const orders = input.orders;
   for (const { block } of PNL_BLOCKS) {
-    const byCode = new Map<string, { name: string; cells: Record<string, number> }>();
+    if (orders && (block === 'tradingIncome' || block === 'costOfSales')) {
+      tree[block] = orderGroupNodes(orders.months, block === 'tradingIncome' ? 'salesSen' : 'cogsSen');
+      perBlock[block] = Object.fromEntries(input.months.map((m) => [m, tree[block].reduce((s, n) => s + (n.cells?.[m] ?? 0), 0)]));
+      continue;
+    }
+    const byCode = new Map<string, { name: string; label?: string; cells: Record<string, number> }>();
     const total: Record<string, number> = {};
+    const add = (code: string, name: string, month: string, v: number) => {
+      const cur = byCode.get(code) ?? { name, cells: {} };
+      cur.cells[month] = (cur.cells[month] ?? 0) + v;
+      byCode.set(code, cur);
+      total[month] = (total[month] ?? 0) + v;
+    };
     for (const m of input.split) {
       for (const l of m.blocks[block]) {
         const v = l.cells[input.dept] ?? 0;
-        if (v === 0) continue;
-        const cur = byCode.get(l.code) ?? { name: l.name, cells: {} };
-        cur.cells[m.month] = (cur.cells[m.month] ?? 0) + v;
-        byCode.set(l.code, cur);
-        total[m.month] = (total[m.month] ?? 0) + v;
+        if (v !== 0) add(l.code, l.name, m.month, v);
       }
     }
-    const lines: LaidLine[] = [...byCode.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([code, x]) => ({
-      code, name: x.name, cells: x.cells, amountSen: Object.values(x.cells).reduce((a, b) => a + b, 0),
-    }));
+    const c = block === 'expenses' ? orders?.commission ?? null : null;
+    if (c) {
+      for (const m of orders!.months) {
+        const v = m.commission ? m.commission.billSen - m.commission.releaseSen : 0;
+        if (v !== 0) add(c.code, c.name, m.month, v);
+      }
+      const cur = byCode.get(c.code);
+      if (cur) cur.label = c.label;
+    }
+    const lines: LaidLine[] = [...byCode.entries()]
+      .map(([code, x]) => ({ code, x, cells: Object.fromEntries(Object.entries(x.cells).filter(([, v]) => v !== 0)) }))
+      .filter((l) => Object.keys(l.cells).length > 0)
+      .sort((a, b) => a.code.localeCompare(b.code))
+      .map(({ code, x, cells }) => ({
+        code, name: x.name, ...(x.label ? { label: x.label } : {}), cells, amountSen: Object.values(cells).reduce((a, b) => a + b, 0),
+      }));
     tree[block] = layOutBlock([...(input.layout[block] ?? [])] as LayoutItem[], lines, input.companyId, null);
     perBlock[block] = total;
   }
@@ -579,5 +659,68 @@ export function buildDeptView(input: {
       expensesSen: v('expenses'), taxationSen: v('taxation'), netSen: grossSen + v('otherIncome') - v('expenses') - v('taxation'),
     };
   });
-  return { dept: input.dept, months: [...input.months], perMonth, tree };
+  const counted = orders ? orders.months.reduce((s, m) => ({ counted: s.counted + m.orders.counted, notDelivered: s.notDelivered + m.orders.notDelivered }), { counted: 0, notDelivered: 0 }) : null;
+  return { dept: input.dept, basis: orders ? 'orders' : 'books', months: [...input.months], perMonth, tree, orders: counted };
+}
+
+/* ── ALL: every department's own P&L, side by side ────────────────────────── */
+
+/** A department's own P&L in a few figures (owner 2026-11-25: All departments is not the
+    books split again —「这样其实就和我的actual重复了」— but each department by its own
+    method and its own figures): what it earns, what that income costs directly, its
+    other income, its expenses (with taxation where its P&L has any) and its result. */
+export type DeptSummary = {
+  incomeSen: number; costSen: number; grossSen: number; otherIncomeSen: number; expensesSen: number; profitSen: number;
+};
+const summary = (incomeSen: number, costSen: number, otherIncomeSen: number, expensesSen: number): DeptSummary => ({
+  incomeSen, costSen, grossSen: incomeSen - costSen, otherIncomeSen, expensesSen, profitSen: incomeSen - costSen + otherIncomeSen - expensesSen,
+});
+
+/** A department's own P&L (Exhibition on orders, Showroom as booked): its months added up. */
+export function summaryOfDept(v: DeptView): DeptSummary {
+  const sum = (f: (m: DeptViewMonth) => number) => v.perMonth.reduce((x, m) => x + f(m), 0);
+  return summary(sum((m) => m.salesSen), sum((m) => m.costOfSalesSen), sum((m) => m.otherIncomeSen), sum((m) => m.expensesSen + m.taxationSen));
+}
+
+/** Operation by its sheet, down to its Net Profit: what it earns (its rate of the DOs' value
+    and the charges billed), less the Logistic Expense it pays, less the warehouse. Profit From
+    Logistics and From Setup/Dismantle stay on the sheet: Logistics is its own column here,
+    and the fairs' setup and dismantle transport is booked in the Exhibition's expenses. */
+export function summaryOfOperation(p: OperationPnl): DeptSummary {
+  const t = (k: OpRowKey) => opSum(p, k);
+  return summary(t('do_income') + t('income_warehouse') + t('income_2990') + t('income_other'), -t('logistic_expense'), 0, t('total_expense'));
+}
+
+/** Logistics by the Logistics P&L: its total income, its total expense, its net. */
+export function summaryOfLogistics(rows: ReadonlyArray<{ key: string; totalSen: number | null }>): DeptSummary {
+  const t = (k: string) => Number(rows.find((r) => r.key === k)?.totalSen ?? 0);
+  return summary(t('total_income'), 0, 0, t('total_expense'));
+}
+
+/** G&A: its share of the Performance sales against what it booked. */
+export function summaryOfGa(g: GaPnl): DeptSummary {
+  const sum = (f: (m: GaMonth) => number) => g.perMonth.reduce((x, m) => x + f(m), 0);
+  return summary(sum((m) => m.shareSen), 0, 0, sum((m) => m.expenseSen));
+}
+
+export const addSummaries = (xs: readonly DeptSummary[]): DeptSummary => summary(
+  xs.reduce((a, x) => a + x.incomeSen, 0), xs.reduce((a, x) => a + x.costSen, 0),
+  xs.reduce((a, x) => a + x.otherIncomeSen, 0), xs.reduce((a, x) => a + x.expensesSen, 0),
+);
+
+/** The expense accounts no department claims yet, over the months: named under the table,
+    in no department's figures. */
+export function unassignedOf(split: readonly DeptMonthSplit[]): Array<{ code: string; name: string; amountSen: number }> {
+  const by = new Map<string, { name: string; amountSen: number }>();
+  for (const m of split) {
+    for (const l of m.blocks.expenses) {
+      const v = l.cells.none ?? 0;
+      if (v === 0) continue;
+      const cur = by.get(l.code) ?? { name: l.name, amountSen: 0 };
+      cur.amountSen += v;
+      by.set(l.code, cur);
+    }
+  }
+  return [...by.entries()].filter(([, x]) => x.amountSen !== 0).sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([code, x]) => ({ code, name: x.name, amountSen: x.amountSen }));
 }

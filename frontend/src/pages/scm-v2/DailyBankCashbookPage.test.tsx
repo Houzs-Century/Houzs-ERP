@@ -5,7 +5,7 @@
 // is called by its note; the banks not on it yet are named, with the way to start
 // them. The board's arithmetic is pinned in backend/src/acc/daily-bank.test.ts.
 
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { describe, expect, test, vi } from 'vitest';
 import type { DailyBankBoard } from './accounting-phase1-queries';
@@ -29,6 +29,8 @@ const CASH: DailyBankBoard = {
 };
 
 const original = vi.fn();
+const skip = vi.fn();
+const unskip = vi.fn();
 vi.mock('./accounting-phase1-queries', () => ({
   useDailyBank: (date: string) => { original(date); return { data: undefined, isLoading: false, isError: false, error: null }; },
   useDailyClose: () => ({ data: { rows: [] }, isLoading: false }),
@@ -47,6 +49,8 @@ vi.mock('./daily-bank-cashbook-queries', () => ({
   useSaveCashbookStart: () => ({ mutate: vi.fn(), isPending: false }),
   useRemoveCashbookStart: () => ({ mutate: vi.fn(), isPending: false }),
   useSaveCashbookDay: () => ({ mutate: vi.fn(), isPending: false }),
+  useSkipCashbookVoucher: () => ({ mutate: skip, isPending: false }),
+  useUnskipCashbookVoucher: () => ({ mutate: unskip, isPending: false }),
 }));
 vi.mock('../../vendor/scm/components/ConfirmDialog', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../vendor/scm/components/ConfirmDialog')>()),
@@ -93,6 +97,24 @@ describe('Daily Bank (cash book) — its own page beside the original', () => {
     expect(screen.getByLabelText('Starting balances')).toBeTruthy();
   });
 
+  test('an old voucher approved today reads like any other line: its payee and amount, no voucher date (owner 2026-11-24: 过了就不需要显示了)', () => {
+    const block = CASH.blocks[0]!;
+    const kept = block.payouts;
+    block.payouts = [...kept, { jeNo: '', sourceType: 'PV', sourceDocNo: 'pv-9', docNo: 'HPV-050', party: 'OLD BILL', note: 'Lorry rental', amountSen: 70_000, method: null }];
+    try {
+      renderAt('?view=board');
+      const line = within(screen.getByLabelText('Accounts')).getByText('OLD BILL').parentElement!;
+      expect(line.textContent).toBe('OLD BILL−700.00');
+      cleanup();
+      renderAt('?view=accounts');
+      const may = screen.getByLabelText('310-0010 CASH AT BANK - MAYBANK').textContent!;
+      expect(may).toContain('OLD BILL · Lorry rental');
+      expect(may).not.toContain('dated');
+    } finally {
+      block.payouts = kept;
+    }
+  });
+
   test('the Accounts sheet lists a typed receipt by its note and who typed it', () => {
     renderAt('?view=accounts');
     const may = screen.getByLabelText('310-0010 CASH AT BANK - MAYBANK');
@@ -114,6 +136,46 @@ describe('Daily Bank (cash book) — its own page beside the original', () => {
       '· Awaiting approval · UMOBILE · HPV-102−800.00',
       'Available (after pending)100,999.50',
     ]);
+  });
+
+  /* Owner 2026-11-25, on a voucher whose money left before the bank's start: 这个是例外 … 要，加勾选. */
+  describe('a voucher ticked Don\'t deduct, as already in the starting balance', () => {
+    const block = CASH.blocks[0]!;
+    const TICKED = [{ pvId: 'pv-7', pvNumber: 'HPV-077', party: 'OWN TRANSFER', note: 'Other', amountSen: 3_100_000, tickedBy: 'Mei Ling', tickedAt: '2026-11-25T02:30:00Z' }];
+    const withTicks = (canWrite: boolean, run: () => Promise<void> | void) => async () => {
+      block.notDeducted = TICKED;
+      CASH.canWrite = canWrite;
+      try { await run(); } finally { delete block.notDeducted; delete CASH.canWrite; }
+    };
+
+    test('Finance ticks an approved voucher; a ticked one stays on its line, marked, its amount not taken off; untick deducts it again', withTicks(true, async () => {
+      renderAt('?view=accounts');
+      const may = screen.getByLabelText('310-0010 CASH AT BANK - MAYBANK');
+      /* One tick per voucher: the typed receipt has none. */
+      expect(within(may).getAllByRole('checkbox').map((b) => b.getAttribute('aria-label'))).toEqual(["Don't deduct HPV-101", "Don't deduct HPV-077"]);
+      const open = within(may).getByLabelText("Don't deduct HPV-101") as HTMLInputElement;
+      expect(open.checked).toBe(false);
+      fireEvent.click(open);
+      await waitFor(() => expect(skip).toHaveBeenCalledWith({ pvId: 'pv-1' }));
+      const ticked = within(may).getByLabelText("Don't deduct HPV-077") as HTMLInputElement;
+      expect(ticked.checked).toBe(true);
+      const row = ticked.closest('tr')!;
+      expect(row.textContent).toContain('OWN TRANSFER · OtherNot deducted: already in the starting balance · ticked by Mei Ling · 2026/11/25 10:30');
+      expect(row.querySelector('[class*="notDeductedAmount"]')!.textContent).toBe('31,000.00');
+      expect(within(row).getByRole('button', { name: 'History of HPV-077 on the cash book' })).toBeTruthy();
+      /* The subtotal is the board's: the ticked voucher is not in it. */
+      expect(may.querySelector('tfoot')!.textContent).toBe('Subtotal3,000.001,200.50');
+      fireEvent.click(ticked);
+      await waitFor(() => expect(unskip).toHaveBeenCalledWith({ pvId: 'pv-7' }));
+    }));
+
+    test('without the write key there is no tick, and a ticked voucher still says so', withTicks(false, () => {
+      renderAt('?view=accounts');
+      const may = screen.getByLabelText('310-0010 CASH AT BANK - MAYBANK');
+      expect(within(may).queryAllByRole('checkbox')).toEqual([]);
+      expect(may.textContent).toContain('Not deducted: already in the starting balance · ticked by Mei Ling');
+      expect(within(may).getByRole('button', { name: 'History of HPV-077 on the cash book' })).toBeTruthy();
+    }));
   });
 
   test('an address with the original\'s Daily close view opens the Board here', async () => {

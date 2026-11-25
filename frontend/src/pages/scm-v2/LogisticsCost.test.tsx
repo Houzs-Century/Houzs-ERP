@@ -1,5 +1,6 @@
-/* The Logistics cost tab as the owner approved it on 2026-11-05 (demo
-   JoQSYerQXoWd7gQgWLrZQw). Pinned:
+/* The Logistics cost report as the owner approved it on 2026-11-05 (demo
+   JoQSYerQXoWd7gQgWLrZQw), the Department P&L's Logistics since 2026-11-25 (its
+   picker and its own place: DepartmentPnl.test.tsx). Pinned:
      • P&L: the regions across the top, a % beside every figure of its column's
        Delivery Order value, "Transport Income (1% of fair sales)" with its own rate;
      • By region & trip: one line per lorry and per carrier, the 3PL on no DO in
@@ -32,7 +33,7 @@ const { fetchMock } = vi.hoisted(() => {
     { key: 'total_income', label: 'TOTAL INCOME', sen: r4(1_723_032, 1_770_610, 0, 0), totalSen: 3_493_642 },
     { key: 'outsource', label: 'Outsource Expense', sen: r4(1_597_000, 138_000, 0, 0), totalSen: 1_735_000 },
     { key: 'petrol', label: 'Petrol Cost', sen: r4(0, 2_070_891, 0, 0), totalSen: 2_070_891 },
-    { key: 'upkeep', label: 'Upkeep Cost', sen: r4(0, 0, 0, 0), totalSen: 0 },
+    { key: 'upkeep', label: 'Upkeep Cost', sen: r4(0, 140_000, 0, 0), totalSen: 140_000 },
     { key: 'instalment', label: 'Lorry Installment Cost', sen: r4(0, 0, 0, 0), totalSen: 0 },
     { key: 'roadtax', label: 'RoadTax & Insurance Cost', sen: r4(0, 0, 0, 0), totalSen: 0 },
     { key: 'manpower', label: 'Manpower Cost', sen: r4(0, 0, 0, 0), totalSen: 0 },
@@ -76,6 +77,26 @@ const { fetchMock } = vi.hoisted(() => {
       spreads: [{ lineId: 'g-u2', kind: 'upkeep', accountCode: '900-U010', accountName: 'UPKEEP OF LORI - VPC 9058', day: '2026-10-14', docNo: 'JE-2610-1345', notes: 'LABOUR CHARGE TO FIX AWNING', amountSen: 30_000, months: 1, isDefault: true, perMonthSen: 30_000, inRangeSen: 30_000, lastMonth: '2026-10' }],
       ownTrips: 2, inHousePerTripSen: 1_035_446, tripsProblem: null,
       areaRates: [{ key: 'kualalumpur', label: 'Kuala Lumpur', region: 'KL', rateSen: 40_000, defaultRateSen: 40_000, isDefault: true }],
+      /* Each month: VNB9058 RM 300 of its own, VPC9058 RM 1,000 on a bill that says VNB 9058, VQE9058 RM 100 of a RM 600
+         bill booked in the first month and spread over 6, VRH9058 none: the P&L's RM 1,400. */
+      upkeepLorries: [
+        {
+          accountCode: '900-U008', accountName: 'UPKEEP OF LORI - VNB 9058', plate: 'VNB9058', ours: true,
+          byMonth: Object.fromEntries(months.map((mm) => [mm, 30_000])), totalSen: 30_000 * months.length,
+          bills: months.map((mm) => ({ lineId: `a-${mm}`, day: `${mm}-09`, docNo: 'JV-2609-001', notes: 'VNB 9058 - SERVICE LORRY', amountSen: 30_000, months: 1, byMonth: { [mm]: 30_000 }, otherPlate: null })),
+        },
+        {
+          accountCode: '900-U010', accountName: 'UPKEEP OF LORI - VPC 9058', plate: 'VPC9058', ours: true,
+          byMonth: Object.fromEntries(months.map((mm) => [mm, 100_000])), totalSen: 100_000 * months.length,
+          bills: months.map((mm) => ({ lineId: `b-${mm}`, day: `${mm}-28`, docNo: 'HC-HPV-2609-001', notes: 'VNB 9058 - REPAIR LORRY - WC00001', amountSen: 100_000, months: 1, byMonth: { [mm]: 100_000 }, otherPlate: 'VNB9058' })),
+        },
+        {
+          accountCode: '900-U011', accountName: 'UPKEEP OF LORI - VQE 9058', plate: 'VQE9058', ours: true,
+          byMonth: Object.fromEntries(months.map((mm) => [mm, 10_000])), totalSen: 10_000 * months.length,
+          bills: [{ lineId: 'c', day: `${months[0]}-14`, docNo: 'HC-HPV-2610-001', notes: 'VQE 9058 - NEW TYRES', amountSen: 60_000, months: 6, byMonth: Object.fromEntries(months.map((mm) => [mm, 10_000])), otherPlate: null }],
+        },
+        { accountCode: '900-U014', accountName: 'UPKEEP OF LORI - VRH 9058', plate: 'VRH9058', ours: true, byMonth: {}, totalSen: 0, bills: [] },
+      ],
     };
   };
   return {
@@ -95,7 +116,7 @@ import { LogisticsCostTab } from './LogisticsCost';
 
 const draw = (search = '') => {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<MemoryRouter initialEntries={[`/finance/reports${search}`]}><QueryClientProvider client={qc}><LogisticsCostTab /></QueryClientProvider></MemoryRouter>);
+  return render(<MemoryRouter initialEntries={[`/finance/reports${search}`]}><QueryClientProvider client={qc}><LogisticsCostTab departmentPicker={null} /></QueryClientProvider></MemoryRouter>);
 };
 const putOf = (path: string) => fetchMock.mock.calls.filter(([p, i]) => p === path && i?.method === 'PUT').map(([, i]) => JSON.parse(String(i!.body)));
 const rowText = (table: HTMLElement, label: string) => within(table).getAllByText(label)[0]!.closest('tr')!.textContent;
@@ -156,12 +177,55 @@ describe('By region & trip', () => {
   });
 
   test('By month: Total first, then one column per month; split each month by region on a switch', async () => {
-    draw('?lv=region&lm=months');
+    draw('?lv=region&dm=months');
     const table = await screen.findByRole('table', { name: 'Delivery cost by region and trip' });
     const heads = within(table).getAllByRole('columnheader').map((h) => h.textContent);
     expect(heads[1]).toMatch(/^Total/);
     fireEvent.click(screen.getByRole('switch', { name: /Split each month by region/ }));
     await waitFor(() => expect(within(screen.getByRole('table', { name: 'Delivery cost by region and trip' })).getAllByRole('columnheader', { name: /Penang/ }).length).toBeGreaterThan(0));
+  });
+});
+
+describe('Repairs by lorry', () => {
+  test('one line per lorry from its upkeep account, each period Actual and Spread; Spread is the P&L Upkeep Cost', async () => {
+    draw('?lv=repairs');
+    const table = await screen.findByRole('table', { name: 'Repairs and maintenance by lorry' });
+    const heads = within(table).getAllByRole('columnheader').map((h) => h.textContent);
+    expect(heads.some((h) => h.includes('Actual'))).toBe(true);
+    expect(heads.some((h) => h.includes('Spread'))).toBe(true);
+    expect(rowText(table, 'VNB9058')).toContain('900-U008 · 1 bill');
+    expect(rowText(table, 'VNB9058')).toContain('300.00300.00');
+    /* Booked in full this month; the P&L takes RM 100 of it a month. */
+    expect(rowText(table, 'VQE9058')).toContain('600.00100.00');
+    expect(rowText(table, 'VRH9058')).toContain('900-U014 · 0 bills');
+    expect(rowText(table, 'Total repairs & maintenance')).toContain('1,900.001,400.00');
+    /* The P&L checks the Spread column only. */
+    expect(rowText(table, 'Logistics P&L · Upkeep Cost (from the books)')).toMatch(/-1,400\.00$/);
+    expect(rowText(table, 'Difference (Spread less the P&L)')).toMatch(/-0\.00$/);
+    expect(screen.getByRole('group', { name: 'Repairs by lorry totals' }).textContent).toContain('Actual1,900');
+    /* No regions here: neither the % nor the split switch. */
+    expect(screen.queryByRole('switch', { name: /% of DO/ })).toBeNull();
+  });
+
+  test('a bill that names another lorry is To check; a figure opens its bills, the spread one with its months', async () => {
+    draw('?lv=repairs');
+    const check = await screen.findByRole('region', { name: 'To check' });
+    expect(check.textContent).toContain('HC-HPV-2609-001');
+    expect(check.textContent).toContain('the description says VNB9058, but it is booked to VPC9058 (900-U010)');
+    const table = screen.getByRole('table', { name: 'Repairs and maintenance by lorry' });
+    fireEvent.click(within(within(table).getByText('VPC9058').closest('tr')!).getAllByRole('button', { name: '1,000.00' })[0]!);
+    expect(within(table).getByText('VNB 9058 - REPAIR LORRY - WC00001')).toBeTruthy();
+    expect(within(table).getByText('Says VNB9058')).toBeTruthy();
+    fireEvent.click(within(within(table).getByText('VQE9058').closest('tr')!).getByRole('button', { name: '100.00' }));
+    expect(within(table).getByText('RM 600.00 over 6 months')).toBeTruthy();
+  });
+
+  test('By month: Total first, then each month, Actual and Spread each; no split by region', async () => {
+    draw('?lv=repairs&dm=months');
+    const table = await screen.findByRole('table', { name: 'Repairs and maintenance by lorry' });
+    expect(within(table).getAllByText(/^Total · \d+ months?$/).length).toBeGreaterThan(0);
+    expect(within(table).getAllByRole('columnheader', { name: /Actual/ }).length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByRole('switch', { name: /Split each month by region/ })).toBeNull();
   });
 });
 

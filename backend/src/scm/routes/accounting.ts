@@ -33,7 +33,7 @@ import { CONVERT_SOURCE, backfillSoPayments, paymentEntryDisagreements, unbooked
 import { dailyBankHandler, cashbookBoardHandler } from './accounting-daily-bank';
 import {
   cashbookGet, cashbookStartPut, cashbookStartDelete, cashbookReceiptCreate, cashbookReceiptUpdate, cashbookReceiptDelete,
-  cashbookReceiptsDayPut,
+  cashbookReceiptsDayPut, cashbookSkipPut, cashbookSkipDelete,
 } from './accounting-daily-bank-cashbook';
 import { systemTakings, postCashOverShort } from '../../acc/daily-close';
 import { resolveRoles, piLines, DEFAULT_ROLE_CODES } from '../../acc/rules';
@@ -69,6 +69,7 @@ import { previousPaymentsList, previousPaymentsMark, previousPaymentsUndo } from
 import { arAgingHandler, apAgingHandler } from './accounting-aging';
 import { productProfitHandler } from './accounting-product-profit';
 import { productChangesHandler } from './accounting-product-changes';
+import { soBacklogCoverHandler } from './accounting-so-backlog-cover';
 import { bankConfigList, bankConfigSave } from './accounting-bank-config';
 import { payoutUpload, payoutList, payoutCharge, payoutChargeUndo, chargeAccountsHandler } from './accounting-payouts';
 import {
@@ -78,15 +79,18 @@ import {
 import { itemGroupsList, itemGroupCreate, itemGroupBind, itemGroupPatch } from './accounting-item-groups';
 import { piPeriodicBackfill } from './accounting-pi-backfill';
 import { stockCloseStatus, stockCloseRun } from './accounting-stock-close';
+import { commissionReleaseOrders, commissionReleaseRun, commissionReleaseSettings, commissionReleaseStatus } from './accounting-commission-release';
 import { pnlReport, balanceSheetReport } from './accounting-reports';
 import { journalEntryEdit } from './accounting-journal-edit';
 import { reportLayoutGet, reportLayoutPut, reportLayoutReset } from './accounting-report-layouts';
 import { receiptsPaymentsReport } from './accounting-rp';
+import { openingBillPlacePut, openingBillsGet, openingBillsOfSupplier } from './accounting-opening-bill-places';
+import { cashFlowForecastHandler, forecastInputsGetHandler, forecastInputsPutHandler, tfGetHandler, tfPutHandler, balanceSheetForecastHandler } from './accounting-cashflow-forecast';
 import { collectionReport } from './accounting-collection';
 import { merchantChargesReport } from './accounting-merchant-charges';
 import { performanceMonthsHandler, performanceReport, savePerformanceSettingsHandler } from './accounting-performance';
 import { forecastFiguresHandler, forecastGetHandler, forecastPutHandler } from './accounting-forecast';
-import { dashboardHandler } from './accounting-dashboard';
+import { dashboardForecastMonthHandler, dashboardHandler } from './accounting-dashboard';
 import { financeTodoHandler, financeTodoCountHandler } from './accounting-todo';
 import {
   todoPeopleHandler, todoSettingsGetHandler, todoSettingsPutHandler, todoGroupAddHandler,
@@ -210,10 +214,27 @@ accounting.post('/backfill/pi-periodic', piPeriodicBackfill);
    the manual run — the nightly close itself fires from the cron. */
 accounting.get('/stock-close', stockCloseStatus);
 accounting.post('/stock-close/run', stockCloseRun);
+/* The monthly commission release (owner 2026-11-25): what the prepayment holds
+   and releases, the switch and a manual run — the nightly run fires from the cron. */
+accounting.get('/commission-release', commissionReleaseStatus);
+accounting.get('/commission-release/orders', commissionReleaseOrders);
+accounting.post('/commission-release/run', commissionReleaseRun);
+accounting.post('/commission-release/settings', commissionReleaseSettings);
 /* The standard statements (GL redesign item 6) — one source (v_gl_entries),
    AutoCount arithmetic; handlers in accounting-reports.ts. */
 accounting.get('/reports/pnl', pnlReport);
 accounting.get('/reports/receipts-payments', receiptsPaymentsReport);
+accounting.get('/reports/receipts-payments/opening-bills', openingBillsGet);
+accounting.put('/reports/receipts-payments/opening-bills/place', openingBillPlacePut);
+accounting.get('/reports/receipts-payments/opening-bills/:supplierId', openingBillsOfSupplier);
+/* Its P&L forecast column: the Forecast P&L as cash on the same tree (forecast port step 2). */
+accounting.get('/reports/cash-flow-forecast', cashFlowForecastHandler);
+/* Its Capex & financing table (forecast port step 3): keyed per account and month, forecast only. */
+accounting.get('/reports/cash-flow-forecast/inputs', forecastInputsGetHandler);
+accounting.put('/reports/cash-flow-forecast/inputs', forecastInputsPutHandler);
+accounting.get('/reports/cash-flow-forecast/tf', tfGetHandler);
+accounting.put('/reports/cash-flow-forecast/tf', tfPutHandler);
+accounting.get('/reports/balance-sheet-forecast', balanceSheetForecastHandler);
 /* Deposit and balance collected per salesman (owner 2026-09-12; docs/bugs/0825). */
 accounting.get('/reports/collection', collectionReport);
 /* What each acquirer charged against the gross, per month and per merchant (owner 2026-09-12; docs/bugs/0826). */
@@ -239,12 +260,17 @@ accounting.get('/product-profit', productProfitHandler);
    sales order with its selling and cost before and after, by the month of its
    change day. accounting-product-changes.ts; acc/product-changes.ts. */
 accounting.get('/product-changes', productChangesHandler);
+/* The SO conversion & backlog report (owner 2026-11-24): the month's orders by
+   Processing Date, this month's and the backlog's, and the backlog cover rates
+   with their average. accounting-so-backlog-cover.ts; acc/so-backlog-cover.ts. */
+accounting.get('/so-backlog-cover', soBacklogCoverHandler);
 /* The Forecast P&L (owner 2026-09-21): a planning grid beside the statements; nothing posts. */
 accounting.get('/forecast', forecastGetHandler);
 accounting.put('/forecast', forecastPutHandler);
 accounting.get('/forecast/figures', forecastFiguresHandler);
 /* The Financial Dashboard (owner 2026-09-21): the statements per period, beside the forecast. */
 accounting.get('/dashboard', dashboardHandler);
+accounting.get('/dashboard/forecast-month', dashboardForecastMonthHandler);
 /* Finance's To do (the owner's Claude Design redesign, 2026-11-02): the jobs
    the books raise, and their count for the sidebar badge (routes/accounting-todo.ts). */
 accounting.get('/todo', financeTodoHandler);
@@ -1299,6 +1325,9 @@ accounting.post('/daily-bank/receipts', cashbookReceiptCreate);
 accounting.put('/daily-bank/receipts/day', cashbookReceiptsDayPut);
 accounting.patch('/daily-bank/receipts/:id', cashbookReceiptUpdate);
 accounting.delete('/daily-bank/receipts/:id', cashbookReceiptDelete);
+/* An approved voucher ticked as already in its bank's starting balance, and unticked (owner 2026-11-25: 要，加勾选). */
+accounting.put('/daily-bank/skips/:pvId', cashbookSkipPut);
+accounting.delete('/daily-bank/skips/:pvId', cashbookSkipDelete);
 
 /* ════════════════════════════════════════════════════════════════════════
    Daily close (cashup, brief 3.5 layer 2)

@@ -212,7 +212,14 @@ export function DefectListView() {
     { keepPreviousData: true },
   );
 
-  const rows = useMemo(() => q.data?.rows ?? [], [q.data]);
+  // Solo events only (owner 2026-11-24): the mall-management ("MALL MGMT")
+  // events are handled elsewhere, so this list hides any event whose name
+  // carries the MALL MGMT organizer and shows only the solo roadshows. Filtered
+  // at the row level so the count, the grouping and the photo viewer all agree.
+  const rows = useMemo(
+    () => (q.data?.rows ?? []).filter((r) => !/mall\s*mgmt/i.test(r.name)),
+    [q.data],
+  );
   const groups = useMemo(() => groupByProject(rows), [rows]);
   const mediaItems = useMemo(
     () => rows.map((r) => ({ r2_key: r.r2_key, content_type: r.content_type, caption: r.caption })),
@@ -332,7 +339,12 @@ export function DefectListView() {
                   const idx = rows.indexOf(r);
                   const { model, reason } = parseDefectCaption(r.caption);
                   const latest = r.latest_status;
-                  const stage = defectStage(latest);
+                  // A defect is settled in the project either by the photo's
+                  // action timeline OR by ticking the defect ITEM done/na — honour
+                  // both so the badge here matches the project (owner 2026-11-25).
+                  const itemStatus = r.item_status.toLowerCase();
+                  const itemClosed = itemStatus === "done" || itemStatus === "na";
+                  const stage = itemClosed ? "resolved" : defectStage(latest);
                   const canReview = canReviewDefect(user, r.state);
                   const canPurchase = canPurchaseDefect(user);
                   const editing = draft?.attId === r.attachment_id;
@@ -360,8 +372,19 @@ export function DefectListView() {
                           </div>
                         )}
                         <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10.5px] text-ink-muted">
-                          <span className={cn("rounded px-1.5 py-0.5 font-bold", defectListBadge(latest))}>
-                            {stage === "fresh" ? "New" : defectActionLabel(latest)}
+                          <span
+                            className={cn(
+                              "rounded px-1.5 py-0.5 font-bold",
+                              itemClosed ? defectListBadge("done") : defectListBadge(latest),
+                            )}
+                          >
+                            {itemClosed
+                              ? itemStatus === "na"
+                                ? "N/A"
+                                : "Done"
+                              : stage === "fresh"
+                                ? "New"
+                                : defectActionLabel(latest)}
                           </span>
                           {r.latest_at && (
                             <span>

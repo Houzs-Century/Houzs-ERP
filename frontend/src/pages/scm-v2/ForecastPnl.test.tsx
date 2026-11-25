@@ -5,7 +5,8 @@
    the %; the totals follow the shared arithmetic; Add month inherits the
    percentages and starts the amounts blank; Save sends the whole grid and a
    refused save shows the server's sentence naming the cell; empty lines hide
-   and show. The server half is backend/tests/forecastPnl.test.ts. */
+   and show; a purchase line splits by supplier and is then their sum. The
+   server half is backend/tests/forecastPnl.test.ts. */
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
@@ -112,7 +113,8 @@ describe('the Forecast P&L page', () => {
     expect(amount('2026-10', '601-0003').placeholder).toBe('0.00');
     fireEvent.click(screen.getByText('Save'));
     expect(mutate).toHaveBeenCalledTimes(1);
-    const sent = mutate.mock.calls[0]![0] as Record<string, Record<string, unknown>>;
+    const sent = (mutate.mock.calls[0]![0] as { months: Record<string, Record<string, unknown>>; suppliers: unknown }).months;
+    expect((mutate.mock.calls[0]![0] as { suppliers: unknown }).suppliers).toEqual({});
     expect(Object.keys(sent).sort()).toEqual(['2026-09', '2026-10']);
     expect(sent['2026-10']).toEqual({ '601-0003': { bp: 6000 } });
     expect(sent['2026-09']).toEqual(DATA.months['2026-09']);
@@ -134,7 +136,7 @@ describe('the Forecast P&L page', () => {
     fireEvent.click(screen.getByLabelText('Remove Sep 2026'));
     expect(screen.getByText('No month yet — pick one above and press Add month.')).toBeTruthy();
     fireEvent.click(screen.getByText('Save'));
-    expect(mutate.mock.calls[1]![0]).toEqual({});
+    expect(mutate.mock.calls[1]![0]).toEqual({ months: {}, suppliers: {} });
   });
 
   test('the bar: the months covered as the grey line, the six after the last or Other…, Nothing to save, and Excel of the grid as shown', async () => {
@@ -190,5 +192,110 @@ describe('the Forecast P&L page', () => {
     expect(amount('2026-09', '601-0003').placeholder).toBe('60,000.00');
     expect(amount('2026-09', '900-S001').placeholder).toBe('20,000.00');
     expect(rowText('gross-profit')).toContain('130,000.00');
+  });
+});
+
+/* Step 1 of the Hookka forecast port (2026-11-24): a purchase line split by
+   supplier. Made-up suppliers and figures. */
+describe('a purchase line split by supplier', () => {
+  const SUP_DATA: ForecastResponse = {
+    ...DATA,
+    accounts: DATA.accounts.map((a) => (a.code === '601-0003' ? { ...a, purchase: true } : a)),
+    suppliers: { '2026-09': { '601-0003': { 'sup-a': { amtSen: 3_000_000 }, 'sup-b': { bp: 1500 } } } },
+    supplierList: [
+      { id: 'sup-a', code: '400-A001', name: 'Alpha Trading', active: true, recent: ['601-0003'] },
+      { id: 'sup-b', code: '400-B001', name: 'Beta Supplies', active: true, recent: [] },
+      { id: 'sup-c', code: '400-C001', name: 'Cedar Works', active: true, recent: ['601-0003'] },
+      { id: 'sup-d', code: '400-D001', name: 'Delta Retired', active: false, recent: ['601-0003'] },
+      { id: 'sup-e', code: '400-E001', name: 'Echo Imports', active: true, recent: [] },
+    ],
+  };
+  beforeEach(() => { state.data = SUP_DATA; });
+  const sup = (m: string, code: string, name: string, side: 'amount' | 'percent') => screen.getByLabelText(`${m} ${code} ${name} ${side}`) as HTMLInputElement;
+
+  test('closed, the line shows the suppliers that carry a figure and their sum, read-only; the totals take the sum', () => {
+    render(<MemoryRouter><ForecastPnl /></MemoryRouter>);
+    /* Alpha 30,000 + Beta 15% of 100,000 = 15,000 → 45,000 (45%), not the line's own 60%. */
+    expect(amount('2026-09', '601-0003').value).toBe('45,000.00');
+    expect(amount('2026-09', '601-0003').readOnly).toBe(true);
+    expect(percent('2026-09', '601-0003').value).toBe('45');
+    expect(sup('2026-09', '601-0003', 'Alpha Trading', 'amount').value).toBe('30,000.00');
+    expect(sup('2026-09', '601-0003', 'Alpha Trading', 'percent').placeholder).toBe('30');
+    expect(sup('2026-09', '601-0003', 'Beta Supplies', 'percent').value).toBe('15');
+    expect(sup('2026-09', '601-0003', 'Beta Supplies', 'amount').placeholder).toBe('15,000.00');
+    expect(rowText('gross-profit')).toContain('55,000.00');
+    /* Closed: no supplier without a figure, no Other, no picker. */
+    expect(screen.queryByText('Cedar Works')).toBeNull();
+    expect(screen.queryByText('Other (new suppliers)')).toBeNull();
+    expect(screen.queryByLabelText('Add a supplier under 601-0003')).toBeNull();
+  });
+
+  test("open, it lists the active suppliers that billed it lately, the keyed ones and Other, and offers the company's other active suppliers", () => {
+    render(<MemoryRouter><ForecastPnl /></MemoryRouter>);
+    fireEvent.click(screen.getByLabelText('Show the suppliers of 601-0003'));
+    const names = [...document.querySelectorAll('[data-row^="sup:601-0003:"]')].map((r) => r.getAttribute('data-row'));
+    expect(names).toEqual(['sup:601-0003:sup-a', 'sup:601-0003:sup-b', 'sup:601-0003:sup-c', 'sup:601-0003:other', 'sup:601-0003:add']);
+    const pick = screen.getByLabelText('Add a supplier under 601-0003') as HTMLSelectElement;
+    expect([...pick.options].map((o) => o.textContent)).toEqual(['Add supplier…', 'Echo Imports']);
+    fireEvent.change(pick, { target: { value: 'sup-e' } });
+    expect(sup('2026-09', '601-0003', 'Echo Imports', 'amount')).toBeTruthy();
+    /* Other takes a figure like any supplier; the line follows. */
+    key(sup('2026-09', '601-0003', 'Other (new suppliers)', 'amount'), '5000');
+    expect(amount('2026-09', '601-0003').value).toBe('50,000.00');
+    expect(rowText('gross-profit')).toContain('50,000.00');
+  });
+
+  test('clearing every supplier hands the line back its own figure; Save sends the lines and the supplier figures', () => {
+    render(<MemoryRouter><ForecastPnl /></MemoryRouter>);
+    key(sup('2026-09', '601-0003', 'Alpha Trading', 'amount'), '');
+    expect(amount('2026-09', '601-0003').value).toBe('15,000.00');
+    key(sup('2026-09', '601-0003', 'Beta Supplies', 'percent'), '');
+    /* No supplier left: the line's own 60% is back, and typeable. */
+    expect(amount('2026-09', '601-0003').readOnly).toBe(false);
+    expect(percent('2026-09', '601-0003').value).toBe('60');
+    expect(amount('2026-09', '601-0003').placeholder).toBe('60,000.00');
+    fireEvent.click(screen.getByText('Save'));
+    expect(mutate.mock.calls[0]![0]).toEqual({ months: DATA.months, suppliers: {} });
+  });
+
+  test('Add month carries each supplier\'s % and none of the amounts; Excel shows the suppliers under their line', async () => {
+    render(<MemoryRouter><ForecastPnl /></MemoryRouter>);
+    fireEvent.change(screen.getByLabelText('Month to add'), { target: { value: '2026-10' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add month' }));
+    expect(sup('2026-10', '601-0003', 'Beta Supplies', 'percent').value).toBe('15');
+    expect(sup('2026-10', '601-0003', 'Alpha Trading', 'amount').value).toBe('');
+    fireEvent.click(screen.getByText('Save'));
+    expect((mutate.mock.calls[0]![0] as { suppliers: unknown }).suppliers).toEqual({
+      '2026-09': SUP_DATA.suppliers!['2026-09'],
+      '2026-10': { '601-0003': { 'sup-b': { bp: 1500 } } },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Excel' }));
+    await waitFor(() => expect(xlsx).toHaveBeenCalled());
+    const [sheet] = xlsx.mock.calls[xlsx.mock.calls.length - 1]! as [{ tables: Array<{ rows: Array<{ label: string; depth: number; cells: number[] }> }> }];
+    const rows = sheet.tables[0]!.rows;
+    const at = rows.findIndex((r) => r.label === '601-0003 · PURCHASE OF SOFA');
+    expect(rows.slice(at, at + 3).map((r) => [r.label, r.cells])).toEqual([
+      ['601-0003 · PURCHASE OF SOFA', [4_500_000, 0]],
+      ['Alpha Trading', [3_000_000, 0]],
+      ['Beta Supplies', [1_500_000, 0]],
+    ]);
+    expect(rows[at + 1]!.depth).toBe(rows[at]!.depth + 1);
+  });
+
+  test("a refused supplier cell is named by the server and the page goes to it", () => {
+    render(<MemoryRouter><ForecastPnl /></MemoryRouter>);
+    key(sup('2026-09', '601-0003', 'Alpha Trading', 'amount'), '31000');
+    fireEvent.click(screen.getByText('Save'));
+    const opts = mutate.mock.calls[0]![1] as { onError: (e: unknown) => void };
+    act(() => { opts.onError(new Error('2026-09 601-0003 sup-a amount: amount must be a whole number of sen')); });
+    expect(document.activeElement).toBe(sup('2026-09', '601-0003', 'Alpha Trading', 'amount'));
+  });
+
+  test('a server older than the split (no suppliers, no supplier list) reads as before', () => {
+    state.data = { ...DATA, accounts: SUP_DATA.accounts };
+    render(<MemoryRouter><ForecastPnl /></MemoryRouter>);
+    expect(percent('2026-09', '601-0003').value).toBe('60');
+    fireEvent.click(screen.getByLabelText('Show the suppliers of 601-0003'));
+    expect([...document.querySelectorAll('[data-row^="sup:601-0003:"]')].map((r) => r.getAttribute('data-row'))).toEqual(['sup:601-0003:other', 'sup:601-0003:add']);
   });
 });

@@ -18,6 +18,8 @@ export type EmployeeRow = {
   nationality: string | null;
   ic_number: string | null;
   passport_number: string | null;
+  work_permit_expiry: string | null;
+  confirm_due_on: string | null;
   is_outsource: boolean;
   pay_mode: string;
   basic_salary_sen: number;
@@ -69,6 +71,8 @@ export function rowToEmployee(
     nationality: r.nationality ?? "",
     icNumber: r.ic_number ?? "",
     passportNumber: r.passport_number ?? "",
+    workPermitExpiry: r.work_permit_expiry ?? "",
+    confirmDueOn: r.confirm_due_on ?? "",
     isOutsource: r.is_outsource,
     payMode: r.pay_mode as PayMode,
     basicSalarySen: Number(r.basic_salary_sen),
@@ -108,6 +112,8 @@ export function employeeColumns(e: EmployeeInput) {
     nationality: blank(e.nationality),
     ic_number: blank(e.icNumber),
     passport_number: blank(e.passportNumber),
+    work_permit_expiry: blank(e.workPermitExpiry),
+    confirm_due_on: blank(e.confirmDueOn),
     is_outsource: e.isOutsource,
     pay_mode: e.payMode,
     daily_rate_sen: e.dailyRateSen,

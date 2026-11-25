@@ -5,8 +5,9 @@
    a bold line, the unassigned groups last, then Cash surplus / (deficit),
    Balance b/f and Balance c/f, each split into Bank and Card; rows in the owner's
    accounts or by debtor / creditor; By month one read per column; a figure
-   opens the entries behind it under its row. The server half is
-   backend/tests/rpReport.test.ts. */
+   opens the entries behind it under its row; By month with the P&L forecast
+   beside each month. The server half is backend/tests/rpReport.test.ts and
+   backend/tests/cashFlowForecast.test.ts. */
 
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -79,8 +80,23 @@ vi.mock('../../vendor/scm/lib/rp-report-queries', async (importOriginal) => ({
 }));
 /* By month: each column one read of the same endpoint. */
 const columnPaths = vi.hoisted(() => [] as string[]);
+/* The P&L forecast's one read, when a test sets it. */
+const forecastAnswer = vi.hoisted(() => ({ value: null as unknown }));
 vi.mock('../../vendor/scm/lib/authed-fetch', () => ({
-  authedFetch: async (path: string) => { columnPaths.push(path); return shownReport.value ?? report; },
+  authedFetch: async (path: string) => {
+    columnPaths.push(path);
+    if (path.includes('/cash-flow-forecast/tf')) {
+      return { currentMonth: '2026-07', shown: ['2026-07'], suppliers: [], facilities: [{
+        code: '460-0009', name: 'TRADE FINANCE - SAMPLE BANK', lender: 'SAMPLE BANK', tenorSet: null, rateSet: null, tenorDays: 60, rateBp: 50, defaultRateBp: 50,
+        interest: null, owedNowSen: 100000, open: [], suppliers: [], off: {}, dues: {}, schedule: [],
+      }] };
+    }
+    if (path.includes('/cash-flow-forecast/inputs')) {
+      return { currentMonth: '2026-07', shown: ['2026-07'], months: {}, notOffered: [], accounts: [{ code: '202-1000', name: 'EQUIPMENT (OFFICE)', group: { id: 'cf:funding:capex', label: 'CAPITAL EXPENDITURE (CAPEX)' } }] };
+    }
+    if (path.includes('/cash-flow-forecast')) return forecastAnswer.value;
+    return shownReport.value ?? report;
+  },
 }));
 vi.mock('../../vendor/scm/lib/dashboard-queries', async (importOriginal) => ({
   ...(await importOriginal() as object),
@@ -396,5 +412,164 @@ describe('AutoCount money on the Cash Flow', () => {
   test('no AutoCount money, no line', () => {
     at();
     expect(screen.queryByText(memoText)).toBeNull();
+  });
+});
+
+/* The P&L forecast (step 2 of the forecast port, 2026-11-24): By month with the
+   switch on — each month Actual | P&L forecast under its name, the months after
+   this one the forecast alone; the forecast's own lines merge with the actual by
+   id; Balance b/f and c/f run on from the actual; a forecast figure opens where
+   it came from and how it was timed. Made-up figures. */
+describe('the P&L forecast', () => {
+  const fc = (month: string, tree: LaidNode[], inSen: number, outSen: number, entries: RpReport['entries'] = []): { month: string; future: boolean; report: RpReport } => ({
+    month, future: month > '2026-07',
+    report: {
+      from: `${month}-01`, to: `${month}-28`, byParty: false,
+      columns: [{ code: 'FORECAST', name: 'P&L forecast' }], opening: { FORECAST: 0 }, receipts: [], payments: [],
+      totals: { receipts: { FORECAST: inSen }, payments: { FORECAST: outSen }, closing: { FORECAST: inSen - outSen }, openingTotalSen: 0, receiptsTotalSen: inSen, paymentsTotalSen: outSen, closingTotalSen: inSen - outSen },
+      entries, card: { takingsSen: 0, transitSen: 0, codes: [] },
+      layout: { stored: true, inSen, outSen, tree },
+    },
+  });
+  const tree = (inSen: number, outSen: number): LaidNode[] => [
+    { kind: 'category', id: 'side:in', label: 'RECEIPTS', flow: 'in', totalLabel: 'Total receipts', amountSen: inSen, pct: 100, cells: { FORECAST: inSen }, children: [
+      { kind: 'category', id: 'in:sec:CURRENT ASSETS', label: 'CURRENT ASSETS', amountSen: inSen, pct: 100, cells: { FORECAST: inSen }, children: [
+        line('300-0000:DEP:FC', '300-0000', 'Forecast sales', { FORECAST: inSen }, 100, 'in'),
+      ] },
+    ] },
+    { kind: 'category', id: 'side:out', label: 'PAYMENTS', flow: 'out', totalLabel: 'Total payments', amountSen: outSen, pct: 100, cells: { FORECAST: outSen }, children: [
+      { kind: 'category', id: 'out:cat:purchases', label: 'Purchases', amountSen: outSen, pct: 100, cells: { FORECAST: outSen }, children: [
+        line('601-0003', '601-0003', '601-0003 · PURCHASE OF SOFA', { FORECAST: outSen }, 100),
+      ] },
+    ] },
+  ];
+  const ANSWER = {
+    from: '2026-05', to: '2026-07', currentMonth: '2026-07',
+    months: [
+      fc('2026-05', [], 0, 0), fc('2026-06', [], 0, 0),
+      fc('2026-07', tree(30000, 25000), 30000, 25000, [
+        { jeNo: '', entryDate: '2026-07-01', sourceType: 'FORECAST', sourceDocNo: '2026-06', narration: 'Jun 2026 Forecast P&L · the supplier pays a month later (no payment term set)', party: 'Sample Sofa Works', side: 'P', rowKey: '601-0003', column: 'FORECAST', sen: 25000 },
+      ]),
+      fc('2026-08', tree(10000, 5000), 10000, 5000),
+    ],
+    measured: { from: '2026-04-01', to: '2026-06-30' },
+    receiptMix: [{ kind: 'DEP', months: 0, pct: 70 }, { kind: 'BAL', months: 1, pct: 30 }],
+    flagged: [{ id: 's1', code: '400-S001', name: 'Sample Sofa Works' }],
+    nonCash: [],
+    docs: null,
+    tf: null,
+  };
+  beforeEach(() => { forecastAnswer.value = ANSWER; });
+  afterEach(() => { forecastAnswer.value = null; });
+  const cells = (name: string) => [...screen.getByText(name).closest('tr')!.querySelectorAll('td')].map((td) => td.textContent);
+  const open = async () => {
+    at();
+    fireEvent.click(within(screen.getByRole('group', { name: 'Columns' })).getByRole('button', { name: 'By month' }));
+    fireEvent.click(within(screen.getByRole('group', { name: 'Months' })).getByRole('button', { name: '3' }));
+    fireEvent.click(screen.getByRole('switch', { name: 'Forecast' }));
+    await waitFor(() => expect(heads()).toEqual([
+      'Account', 'Total3 months%', 'Aug 2026Forecast only', 'Jul 2026', 'Jun 2026', 'May 2026',
+      'P&L forecast', 'Actual', 'P&L forecast', 'Actual', 'P&L forecast', 'Actual', 'P&L forecast',
+    ]));
+  };
+
+  test('each month Actual | P&L forecast, the later month the forecast alone; one read of the forecast for the months shown', async () => {
+    await open();
+    expect(columnPaths.filter((p) => p.includes('/cash-flow-forecast'))).toEqual(['/accounting/reports/cash-flow-forecast?from=2026-05&to=2026-07']);
+    /* The sofa purchases: Total (actual), Aug forecast, then Jul / Jun / May actual | forecast. */
+    expect(cells('PURCHASE OF SOFA').slice(1)).toEqual(['50.00', '400.00', '250.00', '400.00', '', '400.00', '']);
+    /* A line only the forecast has merges in where it belongs. */
+    expect(cells('Forecast sales').slice(1)).toEqual(['100.00', '', '300.00', '', '', '', '']);
+  });
+
+  test('Balance b/f and c/f run on: a month from its own actual b/f, the later month from the forecast c/f before it', async () => {
+    await open();
+    /* Every month's actual b/f is (100.00) here; July's forecast nets +50.00, August's +50.00. */
+    expect(cells('Balance b/f').slice(1)).toEqual(['(50.00)', '(100.00)', '(100.00)', '(100.00)', '(100.00)', '(100.00)', '(100.00)']);
+    expect(cells('Balance c/f').slice(1)).toEqual(['0.00', '(160.00)', '(50.00)', '(160.00)', '(100.00)', '(160.00)', '(100.00)']);
+  });
+
+  test('a forecast figure opens where it came from and how it was timed; the note names the supplier without a term', async () => {
+    await open();
+    fireEvent.click(screen.getByRole('button', { name: '601-0003 · PURCHASE OF SOFA · Jul 2026 P&L forecast' }));
+    const region = screen.getByRole('region', { name: 'Entries of 601-0003 · PURCHASE OF SOFA' });
+    expect(region.textContent).toContain('Jul 2026 P&L forecast · 1 entry');
+    expect(region.textContent).toContain('Jun 2026');
+    expect(region.textContent).toContain('Sample Sofa Works');
+    expect(region.textContent).toContain('a month later (no payment term set)');
+    expect(document.body.textContent).toContain('70% as deposits in the order month, 30% as settlements a month after');
+    expect(document.body.textContent).toContain('No payment term on the supplier, counted a month later (1): Sample Sofa Works');
+  });
+
+  test('Capex & financing opens its table from By month', async () => {
+    await open();
+    fireEvent.click(screen.getByRole('button', { name: 'Capex & financing' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Capex & financing' });
+    expect(await within(dialog).findByText('CAPITAL EXPENDITURE (CAPEX)')).toBeTruthy();
+    expect(within(dialog).getByLabelText('2026-07 202-1000 amount')).toBeTruthy();
+  });
+
+  /* Step 4 (2026-11-24): Orders & bills from the current month on, between the actual and the P&L forecast. */
+  const docsTree = (inSen: number): LaidNode[] => [
+    { kind: 'category', id: 'side:in', label: 'RECEIPTS', flow: 'in', totalLabel: 'Total receipts', amountSen: inSen, pct: 100, cells: { FORECAST: inSen }, children: [
+      { kind: 'category', id: 'in:sec:CURRENT ASSETS', label: 'CURRENT ASSETS', amountSen: inSen, pct: 100, cells: { FORECAST: inSen }, children: [
+        line('300-0000:BAL:ORD', '300-0000', 'Open orders (balance on delivery)', { FORECAST: inSen }, 100, 'in'),
+      ] },
+    ] },
+  ];
+  const withDocs = () => ({
+    ...ANSWER,
+    docs: {
+      months: [
+        fc('2026-07', docsTree(20000), 20000, 0, [
+          { jeNo: '', entryDate: '2026-07-01', sourceType: 'FORECAST_ORDER', sourceDocNo: 'SO-0001', narration: 'delivery 2026-07-20 · balance on delivery', party: 'Customer One', side: 'R', rowKey: '300-0000:BAL:ORD', column: 'FORECAST', sen: 20000 },
+        ]),
+        fc('2026-08', docsTree(5000), 5000, 0),
+      ],
+      asAt: '2026-07-01',
+      undated: [{ year: '2026', orders: 2, sen: 150000 }],
+      beyond: { orders: 0, orderSen: 0, bills: 0, billSen: 0 },
+      flagged: [],
+    },
+  });
+
+  test('Orders & bills from the current month on: Actual | Orders & bills | P&L forecast; an order opens behind its figure; the orders in no month are said', async () => {
+    forecastAnswer.value = withDocs();
+    at();
+    fireEvent.click(within(screen.getByRole('group', { name: 'Columns' })).getByRole('button', { name: 'By month' }));
+    fireEvent.click(within(screen.getByRole('group', { name: 'Months' })).getByRole('button', { name: '3' }));
+    fireEvent.click(screen.getByRole('switch', { name: 'Forecast' }));
+    await waitFor(() => expect(heads()).toEqual([
+      'Account', 'Total3 months%', 'Aug 2026Forecast only', 'Jul 2026', 'Jun 2026', 'May 2026',
+      'Orders & bills', 'P&L forecast', 'Actual', 'Orders & bills', 'P&L forecast', 'Actual', 'P&L forecast', 'Actual', 'P&L forecast',
+    ]));
+    /* Aug: Orders & bills | P&L forecast, then Jul: Actual | Orders & bills | P&L forecast, Jun and May Actual | P&L forecast. */
+    expect(cells('Open orders (balance on delivery)').slice(1)).toEqual(['50.00', '', '', '200.00', '', '', '', '', '']);
+    fireEvent.click(screen.getByRole('button', { name: 'Open orders (balance on delivery) · Jul 2026 Orders & bills' }));
+    const region = screen.getByRole('region', { name: 'Entries of Open orders (balance on delivery)' });
+    expect(region.textContent).toContain('Order SO-0001');
+    expect(region.textContent).toContain('Customer One');
+    expect(region.textContent).toContain('delivery 2026-07-20');
+    expect(document.body.textContent).toContain('Open orders with no delivery date, in no month (2): 2 ordered in 2026, RM 1,500.00.');
+  });
+
+  test('Trade finance opens its plan from By month', async () => {
+    await open();
+    fireEvent.click(screen.getByRole('button', { name: 'Trade finance' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Trade finance' });
+    expect(await within(dialog).findByText('460-0009 · TRADE FINANCE - SAMPLE BANK')).toBeTruthy();
+    expect(within(dialog).getByText('Owed today RM 1,000.00')).toBeTruthy();
+  });
+
+  test('by debtor / creditor the forecast steps aside; Excel carries the forecast columns as shown', async () => {
+    await open();
+    fireEvent.click(screen.getByRole('button', { name: 'Excel' }));
+    await waitFor(() => expect(xlsx).toHaveBeenCalledTimes(1));
+    const [xs, name] = xlsx.mock.calls[0]! as [{ tables: Array<{ columns: Array<{ label: string; group?: string }> }> }, string];
+    expect(name).toBe('cash-flow-monthly-forecast-2026-05-2026-07.xlsx');
+    expect(xs.tables[0]!.columns.map((c) => `${c.group ?? ''}|${c.label}`).slice(0, 5)).toEqual(['|Total', '|%', 'Aug 2026|P&L forecast', 'Jul 2026|Actual', 'Jul 2026|P&L forecast']);
+    fireEvent.click(within(screen.getByRole('group', { name: 'Show debtor and creditor names' })).getByRole('button', { name: 'By debtor / creditor' }));
+    await waitFor(() => expect(heads()).toEqual(['Account', 'Total3 months%', 'Jul 2026%', 'Jun 2026%', 'May 2026%']));
+    expect(screen.getByRole('switch', { name: 'Forecast' }).getAttribute('aria-checked')).toBe('false');
   });
 });

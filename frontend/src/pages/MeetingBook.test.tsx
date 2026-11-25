@@ -44,7 +44,7 @@ describe("MeetingBook", () => {
     fireEvent.change(screen.getByLabelText("Your company name"), { target: { value: "ABC Trading" } });
     fireEvent.change(screen.getByLabelText("Your name"), { target: { value: "Mr Lee" } });
     fireEvent.change(screen.getByLabelText("Phone"), { target: { value: "+60 12 345 6789" } });
-    fireEvent.change(screen.getByLabelText("Email (for the confirmation)"), { target: { value: "lee@example.com" } });
+    fireEvent.change(screen.getByLabelText("Email (we send the confirmation here)"), { target: { value: "lee@example.com" } });
     fireEvent.change(screen.getByLabelText("Meeting title"), { target: { value: "Intro" } });
     fireEvent.click(screen.getByRole("button", { name: "More people" }));
     // A tap on the room picks its first free hour (10:30, after the 08:00-10:30 booking).

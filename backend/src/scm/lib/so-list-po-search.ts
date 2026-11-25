@@ -49,15 +49,36 @@ export async function soDocNosByPoNumber(
   c: CompanyScopeCtx,
   term: string | null,
 ): Promise<string[]> {
+  return walkPoToSo(sb, (q) => scopeToCompany(q, c), term);
+}
+
+/** The same walk for a caller that holds the allow-list itself (Service Cases list,
+ *  HC-0257): undefined = unresolved (no predicate), [] = no match. */
+export async function soDocNosByPoNumberInCompanies(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SCM PostgREST client is untyped throughout (companyScope.ts)
+  sb: any,
+  companyIds: number[] | undefined,
+  term: string | null,
+): Promise<string[]> {
+  if (companyIds?.length === 0) return [];
+  return walkPoToSo(sb, (q) => (companyIds ? q.in('company_id', companyIds) : q), term);
+}
+
+async function walkPoToSo(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SCM PostgREST client is untyped throughout (companyScope.ts)
+  sb: any,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a PostgREST builder
+  scope: (q: any) => any,
+  term: string | null,
+): Promise<string[]> {
   const s = escapeForOr(term ?? '');
   if (!s) return [];
 
   // 1. PO headers whose number contains the term. CANCELLED dropped app-side
   //    (the same rule so-converted-po applies), so the search admits exactly
   //    the orders the "PO No." column shows. Capped at the match budget.
-  const headRes = await scopeToCompany(
+  const headRes = await scope(
     sb.from('purchase_orders').select('id, status').ilike('po_number', `%${s}%`),
-    c,
   ).limit(PO_NUMBER_MATCH_CAP);
   if (headRes.error) throw new Error(`PO number lookup failed: ${headRes.error.message}`);
   const poIds = ((headRes.data ?? []) as Array<{ id: string | null; status: string | null }>)
@@ -68,7 +89,7 @@ export async function soDocNosByPoNumber(
 
   // 2. Their PO lines -> the SO lines they were raised from (direct link only).
   const poItems = await chunkIn<{ so_item_id: string | null }>(poIds, (batch, from, to) =>
-    scopeToCompany(sb.from('purchase_order_items').select('so_item_id'), c)
+    scope(sb.from('purchase_order_items').select('so_item_id'))
       .in('purchase_order_id', batch)
       .not('so_item_id', 'is', null)
       .range(from, to),
@@ -81,7 +102,7 @@ export async function soDocNosByPoNumber(
 
   // 3. Those SO lines -> their SO doc_no.
   const soItems = await chunkIn<{ doc_no: string | null }>(soItemIds, (batch, from, to) =>
-    scopeToCompany(sb.from('mfg_sales_order_items').select('doc_no'), c)
+    scope(sb.from('mfg_sales_order_items').select('doc_no'))
       .in('id', batch)
       .range(from, to),
   );

@@ -212,5 +212,7 @@ describe('DailyBank — the original, beside the cash book', () => {
     const hlb = screen.getByLabelText('310-0020 CASH AT BANK - HLBB');
     expect(hlb.textContent).toContain('· In transit · PBB card money, not yet in this bank');
     expect(hlb.querySelector('[class*="afterStrip"]')!.className).not.toMatch(/afterRuled/);
+    /* The cash book's Don't deduct tick (owner 2026-11-25) is not on the original. */
+    expect(screen.queryAllByRole('checkbox')).toEqual([]);
   });
 });

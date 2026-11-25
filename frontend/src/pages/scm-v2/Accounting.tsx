@@ -15,8 +15,8 @@
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
-import { accountingTabFromSearch, type AccountingTab } from './accounting-tabs';
+import { Link, Navigate, useSearchParams } from 'react-router-dom';
+import { accountingTabFromSearch, logisticsMovedTo, type AccountingTab } from './accounting-tabs';
 import { reportOfAccountingTab, type ReportItem } from './reports-catalog';
 import { ReportShell } from './reports/ReportShell';
 import {
@@ -28,6 +28,7 @@ import { DataTable, type Column } from '../../components/DataTable';
 import { ItemGroupsTab } from './ItemGroups';
 import { TrialBalanceTab } from './TrialBalance';
 import { StockCloseTab } from './StockClose';
+import { CommissionReleaseTab } from './CommissionRelease';
 import { PnLTab, BalanceSheetTab } from './Reports';
 import { ReceiptsPaymentsTab } from './ReceiptsPayments';
 import { PaymentCorrectionsTab } from './PaymentCorrectionsTab';
@@ -38,7 +39,7 @@ import { EventCostsTab } from './EventCosts';
 import { EventCommissionTab } from './EventCommission';
 import { ProductProfitTab } from './ProductProfit';
 import { ProductChangesTab, ProductChangesSummaryTab } from './ProductChanges';
-import { LogisticsCostTab } from './LogisticsCost';
+import { SoBacklogCoverTab } from './SoBacklogCover';
 import { DepartmentPnlTab } from './DepartmentPnl';
 import { byText } from '../../vendor/scm/lib/sort-options';
 import styles from './Suppliers.module.css';
@@ -53,7 +54,7 @@ import { DateField } from "../../vendor/scm/components/DateField";
 type Tab = AccountingTab;
 
 /* The tabs that draw their own head, with their actions in it. */
-const OWN_HEADER: ReadonlySet<Tab> = new Set<Tab>(['je', 'gl', 'check', 'close']);
+const OWN_HEADER: ReadonlySet<Tab> = new Set<Tab>(['je', 'gl', 'check', 'close', 'commrel']);
 
 export const Accounting = () => {
   /* THE TAB THE URL NAMES (docs/bugs/0824). The Finance sidebar deep-links
@@ -74,6 +75,8 @@ export const Accounting = () => {
      report's own header (batch 6 §4.3); Journal entries, the General ledger
      and the Trial balance too when opened from the list (`in=reports`). */
   const report = reportOfAccountingTab(tab, params.get('in') === 'reports');
+  /* The Logistics cost tab moved into the Department P&L (owner 2026-11-25): an old link lands there. */
+  if (params.get('tab') === 'logistics') return <Navigate to={logisticsMovedTo(params)} replace />;
 
   return (
     <AccountingFrame tab={tab} report={report}>
@@ -83,6 +86,7 @@ export const Accounting = () => {
       {tab === 'gl'    && <GlTab />}
       {tab === 'tb'    && <TrialBalanceTab />}
       {tab === 'close' && <StockCloseTab />}
+      {tab === 'commrel' && <CommissionReleaseTab />}
       {tab === 'pnl'   && <PnLTab />}
       {tab === 'bs'    && <BalanceSheetTab />}
       {tab === 'rp'    && <ReceiptsPaymentsTab />}
@@ -100,7 +104,7 @@ export const Accounting = () => {
       {tab === 'products' && <ProductProfitTab />}
       {tab === 'changes' && <ProductChangesTab />}
       {tab === 'changesum' && <ProductChangesSummaryTab />}
-      {tab === 'logistics' && <LogisticsCostTab />}
+      {tab === 'sotodo' && <SoBacklogCoverTab />}
       {tab === 'departments' && <DepartmentPnlTab />}
     </AccountingFrame>
   );

@@ -315,7 +315,7 @@ export function DailyBankCashbook({ date, today }: { date: string; today: string
             <span className={styles.closeTitle}>Money received · {fmtDate(date)}</span>
             <span className={styles.closeSub}>{day.receipts.length} typed · RM {money(total)} on the Board</span>
           </div>
-          <div className={styles.cbHelp}>Type what came into each bank this day as one total per way it came: Online, Cash, Cheque, or a card terminal. Save keeps the cells you changed; 0 clears one. Payments come off by themselves: every approved payment voucher paying out of the bank, on its voucher date. Nothing here posts to the books.</div>
+          <div className={styles.cbHelp}>Type what came into each bank this day as one total per way it came: Online, Cash, Cheque, or a card terminal. Save keeps the cells you changed; 0 clears one. Payments come off by themselves: every payment voucher paying out of the bank, on the day it is approved. One whose money left before the bank’s start is already in the starting balance: tick it Don’t deduct on Accounts. Nothing here posts to the books.</div>
           {future && <div className={styles.muted}>This day hasn’t happened yet. Money is typed once it is received.</div>}
           {!future && open.length > 0 && <IncomeGrid key={date} day={day} date={date} banks={open} canEdit={canEdit} onSaid={setSaid} />}
           {!future && open.length === 0 && <div className={styles.muted}>No account’s cash book has started by {fmtDate(date)}. Set a starting balance below first.</div>}

@@ -164,6 +164,7 @@ import { todayMyt } from "../vendor/scm/lib/dates";
 import { FormTouchScope, useFormGuard } from "../hooks/useLeaveGuard";
 import { CaseAddressFields, CASE_ADDRESS_DESKTOP } from "../components/assr/CaseAddressFields";
 import { formatCaseAddress } from "../vendor/scm/lib/assr-case-address";
+import { printFrameAs } from "../lib/printFrame";
 
 type StageFilter = "ALL" | AssrStage;
 
@@ -1176,7 +1177,7 @@ function CasesView({
         search={{
           value: search,
           onChange: (v) => { setSearch(v); },
-          placeholder: "Search ASSR no, SO no, Ref no, DO no, customer, salesperson, phone…",
+          placeholder: "Search ASSR no, SO no, Ref no, DO no, PO no, customer, salesperson, phone…",
           searching: searchTransition.isSearching,
           countPending: list.loading || list.placeholder || Boolean(list.error) || searchTransition.resultsAreStale,
           scope: "server",
@@ -6334,8 +6335,7 @@ function PrintMenu({
     frame.srcdoc = html;
     frame.onload = () => {
       try {
-        frame.contentWindow?.focus();
-        frame.contentWindow?.print();
+        printFrameAs(frame, frame.contentDocument?.title || "Service document");
       } catch {
         /* Some engines throw before the document settles; the tab exit is still
            there and the frame is cleaned up below either way. */

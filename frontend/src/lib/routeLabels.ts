@@ -91,6 +91,7 @@ export const SCM_SEGMENT_LABELS: Record<string, SegmentLabel> = {
   "stock-adjustments": ["Stock Adjustments", "Stock Adjustment"],
   "stock-transfers": ["Stock Transfers", "Stock Transfer"],
   "stock-takes": ["Stock Takes", "Stock Take"],
+  "stock-take-approvals": ["Stock Take Approvals", "Stock Take Approval"],
   "fabric-tracking": "Fabric Converter",
   "loading-list": "Loading List",
   // Products

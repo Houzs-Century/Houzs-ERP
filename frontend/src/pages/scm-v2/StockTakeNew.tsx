@@ -42,16 +42,12 @@ import { PageHeader } from '../../components/Layout';
 import { DateField } from "../../vendor/scm/components/DateField";
 import { StaffMultiPick } from '../../vendor/scm/components/StaffMultiPick';
 import { todayMyt } from '../../vendor/scm/lib/dates';
+import { MFG_CATEGORY_LABELS, MFG_PRODUCT_CATEGORIES } from '../../vendor/shared/product-categories';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-const CATEGORIES: Array<{ value: string; label: string }> = [
-  { value: 'BEDFRAME',  label: 'Bedframe'  },
-  { value: 'MATTRESS',  label: 'Mattress'  },
-  { value: 'SOFA',      label: 'Sofa'      },
-  { value: 'ACCESSORY', label: 'Accessory' },
-  { value: 'SERVICE',   label: 'Service'   },
-];
+// Every product category, so a count sheet can cover Dining / Carpet / ... too (HC-0258).
+const CATEGORIES = MFG_PRODUCT_CATEGORIES.map((c) => ({ value: c, label: MFG_CATEGORY_LABELS[c] }));
 
 export const StockTakeNew = () => {
   const navigate = useNavigate();

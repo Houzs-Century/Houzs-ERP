@@ -64,7 +64,7 @@ export const PriceCheck = ({ card, rules, areas, areaRules, form, onForm }: {
   const factsKey = read.ok ? JSON.stringify(read.facts) : null;
   const cardKey = JSON.stringify([
     card.basis, card.aggregation, card.minChargeSen, card.capSen, card.rounding,
-    rules.map((r) => [r.id, r.amountSen, r.tierPosition, r.bracketMin, r.bracketMax, r.zone, r.appliesTo ?? null]),
+    rules.map((r) => [r.id, r.amountSen, r.tierPosition, r.bracketMin, r.bracketMax, r.zone, r.appliesTo ?? null, r.bps ?? null, r.label ?? null]),
     areaRules.map((r) => [r.id, r.amountSen, r.tierPosition, r.bracketMin, r.bracketMax, r.areaId]),
     areas.map((a) => [a.id, a.towns]),
   ]);
@@ -98,6 +98,10 @@ export const PriceCheck = ({ card, rules, areas, areaRules, form, onForm }: {
         {priced.has('SOFA_BRACKET') && (
           <Box label="Sofas — compartments of each" value={form.sofas} placeholder="3, 6" error={errors.sofas} inputMode="text"
             onChange={(v) => onForm({ ...form, sofas: v })} />
+        )}
+        {priced.has('DO_CHARGE') && form.job === 'DELIVERY' && (
+          <Box label="Goods value (RM)" value={form.goods} placeholder="0.00" error={errors.goods} inputMode="text"
+            onChange={(v) => onForm({ ...form, goods: v })} />
         )}
         {counts.map((t) => (
           <Box key={t} label={RULE_LABEL[t]} value={form.counts[t] ?? ''} placeholder="0" error={errors[t]} inputMode="numeric"

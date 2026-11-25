@@ -2083,8 +2083,10 @@ function DataTableInner<T, L>({
     const idx = renderList.findIndex((it) => it.kind === "row" && String(getRowKey(it.row)) === key);
     if (idx < 0) return;
     const find = () => tbodyRef.current?.querySelector<HTMLElement>(`tr[data-rowkey="${CSS.escape(key)}"]`);
-    const settle = () => find()?.scrollIntoView({ block: "center" });
-    if (find()) return settle();
+    // Block body: Chrome's scrollIntoView returns a Promise, and an effect that
+    // returns it hands React a "cleanup" that crashes when the list closes.
+    const settle = () => { find()?.scrollIntoView({ block: "center" }); };
+    if (find()) { settle(); return; }
     const offset = idx * (rowHeightRef.current || ROW_HEIGHT_ESTIMATE);
     const wrap = scrollWrapRef.current;
     // A programmatic scroll does not always emit `scroll` (a background tab never

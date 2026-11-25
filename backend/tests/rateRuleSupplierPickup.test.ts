@@ -47,7 +47,9 @@ describe('rate rules: every type the editor offers can be saved', () => {
   });
 
   test.each(RATE_RULE_TYPES.map((t) => [t]))('POST does not refuse %s as an unknown type', async (ruleType) => {
-    const res = await send(app(), 'POST', '/card-1/rules', { ruleType, amountSen: 100, tierPosition: 1, zone: 'MELAKA', bracketMin: 0 });
+    /* A Per DO charge is refused without its name (do-charge.ts), so it is named. */
+    const named = ruleType === 'DO_CHARGE' ? { label: 'Permit' } : {};
+    const res = await send(app(), 'POST', '/card-1/rules', { ruleType, amountSen: 100, tierPosition: 1, zone: 'MELAKA', bracketMin: 0, ...named });
     expect(res.status).not.toBe(400);
   });
 

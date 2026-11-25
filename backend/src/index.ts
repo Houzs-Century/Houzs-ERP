@@ -125,6 +125,7 @@ import mailAcks from "./routes/mail-acks";
 import mailAccessLog from "./routes/mail-access-log";
 import mailReplyGuard from "./routes/mail-reply-guard";
 import mailPersonal from "./routes/mail-personal";
+import mailClaim from "./routes/mail-claim";
 // 2990 → Houzs LIVE SO mirror receiver. PRE-AUTH (secret-guarded, called by the
 // 2990 DB via pg_net, no user JWT) — mounted at the top level, outside /api/scm.
 import { soMirror } from "./scm/routes/so-mirror";
@@ -175,6 +176,7 @@ import { publicBrandCalendar } from "./routes/publicBrandCalendar";
 import { brandShare } from "./routes/brandShare";
 import { projectForecast } from "./routes/projectForecast";
 import { drainEmailOutbox } from "./services/email";
+import { sendAllMeetingMail } from "./services/meetingMail";
 import { backfillOutboundMessageIds } from "./lib/mail-threading";
 import { DELIVERY_REFRESH_LIMIT, refreshOutboundDelivery } from "./lib/mail-delivery";
 import { pollVelocity } from "./scm/lib/velocity-poll";
@@ -197,6 +199,7 @@ import { CLAUDE_MODEL } from "./scm/lib/scan-ocr";
 import { runAgentHeartbeat } from "./services/agent-scheduler";
 import { getSupabaseService } from "./db/supabase";
 import { sweepStockClose } from "./acc/stock-close";
+import { sweepCommissionRelease } from "./acc/commission-release";
 import { retryOpenDoStamps } from "./scm/lib/do-shipped-from-retry";
 import { INTEGRITY_JOB, runNightlyIntegrity } from "./services/nightlyIntegrityRun";
 import { JOB_ALERTS_JOB, runJobFailureAlerts } from "./services/jobFailureAlerts";
@@ -652,6 +655,7 @@ app.route("/api/mail-center", mailAcks);
 app.route("/api/mail-center", mailAccessLog);
 app.route("/api/mail-center", mailReplyGuard);
 app.route("/api/mail-center", mailPersonal);
+app.route("/api/mail-center", mailClaim);
 app.route("/api/mail-center", mailCenter);
 // Announcements — the banner GET, the LIST GET and the ack POST are open to
 // every authed user (the route handles it internally: the list is audience- and
@@ -794,6 +798,14 @@ export default {
       // Then give Mail Center sends Resend's Message-ID, which a customer's
       // reply quotes to land back on its thread, and ask whether each recent
       // send was delivered or bounced (HC-0247).
+      // Meeting emails the IT Hub wrote for meetings made here, reminders included (services/meetingMail.ts).
+      ctx.waitUntil(
+        track("meeting-mail", () => sendAllMeetingMail(env))
+          .then((r) => {
+            if (r.sent || r.failed) console.log(`[cron meeting-mail] sent=${r.sent} failed=${r.failed}`);
+          })
+          .catch((e) => console.error("[cron meeting-mail]", e))
+      );
       ctx.waitUntil(
         track("email-outbox", () => drainEmailOutbox(env))
           .then((r) => {
@@ -1426,6 +1438,25 @@ export default {
             (changed.length ? ` — ${changed.map((o) => `${o.companyId}/${o.month}:${o.action}`).join(", ")}` : ""),
           );
         }).catch((e) => console.error("[cron stock-close]", e)),
+      );
+      // The monthly commission release (owner 2026-11-25: 系统自动转): every month
+      // from the books' start to last month worked out again for each company that
+      // switched it on — a month whose lines moved (a bill booked late, an invoice
+      // keyed back) is reversed on its own date and posted again. Counts only.
+      ctx.waitUntil(
+        track("commission-release", async () => {
+          const sb = getSupabaseService(env);
+          const { data, error } = await sb.schema("public").from("companies").select("id");
+          if (error) throw new Error(`companies: ${error.message}`);
+          const ids = ((data ?? []) as Array<{ id: number }>).map((r) => Number(r.id));
+          const outcomes = await sweepCommissionRelease(sb, ids, "cron");
+          const changed = outcomes.filter((o) => o.action !== "unchanged");
+          console.log(
+            `[cron commission-release] ${outcomes.length} month check(s), ${changed.length} change(s)` +
+            (changed.length ? ` — ${changed.map((o) => `${o.companyId}/${"month" in o ? o.month : "-"}:${o.action}`).join(", ")}` : ""),
+          );
+          if (outcomes.some((o) => o.action === "failed")) throw new Error("a commission release month failed — see acc_commission_release_runs");
+        }).catch((e) => console.error("[cron commission-release]", e)),
       );
       // Each lorry's day by road (owner 2026-11-08): the two days just gone are worked
       // out on the server, so Fleet Health and Lorry Capacity have every day whether or

@@ -899,7 +899,7 @@ export const FORM_SUPPLIERS: FormSchema = {
     { key: "city", label: "City", type: "text" },
     { key: "area", label: "Area", type: "text" },
     { key: "country", label: "Country", type: "text", placeholder: "Malaysia" },
-    { key: "paymentTerms", label: "Payment Terms", type: "text", placeholder: "e.g. Net 30" },
+    { key: "paymentTerms", label: "Payment Terms", type: "pick", pick: "paymentTerms", placeholder: "Pick the term" }, // the desktop forms' list (owner 2026-11-24)
     { key: "status", label: "Status", type: "select", options: [
       { value: "ACTIVE", label: "Active" }, { value: "INACTIVE", label: "Inactive" }, { value: "BLOCKED", label: "Blocked" },
     ], placeholder: "Active" },

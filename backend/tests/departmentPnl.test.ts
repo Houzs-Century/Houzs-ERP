@@ -2,8 +2,11 @@
    2026-11-19: an Operation report = his "Operation PNL - Auto" sheet, a G&A report,
    and 「我要可以看全部的，也要可以看单独部门的」). The arithmetic is
    scm/lib/department-pnl.test.ts; pinned here, with made-up figures:
-     • All: every P&L line split across the departments, each block's columns adding
-       up to the P&L's own total, a reversed pair counting nowhere;
+     • All (owner 2026-11-25): every department's own P&L side by side, each column its
+       own view's figures — the Exhibition on its orders, Operation to its Net Profit,
+       Logistics by the Logistics P&L, G&A against its share — and their total;
+     • the Exhibition on its orders: the Performance P&L's sales and cost, its own
+       expenses, the commission bills in place of the release;
      • Operation: the DOs by region, 7% of their value, the Logistics P&L's own 3% as
        the logistic expense, the OPERATION CHARGES bill in the month it names, the
        warehouse accounts and the warehouse teams' payroll lines;
@@ -11,7 +14,7 @@
        accounts booked;
      • the two rates: Finance's right only, checked, saved and read back;
      • a figure opened (owner 2026-11-20: 「我希望这里点开也能看」): the lines behind every
-       figure of All, the Exhibition P&L and G&A add up to it, the stock engine's
+       figure of a department's own P&L and G&A add up to it, the stock engine's
        opening stock in place of the ledger's own, nothing of another company's;
        the Operation sheet's rows are its lines added up. */
 
@@ -21,6 +24,7 @@ import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
 import {
   departmentLinesHandler, departmentViewHandler, departmentsAllHandler, departmentsGaHandler, departmentsOperationHandler, departmentsPlanHandler, saveDepartmentRateHandler,
 } from '../src/scm/routes/acc-departments';
+import { logisticsPnlHandler } from '../src/scm/routes/acc-logistics-pnl';
 
 const CO = 1;
 const account = (account_code: string, account_name: string, section: string, extra: Row = {}): Row => ({
@@ -116,6 +120,7 @@ function harness(sb: ReturnType<typeof world>, perms: string[] = ['scm.payment_v
   app.get('/departments/ga', departmentsGaHandler as never);
   app.get('/departments/operation', departmentsOperationHandler as never);
   app.get('/departments/lines', departmentLinesHandler as never);
+  app.get('/logistics/pnl', logisticsPnlHandler as never);
   app.put('/departments/rate', saveDepartmentRateHandler as never);
   const get = async (path: string) => { const r = await app.request(path); return { status: r.status, body: await r.json() as any }; };
   const put = async (body: unknown) => {
@@ -126,33 +131,55 @@ function harness(sb: ReturnType<typeof world>, perms: string[] = ['scm.payment_v
 }
 const SEP = '?from=2026-09-01&to=2026-09-30';
 
-describe('GET /departments/all — the whole P&L by department', () => {
-  test("every line split across the company's departments, each block's columns adding up to the P&L's own total", async () => {
-    const { status, body } = await harness(world()).get(`/departments/all${SEP}`);
+const SEP_AND = SEP.replace('?', '&');
+const nodes = (ns: any[]): any[] => ns.flatMap((n: any) => [n, ...nodes(n.children ?? [])]);
+const leaf = (ns: any[], code: string): any => nodes(ns).find((n: any) => n.kind === 'account' && n.code === code);
+
+describe("GET /departments/all — every department's own P&L, side by side (owner 2026-11-25)", () => {
+  test("each column is its own view's figures: the Exhibition on its orders, Operation to its Net Profit, Logistics by its P&L, G&A against its share", async () => {
+    const h = harness(world());
+    const { status, body } = await h.get(`/departments/all${SEP}`);
     expect(status).toBe(200);
-    expect(body.columns.map((x: any) => x.key)).toEqual(['exhibition', 'operation', 'logistics', 'ga']);
-    expect(body.departments.map((x: any) => [x.key, x.view])).toEqual([['exhibition', 'dept'], ['operation', 'operation'], ['logistics', null], ['ga', 'ga']]);
-    const leaf = (block: string, code: string): any => {
-      const walk = (ns: any[]): any[] => ns.flatMap((n: any) => (n.code === code && n.kind === 'account' ? [n] : walk(n.children ?? [])));
-      return walk(body.tree[block])[0];
-    };
-    /* Finance's team G&A, helpers Logistics, the warehouse teams Operation, the line naming no team the selling department. */
-    expect(leaf('expenses', '900-S100').cells).toEqual({ exhibition: 20_000, operation: 120_000, logistics: 50_000, ga: 80_000, none: 0 });
-    expect(leaf('expenses', '900-D100').cells.ga).toBe(200_000);
-    expect(leaf('expenses', '900-R005').cells.operation).toBe(270_000);
-    expect(leaf('expenses', '900-T005').cells.logistics).toBe(150_000);
-    expect(leaf('expenses', '900-B003').cells.exhibition).toBe(400_000);
-    /* Houzs's showroom folds into G&A; a warehouse job ad is Operation's, an account executive's G&A's. */
-    expect(leaf('expenses', '900-R009').cells.ga).toBe(220_000);
-    expect(leaf('expenses', '900-A004').cells).toEqual({ exhibition: 0, operation: 6_000, logistics: 0, ga: 2_500, none: 0 });
-    expect(leaf('otherIncome', '599-0000').cells).toEqual({ exhibition: 0, operation: 70_000, logistics: 40_000, ga: 1_000, none: 0 });
-    expect(leaf('tradingIncome', '501-0000').cells.exhibition).toBe(5_000_000);
-    for (const [block, key] of [['expenses', 'expensesSen'], ['otherIncome', 'otherIncomeSen'], ['tradingIncome', 'tradingIncomeSen']] as const) {
-      const t = body.blockTotals[block];
-      expect(t.exhibition + t.operation + t.logistics + t.ga + t.none).toBe(body.totals[key]);
+    expect(body.departments.map((x: any) => [x.key, x.view, x.basis])).toEqual([
+      ['exhibition', 'dept', 'orders'], ['operation', 'operation', null], ['logistics', 'logistics', null], ['ga', 'ga', null],
+    ]);
+    /* The Exhibition: the order's sales and cost — not the books' 5,000,000 of sales — less what it booked. */
+    expect(body.summary.exhibition).toEqual({ incomeSen: 2_500_000, costSen: 1_000_000, grossSen: 1_500_000, otherIncomeSen: 0, expensesSen: 420_000, profitSen: 1_080_000 });
+    const own = (await h.get(`/departments/dept?d=exhibition${SEP_AND}`)).body.perMonth[0];
+    expect(body.summary.exhibition.profitSen).toBe(own.netSen);
+    /* Operation: its income less the Logistic Expense and the warehouse — its Net Profit, not the net after Logistics. */
+    const op = (await h.get(`/departments/operation${SEP}`)).body;
+    const t = (k: string) => Object.values(op.perMonth[0].rows[k] as Record<string, number>).reduce((a, b) => a + b, 0);
+    expect(body.summary.operation).toEqual({
+      incomeSen: t('do_income') + t('income_warehouse') + t('income_2990') + t('income_other'), costSen: -t('logistic_expense'),
+      grossSen: t('gross'), otherIncomeSen: 0, expensesSen: t('total_expense'), profitSen: t('net'),
+    });
+    expect(body.summary.operation.profitSen).toBe(350_000 - 120_000 - 576_000);
+    /* Logistics: the Logistics P&L's own totals. */
+    const lg = (await h.get(`/logistics/pnl${SEP}`)).body;
+    const row = (k: string) => lg.rows.find((r: any) => r.key === k).totalSen;
+    expect(body.summary.logistics).toEqual({
+      incomeSen: row('total_income'), costSen: 0, grossSen: row('total_income'), otherIncomeSen: 0, expensesSen: row('total_expense'), profitSen: row('net'),
+    });
+    /* G&A: 8% of the Performance sales against what it booked. */
+    expect(body.summary.ga).toEqual({ incomeSen: 200_000, costSen: 0, grossSen: 200_000, otherIncomeSen: 0, expensesSen: 507_500, profitSen: -307_500 });
+    expect(body.gaShareBp).toBe(800);
+    /* The total is the departments added up. */
+    for (const k of ['incomeSen', 'costSen', 'grossSen', 'otherIncomeSen', 'expensesSen', 'profitSen']) {
+      expect(body.total[k], k).toBe(['exhibition', 'operation', 'logistics', 'ga'].reduce((a, d) => a + body.summary[d][k], 0));
     }
-    /* An expense account with no department is named, never a column. */
+    /* An expense account with no department is named. */
     expect(body.unassigned).toEqual({ label: 'No department yet', lines: [{ code: '900-U014', name: '900-U014', amountSen: 20_000 }] });
+  });
+
+  test("a shop's departments: the Showroom as booked, G&A against its share", async () => {
+    const shop = world({ acc_department_settings: [{ company_id: CO, ga_share_bp: 800, plan: { departments: ['showroom', 'ga'], selling: 'showroom', folds: { exhibition: 'showroom', operation: 'showroom', logistics: 'showroom' } } }] });
+    const h = harness(shop);
+    const { body } = await h.get(`/departments/all${SEP}`);
+    expect(body.departments.map((x: any) => [x.key, x.view, x.basis])).toEqual([['showroom', 'dept', 'books'], ['ga', 'ga', null]]);
+    const own = (await h.get(`/departments/dept?d=showroom${SEP_AND}`)).body.perMonth[0];
+    expect(body.summary.showroom).toMatchObject({ incomeSen: 5_000_000, profitSen: own.netSen });
+    expect(Object.keys(body.summary)).toEqual(['showroom', 'ga']);
   });
 
   test("the statements' right only", async () => {
@@ -161,18 +188,51 @@ describe('GET /departments/all — the whole P&L by department', () => {
 });
 
 describe('GET /departments/plan and /departments/dept — the company\'s departments, one at a time', () => {
-  test('the Exhibition P&L: the fairs\' sales less what Exhibition booked, month by month', async () => {
+  test("the Exhibition P&L on its orders: the Performance P&L's sales and cost, less what Exhibition booked, month by month", async () => {
     const h = harness(world());
     const plan = await h.get('/departments/plan');
     expect(plan.body.departments.map((x: any) => x.label)).toEqual(['Exhibition', 'Operation', 'Logistics', 'G&A']);
     const { status, body } = await h.get(`/departments/dept?d=exhibition&from=2026-09-01&to=2026-09-30`);
     expect(status).toBe(200);
     expect(body.label).toBe('Exhibition');
+    expect(body.basis).toBe('orders');
+    expect(body.orders).toEqual({ counted: 1, notDelivered: 1 });
     expect(body.perMonth).toEqual([{
-      month: '2026-09', salesSen: 5_000_000, costOfSalesSen: 0, grossSen: 5_000_000, otherIncomeSen: 0,
-      expensesSen: 400_000 + 20_000, taxationSen: 0, netSen: 5_000_000 - 420_000,
+      month: '2026-09', salesSen: 2_500_000, costOfSalesSen: 1_000_000, grossSen: 1_500_000, otherIncomeSen: 0,
+      expensesSen: 400_000 + 20_000, taxationSen: 0, netSen: 1_500_000 - 420_000,
     }]);
-    expect((await h.get(`/departments/dept?d=showroom${SEP.replace('?', '&')}`)).body.error).toBe('bad_department');
+    expect(body.tree.tradingIncome.map((n: any) => [n.key, n.label, n.amountSen])).toEqual([['order:bedframe', 'Bedframe', 2_500_000]]);
+    expect(body.tree.costOfSales.map((n: any) => [n.key, n.amountSen])).toEqual([['order:bedframe', 1_000_000]]);
+    expect((await h.get(`/departments/dept?d=showroom${SEP_AND}`)).body.error).toBe('bad_department');
+  });
+
+  test("the commission: the month's bills in place of the release, what else is booked on it kept; its lines are the bill and the rest", async () => {
+    const h = harness(world({
+      accounts: [
+        ...ACCOUNTS.map((r) => ({ ...r })),
+        account('900-C003', 'COMMISSION ( EVENT )', 'EXPENSES', { department_row: 'sales' }),
+        account('360-0050', 'PREPAYMENT COMMISSION', 'CURRENT ASSETS', { account_type: 'ASSET' }),
+      ],
+      v_gl_entries: [
+        ...LEDGER.map((r) => ({ ...r })),
+        /* September's commission bill, booked in October; the release of September and its leg on the prepayment; an overriding booked straight. */
+        gl('360-0050', 1_500_000, 0, { account_type: 'ASSET', notes: "REVENUE TEAM PAYROLL TO COLLECT BACK - SEP'26", entry_date: '2026-10-15', source_type: 'API', source_doc_no: 'HC-API-1' }),
+        gl('900-C003', 600_000, 0, { entry_date: '2026-09-30', source_type: 'COMMREL', notes: 'COMMISSION RELEASE - SEP 2026' }),
+        gl('360-0050', 0, 600_000, { account_type: 'ASSET', entry_date: '2026-09-30', source_type: 'COMMREL' }),
+        gl('900-C003', 30_000, 0, { entry_date: '2026-09-20', notes: 'OVERRIDING - SEP' }),
+      ],
+    }));
+    const body = (await h.get(`/departments/dept?d=exhibition${SEP_AND}`)).body;
+    const c003 = leaf(body.tree.expenses, '900-C003');
+    expect(c003.amountSen).toBe(30_000 + 1_500_000);
+    expect(c003.label).toBe('900-C003 COMMISSION ( EVENT ) — the commission bills for Sep 2026, in place of the monthly release');
+    expect(body.perMonth[0].expensesSen).toBe(420_000 + 1_530_000);
+    const lines = (await h.get(`/departments/lines?view=dept&d=exhibition&block=expenses&keys=900-C003${SEP_AND}`)).body;
+    expect(lines.lines.map((l: any) => [l.source, l.accountCode, l.text, l.sen])).toEqual([
+      ['ledger', '900-C003', 'OVERRIDING - SEP', 30_000],
+      ['bill', '360-0050', "REVENUE TEAM PAYROLL TO COLLECT BACK - SEP'26", 1_500_000],
+    ]);
+    expect(lines.totalSen).toBe(c003.amountSen);
   });
 
   test('a company with no Operation department has no Operation sheet', async () => {
@@ -228,11 +288,10 @@ describe('GET /departments/ga — G&A against its share', () => {
 
 describe('GET /departments/lines — the lines behind a figure add up to it', () => {
   const BLOCKS = ['tradingIncome', 'costOfSales', 'otherIncome', 'expenses', 'taxation'] as const;
-  const nodes = (ns: any[]): any[] => ns.flatMap((n: any) => [n, ...nodes(n.children ?? [])]);
   const leaves = (n: any): string[] => (n.kind === 'account' ? [n.key ?? n.code] : (n.children ?? []).flatMap(leaves));
   const keysOf = (n: any) => encodeURIComponent(leaves(n).join(','));
   /* Houzs's books start on 1 September with opening stock; the ledger's own stock line is the P&L's to set aside. */
-  const booked = () => world({
+  const booked = (over: Record<string, Row[]> = {}) => world({
     acc_company_settings: [{ company_id: CO, books_start_date: '2026-09-01', opening_stock: { customer: 300_000 } }],
     v_gl_entries: [
       ...LEDGER.map((r) => ({ ...r })),
@@ -241,34 +300,40 @@ describe('GET /departments/lines — the lines behind a figure add up to it', ()
       gl('900-P001', 1_500, 0, { entry_date: '2026-10-12' }),
       gl('900-S100', 60_000, 0, { notes: "IT SALARY - OCT'26", entry_date: '2026-10-31' }),
     ],
+    ...over,
   });
 
-  test('All: every account, category and block, in every department and the Total', async () => {
-    const h = harness(booked());
-    const all = (await h.get(`/departments/all${SEP}`)).body;
+  /* 2990's plan: its Showroom sells and reads its books, everything else folds into it. */
+  const SHOP_PLAN = { departments: ['showroom', 'ga'], selling: 'showroom', folds: { exhibition: 'showroom', operation: 'showroom', logistics: 'showroom' } };
+  const shop = () => booked({ acc_department_settings: [{ company_id: CO, ga_share_bp: 800, plan: SHOP_PLAN }] });
+
+  test('a department as booked (the Showroom): every account, category and block, each month and the Total', async () => {
+    const h = harness(shop());
+    const both = '&from=2026-09-01&to=2026-10-31';
+    const months = ['2026-09', '2026-10'];
+    const range = (m: string | null) => (m ? `&from=${m}-01&to=${m === '2026-09' ? '2026-09-30' : '2026-10-31'}` : both);
+    const dept = (await h.get(`/departments/dept?d=showroom${both}`)).body;
+    expect(dept.basis).toBe('books');
     let checked = 0;
     for (const block of BLOCKS) {
-      for (const n of nodes(all.tree[block])) {
-        for (const col of [...all.columns.map((x: any) => x.key), 'none', null]) {
-          const res = await h.get(`/departments/lines?view=all&block=${block}&keys=${keysOf(n)}${col ? `&dept=${col}` : ''}&from=2026-09-01&to=2026-09-30`);
+      for (const n of nodes(dept.tree[block])) {
+        for (const m of [...months, null]) {
+          const res = await h.get(`/departments/lines?view=dept&d=showroom&block=${block}&keys=${keysOf(n)}${range(m)}`);
           expect(res.status).toBe(200);
-          const cell = col ? (n.cells?.[col] ?? 0) : n.amountSen;
-          expect(res.body.totalSen, `${block} ${n.id} ${col ?? 'Total'}`).toBe(cell);
+          const cell = m ? (n.cells?.[m] ?? 0) : months.reduce((x, k) => x + (n.cells?.[k] ?? 0), 0);
+          expect(res.body.totalSen, `${block} ${n.id} ${m ?? 'Total'}`).toBe(cell);
           expect(res.body.lines.reduce((x: number, l: any) => x + l.sen, 0)).toBe(cell);
           checked += 1;
         }
       }
     }
-    expect(checked).toBeGreaterThan(40);
-    /* The payroll account's G&A figure: Finance's team line, nothing else. */
-    const pay = await h.get(`/departments/lines?view=all&block=expenses&keys=900-S100&dept=ga${SEP.replace('?', '&')}`);
-    expect(pay.body.lines.map((l: any) => [l.text, l.sen, l.dept])).toEqual([["FINANCE - SALARY - SEP'26", 80_000, 'ga']]);
+    expect(checked).toBeGreaterThan(20);
     /* Opening stock is the books' own, not the ledger's month-close line on the same account. */
-    const stock = await h.get(`/departments/lines?view=all&block=costOfSales&keys=600-0001${SEP.replace('?', '&')}`);
-    expect(stock.body.lines.map((l: any) => [l.source, l.sen, l.dept])).toEqual([['stock_opening', 300_000, 'exhibition']]);
+    const stock = await h.get(`/departments/lines?view=dept&d=showroom&block=costOfSales&keys=600-0001${SEP.replace('?', '&')}`);
+    expect(stock.body.lines.map((l: any) => [l.source, l.sen, l.dept])).toEqual([['stock_opening', 300_000, 'showroom']]);
   });
 
-  test("the Exhibition P&L and G&A: each month's figure and the Total, row by row", async () => {
+  test("the Exhibition on its orders and G&A: each month's figure and the Total, row by row; the orders' figures open no ledger line", async () => {
     const h = harness(booked());
     const both = '&from=2026-09-01&to=2026-10-31';
     const months = ['2026-09', '2026-10'];
@@ -278,11 +343,18 @@ describe('GET /departments/lines — the lines behind a figure add up to it', ()
       for (const n of nodes(dept.tree[block])) {
         for (const m of [...months, null]) {
           const res = await h.get(`/departments/lines?view=dept&d=exhibition&block=${block}&keys=${keysOf(n)}${range(m)}`);
+          if (block === 'tradingIncome' || block === 'costOfSales') {
+            expect(res.body.error, `${block} ${n.id}`).toBe('from_orders');
+            continue;
+          }
           const cell = m ? (n.cells?.[m] ?? 0) : months.reduce((x, k) => x + (n.cells?.[k] ?? 0), 0);
           expect(res.body.totalSen, `${block} ${n.id} ${m ?? 'Total'}`).toBe(cell);
         }
       }
     }
+    /* The payroll account's Exhibition figure: the line naming no team, nothing else. */
+    const pay = await h.get(`/departments/lines?view=dept&d=exhibition&block=expenses&keys=900-S100${SEP.replace('?', '&')}`);
+    expect(pay.body.lines.map((l: any) => [l.text, l.sen, l.dept])).toEqual([["GROSS SALARY - SEP'26", 20_000, 'exhibition']]);
     const ga = (await h.get(`/departments/ga?${both.slice(1)}`)).body;
     for (const n of nodes(ga.tree)) {
       for (const m of [...months, null]) {
@@ -300,8 +372,8 @@ describe('GET /departments/lines — the lines behind a figure add up to it', ()
     const res = await h.get(`/departments/lines?view=ga&keys=900-P001${SEP.replace('?', '&')}`);
     expect(res.body.lines.map((l: any) => l.id)).not.toContain('other-co');
     expect(res.body.totalSen).toBe(5_000);
-    const all = await h.get(`/departments/lines?view=all&block=expenses&keys=900-P001${SEP.replace('?', '&')}`);
-    expect(all.body.totalSen).toBe(5_000);
+    const own = await h.get(`/departments/lines?view=dept&d=ga&block=expenses&keys=900-P001${SEP.replace('?', '&')}`);
+    expect(own.body.totalSen).toBe(5_000);
   });
 
   test('the statements\' right only; a view, a block, a department and accounts that make sense', async () => {
@@ -309,9 +381,11 @@ describe('GET /departments/lines — the lines behind a figure add up to it', ()
     const h = harness(world());
     const q = SEP.replace('?', '&');
     expect((await h.get(`/departments/lines?view=operation&keys=900-P001${q}`)).body.error).toBe('bad_view');
+    /* All is the departments' own P&Ls side by side: a department's figures open in its own view. */
+    expect((await h.get(`/departments/lines?view=all&block=expenses&keys=900-P001${q}`)).body.error).toBe('bad_view');
     expect((await h.get(`/departments/lines?view=ga${q}`)).body.error).toBe('bad_keys');
-    expect((await h.get(`/departments/lines?view=all&block=assets&keys=900-P001${q}`)).body.error).toBe('bad_block');
-    expect((await h.get(`/departments/lines?view=all&block=expenses&dept=showroom&keys=900-P001${q}`)).body.error).toBe('bad_department');
+    expect((await h.get(`/departments/lines?view=dept&d=ga&block=assets&keys=900-P001${q}`)).body.error).toBe('bad_block');
+    expect((await h.get(`/departments/lines?view=dept&d=showroom&block=expenses&keys=900-P001${q}`)).body.error).toBe('bad_department');
     expect((await h.get(`/departments/lines?view=dept&d=logisticsx&block=expenses&keys=900-P001${q}`)).body.error).toBe('bad_department');
   });
 

@@ -12,6 +12,7 @@ const DAY = 24 * 60;
 export const JOB_CADENCE_MIN: Record<string, number> = {
   keepwarm: 5,
   "email-outbox": 5,
+  "meeting-mail": 5,
   "so-pull": 5,
   "amendment-cmd": 5,
   "ac-writeback": 5,
@@ -53,6 +54,7 @@ export const JOB_CADENCE_MIN: Record<string, number> = {
   "failed-logins-retention": DAY,
   "hr-trip-sync": DAY,
   "stock-close": DAY,
+  "commission-release": DAY,
   "lorry-day-routes": DAY,
   "do-stamp-retry": DAY,
   "integrity-nightly": DAY,

@@ -8,11 +8,13 @@
 
 import type { Variables } from '../env';
 import { requireActiveCompanyId } from '../lib/companyScope';
-import { todayMyt } from '../lib/my-time';
+import { mytDayWindow, todayMyt } from '../lib/my-time';
 import { paginateAll } from '../lib/paginate-all';
 import {
-  computeDailyBank, type CashbookPayout, type CashbookReceipt, type CashbookStart, type DailyBankCashbook, type PendingVoucherRow,
+  computeDailyBank, payoutDay, type CashbookPayout, type CashbookReceipt, type CashbookSkip, type CashbookStart, type DailyBankCashbook,
+  type PendingVoucherRow,
 } from '../../acc/daily-bank';
+import { canWriteCashbook } from './accounting-daily-bank-cashbook';
 import { describeVouchers } from './payment-vouchers-describe';
 import { resolveRoles } from '../../acc/rules';
 import { isReversalPair } from '../../acc/reversal-pairs';
@@ -111,14 +113,14 @@ export async function loadDailyBankBoard(
   /* Each listed voucher reads as the PV list's Description does: what it pays for,
      never its bill number (owner 2026-11-09) — the pending ones and, on the cash
      book, the day's payouts, in one read. The To do's sum needs no words. */
-  const paidToday = (cashbook?.payouts ?? []).filter((v) => v.voucher_date === date);
+  const paidToday = (cashbook?.payouts ?? []).filter((v) => payoutDay(v) === date);
   if (opts.withNames && pending.length + paidToday.length > 0) {
     const described = await describeVouchers(sb, { get: (k: string) => (k === 'companyId' ? co.companyId : undefined) },
       [...pending, ...paidToday].map((v) => ({ ...v, id: String(v.id) })));
     if (!described.ok) return { ok: false, reason: described.reason };
     const wordsOf = (id: unknown): string | null => described.byId.get(String(id))?.description_text ?? null;
     pending = pending.map((v) => ({ ...v, description_text: wordsOf(v.id) }));
-    if (cashbook) cashbook.payouts = cashbook.payouts.map((v) => (v.voucher_date === date ? { ...v, description_text: wordsOf(v.id) } : v));
+    if (cashbook) cashbook.payouts = cashbook.payouts.map((v) => (payoutDay(v) === date ? { ...v, description_text: wordsOf(v.id) } : v));
   }
 
   const ledgerMoney = cashbook ? [] : money;
@@ -200,7 +202,8 @@ export async function loadDailyBankBoard(
 /** The cash book behind the board (owner 2026-11-23): every money account's
     start, and — for the accounts whose start is on or before the day — the
     receipts typed for them (deleted ones left out) and the approved vouchers
-    paying out of them, from the earliest such start to the day. Every read is
+    paying out of them, approved from the earliest such start to the day (owner
+    2026-11-24: a voucher comes off on the day it is approved). Every read is
     bound: a failed or cut-short one answers 500, never a board that quietly fell
     back to the ledger or dropped a receipt. */
 export async function loadCashbook(
@@ -215,10 +218,13 @@ export async function loadCashbook(
     .map((s) => ({ account_code: String(s.account_code), start_date: String(s.start_date).slice(0, 10), balance_sen: Number(s.balance_sen) }))
     .filter((s) => isMoney.has(s.account_code));
   const live = starts.filter((s) => s.start_date <= date);
-  if (live.length === 0) return { ok: true, cashbook: { starts, receipts: [], payouts: [] } };
+  if (live.length === 0) return { ok: true, cashbook: { starts, receipts: [], payouts: [], skips: [] } };
   const codes = live.map((s) => s.account_code);
   const since = live.reduce((first, s) => (s.start_date < first ? s.start_date : first), date);
-  const [rq, pq] = await Promise.all([
+  const days = mytDayWindow(since, date);
+  if (!days?.startUtc || !days.endUtc) return { ok: false, reason: `not a day: ${since} to ${date}` };
+  const PV_COLS = 'id, pv_number, payee_name, notes, purpose, credit_account_code, voucher_date, total_sen, exchange_rate, bank_charge_sen, approved_at, posted_at';
+  const [rq, pq, uq, kq] = await Promise.all([
     paginateAll<Record<string, unknown>>((from, to) => sb.from('acc_daily_bank_receipts')
       .select('id, account_code, receipt_date, amount_sen, note, created_by')
       .eq('company_id', companyId).in('account_code', codes).is('deleted_at', null)
@@ -226,30 +232,56 @@ export async function loadCashbook(
       .order('receipt_date').order('created_at').order('id')
       .range(from, to)),
     /* Approved = POSTED: approval posts in the same request, and a voucher whose
-       posting died stays DRAFT — pending above, never paid here as well. */
+       posting died stays DRAFT — pending above, never paid here as well. It comes
+       off on the Malaysia day it was approved, whatever its voucher date. */
     paginateAll<Record<string, unknown>>((from, to) => sb.from('payment_vouchers')
-      .select('id, pv_number, payee_name, notes, purpose, credit_account_code, voucher_date, total_sen, exchange_rate, bank_charge_sen')
+      .select(PV_COLS)
       .eq('company_id', companyId).eq('status', 'POSTED').in('credit_account_code', codes)
-      .gte('voucher_date', since).lte('voucher_date', date)
+      .gte('approved_at', days.startUtc).lt('approved_at', days.endUtc)
+      .order('approved_at').order('pv_number').order('id')
+      .range(from, to)),
+    /* One posted without an approval stamp falls back to its posting, then its
+       voucher date (payoutDay); none in production on 2026-11-24. */
+    paginateAll<Record<string, unknown>>((from, to) => sb.from('payment_vouchers')
+      .select(PV_COLS)
+      .eq('company_id', companyId).eq('status', 'POSTED').in('credit_account_code', codes)
+      .is('approved_at', null)
       .order('voucher_date').order('pv_number').order('id')
+      .range(from, to)),
+    /* The vouchers Finance ticked as already in the starting balance (owner
+       2026-11-25: 要，加勾选), still ticked. */
+    paginateAll<Record<string, unknown>>((from, to) => sb.from('acc_daily_bank_voucher_skips')
+      .select('id, pv_id, ticked_by, ticked_at')
+      .eq('company_id', companyId).is('unticked_at', null)
+      .order('ticked_at').order('id')
       .range(from, to)),
   ]);
   if (rq.error) return { ok: false, reason: rq.error.message };
   if (pq.error) return { ok: false, reason: pq.error.message };
-  if (rq.truncated || pq.truncated) return { ok: false, reason: 'the cash book is too long to read in one go' };
+  if (uq.error) return { ok: false, reason: uq.error.message };
+  if (kq.error) return { ok: false, reason: kq.error.message };
+  if (rq.truncated || pq.truncated || uq.truncated || kq.truncated) return { ok: false, reason: 'the cash book is too long to read in one go' };
   const receipts: CashbookReceipt[] = (rq.data ?? []).map((r) => ({
     id: String(r.id), account_code: String(r.account_code), receipt_date: String(r.receipt_date).slice(0, 10),
     amount_sen: Number(r.amount_sen), note: String(r.note ?? ''), created_by: (r.created_by as string | null) ?? null,
   }));
-  const payouts = (pq.data ?? []).map((v) => ({
+  const payouts = ([...(pq.data ?? []), ...(uq.data ?? [])].map((v) => ({
     ...v, id: String(v.id), pv_number: String(v.pv_number), credit_account_code: String(v.credit_account_code),
     voucher_date: String(v.voucher_date).slice(0, 10),
-  })) as unknown as CashbookPayout[];
-  return { ok: true, cashbook: { starts, receipts, payouts } };
+    approved_at: (v.approved_at as string | null) ?? null, posted_at: (v.posted_at as string | null) ?? null,
+  })) as unknown as CashbookPayout[])
+    .filter((v) => payoutDay(v) >= since && payoutDay(v) <= date)
+    .sort((a, b) => payoutDay(a).localeCompare(payoutDay(b)) || a.pv_number.localeCompare(b.pv_number) || a.id.localeCompare(b.id));
+  const paying = new Set(payouts.map((v) => v.id));
+  const skips: CashbookSkip[] = (kq.data ?? [])
+    .map((k) => ({ pv_id: String(k.pv_id), ticked_by: (k.ticked_by as string | null) ?? null, ticked_at: (k.ticked_at as string | null) ?? null }))
+    .filter((k) => paying.has(k.pv_id));
+  return { ok: true, cashbook: { starts, receipts, payouts, skips } };
 }
 
 /** GET /daily-bank (the original board) and GET /daily-bank/cashbook/board (the
-    owner's cash book, 2026-11-23): the same handler, a different book. */
+    owner's cash book, 2026-11-23): the same handler, a different book. The cash
+    book's also says whether the caller may tick a voucher off it. */
 const boardHandler = (book: 'ledger' | 'cashbook') => async (c: any) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -257,7 +289,7 @@ const boardHandler = (book: 'ledger' | 'cashbook') => async (c: any) => {
   const date = /^\d{4}-\d{2}-\d{2}$/.test(dateQ) ? dateQ : todayMyt();
   const r = await loadDailyBankBoard(c.get('supabase'), co.companyId, date, { withNames: true, book });
   if (!r.ok) return c.json({ error: 'load_failed', reason: r.reason }, 500);
-  return c.json(r.board);
+  return c.json(book === 'cashbook' ? { ...r.board, canWrite: canWriteCashbook(c) } : r.board);
 };
 export const dailyBankHandler = boardHandler('ledger');
 export const cashbookBoardHandler = boardHandler('cashbook');

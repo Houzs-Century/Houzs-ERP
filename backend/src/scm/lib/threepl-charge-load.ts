@@ -9,7 +9,8 @@ import { scopeToCompanyId } from './companyScope';
 import { DEFAULT_ZONE_PREFIX_MAP, zoneForAddress, type ZonePrefixRule } from './zone-classify';
 import type { SetLine } from './set-count';
 import type { DeliveryFacts, RateCardSpec } from './delivery-rate-card';
-import { doFacts } from './threepl-do-charge';
+import { doFacts, orderAddressText, setLineOf } from './threepl-do-charge';
+import { loadDoGoods } from './do-goods';
 import { areaOut, cardOut, ruleOut, toCardSpec } from '../routes/delivery-rate-cards';
 import { loadPlacesFor } from '../routes/delivery-places';
 import { MAP_COLS, toPrefixMap, type MapRow } from '../routes/delivery-zones';
@@ -61,7 +62,8 @@ export async function loadCarrierCards(sb: unknown, companyId: number): Promise<
 export type CompanyScopeFn = <Q>(query: Q) => Q;
 
 /** Each DO's facts for the rate card, read from its order: the order's lines
- *  (sets / items) and its address (zone). A DO with no order has none. */
+ *  (sets / items) and its address (zone), and the DO's own goods value (its
+ *  lines without the service ones, do-goods.ts). A DO with no order has none. */
 export async function loadDoFacts(
   scope: CompanyScopeFn, sb: unknown, dos: ReadonlyArray<{ id: string; soDocNo: string | null }>,
   zoneMap: readonly ZonePrefixRule[] = DEFAULT_ZONE_PREFIX_MAP,
@@ -70,31 +72,30 @@ export async function loadDoFacts(
   const linesBySo = new Map<string, SetLine[]>();
   const zoneBySo = new Map<string, string | null>();
   const addressBySo = new Map<string, string>();
+  let goods = new Map<string, number>();
   if (soDocs.length) {
-    const [{ data: lineRows, error: e5 }, { data: soRows, error: e6 }] = await Promise.all([
+    const [{ data: lineRows, error: e5 }, { data: soRows, error: e6 }, doGoods] = await Promise.all([
       scope(db(sb).from('mfg_sales_order_items').select('doc_no, item_group, qty, cancelled')).in('doc_no', soDocs),
       scope(db(sb).from('mfg_sales_orders').select('doc_no, postcode, address1, address2, address3, address4, city')).in('doc_no', soDocs),
+      loadDoGoods(scope, sb, dos.map((d) => d.id)),
     ]);
     if (e5 || e6) return { ok: false, reason: (e5 ?? e6)!.message };
+    if (!doGoods.ok) return doGoods;
+    goods = doGoods.goods;
     for (const l of (lineRows ?? []) as Row[]) {
       const arr = linesBySo.get(String(l.doc_no)) ?? [];
-      const g = String(l.item_group ?? '').toUpperCase();
-      arr.push({
-        category: g.includes('BEDFRAME') ? 'BEDFRAME' : g.includes('SOFA') ? 'SOFA' : g.includes('MATTRESS') ? 'MATTRESS' : 'OTHERS',
-        qty: Number(l.qty ?? 1), cancelled: l.cancelled === true,
-      });
+      arr.push(setLineOf(l));
       linesBySo.set(String(l.doc_no), arr);
     }
     for (const so of (soRows ?? []) as Row[]) {
-      /* The words a town surcharge or a rate card area is found by: the whole address and its city. */
-      addressBySo.set(String(so.doc_no), [str(so.address1), str(so.address2), str(so.address3), str(so.address4), str(so.city), str(so.postcode)].filter(Boolean).join(' '));
+      addressBySo.set(String(so.doc_no), orderAddressText(so));
       zoneBySo.set(String(so.doc_no), zoneForAddress({ postcode: str(so.postcode), address1: str(so.address1), address2: str(so.address2) }, zoneMap).zone);
     }
   }
   const facts = new Map<string, DeliveryFacts>();
   for (const d of dos) {
     if (!d.soDocNo) continue;
-    facts.set(d.id, doFacts(linesBySo.get(d.soDocNo) ?? [], zoneBySo.get(d.soDocNo) ?? null, addressBySo.get(d.soDocNo) ?? null));
+    facts.set(d.id, doFacts(linesBySo.get(d.soDocNo) ?? [], zoneBySo.get(d.soDocNo) ?? null, addressBySo.get(d.soDocNo) ?? null, goods.get(d.id) ?? null));
   }
   return { ok: true, facts };
 }

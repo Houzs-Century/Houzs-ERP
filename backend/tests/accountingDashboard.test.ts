@@ -19,10 +19,11 @@
 import { Hono } from 'hono';
 import { beforeEach, describe, expect, test } from 'vitest';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
-import { buildDashboard, clearDashboardCache, dashboardHandler, parseDashboardQuery, type DashboardPayload } from '../src/scm/routes/accounting-dashboard';
+import { buildDashboard, clearDashboardCache, dashboardForecastMonthHandler, dashboardHandler, parseDashboardQuery, type DashboardForecastMonth, type DashboardPayload } from '../src/scm/routes/accounting-dashboard';
 import { balanceSheetReport, pnlReport } from '../src/scm/routes/accounting-reports';
 import { receiptsPaymentsReport } from '../src/scm/routes/accounting-rp';
 import { performanceReport } from '../src/scm/routes/accounting-performance';
+import { forecastFiguresHandler } from '../src/scm/routes/accounting-forecast';
 
 const CO = 2;
 const TODAY = '2026-09-21';
@@ -155,6 +156,7 @@ function harness(perms: string[] = ['scm.payment_voucher.post'], over: Record<st
     await next();
   });
   app.get('/accounting/dashboard', dashboardHandler as never);
+  app.get('/accounting/dashboard/forecast-month', dashboardForecastMonthHandler as never);
   app.get('/accounting/reports/pnl', pnlReport as never);
   app.get('/accounting/reports/balance-sheet', balanceSheetReport as never);
   app.get('/accounting/reports/receipts-payments', receiptsPaymentsReport as never);
@@ -176,6 +178,28 @@ describe('parseDashboardQuery', () => {
     expect(parseDashboardQuery({ from: '2026-05', to: '2026-01' })).toMatchObject({ ok: false });
     expect(parseDashboardQuery({ from: '2020-01', to: '2026-01' })).toMatchObject({ ok: false });
     expect(parseDashboardQuery({ from: '2026-08', to: '2026-11', periods: '3' })).toEqual({ ok: true, query: { granularity: 'month', periods: 3, from: '2026-08', to: '2026-11' } });
+  });
+});
+
+/* Step 1 of the forecast port (2026-11-24): a purchase account split by
+   supplier is the sum of its suppliers on every reader — the Dashboard's
+   forecast totals and its per-group compare read what the Forecast P&L's own
+   figures door reads. Made-up figures. */
+describe('a purchase line split by supplier', () => {
+  test("November's sofa purchases are the sum of its suppliers in the forecast totals and the group compare, the figures door's own numbers", async () => {
+    const rows = FORECAST.map((r) => (r.month === '2026-11' ? { ...r, suppliers: { '601-0003': { 'sup-a': { amtSen: 70_000 }, other: { bp: 1000 } } } } : r));
+    const { sb, app } = harness(undefined, { acc_forecast_pnl: rows });
+    app.get('/accounting/forecast/figures', forecastFiguresHandler as never);
+    const r = await buildDashboard(sb, CO, [CO], { granularity: 'month', periods: 2, from: null, to: null }, TODAY);
+    if (!r.ok) throw new Error(r.reason);
+    const nov = r.payload.periods[3]!;
+    /* 700.00 + 10% of the 1,500.00 sofa sales = 850.00, not the account's own 60% (900.00). */
+    expect(nov.forecast).toMatchObject({ salesSen: 150_000, costOfSalesSen: 85_000, grossProfitSen: 65_000, netProfitSen: 65_000 });
+    expect(nov.compare!.groups.find((g) => g.key === 'sofa')).toMatchObject({ forecastSalesSen: 150_000, forecastCostSen: 85_000 });
+    const fig = await json<{ months: Array<{ totals: { costOfSalesSen: number; grossProfitSen: number; netProfitSen: number } }> }>(await app.request('/accounting/forecast/figures?from=2026-11&to=2026-11'));
+    expect(fig.months[0]!.totals).toMatchObject({ costOfSalesSen: nov.forecast!.costOfSalesSen, grossProfitSen: nov.forecast!.grossProfitSen, netProfitSen: nov.forecast!.netProfitSen });
+    /* September carries no supplier figure: its 60% stands, as before. */
+    expect(r.payload.periods[1]!.forecast).toMatchObject({ costOfSalesSen: 72_000 });
   });
 });
 
@@ -368,13 +392,55 @@ describe('buildDashboard — reads', () => {
   test('the window is read once — the orders, their lines, the settings and the ledger a single time, not once per period', async () => {
     const reads = await countReads(6);
     const count = (table: string) => reads.filter((n) => n === table).length;
-    expect(count('mfg_sales_orders')).toBe(1);
+    /* Each count is the window's own read plus, when the periods reach the
+       current month, the Forecast Balance Sheet's (step 7 of the forecast
+       port), built once for the whole answer: its open orders, its grid, the
+       start sheet's stock settings, and its ledger reads (the start sheet,
+       the supplier aging then and now, the trade-finance facility). */
+    expect(count('mfg_sales_orders')).toBe(1 + 1);
     expect(count('mfg_sales_order_items')).toBe(1);
-    /* Twice, both in the first wave: the Performance P&L's rate, and the
-       books' opening (acc/books-opening.ts) — never once per period. */
-    expect(count('acc_company_settings')).toBe(2);
-    expect(count('v_gl_entries')).toBe(1);
-    expect(count('acc_forecast_pnl')).toBe(1);
+    /* The Performance P&L's rate and the books' opening (acc/books-opening.ts), then the forecast's start sheet. */
+    expect(count('acc_company_settings')).toBe(2 + 1);
+    /* + 2: the Performance P&L's commission (acc/performance-commission.ts) — the
+       bills on the prepayment and the release on the expense, read once for every period. */
+    expect(count('v_gl_entries')).toBe(1 + 5 + 2);
+    expect(count('acc_forecast_pnl')).toBe(1 + 1);
+  });
+
+  test('the Forecast Balance Sheet and the forecast ratios: from the current month on, by the same formulas as the actual ones', async () => {
+    const { sb } = harness();
+    const r = await buildDashboard(sb, CO, [CO], { granularity: 'month', periods: 6, from: null, to: null }, TODAY);
+    if (!r.ok) throw new Error(r.reason);
+    const by = new Map(r.payload.periods.map((p) => [p.key, p]));
+    const sep = by.get('2026-09')!;
+    /* September is the current month: its month-end forecast beside its actual. */
+    const fbs = sep.forecastBalanceSheet!;
+    expect(fbs).not.toBeNull();
+    expect(fbs.debtToAssetPct).toBe(fbs.assetsSen !== 0 ? Math.round((fbs.liabilitiesSen / fbs.assetsSen) * 1000) / 10 : null);
+    expect(sep.forecastRatios).toMatchObject({
+      grossMarginPct: 40,
+      currentRatio: fbs.currentLiabilitiesSen !== 0 ? Math.round((fbs.currentAssetsSen / fbs.currentLiabilitiesSen) * 100) / 100 : null,
+      quickRatio: fbs.currentLiabilitiesSen !== 0 ? Math.round(((fbs.currentAssetsSen - fbs.inventorySen) / fbs.currentLiabilitiesSen) * 100) / 100 : null,
+    });
+    /* A month before the current one has no forecast sheet yet; its forecast margins still come off its Forecast P&L row, when it has one. */
+    for (const p of r.payload.periods.filter((x) => x.key < '2026-09')) expect(p.forecastBalanceSheet).toBeNull();
+  });
+
+  test("a past month's forecast, back-calculated one month at a time: its sheet from the month-end before it, its ratios by the same formulas; none without a Forecast P&L row", async () => {
+    const { app } = harness();
+    const sep = await app.request('/accounting/dashboard/forecast-month?month=2026-09');
+    expect(sep.status, await sep.clone().text()).toBe(200);
+    const b = (await sep.json()) as DashboardForecastMonth;
+    expect(b.month).toBe('2026-09');
+    const fbs = b.balanceSheet!;
+    expect(fbs).not.toBeNull();
+    expect(b.ratios).toMatchObject({
+      grossMarginPct: 40,
+      currentRatio: fbs.currentLiabilitiesSen !== 0 ? Math.round((fbs.currentAssetsSen / fbs.currentLiabilitiesSen) * 100) / 100 : null,
+    });
+    const aug = (await (await app.request('/accounting/dashboard/forecast-month?month=2026-08')).json()) as DashboardForecastMonth;
+    expect(aug).toEqual({ month: '2026-08', balanceSheet: null, ratios: null });
+    expect((await app.request('/accounting/dashboard/forecast-month?month=2026-8')).status).toBe(400);
   });
 
   test('the number of reads does not grow with the number of periods', async () => {

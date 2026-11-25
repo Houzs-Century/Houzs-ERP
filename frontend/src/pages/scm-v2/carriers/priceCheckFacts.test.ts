@@ -38,8 +38,15 @@ describe('readFacts', () => {
   ]);
 
   it('reads only the boxes the card prices, a blank box as 0', () => {
-    const r = readFacts({ job: 'DELIVERY', count: '3', sofas: '3, 6', town: 'BINTULU', counts: { DISPOSE: '', SETUP: '2' } }, SET_CARD, priced);
+    const r = readFacts({ job: 'DELIVERY', count: '3', sofas: '3, 6', town: 'BINTULU', counts: { DISPOSE: '', SETUP: '2' }, goods: '9000' }, SET_CARD, priced);
     expect(r).toEqual({ ok: true, facts: { setCount: 3, sofaCompartments: [3, 6], disposeCount: 0, destinationZone: 'BINTULU' } });
+  });
+
+  it("a charge on each DO: one DO, its goods value as typed (owner 2026-11-24, the Singapore carriers)", () => {
+    const charged = pricedTypes([rule({}), rule({ ruleType: 'DO_CHARGE', label: 'Tax', bps: 700, amountSen: 0 })]);
+    expect(readFacts({ ...EMPTY_FORM, goods: '5000' }, SET_CARD, charged)).toEqual({ ok: true, facts: { setCount: 1, destinationZone: null, goodsValueSen: 500_000, dropCount: 1 } });
+    expect(readFacts({ ...EMPTY_FORM, goods: 'abc' }, SET_CARD, charged)).toMatchObject({ ok: false, errors: { goods: expect.any(String) } });
+    expect(lineLabel({ ruleType: 'DO_CHARGE', label: 'Tax 7% of goods', amountSen: 35_000 }, 'set')).toBe('Tax 7% of goods');
   });
 
   it('counts items on a per-item card, nothing on a per-trip card, and in town is no zone', () => {

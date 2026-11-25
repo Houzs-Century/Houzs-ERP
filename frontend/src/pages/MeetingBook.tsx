@@ -337,7 +337,7 @@ export function MeetingBook() {
               <label className={FIELD}>Your name<input className={INPUT} autoComplete="name" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></label>
               <label className={FIELD}>Phone<input className={INPUT} inputMode="tel" autoComplete="tel" placeholder="+60 12-345 6789" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></label>
             </div>
-            <label className={FIELD}>Email (for the confirmation)<input className={INPUT} type="email" autoComplete="email" placeholder="you@company.com" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></label>
+            <label className={FIELD}>Email (we send the confirmation here)<input className={INPUT} type="email" autoComplete="email" placeholder="you@company.com" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></label>
           </section>
 
           <section className={CARD}>

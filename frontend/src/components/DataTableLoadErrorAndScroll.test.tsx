@@ -1,3 +1,4 @@
+import { Component, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -82,5 +83,35 @@ describe("DataTable scroll to a row that is not drawn yet", () => {
     );
     expect(main.scrollTop).toBeGreaterThan(0);
     expect(winScroll).not.toHaveBeenCalled();
+  });
+});
+
+/* Newer Chrome returns a Promise from scrollIntoView. The effect returned that
+   call's result, so React kept the Promise as the cleanup and called it when
+   the list re-ran the scroll or closed: "destroy is not a function", and the
+   page after the Suppliers list showed "Something went wrong loading this page". */
+class Catch extends Component<{ children: ReactNode }, { crashed: boolean }> {
+  state = { crashed: false };
+  static getDerivedStateFromError() { return { crashed: true }; }
+  render() { return this.state.crashed ? <p>crashed</p> : this.props.children; }
+}
+
+describe("DataTable scroll to a row that is already drawn", () => {
+  it("does not keep scrollIntoView's Promise as the effect cleanup", () => {
+    setViewport(1280);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const scrollIntoView = vi.fn(() => Promise.resolve());
+    Object.defineProperty(Element.prototype, "scrollIntoView", { configurable: true, writable: true, value: scrollIntoView });
+    const table = (nonce: number) => (
+      <Catch>
+        <DataTable tableId="scroll-drawn" columns={columns} rows={rows} getRowKey={(r) => r.id} scrollToRow={{ key: "3", nonce }} />
+      </Catch>
+    );
+    const view = render(table(1));
+    expect(scrollIntoView).toHaveBeenCalled();
+    view.rerender(table(2));
+    expect(screen.queryByText("crashed")).toBeNull();
+    view.unmount();
+    Reflect.deleteProperty(Element.prototype, "scrollIntoView");
   });
 });

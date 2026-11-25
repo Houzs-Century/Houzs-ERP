@@ -24,6 +24,7 @@ import {
   accountsUnder, buildPerformanceReport, loadPerformanceSettings, normaliseAlso, performanceLayout, savePerformanceSettings,
   type PerfExpense, type PerfLine, type PerfOrder, type PerformanceLayout, type PerformanceReport, type PerformanceSettings,
 } from '../../acc/performance-pnl';
+import { commissionForPeriod, loadCommissionFacts, type CommissionFacts } from '../../acc/performance-commission';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 const requirePerm = (c: Ctx): boolean => hasHouzsPerm(c, 'scm.payment_voucher.post');
@@ -48,12 +49,17 @@ export type PerfSources = {
   lines: (docNos: string[]) => Promise<{ ok: true; lines: PerfLine[] } | { ok: false; reason: string }>;
   /** The account the rate stands in for, as the chart names it; null when the chart has no such code. */
   rateAccount: (code: string) => Promise<{ ok: true; account: { code: string; name: string } | null } | { ok: false; reason: string }>;
+  /** The commission bills on the prepayment and what the release booked (owner 2026-11-25); null facts = none kept. */
+  commission: () => Promise<{ ok: true; facts: CommissionFacts | null } | { ok: false; reason: string }>;
 };
 /** The database, as the route reads it. Every read the report needs is a
     source, so the Dashboard can answer all of them from one preloaded window
     (2026-09-22, the owner's "loading 很慢": the orders, their lines, the
     settings and the rate's account were read again for every period). */
-export const perfDbSources = (sb: Sb, companyId: number, layoutIds: number[]): PerfSources => ({
+export const perfDbSources = (sb: Sb, companyId: number, layoutIds: number[]): PerfSources => {
+  /* Read once per source: the By-month view asks for every month. */
+  let commission: ReturnType<PerfSources['commission']> | null = null;
+  return {
   sums: (from, to) => loadSums(sb, companyId, from, to),
   accounts: () => loadAccounts(sb, companyId),
   layout: () => resolveLayout(sb, layoutIds, 'performance'),
@@ -88,7 +94,9 @@ export const perfDbSources = (sb: Sb, companyId: number, layoutIds: number[]): P
     const row = acct as { account_code: string; account_name?: string | null } | null;
     return { ok: true, account: row ? { code: String(row.account_code), name: String(row.account_name ?? '') } : null };
   },
-});
+  commission: () => (commission ??= loadCommissionFacts(sb, companyId)),
+  };
+};
 export type PerformancePayload = PerformanceReport & { layout: PerformanceLayout };
 
 /** The Performance P&L for [from, to] — the route's figures, and the Dashboard's. */
@@ -129,7 +137,11 @@ export async function buildPerformance(companyId: number, from: string, to: stri
   const alsoCodes = accountsUnder(st.settings.also, accs.accounts);
   const nameOf = new Map(accs.accounts.map((a) => [a.account_code, a.account_name ?? null]));
   const alsoNamed = st.settings.also.map((code) => ({ code, name: nameOf.get(code) ?? null }));
-  const report = buildPerformanceReport({ from, to, orders, lines, expenses, otherIncome, settings: st.settings, account: acct.account, alsoCodes, alsoNamed });
+  /* The commission: the bills for the period's months in place of the release. */
+  const cf = await src.commission();
+  if (!cf.ok) return { ok: false, reason: cf.reason };
+  const commission = commissionForPeriod(cf.facts, from, to);
+  const report = buildPerformanceReport({ from, to, orders, lines, expenses, otherIncome, settings: st.settings, account: acct.account, alsoCodes, alsoNamed, commission });
   return { ok: true, report: { ...report, layout: performanceLayout(report, laid.layout, companyId, laid.stored) } };
 }
 
@@ -165,6 +177,11 @@ export type PerformanceMonth = {
   month: string; from: string; to: string;
   salesSen: number; cogsSen: number; gpSen: number; gpPct: number | null;
   otherIncomeSen: number; expensesSen: number; netSen: number; netPct: number | null;
+  /** The month's orders, its product groups' sales and cost, and its commission bills — the
+      Department P&L's Exhibition reads them (owner 2026-11-25), so the two reports agree. */
+  orders: PerformanceReport['orders'];
+  groups: Array<Pick<PerformanceReport['groups'][number], 'key' | 'label' | 'salesSen' | 'cogsSen'>>;
+  commission: PerformanceReport['commission'];
 };
 
 /** Every month from `from` to `to` (YYYY-MM, inclusive), each as its first and last day. */
@@ -188,8 +205,9 @@ export function monthsBetween(from: string, to: string): Array<{ month: string; 
     the window's orders and their lines and the rate's account answered from
     memory; the ledger's sums still per period. */
 export async function windowPerfSources(db: PerfSources, from: string, to: string): Promise<{ ok: true; src: PerfSources } | { ok: false; reason: string }> {
-  const [st, accs, laid, sos] = await Promise.all([db.settings(), db.accounts(), db.layout(), db.orders(from, to)]);
+  const [st, accs, laid, sos, cf] = await Promise.all([db.settings(), db.accounts(), db.layout(), db.orders(from, to), db.commission()]);
   if (!st.ok) return { ok: false, reason: st.reason };
+  if (!cf.ok) return { ok: false, reason: cf.reason };
   if (!accs.ok) return { ok: false, reason: accs.reason };
   if (!laid.ok) return { ok: false, reason: laid.reason };
   if (!sos.ok) return { ok: false, reason: sos.reason };
@@ -210,6 +228,7 @@ export async function windowPerfSources(db: PerfSources, from: string, to: strin
         return Promise.resolve({ ok: true, lines: its.lines.filter((l) => wanted.has(l.doc_no)) });
       },
       rateAccount: () => Promise.resolve(acct),
+      commission: () => Promise.resolve(cf),
     },
   };
 }
@@ -232,6 +251,9 @@ export async function buildPerformanceMonths(companyId: number, from: string, to
       salesSen: p.totals.salesSen, cogsSen: p.totals.cogsSen, gpSen: p.totals.gpSen, gpPct: p.totals.gpPct,
       otherIncomeSen: p.otherIncomeSen, expensesSen: p.operatingExpense.amountSen + p.otherExpensesSen,
       netSen: p.netSen, netPct: p.netPct,
+      orders: p.orders,
+      groups: p.groups.map((g) => ({ key: g.key, label: g.label, salesSen: g.salesSen, cogsSen: g.cogsSen })),
+      commission: p.commission,
     });
   }
   return { ok: true, months: out };

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { autoOtWindow, confirmedOtMinutes, parseOtSegment, planAutoOtClaim, punchOtMinutes, segmentMinutes } from "./hr-ot";
+import { autoOtWindow, confirmedOtMinutes, isDriverPosition, parseOtSegment, planAutoOtClaim, punchOtMinutes, segmentMinutes } from "./hr-ot";
 import { toAttendanceRules } from "../../scm/shared/hr-attendance";
 import { DEFAULT_PAY_RULES } from "../../scm/shared/hr-pay-rules";
 import { computeMonthlyPay, type PayEmployee } from "../../scm/shared/hr-payroll";
@@ -68,25 +68,47 @@ describe("autoOtWindow", () => {
 describe("planAutoOtClaim", () => {
   const SHIFT_END = 1080;
   test("inserts a fresh claim when overtime appears and none exists", () => {
-    expect(planAutoOtClaim({ existingAuto: null, reportedOwnsDay: false, shiftEndMin: SHIFT_END, otMin: 90 })).toEqual({ kind: "insert", startMin: 1080, endMin: 1170 });
+    expect(planAutoOtClaim({ existingAuto: null, reportedOwnsDay: false, isDriver: false, shiftEndMin: SHIFT_END, otMin: 90 })).toEqual({ kind: "insert", startMin: 1080, endMin: 1170 });
   });
   test("refreshes a still-pending auto claim", () => {
-    expect(planAutoOtClaim({ existingAuto: { id: 7, status: "PENDING" }, reportedOwnsDay: false, shiftEndMin: SHIFT_END, otMin: 120 })).toEqual({ kind: "update", id: 7, startMin: 1080, endMin: 1200 });
+    expect(planAutoOtClaim({ existingAuto: { id: 7, status: "PENDING" }, reportedOwnsDay: false, isDriver: false, shiftEndMin: SHIFT_END, otMin: 120 })).toEqual({ kind: "update", id: 7, startMin: 1080, endMin: 1200 });
   });
   test("removes a pending auto claim once the punch no longer earns any", () => {
-    expect(planAutoOtClaim({ existingAuto: { id: 7, status: "PENDING" }, reportedOwnsDay: false, shiftEndMin: SHIFT_END, otMin: 0 })).toEqual({ kind: "delete", id: 7 });
+    expect(planAutoOtClaim({ existingAuto: { id: 7, status: "PENDING" }, reportedOwnsDay: false, isDriver: false, shiftEndMin: SHIFT_END, otMin: 0 })).toEqual({ kind: "delete", id: 7 });
   });
   test("does nothing when there is no overtime and no auto claim", () => {
-    expect(planAutoOtClaim({ existingAuto: null, reportedOwnsDay: false, shiftEndMin: SHIFT_END, otMin: 0 })).toEqual({ kind: "none" });
+    expect(planAutoOtClaim({ existingAuto: null, reportedOwnsDay: false, isDriver: false, shiftEndMin: SHIFT_END, otMin: 0 })).toEqual({ kind: "none" });
+  });
+  test("ignores sub-30-minute overtime: no claim created, a pending one removed", () => {
+    expect(planAutoOtClaim({ existingAuto: null, reportedOwnsDay: false, isDriver: false, shiftEndMin: SHIFT_END, otMin: 20 })).toEqual({ kind: "none" });
+    expect(planAutoOtClaim({ existingAuto: null, reportedOwnsDay: false, isDriver: false, shiftEndMin: SHIFT_END, otMin: 29 })).toEqual({ kind: "none" });
+    expect(planAutoOtClaim({ existingAuto: { id: 7, status: "PENDING" }, reportedOwnsDay: false, isDriver: false, shiftEndMin: SHIFT_END, otMin: 20 })).toEqual({ kind: "delete", id: 7 });
+  });
+  test("counts overtime from exactly 30 minutes", () => {
+    expect(planAutoOtClaim({ existingAuto: null, reportedOwnsDay: false, isDriver: false, shiftEndMin: SHIFT_END, otMin: 30 })).toEqual({ kind: "insert", startMin: 1080, endMin: 1110 });
   });
   test("never re-raises or overwrites a supervisor's confirm or reject", () => {
     for (const status of ["CONFIRMED", "REJECTED"]) {
-      expect(planAutoOtClaim({ existingAuto: { id: 7, status }, reportedOwnsDay: false, shiftEndMin: SHIFT_END, otMin: 120 })).toEqual({ kind: "none" });
+      expect(planAutoOtClaim({ existingAuto: { id: 7, status }, reportedOwnsDay: false, isDriver: false, shiftEndMin: SHIFT_END, otMin: 120 })).toEqual({ kind: "none" });
     }
   });
   test("steps aside when a human reported the day: a pending auto claim is removed, none is created", () => {
-    expect(planAutoOtClaim({ existingAuto: { id: 7, status: "PENDING" }, reportedOwnsDay: true, shiftEndMin: SHIFT_END, otMin: 120 })).toEqual({ kind: "delete", id: 7 });
-    expect(planAutoOtClaim({ existingAuto: null, reportedOwnsDay: true, shiftEndMin: SHIFT_END, otMin: 120 })).toEqual({ kind: "none" });
+    expect(planAutoOtClaim({ existingAuto: { id: 7, status: "PENDING" }, reportedOwnsDay: true, isDriver: false, shiftEndMin: SHIFT_END, otMin: 120 })).toEqual({ kind: "delete", id: 7 });
+    expect(planAutoOtClaim({ existingAuto: null, reportedOwnsDay: true, isDriver: false, shiftEndMin: SHIFT_END, otMin: 120 })).toEqual({ kind: "none" });
+  });
+  test("a driver earns no auto overtime: none created, a pending one removed", () => {
+    expect(planAutoOtClaim({ existingAuto: null, reportedOwnsDay: false, isDriver: true, shiftEndMin: SHIFT_END, otMin: 120 })).toEqual({ kind: "none" });
+    expect(planAutoOtClaim({ existingAuto: { id: 7, status: "PENDING" }, reportedOwnsDay: false, isDriver: true, shiftEndMin: SHIFT_END, otMin: 120 })).toEqual({ kind: "delete", id: 7 });
+  });
+});
+
+describe("isDriverPosition", () => {
+  test("drivers are excluded; warehouse crew and the supervisor are not", () => {
+    expect(isDriverPosition("Lorry Driver")).toBe(true);
+    expect(isDriverPosition("lorry driver")).toBe(true);
+    expect(isDriverPosition("Warehouse Crew")).toBe(false);
+    expect(isDriverPosition("Warehouse Store Supervisor")).toBe(false);
+    expect(isDriverPosition(null)).toBe(false);
   });
 });
 

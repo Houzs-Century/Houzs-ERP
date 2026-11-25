@@ -36,6 +36,7 @@
 import { isDeliveryFeeServiceCode, isServiceLine } from '../scm/shared/service-sku';
 import { SO_DELIVERED_OR_BEYOND, SO_NOT_AN_ORDER } from '../scm/shared/so-deliverable-states';
 import { layOutBlock, type LaidLine, type LaidNode, type Layout, type LayoutItem } from './report-layout';
+import type { PeriodCommission } from './performance-commission';
 
 type Db = any;
 
@@ -172,6 +173,10 @@ export type PerformanceReport = {
   otherExpensesSen: number;
   netSen: number; netPct: number | null;
   settings: PerformanceSettings;
+  /** The commission: the bills for the period's months on the commission
+      expense, in place of what the monthly release booked there (owner
+      2026-11-25); null when the company keeps no commission prepayment. */
+  commission: PeriodCommission | null;
 };
 
 const pct = (part: number, whole: number): number | null => (whole > 0 ? Math.round((part / whole) * 1000) / 10 : null);
@@ -188,6 +193,8 @@ export function buildPerformanceReport(p: {
   alsoCodes?: ReadonlySet<string>;
   /** `settings.also` as the chart names them. */
   alsoNamed?: Array<{ code: string; name: string | null }>;
+  /** The period's commission bills and what the release booked (acc/performance-commission.ts). */
+  commission?: PeriodCommission | null;
 }): PerformanceReport {
   const excludedDraft = p.orders.filter((o) => String(o.status) === 'DRAFT').length;
   const excludedCancelled = p.orders.filter((o) => String(o.status) === 'CANCELLED').length;
@@ -229,16 +236,23 @@ export function buildPerformanceReport(p: {
 
   const opexSen = Math.round((salesExServiceSen * p.settings.rateBp) / 10000);
   const code = p.settings.account;
-  const replaced = p.expenses.find((e) => e.code === code) ?? null;
+  /* The commission expense reads the bills for the period's months, not the
+     release: what the release booked on it leaves, the bills come in. */
+  const commission = p.commission ?? null;
+  const booked = commission
+    ? (p.expenses.some((e) => e.code === commission.code) ? p.expenses : [...p.expenses, { code: commission.code, name: commission.name ?? commission.code, amountSen: 0 }])
+        .map((e) => (e.code === commission.code ? { ...e, amountSen: e.amountSen - commission.releaseSen + commission.billSen } : e))
+    : p.expenses;
+  const replaced = booked.find((e) => e.code === code) ?? null;
   const accountFound = p.account != null;
   /* Only the named account is replaced — and only when the chart carries
      it; a code the chart does not know replaces nothing, and the report
      says so rather than quietly dropping a booked expense. */
   /* The other accounts the rate covers are inside it, not beside it. */
   const alsoCodes = p.alsoCodes ?? new Set<string>();
-  const inRate = p.expenses.filter((e) => alsoCodes.has(e.code) && e.code !== code && e.amountSen !== 0)
+  const inRate = booked.filter((e) => alsoCodes.has(e.code) && e.code !== code && e.amountSen !== 0)
     .sort((a, b) => a.code.localeCompare(b.code));
-  const otherExpenses = (accountFound ? p.expenses.filter((e) => e.code !== code) : p.expenses)
+  const otherExpenses = (accountFound ? booked.filter((e) => e.code !== code) : booked)
     .filter((e) => !alsoCodes.has(e.code))
     .filter((e) => e.amountSen !== 0)
     .sort((a, b) => a.code.localeCompare(b.code));
@@ -268,6 +282,7 @@ export function buildPerformanceReport(p: {
     otherExpenses, otherExpensesSen,
     netSen, netPct: pct(netSen, salesSen),
     settings: p.settings,
+    commission,
   };
 }
 
@@ -298,6 +313,15 @@ export const operatingExpenseLabel = (o: PerformanceReport['operatingExpense']):
   return `Operating expense — ${ratePct(o.rateBp)} of sales excluding service (${fmtRm2(o.baseSen)}), ${standsFor}${also}`;
 };
 
+const monthWord = (ym: string): string => {
+  const m = /^(\d{4})-(\d{2})$/.exec(ym);
+  return m ? new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, 1)).toLocaleString('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' }) : ym;
+};
+
+/** The sentence the commission line prints under: the bills it shows, in place of the release. */
+export const commissionLabel = (c: PeriodCommission): string =>
+  `${c.code}${c.name ? ` ${c.name}` : ''} — the commission bills for ${c.months.length > 0 ? c.months.map(monthWord).join(', ') : 'no month in the period'}, in place of the monthly release`;
+
 /**
  * The lower part of the Performance P&L — the other income as booked, the
  * computed operating expense, every other expense as booked — on the
@@ -317,6 +341,10 @@ export function performanceLayout(r: PerformanceReport, layout: Layout, companyI
     otherIncome: layOutBlock(block('otherIncome'), r.otherIncome, companyId, baseSen),
     /* A covered account that booked something prints where it always sits,
        at nil — the money is inside the rate's line. */
-    expenses: layOutBlock(block('expenses'), [opex, ...r.otherExpenses, ...r.inRate.map((e) => ({ code: e.code, name: e.name, amountSen: 0 }))], companyId, baseSen),
+    expenses: layOutBlock(block('expenses'), [
+      opex,
+      ...r.otherExpenses.map((e): LaidLine => (r.commission && e.code === r.commission.code ? { ...e, label: commissionLabel(r.commission) } : e)),
+      ...r.inRate.map((e) => ({ code: e.code, name: e.name, amountSen: 0 })),
+    ], companyId, baseSen),
   };
 }
