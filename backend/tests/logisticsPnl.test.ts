@@ -168,9 +168,14 @@ describe('GET /acc-events/logistics/pnl', () => {
     expect(row('instalment').sen.KL).toBe(318_000);
     expect(row('manpower').sen.KL).toBe(2_230_969);
     expect(b.spreads.map((s: any) => [s.lineId, s.months, s.isDefault])).toEqual([['g-u1', 3, false], ['g-u2', 1, true], ['g-i1', 12, true]]);
-    /* Repairs by lorry (owner 2026-11-25): VPC9058's upkeep account, adding up to the Upkeep Cost row. */
-    expect(b.upkeepLorries.map((l: any) => [l.plate, l.accountCode, l.ours, l.totalSen, l.bills.map((x: any) => x.lineId)]))
-      .toEqual([['VPC9058', '900-U010', true, row('upkeep').sen.KL, ['g-u1', 'g-u2']]]);
+    /* Spend by lorry (owner 2026-11-25): each lorry by its accounts, driver pay and the unnamed insurance Not tied,
+       adding up to Total In-house Expenses. */
+    expect(b.lorrySpend.map((l: any) => [l.plate, l.totalSen, l.lines.map((x: any) => x.kind)])).toEqual([
+      ['VPC9058', 100_000 + 116_200 + 318_000, ['upkeep', 'upkeep', 'instalment']],
+      ['VRH9058', 814_726, ['petrol']],
+      [null, 2_230_969 + 37_023, ['manpower', 'roadtax']],
+    ]);
+    expect(b.lorrySpend.reduce((t: number, l: any) => t + l.totalSen, 0)).toBe(row('inhouse_total').sen.KL);
     expect(b.ownTrips).toBe(1);
     expect(b.tripsProblem).toBeNull();
     expect(b.areaRates.find((a: any) => a.key === 'johor')).toMatchObject({ rateSen: 120_000, isDefault: false });
