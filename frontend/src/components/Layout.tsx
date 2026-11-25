@@ -11,15 +11,14 @@ import { RowActionsMenu, type MenuItem } from "./RowActionsMenu";
 import { useBranding } from "../hooks/useBranding";
 import { CompanyMark } from "./CompanyMark";
 import { whenPageChunksSettled } from "../lib/lazyPage";
-import { useProductCategories } from "../vendor/scm/lib/product-categories-store";
 
 interface Props {
   children: ReactNode;
 }
 
 export function Layout({ children }: Props) {
-  // Load the product categories once, so every label is the registry name from the first page.
-  useProductCategories();
+  // Load the product categories once, so labels read the registry name; lazy, to keep it out of the first bundle.
+  useEffect(() => { void import("../vendor/scm/lib/product-categories-store").then((m) => m.ensureProductCategories()).catch(() => undefined); }, []);
   // Desktop collapse — only used at lg+. Mobile no longer has a
   // drawer-opening hamburger; the bottom rail's centre Menu disc
   // covers nav, so the top bar is just brand + chrome.

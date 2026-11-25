@@ -25,8 +25,7 @@ import {
   type ProductModelRow, type AllowedOptions,
 } from '../../vendor/scm/lib/product-models-queries';
 import { useMaintenanceConfig, useMfgProducts, mfgCategoryLabel, type MfgCategory, type MfgProductRow } from '../../vendor/scm/lib/mfg-products-queries';
-import { useProductCategories } from '../../vendor/scm/lib/product-categories-store';
-import { isSingleSkuCategory } from '../../vendor/scm/lib/product-categories-store';
+import { isSingleSkuCategory, useProductCategories } from '../../vendor/scm/lib/product-categories-store';
 import { CategorySwapSelect } from '../../vendor/scm/components/CategorySwapSelect';
 import {
   useSuppliers, useCreateBindingsBatch,
@@ -51,7 +50,6 @@ const ICON = { size: 14, strokeWidth: 1.75 } as const;
    removed .page cascade. Shared by the list and all three dialogs. */
 const BANNER_ERR =
   'rounded-lg border border-err/40 bg-err/10 px-4 py-3 text-[13px] text-err';
-
 
 /* DataGrid layout key for the Models list. The legacy page rendered one
    table per category — to keep that read on first visit we seed a default
@@ -744,8 +742,8 @@ export function NewModelDialog({
   /** Only fires in single-row mode (rows.length === 1). Used by SKU Master's
       "+ New SKU" entry-point to chain into the existing auto-generate flow. */
   onCreated?: (modelId: string, category: MfgCategory) => void;
-}) {  const CATEGORIES = useProductCategories().active.map((c) => c.code);
-
+}) {
+  const CATEGORIES = useProductCategories().active.map((c) => c.code);
   const [category, setCategory]   = useState<MfgCategory>(initialCategory ?? 'SOFA');
   const [rows, setRows]           = useState<ModelRow[]>(() => [emptyRow()]);
   const [pickedSizes, setPickedSizes] = useState<Set<string>>(new Set());
