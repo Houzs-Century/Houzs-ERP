@@ -108,7 +108,7 @@ follows the new SLA at once.
   the SO's AutoCount `transfer_to`, a mirror DO on the case's Ref (placeholder
   refs never match), and SCM DOs scoped to the caller's companies.
 - The list / export search also finds a case by the PO column: the case's own
-  `po_no` and the SO's non-cancelled Order POs (`soDocNosByPoNumber`).
+  `po_no` and the SO's non-cancelled Order POs (the SO list's `so-list-po-search.ts`).
 - The pre-auth form-intake endpoints scope strictly by the caller's **secret**
   → company mapping; an unmapped secret 503s, it must never fall back to "no
   predicate" (that would leak both companies' PII).

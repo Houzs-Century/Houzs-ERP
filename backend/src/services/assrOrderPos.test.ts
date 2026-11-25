@@ -4,7 +4,7 @@
 // ORDER lines. Pinned through a minimal fake PostgREST client, the same shape
 // as scm/lib/so-converted-po.test.ts, because the D1 test harness has no scm.
 import { describe, expect, test } from 'vitest';
-import { applyErpSupplierNames, attachOrderPurchaseOrders, supplierPickerResults, orderPoSupplierCode, orderSupplierCode, soDocNosByPoNumber } from './assrOrderPos';
+import { applyErpSupplierNames, attachOrderPurchaseOrders, supplierPickerResults, orderPoSupplierCode, orderSupplierCode } from './assrOrderPos';
 
 type Row = Record<string, unknown>;
 
@@ -19,12 +19,6 @@ function fakeSb(tables: Record<string, Row[]>, seen: string[] = []) {
       return this;
     }
     in(col: string, vals: unknown[]) { this.rows = this.rows.filter((r) => vals.includes(r[col])); return this; }
-    ilike(col: string, pat: string) {
-      const needle = pat.replace(/%/g, '').toLowerCase();
-      this.rows = this.rows.filter((r) => String(r[col] ?? '').toLowerCase().includes(needle));
-      return this;
-    }
-    limit(n: number) { this.rows = this.rows.slice(0, n); return this; }
     not(col: string, op: string, val: unknown) {
       if (op === 'is' && val === null) this.rows = this.rows.filter((r) => r[col] != null);
       return this;
@@ -119,37 +113,6 @@ describe('attachOrderPurchaseOrders', () => {
     await attachOrderPurchaseOrders(fakeSb(tables, seen), rows);
     expect((rows[0].order_pos as unknown[]).length).toBe(2);
     expect(seen).toContain('purchase_orders.company_id=1');
-  });
-});
-
-// HC-0257 — the list search finds a case by an Order PO in its PO column.
-describe('soDocNosByPoNumber', () => {
-  const t = {
-    ...tables,
-    purchase_orders: [
-      ...tables.purchase_orders,
-      { id: 'po-void', po_number: 'HC-PO-008799', status: 'CANCELLED', company_id: HOUZS },
-    ],
-    purchase_order_items: [
-      ...tables.purchase_order_items,
-      { id: 'pi-void', so_item_id: 'hl-1', purchase_order_id: 'po-void', company_id: HOUZS },
-    ],
-  };
-
-  test('a PO number (part, any case) finds the SO it was raised from', async () => {
-    expect(await soDocNosByPoNumber(fakeSb(t), 'hc-po-008783', [HOUZS, CO_2990])).toEqual(['HC-SO-011733']);
-    expect(await soDocNosByPoNumber(fakeSb(t), '2607-004', [HOUZS, CO_2990])).toEqual(['SO-2607-001']);
-  });
-
-  test("stays in the caller's companies; a cancelled PO finds nothing", async () => {
-    expect(await soDocNosByPoNumber(fakeSb(t), 'PO-2607-004', [HOUZS])).toEqual([]);
-    expect(await soDocNosByPoNumber(fakeSb(t), 'HC-PO-008799', [HOUZS])).toEqual([]);
-    expect(await soDocNosByPoNumber(fakeSb(t), 'HC-PO-008783', [])).toEqual([]);
-  });
-
-  test('a read error reads as no match, not a failed search', async () => {
-    const sb = { from: () => { throw new Error('down'); } };
-    expect(await soDocNosByPoNumber(sb, 'HC-PO-1', [HOUZS])).toEqual([]);
   });
 });
 

@@ -24,7 +24,7 @@
    ---------------------------------------------------------------------------- */
 import type { Env } from "../types";
 import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
-import { soDocNosByPoNumber } from "./assrOrderPos";
+import { soDocNosByPoNumberInCompanies } from "../scm/lib/so-list-po-search";
 
 export interface AssrOrderDo {
   do_number: string;
@@ -61,7 +61,7 @@ export async function findOrdersByDoNumber(
       .all<{ ref: string | null }>(),
     findScmSoDocNosByDoNumber(env, searchTerm, allowedCompanyIds),
     // The PO column's Order POs ride the same SO doc_no arm of the list search.
-    isSupabaseConfigured(env) ? soDocNosByPoNumber(getSupabaseService(env), searchTerm, allowedCompanyIds) : [],
+    isSupabaseConfigured(env) ? soDocNosByPoNumberInCompanies(getSupabaseService(env), allowedCompanyIds, searchTerm) : [],
   ]);
   const refKeys = (mirrored.results ?? [])
     .map((row) => String(row.ref ?? "").trim().toLowerCase())
