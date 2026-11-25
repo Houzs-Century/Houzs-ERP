@@ -281,6 +281,14 @@ export type DailyBankBlock = {
   receipts: DailyBankMovement[]; payouts: DailyBankMovement[];
   pending: DailyBankPending[]; pendingSen: number; availableSen: number;
   transit: DailyBankTransit[]; transitSen: number; availableWithTransitSen: number;
+  /** On the cash-book board only (owner 2026-11-25: 要，加勾选): the day's approved vouchers
+      ticked as already in the starting balance — listed, not taken off. */
+  notDeducted?: DailyBankNotDeducted[];
+};
+/** An approved voucher the cash book lists on its day but does not take off. */
+export type DailyBankNotDeducted = {
+  pvId: string; pvNumber: string; party: string | null; note: string; amountSen: number;
+  tickedBy: string | null; tickedAt: string | null;
 };
 export type DailyBankBoard = {
   date: string;
@@ -296,6 +304,8 @@ export type DailyBankBoard = {
   /** On the cash book: the money accounts it does not carry yet (no start, or a start after the day). */
   notStarted: Array<{ accountCode: string; accountName: string; startDate: string | null }>;
   note: string;
+  /** On the cash book only: whether the caller may tick a voucher off it. */
+  canWrite?: boolean;
 };
 
 export const useDailyBank = (date: string) => useQuery({

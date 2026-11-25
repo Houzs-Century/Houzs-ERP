@@ -33,7 +33,7 @@ import { CONVERT_SOURCE, backfillSoPayments, paymentEntryDisagreements, unbooked
 import { dailyBankHandler, cashbookBoardHandler } from './accounting-daily-bank';
 import {
   cashbookGet, cashbookStartPut, cashbookStartDelete, cashbookReceiptCreate, cashbookReceiptUpdate, cashbookReceiptDelete,
-  cashbookReceiptsDayPut,
+  cashbookReceiptsDayPut, cashbookSkipPut, cashbookSkipDelete,
 } from './accounting-daily-bank-cashbook';
 import { systemTakings, postCashOverShort } from '../../acc/daily-close';
 import { resolveRoles, piLines, DEFAULT_ROLE_CODES } from '../../acc/rules';
@@ -1314,6 +1314,9 @@ accounting.post('/daily-bank/receipts', cashbookReceiptCreate);
 accounting.put('/daily-bank/receipts/day', cashbookReceiptsDayPut);
 accounting.patch('/daily-bank/receipts/:id', cashbookReceiptUpdate);
 accounting.delete('/daily-bank/receipts/:id', cashbookReceiptDelete);
+/* An approved voucher ticked as already in its bank's starting balance, and unticked (owner 2026-11-25: 要，加勾选). */
+accounting.put('/daily-bank/skips/:pvId', cashbookSkipPut);
+accounting.delete('/daily-bank/skips/:pvId', cashbookSkipDelete);
 
 /* ════════════════════════════════════════════════════════════════════════
    Daily close (cashup, brief 3.5 layer 2)

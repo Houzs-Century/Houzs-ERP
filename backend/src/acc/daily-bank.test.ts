@@ -198,7 +198,7 @@ describe('computeDailyBank — the cash book', () => {
 
   it('B/F = start + receipts − approved vouchers before the day; the day adds its own; only its own banks and their pending count; no card money under a bank', () => {
     const board = computeDailyBank(DAY, BANKS, ACQ, LEDGER, PENDING, {
-      starts: [START],
+      starts: [START], skips: [],
       receipts: [
         R({ id: 'r0', receipt_date: '2026-11-23', amount_sen: 50_000, note: 'before the start: already inside it' }),
         R({ id: 'r1', receipt_date: '2026-11-24', amount_sen: 300_000, note: 'Hookka deposit' }),
@@ -241,7 +241,7 @@ describe('computeDailyBank — the cash book', () => {
 
   it('on the start day B/F is the start itself and the day lists its own money', () => {
     const board = computeDailyBank('2026-11-24', BANKS, ACQ, LEDGER, [], {
-      starts: [START],
+      starts: [START], skips: [],
       receipts: [R({ id: 'r1', receipt_date: '2026-11-24', amount_sen: 300_000, note: 'Hookka deposit' })],
       payouts: [V({ id: 'v1', voucher_date: '2026-11-24', total_sen: 40_000 })],
     });
@@ -249,7 +249,7 @@ describe('computeDailyBank — the cash book', () => {
   });
 
   it('a day before its start, an account is not on the cash book yet — and says when it starts', () => {
-    const board = computeDailyBank('2026-11-23', BANKS, ACQ, LEDGER, PENDING, { starts: [START], receipts: [], payouts: [] });
+    const board = computeDailyBank('2026-11-23', BANKS, ACQ, LEDGER, PENDING, { starts: [START], receipts: [], payouts: [], skips: [] });
     expect(board.blocks).toEqual([]);
     expect(board.notStarted).toEqual([
       { accountCode: '310-0010', accountName: 'CASH AT BANK - MAYBANK', startDate: '2026-11-24' },
@@ -261,7 +261,7 @@ describe('computeDailyBank — the cash book', () => {
   /* Owner 2026-11-24: 其实就是我approved了就当做一件过了要扣，不可以吗？ — then 照这样改. */
   it('an approved voucher comes off on the Malaysia day it was approved, whatever its own date; its line never shows that date (owner: 过了就不需要显示了)', () => {
     const board = computeDailyBank(DAY, BANKS, ACQ, LEDGER, [], {
-      starts: [START], receipts: [],
+      starts: [START], receipts: [], skips: [],
       payouts: [
         V({ id: 'old', pv_number: 'HPV-OLD', voucher_date: '2026-09-29', total_sen: 70_000, bank_charge_sen: 100, approved_at: `${DAY}T02:00:00Z` }),
         V({ id: 'moved', pv_number: 'HPV-MOVED', voucher_date: '2026-11-24', total_sen: 11_000, approved_at: `${DAY}T01:00:00Z` }),
@@ -292,6 +292,29 @@ describe('computeDailyBank — the cash book', () => {
     expect(may.closingSen).toBe(77_408_649 - 5_000 - 2_000 - 85_600);
   });
 
+  /* Owner 2026-11-25: 这个是例外，因为他们不小心cancel了 — offered a tick, 要，加勾选. */
+  it('a voucher ticked as already in the starting balance never comes off: listed apart on its day, left out of B/F after it', () => {
+    const payouts = [
+      V({ id: 'again', pv_number: 'HPV-AGAIN', payee_name: 'OWN TRANSFER', voucher_date: '2026-10-02', total_sen: 3_100_000, approved_at: `${DAY}T03:00:00Z` }),
+      V({ id: 'normal', pv_number: 'HPV-NORMAL', voucher_date: DAY, total_sen: 20_000, approved_at: `${DAY}T05:00:00Z` }),
+    ];
+    const skips = [{ pv_id: 'again', ticked_by: 'Finance', ticked_at: '2026-11-26T02:00:00Z' }];
+    const may = computeDailyBank(DAY, BANKS, ACQ, LEDGER, [], { starts: [START], receipts: [], payouts, skips }).blocks[0]!;
+    expect(may.payouts.map((m) => m.docNo)).toEqual(['HPV-NORMAL']);
+    expect(may).toMatchObject({ openingSen: 77_408_649, outSen: 20_000, closingSen: 77_408_649 - 20_000 });
+    expect(may.notDeducted).toEqual([
+      { pvId: 'again', pvNumber: 'HPV-AGAIN', party: 'OWN TRANSFER', note: 'Other', amountSen: 3_100_000, tickedBy: 'Finance', tickedAt: '2026-11-26T02:00:00Z' },
+    ]);
+    /* The day after: B/F leaves it out, and it is not listed again. */
+    const after = computeDailyBank('2026-11-26', BANKS, ACQ, LEDGER, [], { starts: [START], receipts: [], payouts, skips }).blocks[0]!;
+    expect(after).toMatchObject({ openingSen: 77_408_649 - 20_000, outSen: 0, notDeducted: [] });
+    /* Unticked, it comes off as before. */
+    const unticked = computeDailyBank('2026-11-26', BANKS, ACQ, LEDGER, [], { starts: [START], receipts: [], payouts, skips: [] }).blocks[0]!;
+    expect(unticked.openingSen).toBe(77_408_649 - 20_000 - 3_100_000);
+    /* The original board never carries the list. */
+    expect(computeDailyBank(DAY, BANKS, ACQ, LEDGER, [], null).blocks.every((b) => !('notDeducted' in b))).toBe(true);
+  });
+
   it('the day it comes off: approved, else posted (Malaysia time), else its voucher date', () => {
     const v = (over: Partial<CashbookPayout>) => V({ voucher_date: '2026-11-01', approved_at: null, posted_at: null, ...over });
     expect(payoutDay(v({ approved_at: '2026-11-03T15:59:59Z', posted_at: '2026-11-09T00:00:00Z' }))).toBe('2026-11-03');
@@ -310,7 +333,7 @@ describe('computeDailyBank — the cash book', () => {
   });
 
   it('an overdrawn account starts below zero', () => {
-    const board = computeDailyBank(DAY, BANKS, ACQ, LEDGER, [], { starts: [{ ...START, balance_sen: -500_000 }], receipts: [], payouts: [] });
+    const board = computeDailyBank(DAY, BANKS, ACQ, LEDGER, [], { starts: [{ ...START, balance_sen: -500_000 }], receipts: [], payouts: [], skips: [] });
     expect(board.blocks[0]!.closingSen).toBe(-500_000);
   });
 
