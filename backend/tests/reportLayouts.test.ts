@@ -133,6 +133,26 @@ describe('the layout routes', () => {
     expect(shape(again.layout.blocks.accounts!)[0]).toEqual({ 'side:in': [{ 'in:cat:x': ['900-A001'] }] });
   });
 
+  test('a Cash Flow line\'s own Settlement / Deposit split is saved and read back; a bad one is a 400 that names the line (2026-11-25)', async () => {
+    const { app, tables } = harness();
+    const tree = (split: unknown) => ({ version: 1, blocks: { accounts: [
+      { kind: 'category', id: 'ops', label: 'OPERATIONS OUTFLOWS', flow: 'out', split: { settlement: 0, deposit: 1 }, children: [
+        { kind: 'account', code: '900-A001', flow: 'net', split },
+        { kind: 'account', code: '900-A002', flow: 'net' },
+      ] },
+    ] } });
+    const bad = await put(app, tree({ settlement: 0, deposit: 0 }), 'rp');
+    expect(bad.status).toBe(400);
+    expect(await bad.json()).toEqual({ error: 'bad_layout', message: '900-A001: the Settlement / Deposit split is two whole parts from 0 to 99, not both 0.' });
+    expect(tables.acc_report_layouts).toHaveLength(0);
+    expect((await put(app, tree({ settlement: 1, deposit: 0 }), 'rp')).status).toBe(200);
+    const back = (await (await app.request('/accounting/reports/layout?report=rp')).json()) as { layout: { blocks: Record<string, Array<{ children: unknown[] }>> } };
+    expect(back.layout.blocks.accounts![0]!.children).toEqual([
+      { kind: 'account', code: '900-A001', flow: 'net', split: { settlement: 1, deposit: 0 } },
+      { kind: 'account', code: '900-A002', flow: 'net' },
+    ]);
+  });
+
   test('nothing saved: the chart\'s own tree, the union with each company\'s tick, the companies', async () => {
     const { app } = harness();
     const res = await app.request('/accounting/reports/layout?report=pnl');

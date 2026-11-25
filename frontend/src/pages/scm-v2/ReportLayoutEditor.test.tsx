@@ -361,12 +361,13 @@ describe('the Cash Flow layout (owner 2026-09-18)', () => {
     saveAsync.mockClear();
     drawRp();
     expect(screen.getByText('Settlement / Deposit', { selector: 'th' })).toBeTruthy();
-    /* A top group with nothing set is not split; one below follows the group above; a line has no choice of its own. */
+    /* A top group with nothing set is not split; one below follows the group above, which it names. */
     const top = screen.getByLabelText('Settlement / Deposit of RECEIPTS') as HTMLSelectElement;
+    const below = () => (screen.getByLabelText('Settlement / Deposit of CURRENT ASSETS') as HTMLSelectElement).selectedOptions[0]!.textContent;
     expect([top.value, top.selectedOptions[0]!.textContent]).toEqual(['', 'Not split']);
-    expect((screen.getByLabelText('Settlement / Deposit of CURRENT ASSETS') as HTMLSelectElement).selectedOptions[0]!.textContent).toBe('As above');
-    expect(screen.queryByLabelText('Settlement / Deposit of 300-0000')).toBeNull();
+    expect(below()).toBe('As above (not split)');
     fireEvent.change(top, { target: { value: 'deposit' } });
+    expect(below()).toBe('As above (Deposit)');
     fireEvent.change(screen.getByLabelText('Settlement / Deposit of PAYMENTS'), { target: { value: 'parts' } });
     /* Parts start at a third Settlement, two thirds Deposit, and are typed as whole numbers. */
     expect((screen.getByLabelText('Settlement parts of PAYMENTS') as HTMLInputElement).value).toBe('1');
@@ -380,5 +381,34 @@ describe('the Cash Flow layout (owner 2026-09-18)', () => {
     expect(rin.split).toEqual({ settlement: 0, deposit: 1 });
     expect(rout.split).toEqual({ settlement: 1, deposit: 3 });
     expect(rin.children[0]).not.toHaveProperty('split');
+  });
+
+  test('an account line has its own Settlement / Deposit: As above names what it follows, its choice is saved on the line, As above clears it (owner 2026-11-25)', async () => {
+    saveAsync.mockClear();
+    drawRp();
+    /* 300-0000 sits twice: its In line under CURRENT ASSETS, its Out line under PAYMENTS. */
+    const lines = () => screen.getAllByLabelText('Settlement / Deposit of 300-0000') as HTMLSelectElement[];
+    expect(lines().map((x) => [x.value, x.selectedOptions[0]!.textContent])).toEqual([['', 'As above (not split)'], ['', 'As above (not split)']]);
+    fireEvent.change(screen.getByLabelText('Settlement / Deposit of RECEIPTS'), { target: { value: 'deposit' } });
+    fireEvent.change(screen.getByLabelText('Settlement / Deposit of PAYMENTS'), { target: { value: 'parts' } });
+    expect(lines().map((x) => x.selectedOptions[0]!.textContent)).toEqual(['As above (Deposit)', 'As above (1 : 2)']);
+    /* The In line to Settlement, inside the all-Deposit RECEIPTS. */
+    fireEvent.change(lines()[0]!, { target: { value: 'settlement' } });
+    expect(lines()[0]!.value).toBe('settlement');
+    /* 601-0003 in parts: they start at 1 : 2 and are typed as whole numbers. */
+    fireEvent.change(screen.getByLabelText('Settlement / Deposit of 601-0003'), { target: { value: 'parts' } });
+    expect((screen.getByLabelText('Settlement parts of 601-0003') as HTMLInputElement).value).toBe('1');
+    fireEvent.change(screen.getByLabelText('Deposit parts of 601-0003'), { target: { value: '5' } });
+    /* The Out line set, then back to As above: nothing stays on it. */
+    fireEvent.change(lines()[1]!, { target: { value: 'deposit' } });
+    fireEvent.change(lines()[1]!, { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(saveAsync).toHaveBeenCalledTimes(1));
+    const [rin, rout] = saved().blocks.accounts! as [LayoutCategory, LayoutCategory];
+    expect((rin.children[0] as LayoutCategory).children).toEqual([{ kind: 'account', code: '300-0000', flow: 'in', split: { settlement: 1, deposit: 0 } }]);
+    expect(rout.children).toEqual([
+      { kind: 'account', code: '300-0000', flow: 'out' },
+      { kind: 'account', code: '601-0003', flow: 'out', split: { settlement: 1, deposit: 5 } },
+    ]);
   });
 });
