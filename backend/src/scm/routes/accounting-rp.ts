@@ -57,7 +57,10 @@ import { requireActiveCompanyId } from '../lib/companyScope';
 import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { resolveRoles, type RoleCodes } from '../../acc/rules';
 import { countsInTheBooks } from '../../acc/reversal-pairs';
-import { cashFlowHomes, layOutCashFlow, type CashFlowHome, type LaidLine, type LaidNode, type SplitTo } from '../../acc/report-layout';
+import { cashFlowHomes, layOutCashFlow, type LaidLine, type LaidNode, type SplitTo } from '../../acc/report-layout';
+import {
+  chosenPlace, loadOpeningPlaces, loadSupplierBillAccounts, openingBillHome, placeOf, type OpeningPlace, type PlaceAccount, type StoredPlace,
+} from '../../acc/opening-bill-places';
 import { OPENING_CLEARING, OPENING_SOURCE } from '../../acc/opening-balance';
 import { inBankShares, loadCardPayoutFacts, merchantMatched, paymentKey, type CardPayoutFacts } from '../../acc/card-in-bank';
 import { loadOrderPaymentFacts, paymentKinds, type OrderPaymentFacts, type PaymentKind } from '../../acc/order-payment-kind';
@@ -222,28 +225,12 @@ async function loadAcquirerTransits(sb: Sb, companyId: number): Promise<{ ok: tr
   return { ok: true, codes: [...codes].sort() };
 }
 
-export type RpAccount = { code: string; name: string };
-export type RpSplit = {
-  code: string; name: string; sen: number;
-  /** A share of an opening bill: the accounts its supplier's own live bills in the ERP sit on
-      (none: no such bill), which place it (openingBillHome). */
-  supplierAccounts?: RpAccount[];
-};
+/** A share of an opening bill (owner 2026-11-25: 这个 other creditor 是还 booth setup 的，它应该在
+    cashflow 的 exhibition & roadshow): Finance's choice for the bill or its supplier, and the
+    accounts the supplier's own live bills in the ERP sit on (acc/opening-bill-places.ts). */
+export type RpOpeningShare = { set: OpeningPlace | null; accounts: PlaceAccount[] };
+export type RpSplit = { code: string; name: string; sen: number; opening?: RpOpeningShare };
 type Split = RpSplit;
-
-/** Where a payment of an opening bill reads (owner 2026-11-25: 这个 other creditor 是还 booth
-    setup 的，它应该在 cashflow 的 exhibition & roadshow): the one account its supplier's own bills
-    in the ERP sit on; else the one Cash Flow category every one of those accounts prints directly
-    under (`homes`, the payment's direction); else — spread over categories, one not placed, or no
-    bill in the ERP — null, and it stays on the creditor control. */
-export function openingBillHome(accounts: readonly RpAccount[], homes: ReadonlyMap<string, CashFlowHome>): ({ kind: 'account' } & RpAccount) | ({ kind: 'category' } & CashFlowHome) | null {
-  const [first, ...rest] = accounts;
-  if (!first) return null;
-  if (rest.length === 0) return { kind: 'account', ...first };
-  const home = homes.get(first.code);
-  if (!home || rest.some((a) => homes.get(a.code)?.id !== home.id)) return null;
-  return { kind: 'category', ...home };
-}
 
 /** The supplier-payment vouchers among `period`'s journals: a PV (or its
     reversal) with a leg on a selected money account and a leg on a creditor
@@ -356,10 +343,11 @@ async function supplierPurposeSplits(
     }
   }
   /* An AP invoice's purpose = its own lines. An opening bill's own line is the opening
-     clearing, which says nothing of what was bought: its purpose is the accounts its
-     supplier's own live bills in the ERP sit on (owner 2026-11-25), placed by the report. */
+     clearing, which says nothing of what was bought: its share carries Finance's choice for
+     the bill or its supplier and the accounts the supplier's own live bills in the ERP sit on
+     (owner 2026-11-25, acc/opening-bill-places.ts), which the report places. */
   const apiSplit = new Map<string, Split[]>();
-  const openingAccounts = new Map<string, RpAccount[]>();
+  const openingShares = new Map<string, RpOpeningShare>();
   if (apiIds.length > 0) {
     type ApHead = { id: string; supplier_id: string | null; opening: boolean | null };
     const heads = await chunkIn<ApHead>(apiIds, (batch, f, t) => sb.from('ap_invoices')
@@ -367,17 +355,27 @@ async function supplierPurposeSplits(
     if (heads.error) return { ok: false, reason: heads.error.message };
     const supplierOfOpening = new Map<string, string>();
     for (const h of heads.data) if (h.opening === true && h.supplier_id) supplierOfOpening.set(String(h.id), String(h.supplier_id));
-    /* Live = what the settle function takes: neither a draft nor cancelled. */
-    const bills = await chunkIn<{ id: string; supplier_id: string }>([...new Set(supplierOfOpening.values())], (batch, f, t) => sb.from('ap_invoices')
-      .select('id, supplier_id').eq('company_id', companyId).in('supplier_id', batch).eq('opening', false)
-      .not('status', 'in', '(DRAFT,CANCELLED)').range(f, t));
-    if (bills.error) return { ok: false, reason: bills.error.message };
-    const supplierOfBill = new Map(bills.data.map((b) => [String(b.id), String(b.supplier_id)]));
+    const noOpening = supplierOfOpening.size === 0;
+    const [own, places] = await Promise.all([
+      loadSupplierBillAccounts(sb, companyId, [...supplierOfOpening.values()]),
+      noOpening ? Promise.resolve({ ok: true as const, suppliers: new Map(), bills: new Map() }) : loadOpeningPlaces(sb, companyId),
+    ]);
+    if (!own.ok) return own;
+    if (!places.ok) return places;
     type ApLine = { invoice_id: string; debit_account_code: string; amount_sen: number };
-    const lines = await chunkIn<ApLine>([...new Set([...apiIds, ...supplierOfBill.keys()])], (batch, f, t) => sb.from('ap_invoice_lines')
+    const lines = await chunkIn<ApLine>(apiIds, (batch, f, t) => sb.from('ap_invoice_lines')
       .select('invoice_id, debit_account_code, amount_sen').eq('company_id', companyId).in('invoice_id', batch).range(f, t));
     if (lines.error) return { ok: false, reason: lines.error.message };
-    const codes = [...new Set(lines.data.map((l) => String(l.debit_account_code)))];
+    const chosen = new Map<string, StoredPlace>();
+    for (const [id, supplier] of supplierOfOpening) {
+      const p = chosenPlace(places.bills.get(id), places.suppliers.get(supplier));
+      if (p) chosen.set(id, p);
+    }
+    const codes = [...new Set([
+      ...lines.data.map((l) => String(l.debit_account_code)),
+      ...[...supplierOfOpening.values()].flatMap((s) => own.bySupplier.get(s) ?? []),
+      ...[...chosen.values()].flatMap((p) => (p.account ? [p.account] : [])),
+    ])];
     const names = new Map<string, string>();
     if (codes.length > 0) {
       const accs = await chunkIn<{ account_code: string; account_name: string }>(codes, (batch, f, t) =>
@@ -385,21 +383,18 @@ async function supplierPurposeSplits(
       if (accs.error) return { ok: false, reason: accs.error.message };
       for (const a of accs.data) names.set(String(a.account_code), String(a.account_name));
     }
-    const allocated = new Set(apiIds);
-    const supplierCodes = new Map<string, Set<string>>();
+    const nameOf = (code: string): string => names.get(code) ?? code;
     for (const l of lines.data) {
-      const id = String(l.invoice_id);
-      const code = String(l.debit_account_code);
-      if (allocated.has(id)) {
-        const list = apiSplit.get(id) ?? [];
-        list.push({ code, name: names.get(code) ?? code, sen: Number(l.amount_sen ?? 0) });
-        apiSplit.set(id, list);
-      }
-      const supplier = supplierOfBill.get(id);
-      if (supplier && code !== OPENING_CLEARING) supplierCodes.set(supplier, (supplierCodes.get(supplier) ?? new Set<string>()).add(code));
+      const list = apiSplit.get(String(l.invoice_id)) ?? [];
+      list.push({ code: String(l.debit_account_code), name: nameOf(String(l.debit_account_code)), sen: Number(l.amount_sen ?? 0) });
+      apiSplit.set(String(l.invoice_id), list);
     }
     for (const [id, supplier] of supplierOfOpening) {
-      openingAccounts.set(id, [...(supplierCodes.get(supplier) ?? [])].sort().map((code) => ({ code, name: names.get(code) ?? code })));
+      const p = chosen.get(id);
+      openingShares.set(id, {
+        set: p ? placeOf(p, nameOf) : null,
+        accounts: (own.bySupplier.get(supplier) ?? []).map((code) => ({ code, name: nameOf(code) })),
+      });
     }
   }
 
@@ -425,9 +420,9 @@ async function supplierPurposeSplits(
     const settled = Number(a.applied_sen ?? 0) > 0 ? Number(a.applied_sen) : Number(a.amount_sen ?? 0);
     if (settled <= 0) continue;
     const list = byPv.get(pv) ?? [];
-    const opening = !a.pi_id && a.ap_invoice_id ? openingAccounts.get(String(a.ap_invoice_id)) : undefined;
+    const opening = !a.pi_id && a.ap_invoice_id ? openingShares.get(String(a.ap_invoice_id)) : undefined;
     if (opening) {
-      list.push({ code: OPENING_CLEARING, name: OPENING_CLEARING, sen: settled, supplierAccounts: opening });
+      list.push({ code: OPENING_CLEARING, name: OPENING_CLEARING, sen: settled, opening });
     } else {
       const parts = a.pi_id ? piSplit.get(String(a.pi_id)) : a.ap_invoice_id ? apiSplit.get(String(a.ap_invoice_id)) : undefined;
       list.push(...proportion(settled, parts ?? []));
@@ -579,9 +574,10 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
         /* Owner 2026-11-05: what a trade-finance account pays a supplier is its own line;
            money paid ahead of a bill reads as the creditor control. */
         const toControl = (amt: number) => add(side, control.account_code, control.account_code, String(control.account_name ?? control.account_code), leg.account_code, amt, supplierMeta);
-        /* Owner 2026-11-25: an opening bill reads by its supplier's own bills in the ERP. */
-        const toOpeningHome = (accounts: RpAccount[], amt: number): void => {
-          const home = openingBillHome(accounts, side === 'R' ? homes.in : homes.out);
+        /* Owner 2026-11-25: an opening bill reads as Finance set it for the bill or its supplier,
+           else by the supplier's own bills in the ERP, else the creditor control. */
+        const toOpeningHome = (o: RpOpeningShare, amt: number): void => {
+          const home = o.set ?? openingBillHome(o.accounts, side === 'R' ? homes.in : homes.out);
           if (home === null) toControl(amt);
           else if (home.kind === 'account') add(side, home.code, home.code, home.name, leg.account_code, amt, supplierMeta);
           else add(side, `${OPENING_BILLS}:${home.id}`, null, OPENING_BILLS_NAME, leg.account_code, amt, supplierMeta, undefined, undefined, home.id);
@@ -591,7 +587,7 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
           const amt = Math.round(x.sen * scale);
           placed += amt;
           if (tf) add(side, TRADE_FINANCE_AP, TRADE_FINANCE_AP, TRADE_FINANCE_AP_NAME, leg.account_code, amt, supplierMeta);
-          else if (x.supplierAccounts) toOpeningHome(x.supplierAccounts, amt);
+          else if (x.opening) toOpeningHome(x.opening, amt);
           else if (x.code === OPENING_CLEARING) toControl(amt);
           else add(side, x.code, x.code, x.name, leg.account_code, amt, supplierMeta);
         }

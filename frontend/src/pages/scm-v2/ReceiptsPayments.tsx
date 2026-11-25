@@ -66,6 +66,7 @@ import { forecastColumns, forecastNote, isForecastKey, rollForecast } from './re
 import { useCashFlowForecast } from '../../vendor/scm/lib/cash-flow-forecast-queries';
 import { CapexFinancingDialog } from './reports/CapexFinancingDialog';
 import { TradeFinanceDialog } from './reports/TradeFinanceDialog';
+import { OpeningBillsDialog } from './reports/OpeningBillsDialog';
 import {
   REPORT_CHART_COLORS, ReportBarChart, chartMonths, thousands, useChartMonths, useChartPeriods,
   type ChartBarSeries, type ChartMonth,
@@ -206,6 +207,7 @@ export const ReceiptsPaymentsTab = () => {
   const [forecast, setForecast] = useState(false);
   const [inputsOpen, setInputsOpen] = useState(false);
   const [tfOpen, setTfOpen] = useState(false);
+  const [openingOpen, setOpeningOpen] = useState(false);
   const [months, setMonths] = useState<number>(6);
   const [level, setLevel] = useState<Level>('all');
   const [showPct, setShowPct] = useState(true);
@@ -347,10 +349,12 @@ export const ReceiptsPaymentsTab = () => {
           </ReportTool>
         )}
         <ReportSwitch on={showPct} onChange={setShowPct}>% beside</ReportSwitch>
+        <button type="button" className={s.pickerButton} onClick={() => setOpeningOpen(true)}>Opening bills</button>
       </ReportToolbar>
       {editing && <ReportLayoutEditor report="rp" onClose={() => setEditing(false)} />}
       {inputsOpen && <CapexFinancingDialog onClose={() => setInputsOpen(false)} canWrite={canPlan} />}
       {tfOpen && <TradeFinanceDialog onClose={() => setTfOpen(false)} canWrite={canPlan} />}
+      {openingOpen && <OpeningBillsDialog onClose={() => setOpeningOpen(false)} canWrite={canArrange} />}
       {chartWin && <CashFlowChart win={chartWin} />}
       {!r.usable && <ReportMessage>Pick dates.</ReportMessage>}
       {r.usable && failed > 0 && (

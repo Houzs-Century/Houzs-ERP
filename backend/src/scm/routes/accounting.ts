@@ -83,6 +83,7 @@ import { pnlReport, balanceSheetReport } from './accounting-reports';
 import { journalEntryEdit } from './accounting-journal-edit';
 import { reportLayoutGet, reportLayoutPut, reportLayoutReset } from './accounting-report-layouts';
 import { receiptsPaymentsReport } from './accounting-rp';
+import { openingBillPlacePut, openingBillsGet, openingBillsOfSupplier } from './accounting-opening-bill-places';
 import { cashFlowForecastHandler, forecastInputsGetHandler, forecastInputsPutHandler, tfGetHandler, tfPutHandler, balanceSheetForecastHandler } from './accounting-cashflow-forecast';
 import { collectionReport } from './accounting-collection';
 import { merchantChargesReport } from './accounting-merchant-charges';
@@ -216,6 +217,9 @@ accounting.post('/stock-close/run', stockCloseRun);
    AutoCount arithmetic; handlers in accounting-reports.ts. */
 accounting.get('/reports/pnl', pnlReport);
 accounting.get('/reports/receipts-payments', receiptsPaymentsReport);
+accounting.get('/reports/receipts-payments/opening-bills', openingBillsGet);
+accounting.put('/reports/receipts-payments/opening-bills/place', openingBillPlacePut);
+accounting.get('/reports/receipts-payments/opening-bills/:supplierId', openingBillsOfSupplier);
 /* Its P&L forecast column: the Forecast P&L as cash on the same tree (forecast port step 2). */
 accounting.get('/reports/cash-flow-forecast', cashFlowForecastHandler);
 /* Its Capex & financing table (forecast port step 3): keyed per account and month, forecast only. */
