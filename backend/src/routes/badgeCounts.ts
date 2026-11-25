@@ -29,6 +29,7 @@ export const BADGE_COUNT_PATHS = {
   "it-support-replies": "/api/it-support/unread-count",
   "fair-links-to-settle": "/api/scm/mfg-sales-orders/fair-pending/count",
   "product-request-approvals": "/api/scm/product-requests/pending-count",
+  "stock-take-approvals": "/api/scm/stock-takes/pending-count",
   "finance-todo": "/api/scm/accounting/todo/count",
   "mail-waiting": "/api/mail-center/waiting-count",
   "meetings-unread": "/api/meetings/unread-count",

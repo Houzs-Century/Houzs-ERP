@@ -134,7 +134,8 @@ describe("executable route contract", () => {
     // 195 since 2026-11-10: /scm/ap-invoices/duplicates — supplier bills booked twice, for Finance to review.
     // 196 since 2026-11-23: /meetings — the meeting rooms every company shares.
     // 197 since 2026-11-23: /scm/daily-bank-cashbook — the owner's cash book, a second Daily Bank.
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(197);
+    // 198 since 2026-11-24: /scm/stock-take-approvals — the stock-take approvals inbox (supervisors).
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(198);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -204,7 +205,8 @@ describe("executable route contract", () => {
     // 206 since 2026-11-10 — /scm/ap-invoices/duplicates; see the staff-route count above.
     // 207 since 2026-11-23 — /meetings; see the staff-route count above.
     // 208 since 2026-11-23 — /scm/daily-bank-cashbook; see the staff-route count above.
-    expect(ROUTE_CONTRACT).toHaveLength(208);
+    // 209 since 2026-11-24 — /scm/stock-take-approvals; see the staff-route count above.
+    expect(ROUTE_CONTRACT).toHaveLength(209);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {
