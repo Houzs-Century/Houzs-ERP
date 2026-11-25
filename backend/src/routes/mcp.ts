@@ -19,9 +19,10 @@ import type { Context } from "hono";
 import type { Env } from "../types";
 import { getUserById, type AuthUser } from "../services/auth";
 import { hasPermission } from "../services/permissions";
-import { MCP_INNER_HEADER, mcpInnerSecret, rememberVerified } from "../services/mcp-inner";
+import { MCP_INNER_HEADER, mcpInnerSecret, recallVerified, rememberVerified } from "../services/mcp-inner";
+import { isFinanceViewer, isProductCostViewer } from "../services/pmsAccess";
 import { docTitle, fetchKind, myToday, parseFetchId, pickFields, PROMPTS, promptText, resolveWindow, searchResults, singleMonth, summariseDelivery, summariseSales, type Window } from "../services/mcp-quick";
-import { classifyPath, moduleCatalog, readablePaths, redactSecrets, type RouteInfo } from "../services/mcp-access";
+import { classifyPath, moduleCatalog, readablePaths, redactMoney, redactSecrets, type RouteInfo } from "../services/mcp-access";
 import {
   consumeCode,
   createAuthRequest,
@@ -322,8 +323,13 @@ async function readValue(c: Context<HonoEnv>, token: string, rawPath: string, qu
     const msg = body && typeof body === "object" && typeof (body as { error?: unknown }).error === "string" ? (body as { error: string }).error : `HTTP ${res.status}`;
     return { ok: false, status: res.status, message: `The ERP answered: ${msg}`, note: msg.slice(0, 120), target };
   }
-  const { value, removed } = redactSecrets(body);
-  return { ok: true, status: res.status, value, removed: [...removed], target };
+  const { value: noSecrets, removed } = redactSecrets(body);
+  // Cost / margin / profit by the ERP's own cohorts (services/mcp-access.ts redactMoney).
+  const who = recallVerified<McpIdentity>(token, Date.now())?.user ?? (await mcpIdentity(c.env, token))?.user ?? null;
+  const sight = { finance: !!who && isFinanceViewer(who), productCost: !!who && isProductCostViewer(who) };
+  const money = redactMoney(noSecrets, sight);
+  for (const k of money.removed) removed.add(k);
+  return { ok: true, status: res.status, value: money.value, removed: [...removed], target };
 }
 
 /** Read one endpoint as the person, as tool text; shared with the leak check (routes/mcpAdmin.ts). */

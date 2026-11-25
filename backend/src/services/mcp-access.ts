@@ -78,6 +78,55 @@ export function redactSecrets(v: unknown): { value: unknown; removed: Set<string
   return { value: walk(v, 0), removed };
 }
 
+// ── money fields (cost / margin / profit) ───────────────────────────────────
+// The leak check (2026-11-25, account: a Sales Executive) found cost reaching a
+// non-finance person through the ERP's own replies even where the screens hide
+// it: unitCostSen on deliverable DO lines and invoiceable lines, costPriceSen on
+// special add-ons, contractor_cost / fin_total_cost on projects, cost_notes on
+// service cases. The connector now strips them by the ERP's OWN cohorts:
+//   margin / profit / any other cost  → isFinanceViewer (the PMS director cohort,
+//                                        or projects.finance.view), same as
+//                                        scm/lib/houzs-perms canViewScmFinance;
+//   product / line unit cost          → isProductCostViewer (finance cohort OR
+//                                        Purchasing), same as canViewScmProductCost.
+// Unknown caller → strip all of them (fail closed).
+export const PROFIT_KEY = /(margin|profit|gross_?pct|gp_?pct|markup)/i;
+export const PRODUCT_COST_KEY = /(unit_?cost|cost_?price|landed_?cost|avg_?cost|average_?cost|cost_?per_?unit)/i;
+export const ANY_COST_KEY = /cost/i;
+
+export type MoneySight = { finance: boolean; productCost: boolean };
+
+/** Which money keys this person may NOT see: profit / cost families by cohort. */
+export function moneyKeyHidden(key: string, sight: MoneySight): boolean {
+  if (PROFIT_KEY.test(key)) return !sight.finance;
+  if (PRODUCT_COST_KEY.test(key)) return !(sight.productCost || sight.finance);
+  if (ANY_COST_KEY.test(key)) return !sight.finance;
+  return false;
+}
+
+/** Strip the money keys this person may not see (any depth). */
+export function redactMoney(v: unknown, sight: MoneySight): { value: unknown; removed: Set<string> } {
+  const removed = new Set<string>();
+  if (sight.finance && sight.productCost) return { value: v, removed };
+  const walk = (x: unknown, depth: number): unknown => {
+    if (depth > 40) return null;
+    if (Array.isArray(x)) return x.map((y) => walk(y, depth + 1));
+    if (x && typeof x === "object") {
+      const out: Record<string, unknown> = {};
+      for (const [k, val] of Object.entries(x as Record<string, unknown>)) {
+        if (moneyKeyHidden(k, sight)) {
+          removed.add(k);
+          continue;
+        }
+        out[k] = walk(val, depth + 1);
+      }
+      return out;
+    }
+    return x;
+  };
+  return { value: walk(v, 0), removed };
+}
+
 /** Money / people field names — the leak check reports where these reach a staff account. */
 export const SENSITIVE_KEY = /(cost|salary|wage|payroll|margin|profit|commission|ic_?no|nric|bank_?acc|basic_pay|allowance|epf|socso)/i;
 
