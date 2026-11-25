@@ -238,7 +238,7 @@ export async function postReleaseMonth(
   const releasedSen = parts.reduce((s, p) => s + p.sen, 0);
   const record = async (o: ReleaseOutcome): Promise<ReleaseOutcome> => {
     await sb.from('acc_commission_release_runs').insert({
-      company_id: companyId, month: `${month}-01`, trigger, released_sen: o.releasedSen, action: o.action,
+      company_id: companyId, month: `${month}-01`, ran_at: new Date().toISOString(), trigger, released_sen: o.releasedSen, action: o.action,
       je_no: o.jeNo ?? null, note: o.note ?? null,
       parts: Object.fromEntries(parts.filter((p) => p.sen !== 0).map((p) => [p.key, p.sen])),
     });

@@ -158,20 +158,20 @@ export const CommissionReleaseTab = () => {
   const releasedSen = sum(layers, (l) => l.releasedSen);
   const bookedSen = sum(data?.posted ?? [], (p) => p.releasedSen);
   const layerCols: Column<ReleaseLayer>[] = [
-    { key: 'bill', label: 'Bill', getValue: (l) => layerName(l), render: (l) => <span className={b.strong}>{layerName(l)}</span>, total: () => 'Total' },
-    { key: 'docs', label: 'Documents', getValue: (l) => l.docs.join(', '), render: (l) => <span className={b.muted}>{l.docs.join(', ')}</span> },
+    { key: 'bill_month', label: 'Bill month', getValue: (l) => layerName(l), render: (l) => <span className={b.strong}>{layerName(l)}</span>, total: () => 'Total' },
+    { key: 'doc_nos', label: 'Documents', getValue: (l) => l.docs.join(', '), render: (l) => <span className={b.muted}>{l.docs.join(', ')}</span> },
     {
       key: 'amount', label: 'Amount', align: 'right', getValue: (l) => l.amountSen / 100, exportValue: (l) => l.amountSen / 100, exportFormat: 'money',
       render: (l) => fmtLedger(l.amountSen), total: (rows) => fmtLedger(sum(rows, (r) => r.amountSen)),
     },
-    { key: 'basis', label: 'Split by', getValue: (l) => BASIS[l.basis], render: (l) => <span className={b.muted}>{BASIS[l.basis]}</span> },
-    { key: 'orders', label: 'Orders', align: 'right', getValue: (l) => l.orders, render: (l) => l.orders.toLocaleString('en-MY') },
+    { key: 'share_source', label: 'Shares from', getValue: (l) => BASIS[l.basis], render: (l) => <span className={b.muted}>{BASIS[l.basis]}</span> },
+    { key: 'orders_qty', label: 'Orders', align: 'right', getValue: (l) => l.orders, render: (l) => l.orders.toLocaleString('en-MY') },
     {
-      key: 'released', label: 'Released to date', align: 'right', getValue: (l) => l.releasedSen / 100, exportValue: (l) => l.releasedSen / 100, exportFormat: 'money',
+      key: 'released_amount', label: 'Released to date', align: 'right', getValue: (l) => l.releasedSen / 100, exportValue: (l) => l.releasedSen / 100, exportFormat: 'money',
       render: (l) => fmtLedger(l.releasedSen), total: (rows) => fmtLedger(sum(rows, (r) => r.releasedSen)),
     },
     {
-      key: 'left', label: 'Left in prepayment', align: 'right', getValue: (l) => l.leftSen / 100, exportValue: (l) => l.leftSen / 100, exportFormat: 'money',
+      key: 'left_amount', label: 'Left in prepayment', align: 'right', getValue: (l) => l.leftSen / 100, exportValue: (l) => l.leftSen / 100, exportFormat: 'money',
       render: (l) => <span className={b.strong}>{fmtLedger(l.leftSen)}</span>, total: (rows) => fmtLedger(sum(rows, (r) => r.leftSen)),
     },
     { key: 'note', label: 'Note', getValue: (l) => l.note ?? '', render: (l) => <span className={b.muted}>{l.note ?? ''}</span> },
@@ -180,23 +180,23 @@ export const CommissionReleaseTab = () => {
   const monthCols: Column<MonthRow>[] = [
     { key: 'month', label: 'Month', getValue: (m) => m.month, render: (m) => <span className={b.strong}>{monthName(m.month)}</span> },
     {
-      key: 'release', label: 'Release', align: 'right', getValue: (m) => m.totalSen / 100, exportValue: (m) => m.totalSen / 100, exportFormat: 'money',
+      key: 'release_amount', label: 'Release', align: 'right', getValue: (m) => m.totalSen / 100, exportValue: (m) => m.totalSen / 100, exportFormat: 'money',
       render: (m) => fmtLedger(m.totalSen), total: (rows) => fmtLedger(sum(rows, (r) => r.totalSen)),
     },
     {
-      key: 'made_of', label: 'Made of', getValue: (m) => m.parts.map((p) => `${nameOf.get(p.key) ?? p.key} ${fmtLedger(p.sen)}`).join(' · '),
+      key: 'made_of_lines', label: 'Made of', getValue: (m) => m.parts.map((p) => `${nameOf.get(p.key) ?? p.key} ${fmtLedger(p.sen)}`).join(' · '),
       render: (m) => <span className={b.muted}>{m.parts.map((p) => `${nameOf.get(p.key) ?? p.key} ${fmtLedger(p.sen)}`).join(' · ') || '—'}</span>,
     },
     {
-      key: 'booked', label: 'Booked', align: 'right', getValue: (m) => (m.bookedSen == null ? '' : m.bookedSen / 100), exportValue: (m) => (m.bookedSen == null ? null : m.bookedSen / 100), exportFormat: 'money',
+      key: 'booked_amount', label: 'Booked', align: 'right', getValue: (m) => (m.bookedSen == null ? '' : m.bookedSen / 100), exportValue: (m) => (m.bookedSen == null ? null : m.bookedSen / 100), exportFormat: 'money',
       render: (m) => (m.bookedSen == null ? '—' : fmtLedger(m.bookedSen)), total: (rows) => fmtLedger(sum(rows, (r) => r.bookedSen ?? 0)),
     },
-    { key: 'entry', label: 'Entry', getValue: (m) => m.jeNo ?? '', render: (m) => m.jeNo ?? '—' },
-    { key: 'state', label: 'State', getValue: (m) => (data ? monthState(m, data).label : ''), render: (m) => (data ? <Tag t={monthState(m, data)} /> : null) },
+    { key: 'je_no', label: 'Entry', getValue: (m) => m.jeNo ?? '', render: (m) => m.jeNo ?? '—' },
+    { key: 'month_status', label: 'Status', getValue: (m) => (data ? monthState(m, data).label : ''), render: (m) => (data ? <Tag t={monthState(m, data)} /> : null) },
   ];
 
   const orderCols: Column<LayerOrder>[] = [
-    { key: 'so', label: 'Sales order', getValue: (o) => o.docNo, render: (o) => <span className={b.strong}>{o.docNo}</span> },
+    { key: 'so_doc_no', label: 'SO number', getValue: (o) => o.docNo, render: (o) => <span className={b.strong}>{o.docNo}</span> },
     { key: 'so_date', label: 'SO date', getValue: (o) => o.soDate ?? '', render: (o) => (o.soDate ? fmtDate(o.soDate) : '—') },
     { key: 'status', label: 'Status', getValue: (o) => o.status, render: (o) => <span className={b.muted}>{o.status}</span> },
     { key: 'total', label: 'Order total', align: 'right', getValue: (o) => o.totalSen / 100, exportValue: (o) => o.totalSen / 100, exportFormat: 'money', render: (o) => fmtLedger(o.totalSen) },
@@ -204,13 +204,13 @@ export const CommissionReleaseTab = () => {
       key: 'share', label: 'Commission share', align: 'right', getValue: (o) => o.shareSen / 100, exportValue: (o) => o.shareSen / 100, exportFormat: 'money',
       render: (o) => fmtLedger(o.shareSen), total: (rows) => fmtLedger(sum(rows, (r) => r.shareSen)),
     },
-    { key: 'sold', label: 'Sold', align: 'right', getValue: (o) => o.sold, render: (o) => pct(o.sold) },
+    { key: 'invoiced_pct', label: 'Invoiced', align: 'right', getValue: (o) => o.sold, render: (o) => pct(o.sold) },
     {
-      key: 'released', label: 'Released', align: 'right', getValue: (o) => o.releasedSen / 100, exportValue: (o) => o.releasedSen / 100, exportFormat: 'money',
+      key: 'released_amount', label: 'Released', align: 'right', getValue: (o) => o.releasedSen / 100, exportValue: (o) => o.releasedSen / 100, exportFormat: 'money',
       render: (o) => fmtLedger(o.releasedSen), total: (rows) => fmtLedger(sum(rows, (r) => r.releasedSen)),
     },
     {
-      key: 'left', label: 'Left', align: 'right', getValue: (o) => o.leftSen / 100, exportValue: (o) => o.leftSen / 100, exportFormat: 'money',
+      key: 'left_amount', label: 'Left', align: 'right', getValue: (o) => o.leftSen / 100, exportValue: (o) => o.leftSen / 100, exportFormat: 'money',
       render: (o) => fmtLedger(o.leftSen), total: (rows) => fmtLedger(sum(rows, (r) => r.leftSen)),
     },
   ];
@@ -223,11 +223,11 @@ export const CommissionReleaseTab = () => {
     { key: 'by', label: 'By', getValue: (r) => (r.trigger === 'manual' ? 'By hand' : 'Nightly'), render: (r) => (r.trigger === 'manual' ? 'By hand' : 'Nightly') },
     { key: 'month', label: 'Month', getValue: (r) => String(r.month).slice(0, 7), render: (r) => monthName(String(r.month).slice(0, 7)) },
     {
-      key: 'released', label: 'Release', align: 'right', getValue: (r) => r.released_sen / 100, exportValue: (r) => r.released_sen / 100, exportFormat: 'money',
+      key: 'release_amount', label: 'Release', align: 'right', getValue: (r) => r.released_sen / 100, exportValue: (r) => r.released_sen / 100, exportFormat: 'money',
       render: (r) => fmtLedger(r.released_sen),
     },
     { key: 'result', label: 'Result', getValue: (r) => runTag(r.action).label, render: (r) => <Tag t={runTag(r.action)} /> },
-    { key: 'entry', label: 'Entry', getValue: (r) => r.je_no ?? '', render: (r) => r.je_no ?? '—' },
+    { key: 'je_no', label: 'Entry', getValue: (r) => r.je_no ?? '', render: (r) => r.je_no ?? '—' },
     { key: 'note', label: 'Note', getValue: (r) => r.note ?? '', render: (r) => <span className={b.muted}>{r.note ?? ''}</span> },
   ];
   const seg = (id: RunFilter, label: string, n: number) => (
@@ -302,7 +302,7 @@ export const CommissionReleaseTab = () => {
             <section className={s.card} aria-label="Orders of the bill">
               <div className={s.cardHead}>
                 <span className={s.cardTitle}>{layerName(picked)} — its orders</span>
-                <span className={s.cardSub}>Split by: {BASIS[picked.basis]} · sold to date</span>
+                <span className={s.cardSub}>Shares from: {BASIS[picked.basis]} · invoiced to date</span>
                 <span className={b.grow} />
                 <button type="button" className={b.btn} onClick={() => setLayer(null)} aria-label="Close the orders"><X size={14} aria-hidden />Close</button>
               </div>
