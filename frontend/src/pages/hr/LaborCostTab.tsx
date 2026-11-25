@@ -1,10 +1,13 @@
-/* HR · Labor Cost (step-2 re-skin). A month's logged hours priced the way
- * payroll prices them, by department and by employee, with the month's
- * short-hour docks (Settle month / Undo). New design; real data and all
- * actions unchanged. (Ported from the old LaborCostTab.) */
+/* HR · Labor Cost. A month's logged hours priced the way payroll prices them, by
+ * department and by employee, with the month's short-hour docks (Settle month /
+ * Undo). Each block is the SYSTEM DataTable (search / per-column sort + funnel /
+ * Columns / export), so the lists read like the rest of the ERP; the month picker,
+ * the amount eye and Settle month stay page controls. (Ported from the old
+ * hand-rolled tables; data and actions unchanged.) */
 import { useState } from "react";
 import type { ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
+import { DataTable, type Column } from "../../components/DataTable";
 import { api } from "../../api/client";
 import { useDialog } from "../../hooks/useDialog";
 import { useToast } from "../../hooks/useToast";
@@ -17,9 +20,11 @@ import { HR, useHourDeductions, useLaborCost, type HourDeduction, type LaborCost
 
 const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(" ");
 const h2 = (n: number) => (Math.round(n * 100) / 100).toLocaleString("en-MY");
+const sum = <T,>(rows: T[], pick: (r: T) => number) => rows.reduce((a, r) => a + pick(r), 0);
 const monthInput = "h-8 rounded-md border border-border bg-surface-2 px-2 text-[12px] text-ink focus:border-primary focus:outline-none";
 type Dept = LaborCostResponse["byDepartment"][number];
 type Emp = LaborCostResponse["byEmployee"][number];
+const payLabel = (e: Emp) => (e.payMode === "DAILY" ? "Per day" : "Monthly");
 
 function lastDay(period: string): string {
   const [y, m] = period.split("-").map(Number);
@@ -77,6 +82,36 @@ export function LaborCostTab() {
   const empRows = cost.data?.byEmployee ?? [];
   const dockList = docks.data?.deductions ?? [];
 
+  const deptColumns: Column<Dept>[] = [
+    { key: "name", label: "Department", getValue: (d) => d.name, render: (d) => <span className="font-semibold text-ink">{d.name}</span> },
+    { key: "headcount", label: "People", align: "right", filterType: "number", getValue: (d) => d.headcount, numberValue: (d) => d.headcount, render: (d) => d.headcount, total: (rows) => sum(rows, (d) => d.headcount) },
+    { key: "hours", label: "Hours", align: "right", filterType: "number", getValue: (d) => d.hours, numberValue: (d) => d.hours, render: (d) => <span className="font-mono">{h2(d.hours)}</span>, total: (rows) => <span className="font-mono">{h2(sum(rows, (d) => d.hours))}</span> },
+    { key: "otHours", label: "OT hours", align: "right", filterType: "number", getValue: (d) => d.otHours, numberValue: (d) => d.otHours, render: (d) => <span className="font-mono">{h2(d.otHours)}</span>, total: (rows) => <span className="font-mono">{h2(sum(rows, (d) => d.otHours))}</span> },
+    { key: "otCost", label: "OT cost", align: "right", filterType: "number", getValue: (d) => d.otCostSen / 100, numberValue: (d) => d.otCostSen / 100, render: (d) => <span className="font-mono">{money(d.otCostSen)}</span>, total: (rows) => <span className="font-mono">{money(sum(rows, (d) => d.otCostSen))}</span> },
+    { key: "cost", label: "Labor cost", align: "right", filterType: "number", getValue: (d) => d.costSen / 100, numberValue: (d) => d.costSen / 100, render: (d) => <span className="font-money font-semibold text-ink">{money(d.costSen)}</span>, total: (rows) => <span className="font-money font-semibold text-ink">{money(sum(rows, (d) => d.costSen))}</span> },
+  ];
+
+  const empColumns: Column<Emp>[] = [
+    { key: "empNo", label: "Emp No", getValue: (e) => e.empNo, render: (e) => <span className="font-mono text-[11px] font-semibold text-accent">{e.empNo}</span> },
+    { key: "name", label: "Name", getValue: (e) => e.name, render: (e) => e.name },
+    { key: "department", label: "Department", getValue: (e) => e.departmentName || "", render: (e) => e.departmentName || <span className="text-ink-muted">—</span> },
+    { key: "pay", label: "Pay", getValue: payLabel, render: payLabel },
+    { key: "days", label: "Days", align: "right", filterType: "number", getValue: (e) => e.days, numberValue: (e) => e.days, render: (e) => e.days, total: (rows) => sum(rows, (e) => e.days) },
+    { key: "hours", label: "Hours", align: "right", filterType: "number", getValue: (e) => e.hours, numberValue: (e) => e.hours, render: (e) => <span className="font-mono">{h2(e.hours)}</span>, total: (rows) => <span className="font-mono">{h2(sum(rows, (e) => e.hours))}</span> },
+    { key: "otHours", label: "OT hours", align: "right", filterType: "number", getValue: (e) => e.otHours, numberValue: (e) => e.otHours, render: (e) => <span className="font-mono">{h2(e.otHours)}</span>, total: (rows) => <span className="font-mono">{h2(sum(rows, (e) => e.otHours))}</span> },
+    { key: "cost", label: "Labor cost", align: "right", filterType: "number", getValue: (e) => e.costSen / 100, numberValue: (e) => e.costSen / 100, render: (e) => (e.salaryMissing ? <Tag tone="warn">No salary set</Tag> : <span className="font-money">{money(e.costSen)}</span>), total: (rows) => <span className="font-money font-semibold text-ink">{money(sum(rows.filter((e) => !e.salaryMissing), (e) => e.costSen))}</span> },
+  ];
+
+  const dockColumns: Column<HourDeduction>[] = [
+    { key: "workDate", label: "Date", filterType: "date", newestFirst: true, getValue: (d) => d.workDate, dateValue: (d) => d.workDate, render: (d) => <span className="font-mono">{formatDate(d.workDate)}</span> },
+    { key: "empNo", label: "Emp No", getValue: (d) => d.empNo, render: (d) => <span className="font-mono text-[11px] text-accent">{d.empNo}</span> },
+    { key: "name", label: "Name", getValue: (d) => d.name, render: (d) => d.name },
+    { key: "hours", label: "Hours", align: "right", filterType: "number", getValue: (d) => d.hours, numberValue: (d) => d.hours, render: (d) => <span className="font-mono font-semibold text-err">-{d.hours}h</span>, total: (rows) => <span className="font-mono font-semibold text-err">-{h2(sum(rows, (d) => d.hours))}h</span> },
+    { key: "source", label: "Source", getValue: (d) => (d.source === "AUTO" ? "Auto" : "HR"), render: (d) => (d.source === "AUTO" ? <Tag tone="muted">Auto</Tag> : <Tag tone="info">HR</Tag>) },
+    { key: "note", label: "Note", getValue: (d) => d.note ?? "", render: (d) => <span className="text-[11px] text-ink-muted">{d.note}</span> },
+    { key: "undo", label: "", align: "right", width: "80px", disableSort: true, render: (d) => (canManage ? <button type="button" className={hrSecondaryBtn} onClick={() => void undo(d)}>Undo</button> : null) },
+  ];
+
   return (
     <>
       <HrPageHeader
@@ -89,7 +124,7 @@ export function LaborCostTab() {
           </>
         }
       />
-      <div className="flex min-h-0 flex-1 flex-col gap-3 px-6 py-4">
+      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-6 py-4">
         {cost.error && <div className="rounded-xl border border-err/40 bg-err-bg p-3 text-[12px] text-err">{cost.error}</div>}
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           <Stat bar="bg-primary" label="Labor cost" value={<span className="font-money">{money(t?.costSen ?? 0)}</span>} sub="regular + OT, from logged hours" />
@@ -98,41 +133,41 @@ export function LaborCostTab() {
           <Stat bar="bg-learning" label="People" value={t?.employees ?? 0} sub="with logged hours" />
         </div>
 
-        <Card title="By department">
-          <Table head={["Department", "People", "Hours", "OT hours", "OT cost", "Labor cost"]} aligns={["left", "right", "right", "right", "right", "right"]}>
-            {deptRows.map((d: Dept) => (
-              <tr key={String(d.departmentId)} className="hover:bg-row-hover">
-                <Td className="font-semibold text-ink">{d.name}</Td>
-                <Td align="right">{d.headcount}</Td>
-                <Td align="right" mono>{h2(d.hours)}</Td>
-                <Td align="right" mono>{h2(d.otHours)}</Td>
-                <Td align="right" mono>{money(d.otCostSen)}</Td>
-                <Td align="right"><span className="font-money font-semibold text-ink">{money(d.costSen)}</span></Td>
-              </tr>
-            ))}
-            {!cost.loading && deptRows.length === 0 && <EmptyRow cols={6} label="No hours logged this month." />}
-          </Table>
-        </Card>
+        <Section title="By department">
+          <DataTable<Dept>
+            tableId="hr-labor-cost-dept"
+            documentLabel="Labor cost by department"
+            columns={deptColumns}
+            rows={deptRows}
+            loading={cost.loading && !cost.data}
+            error={null}
+            emptyLabel="No hours logged this month."
+            getRowKey={(d) => String(d.departmentId)}
+            clientSearch={{ placeholder: "Search departments" }}
+            exportName="labor-cost-by-department"
+            exportXlsx
+            freezeHeight="off"
+          />
+        </Section>
 
-        <Card title="By employee">
-          <Table head={["Emp No", "Name", "Department", "Pay", "Days", "Hours", "OT hours", "Labor cost"]} aligns={["left", "left", "left", "left", "right", "right", "right", "right"]}>
-            {empRows.map((e: Emp) => (
-              <tr key={e.employeeId} className="hover:bg-row-hover">
-                <Td mono className="text-[11px] font-semibold text-accent">{e.empNo}</Td>
-                <Td>{e.name}</Td>
-                <Td>{e.departmentName || <span className="text-ink-muted">—</span>}</Td>
-                <Td>{e.payMode === "DAILY" ? "Per day" : "Monthly"}</Td>
-                <Td align="right">{e.days}</Td>
-                <Td align="right" mono>{h2(e.hours)}</Td>
-                <Td align="right" mono>{h2(e.otHours)}</Td>
-                <Td align="right">{e.salaryMissing ? <Tag tone="warn">No salary set</Tag> : <span className="font-money">{money(e.costSen)}</span>}</Td>
-              </tr>
-            ))}
-            {!cost.loading && empRows.length === 0 && <EmptyRow cols={8} label="No hours logged this month." />}
-          </Table>
-        </Card>
+        <Section title="By employee">
+          <DataTable<Emp>
+            tableId="hr-labor-cost-employee"
+            documentLabel="Labor cost by employee"
+            columns={empColumns}
+            rows={empRows}
+            loading={cost.loading && !cost.data}
+            error={null}
+            emptyLabel="No hours logged this month."
+            getRowKey={(e) => e.employeeId}
+            clientSearch={{ placeholder: "Search employees" }}
+            exportName="labor-cost-by-employee"
+            exportXlsx
+            freezeHeight="off"
+          />
+        </Section>
 
-        <div className="rounded-xl border border-border bg-surface p-4">
+        <section className="flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-2">
             <div>
               <div className="text-[13px] font-bold text-ink">Short-hour docks · {period}</div>
@@ -140,23 +175,21 @@ export function LaborCostTab() {
             </div>
             {canManage && <button type="button" className={cx(hrPrimaryBtn, "ml-auto")} disabled={settling} onClick={() => void settle()}>{settling ? "Settling…" : "Settle month"}</button>}
           </div>
-          {docks.data && dockList.length === 0 && <div className="mt-3 text-[12px] text-ink-muted">Nothing docked this month.</div>}
-          {dockList.length > 0 && (
-            <ul className="mt-3 divide-y divide-border-subtle">
-              {dockList.map((d) => (
-                <li key={d.id} className="flex flex-wrap items-center gap-2 py-1.5 text-[12px]">
-                  <span className="w-24 font-mono">{formatDate(d.workDate)}</span>
-                  <span className="font-mono text-[11px] text-accent">{d.empNo}</span>
-                  <span className="text-ink">{d.name}</span>
-                  <span className="font-mono font-semibold text-err">-{d.hours}h</span>
-                  {d.source === "AUTO" ? <Tag tone="muted">Auto</Tag> : <Tag tone="info">HR</Tag>}
-                  <span className="truncate text-[11px] text-ink-muted">{d.note}</span>
-                  {canManage && <button type="button" className={cx(hrSecondaryBtn, "ml-auto")} onClick={() => void undo(d)}>Undo</button>}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+          <DataTable<HourDeduction>
+            tableId="hr-labor-cost-docks"
+            documentLabel="Short-hour docks"
+            columns={dockColumns}
+            rows={dockList}
+            loading={docks.loading && !docks.data}
+            error={docks.error}
+            emptyLabel="Nothing docked this month."
+            getRowKey={(d) => d.id}
+            clientSearch={{ placeholder: "Search docks" }}
+            exportName="short-hour-docks"
+            exportXlsx
+            freezeHeight="off"
+          />
+        </section>
       </div>
     </>
   );
@@ -174,29 +207,11 @@ function Stat({ bar, label, value, sub }: { bar: string; label: string; value: R
     </div>
   );
 }
-function Card({ title, children }: { title: string; children: ReactNode }) {
+function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div className="flex flex-col overflow-hidden rounded-xl border border-border bg-surface">
-      <div className="border-b border-border-subtle px-4 py-2 text-[12px] font-bold text-ink">{title}</div>
-      <div className="thin-scroll overflow-auto">{children}</div>
-    </div>
+    <section className="flex flex-col gap-2">
+      <div className="text-[13px] font-bold text-ink">{title}</div>
+      {children}
+    </section>
   );
-}
-function Table({ head, aligns, children }: { head: string[]; aligns: ("left" | "right" | "center")[]; children: ReactNode }) {
-  return (
-    <table className="w-full border-separate border-spacing-0 text-[12px]">
-      <thead>
-        <tr className="text-[10px] font-bold uppercase tracking-wide text-ink-muted">
-          {head.map((h, i) => <th key={h} className={cx("border-b border-border-subtle bg-surface-2 px-3 py-2", aligns[i] === "right" ? "text-right" : "text-left")}>{h}</th>)}
-        </tr>
-      </thead>
-      <tbody>{children}</tbody>
-    </table>
-  );
-}
-function Td({ children, align, mono, className }: { children: ReactNode; align?: "right"; mono?: boolean; className?: string }) {
-  return <td className={cx("border-b border-border-subtle px-3 py-2", align === "right" ? "text-right" : "text-left", mono && "font-mono", className)}>{children}</td>;
-}
-function EmptyRow({ cols, label }: { cols: number; label: string }) {
-  return <tr><td colSpan={cols} className="px-4 py-8 text-center text-[12px] text-ink-muted">{label}</td></tr>;
 }

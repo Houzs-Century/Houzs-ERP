@@ -66,12 +66,15 @@ export type HrCol<T> = {
 const slug = (s: string) => "hr-" + s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
 export function HrTablePage<T extends { id: number | string }>({
-  title, subtitle, actions, stats, periods, period, onPeriod, rows, columns, searchPlaceholder, footer, footerRight, onRowClick,
+  title, subtitle, actions, topSection, stats, periods, period, onPeriod, rows, columns, searchPlaceholder, footer, footerRight, onRowClick,
   loading, error, emptyLabel, moneyToggle, toolbarExtra, tableId,
 }: {
   title: string;
   subtitle: ReactNode;
   actions?: ReactNode;
+  /** A block rendered between the header and the stat cards (e.g. the punch
+   *  rules card), for a page that carries its own controls above the table. */
+  topSection?: ReactNode;
   stats: HrStat[];
   /** Period chips: uncontrolled label-only, or controlled via period + onPeriod. */
   periods?: string[];
@@ -139,6 +142,7 @@ export function HrTablePage<T extends { id: number | string }>({
     <>
       <HrPageHeader title={title} subtitle={subtitle} actions={actions} />
       <div className="flex min-h-0 flex-1 flex-col gap-3 px-6 py-4">
+        {topSection}
         {stats.length > 0 && (
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             {stats.map((s, i) => (
