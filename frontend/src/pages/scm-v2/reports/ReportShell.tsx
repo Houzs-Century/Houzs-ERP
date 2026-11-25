@@ -6,15 +6,15 @@
 //
 // A report adopts the frame from inside, with reportParts (header buttons, the
 // grey line, the toolbar card, the exports); one that adopts nothing renders as
-// it did, under the header. A P&L gets the P&L picker under its header, when
-// the reader may open another P&L (owner 2026-11-25).
+// it did, under the header. A P&L's view gets the views picker under its
+// header, when the reader may open another view (owner 2026-11-25).
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { PageHeader } from '../../../components/Layout';
 import { todayMyt } from '../../../vendor/scm/lib/dates';
-import { reportById, type ReportId } from '../reports-catalog';
+import { PNL_CHOICES, PNL_SIDE_BY_SIDE, pnlChoiceOf, pnlFamilyOf, pnlViewsOf, reportById, type ReportId } from '../reports-catalog';
 import { ReportRail, reportListEntries, useRailPinned, useVisibleReports } from './ReportRail';
 import { PnlPicker } from './PnlPicker';
 import { writeLastReport } from './lastReport';
@@ -57,7 +57,17 @@ export function ReportShell({ report, subtitle, actions, ownHeader = false, chil
   const entries = useMemo(() => reportListEntries(reports), [reports]);
   /* A reader who may open one report only has no list to choose from — the P&Ls counting as one. */
   const showRail = entries.length > 1;
-  const pnls = useMemo(() => (item.pnlPick ? reports.filter((r) => r.pnlPick) : []), [item, reports]);
+  /* The P&L's views picker: this P&L's views whose report this reader may open, and the one this page is. */
+  const family = pnlFamilyOf(report);
+  const choices = useMemo(() => (family ? PNL_CHOICES.filter((c) => c.family === family && reports.some((r) => r.id === c.report)) : []), [family, reports]);
+  const pnlNow = pnlChoiceOf(report, params.get('dbasis'));
+  /* The views shown now: the one this page is, or those the side-by-side page names. */
+  const sideBySide = report === PNL_SIDE_BY_SIDE.report;
+  const views = params.get('views');
+  const selected = useMemo(
+    () => (sideBySide ? pnlViewsOf(views).filter((v) => choices.some((c) => c.view === v)) : pnlNow ? [pnlNow.view] : []),
+    [sideBySide, views, choices, pnlNow],
+  );
 
   return (
     <div className={`${tokens.root} ${s.shell} ${!showRail ? s.shellBare : pinned ? s.shellPinned : ''}`} data-report={report}>
@@ -78,8 +88,10 @@ export function ReportShell({ report, subtitle, actions, ownHeader = false, chil
                 </div>
               )}
             />
-            {pnls.length > 1 && (
-              <div className={inPlace ? s.asideNow : s.inPlace}><PnlPicker current={report} choices={pnls} range={carried} /></div>
+            {family && choices.length > 1 && (pnlNow || sideBySide) && (
+              <div className={inPlace ? s.asideNow : s.inPlace}>
+                <PnlPicker family={family} current={pnlNow} selected={selected} choices={choices} range={carried} />
+              </div>
             )}
             <div ref={setInPlaceHost} className={s.inPlace} />
             <div className={inPlace ? s.asideNow : s.inPlace} data-report-body>
