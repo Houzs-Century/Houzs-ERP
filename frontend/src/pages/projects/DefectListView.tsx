@@ -339,12 +339,7 @@ export function DefectListView() {
                   const idx = rows.indexOf(r);
                   const { model, reason } = parseDefectCaption(r.caption);
                   const latest = r.latest_status;
-                  // A defect is settled in the project either by the photo's
-                  // action timeline OR by ticking the defect ITEM done/na — honour
-                  // both so the badge here matches the project (owner 2026-11-25).
-                  const itemStatus = r.item_status.toLowerCase();
-                  const itemClosed = itemStatus === "done" || itemStatus === "na";
-                  const stage = itemClosed ? "resolved" : defectStage(latest);
+                  const stage = defectStage(latest);
                   const canReview = canReviewDefect(user, r.state);
                   const canPurchase = canPurchaseDefect(user);
                   const editing = draft?.attId === r.attachment_id;
@@ -372,19 +367,8 @@ export function DefectListView() {
                           </div>
                         )}
                         <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10.5px] text-ink-muted">
-                          <span
-                            className={cn(
-                              "rounded px-1.5 py-0.5 font-bold",
-                              itemClosed ? defectListBadge("done") : defectListBadge(latest),
-                            )}
-                          >
-                            {itemClosed
-                              ? itemStatus === "na"
-                                ? "N/A"
-                                : "Done"
-                              : stage === "fresh"
-                                ? "New"
-                                : defectActionLabel(latest)}
+                          <span className={cn("rounded px-1.5 py-0.5 font-bold", defectListBadge(latest))}>
+                            {stage === "fresh" ? "New" : defectActionLabel(latest)}
                           </span>
                           {r.latest_at && (
                             <span>
