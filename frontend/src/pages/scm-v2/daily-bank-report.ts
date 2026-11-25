@@ -210,7 +210,7 @@ export function drawDailyBankCanvas(board: DailyBankBoard): HTMLCanvasElement {
   canvas.width = W * scale;
   canvas.height = H * scale;
   ctx.scale(scale, scale);
-  ctx.fillStyle = '#FBF8F3';
+  ctx.fillStyle = '#FFFFFF'; // owner 2026-11-25: background 颜色可以换成白色
   ctx.fillRect(0, 0, W, H);
 
   let y = P + 14;

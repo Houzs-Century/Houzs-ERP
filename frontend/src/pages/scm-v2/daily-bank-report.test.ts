@@ -139,6 +139,11 @@ describe('the exported picture', () => {
     expect(drawn.filter((c) => /mono|Menlo/i.test(c.font ?? ''))).toEqual([]);
   });
 
+  test('the picture is on white (owner 2026-11-25: background 颜色可以换成白色)', () => {
+    const [background] = draw(board({ blocks: [quietBank] }));
+    expect(background).toMatchObject({ op: 'fillRect', args: [0, 0, 980, expect.any(Number)], fill: '#FFFFFF' });
+  });
+
   /* Owner 2026-11-25 (可以优化一下): names and descriptions were cut short with "…". */
   test('a party or description too long for its column wraps onto a second line', () => {
     const party = 'NORTHWIND EXHIBITION SERVICES SDN BHD';           // 37 characters, past the column at 6 px each
