@@ -161,7 +161,7 @@ attendance.post("/punch", async (c) => {
   const refusal = punchGateRefusal(settings, plan.kind, !!photo, loc);
   if (refusal) return c.json(refusal, 422);
   let photoKey: string | null = null;
-  if (photo && plan.kind !== "already-in") {
+  if (photo && plan.kind !== "already-in" && plan.kind !== "reopen") {
     photoKey = `hr-punch/${co.companyId}/${emp.id}/${today}-${action === "CLOCK_IN" ? "in" : "out"}-${crypto.randomUUID().slice(0, 8)}.${PHOTO_TYPES[photo.type]}`;
     await c.env.POD_BUCKET.put(photoKey, await photo.arrayBuffer(), { httpMetadata: { contentType: photo.type } });
   }
@@ -199,6 +199,28 @@ attendance.post("/punch", async (c) => {
       .set({ clock_out_at: at, out_source: "PHONE", ...evidence, updated_at: at, updated_by: userId })
       .where(and(eq(hr_attendance.id, plan.rowId), isNull(hr_attendance.clock_out_at)));
     await syncDayFromPunch(db, co.companyId, plan.rowId);
+  } else if (plan.kind === "reopen") {
+    /* Back on duty after clocking out (HC-0125 multi-punch): drop the clock-out
+       so the day is open again and the next clock-out re-stamps the latest time.
+       The first clock-in and its location/lateness stay; the re-entry's selfie
+       is required by the gate but not stored (the clock-in evidence is the first
+       one). The day's auto hours/dock/OT are recomputed on the next clock-out. */
+    await db
+      .update(hr_attendance)
+      .set({
+        clock_out_at: null,
+        out_source: null,
+        out_lat: null,
+        out_lng: null,
+        out_accuracy_m: null,
+        out_geo: null,
+        out_site_id: null,
+        out_distance_m: null,
+        out_photo_key: null,
+        updated_at: at,
+        updated_by: userId,
+      })
+      .where(and(eq(hr_attendance.id, plan.rowId), isNotNull(hr_attendance.clock_out_at)));
   }
 
   return c.json({

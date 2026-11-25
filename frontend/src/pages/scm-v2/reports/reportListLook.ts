@@ -7,7 +7,9 @@
 // catalog's names, addresses and gates, and the sidebar ships in the app's
 // first download (scripts/check-bundle-size.mjs). The icons and sentences are
 // only the list's, and the list is loaded with the reports. Keyed by ReportId,
-// so a report the catalog adds without its look fails the typecheck.
+// so a report the catalog adds without its look fails the typecheck. A P&L's
+// own sentence shows on its choice in the P&L picker; the list's one P&L entry
+// has its own look (PNL_ENTRY_LOOK).
 // ----------------------------------------------------------------------------
 
 import type { LucideIcon } from 'lucide-react';
@@ -16,6 +18,13 @@ import {
   LayoutDashboard, ListChecks, Network, Package, PieChart, Replace, Scale, TrendingUp, Truck, Users, Wallet,
 } from 'lucide-react';
 import type { ReportId } from '../reports-catalog';
+
+/** The list's one entry for the P&Ls (owner 2026-11-25). */
+export const PNL_ENTRY_LOOK: { label: string; icon: LucideIcon; desc: string } = {
+  label: 'P&L',
+  icon: BarChart3,
+  desc: 'Every P&L in one place, picked at the top: Actual from the books, Department, Performance from the orders, Product changes, Forecast',
+};
 
 export const REPORT_LOOK: Readonly<Record<ReportId, { icon: LucideIcon; desc: string }>> = {
   pnl: { icon: BarChart3, desc: 'Income and expenses for a period on the report layout, with each line’s % of sales' },

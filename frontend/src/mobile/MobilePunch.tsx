@@ -231,8 +231,8 @@ export function MobilePunch({ onBack }: { onBack: () => void }) {
       {me?.linked && view === "punch" && (
         <footer className="actbar">
           <input ref={fileRef} type="file" accept="image/*" capture="user" style={{ display: "none" }} onChange={(e) => void onPhoto(e.target.files?.[0] ?? null)} />
-          <button type="button" className="btn" disabled={!!busy || doneToday} onClick={startPunch} style={{ minHeight: 56, fontSize: 16 }}>
-            {busy ?? (doneToday ? "Done for today" : action === "CLOCK_IN" ? "Clock in (take a selfie)" : "Clock out (take a selfie)")}
+          <button type="button" className="btn" disabled={!!busy} onClick={startPunch} style={{ minHeight: 56, fontSize: 16 }}>
+            {busy ?? (action === "CLOCK_OUT" ? "Clock out (take a selfie)" : doneToday ? "Clock in again (take a selfie)" : "Clock in (take a selfie)")}
           </button>
         </footer>
       )}
