@@ -5,7 +5,10 @@
 // line: Automatic (what its own bills in the ERP give, else the creditor
 // control), a category, or an account; a supplier whose bills are for
 // different things (「根据purpose去放」) can have a line per bill, which comes
-// first. Each pick is kept at once. Cash Flow only: nothing posts.
+// first. A bill whose AutoCount lines were read splits by what it bought
+// (sofa, bedding…: 「如果系统可以分得出purchase of sofa 和purchase of bedding
+// 更加好」) before its supplier's line, which takes only the rest. Each pick is
+// kept at once. Cash Flow only: nothing posts.
 // ----------------------------------------------------------------------------
 
 import { useState } from 'react';
@@ -15,7 +18,7 @@ import { useToastOptional } from '../../../hooks/useToast';
 import { fmtDate, fmtSenPlain } from '../../../vendor/shared/format';
 import {
   useOpeningBillRows, useOpeningBills, useSaveOpeningBillPlace,
-  type OpeningBillsPayload, type OpeningSupplierRow, type PlaceChange, type PlaceOut,
+  type BillGoods, type OpeningBillsPayload, type OpeningSupplierRow, type PlaceChange, type PlaceOut,
 } from '../../../vendor/scm/lib/opening-bill-places-queries';
 import f from './Forecast.module.css';
 
@@ -34,6 +37,14 @@ export const placeText = (p: PlaceOut): string => (p.kind === 'account' ? `${p.c
 
 /** What Automatic gives a supplier. */
 export const autoText = (s: OpeningSupplierRow): string => (s.auto === null ? 'Creditor control' : placeText(s.auto));
+
+/** What a bill bought as the Cash Flow splits it: each purchase account's share, largest first, then the rest. */
+export function goodsText(g: BillGoods): string {
+  const total = g.parts.reduce((s, p) => s + p.sen, 0) + g.restSen;
+  const pct = (sen: number) => `${Math.round((100 * sen) / total)}%`;
+  const parts = [...g.parts].sort((a, b) => b.sen - a.sen).map((p) => `${p.name} ${pct(p.sen)}`);
+  return [...parts, ...(g.restSen > 0 ? [`the rest as the supplier ${pct(g.restSen)}`] : [])].join(' · ');
+}
 
 function PlacePick({ data, value, first, label, disabled, onPick }: {
   data: OpeningBillsPayload; value: string; first: string; label: string; disabled: boolean; onPick: (value: string) => void;
@@ -60,6 +71,11 @@ function SupplierBills({ data, supplier, canWrite, onSave, saving }: {
   return (
     <tr className={f.row} data-row={`bills:${supplier.id}`}>
       <td colSpan={5} style={{ padding: '6px 12px 10px 28px' }}>
+        {supplier.billsByGoods > 0 && (
+          <p className={f.hint} style={{ margin: '0 0 6px' }}>
+            A bill read from AutoCount splits by what it bought; its own line below, if picked, takes it whole.
+          </p>
+        )}
         {q.isError && <p role="alert" className={f.alert}>Its bills did not load. Close this and try again.</p>}
         {!q.data && !q.isError && <p className={f.empty}>Loading its bills…</p>}
         {q.data && (
@@ -71,6 +87,7 @@ function SupplierBills({ data, supplier, canWrite, onSave, saving }: {
                 <th className={`${f.th} ${f.textHead}`}>What it says</th>
                 <th className={f.th}>Amount</th>
                 <th className={f.th}>Paid</th>
+                <th className={`${f.th} ${f.textHead}`}>What it bought (AutoCount)</th>
                 <th className={`${f.th} ${f.textHead}`}>Cash Flow line</th>
               </tr>
             </thead>
@@ -79,12 +96,13 @@ function SupplierBills({ data, supplier, canWrite, onSave, saving }: {
                 <tr key={b.id} className={f.row} data-row={`bill:${b.id}`}>
                   <td className={f.text} style={{ whiteSpace: 'nowrap' }}>{b.number}</td>
                   <td className={f.cell}>{fmtDate(b.date)}</td>
-                  <td className={f.text} style={{ maxWidth: 420 }}>{b.text || '-'}</td>
+                  <td className={f.text} style={{ maxWidth: 360 }}>{b.text || '-'}</td>
                   <td className={f.cell}>{fmtSenPlain(b.totalSen)}</td>
                   <td className={f.cell}>{fmtSenPlain(b.paidSen)}</td>
+                  <td className={f.text} style={{ maxWidth: 300 }}>{b.goods ? goodsText(b.goods) : '-'}</td>
                   <td className={f.text}>
                     <PlacePick
-                      data={data} value={valueOf(b.set)} first={same} label={`${b.number} Cash Flow line`} disabled={!canWrite || saving}
+                      data={data} value={valueOf(b.set)} first={b.goods ? 'By what it bought' : same} label={`${b.number} Cash Flow line`} disabled={!canWrite || saving}
                       onPick={(v) => onSave({ supplierId: null, billId: b.id, ...changeOf(v) })}
                     />
                   </td>
@@ -110,8 +128,9 @@ export function OpeningBillsDialog({ onClose, canWrite }: { onClose: () => void;
     <Modal title="Opening bills in the Cash Flow" onClose={onClose} ariaLabel="Opening bills in the Cash Flow" width="min(1280px, 100%)">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
         <div className={f.note} style={{ padding: 0, borderTop: 0 }}>
-          Where a payment of an opening bill (the AutoCount bills brought over at go-live) reads in the Cash Flow. A bill&apos;s own line comes first, then its supplier&apos;s;
-          Automatic reads the supplier&apos;s own bills in the ERP (one account, or one category they all sit in), else the creditor control.
+          Where a payment of an opening bill (the AutoCount bills brought over at go-live) reads in the Cash Flow. A bill&apos;s own line comes first;
+          then what the bill bought by its AutoCount lines (each product group on its purchase account: sofa, bedding…), the rest going on;
+          then its supplier&apos;s line; Automatic reads the supplier&apos;s own bills in the ERP (one account, or one category they all sit in), else the creditor control.
           Each pick is kept at once. Cash Flow only: nothing posts.
         </div>
         {q.isError && <p role="alert" className={f.alert}>The list did not load. Close it and try again.</p>}
@@ -143,6 +162,7 @@ export function OpeningBillsDialog({ onClose, canWrite }: { onClose: () => void;
                             {open === s.id ? 'Hide bills' : `Bills (${s.bills})`}
                           </button>
                           {s.billsSet > 0 && <span className={f.hint}> · {s.billsSet} with their own line</span>}
+                          {s.billsByGoods > 0 && <span className={f.hint}> · {s.billsByGoods} by what they bought</span>}
                         </td>
                         <td className={f.cell}>{s.openBills} open of {s.bills}</td>
                         <td className={f.cell}>{fmtSenPlain(s.owingSen)}</td>

@@ -16,7 +16,9 @@
 //     own debit lines (a single-group PI is simply that group);
 //   · an AP invoice → the bill's own lines' accounts, the same way;
 //   · a bill from before the books (an opening paper, its own line the opening
-//     clearing) → what that supplier's own bills in the ERP are for: the one
+//     clearing) → Finance's choice for it; else what it bought in AutoCount, by
+//     product group, the same way as a PI; the rest → Finance's choice for its
+//     supplier, else what that supplier's own bills in the ERP are for: the one
 //     account they sit on, else the one Cash Flow category those accounts print
 //     in (a line of its own there), else the creditor control (owner 2026-11-25);
 //   · money the voucher paid beyond what it settled → the creditor control
@@ -60,7 +62,8 @@ import { resolveRoles, type RoleCodes } from '../../acc/rules';
 import { countsInTheBooks } from '../../acc/reversal-pairs';
 import { cashFlowHomes, layOutCashFlow, type LaidLine, type LaidNode, type SplitTo } from '../../acc/report-layout';
 import {
-  chosenPlace, loadOpeningPlaces, loadSupplierBillAccounts, openingBillHome, placeOf, type OpeningPlace, type PlaceAccount, type StoredPlace,
+  goodsParts, loadGroupPurchaseAccounts, loadOpeningBillGoods, loadOpeningPlaces, loadSupplierBillAccounts, openingBillHome, placeOf,
+  type GoodsParts, type OpeningPlace, type PlaceAccount, type StoredPlace,
 } from '../../acc/opening-bill-places';
 import { OPENING_CLEARING, OPENING_SOURCE } from '../../acc/opening-balance';
 import { inBankShares, loadCardPayoutFacts, merchantMatched, paymentKey, type CardPayoutFacts } from '../../acc/card-in-bank';
@@ -399,11 +402,14 @@ async function supplierPurposeSplits(
     }
   }
   /* An AP invoice's purpose = its own lines. An opening bill's own line is the opening
-     clearing, which says nothing of what was bought: its share carries Finance's choice for
-     the bill or its supplier and the accounts the supplier's own live bills in the ERP sit on
-     (owner 2026-11-25, acc/opening-bill-places.ts), which the report places. */
+     clearing, which says nothing of what was bought: Finance's choice for the bill comes
+     first; else what the bill bought in AutoCount, by product group, splits it the way a
+     purchase invoice splits, the rest of it carrying on; that share carries Finance's choice
+     for its supplier and the accounts the supplier's own live bills in the ERP sit on (owner
+     2026-11-25, acc/opening-bill-places.ts), which the report places. */
   const apiSplit = new Map<string, Split[]>();
   const openingShares = new Map<string, RpOpeningShare>();
+  const goodsSplit = new Map<string, Split[]>();
   if (apiIds.length > 0) {
     type ApHead = { id: string; supplier_id: string | null; opening: boolean | null };
     const heads = await chunkIn<ApHead>(apiIds, (batch, f, t) => sb.from('ap_invoices')
@@ -412,25 +418,36 @@ async function supplierPurposeSplits(
     const supplierOfOpening = new Map<string, string>();
     for (const h of heads.data) if (h.opening === true && h.supplier_id) supplierOfOpening.set(String(h.id), String(h.supplier_id));
     const noOpening = supplierOfOpening.size === 0;
-    const [own, places] = await Promise.all([
+    const [own, places, goods, groups] = await Promise.all([
       loadSupplierBillAccounts(sb, companyId, [...supplierOfOpening.values()]),
       noOpening ? Promise.resolve({ ok: true as const, suppliers: new Map(), bills: new Map() }) : loadOpeningPlaces(sb, companyId),
+      noOpening ? Promise.resolve({ ok: true as const, byBill: new Map() }) : loadOpeningBillGoods(sb, companyId, [...supplierOfOpening.keys()]),
+      noOpening ? Promise.resolve({ ok: true as const, accountOf: new Map<string, string>() }) : loadGroupPurchaseAccounts(sb, companyId),
     ]);
     if (!own.ok) return own;
     if (!places.ok) return places;
+    if (!goods.ok) return goods;
+    if (!groups.ok) return groups;
     type ApLine = { invoice_id: string; debit_account_code: string; amount_sen: number };
     const lines = await chunkIn<ApLine>(apiIds, (batch, f, t) => sb.from('ap_invoice_lines')
       .select('invoice_id, debit_account_code, amount_sen').eq('company_id', companyId).in('invoice_id', batch).range(f, t));
     if (lines.error) return { ok: false, reason: lines.error.message };
+    /* The bill's own choice, else its supplier's — for a bill read by its goods, the supplier's
+       places only the rest of it. */
     const chosen = new Map<string, StoredPlace>();
+    const goodsOf = new Map<string, GoodsParts>();
     for (const [id, supplier] of supplierOfOpening) {
-      const p = chosenPlace(places.bills.get(id), places.suppliers.get(supplier));
+      const billOwn = places.bills.get(id);
+      const parts = billOwn ? null : goodsParts(goods.byBill.get(id), groups.accountOf);
+      if (parts) goodsOf.set(id, parts);
+      const p = billOwn ?? places.suppliers.get(supplier);
       if (p) chosen.set(id, p);
     }
     const codes = [...new Set([
       ...lines.data.map((l) => String(l.debit_account_code)),
       ...[...supplierOfOpening.values()].flatMap((s) => own.bySupplier.get(s) ?? []),
       ...[...chosen.values()].flatMap((p) => (p.account ? [p.account] : [])),
+      ...[...goodsOf.values()].flatMap((g) => g.parts.map((p) => p.code)),
     ])];
     const names = new Map<string, string>();
     if (codes.length > 0) {
@@ -447,10 +464,17 @@ async function supplierPurposeSplits(
     }
     for (const [id, supplier] of supplierOfOpening) {
       const p = chosen.get(id);
-      openingShares.set(id, {
+      const share: RpOpeningShare = {
         set: p ? placeOf(p, nameOf) : null,
         accounts: (own.bySupplier.get(supplier) ?? []).map((code) => ({ code, name: nameOf(code) })),
-      });
+      };
+      const g = goodsOf.get(id);
+      if (g) {
+        goodsSplit.set(id, [
+          ...g.parts.map((x) => ({ code: x.code, name: nameOf(x.code), sen: x.sen })),
+          ...(g.restSen > 0 ? [{ code: OPENING_CLEARING, name: OPENING_CLEARING, sen: g.restSen, opening: share }] : []),
+        ]);
+      } else openingShares.set(id, share);
     }
   }
 
@@ -464,7 +488,7 @@ async function supplierPurposeSplits(
     const out = parts.map((p) => {
       const share = Math.floor((amount * p.sen) / total);
       left -= share;
-      return { code: p.code, name: p.name, sen: share };
+      return { ...p, sen: share };
     });
     const biggest = out.reduce((b, x, i) => (x.sen > out[b]!.sen ? i : b), 0);
     out[biggest]!.sen += left;
@@ -476,8 +500,12 @@ async function supplierPurposeSplits(
     const settled = Number(a.applied_sen ?? 0) > 0 ? Number(a.applied_sen) : Number(a.amount_sen ?? 0);
     if (settled <= 0) continue;
     const list = byPv.get(pv) ?? [];
-    const opening = !a.pi_id && a.ap_invoice_id ? openingShares.get(String(a.ap_invoice_id)) : undefined;
-    if (opening) {
+    const billId = !a.pi_id && a.ap_invoice_id ? String(a.ap_invoice_id) : null;
+    const goods = billId ? goodsSplit.get(billId) : undefined;
+    const opening = billId ? openingShares.get(billId) : undefined;
+    if (goods) {
+      list.push(...proportion(settled, goods));
+    } else if (opening) {
       list.push({ code: OPENING_CLEARING, name: OPENING_CLEARING, sen: settled, opening });
     } else {
       const parts = a.pi_id ? piSplit.get(String(a.pi_id)) : a.ap_invoice_id ? apiSplit.get(String(a.ap_invoice_id)) : undefined;

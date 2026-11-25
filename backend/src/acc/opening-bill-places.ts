@@ -6,10 +6,16 @@
 // In order (owner 2026-11-25, 「要，做 A」):
 //   1. the bill's own choice (scm.acc_opening_bill_places) — for a supplier
 //      whose bills are for different things (「根据purpose去放」);
-//   2. its supplier's choice (scm.acc_opening_supplier_places);
-//   3. the supplier's own live bills in the ERP: the one account they sit on,
+//   2. what the bill bought, read from AutoCount's own lines
+//      (scm.acc_opening_bill_goods; 「如果系统可以分得出purchase of sofa 和
+//      purchase of bedding 更加好」): each product group with a purchase
+//      account on that account, in proportion, as a purchase invoice reads;
+//      the rest of the bill (a group with no account, lines with no group)
+//      goes on down this list;
+//   3. its supplier's choice (scm.acc_opening_supplier_places);
+//   4. the supplier's own live bills in the ERP: the one account they sit on,
 //      else the one Cash Flow category those accounts print directly under;
-//   4. else the creditor control.
+//   5. else the creditor control.
 // A choice is an account of the company's chart or a Cash Flow category.
 // Cash Flow only: nothing here posts.
 // ----------------------------------------------------------------------------
@@ -45,8 +51,27 @@ export function openingBillHome(accounts: readonly PlaceAccount[], homes: Readon
   return { kind: 'category', ...home };
 }
 
-/** Finance's choice for one bill: its own, else its supplier's, else none. */
-export const chosenPlace = (bill: StoredPlace | undefined, supplier: StoredPlace | undefined): StoredPlace | null => bill ?? supplier ?? null;
+/** What an opening bill bought, by product group (as scm.acc_item_group_accounts names it; '' = no group): MYR sen before tax. */
+export type BillGoods = ReadonlyMap<string, number>;
+/** A bill's goods as Cash Flow parts: one per purchase account its groups name, and the rest of the bill. Weights only. */
+export type GoodsParts = { parts: Array<{ code: string; sen: number }>; restSen: number };
+
+/** Each product group with a purchase account on that account (groups sharing one, one part), the
+    rest — a group with no account, lines with no group — as one remainder. A part not above zero
+    drops out, as does a remainder below zero (a discount line spreads over the goods). Null when no
+    part has an account: the bill reads as it would without its goods. */
+export function goodsParts(goods: BillGoods | undefined, accountOf: ReadonlyMap<string, string>): GoodsParts | null {
+  if (!goods) return null;
+  const byAccount = new Map<string, number>();
+  let rest = 0;
+  for (const [group, sen] of goods) {
+    const code = accountOf.get(group.trim().toUpperCase());
+    if (code) byAccount.set(code, (byAccount.get(code) ?? 0) + sen);
+    else rest += sen;
+  }
+  const parts = [...byAccount].filter(([, sen]) => sen > 0).map(([code, sen]) => ({ code, sen })).sort((a, b) => a.code.localeCompare(b.code));
+  return parts.length === 0 ? null : { parts, restSen: Math.max(0, rest) };
+}
 
 /** A stored choice as a place, the account named. */
 export const placeOf = (p: StoredPlace, nameOf: (code: string) => string): OpeningPlace =>
@@ -73,6 +98,36 @@ export async function loadSupplierBillAccounts(sb: Sb, companyId: number, suppli
   }
   for (const [supplier, set] of codes) bySupplier.set(supplier, [...set].sort());
   return { ok: true, bySupplier };
+}
+
+/** What the named opening bills bought (scm.acc_opening_bill_goods), by bill id; a bill not read is absent. */
+export async function loadOpeningBillGoods(sb: Sb, companyId: number, billIds: readonly string[] | 'all'): Promise<{ ok: true; byBill: Map<string, Map<string, number>> } | Fail> {
+  type Row = { ap_invoice_id: string; group_code: string; myr_sen: number | string };
+  const r = billIds === 'all'
+    ? await paginateAll<Row>((f, t) => sb.from('acc_opening_bill_goods').select('ap_invoice_id, group_code, myr_sen').eq('company_id', companyId)
+      .order('ap_invoice_id').order('group_code').range(f, t))
+    : billIds.length === 0 ? { data: [] as Row[], error: null }
+      : await chunkIn<Row>([...new Set(billIds)], (batch, f, t) => sb.from('acc_opening_bill_goods').select('ap_invoice_id, group_code, myr_sen')
+        .eq('company_id', companyId).in('ap_invoice_id', batch).range(f, t));
+  if (r.error) return { ok: false, reason: `opening bill goods: ${failed(r.error)}` };
+  const byBill = new Map<string, Map<string, number>>();
+  for (const row of r.data ?? []) {
+    const id = String(row.ap_invoice_id);
+    byBill.set(id, (byBill.get(id) ?? new Map<string, number>()).set(String(row.group_code), Number(row.myr_sen)));
+  }
+  return { ok: true, byBill };
+}
+
+/** The company's purchase account per product group (scm.acc_item_group_accounts), groups upper-case. */
+export async function loadGroupPurchaseAccounts(sb: Sb, companyId: number): Promise<{ ok: true; accountOf: Map<string, string> } | Fail> {
+  const { data, error } = await sb.from('acc_item_group_accounts').select('group_code, purchase_account').eq('company_id', companyId);
+  if (error) return { ok: false, reason: `item group accounts: ${failed(error)}` };
+  const accountOf = new Map<string, string>();
+  for (const b of (data ?? []) as Array<{ group_code: string | null; purchase_account: string | null }>) {
+    const code = String(b.purchase_account ?? '').trim();
+    if (code) accountOf.set(String(b.group_code ?? '').trim().toUpperCase(), code);
+  }
+  return { ok: true, accountOf };
 }
 
 /** Finance's choices of the company, by supplier id and by bill id (both tables are small: read whole). */

@@ -3,24 +3,27 @@
    category, or the creditor control) and its pick; a pick sends one change —
    an account, a category, or Automatic to clear it; a supplier's bills open
    under it, each with its own pick that falls back to the supplier's line;
-   without the right the picks only read. The server half is
+   a bill read from AutoCount shows what it bought and splits by it; without
+   the right the picks only read. The server half is
    backend/tests/cashFlowOpeningBillPlaces.test.ts. Made-up names and figures. */
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import type { OpeningBillRow, OpeningBillsPayload } from '../../../vendor/scm/lib/opening-bill-places-queries';
 
 const DATA: OpeningBillsPayload = {
   suppliers: [
-    { id: 'A', code: 'A001', name: 'Alpha Stands', bills: 3, openBills: 1, owingSen: 120_000, paidSen: 50_000, billsSet: 0, set: null, auto: { kind: 'account', code: '900-X001', name: 'STAND BUILD' } },
-    { id: 'B', code: 'B001', name: 'Beta Mixed', bills: 2, openBills: 0, owingSen: 0, paidSen: 30_000, billsSet: 1, set: { kind: 'category', id: 'cf:exh', label: 'EXHIBITION' }, auto: null },
-    { id: 'C', code: 'C001', name: 'Gamma None', bills: 1, openBills: 1, owingSen: 5_000, paidSen: 0, billsSet: 0, set: null, auto: null },
+    { id: 'A', code: 'A001', name: 'Alpha Stands', bills: 3, openBills: 1, owingSen: 120_000, paidSen: 50_000, billsSet: 0, billsByGoods: 0, set: null, auto: { kind: 'account', code: '900-X001', name: 'STAND BUILD' } },
+    { id: 'B', code: 'B001', name: 'Beta Mixed', bills: 3, openBills: 0, owingSen: 0, paidSen: 30_000, billsSet: 1, billsByGoods: 1, set: { kind: 'category', id: 'cf:exh', label: 'EXHIBITION' }, auto: null },
+    { id: 'C', code: 'C001', name: 'Gamma None', bills: 1, openBills: 1, owingSen: 5_000, paidSen: 0, billsSet: 0, billsByGoods: 0, set: null, auto: null },
   ],
   accounts: [{ code: '601-0001', name: 'PURCHASE OF BEDDING' }, { code: '900-X001', name: 'STAND BUILD' }],
   categories: [{ id: 'cf:out', label: 'OUTFLOWS', path: 'OUTFLOWS' }, { id: 'cf:exh', label: 'EXHIBITION', path: 'OUTFLOWS › EXHIBITION' }],
 };
 const BILLS: OpeningBillRow[] = [
-  { id: 'b1', number: 'API-1', date: '2026-08-31', text: 'MARKETING SERVICE', totalSen: 20_000, paidSen: 20_000, status: 'PAID', set: null },
-  { id: 'b2', number: 'API-2', date: '2026-08-31', text: 'SALARY', totalSen: 10_000, paidSen: 10_000, status: 'PAID', set: { kind: 'account', code: '601-0001', name: 'PURCHASE OF BEDDING' } },
+  { id: 'b1', number: 'API-1', date: '2026-08-31', text: 'MARKETING SERVICE', totalSen: 20_000, paidSen: 20_000, status: 'PAID', set: null, goods: null },
+  { id: 'b2', number: 'API-2', date: '2026-08-31', text: 'SALARY', totalSen: 10_000, paidSen: 10_000, status: 'PAID', set: { kind: 'account', code: '601-0001', name: 'PURCHASE OF BEDDING' }, goods: null },
+  { id: 'b3', number: 'API-3', date: '2026-08-31', text: 'BED FRAMES AND A SOFA', totalSen: 10_000, paidSen: 0, status: 'POSTED', set: null,
+    goods: { parts: [{ code: '601-0001', name: 'PURCHASE OF BEDDING', sen: 8_200 }, { code: '601-0003', name: 'PURCHASE OF SOFA', sen: 1_800 }], restSen: 0 } },
 ];
 const mutate = vi.fn();
 vi.mock('../../../vendor/scm/lib/opening-bill-places-queries', async (importOriginal) => ({
@@ -29,9 +32,10 @@ vi.mock('../../../vendor/scm/lib/opening-bill-places-queries', async (importOrig
   useOpeningBillRows: (id: string | null) => ({ data: id ? { bills: BILLS } : undefined, isError: false }),
   useSaveOpeningBillPlace: () => ({ mutate, isPending: false }),
 }));
-const { OpeningBillsDialog, changeOf, valueOf } = await import('./OpeningBillsDialog');
+const { OpeningBillsDialog, changeOf, goodsText, valueOf } = await import('./OpeningBillsDialog');
 
 const pick = (label: string) => screen.getByLabelText(label) as HTMLSelectElement;
+const openBillsOf = (id: string) => fireEvent.click(within(document.querySelector(`[data-row="sup:${id}"]`) as HTMLElement).getByRole('button', { name: /^Bills/ }));
 
 beforeEach(() => { mutate.mockClear(); });
 
@@ -71,7 +75,7 @@ describe('Opening bills in the Cash Flow', () => {
 
   test('a supplier\'s bills open under it, each falling back to the supplier\'s line', () => {
     render(<OpeningBillsDialog onClose={() => {}} canWrite />);
-    fireEvent.click(screen.getByRole('button', { name: 'Bills (2)' }));
+    openBillsOf('B');
     expect(screen.getByText('MARKETING SERVICE')).toBeTruthy();
     const first = pick('API-1 Cash Flow line');
     expect(first.value).toBe('');
@@ -79,6 +83,24 @@ describe('Opening bills in the Cash Flow', () => {
     expect(pick('API-2 Cash Flow line').value).toBe('acc:601-0001');
     fireEvent.change(first, { target: { value: 'acc:900-X001' } });
     expect(mutate.mock.calls[0]![0]).toEqual({ supplierId: null, billId: 'b1', account: '900-X001', category: null });
+  });
+
+  test('a bill read from AutoCount shows what it bought and splits by it, before the supplier\'s line (owner 2026-11-25)', () => {
+    render(<OpeningBillsDialog onClose={() => {}} canWrite />);
+    expect((document.querySelector('[data-row="sup:B"]') as HTMLElement).textContent).toContain('1 by what they bought');
+    openBillsOf('B');
+    const row = document.querySelector('[data-row="bill:b3"]') as HTMLElement;
+    expect(row.textContent).toContain('PURCHASE OF BEDDING 82% · PURCHASE OF SOFA 18%');
+    const third = pick('API-3 Cash Flow line');
+    expect(third.value).toBe('');
+    expect(third.options[0]!.textContent).toBe('By what it bought');
+    expect((document.querySelector('[data-row="bill:b1"]') as HTMLElement).textContent).toContain('-');
+  });
+
+  test('what it bought as words: largest first, the rest as the supplier last', () => {
+    expect(goodsText({ parts: [{ code: '601-0003', name: 'SOFA', sen: 300 }, { code: '601-0001', name: 'BEDDING', sen: 600 }], restSen: 100 }))
+      .toBe('BEDDING 60% · SOFA 30% · the rest as the supplier 10%');
+    expect(goodsText({ parts: [{ code: '601-0001', name: 'BEDDING', sen: 5 }], restSen: 0 })).toBe('BEDDING 100%');
   });
 
   test('without the right, the picks only read', () => {
