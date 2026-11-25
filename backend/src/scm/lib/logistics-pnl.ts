@@ -227,7 +227,11 @@ export function coveredKinds(kind: string | null | undefined, words: string | nu
 export type SpreadKind = 'upkeep' | 'roadtax';
 export const DEFAULT_SPREAD: Record<SpreadKind, number> = { upkeep: 1, roadtax: 12 };
 export const MAX_SPREAD = 36;
-export type SpreadLeg = { lineId: string; kind: SpreadKind; accountCode: string; accountName: string | null; day: string; docNo: string | null; notes: string | null; amountSen: number };
+export type SpreadLeg = {
+  lineId: string; kind: SpreadKind; accountCode: string; accountName: string | null; day: string; docNo: string | null; notes: string | null; amountSen: number;
+  /** The document that posted it (a PV or JV number), when the ledger names one. */
+  sourceDocNo?: string | null;
+};
 export type SpreadRow = SpreadLeg & { months: number; isDefault: boolean; perMonthSen: number; inRangeSen: number; lastMonth: string };
 
 /** Each bill's share of the months asked for; the bills whose spread reaches into them. */
@@ -367,7 +371,7 @@ export function buildLogisticsPnl(input: PnlInput): LogisticsPnl {
       if (net === 0) continue;
       spreadLegs.push({
         lineId: l.lineId, kind: a.upkeep.has(l.accountCode) ? 'upkeep' : 'roadtax',
-        accountCode: l.accountCode, accountName: l.accountName, day: l.day, docNo: l.docNo, notes: l.notes, amountSen: net,
+        accountCode: l.accountCode, accountName: l.accountName, day: l.day, docNo: l.docNo, notes: l.notes, amountSen: net, sourceDocNo: l.sourceDocNo,
       });
       continue;
     }
