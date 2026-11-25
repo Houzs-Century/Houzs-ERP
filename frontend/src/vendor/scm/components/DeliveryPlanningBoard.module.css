@@ -169,10 +169,10 @@
 .bulkBar {
   position: fixed;
   bottom: var(--space-4);
-  left: 50%;
-  transform: translateX(-50%);
-  width: max-content;
-  max-width: calc(100vw - 32px);
+  left: 16px;
+  right: 16px;
+  margin-inline: auto;
+  width: fit-content;
   z-index: 40;
   box-shadow: 0 8px 28px rgba(34, 31, 32, 0.18);
   display: flex;
@@ -183,6 +183,15 @@
   background: var(--hz-c-primary-soft);
   border: 1px solid var(--hz-c-primary);
   border-radius: var(--radius-md);
+}
+/* Desktop: draw over the sidebar (z-50, earlier in the DOM, so equal z wins;
+   drawers are portaled later and still cover it), and stop short of the
+   48px quick-actions button at right 20px so the two sit side by side. */
+@media (min-width: 1024px) {
+  .bulkBar {
+    z-index: 50;
+    right: calc(20px + 48px + 12px);
+  }
 }
 .bulkCount { font-weight: 600; color: var(--hz-c-primary-ink); white-space: nowrap; }
 .bulkSep { color: var(--hz-c-ink-muted); }
