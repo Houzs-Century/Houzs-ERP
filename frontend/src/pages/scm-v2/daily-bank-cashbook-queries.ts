@@ -98,3 +98,18 @@ export const useDeleteCashbookReceipt = () => useCashbookWrite(
   (v: { id: string }) => authedFetch<{ ok: boolean }>(receiptPath(v.id), json('DELETE')),
   'Receipt not deleted',
 );
+
+/* An approved voucher ticked as already in its bank's starting balance (owner
+   2026-11-25: 要，加勾选): the cash book lists it and does not take it off; untick
+   and it comes off again. */
+const skipPath = (pvId: string): string => `/accounting/daily-bank/skips/${encodeURIComponent(pvId)}`;
+
+export const useSkipCashbookVoucher = () => useCashbookWrite(
+  (v: { pvId: string }) => authedFetch<{ ok: boolean }>(skipPath(v.pvId), json('PUT')),
+  'Voucher not ticked',
+);
+
+export const useUnskipCashbookVoucher = () => useCashbookWrite(
+  (v: { pvId: string }) => authedFetch<{ ok: boolean }>(skipPath(v.pvId), json('DELETE')),
+  'Voucher not unticked',
+);

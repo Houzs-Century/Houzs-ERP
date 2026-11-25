@@ -15,7 +15,9 @@
 // it, and the spares are offered per side. Its Settlement / Deposit column
 // (owner 2026-11-09) says where a group's money prints on the Settlement /
 // Deposit view: Settlement, Deposit, split in parts (1 : 2 = a third and two
-// thirds), or as the group above.
+// thirds), or as the group above — and an account line may have its own
+// (owner 2026-11-25: 我希望每个都可以自由调), else it follows its group; "As
+// above" names what it follows.
 //
 // The owner's redesign (batch 6 §5.12, Finance-1a-Reports template 174–195):
 // the editor stands IN PLACE of the report while it is open (InPlaceOfReport —
@@ -31,9 +33,9 @@ import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { fmtDateOrDash } from '../../vendor/shared/format';
 import {
   REPORT_TITLES, SPLIT_MAX_PART, addCategory, addSubtotal, categoryIds, itemKey, moveWithinSiblings, newCategoryId, newSubtotalId, placeItem, removeCategory, removeSubtotal, renameCategory,
-  setAccountFlow, setCategoryFlow, setCategorySplit, setCategoryTick, setTotalLabel, splitChoice, splitOfChoice, splitPart, unplaceAccount, unplacedAccounts,
+  setAccountFlow, setAccountSplit, setCategoryFlow, setCategorySplit, setCategoryTick, setTotalLabel, splitChoice, splitOfChoice, splitPart, splitWord, unplaceAccount, unplacedAccounts,
   useReportLayout, useResetReportLayout, useSaveReportLayout,
-  type DropTarget, type Flow, type Layout, type LayoutAccountRow, type LayoutBlockDef, type LayoutCategory, type LayoutCompany, type LayoutItem, type ReportKey, type Side,
+  type CashSplit, type DropTarget, type Flow, type Layout, type LayoutAccountRow, type LayoutBlockDef, type LayoutCategory, type LayoutCompany, type LayoutItem, type ReportKey, type Side,
   type SplitChoice,
 } from '../../vendor/scm/lib/report-layout';
 import { InPlaceOfReport } from './reports/reportParts';
@@ -248,48 +250,54 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
     </span>
   );
 
-  /* A group's Settlement / Deposit choice (owner 2026-11-09): not split (a top group) or as
-     the group above, all Settlement, all Deposit, or split in parts typed as whole numbers. */
-  const splitControl = (it: LayoutCategory, depth: number) => {
-    const choice: SplitChoice = typingParts.has(it.id) && it.split ? 'parts' : splitChoice(it.split);
+  /* A Settlement / Deposit choice — a group's (owner 2026-11-09) or an account line's own
+     (2026-11-25): not split (a top group) or as the group above — named, so a line shows
+     what it follows — all Settlement, all Deposit, or split in parts typed as whole numbers. */
+  const splitControl = (
+    key: string, label: string, split: CashSplit | undefined, follow: string,
+    set: (layout: Layout, next: CashSplit | null) => Layout,
+  ) => {
+    const choice: SplitChoice = typingParts.has(key) && split ? 'parts' : splitChoice(split);
     const choose = (next: SplitChoice) => {
       if (!draft) return;
       setTypingParts((prev) => {
         const out = new Set(prev);
-        if (next === 'parts') out.add(it.id); else out.delete(it.id);
+        if (next === 'parts') out.add(key); else out.delete(key);
         return out;
       });
-      apply(setCategorySplit(draft, it.id, splitOfChoice(next)));
+      apply(set(draft, splitOfChoice(next)));
     };
     const setPart = (part: 'settlement' | 'deposit', typed: string) => {
-      if (!draft || !it.split) return;
-      apply(setCategorySplit(draft, it.id, { ...it.split, [part]: splitPart(typed, it.split[part]) }));
+      if (!draft || !split) return;
+      apply(set(draft, { ...split, [part]: splitPart(typed, split[part]) }));
     };
     return (
       <span className={s.split}>
-        <select aria-label={`Settlement / Deposit of ${it.label}`} className={s.select} value={choice}
+        <select aria-label={`Settlement / Deposit of ${label}`} className={s.select} value={choice}
           title="Where its money prints on the Settlement / Deposit view" onChange={(e) => choose(e.target.value as SplitChoice)}>
-          <option value="">{depth === 1 ? 'Not split' : 'As above'}</option>
+          <option value="">{follow}</option>
           <option value="settlement">Settlement</option>
           <option value="deposit">Deposit</option>
           <option value="parts">Split in parts</option>
         </select>
-        {choice === 'parts' && it.split && (
+        {choice === 'parts' && split && (
           <span className={s.parts}>
             <input type="number" inputMode="numeric" min={0} max={SPLIT_MAX_PART} step={1} className={s.part}
-              aria-label={`Settlement parts of ${it.label}`} title="Settlement parts" value={it.split.settlement}
+              aria-label={`Settlement parts of ${label}`} title="Settlement parts" value={split.settlement}
               onChange={(e) => setPart('settlement', e.target.value)} />
             <span aria-hidden>:</span>
             <input type="number" inputMode="numeric" min={0} max={SPLIT_MAX_PART} step={1} className={s.part}
-              aria-label={`Deposit parts of ${it.label}`} title="Deposit parts" value={it.split.deposit}
+              aria-label={`Deposit parts of ${label}`} title="Deposit parts" value={split.deposit}
               onChange={(e) => setPart('deposit', e.target.value)} />
           </span>
         )}
       </span>
     );
   };
+  const asAbove = (above: CashSplit | undefined): string => `As above (${splitWord(above)})`;
 
-  const renderItems = (block: string, items: LayoutItem[], depth: number): React.ReactNode => items.map((it) => {
+  /* `above`: the Settlement / Deposit the group above passes down — what "As above" follows. */
+  const renderItems = (block: string, items: LayoutItem[], depth: number, above: CashSplit | undefined): React.ReactNode => items.map((it) => {
     const key = itemKey(it);
     if (it.kind === 'account') {
       return (
@@ -312,8 +320,7 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
               </select>
             </td>
           )}
-          {/* A line follows its group's Settlement / Deposit choice. */}
-          {cashFlow && <td />}
+          {cashFlow && <td>{splitControl(key, it.code, it.split, asAbove(above), (l, next) => setAccountSplit(l, block, key, next))}</td>}
           {noTicks}
           <td className={`${s.shrink} ${s.center}`}>{order(block, key, it.code)}</td>
           <td className={`${s.shrink} ${s.right}`}>
@@ -392,7 +399,7 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
               )}
             </td>
           )}
-          {cashFlow && <td>{splitControl(it, depth)}</td>}
+          {cashFlow && <td>{splitControl(it.id, it.label, it.split, depth === 1 ? 'Not split' : asAbove(above), (l, next) => setCategorySplit(l, it.id, next))}</td>}
           {companies.map((co) => (
             <td key={co.id} className={s.center}>
               <input
@@ -422,7 +429,7 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
             </span>
           </td>
         </tr>
-        {open && renderItems(block, it.children, depth + 1)}
+        {open && renderItems(block, it.children, depth + 1, it.split ?? above)}
       </Fragment>
     );
   });
@@ -466,7 +473,7 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
           </td>
           <td colSpan={span - 2} />
         </tr>
-        {renderItems(block.key, items, 1)}
+        {renderItems(block.key, items, 1, undefined)}
         {items.length === 0 && spares.every((sp) => sp.rows.length === 0) && (
           <tr className={s.empty}><td colSpan={span}>No accounts in this block.</td></tr>
         )}
@@ -563,9 +570,10 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
                   {' '}On the Cash flow every top category is In or Out — that decides the sign of its lines and which total they
                   feed; a line's own direction (In, Out, or Net = in − out) may differ, so one account can sit on both sides; a
                   side names its own subtotal line (Rename); a subtotal row sums everything above it, In less Out.
-                  {' '}Settlement / Deposit says where a group's money prints on the Settlement / Deposit view: all Settlement,
-                  all Deposit, or split in parts (1 : 2 = a third Settlement, two thirds Deposit); a group left as above follows
-                  the group it sits in. A customer's order payment goes by the payment itself.
+                  {' '}Settlement / Deposit says where a group's or an account line's money prints on the Settlement / Deposit
+                  view: all Settlement, all Deposit, or split in parts (1 : 2 = a third Settlement, two thirds Deposit); a group
+                  or a line left as above follows the group it sits in, and a line's own choice wins over its group's. A
+                  customer's order payment goes by the payment itself.
                 </>
               )}
             </div>

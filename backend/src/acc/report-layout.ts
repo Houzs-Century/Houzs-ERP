@@ -89,7 +89,8 @@ export const SIDES: readonly Side[] = ['in', 'out'];
     money splits between the Settlement and the Deposit columns, in whole parts —
     1 : 0 all Settlement, 0 : 1 all Deposit, 1 : 2 a third and two thirds. A category
     without one follows the category above it; with none anywhere above, its lines are
-    not split and print one figure a month. */
+    not split and print one figure a month. An account line may carry its own (owner
+    2026-11-25: 我希望每个都可以自由调), which wins over its category's. */
 export type CashSplit = { settlement: number; deposit: number };
 export const SPLIT_MAX_PART = 99;
 /** Where a line's money goes when the line itself says (a customer's order payment by its kind). */
@@ -102,6 +103,8 @@ export type LayoutAccount = {
   code: string;
   /** Cash Flow only: the line's direction (always set on a checked Cash Flow tree). */
   flow?: Flow;
+  /** Cash Flow only: the line's own Settlement / Deposit split; absent = its category's. */
+  split?: CashSplit;
 };
 export type LayoutCategory = {
   kind: 'category';
@@ -183,6 +186,16 @@ export type LayoutCheck = { ok: true; layout: Layout } | { ok: false; reason: st
    and slashes are in — a tree the chart built must always be savable. */
 const ID_RE = /^[A-Za-z0-9:_./ -]{1,64}$/;
 
+/* The Settlement / Deposit split, a category's or an account line's alike (owner 2026-11-09). */
+const splitPart = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= SPLIT_MAX_PART;
+const readSplit = (raw: unknown): CashSplit | null => {
+  const sp = raw as Record<string, unknown> | null;
+  if (!sp || typeof sp !== 'object' || !splitPart(sp.settlement) || !splitPart(sp.deposit) || sp.settlement + sp.deposit === 0) return null;
+  return { settlement: sp.settlement, deposit: sp.deposit };
+};
+const splitRefused = (who: string): string =>
+  `${who}: the Settlement / Deposit split is two whole parts from 0 to ${SPLIT_MAX_PART}, not both 0.`;
+
 export function validateLayout(report: ReportKey, rawIn: unknown): LayoutCheck {
   /* A Cash Flow tree saved before directions existed is the old two-sided
      report: read as RECEIPTS (In) over PAYMENTS (Out), never refused. */
@@ -221,7 +234,13 @@ export function validateLayout(report: ReportKey, rawIn: unknown): LayoutCheck {
           if (flow !== 'in' && outPlaced.has(code)) return `${code}'s money out is placed twice.`;
           if (flow !== 'out') inPlaced.add(code);
           if (flow !== 'in') outPlaced.add(code);
-          out.push({ kind: 'account', code, flow });
+          const line: LayoutAccount = { kind: 'account', code, flow };
+          if (o.split !== undefined) {
+            const split = readSplit(o.split);
+            if (!split) return splitRefused(code);
+            line.split = split;
+          }
+          out.push(line);
         } else {
           if (codes.has(code)) return `${code} is placed twice.`;
           codes.add(code);
@@ -265,12 +284,9 @@ export function validateLayout(report: ReportKey, rawIn: unknown): LayoutCheck {
         /* Cash Flow only, at any depth: the Settlement / Deposit split, in whole parts (owner 2026-11-09). */
         let split: CashSplit | undefined;
         if (cashFlow && o.split !== undefined) {
-          const sp = o.split as Record<string, unknown> | null;
-          const part = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= SPLIT_MAX_PART;
-          if (!sp || typeof sp !== 'object' || !part(sp.settlement) || !part(sp.deposit) || sp.settlement + sp.deposit === 0) {
-            return `${label}: the Settlement / Deposit split is two whole parts from 0 to ${SPLIT_MAX_PART}, not both 0.`;
-          }
-          split = { settlement: sp.settlement, deposit: sp.deposit };
+          const sp = readSplit(o.split);
+          if (!sp) return splitRefused(label);
+          split = sp;
         }
         const children = walk(o.children ?? [], depth + 1, `Category ${label}`, cashFlow ? (catSide ?? side) : null);
         if (typeof children === 'string') return children;
@@ -314,6 +330,9 @@ export type LaidLine = {
   /** Cash Flow: the column the line's money goes to whatever its category says (a customer's
       order payment: Deposit or Settlement by its kind). */
   splitTo?: SplitTo;
+  /** Cash Flow: the category, by id, the line prints directly under when no account of its own
+      places it (a payment of an opening bill read by its supplier's category); it carries no code. */
+  category?: string;
 };
 export type LaidNode = {
   kind: 'category' | 'account' | 'unassigned' | 'subtotal';
@@ -331,8 +350,8 @@ export type LaidNode = {
   flow?: Flow;
   /** Cash Flow: what a top category's subtotal line prints. */
   totalLabel?: string;
-  /** Cash Flow: the figure in the Settlement and Deposit columns — on a line its category
-      splits, a group whose lines all split, a running subtotal over such groups. */
+  /** Cash Flow: the figure in the Settlement and Deposit columns — on a line split by its
+      own parts or its category's, a group whose lines all split, a running subtotal over such groups. */
   sd?: SettleDeposit;
   children: LaidNode[];
 };
@@ -515,6 +534,35 @@ export function upgradeCashFlowLayout(raw: unknown): unknown {
   return { version: 1, blocks: { accounts: wrapCashFlowSides(items as LayoutItem[]) } };
 }
 
+/** A Cash Flow category an account's money prints directly under. */
+export type CashFlowHome = { id: string; label: string };
+
+/** Cash Flow: the category each account's money in and money out prints directly under for
+    this company, as layOutCashFlow places it — the first placing wins, a header account sits in
+    its own category, an unticked category places nothing. An account the tree does not place
+    (it prints under Unassigned) has no home. */
+export function cashFlowHomes(items: LayoutItem[], companyId: number): { in: Map<string, CashFlowHome>; out: Map<string, CashFlowHome> } {
+  const homes = { in: new Map<string, CashFlowHome>(), out: new Map<string, CashFlowHome>() };
+  const put = (code: string, flow: Flow, home: CashFlowHome): void => {
+    if (flow !== 'out' && !homes.in.has(code)) homes.in.set(code, home);
+    if (flow !== 'in' && !homes.out.has(code)) homes.out.set(code, home);
+  };
+  const walk = (list: LayoutItem[], side: Side, home: CashFlowHome): void => {
+    for (const it of list) {
+      if (it.kind === 'account') { put(it.code, it.flow ?? side, home); continue; }
+      if (it.kind === 'subtotal' || it.hiddenFor?.includes(companyId)) continue;
+      const mine = { id: it.id, label: it.label };
+      if (it.code) put(it.code, side, mine);
+      walk(it.children, side, mine);
+    }
+  };
+  for (const it of items) {
+    if (it.kind !== 'category' || it.hiddenFor?.includes(companyId)) continue;
+    walk(it.children, it.flow ?? 'in', { id: it.id, label: it.label });
+  }
+  return homes;
+}
+
 export type CashFlowLaid = {
   /** The top level: In/Out categories with their trees, subtotal lines, and the unassigned groups last. */
   nodes: LaidNode[];
@@ -551,6 +599,13 @@ export function layOutCashFlow(items: LayoutItem[], receipts: LaidLine[], paymen
   };
   const inBy = byCode(receipts);
   const outBy = byCode(payments);
+  const byCategory = (lines: LaidLine[]): Map<string, LaidLine[]> => {
+    const m = new Map<string, LaidLine[]>();
+    for (const l of lines) if (l.category) m.set(l.category, [...(m.get(l.category) ?? []), l]);
+    return m;
+  };
+  const inByCategory = byCategory(receipts);
+  const outByCategory = byCategory(payments);
   const inPlaced = new Set<string>();
   const outPlaced = new Set<string>();
   /* The id carries the direction: one account's In line and Out line are two lines. */
@@ -558,10 +613,18 @@ export function layOutCashFlow(items: LayoutItem[], receipts: LaidLine[], paymen
     const node = laidLineNode({ ...l, amountSen: by * l.amountSen, cells: scaled(l.cells, by) }, null);
     node.id = `${flow}:${node.id}`;
     node.flow = flow;
+    if (l.category) delete node.code;
     const sd = splitOf(node.amountSen, l.splitTo, split);
     if (sd) node.sd = sd;
     return node;
   };
+  /* The lines placed by category rather than by an account: at the foot of the category, oriented to its side. */
+  const takeHere = (id: string, side: Side, split: CashSplit | undefined): LaidNode[] =>
+    ([['in', inByCategory, inPlaced], ['out', outByCategory, outPlaced]] as const).flatMap(([flow, by, placed]) => {
+      const ls = (by.get(id) ?? []).filter((l) => !placed.has(keyOf(l)));
+      for (const l of ls) placed.add(keyOf(l));
+      return ls.map((l) => leaf(l, flow === side ? 1 : -1, flow, split));
+    });
   /* Lines of one code that share a group print under its sub-heading, in their order. */
   const grouped = (pairs: Array<{ line: LaidLine; node: LaidNode }>, flow: Flow, code: string): LaidNode[] => {
     const out: Array<LaidNode | { gid: string; label: string; kids: LaidNode[] }> = [];
@@ -574,7 +637,7 @@ export function layOutCashFlow(items: LayoutItem[], receipts: LaidLine[], paymen
     }
     return out.map((o) => ('gid' in o ? groupNode('category', o.gid, o.label, o.kids, null) : o));
   };
-  /* The lines an account line takes, oriented to its side, split by its category's parts. */
+  /* The lines an account line takes, oriented to its side, split by its own parts or its category's. */
   const take = (code: string, flow: Flow, side: Side, split: CashSplit | undefined): LaidNode[] => {
     if (flow === 'in' || flow === 'out') {
       const placed = flow === 'in' ? inPlaced : outPlaced;
@@ -603,15 +666,16 @@ export function layOutCashFlow(items: LayoutItem[], receipts: LaidLine[], paymen
       return { line: src, node };
     }), 'net', code);
   };
-  /* `split`: the parts the category above passes down (owner 2026-11-09). */
+  /* `split`: the parts the category above passes down (owner 2026-11-09); an account
+     line's own parts win over them (owner 2026-11-25). */
   const walk = (list: LayoutItem[], side: Side, split: CashSplit | undefined): LaidNode[] => {
     const out: LaidNode[] = [];
     for (const it of list) {
-      if (it.kind === 'account') { out.push(...take(it.code, it.flow ?? side, side, split)); continue; }
+      if (it.kind === 'account') { out.push(...take(it.code, it.flow ?? side, side, it.split ?? split)); continue; }
       if (it.kind === 'subtotal') continue;
       if (it.hiddenFor?.includes(companyId)) continue;
       const mine = it.split ?? split;
-      const kids: LaidNode[] = [...(it.code ? take(it.code, side, side, mine) : []), ...walk(it.children, side, mine)];
+      const kids: LaidNode[] = [...(it.code ? take(it.code, side, side, mine) : []), ...walk(it.children, side, mine), ...takeHere(it.id, side, mine)];
       if (kids.length === 0) continue;
       const node = groupNode('category', it.id, it.label, kids, null);
       if (it.code) node.code = it.code;
@@ -628,7 +692,7 @@ export function layOutCashFlow(items: LayoutItem[], receipts: LaidLine[], paymen
     if (it.kind === 'subtotal') { tops.push({ node: { kind: 'subtotal', id: it.id, label: it.label, amountSen: 0, pct: null, children: [] }, side: null }); continue; }
     const side = it.flow ?? 'in';
     if (it.hiddenFor?.includes(companyId)) continue;
-    const kids = walk(it.children, side, it.split);
+    const kids = [...walk(it.children, side, it.split), ...takeHere(it.id, side, it.split)];
     if (kids.length === 0) continue; // nothing in it this period (the hidden own-account transfers)
     const node = groupNode('category', it.id, it.label, kids, null);
     node.flow = side;

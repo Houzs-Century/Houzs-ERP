@@ -20,6 +20,12 @@
 //                                            the day's grid (owner 2026-11-23: 不能做成这样的
 //                                            表格给我keyin income？): one total per bank and
 //                                            method; 0 clears a cell
+//   PUT    /daily-bank/skips/:pvId           tick an approved voucher as already in its
+//                                            bank's starting balance: the cash book lists
+//                                            it, never takes it off (owner 2026-11-25:
+//                                            这个是例外 … 要，加勾选)
+//   DELETE /daily-bank/skips/:pvId           untick: it comes off again; stamps
+//                                            unticked_at / unticked_by, the row stays
 //
 // Writes take the Finance write key Daily close takes (scm.payment_voucher.post),
 // ask the audit trail first (assertAuditWritable) and record every change on it
@@ -38,12 +44,14 @@ import {
   type AuditAction, type EntityType, type FieldChange,
 } from '../lib/entity-audit';
 import { fmtDate, fmtSen } from '../shared/format';
+import { insideStart, voucherPayoutSen, type CashbookPayout } from '../../acc/daily-bank';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 type Sb = Variables['supabase'];
 type Refusal = { status: ContentfulStatusCode; body: Record<string, unknown> };
 
-const canWrite = (c: Ctx): boolean => hasHouzsPerm(c, 'scm.payment_voucher.post');
+/** Who may change the cash book: its starts, receipts and ticks. */
+export const canWriteCashbook = (c: Ctx): boolean => hasHouzsPerm(c, 'scm.payment_voucher.post');
 const NO_PERM = { error: 'forbidden', message: "You don't have permission to change the Daily Bank cash book." };
 /** RM 10 billion: past this a figure is a typing slip, not a bank balance. */
 const MAX_SEN = 1_000_000_000_000;
@@ -75,7 +83,7 @@ async function readJson(c: Ctx): Promise<Record<string, unknown> | null> {
 
 /** The permission, then the company: what every write needs first. */
 function writeGate(c: Ctx): { companyId: number } | { resp: Response } {
-  if (!canWrite(c)) return { resp: c.json(NO_PERM, 403) };
+  if (!canWriteCashbook(c)) return { resp: c.json(NO_PERM, 403) };
   const co = requireActiveCompanyId(c);
   if (!co.ok) return { resp: c.json(co.refusal, 409) };
   return { companyId: co.companyId };
@@ -180,7 +188,7 @@ export const cashbookGet = async (c: Ctx): Promise<Response> => {
   });
   const held = rows.filter((r) => r.deletedAt == null && r.method != null).map((r) => String(r.method));
   return c.json({
-    date, today: todayMyt(), canWrite: canWrite(c), accounts, methods: withHeld(ms.methods, held),
+    date, today: todayMyt(), canWrite: canWriteCashbook(c), accounts, methods: withHeld(ms.methods, held),
     receipts: rows.filter((r) => r.deletedAt == null),
     deleted: rows.filter((r) => r.deletedAt != null),
   });
@@ -515,4 +523,110 @@ export const cashbookReceiptsDayPut = async (c: Ctx): Promise<Response> => {
     if (step.kind === 'delete') done.deleted += 1; else done.updated += 1;
   }
   return c.json({ ok: true, ...done });
+};
+
+/* ── PUT / DELETE /daily-bank/skips/:pvId ─────────────────────────────────────
+   The exception the owner asked for (2026-11-25: 这个是例外，因为他们不小心cancel了;
+   offered a tick: 要，加勾选): an approved voucher whose money left the bank before
+   that bank's cash-book start, though it was approved after it, is already inside
+   the starting balance. Ticked, the cash book lists it on its day and does not take
+   it off; unticked, it comes off again. The voucher and the books never change. */
+
+type SkipVoucher = CashbookPayout & { status: string };
+
+const notHereVoucher: Refusal = { status: 404, body: { error: 'not_found', message: 'That voucher is not in the company you are working in.' } };
+/* 22P02: not a uuid at all — no such voucher, not a server fault. */
+const readFailed = (error: { code?: string; message: string }): Refusal =>
+  (String(error.code ?? '') === '22P02' ? notHereVoucher : { status: 500, body: { error: 'load_failed', reason: error.message } });
+
+async function voucherOf(sb: Sb, companyId: number, pvId: string): Promise<{ ok: true; v: SkipVoucher } | ({ ok: false } & Refusal)> {
+  const { data, error } = await sb.from('payment_vouchers')
+    .select('id, pv_number, payee_name, status, credit_account_code, voucher_date, total_sen, exchange_rate, bank_charge_sen, approved_at, posted_at')
+    .eq('company_id', companyId).eq('id', pvId).maybeSingle();
+  if (error) return { ok: false, ...readFailed(error) };
+  if (!data) return { ok: false, ...notHereVoucher };
+  const r = data as Record<string, unknown>;
+  return { ok: true, v: {
+    id: String(r.id), pv_number: String(r.pv_number ?? ''), payee_name: (r.payee_name as string | null) ?? null, status: String(r.status ?? ''),
+    credit_account_code: String(r.credit_account_code ?? ''), voucher_date: String(r.voucher_date ?? '').slice(0, 10),
+    total_sen: Number(r.total_sen), exchange_rate: (r.exchange_rate as string | number | null) ?? null, bank_charge_sen: (r.bank_charge_sen as number | null) ?? null,
+    approved_at: (r.approved_at as string | null) ?? null, posted_at: (r.posted_at as string | null) ?? null,
+  } };
+}
+
+/** The voucher's tick that still counts, if any. */
+async function liveSkipOf(sb: Sb, companyId: number, pvId: string): Promise<{ ok: true; id: string | null } | ({ ok: false } & Refusal)> {
+  const { data, error } = await sb.from('acc_daily_bank_voucher_skips').select('id')
+    .eq('company_id', companyId).eq('pv_id', pvId).is('unticked_at', null).maybeSingle();
+  if (error) return { ok: false, ...readFailed(error) };
+  return { ok: true, id: data ? String((data as { id: unknown }).id) : null };
+}
+
+/** The tick on the trail as one field: is the voucher taken off the cash book. */
+const deductedChange = (deducted: boolean): FieldChange[] =>
+  compactChanges([fieldChange('deducted', deducted ? 'No' : 'Yes', deducted ? 'Yes' : 'No')]);
+
+/* ── PUT /daily-bank/skips/:pvId — already in the starting balance, don't deduct ─ */
+export const cashbookSkipPut = async (c: Ctx): Promise<Response> => {
+  const g = writeGate(c);
+  if ('resp' in g) return g.resp;
+  const sb = c.get('supabase');
+  const got = await voucherOf(sb, g.companyId, String(c.req.param('pvId') ?? '').trim());
+  if (!got.ok) return c.json(got.body, got.status);
+  const v = got.v;
+  if (v.status !== 'POSTED') {
+    return c.json({ error: 'not_approved', message: `${v.pv_number} is not approved. Only an approved voucher comes off the cash book.` }, 409);
+  }
+  const notOn = { error: 'not_on_cashbook', message: `${v.pv_number} does not pay out of a bank on the cash book, so there is nothing to keep off it.` };
+  const acct = await moneyAccount(sb, g.companyId, v.credit_account_code);
+  if (!acct.ok) return acct.status === 500 ? c.json(acct.body, 500) : c.json(notOn, 409);
+  const s = await startOf(sb, g.companyId, v.credit_account_code);
+  if (!s.ok) return c.json(s.body, s.status);
+  if (!s.start) return c.json(notOn, 409);
+  if (insideStart(v, s.start)) {
+    return c.json({ error: 'inside_start', message: `${v.pv_number} is already inside ${acct.name}'s starting balance (its cash book starts ${fmtDate(s.start.start_date)}), so the cash book never takes it off.` }, 409);
+  }
+  const live = await liveSkipOf(sb, g.companyId, v.id);
+  if (!live.ok) return c.json(live.body, live.status);
+  if (live.id) return c.json({ ok: true, alreadyTicked: true });
+  if (!(await auditReady(sb, 'DAILY_BANK_SKIP', v.id, 'CREATE', g.companyId))) return c.json(auditUnavailableBody(), 409);
+  const { error } = await sb.from('acc_daily_bank_voucher_skips')
+    .insert({ company_id: g.companyId, pv_id: v.id, ticked_by: who(c), ticked_at: new Date().toISOString() });
+  if (error) {
+    if (String((error as { code?: string }).code ?? '') === '23505') return c.json({ ok: true, alreadyTicked: true });
+    return c.json({ error: 'save_failed', reason: error.message }, 500);
+  }
+  await recordEntityAudit(sb, {
+    entityType: 'DAILY_BANK_SKIP', entityId: v.id, entityDocNo: v.pv_number, action: 'CREATE', actor: c.get('houzsUser'), companyId: g.companyId,
+    note: `${v.pv_number}: not taken off ${acct.name} on the cash book (${fmtSen(voucherPayoutSen(v))}), already in its starting balance`,
+    fieldChanges: deductedChange(false),
+  });
+  return c.json({ ok: true });
+};
+
+/* ── DELETE /daily-bank/skips/:pvId — deduct it again ─────────────────────────── */
+export const cashbookSkipDelete = async (c: Ctx): Promise<Response> => {
+  const g = writeGate(c);
+  if ('resp' in g) return g.resp;
+  const pvId = String(c.req.param('pvId') ?? '').trim();
+  const sb = c.get('supabase');
+  const live = await liveSkipOf(sb, g.companyId, pvId);
+  if (!live.ok) return c.json(live.body, live.status);
+  if (!live.id) return c.json({ ok: true, alreadyUnticked: true });
+  const { data: pvRow, error: pErr } = await sb.from('payment_vouchers').select('pv_number')
+    .eq('company_id', g.companyId).eq('id', pvId).maybeSingle();
+  if (pErr) return c.json({ error: 'load_failed', reason: pErr.message }, 500);
+  const pvNumber = String((pvRow as { pv_number?: string | null } | null)?.pv_number ?? pvId);
+  if (!(await auditReady(sb, 'DAILY_BANK_SKIP', pvId, 'DELETE', g.companyId))) return c.json(auditUnavailableBody(), 409);
+  const { data, error } = await sb.from('acc_daily_bank_voucher_skips')
+    .update({ unticked_at: new Date().toISOString(), unticked_by: who(c) })
+    .eq('company_id', g.companyId).eq('id', live.id).is('unticked_at', null).select('id');
+  if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
+  if (!Array.isArray(data) || data.length === 0) return c.json({ ok: true, alreadyUnticked: true });
+  await recordEntityAudit(sb, {
+    entityType: 'DAILY_BANK_SKIP', entityId: pvId, entityDocNo: pvNumber, action: 'DELETE', actor: c.get('houzsUser'), companyId: g.companyId,
+    note: `${pvNumber}: taken off the cash book again`,
+    fieldChanges: deductedChange(true),
+  });
+  return c.json({ ok: true });
 };

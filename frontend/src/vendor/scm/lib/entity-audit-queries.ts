@@ -69,6 +69,7 @@ export const AUDIT_ENTITY_TYPES = [
   'CREDIT_NOTE',
   'DAILY_BANK_START',
   'DAILY_BANK_RECEIPT',
+  'DAILY_BANK_SKIP',
 ] as const;
 
 export type AuditEntityType = (typeof AUDIT_ENTITY_TYPES)[number];
