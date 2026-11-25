@@ -51,13 +51,14 @@ export function PublicHolidaysPage() {
   }
 
   const columns: HrCol<Row>[] = [
-    { key: "date", label: "Date", render: (h) => <span className="font-semibold text-ink">{formatDate(h.date)}</span> },
-    { key: "name", label: "Name", render: (h) => h.name || <span className="text-ink-soft">—</span> },
-    { key: "status", label: "Status", render: (h) => (h.date < today ? <Tag tone="muted">Past</Tag> : <Tag tone="ok">Upcoming</Tag>) },
+    { key: "date", label: "Date", filterType: "date", getValue: (h) => h.date, render: (h) => <span className="font-semibold text-ink">{formatDate(h.date)}</span> },
+    { key: "name", label: "Name", getValue: (h) => h.name ?? "", render: (h) => h.name || <span className="text-ink-soft">—</span> },
+    { key: "status", label: "Status", getValue: (h) => (h.date < today ? "Past" : "Upcoming"), render: (h) => (h.date < today ? <Tag tone="muted">Past</Tag> : <Tag tone="ok">Upcoming</Tag>) },
     {
       key: "actions",
       label: "",
       align: "right",
+      disableSort: true,
       render: (h) =>
         canManage ? (
           <button type="button" onClick={() => void remove(h)} className="rounded-md border border-border bg-surface px-2.5 py-1 text-[11px] font-semibold text-ink-secondary hover:border-err/40 hover:text-err">Remove</button>
