@@ -5,10 +5,10 @@
 // line: Automatic (what its own bills in the ERP give, else the creditor
 // control), a category, or an account; a supplier whose bills are for
 // different things (「根据purpose去放」) can have a line per bill, which comes
-// first. A bill whose AutoCount lines were read splits by what it bought
-// (sofa, bedding…: 「如果系统可以分得出purchase of sofa 和purchase of bedding
-// 更加好」) before its supplier's line, which takes only the rest. Each pick is
-// kept at once. Cash Flow only: nothing posts.
+// first. A bill whose AutoCount lines were read splits out its sofa and its
+// bedding (「如果系统可以分得出purchase of sofa 和purchase of bedding 更加好」)
+// before its supplier's line, which takes the rest. Each pick is kept at once.
+// Cash Flow only: nothing posts.
 // ----------------------------------------------------------------------------
 
 import { useState } from 'react';
@@ -129,7 +129,7 @@ export function OpeningBillsDialog({ onClose, canWrite }: { onClose: () => void;
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
         <div className={f.note} style={{ padding: 0, borderTop: 0 }}>
           Where a payment of an opening bill (the AutoCount bills brought over at go-live) reads in the Cash Flow. A bill&apos;s own line comes first;
-          then what the bill bought by its AutoCount lines (each product group on its purchase account: sofa, bedding…), the rest going on;
+          then the sofa and the bedding the bill bought by its AutoCount lines (each on its purchase account), its other goods going on;
           then its supplier&apos;s line; Automatic reads the supplier&apos;s own bills in the ERP (one account, or one category they all sit in), else the creditor control.
           Each pick is kept at once. Cash Flow only: nothing posts.
         </div>

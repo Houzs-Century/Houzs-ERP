@@ -16,8 +16,8 @@
 //     own debit lines (a single-group PI is simply that group);
 //   · an AP invoice → the bill's own lines' accounts, the same way;
 //   · a bill from before the books (an opening paper, its own line the opening
-//     clearing) → Finance's choice for it; else what it bought in AutoCount, by
-//     product group, the same way as a PI; the rest → Finance's choice for its
+//     clearing) → Finance's choice for it; else the sofa and the bedding it
+//     bought in AutoCount, the same way as a PI; the rest → Finance's choice for its
 //     supplier, else what that supplier's own bills in the ERP are for: the one
 //     account they sit on, else the one Cash Flow category those accounts print
 //     in (a line of its own there), else the creditor control (owner 2026-11-25);

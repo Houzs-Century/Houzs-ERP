@@ -61,15 +61,16 @@ const tables = (): Record<string, Row[]> => ({
     { company_id: CO, group_code: 'ACCESSORY', purchase_account: '602-0000' },
     { company_id: OTHER_CO, group_code: 'TRANSPORT', purchase_account: '601-0001' },
   ],
-  suppliers: ['H', 'K', 'M', 'N', 'T'].map((x) => ({ id: `sup-${x}`, company_id: CO, code: `${x}001`, name: `SUPPLIER ${x}` })),
+  suppliers: ['H', 'K', 'M', 'N', 'T', 'F'].map((x) => ({ id: `sup-${x}`, company_id: CO, code: `${x}001`, name: `SUPPLIER ${x}` })),
   ap_invoices: [
     bill('ob-h1', 'sup-H', 10000, 5000), bill('ob-h2', 'sup-H', 3000, 0),
     bill('ob-k1', 'sup-K', 2000, 2000),
     bill('ob-m1', 'sup-M', 1000, 1000),
     bill('ob-n1', 'sup-N', 4000, 4000),
     bill('ob-t1', 'sup-T', 6000, 6000),
+    bill('ob-f1', 'sup-F', 1000, 1000),
   ],
-  ap_invoice_lines: ['ob-h1', 'ob-h2', 'ob-k1', 'ob-m1', 'ob-n1', 'ob-t1'].map((id) => ({ id: `l-${id}`, company_id: CO, invoice_id: id, debit_account_code: '190-0000', amount_sen: 100 })),
+  ap_invoice_lines: ['ob-h1', 'ob-h2', 'ob-k1', 'ob-m1', 'ob-n1', 'ob-t1', 'ob-f1'].map((id) => ({ id: `l-${id}`, company_id: CO, invoice_id: id, debit_account_code: '190-0000', amount_sen: 100 })),
   acc_opening_bill_goods: [
     /* H: bed frames and a mattress (one account) and a sofa. */
     goods('ob-h1', 'BEDFRAME', 5200), goods('ob-h1', 'MATTRESS', 3000), goods('ob-h1', 'SOFA', 1800),
@@ -81,19 +82,22 @@ const tables = (): Record<string, Row[]> => ({
     goods('ob-n1', 'SOFA', 4000, OTHER_CO),
     /* T: a sofa, paid out of the trade-finance bank. */
     goods('ob-t1', 'SOFA', 6000),
+    /* F: fabric (an accessory group, bound to its own account) and a mattress; Finance put F on bedding. */
+    goods('ob-f1', 'ACCESSORY', 900), goods('ob-f1', 'MATTRESS', 100),
   ],
   acc_opening_supplier_places: [
     { company_id: CO, supplier_id: 'sup-H', account_code: '601-0001', category_id: null },
     { company_id: CO, supplier_id: 'sup-M', account_code: '900-X002', category_id: null },
     { company_id: CO, supplier_id: 'sup-N', account_code: '900-X002', category_id: null },
+    { company_id: CO, supplier_id: 'sup-F', account_code: '601-0001', category_id: null },
   ],
   acc_opening_bill_places: [{ company_id: CO, ap_invoice_id: 'ob-k1', account_code: '900-X001', category_id: null }],
   v_gl_entries: [
     ...pay('JE-H', 'PV-H', 'SUPPLIER H', 5000), ...pay('JE-K', 'PV-K', 'SUPPLIER K', 2000), ...pay('JE-M', 'PV-M', 'SUPPLIER M', 1000),
-    ...pay('JE-N', 'PV-N', 'SUPPLIER N', 4000), ...pay('JE-T', 'PV-T', 'SUPPLIER T', 6000, TF_BANK),
+    ...pay('JE-N', 'PV-N', 'SUPPLIER N', 4000), ...pay('JE-T', 'PV-T', 'SUPPLIER T', 6000, TF_BANK), ...pay('JE-F', 'PV-F', 'SUPPLIER F', 1000),
   ],
-  payment_vouchers: ['H', 'K', 'M', 'N', 'T'].map((x) => ({ id: `pv-${x}`, company_id: CO, pv_number: `PV-${x}`, status: 'POSTED' })),
-  pv_allocations: [alloc('pv-H', 'ob-h1', 5000), alloc('pv-K', 'ob-k1', 2000), alloc('pv-M', 'ob-m1', 1000), alloc('pv-N', 'ob-n1', 4000), alloc('pv-T', 'ob-t1', 6000)],
+  payment_vouchers: ['H', 'K', 'M', 'N', 'T', 'F'].map((x) => ({ id: `pv-${x}`, company_id: CO, pv_number: `PV-${x}`, status: 'POSTED' })),
+  pv_allocations: [alloc('pv-H', 'ob-h1', 5000), alloc('pv-K', 'ob-k1', 2000), alloc('pv-M', 'ob-m1', 1000), alloc('pv-N', 'ob-n1', 4000), alloc('pv-T', 'ob-t1', 6000), alloc('pv-F', 'ob-f1', 1000)],
   purchase_invoices: [],
   acc_account_roles: [],
   acc_acquirers: [],
@@ -119,14 +123,16 @@ function harness(t = tables()) {
 type Payments = { payments: Array<{ key: string; code: string | null; cells: Record<string, number> }> };
 
 describe('Cash Flow: an opening bill reads by what it bought (owner 2026-11-25)', () => {
-  test('sofa and bedding apart, in the bill\'s own proportion; the rest as its supplier\'s line; a bill\'s own choice whole; trade finance stays TF-AP', async () => {
+  test('sofa and bedding apart, in the bill\'s own proportion; other goods and the rest as its supplier\'s line; a bill\'s own choice whole; trade finance stays TF-AP', async () => {
     const res = await harness().request('/rp?from=2026-09-01&to=2026-09-30');
     expect(res.status, await res.clone().text()).toBe(200);
     const r = await res.json() as Payments;
     const cells = (key: string) => r.payments.find((p) => p.key === key)?.cells;
     /* H paid 5,000 of a bill of bedding 8,200 · sofa 1,800 → 4,100 · 900; its supplier's bedding line takes nothing more.
        M paid 1,000 of sofa 600 · rest 400 → 600 on sofa, 400 on its supplier's line. */
-    expect(cells('601-0001')).toEqual({ [BANK]: 4100 });
+    /* F paid 1,000 of mattress 100 · fabric 900: the mattress on bedding, the fabric as F's own line — bedding too. */
+    expect(cells('601-0001')).toEqual({ [BANK]: 4100 + 100 + 900 });
+    expect(cells('602-0000')).toBeUndefined();
     expect(cells('601-0003')).toEqual({ [BANK]: 900 + 600 });
     expect(cells('900-X002')).toEqual({ [BANK]: 400 + 4000 }); // M's rest, and N (another company's goods row is not its goods)
     expect(cells('900-X001')).toEqual({ [BANK]: 2000 });       // K: the bill's own choice, whole
@@ -152,11 +158,14 @@ describe('Cash Flow: an opening bill reads by what it bought (owner 2026-11-25)'
     expect(m.bills[0]!.goods).toEqual({ parts: [{ code: '601-0003', name: 'PURCHASE OF SOFA', sen: 600 }], restSen: 400 });
   });
 
-  test('the split: groups sharing an account are one part; a group with no account and lines with no group are the rest; nothing with an account, no split', () => {
-    const accountOf = new Map([['BEDFRAME', '601-0001'], ['MATTRESS', '601-0001'], ['SOFA', '601-0003']]);
+  test('the split: sofa and bedding only; groups sharing an account are one part; other goods, a group with no account and lines with no group are the rest', () => {
+    const accountOf = new Map([['BEDFRAME', '601-0001'], ['MATTRESS', '601-0001'], ['SOFA', '601-0003'], ['ACCESSORY', '602-0000'], ['DINING', '601-0002']]);
     expect(goodsParts(new Map([['BEDFRAME', 50], ['MATTRESS', 30], ['sofa', 20]]), accountOf))
       .toEqual({ parts: [{ code: '601-0001', sen: 80 }, { code: '601-0003', sen: 20 }], restSen: 0 });
     expect(goodsParts(new Map([['SOFA', 70], ['TRANSPORT', 20], ['', 10]]), accountOf)).toEqual({ parts: [{ code: '601-0003', sen: 70 }], restSen: 30 });
+    /* Fabric and other goods stay where the owner put their supplier (「都是purchase of bedding」). */
+    expect(goodsParts(new Map([['MATTRESS', 60], ['ACCESSORY', 30], ['DINING', 10]]), accountOf)).toEqual({ parts: [{ code: '601-0001', sen: 60 }], restSen: 40 });
+    expect(goodsParts(new Map([['ACCESSORY', 100]]), accountOf)).toBeNull();
     /* A discount line with no group spreads over the goods; a returned group drops out. */
     expect(goodsParts(new Map([['SOFA', 100], ['', -10], ['BEDFRAME', -5]]), accountOf)).toEqual({ parts: [{ code: '601-0003', sen: 100 }], restSen: 0 });
     expect(goodsParts(new Map([['TRANSPORT', 100]]), accountOf)).toBeNull();

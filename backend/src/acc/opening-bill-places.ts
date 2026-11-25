@@ -8,10 +8,10 @@
 //      whose bills are for different things (「根据purpose去放」);
 //   2. what the bill bought, read from AutoCount's own lines
 //      (scm.acc_opening_bill_goods; 「如果系统可以分得出purchase of sofa 和
-//      purchase of bedding 更加好」): each product group with a purchase
-//      account on that account, in proportion, as a purchase invoice reads;
-//      the rest of the bill (a group with no account, lines with no group)
-//      goes on down this list;
+//      purchase of bedding 更加好」): its sofa and its bedding (bed frames,
+//      mattresses), each on its group's purchase account, in proportion, as a
+//      purchase invoice reads; the rest of the bill (other goods, lines with
+//      no group) goes on down this list;
 //   3. its supplier's choice (scm.acc_opening_supplier_places);
 //   4. the supplier's own live bills in the ERP: the one account they sit on,
 //      else the one Cash Flow category those accounts print directly under;
@@ -21,6 +21,7 @@
 // ----------------------------------------------------------------------------
 
 import { chunkIn, paginateAll } from '../scm/lib/paginate-all';
+import { MAIN_CATEGORIES } from '../scm/lib/so-readiness';
 import { OPENING_CLEARING } from './opening-balance';
 import type { CashFlowHome } from './report-layout';
 import type { resolveRoles } from './rules';
@@ -56,16 +57,23 @@ export type BillGoods = ReadonlyMap<string, number>;
 /** A bill's goods as Cash Flow parts: one per purchase account its groups name, and the rest of the bill. Weights only. */
 export type GoodsParts = { parts: Array<{ code: string; sen: number }>; restSen: number };
 
-/** Each product group with a purchase account on that account (groups sharing one, one part), the
-    rest — a group with no account, lines with no group — as one remainder. A part not above zero
-    drops out, as does a remainder below zero (a discount line spreads over the goods). Null when no
-    part has an account: the bill reads as it would without its goods. */
+/** The product groups a bill splits by: the sofa and the bedding in it — the main categories (owner
+    2026-11-25, 「分得出purchase of sofa 和purchase of bedding」, having put fabric and other goods
+    suppliers on bedding himself). Any other group reads as the rest of the bill, where Finance's
+    supplier line puts it. */
+export const SPLIT_GROUPS: ReadonlySet<string> = MAIN_CATEGORIES;
+
+/** Each split group with a purchase account on that account (groups sharing one, one part), the
+    rest — another group, a group with no account, lines with no group — as one remainder. A part
+    not above zero drops out, as does a remainder below zero (a discount line spreads over the
+    goods). Null when no part has an account: the bill reads as it would without its goods. */
 export function goodsParts(goods: BillGoods | undefined, accountOf: ReadonlyMap<string, string>): GoodsParts | null {
   if (!goods) return null;
   const byAccount = new Map<string, number>();
   let rest = 0;
   for (const [group, sen] of goods) {
-    const code = accountOf.get(group.trim().toUpperCase());
+    const g = group.trim().toUpperCase();
+    const code = SPLIT_GROUPS.has(g) ? accountOf.get(g) : undefined;
     if (code) byAccount.set(code, (byAccount.get(code) ?? 0) + sen);
     else rest += sen;
   }
