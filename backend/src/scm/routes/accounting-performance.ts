@@ -177,6 +177,11 @@ export type PerformanceMonth = {
   month: string; from: string; to: string;
   salesSen: number; cogsSen: number; gpSen: number; gpPct: number | null;
   otherIncomeSen: number; expensesSen: number; netSen: number; netPct: number | null;
+  /** The month's orders, its product groups' sales and cost, and its commission bills — the
+      Department P&L's Exhibition reads them (owner 2026-11-25), so the two reports agree. */
+  orders: PerformanceReport['orders'];
+  groups: Array<Pick<PerformanceReport['groups'][number], 'key' | 'label' | 'salesSen' | 'cogsSen'>>;
+  commission: PerformanceReport['commission'];
 };
 
 /** Every month from `from` to `to` (YYYY-MM, inclusive), each as its first and last day. */
@@ -246,6 +251,9 @@ export async function buildPerformanceMonths(companyId: number, from: string, to
       salesSen: p.totals.salesSen, cogsSen: p.totals.cogsSen, gpSen: p.totals.gpSen, gpPct: p.totals.gpPct,
       otherIncomeSen: p.otherIncomeSen, expensesSen: p.operatingExpense.amountSen + p.otherExpensesSen,
       netSen: p.netSen, netPct: p.netPct,
+      orders: p.orders,
+      groups: p.groups.map((g) => ({ key: g.key, label: g.label, salesSen: g.salesSen, cogsSen: g.cogsSen })),
+      commission: p.commission,
     });
   }
   return { ok: true, months: out };

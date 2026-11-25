@@ -1,23 +1,27 @@
 // ----------------------------------------------------------------------------
 // acc-departments — the Department P&L (owner 2026-11-19: an Operation report =
 // his "Operation PNL - Auto" sheet, a G&A report = admin, IT, legal and HQ, and
-// 「我要可以看全部的，也要可以看单独部门的」). Registered on the /acc-events router
-// beside the Logistics cost report, behind the same Finance › Accounting guard:
+// 「我要可以看全部的，也要可以看单独部门的」; 2026-11-25: each department by its own
+// method — the Exhibition on its orders, Logistics by the Logistics P&L — and All
+// not the books split again). Registered on the /acc-events router beside the
+// Logistics cost report, behind the same Finance › Accounting guard:
 //
 //   GET /departments/plan                  the company's departments (its plan)
-//   GET /departments/all?from=&to=         the P&L, every line split across the
-//                                          company's departments
+//   GET /departments/all?from=&to=         every department's own P&L in a few
+//                                          figures, side by side, and their total
 //   GET /departments/ga?from=&to=          G&A month by month: its share of the
 //                                          Performance sales against what it booked
 //   GET /departments/operation?from=&to=   the Operation sheet month by month, by region
 //   GET /departments/dept?d=&from=&to=     one department's own P&L month by month
-//                                          (the Exhibition P&L, the Showroom P&L)
-//   GET /departments/lines?view=&keys=…    the lines behind one figure of All, G&A or
-//                                          a department's P&L (the Operation sheet
-//                                          sends its own with the report)
+//                                          (the Exhibition P&L on its orders, the
+//                                          Showroom P&L as booked)
+//   GET /departments/lines?view=&keys=…    the lines behind one figure of a
+//                                          department's own P&L or G&A (the Operation
+//                                          sheet sends its own with the report)
 //   PUT /departments/rate                  { dept: 'ga' | 'operation', pct } — G&A's
 //                                          share (8%) or Operation's income (7%)
 //
+// Logistics' own P&L is the Logistics cost report's (GET /logistics/pnl), which All reads.
 // Every read is a financial statement: the statements' right
 // (scm.payment_voucher.post), as the P&L. The PUT is Finance's money right too.
 // Which department an amount belongs to: scm/lib/department-rows.ts; the
@@ -30,21 +34,25 @@ import { chunkIn } from '../lib/paginate-all';
 import { todayMyt } from '../lib/my-time';
 import { dateOrNull } from '../lib/date-coerce';
 import { countsInTheBooks } from '../../acc/reversal-pairs';
-import { layOutBlock, type LaidLine, type LaidNode, type LayoutItem } from '../../acc/report-layout';
+import { commissionLabel } from '../../acc/performance-pnl';
+import { RELEASE_SOURCE, loadPrepaidLines, type PrepaidLedgerLine } from '../../acc/commission-bills';
+import { resolveRoles } from '../../acc/rules';
+import type { LayoutItem } from '../../acc/report-layout';
 import { buildPnl, dbSources, pnlStockLines, type PnlReport } from './accounting-reports';
 import { allowedIds, resolveLayout } from './accounting-report-layouts';
-import { PERFORMANCE_MONTHS_MAX, buildPerformanceMonths, perfDbSources } from './accounting-performance';
-import { loadLogisticsPnl } from './acc-logistics-pnl';
+import { PERFORMANCE_MONTHS_MAX, buildPerformanceMonths, perfDbSources, type PerformanceMonth } from './accounting-performance';
+import { loadLogisticsPnl, type LogisticsPnlLoad } from './acc-logistics-pnl';
 import { fail } from './acc-logistics';
 import { MAX_SPREAD, addMonths, monthsBetween, type Leg } from '../lib/logistics-pnl';
 import {
   DEPARTMENT_LABEL, MANPOWER_LABEL, NONE_LABEL, OP_REGIONS, OP_ROW_LABEL, RECRUITMENT_LABEL, accountHome, isMixedAccount,
-  parsePlan, payrollAccounts,
-  type DepartmentPlan, type DeptAccount, type DeptKey, type GaTeam, type ManpowerRow, type OpRow,
+  parsePlan, payrollAccounts, resolveDept,
+  type Department, type DepartmentPlan, type DeptAccount, type DeptKey, type GaTeam, type ManpowerRow, type OpRow,
 } from '../lib/department-rows';
 import {
-  PNL_BLOCKS, buildDeptView, buildGaPnl, buildOperationPnl, gaLines, operationRows, splitPnlLineParts, splitPnlLines,
-  type DeptMonthSplit, type LogisticsMonthIn, type PnlBlock, type SplitLeg,
+  PNL_BLOCKS, addSummaries, basisOf, buildDeptView, buildGaPnl, buildOperationPnl, gaLines, operationRows, splitPnlLineParts, splitPnlLines,
+  summaryOfDept, summaryOfGa, summaryOfLogistics, summaryOfOperation, unassignedOf,
+  type DeptMonthSplit, type DeptOrders, type DeptSummary, type GaPnl, type LogisticsMonthIn, type OperationPnl, type PnlBlock, type SplitLeg,
 } from '../lib/department-pnl';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- PostgREST client, untyped throughout the acc layer */
@@ -63,8 +71,9 @@ const monthEnd = (ymd: string): string => {
   return d.toISOString().slice(0, 10);
 };
 
+type Range = { from: string; to: string; months: string[] };
 /** The range asked for, widened to whole months (every view reads whole months). */
-function rangeOf(c: any): { ok: true; from: string; to: string; months: string[] } | { ok: false; res: Response } {
+function rangeOf(c: any): ({ ok: true } & Range) | { ok: false; res: Response } {
   const today = todayMyt();
   const rawFrom = dateOrNull(c.req.query('from')) ?? monthStart(today);
   const rawTo = dateOrNull(c.req.query('to')) ?? monthEnd(today);
@@ -101,12 +110,15 @@ async function loadSetup(sb: any, companyId: number): Promise<
     plan: parsePlan(set?.plan),
   };
 }
+type Setup = Extract<Awaited<ReturnType<typeof loadSetup>>, { ok: true }>;
+type Failed = { ok: false; what: string; reason: string };
 
-/** The views a department has: G&A its share, Operation the sheet, the others their own P&L.
-    Logistics is its own report (Logistics cost) and has no view here. */
-const viewOf = (d: string): 'ga' | 'operation' | 'dept' | null => (d === 'ga' ? 'ga' : d === 'operation' ? 'operation' : d === 'logistics' ? null : 'dept');
+/** The view a department opens: G&A its share, Operation the sheet, Logistics the
+    Logistics P&L, any other its own P&L (the Exhibition on its orders). */
+type ViewKind = 'ga' | 'operation' | 'logistics' | 'dept';
+const viewOf = (d: Department): ViewKind => (d === 'ga' || d === 'operation' || d === 'logistics' ? d : 'dept');
 const planBody = (plan: DepartmentPlan) => ({
-  departments: plan.departments.map((key) => ({ key, label: DEPARTMENT_LABEL[key], view: viewOf(key) })),
+  departments: plan.departments.map((key) => ({ key, label: DEPARTMENT_LABEL[key], view: viewOf(key), basis: viewOf(key) === 'dept' ? basisOf(key) : null })),
   selling: plan.selling,
 });
 
@@ -116,6 +128,13 @@ const chartOf = (chart: readonly DeptAccount[]) => {
   const payroll = payrollAccounts(chart);
   const mixed = new Set(chart.filter((a) => isMixedAccount(a, payroll)).map((a) => a.account_code));
   return { byCode, payroll, mixed };
+};
+
+/** The department an account's money counts in when its lines say nothing else; null for
+    an account in no department yet, or a Recruitment one (each line by its post). */
+const deptOfAccount = (a: DeptAccount | undefined, plan: DepartmentPlan): DeptKey | null => {
+  const home = accountHome(a).dept;
+  return home === 'none' || home === 'hire' ? null : resolveDept(home, plan);
 };
 
 /** One period's P&L split by department: the P&L's lines, read leg by leg where an
@@ -140,6 +159,120 @@ async function splitPeriod(sb: any, companyId: number, pnl: PnlReport, setup: { 
   };
 }
 
+/** The P&L month by month, each month split as the departments take it — what a
+    department's own P&L reads; the ledger's mixed lines read once for the range. */
+async function splitMonths(sb: any, companyId: number, ids: number[], setup: Setup, r: Range): Promise<{ ok: true; split: DeptMonthSplit[] } | Failed> {
+  const src = dbSources(sb, companyId, ids);
+  const { mixed } = chartOf(setup.chart);
+  const incomeCodes = setup.chart.filter((a) => ['OTHER INCOMES', 'EXTRA-ORDINARY INCOME'].includes(String(a.section ?? '').toUpperCase())).map((a) => a.account_code);
+  const legsRes = await readLegs(sb, companyId, [...new Set([...mixed, ...incomeCodes])], r.from, r.to);
+  if (!legsRes.ok) return { ok: false, what: 'ledger', reason: legsRes.reason };
+  const split: DeptMonthSplit[] = [];
+  for (const m of r.months) {
+    const from = `${m}-01`;
+    const to = monthEnd(from);
+    const p = await buildPnl(src, companyId, from, to);
+    if (!p.ok) return { ok: false, what: 'P&L', reason: `${m}: ${p.reason}` };
+    const sp = await splitPeriod(sb, companyId, p.report, setup, legsRes.legs.filter((l) => l.day >= from && l.day <= to));
+    if (!sp.ok) return { ok: false, what: 'ledger', reason: sp.reason };
+    split.push({ month: m, blocks: sp.blocks });
+  }
+  return { ok: true, split };
+}
+
+/** The Performance P&L's months over the range: the orders' sales and cost, G&A's base. */
+const performanceOf = (sb: any, companyId: number, ids: number[], r: Range) =>
+  buildPerformanceMonths(companyId, r.months[0]!, r.months[r.months.length - 1]!, perfDbSources(sb, companyId, ids));
+
+/** A department on orders: each month of the Performance P&L as it reads it, and the
+    commission account when the account counts in this department — then its line reads
+    the bills in place of the release, labelled as the Performance P&L labels it. */
+function deptOrders(dept: DeptKey, months: readonly PerformanceMonth[], setup: Setup): DeptOrders {
+  const bills = months.flatMap((m) => (m.commission ? [m.commission] : []));
+  const first = bills.at(0);
+  const account = first ? setup.chart.find((a) => a.account_code === first.code) : undefined;
+  const here = first !== undefined && deptOfAccount(account, setup.plan) === dept;
+  return {
+    months: months.map((m) => ({
+      month: m.month, groups: m.groups, orders: { counted: m.orders.counted, notDelivered: m.orders.notDelivered },
+      commission: here && m.commission ? { billSen: m.commission.billSen, releaseSen: m.commission.releaseSen } : null,
+    })),
+    commission: here ? {
+      code: first.code,
+      name: account?.account_name ?? first.name ?? first.code,
+      label: commissionLabel({
+        code: first.code, name: first.name, months: [...new Set(bills.flatMap((b) => b.months))].sort(),
+        billSen: bills.reduce((s, b) => s + b.billSen, 0), releaseSen: bills.reduce((s, b) => s + b.releaseSen, 0),
+      }),
+    } : null,
+  };
+}
+
+/** Every expense account's code: the accounts G&A's legs are read on (the showroom's that fold into it too). */
+const expenseCodesOf = (chart: readonly DeptAccount[]): string[] =>
+  [...new Set(chart.filter((a) => String(a.section ?? '').toUpperCase() === 'EXPENSES').map((a) => a.account_code))];
+
+/** G&A over the range: the Performance sales' share against every line the plan puts in G&A. */
+async function gaOf(sb: any, companyId: number, setup: Setup, layout: readonly LayoutItem[], r: Range, perf: readonly PerformanceMonth[]): Promise<{ ok: true; g: GaPnl } | Failed> {
+  /* Every expense account: what folds into G&A (Houzs's showroom) is G&A's too. */
+  const legsRes = await readLegs(sb, companyId, expenseCodesOf(setup.chart), r.from, r.to);
+  if (!legsRes.ok) return { ok: false, what: 'ledger', reason: legsRes.reason };
+  return {
+    ok: true,
+    g: buildGaPnl({
+      months: r.months,
+      sales: new Map(perf.map((m) => [m.month, m.salesSen] as const)),
+      shareBp: setup.gaShareBp,
+      legs: legsRes.legs,
+      chart: new Map(setup.chart.map((a) => [a.account_code, a] as const)),
+      payroll: payrollAccounts(setup.chart),
+      plan: setup.plan,
+      layout,
+      companyId,
+    }),
+  };
+}
+const expenseLayout = (blocks: unknown): LayoutItem[] => (blocks as Partial<Record<string, LayoutItem[]>>).expenses ?? [];
+
+/** Operation over the range: the owner's sheet by region, on the Logistics P&L's own figures. */
+async function operationOf(sb: any, companyId: number, setup: Setup, r: Range, lg: Extract<LogisticsPnlLoad, { ok: true }>): Promise<{ ok: true; p: OperationPnl } | Failed> {
+  const spreadRes = await sb.from('acc_logistics_spreads').select('line_id, months').eq('company_id', companyId);
+  if (spreadRes.error) return { ok: false, what: 'spreads', reason: spreadRes.error.message };
+  const payroll = payrollAccounts(setup.chart);
+  /* The Operation accounts (each row and region) and the recruitment accounts (warehouse job ads). */
+  const opCodes = setup.chart.filter((a) => { const h = accountHome(a).dept; return h === 'operation' || h === 'hire'; }).map((a) => a.account_code);
+  /* From far enough back for the longest spread of an upkeep or insurance bill. */
+  const spreadFrom = `${addMonths(r.months[0]!, -(MAX_SPREAD - 1))}-01`;
+  const legsRes = await readLegs(sb, companyId, [...new Set([...payroll, ...opCodes])], spreadFrom, r.to);
+  if (!legsRes.ok) return { ok: false, what: 'ledger', reason: legsRes.reason };
+
+  const sen = (rows: ReadonlyArray<{ key: string; sen: Record<string, number | null> }>, key: string): Record<string, number> => {
+    const row = rows.find((x) => x.key === key);
+    return Object.fromEntries(Object.entries(row?.sen ?? {}).map(([k, v]) => [k, Number(v ?? 0)]));
+  };
+  const logistics = new Map<string, LogisticsMonthIn>(lg.body.perMonth.map((m) => [m.month, {
+    doValue: sen(m.rows, 'do_value'),
+    doCount: { PG: m.dos.PG, KL: m.dos.KL, EM: m.dos.EM, SG: m.dos.SG },
+    transportIncome: sen(m.rows, 'do_income'),
+    fairIncome: sen(m.rows, 'fair_income'),
+    net: sen(m.rows, 'net'),
+    fairs: m.fairs.map((f) => ({ id: f.id, code: f.code, name: f.name, venue: f.venue, region: f.region, incomeSen: f.incomeSen, costSen: f.chargeSen + f.dismantleSen + f.transportSen })),
+  }] as const));
+  return {
+    ok: true,
+    p: buildOperationPnl({
+      months: r.months,
+      incomeBp: setup.operationIncomeBp,
+      logistics,
+      bills: lg.billLines,
+      legs: legsRes.legs,
+      chart: new Map(setup.chart.map((a) => [a.account_code, a] as const)),
+      payroll,
+      spreadMonths: new Map(((spreadRes.data ?? []) as Row[]).map((x) => [String(x.line_id), Number(x.months)] as const)),
+    }),
+  };
+}
+
 /* ── GET /departments/plan ────────────────────────────────────────────────── */
 export const departmentsPlanHandler = async (c: any): Promise<Response> => {
   if (!canRead(c)) return c.json(NO_PERM, 403);
@@ -153,7 +286,7 @@ export const departmentsPlanHandler = async (c: any): Promise<Response> => {
 /** The legs of some accounts in [from, to] the books count, as the statements count them. */
 async function readLegs(sb: any, companyId: number, codes: readonly string[], from: string, to: string): Promise<{ ok: true; legs: Leg[] } | { ok: false; reason: string }> {
   const res = await chunkIn<Row>([...codes], (b, lo, hi) => sb.from('v_gl_entries')
-    .select('line_id, account_code, account_name, entry_date, debit_sen, credit_sen, posted, reversed, reversed_by_je, notes, je_no')
+    .select('line_id, account_code, account_name, entry_date, debit_sen, credit_sen, posted, reversed, reversed_by_je, notes, je_no, source_type')
     .eq('company_id', companyId).in('account_code', b).gte('entry_date', from).lte('entry_date', to)
     .order('line_id').range(lo, hi));
   if (res.error) return { ok: false, reason: res.error.message };
@@ -163,11 +296,16 @@ async function readLegs(sb: any, companyId: number, codes: readonly string[], fr
       lineId: String(l.line_id), accountCode: String(l.account_code), accountName: l.account_name == null ? null : String(l.account_name),
       day: String(l.entry_date).slice(0, 10), debitSen: Number(l.debit_sen ?? 0), creditSen: Number(l.credit_sen ?? 0),
       notes: l.notes == null ? null : String(l.notes), docNo: l.je_no == null ? null : String(l.je_no),
+      sourceType: l.source_type == null ? null : String(l.source_type),
     })),
   };
 }
 
 /* ── GET /departments/all ─────────────────────────────────────────────────── */
+/** Every department's own P&L in a few figures, side by side (owner 2026-11-25: the books
+    split again 「就和我的actual重复了」): each read by its own view's builder over the same
+    range — the Exhibition on its orders, Operation by its sheet, Logistics by the Logistics
+    P&L, G&A against its share — and their total, the departments added up. */
 export const departmentsAllHandler = async (c: any): Promise<Response> => {
   if (!canRead(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -176,44 +314,51 @@ export const departmentsAllHandler = async (c: any): Promise<Response> => {
   if (!r.ok) return r.res;
   const sb = c.get('supabase');
   const companyId = co.companyId;
+  const ids = allowedIds(c);
 
-  const [pnlRes, setup, laid] = await Promise.all([
-    buildPnl(dbSources(sb, companyId, allowedIds(c)), companyId, r.from, r.to),
-    loadSetup(sb, companyId),
-    resolveLayout(sb, allowedIds(c), 'pnl'),
-  ]);
-  if (!pnlRes.ok) return c.json({ error: 'load_failed', message: 'The P&L could not be read — try again.', reason: pnlRes.reason }, 500);
+  const [setup, laid] = await Promise.all([loadSetup(sb, companyId), resolveLayout(sb, ids, 'pnl')]);
   if (!setup.ok) return fail(c, setup.what, setup.reason);
   if (!laid.ok) return fail(c, 'P&L layout', laid.reason);
-  const pnl = pnlRes.report;
-  const split = await splitPeriod(sb, companyId, pnl, setup, null);
-  if (!split.ok) return fail(c, 'ledger', split.reason);
+  const depts = setup.plan.departments;
+  const has = (v: ViewKind) => depts.some((d) => viewOf(d) === v);
+  const needPerf = has('ga') || depts.some((d) => viewOf(d) === 'dept' && basisOf(d) === 'orders');
+  const [split, perf, lg] = await Promise.all([
+    splitMonths(sb, companyId, ids, setup, r),
+    needPerf ? performanceOf(sb, companyId, ids, r) : Promise.resolve(null),
+    has('operation') || has('logistics') ? loadLogisticsPnl(c, companyId, r.from, r.to) : Promise.resolve(null),
+  ]);
+  if (!split.ok) return fail(c, split.what, split.reason);
+  if (perf && !perf.ok) return fail(c, 'Performance P&L', perf.reason);
+  if (lg && !lg.ok) return lg.res;
+  const [ga, op] = await Promise.all([
+    has('ga') && perf ? gaOf(sb, companyId, setup, expenseLayout(laid.layout.blocks), r, perf.months) : Promise.resolve(null),
+    has('operation') && lg ? operationOf(sb, companyId, setup, r, lg) : Promise.resolve(null),
+  ]);
+  if (ga && !ga.ok) return fail(c, ga.what, ga.reason);
+  if (op && !op.ok) return fail(c, op.what, op.reason);
 
-  const keys: DeptKey[] = [...setup.plan.departments, 'none'];
-  const baseSen = pnl.layout.baseSen;
-  const tree = {} as Record<PnlBlock, LaidNode[]>;
-  const blockTotals = {} as Record<PnlBlock, Partial<Record<DeptKey, number>>>;
-  for (const { block } of PNL_BLOCKS) {
-    const lines: LaidLine[] = split.blocks[block].map((l) => ({ code: l.code, name: l.name, amountSen: l.amountSen, cells: l.cells as Record<string, number> }));
-    tree[block] = layOutBlock(laid.layout.blocks[block] ?? [], lines, companyId, baseSen);
-    blockTotals[block] = Object.fromEntries(keys.map((k) => [k, lines.reduce((x, l) => x + (l.cells?.[k] ?? 0), 0)]));
+  const summary: Partial<Record<Department, DeptSummary>> = {};
+  for (const d of depts) {
+    const v = viewOf(d);
+    if (v === 'ga' && ga?.ok) summary[d] = summaryOfGa(ga.g);
+    else if (v === 'operation' && op?.ok) summary[d] = summaryOfOperation(op.p);
+    else if (v === 'logistics' && lg?.ok) summary[d] = summaryOfLogistics(lg.body.rows);
+    else if (v === 'dept') {
+      const orders = basisOf(d) === 'orders' && perf?.ok ? deptOrders(d, perf.months, setup) : null;
+      summary[d] = summaryOfDept(buildDeptView({ dept: d, months: r.months, split: split.split, layout: laid.layout.blocks, companyId, orders }));
+    }
   }
-  /* An expense account no department claims yet: named, never a column of its own. */
-  const unassigned = split.blocks.expenses.filter((l) => (l.cells.none ?? 0) !== 0)
-    .map((l) => ({ code: l.code, name: l.name, amountSen: l.cells.none ?? 0 }));
   return c.json({
     from: r.from, to: r.to,
     ...planBody(setup.plan),
-    columns: setup.plan.departments.map((k) => ({ key: k, label: DEPARTMENT_LABEL[k] })),
-    tree, blockTotals, totals: pnl.totals, baseSen,
-    unassigned: { label: NONE_LABEL, lines: unassigned },
-    stock: pnl.stock,
+    gaShareBp: setup.gaShareBp,
+    summary,
+    total: addSummaries(depts.map((d) => summary[d]).filter((x): x is DeptSummary => x != null)),
+    /* An expense account no department claims yet: in no department's figures, named. */
+    unassigned: { label: NONE_LABEL, lines: unassignedOf(split.split) },
+    logisticsProblem: lg?.ok ? (lg.body.fairsProblem ?? lg.body.tripsProblem ?? null) : null,
   });
 };
-
-/** Every expense account's code: the accounts G&A's legs are read on (the showroom's that fold into it too). */
-const expenseCodesOf = (chart: readonly DeptAccount[]): string[] =>
-  [...new Set(chart.filter((a) => String(a.section ?? '').toUpperCase() === 'EXPENSES').map((a) => a.account_code))];
 
 /* ── GET /departments/ga ──────────────────────────────────────────────────── */
 export const departmentsGaHandler = async (c: any): Promise<Response> => {
@@ -228,27 +373,14 @@ export const departmentsGaHandler = async (c: any): Promise<Response> => {
   const [setup, laid, perf] = await Promise.all([
     loadSetup(sb, companyId),
     resolveLayout(sb, allowedIds(c), 'pnl'),
-    buildPerformanceMonths(companyId, r.months[0]!, r.months[r.months.length - 1]!, perfDbSources(sb, companyId, allowedIds(c))),
+    performanceOf(sb, companyId, allowedIds(c), r),
   ]);
   if (!setup.ok) return fail(c, setup.what, setup.reason);
   if (!laid.ok) return fail(c, 'P&L layout', laid.reason);
   if (!perf.ok) return fail(c, 'Performance P&L', perf.reason);
-  /* Every expense account: what folds into G&A (Houzs's showroom) is G&A's too. */
-  const legsRes = await readLegs(sb, companyId, expenseCodesOf(setup.chart), r.from, r.to);
-  if (!legsRes.ok) return fail(c, 'ledger', legsRes.reason);
-
-  const g = buildGaPnl({
-    months: r.months,
-    sales: new Map(perf.months.map((m) => [m.month, m.salesSen] as const)),
-    shareBp: setup.gaShareBp,
-    legs: legsRes.legs,
-    chart: new Map(setup.chart.map((a) => [a.account_code, a] as const)),
-    payroll: payrollAccounts(setup.chart),
-    plan: setup.plan,
-    layout: (laid.layout.blocks as Partial<Record<string, LayoutItem[]>>).expenses ?? [],
-    companyId,
-  });
-  return c.json({ from: r.from, to: r.to, ...g });
+  const ga = await gaOf(sb, companyId, setup, expenseLayout(laid.layout.blocks), r, perf.months);
+  if (!ga.ok) return fail(c, ga.what, ga.reason);
+  return c.json({ from: r.from, to: r.to, ...ga.g });
 };
 
 /* ── GET /departments/dept?d= ─────────────────────────────────────────────── */
@@ -260,31 +392,25 @@ export const departmentViewHandler = async (c: any): Promise<Response> => {
   if (!r.ok) return r.res;
   const sb = c.get('supabase');
   const companyId = co.companyId;
-  const [setup, laid] = await Promise.all([loadSetup(sb, companyId), resolveLayout(sb, allowedIds(c), 'pnl')]);
+  const ids = allowedIds(c);
+  const [setup, laid] = await Promise.all([loadSetup(sb, companyId), resolveLayout(sb, ids, 'pnl')]);
   if (!setup.ok) return fail(c, setup.what, setup.reason);
   if (!laid.ok) return fail(c, 'P&L layout', laid.reason);
   const d = String(c.req.query('d') ?? '');
   const dept = setup.plan.departments.find((x) => x === d);
   if (!dept) return c.json({ error: 'bad_department', message: `${d || '(none)'} is not one of this company's departments.` }, 400);
 
-  /* Month by month, each the P&L's own figures split as the All view splits them; the
-     ledger's mixed lines read once for the whole range. */
-  const src = dbSources(sb, companyId, allowedIds(c));
-  const { mixed } = chartOf(setup.chart);
-  const incomeCodes = setup.chart.filter((a) => ['OTHER INCOMES', 'EXTRA-ORDINARY INCOME'].includes(String(a.section ?? '').toUpperCase())).map((a) => a.account_code);
-  const legsRes = await readLegs(sb, companyId, [...new Set([...mixed, ...incomeCodes])], r.from, r.to);
-  if (!legsRes.ok) return fail(c, 'ledger', legsRes.reason);
-  const split: DeptMonthSplit[] = [];
-  for (const m of r.months) {
-    const from = `${m}-01`;
-    const to = monthEnd(from);
-    const p = await buildPnl(src, companyId, from, to);
-    if (!p.ok) return c.json({ error: 'load_failed', message: 'The P&L could not be read — try again.', reason: `${m}: ${p.reason}` }, 500);
-    const sp = await splitPeriod(sb, companyId, p.report, setup, legsRes.legs.filter((l) => l.day >= from && l.day <= to));
-    if (!sp.ok) return fail(c, 'ledger', sp.reason);
-    split.push({ month: m, blocks: sp.blocks });
-  }
-  const view = buildDeptView({ dept, months: r.months, split, layout: laid.layout.blocks, companyId });
+  /* Month by month, the P&L's own figures split as the departments take them; on
+     orders, the sales and cost of sales of the Performance P&L's own months. */
+  const onOrders = basisOf(dept) === 'orders';
+  const [split, perf] = await Promise.all([
+    splitMonths(sb, companyId, ids, setup, r),
+    onOrders ? performanceOf(sb, companyId, ids, r) : Promise.resolve(null),
+  ]);
+  if (!split.ok) return fail(c, split.what, split.reason);
+  if (perf && !perf.ok) return fail(c, 'Performance P&L', perf.reason);
+  const orders = perf?.ok ? deptOrders(dept, perf.months, setup) : null;
+  const view = buildDeptView({ dept, months: r.months, split: split.split, layout: laid.layout.blocks, companyId, orders });
   return c.json({ from: r.from, to: r.to, label: DEPARTMENT_LABEL[dept], ...view });
 };
 
@@ -298,52 +424,18 @@ export const departmentsOperationHandler = async (c: any): Promise<Response> => 
   const sb = c.get('supabase');
   const companyId = co.companyId;
 
-  const [setup, lg, spreadRes] = await Promise.all([
-    loadSetup(sb, companyId),
-    loadLogisticsPnl(c, companyId, r.from, r.to),
-    sb.from('acc_logistics_spreads').select('line_id, months').eq('company_id', companyId),
-  ]);
+  const [setup, lg] = await Promise.all([loadSetup(sb, companyId), loadLogisticsPnl(c, companyId, r.from, r.to)]);
   if (!setup.ok) return fail(c, setup.what, setup.reason);
   if (!lg.ok) return lg.res;
-  if (spreadRes.error) return fail(c, 'spreads', spreadRes.error.message);
-  const payroll = payrollAccounts(setup.chart);
   if (!setup.plan.departments.includes('operation')) {
     return c.json({ error: 'bad_department', message: "This company has no Operation department — its operation costs count in another." }, 400);
   }
-  /* The Operation accounts (each row and region) and the recruitment accounts (warehouse job ads). */
-  const opCodes = setup.chart.filter((a) => { const h = accountHome(a).dept; return h === 'operation' || h === 'hire'; }).map((a) => a.account_code);
-  /* From far enough back for the longest spread of an upkeep or insurance bill. */
-  const spreadFrom = `${addMonths(r.months[0]!, -(MAX_SPREAD - 1))}-01`;
-  const legsRes = await readLegs(sb, companyId, [...new Set([...payroll, ...opCodes])], spreadFrom, r.to);
-  if (!legsRes.ok) return fail(c, 'ledger', legsRes.reason);
-
-  const sen = (rows: ReadonlyArray<{ key: string; sen: Record<string, number | null> }>, key: string): Record<string, number> => {
-    const row = rows.find((x) => x.key === key);
-    return Object.fromEntries(Object.entries(row?.sen ?? {}).map(([k, v]) => [k, Number(v ?? 0)]));
-  };
-  const logistics = new Map<string, LogisticsMonthIn>(lg.body.perMonth.map((m) => [m.month, {
-    doValue: sen(m.rows, 'do_value'),
-    doCount: { PG: m.dos.PG, KL: m.dos.KL, EM: m.dos.EM, SG: m.dos.SG },
-    transportIncome: sen(m.rows, 'do_income'),
-    fairIncome: sen(m.rows, 'fair_income'),
-    net: sen(m.rows, 'net'),
-    fairs: m.fairs.map((f) => ({ id: f.id, code: f.code, name: f.name, venue: f.venue, region: f.region, incomeSen: f.incomeSen, costSen: f.chargeSen + f.dismantleSen + f.transportSen })),
-  }] as const));
-
-  const p = buildOperationPnl({
-    months: r.months,
-    incomeBp: setup.operationIncomeBp,
-    logistics,
-    bills: lg.billLines,
-    legs: legsRes.legs,
-    chart: new Map(setup.chart.map((a) => [a.account_code, a] as const)),
-    payroll,
-    spreadMonths: new Map(((spreadRes.data ?? []) as Row[]).map((x) => [String(x.line_id), Number(x.months)] as const)),
-  });
+  const op = await operationOf(sb, companyId, setup, r, lg);
+  if (!op.ok) return fail(c, op.what, op.reason);
   const labels: Record<string, string> = { ...MANPOWER_LABEL, ...OP_ROW_LABEL, recruitment: RECRUITMENT_LABEL };
   return c.json({
     from: r.from, to: r.to,
-    ...p,
+    ...op.p,
     rows: operationRows(setup.operationIncomeBp).map((x) => ({ ...x, label: x.label || labels[x.key as ManpowerRow | OpRow] || x.key })),
     regions: OP_REGIONS,
     logisticsIncomeBp: lg.body.doIncomeBp,
@@ -356,8 +448,9 @@ export const departmentsOperationHandler = async (c: any): Promise<Response> => 
 /** The most accounts one read names (a block's every account). */
 export const LINES_KEYS_MAX = 2000;
 
-/** One line behind a figure: a ledger line, or the stock engine's opening or closing
-    stock (the P&L's own, not a journal line). `sen` in the figure's sign. */
+/** One line behind a figure: a ledger line, the stock engine's opening or closing stock
+    (the P&L's own, not a journal line), or — the commission on orders — a commission bill
+    on the prepayment, in the month it pays for. `sen` in the figure's sign. */
 export type DeptEntry = {
   id: string; month: string; day: string | null;
   accountCode: string; accountName: string | null;
@@ -365,21 +458,23 @@ export type DeptEntry = {
   /** The department it counts in; on G&A, the HQ team its words name. */
   dept: DeptKey; team: GaTeam | null;
   sen: number;
-  source: 'ledger' | 'stock_opening' | 'stock_closing' | 'rest';
+  source: 'ledger' | 'stock_opening' | 'stock_closing' | 'rest' | 'bill';
 };
 const linesBody = (lines: DeptEntry[]) => {
   lines.sort((a, b) => (a.day ?? '').localeCompare(b.day ?? '') || a.accountCode.localeCompare(b.accountCode) || a.id.localeCompare(b.id));
   return { lines, totalSen: lines.reduce((x, l) => x + l.sen, 0) };
 };
+/** A line the monthly commission release posted (or its contra). */
+const isRelease = (sourceType: string | null | undefined): boolean => String(sourceType ?? '').replace(/_REVERSAL$/, '') === RELEASE_SOURCE;
 
 /**
- * GET /departments/lines?view=all|dept|ga&from=&to=&keys=…[&block=][&dept=][&d=]
- * The lines behind one figure of All departments, a department's own P&L or G&A —
- * read and split by the rules that made the figure, so they add up to it:
- *   view=all   `block`; the column's department (`dept`: a department of the
- *              company or none; absent = the P&L's Total); the range, read as one;
+ * GET /departments/lines?view=dept|ga&from=&to=&keys=…[&block=][&d=]
+ * The lines behind one figure of a department's own P&L or G&A — read and split by
+ * the rules that made the figure, so they add up to it:
  *   view=dept  `block`; the department `d`; the column's months, each month read
- *              as the view reads it (its own opening and closing stock);
+ *              as the view reads it (its own opening and closing stock); a department
+ *              on orders has no lines behind its sales and cost of sales (they are the
+ *              orders'), and its commission account's are its bills, not the release;
  *   view=ga    the column's months; a key is an account's code or team:<TEAM>.
  * `keys`: the accounts under the figure's row (one account, a category's, a block's).
  */
@@ -390,7 +485,7 @@ export const departmentLinesHandler = async (c: any): Promise<Response> => {
   const r = rangeOf(c);
   if (!r.ok) return r.res;
   const view = String(c.req.query('view') ?? '');
-  if (view !== 'all' && view !== 'dept' && view !== 'ga') return c.json({ error: 'bad_view', message: 'view is all, dept or ga.' }, 400);
+  if (view !== 'dept' && view !== 'ga') return c.json({ error: 'bad_view', message: 'view is dept or ga.' }, 400);
   const keys = [...new Set(String(c.req.query('keys') ?? '').split(',').map((k) => k.trim()).filter(Boolean))];
   if (keys.length === 0 || keys.length > LINES_KEYS_MAX) return c.json({ error: 'bad_keys', message: `Name from 1 to ${LINES_KEYS_MAX} accounts.` }, 400);
   const sb = c.get('supabase');
@@ -420,23 +515,29 @@ export const departmentLinesHandler = async (c: any): Promise<Response> => {
   const blockDef = PNL_BLOCKS.find((b) => b.block === blockArg);
   if (!blockDef) return c.json({ error: 'bad_block', message: `block is one of ${PNL_BLOCKS.map((b) => b.block).join(', ')}.` }, 400);
   const block = blockDef.block;
-  let want: DeptKey | null = null;
-  if (view === 'dept') {
-    const d = String(c.req.query('d') ?? '');
-    const dept = setup.plan.departments.find((x) => x === d);
-    if (!dept) return c.json({ error: 'bad_department', message: `${d || '(none)'} is not one of this company's departments.` }, 400);
-    want = dept;
-  } else {
-    const d = String(c.req.query('dept') ?? '');
-    if (d !== '') {
-      const k = ([...setup.plan.departments, 'none'] as DeptKey[]).find((x) => x === d);
-      if (!k) return c.json({ error: 'bad_department', message: `${d} is not one of this company's departments.` }, 400);
-      want = k;
+  const d = String(c.req.query('d') ?? '');
+  const dept = setup.plan.departments.find((x) => x === d);
+  if (!dept) return c.json({ error: 'bad_department', message: `${d || '(none)'} is not one of this company's departments.` }, 400);
+  const onOrders = basisOf(dept) === 'orders';
+  if (onOrders && (block === 'tradingIncome' || block === 'costOfSales')) {
+    return c.json({ error: 'from_orders', message: "These figures are the sales orders' (the Performance P&L's), not ledger lines." }, 400);
+  }
+
+  /* On orders the commission account reads its bills in place of the release — when the
+     account counts in this department, as the figure does. */
+  let commission: { code: string; prepaid: string; bills: PrepaidLedgerLine[] } | null = null;
+  if (onOrders && block === 'expenses') {
+    const roles = await resolveRoles(sb, companyId);
+    const code = roles.COMMISSION_EXPENSE;
+    if (keys.includes(code) && deptOfAccount(byCode.get(code), setup.plan) === dept) {
+      const pre = await loadPrepaidLines(sb, companyId, roles.COMMISSION_PREPAID);
+      if (!pre.ok) return fail(c, 'commission bills', pre.reason);
+      commission = { code, prepaid: roles.COMMISSION_PREPAID, bills: pre.lines.filter((l) => l.month != null) };
     }
   }
 
-  /* All reads the range as one P&L; a department's view reads each month as its own. */
-  const periods = view === 'all' ? [{ from: r.from, to: r.to }] : r.months.map((m) => ({ from: `${m}-01`, to: monthEnd(`${m}-01`) }));
+  /* Each month read as the view reads it. */
+  const periods = r.months.map((m) => ({ from: `${m}-01`, to: monthEnd(`${m}-01`) }));
   /* Cost of sales carries the stock engine's lines where the ledger's own stock lines were. */
   const stock: Array<Awaited<ReturnType<typeof pnlStockLines>> & { ok: true }> = [];
   if (block === 'costOfSales') {
@@ -456,14 +557,14 @@ export const departmentLinesHandler = async (c: any): Promise<Response> => {
     const legsOf = new Map<string, typeof legsRes.legs>();
     for (const l of legsRes.legs) if (l.day >= p.from && l.day <= p.to) legsOf.set(l.accountCode, [...(legsOf.get(l.accountCode) ?? []), l]);
     for (const code of keys) {
+      const billed = commission != null && code === commission.code;
       const engine = stockCodes.has(code) ? (stock[i]?.lines ?? []).filter((x) => x.code === code) : null;
-      const legs = engine ? undefined : legsOf.get(code) ?? [];
+      const legs = engine ? undefined : (legsOf.get(code) ?? []).filter((l) => !billed || !isRelease(l.sourceType));
       /* The P&L's figure for the account: the stock engine's, else its legs as the block reads them. */
       const amountSen = engine ? engine.reduce((x, l) => x + l.amountSen, 0) : legs!.reduce((x, l) => x + blockDef.sign * (l.debitSen - l.creditSen), 0);
-      if (amountSen === 0) continue;
-      const parts = splitPnlLineParts({ block, code, amountSen, chart: byCode, payroll, mixed, legs, plan: setup.plan, itemize: true });
+      const parts = amountSen === 0 ? [] : splitPnlLineParts({ block, code, amountSen, chart: byCode, payroll, mixed, legs, plan: setup.plan, itemize: true });
       for (const part of parts) {
-        if (want != null && part.dept !== want) continue;
+        if (part.dept !== dept) continue;
         if (part.leg) {
           lines.push({
             id: part.leg.lineId, month: part.leg.day.slice(0, 7), day: part.leg.day, accountCode: code, accountName: part.leg.accountName ?? nameOf(code),
@@ -485,6 +586,13 @@ export const departmentLinesHandler = async (c: any): Promise<Response> => {
             text: 'Not on a ledger line', dept: part.dept, team: null, sen: part.sen, source: 'rest',
           });
         }
+      }
+      if (billed) {
+        const month = p.from.slice(0, 7);
+        commission!.bills.filter((b) => b.month === month).forEach((b, k) => lines.push({
+          id: `bill:${month}:${b.jeNo}:${k}`, month, day: b.entryDate, accountCode: commission!.prepaid, accountName: nameOf(commission!.prepaid),
+          ref: b.docNo || b.jeNo, text: b.notes, dept, team: null, sen: b.amountSen, source: 'bill',
+        }));
       }
     }
   });

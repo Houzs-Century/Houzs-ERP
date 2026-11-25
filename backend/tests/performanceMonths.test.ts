@@ -88,12 +88,17 @@ describe('GET /accounting/reports/performance/months', () => {
       const full = (await (await app.request(`/accounting/reports/performance?from=${m.from}&to=${m.to}`)).json()) as {
         totals: { salesSen: number; cogsSen: number; gpSen: number; gpPct: number | null };
         otherIncomeSen: number; otherExpensesSen: number; operatingExpense: { amountSen: number }; netSen: number; netPct: number | null;
+        orders: unknown; groups: Array<{ key: string; label: string; salesSen: number; cogsSen: number }>; commission: unknown;
       };
       expect(m).toEqual({
         month: m.month, from: m.from, to: m.to,
         salesSen: full.totals.salesSen, cogsSen: full.totals.cogsSen, gpSen: full.totals.gpSen, gpPct: full.totals.gpPct,
         otherIncomeSen: full.otherIncomeSen, expensesSen: full.operatingExpense.amountSen + full.otherExpensesSen,
         netSen: full.netSen, netPct: full.netPct,
+        /* The groups, the orders and the commission the Department P&L's Exhibition reads: the report's own. */
+        orders: full.orders,
+        groups: full.groups.map((g) => ({ key: g.key, label: g.label, salesSen: g.salesSen, cogsSen: g.cogsSen })),
+        commission: full.commission,
       });
     }
     /* July by hand: the cancelled order left out; 16% of sales excluding service in place of 900-O001. */

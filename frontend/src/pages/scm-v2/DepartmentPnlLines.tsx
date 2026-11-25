@@ -4,7 +4,7 @@
 // with the row, the column and its period, "Open in General ledger ›" (Back
 // returns here) and ×, then the lines, totalled — the total IS the figure.
 // The Operation sheet's lines come with the report (its rows are them added up);
-// All, a department's own P&L and G&A read theirs when a figure is opened
+// a department's own P&L and G&A read theirs when a figure is opened
 // (GET /acc-events/departments/lines), split by the rules that made the figure.
 // ----------------------------------------------------------------------------
 
@@ -105,10 +105,12 @@ export function DrillPanel({ title, sub, rows, ledger, onClose }: { title: strin
 
 const entryRow = (e: DeptEntry): DrillRow => ({
   id: e.id, day: e.day, month: e.month, row: null, region: null, ref: e.ref,
-  account: `${e.accountCode}${e.accountName ? ` · ${e.accountName}` : ''}`, text: e.text, how: null, sen: e.sen,
+  account: `${e.accountCode}${e.accountName ? ` · ${e.accountName}` : ''}`, text: e.text,
+  how: e.source === 'bill' ? `The commission bill for ${monthName(`${e.month}-01`)}, in place of the monthly release` : null,
+  sen: e.sen,
 });
 
-/** Lines read when opened: a figure of All, a department's own P&L or G&A. */
+/** Lines read when opened: a figure of a department's own P&L or G&A. */
 export function DeptLinesPanel({ title, sub, ask, onClose }: { title: string; sub: string; ask: DeptLinesAsk; onClose: () => void }) {
   const q = useDepartmentLines(ask);
   const rows = useMemo(() => (q.data?.lines ?? []).map(entryRow), [q.data]);
