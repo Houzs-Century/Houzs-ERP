@@ -32,6 +32,7 @@ export const ACCOUNTING_TAB_TITLES = {
   changes: 'Product changes',
   changesum: 'Product changes P&L',
   sotodo: 'SO conversion & backlog',
+  logistics: 'Logistics cost',
   departments: 'Department P&L',
 } as const;
 
@@ -41,15 +42,3 @@ export const ACCOUNTING_TABS = Object.keys(ACCOUNTING_TAB_TITLES) as readonly Ac
 
 export const accountingTabFromSearch = (raw: string | null | undefined): AccountingTab | null =>
   (ACCOUNTING_TABS as readonly string[]).includes(raw ?? '') ? (raw as AccountingTab) : null;
-
-/** The Logistics cost tab (`?tab=logistics`) is the Department P&L's Logistics now
-    (owner 2026-11-25): an old address lands there, its dates and view kept, its
-    Show / % / split switches under the Department P&L's names. */
-export function logisticsMovedTo(search: URLSearchParams): string {
-  const renamed: Record<string, string> = { lm: 'dm', lsplit: 'dsplit', lpct: 'dpct' };
-  const q = new URLSearchParams({ tab: 'departments', dv: 'logistics' });
-  for (const [k, v] of search) {
-    if (k !== 'tab' && k !== 'dv') q.set(renamed[k] ?? k, v);
-  }
-  return `/scm/accounting?${q.toString()}`;
-}

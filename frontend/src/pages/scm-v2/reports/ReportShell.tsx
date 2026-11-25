@@ -14,7 +14,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { PageHeader } from '../../../components/Layout';
 import { todayMyt } from '../../../vendor/scm/lib/dates';
-import { reportById, type ReportId } from '../reports-catalog';
+import { PNL_CHOICES, isPnlReport, pnlChoiceOf, reportById, type ReportId } from '../reports-catalog';
 import { ReportRail, reportListEntries, useRailPinned, useVisibleReports } from './ReportRail';
 import { PnlPicker } from './PnlPicker';
 import { writeLastReport } from './lastReport';
@@ -57,7 +57,9 @@ export function ReportShell({ report, subtitle, actions, ownHeader = false, chil
   const entries = useMemo(() => reportListEntries(reports), [reports]);
   /* A reader who may open one report only has no list to choose from — the P&Ls counting as one. */
   const showRail = entries.length > 1;
-  const pnls = useMemo(() => (item.pnlPick ? reports.filter((r) => r.pnlPick) : []), [item, reports]);
+  /* The P&L picker: the choices whose report this reader may open, and the one this page is. */
+  const choices = useMemo(() => (isPnlReport(report) ? PNL_CHOICES.filter((c) => reports.some((r) => r.id === c.report)) : []), [report, reports]);
+  const pnlNow = pnlChoiceOf(report, params.get('dbasis'));
 
   return (
     <div className={`${tokens.root} ${s.shell} ${!showRail ? s.shellBare : pinned ? s.shellPinned : ''}`} data-report={report}>
@@ -78,8 +80,8 @@ export function ReportShell({ report, subtitle, actions, ownHeader = false, chil
                 </div>
               )}
             />
-            {pnls.length > 1 && (
-              <div className={inPlace ? s.asideNow : s.inPlace}><PnlPicker current={report} choices={pnls} range={carried} /></div>
+            {choices.length > 1 && pnlNow && (
+              <div className={inPlace ? s.asideNow : s.inPlace}><PnlPicker current={pnlNow} choices={choices} range={carried} /></div>
             )}
             <div ref={setInPlaceHost} className={s.inPlace} />
             <div className={inPlace ? s.asideNow : s.inPlace} data-report-body>

@@ -21,11 +21,13 @@
 //
 // THE P&Ls ARE ONE ENTRY (owner 2026-11-25: 几份P&L, 可以combine 起来 … 我在这里
 // 选): the list shows them as P&L, and a picker across the top of each opens the
-// others (`pnlPick`, its name there). Each stays a report of its own here — its
+// others — a category, Actual (by sales invoice: the books) | Performance (by
+// sales order) | Forecast, then Overall | Department (PNL_CHOICES; his three
+// categories, settled the same day). Each stays a report of its own here — its
 // address, its gate, its method and data — so old links land where they did and
-// a reader is offered only the P&Ls they may open. The Forecast P&L is a plan and
-// sits under Plan with the Dashboard; the Logistics cost report is the Department
-// P&L's Logistics, not an entry of its own (owner, the same day).
+// a reader is offered only the P&Ls they may open. Logistics cost (by DO) and the
+// Product changes P&L are entries of their own (「现有的logistics by DO的放side
+// bar 先」).
 // ----------------------------------------------------------------------------
 
 import type { LucideIcon } from 'lucide-react';
@@ -38,7 +40,7 @@ export type ReportId =
   | 'pnl' | 'departments' | 'bs' | 'rp' | 'tb'
   | 'ar' | 'ap'
   | 'collection' | 'fair' | 'performance' | 'products' | 'changes' | 'changesum' | 'sotodo'
-  | 'events' | 'commission'
+  | 'events' | 'commission' | 'logistics'
   | 'charges'
   | 'forecast' | 'dashboard'
   | 'je' | 'gl'
@@ -63,8 +65,6 @@ export type ReportItem = {
   /** Who sees it — the gate its own sidebar entry had (batch 6 §1.1: "keep
    *  every member's own gate"). Absent on the Books pages, gated in Books. */
   gate?: ReportGate;
-  /** A P&L: its name in the P&L picker. The list shows the P&Ls as one entry, P&L. */
-  pnlPick?: string;
 };
 
 /** A sidebar entry's gate fields (components/Sidebar NavTab), as the reports keep them. */
@@ -105,19 +105,18 @@ const tabItem = (tab: AccountingTab & ReportId, group: ReportGroupId, books = fa
   navTo: `${ACCOUNTING}?tab=${tab}`,
 });
 
-const asPnl = (item: ReportItem, pick: string): ReportItem => ({ ...item, pnlPick: pick });
-
 /** Every report, in the design's order (the list draws them group by group). */
 export const REPORT_CATALOG: readonly ReportItem[] = [
-  // The P&Ls, in the picker's order, each with its own method and data (owner 2026-11-25: 我会有很多个不同的p&L,
-  // 每个的算法和提取的资料不一样). The books' P&L.
-  asPnl(tabItem('pnl', 'statements'), 'Actual'),
-  // G&A, Operation (his "Operation PNL - Auto" sheet) and every account split across the departments (owner 2026-11-19).
-  asPnl(tabItem('departments', 'statements'), 'Department'),
+  // The P&Ls — the list's one P&L entry, each with its own method and data (owner 2026-11-25: 我会有很多个不同的
+  // p&L, 每个的算法和提取的资料不一样). The books' P&L.
+  tabItem('pnl', 'statements'),
   // The month's orders per group against a budgeted operating expense (owner 2026-09-12; docs/bugs/0835).
-  asPnl(tabItem('performance', 'statements'), 'Performance'),
-  // The product changes added up P&L-style, by month and by salesperson (owner 2026-11-23: 类似 p&L).
-  asPnl(tabItem('changesum', 'statements'), 'Product changes'),
+  tabItem('performance', 'statements'),
+  // Each department by its own P&L, on the invoices or on the orders (`dbasis`; owner 2026-11-19, 2026-11-25).
+  tabItem('departments', 'statements'),
+  // The Forecast P&L (owner 2026-09-21: the Hookka Forecast P&L, trading edition — a target per account on the
+  // P&L's own tree; the Dashboard reads them beside the actuals).
+  { id: 'forecast', label: 'Forecast P&L', group: 'statements', path: '/scm/forecast', navTo: '/scm/forecast', gate: FORECAST_GATE },
   tabItem('bs', 'statements'),
   tabItem('rp', 'statements'),
   tabItem('tb', 'statements', true),
@@ -133,17 +132,21 @@ export const REPORT_CATALOG: readonly ReportItem[] = [
   tabItem('products', 'sales'),
   // Every product change on a sales order: did the selling change cover the cost change? By month (owner 2026-11-23).
   tabItem('changes', 'sales'),
+  // The same changes added up P&L-style, by month and by salesperson (owner 2026-11-23: 类似 p&L).
+  tabItem('changesum', 'sales'),
   // The month's shipped DOs: how much came from this month's orders, the rest from earlier ones (owner 2026-11-24).
   tabItem('sotodo', 'sales'),
   // What each event cost, from the ledger — voucher and AP invoice lines tagged with it (owner 2026-09-30, 5a).
   tabItem('events', 'events'),
   // Each fair's commission and each order's under it — goods × brand rate once 30% is paid (owner 2026-10-20).
   tabItem('commission', 'events'),
+  // What delivery cost by DO — by region, per trip (our lorries overall: the month's lorry cost ÷ its trips; 3PL
+  // bill lines), setup & dismantle, repairs by lorry (owner 2026-10-29).
+  tabItem('logistics', 'events'),
   // What each acquirer charged against the gross, per month (owner 2026-09-12; docs/bugs/0826).
   tabItem('charges', 'cards'),
-  // The Forecast P&L and the Dashboard (owner 2026-09-21: the Hookka Forecast P&L + Dashboard, trading
-  // edition — targets per account on the P&L's own tree; the Dashboard reads them beside the actuals).
-  { id: 'forecast', label: 'Forecast P&L', group: 'plan', path: '/scm/forecast', navTo: '/scm/forecast', gate: FORECAST_GATE },
+  // The Dashboard (owner 2026-09-21: the Hookka Dashboard, trading edition — the statements' actuals beside the
+  // Forecast P&L).
   { id: 'dashboard', label: 'Dashboard', group: 'plan', path: '/scm/finance-dashboard', navTo: '/scm/finance-dashboard', gate: FORECAST_GATE },
   tabItem('je', 'books', true),
   tabItem('gl', 'books', true),
@@ -151,6 +154,41 @@ export const REPORT_CATALOG: readonly ReportItem[] = [
   // sales order 的报告).
   tabItem('corrections', 'audit'),
 ];
+
+/** The P&L entry's picker (owner 2026-11-25): first the category — Actual by
+ *  sales invoice (the books), Performance by sales order, Forecast — then
+ *  Overall or Department. A choice opens a report of the list; the Department
+ *  P&L takes its basis from `dbasis` (none reads as Performance there). The
+ *  Forecast's departments are not built yet. */
+export type PnlCategory = 'actual' | 'performance' | 'forecast';
+export type PnlPart = 'overall' | 'department';
+export type PnlChoice = { category: PnlCategory; part: PnlPart; report: ReportId; dbasis: 'actual' | 'performance' | null };
+
+export const PNL_CATEGORIES: ReadonlyArray<{ id: PnlCategory; label: string }> = [
+  { id: 'actual', label: 'Actual' },
+  { id: 'performance', label: 'Performance' },
+  { id: 'forecast', label: 'Forecast' },
+];
+export const PNL_PARTS: ReadonlyArray<{ id: PnlPart; label: string }> = [
+  { id: 'overall', label: 'Overall' },
+  { id: 'department', label: 'Department' },
+];
+export const PNL_CHOICES: readonly PnlChoice[] = [
+  { category: 'actual', part: 'overall', report: 'pnl', dbasis: null },
+  { category: 'actual', part: 'department', report: 'departments', dbasis: 'actual' },
+  { category: 'performance', part: 'overall', report: 'performance', dbasis: null },
+  { category: 'performance', part: 'department', report: 'departments', dbasis: 'performance' },
+  { category: 'forecast', part: 'overall', report: 'forecast', dbasis: null },
+];
+
+/** A P&L of the picker: the list shows them as one entry, P&L. */
+export const isPnlReport = (id: ReportId): boolean => PNL_CHOICES.some((c) => c.report === id);
+
+/** The choice a page is: its report, and on the Department P&L its basis. */
+export function pnlChoiceOf(id: ReportId, dbasis: string | null): PnlChoice | null {
+  const basis = dbasis === 'actual' ? 'actual' : 'performance';
+  return PNL_CHOICES.find((c) => c.report === id && (c.dbasis == null || c.dbasis === basis)) ?? null;
+}
 
 /** A member of the sidebar's one Reports entry: a sidebar entry (NavTab) in
  *  all but name — its address, name, icon and gate. */

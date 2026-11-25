@@ -21,7 +21,7 @@ import { List, Pin, PinOff, type LucideIcon } from 'lucide-react';
 import { useAuth } from '../../../auth/AuthContext';
 import { NAV_TABS, type NavTab } from '../../../components/Sidebar';
 import { makeNavFilter } from '../../../components/navFilter';
-import { REPORT_CATALOG, REPORT_GROUPS, reportById, reportHref, type ReportId, type ReportItem, type ReportRange } from '../reports-catalog';
+import { REPORT_CATALOG, REPORT_GROUPS, isPnlReport, reportHref, type ReportId, type ReportItem, type ReportRange } from '../reports-catalog';
 import { readRailPinned, writeRailPinned } from './reportPrefs';
 import { PNL_ENTRY_LOOK, REPORT_LOOK } from './reportListLook';
 import s from './ReportShell.module.css';
@@ -59,14 +59,12 @@ export type ReportListEntry = {
 
 /** The list's entries for the reports a reader may open, in the catalog's order. */
 export function reportListEntries(reports: readonly ReportItem[]): ReportListEntry[] {
-  const firstPnl = reports.find((r) => r.pnlPick);
+  const firstPnl = reports.find((r) => isPnlReport(r.id));
   return reports.flatMap((r): ReportListEntry[] => {
-    if (!r.pnlPick) {
+    if (!isPnlReport(r.id)) {
       return [{ item: r, label: r.label, ...REPORT_LOOK[r.id], isOn: (current) => current === r.id }];
     }
-    return r === firstPnl
-      ? [{ item: r, ...PNL_ENTRY_LOOK, isOn: (current) => reportById(current).pnlPick != null }]
-      : [];
+    return r === firstPnl ? [{ item: r, ...PNL_ENTRY_LOOK, isOn: isPnlReport }] : [];
   });
 }
 

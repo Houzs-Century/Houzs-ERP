@@ -15,8 +15,8 @@
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Link, Navigate, useSearchParams } from 'react-router-dom';
-import { accountingTabFromSearch, logisticsMovedTo, type AccountingTab } from './accounting-tabs';
+import { Link, useSearchParams } from 'react-router-dom';
+import { accountingTabFromSearch, type AccountingTab } from './accounting-tabs';
 import { reportOfAccountingTab, type ReportItem } from './reports-catalog';
 import { ReportShell } from './reports/ReportShell';
 import {
@@ -40,6 +40,7 @@ import { EventCommissionTab } from './EventCommission';
 import { ProductProfitTab } from './ProductProfit';
 import { ProductChangesTab, ProductChangesSummaryTab } from './ProductChanges';
 import { SoBacklogCoverTab } from './SoBacklogCover';
+import { LogisticsCostTab } from './LogisticsCost';
 import { DepartmentPnlTab } from './DepartmentPnl';
 import { byText } from '../../vendor/scm/lib/sort-options';
 import styles from './Suppliers.module.css';
@@ -75,8 +76,6 @@ export const Accounting = () => {
      report's own header (batch 6 §4.3); Journal entries, the General ledger
      and the Trial balance too when opened from the list (`in=reports`). */
   const report = reportOfAccountingTab(tab, params.get('in') === 'reports');
-  /* The Logistics cost tab moved into the Department P&L (owner 2026-11-25): an old link lands there. */
-  if (params.get('tab') === 'logistics') return <Navigate to={logisticsMovedTo(params)} replace />;
 
   return (
     <AccountingFrame tab={tab} report={report}>
@@ -105,6 +104,8 @@ export const Accounting = () => {
       {tab === 'changes' && <ProductChangesTab />}
       {tab === 'changesum' && <ProductChangesSummaryTab />}
       {tab === 'sotodo' && <SoBacklogCoverTab />}
+      {/* Logistics cost by DO, an entry of its own (owner 2026-11-25: 现有的logistics by DO的放side bar 先). */}
+      {tab === 'logistics' && <LogisticsCostTab departmentPicker={null} />}
       {tab === 'departments' && <DepartmentPnlTab />}
     </AccountingFrame>
   );
