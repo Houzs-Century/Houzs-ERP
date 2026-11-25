@@ -77,14 +77,14 @@ export function PayrollTab() {
   ];
 
   const columns: HrCol<PRow>[] = [
-    { key: "emp", label: "Employee", render: (s) => <Person name={s.employeeName} sub={s.empNo} /> },
-    { key: "basic", label: "Basic", align: "right", render: (s, show) => (s.payMode === "DAILY" ? (show ? `${fmtSen(s.dayRateSen)}/day` : "RM ••••••") : m(s.fullSalarySen, show)) },
-    { key: "allow", label: "Allowances", align: "right", render: (s, show) => (s.allowancesSen ? m(s.allowancesSen, show) : <span className="text-ink-muted">—</span>) },
-    { key: "trip", label: "Trip pay", align: "right", render: (s, show) => (s.tripAllowanceSen + s.commissionSen ? m(s.tripAllowanceSen + s.commissionSen, show) : <span className="text-ink-muted">—</span>) },
-    { key: "ot", label: "Overtime", align: "right", render: (s, show) => (s.otPaySen ? m(s.otPaySen, show) : <span className="text-ink-muted">—</span>) },
-    { key: "ded", label: "Deductions", align: "right", render: (s, show) => { const dd = s.grossSen - s.netSen; return dd > 0 ? <span className="text-err">{show ? `-${fmtSen(dd)}` : "RM ••••••"}</span> : <span className="text-ink-muted">—</span>; } },
-    { key: "net", label: "Net pay", align: "right", render: (s, show) => <span className={"font-semibold " + (s.netSen < 0 ? "text-err" : "text-ink")}>{m(s.netSen, show)}</span> },
-    { key: "status", label: "Status", align: "center", render: (s) => statusTag(d?.projected ? "ESTIMATE" : s.status) },
+    { key: "emp", label: "Employee", getValue: (s) => `${s.employeeName} ${s.empNo}`, render: (s) => <Person name={s.employeeName} sub={s.empNo} /> },
+    { key: "basic", label: "Basic", align: "right", filterType: "number", getValue: (s) => (s.payMode === "DAILY" ? s.dayRateSen : s.fullSalarySen) / 100, render: (s, show) => (s.payMode === "DAILY" ? (show ? `${fmtSen(s.dayRateSen)}/day` : "RM ••••••") : m(s.fullSalarySen, show)) },
+    { key: "allow", label: "Allowances", align: "right", filterType: "number", getValue: (s) => s.allowancesSen / 100, render: (s, show) => (s.allowancesSen ? m(s.allowancesSen, show) : <span className="text-ink-muted">—</span>) },
+    { key: "trip", label: "Trip pay", align: "right", filterType: "number", getValue: (s) => (s.tripAllowanceSen + s.commissionSen) / 100, render: (s, show) => (s.tripAllowanceSen + s.commissionSen ? m(s.tripAllowanceSen + s.commissionSen, show) : <span className="text-ink-muted">—</span>) },
+    { key: "ot", label: "Overtime", align: "right", filterType: "number", getValue: (s) => s.otPaySen / 100, render: (s, show) => (s.otPaySen ? m(s.otPaySen, show) : <span className="text-ink-muted">—</span>) },
+    { key: "ded", label: "Deductions", align: "right", filterType: "number", getValue: (s) => (s.grossSen - s.netSen) / 100, render: (s, show) => { const dd = s.grossSen - s.netSen; return dd > 0 ? <span className="text-err">{show ? `-${fmtSen(dd)}` : "RM ••••••"}</span> : <span className="text-ink-muted">—</span>; } },
+    { key: "net", label: "Net pay", align: "right", filterType: "number", getValue: (s) => s.netSen / 100, render: (s, show) => <span className={"font-semibold " + (s.netSen < 0 ? "text-err" : "text-ink")}>{m(s.netSen, show)}</span> },
+    { key: "status", label: "Status", align: "center", getValue: (s) => (d?.projected ? "ESTIMATE" : s.status), render: (s) => statusTag(d?.projected ? "ESTIMATE" : s.status) },
   ];
 
   const actions = (

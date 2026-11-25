@@ -93,11 +93,12 @@ export function KpiTab() {
   ];
 
   const columns: HrCol<Row>[] = [
-    { key: "emp", label: "Employee", render: (r) => <Person name={r.name} sub={r.empNo} /> },
-    { key: "pos", label: "Position", render: (r) => <Tag tone="info">{r.position}</Tag> },
+    { key: "emp", label: "Employee", getValue: (r) => `${r.name} ${r.empNo}`, render: (r) => <Person name={r.name} sub={r.empNo} /> },
+    { key: "pos", label: "Position", getValue: (r) => r.position, render: (r) => <Tag tone="info">{r.position}</Tag> },
     ...metrics.map((m, i) => ({
       key: `m${m.id}`,
       label: m.name,
+      getValue: (r: Row) => r.metric100.get(m.id) ?? null,
       render: (r: Row) => {
         const v = r.metric100.get(m.id) ?? null;
         return (
@@ -111,6 +112,8 @@ export function KpiTab() {
     {
       key: "score",
       label: "Score",
+      filterType: "number",
+      getValue: (r) => r.final100 ?? null,
       render: (r) => (
         <span className="flex items-center gap-2">
           <Bar pct={r.final100 ?? 0} tone={barTone(r.final100)} w="w-16" />
@@ -118,7 +121,7 @@ export function KpiTab() {
         </span>
       ),
     },
-    { key: "grade", label: "Grade", align: "center", render: (r) => (r.tierLabel ? <Tag tone={gradeTone(r.final100)}>{r.tierLabel}</Tag> : <span className="text-ink-muted">—</span>) },
+    { key: "grade", label: "Grade", align: "center", getValue: (r) => r.tierLabel ?? "", render: (r) => (r.tierLabel ? <Tag tone={gradeTone(r.final100)}>{r.tierLabel}</Tag> : <span className="text-ink-muted">—</span>) },
   ];
 
   const seedDefault = () =>

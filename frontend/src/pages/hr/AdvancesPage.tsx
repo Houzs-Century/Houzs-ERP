@@ -46,15 +46,15 @@ export function AdvancesPage() {
   }
 
   const columns: HrCol<Advance>[] = [
-    { key: "date", label: "Date", render: (a) => <span className="font-mono">{formatDate(a.date)}</span> },
-    { key: "emp", label: "Employee", render: (a) => <span><span className="font-mono text-[11px] font-semibold text-accent">{a.empNo}</span> <span className="text-ink">{a.name}</span></span> },
-    { key: "amount", label: "Amount", align: "right", render: (a, show) => <span className="font-money text-ink">{mask(fmtSen(a.amountSen), show)}</span> },
-    { key: "schedule", label: "Repayment", align: "right", render: (a, show) => (a.installmentSen == null ? <span className="text-ink-muted">Lump sum</span> : <span className="font-money text-ink-secondary">{mask(fmtSen(a.installmentSen), show)}<span className="text-ink-muted">/mo</span></span>) },
-    { key: "thismonth", label: "This month", align: "right", render: (a, show) => <span className="font-money text-ink">{mask(fmtSen(a.thisMonthSen), show)}</span> },
-    { key: "remaining", label: "Remaining", align: "right", render: (a, show) => (a.remainingSen > 0 ? <span className="font-money text-ink-secondary">{mask(fmtSen(a.remainingSen), show)}</span> : <span className="text-ink-muted">—</span>) },
-    { key: "note", label: "Note", render: (a) => <span className="text-ink-secondary">{a.note || "—"}</span> },
-    { key: "status", label: "Status", render: (a) => (a.remainingSen > 0 ? <Tag tone="info">Repaying</Tag> : a.status === "SETTLED" ? <Tag tone="ok">Settled</Tag> : a.thisMonthSen > 0 ? <Tag tone="warn">To deduct</Tag> : <Tag tone="ok">Settled</Tag>) },
-    { key: "actions", label: "", align: "right", render: (a) => (canManage && a.status === "UNSETTLED" ? <button type="button" onClick={() => void remove(a)} className="rounded-md border border-border bg-surface px-2.5 py-1 text-[11px] font-semibold text-ink-secondary hover:border-err/40 hover:text-err">Remove</button> : null) },
+    { key: "date", label: "Date", filterType: "date", getValue: (a) => a.date, render: (a) => <span className="font-mono">{formatDate(a.date)}</span> },
+    { key: "emp", label: "Employee", getValue: (a) => `${a.name} ${a.empNo}`, render: (a) => <span><span className="font-mono text-[11px] font-semibold text-accent">{a.empNo}</span> <span className="text-ink">{a.name}</span></span> },
+    { key: "amount", label: "Amount", align: "right", filterType: "number", getValue: (a) => a.amountSen / 100, render: (a, show) => <span className="font-money text-ink">{mask(fmtSen(a.amountSen), show)}</span> },
+    { key: "schedule", label: "Repayment", align: "right", getValue: (a) => (a.installmentSen == null ? 0 : a.installmentSen / 100), render: (a, show) => (a.installmentSen == null ? <span className="text-ink-muted">Lump sum</span> : <span className="font-money text-ink-secondary">{mask(fmtSen(a.installmentSen), show)}<span className="text-ink-muted">/mo</span></span>) },
+    { key: "thismonth", label: "This month", align: "right", filterType: "number", getValue: (a) => a.thisMonthSen / 100, render: (a, show) => <span className="font-money text-ink">{mask(fmtSen(a.thisMonthSen), show)}</span> },
+    { key: "remaining", label: "Remaining", align: "right", filterType: "number", getValue: (a) => a.remainingSen / 100, render: (a, show) => (a.remainingSen > 0 ? <span className="font-money text-ink-secondary">{mask(fmtSen(a.remainingSen), show)}</span> : <span className="text-ink-muted">—</span>) },
+    { key: "note", label: "Note", getValue: (a) => a.note ?? "", render: (a) => <span className="text-ink-secondary">{a.note || "—"}</span> },
+    { key: "status", label: "Status", getValue: (a) => (a.remainingSen > 0 ? "Repaying" : a.status === "SETTLED" ? "Settled" : a.thisMonthSen > 0 ? "To deduct" : "Settled"), render: (a) => (a.remainingSen > 0 ? <Tag tone="info">Repaying</Tag> : a.status === "SETTLED" ? <Tag tone="ok">Settled</Tag> : a.thisMonthSen > 0 ? <Tag tone="warn">To deduct</Tag> : <Tag tone="ok">Settled</Tag>) },
+    { key: "actions", label: "", align: "right", disableSort: true, render: (a) => (canManage && a.status === "UNSETTLED" ? <button type="button" onClick={() => void remove(a)} className="rounded-md border border-border bg-surface px-2.5 py-1 text-[11px] font-semibold text-ink-secondary hover:border-err/40 hover:text-err">Remove</button> : null) },
   ];
 
   return (
