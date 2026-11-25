@@ -4,7 +4,7 @@ import { getUserBySession, timingSafeEqualStr, type AuthUser, mintSessionPassFor
 import { tryPassAuth } from "../services/session-pass";
 import { hasPermission } from "../services/permissions";
 import { MCP_TOKEN_PREFIX } from "../services/mcp-store";
-import { MCP_INNER_HEADER, isMcpInner, recallVerified } from "../services/mcp-inner";
+import { MCP_ACTION_HEADER, MCP_INNER_HEADER, admitMcpWrite, isMcpInner, recallVerified } from "../services/mcp-inner";
 import { mcpIdentity, type McpIdentity } from "../routes/mcp";
 import { hasScmUmbrella } from "../services/scmUmbrella";
 import { canViewItPages } from "../services/itAccess";
@@ -187,19 +187,27 @@ export const auth: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
   }
 
   // AI Connector token (routes/mcp.ts). Honoured ONLY on the connector's own
-  // in-process call (per-isolate secret header) and ONLY for reads: a token
-  // copied out of an AI app gets 403 here, and so does any write. Runs the
-  // route as the real person, so their permissions and company scope decide.
+  // in-process call (per-isolate secret header) and only for reads, with ONE
+  // exception: the call confirm_action makes for an action the person just
+  // confirmed (services/mcp-inner.ts admitMcpWrite: armed action id, same token,
+  // ACTION_ALLOWLIST route, single use). A token copied out of an AI app gets
+  // 403 here, and so does every other write. Runs the route as the real person,
+  // so their permissions and company scope decide.
   if (token.startsWith(MCP_TOKEN_PREFIX)) {
     if (!isMcpInner(c.req.header(MCP_INNER_HEADER))) {
       return c.json({ error: "AI Connector tokens only work through the connector." }, 403);
     }
-    if (c.req.method !== "GET" && c.req.method !== "HEAD") {
+    const isRead = c.req.method === "GET" || c.req.method === "HEAD";
+    const actionId = c.req.header(MCP_ACTION_HEADER);
+    if (!isRead && !actionId) {
       return c.json({ error: "The AI Connector is read-only." }, 403);
     }
     // Verified at the door of this same tool call (routes/mcp.ts); else check now.
     const id = recallVerified<McpIdentity>(token, Date.now()) ?? (await mcpIdentity(c.env, token));
     if (!id) return c.json({ error: "Your session has expired. Please sign in again." }, 401);
+    if (!isRead && !admitMcpWrite({ method: c.req.method, path, actionId, tokenId: id.tokenId, now: Date.now() })) {
+      return c.json({ error: "The AI Connector is read-only." }, 403);
+    }
     c.set("authPath", "session-db");
     c.set("user", id.user);
     c.set("userId", id.user.id);

@@ -110,7 +110,7 @@ export function AiConnect() {
               <li className="flex gap-2.5">
                 <Check size={18} className="mt-0.5 shrink-0 text-synced" aria-hidden="true" />
                 <span>
-                  <b className="text-ink">Read only.</b> It can look things up; it cannot create, change or delete anything.
+                  <b className="text-ink">Looks things up.</b> It cannot change orders, money or stock. Only if your admin allows it can it book a meeting or send an email for you, and only after you confirm.
                 </span>
               </li>
               <li className="flex gap-2.5">

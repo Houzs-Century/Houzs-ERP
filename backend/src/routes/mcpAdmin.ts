@@ -6,7 +6,7 @@
 //           GET /consent/:id, POST /consent/:id      (the OAuth "Allow?" step)
 //   admin:  GET /admin/overview, POST /admin/requests/:id/:decision,
 //           POST /admin/access, DELETE /admin/access/:userId, POST /admin/revoke,
-//           POST /admin/leak-check
+//           POST /admin/leak-check, POST /admin/actions  ("Allow AI actions", default OFF)
 // Admin = holds ai_connector.manage (the Owner via "*").
 // ---------------------------------------------------------------------------
 import { Hono } from "hono";
@@ -18,6 +18,7 @@ import { usersHoldingPermission } from "../services/permissionHolders";
 import { postPersonalNotice } from "../services/personalNotice";
 import { jsonKeys, leakCheckPaths, SECRET_KEY, SENSITIVE_KEY } from "../services/mcp-access";
 import {
+  actionsEnabled,
   appLabel,
   createCode,
   getAuthRequest,
@@ -28,6 +29,7 @@ import {
   randomToken,
   revokeToken,
   revokeUserTokens,
+  setActionsEnabled,
   takeAuthRequest,
 } from "../services/mcp-store";
 import { isMcpAdmin, mcpAppRoutes, publicOrigin, readEndpoint } from "./mcp";
@@ -168,7 +170,7 @@ app.get("/admin/overview", async (c) => {
   const db = c.env.DB;
   const nowIso = new Date().toISOString();
   const dayAgo = new Date(Date.now() - 24 * 3600_000).toISOString();
-  const [requests, connected, allowed, calls, staff, stats] = await Promise.all([
+  const [requests, connected, allowed, calls, staff, stats, actionsOn] = await Promise.all([
     db
       .prepare(
         `SELECT r.id, r.user_id, r.reason, r.created_at, u.name, u.email, p.name AS position_name
@@ -215,10 +217,12 @@ app.get("/admin/overview", async (c) => {
       )
       .bind(dayAgo, dayAgo, nowIso)
       .first<Record<string, unknown>>(),
+    actionsEnabled(db),
   ]);
   const pos = (r: Record<string, unknown>) => s(r, "position_name") || "—";
   return c.json({
     connectorUrl: connectorUrl(c),
+    actionsEnabled: actionsOn,
     stats: { connectedPeople: num(stats ?? {}, "people"), callsToday: num(stats ?? {}, "calls_24h"), refusedToday: num(stats ?? {}, "refused_24h"), waiting: requests.results.length },
     requests: requests.results.map((r) => ({ id: s(r, "id"), userId: num(r, "user_id"), name: s(r, "name"), position: pos(r), reason: s(r, "reason"), createdAt: iso(r.created_at) })),
     connected: connected.results.map((r) => ({ tokenId: s(r, "id"), userId: num(r, "user_id"), name: s(r, "name"), position: pos(r), app: appLabel(s(r, "client_name")), connectedAt: iso(r.created_at), lastUsedAt: iso(r.last_used_at) })),
@@ -287,6 +291,18 @@ app.post("/admin/revoke", async (c) => {
   else return c.json({ error: "tokenId or userId required" }, 400);
   await audit(c, { action: "ai_connector.disconnect", entityType: "ai_connector", entityId: typeof body.tokenId === "string" ? body.tokenId : Number(body.userId), summary: `Disconnected ${n} AI connection(s)` });
   return c.json({ ok: true, revoked: n });
+});
+
+// "Allow AI actions (meetings, email)": propose_* / confirm_action answer
+// "switched off" until this is on (routes/mcp.ts). Default OFF.
+app.post("/admin/actions", async (c) => {
+  const denied = denyUnlessAdmin(c);
+  if (denied) return denied;
+  const body = (await c.req.json().catch(() => ({}))) as { enabled?: unknown };
+  if (typeof body.enabled !== "boolean") return c.json({ error: "enabled must be true or false" }, 400);
+  await setActionsEnabled(c.env.DB, body.enabled);
+  await audit(c, { action: "ai_connector.actions", entityType: "ai_connector", entityId: c.get("user").id, summary: `AI actions (meetings, email) turned ${body.enabled ? "on" : "off"}` });
+  return c.json({ ok: true, actionsEnabled: body.enabled });
 });
 
 // ── leak check ──────────────────────────────────────────────────────────────

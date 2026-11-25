@@ -8,30 +8,60 @@
 //   POST /api/mcp/oauth/token        authorization_code (PKCE S256) / refresh_token (rotating).
 //   GET  /.well-known/oauth-*        discovery (wellKnown, mounted at the root; Pages forwards it).
 //
-// READ-ONLY and OWN-PERMISSIONS by construction: a tool call re-enters the
-// whole app as a GET carrying the person's MCP token. middleware/auth.ts
-// accepts an hzmcp_ token ONLY on that in-process call (a per-isolate secret
-// header nobody outside can know) and ONLY for GET/HEAD, then runs every route
-// as the real person — their permissions, page access and company scope.
+// OWN-PERMISSIONS by construction: a tool call re-enters the whole app as a GET
+// carrying the person's MCP token. middleware/auth.ts accepts an hzmcp_ token
+// ONLY on that in-process call (a per-isolate secret header nobody outside can
+// know) and ONLY for GET/HEAD, then runs every route as the real person — their
+// permissions, page access and company scope. The one exception is a confirmed
+// action (book a meeting, send an email): propose_* stores it, the person says
+// yes, confirm_action claims it once and makes ONE allowlisted POST
+// (services/mcp-inner.ts ACTION_ALLOWLIST). Off unless an admin turns it on.
 // ---------------------------------------------------------------------------
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { Env } from "../types";
 import { getUserById, type AuthUser } from "../services/auth";
 import { hasPermission } from "../services/permissions";
-import { MCP_INNER_HEADER, mcpInnerSecret, recallVerified, rememberVerified } from "../services/mcp-inner";
+import { actionRoute, armAction, disarmAction, MCP_ACTION_HEADER, MCP_INNER_HEADER, mcpInnerSecret, recallVerified, rememberVerified } from "../services/mcp-inner";
+import {
+  ACTIONS_OFF,
+  actionOutcome,
+  EXPORT_KEY_RE,
+  EXPORT_PREFIX,
+  EXPORT_TTL_MS,
+  exportAlive,
+  flowAnchorFromId,
+  flowAnchorFromSearch,
+  MAX_CONFIRMED_PER_DAY,
+  PENDING_TTL_MS,
+  pdfKind,
+  flowSpec,
+  pickDateAmount,
+  proposeEmail,
+  proposeMeeting,
+  readBootstrap,
+  shapeFlow,
+  type ActionKind,
+  type Proposal,
+} from "../services/mcp-actions";
 import { isFinanceViewer, isProductCostViewer } from "../services/pmsAccess";
 import { docTitle, fetchKind, myToday, parseFetchId, pickFields, PROMPTS, promptText, resolveWindow, searchResults, singleMonth, summariseDelivery, summariseSales, type Window } from "../services/mcp-quick";
 import { classifyPath, moduleCatalog, readablePaths, redactMoney, redactSecrets, type RouteInfo } from "../services/mcp-access";
 import {
+  actionsEnabled,
+  claimPendingAction,
+  confirmedLastDay,
   consumeCode,
   createAuthRequest,
+  createPendingAction,
+  finishPendingAction,
   getClient,
   hasMcpAccess,
   issueTokens,
   logCall,
   MCP_ADMIN_PERMISSION,
   pkceS256,
+  randomToken,
   refreshTokens,
   registerClient,
   resolveAccessToken,
@@ -199,17 +229,22 @@ type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean
 const text = (t: string, isError = false): ToolResult => ({ content: [{ type: "text", text: t }], ...(isError ? { isError: true } : {}) });
 
 export const MCP_INSTRUCTIONS = `You are connected to Houzs ERP (Houzs Century furniture retail + the 2990's POS: sales orders, projects / exhibitions, service cases (ASSR), purchasing, delivery, warehouse, accounting, HR, fleet) as the signed-in staff member.
-Everything is READ-ONLY and limited to what this person may see in the ERP. Never guess figures a call did not return.
+Everything is limited to what this person may see and do in the ERP. Reading is the default; never guess figures a call did not return.
 ANSWER FAST: use a quick answer first. It is one call and already summarised.
 - Sales (a month, quarter or year; vs the same days of the previous period; by showroom, brand, salesperson, state; daily; top models; trend): sales_summary {period: "YYYY-MM" | "YYYY-Qn" | "YYYY"} or {from, to}.
 - Deliveries (delivery orders and amount; vs the same days of the previous period; by region and lorry; daily; open process gaps such as delivery orders not closed or delivered but still owing): delivery_summary {period} or {from, to}.
 - One document, customer or supplier by number or name, or the status of an order: search {query}, then fetch {id} for the full record.
+- The chain of a document (sales order -> delivery orders -> invoices -> payments, and purchase orders -> goods received -> purchase invoices, or backwards from any of them): document_flow {number_or_id}.
+- A document's PDF / printout: get_pdf {type, id} (ids from search).
 Only when no quick answer fits: list_modules, then list_endpoints for a module, then erp_get. Most of the trading ERP is under /api/scm/... With erp_get pass "fields" (only the keys you need) and query parameters (dates YYYY-MM-DD, page/limit, search, status) to keep replies small.
 Two companies share the ERP: HOUZS (default) and 2990 (the 2990's POS). Pass company "2990" to sales_summary, delivery_summary, search, fetch or erp_get for 2990 data, if this person may see it.
 Money in the ERP is integer sen (RM x 100) unless a field says RM. Dates are Malaysia time.
-If a call says "not available to your role" or "You don't have permission", tell the person they do not have permission for that data.`;
+If a call says "not available to your role" or "You don't have permission", tell the person they do not have permission for that data.
+ACTIONS (only booking a meeting and sending an email; never orders, money, stock, approvals or deletes): call propose_meeting or propose_email, show the person the summary it returns word for word, and ask them to confirm. Only call confirm_action after they explicitly say yes in their own reply. If they want changes, propose again. If a tool says AI actions are switched off, tell them their admin has not turned actions on.`;
 
 const readOnly = { readOnlyHint: true, openWorldHint: false };
+const actionHint = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true };
+const CONFIRM_RULE = "Show this summary to the person and ask them to confirm. Only call confirm_action after they explicitly say yes.";
 const COMPANY_PARAM = { type: "string", enum: ["HOUZS", "2990"], description: "Which company's data (default HOUZS)" };
 const PERIOD_PROPS = {
   period: { type: "string", description: "YYYY-MM, YYYY-Qn or YYYY. Default: this month (to today)." },
@@ -275,9 +310,91 @@ export const MCP_TOOLS = [
     },
     annotations: readOnly,
   },
+  {
+    name: "document_flow",
+    title: "Document flow (sales order to payment, purchase order to purchase invoice)",
+    description:
+      "The whole chain around one document, forwards and backwards: sales order -> delivery orders -> invoices -> customer payments, and purchase orders -> goods received -> purchase invoices, with returns. Each link has its type, number, status, date, amount (RM) and ERP link. Give a document number (e.g. HC-SO-013402) or an id from search.",
+    inputSchema: { type: "object", properties: { number_or_id: { type: "string", description: "A document number, or an id from search such as sales_order:HC-SO-013402" }, company: COMPANY_PARAM }, required: ["number_or_id"], additionalProperties: false },
+    annotations: readOnly,
+  },
+  {
+    name: "get_pdf",
+    title: "PDF / printout of a document",
+    description:
+      "A document's printout. A service case (customer copy) or a project debrief comes back as a download link valid for 15 minutes (open it, then print or save as PDF). Sales orders, delivery orders, invoices, purchase orders and the other trading documents make their PDF in the browser: you get the ERP page link, and the person presses Print / PDF there.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        type: {
+          type: "string",
+          enum: ["sales_order", "delivery_order", "sales_invoice", "purchase_order", "grn", "purchase_invoice", "credit_note", "delivery_return", "payment_voucher", "assr_case", "project"],
+          description: "The kind of document (the part before ':' in a search id)",
+        },
+        id: { type: "string", description: "The id (the part after ':' in a search id)" },
+        company: COMPANY_PARAM,
+      },
+      required: ["type", "id"],
+      additionalProperties: false,
+    },
+    annotations: readOnly,
+  },
+  {
+    name: "propose_meeting",
+    title: "Propose a meeting (the person confirms)",
+    description: `Prepare a meeting in the ERP calendar for the signed-in person (they are the organiser). Nothing is booked yet: it returns a summary and a confirmationId. ${CONFIRM_RULE} start / end: "YYYY-MM-DDTHH:MM" in Malaysia time (end defaults to one hour later). attendees: staff names or emails; an email that is not a staff member becomes an outside guest who gets an invitation email.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: { type: "string" },
+        start: { type: "string", description: "YYYY-MM-DDTHH:MM, Malaysia time" },
+        end: { type: "string", description: "YYYY-MM-DDTHH:MM, Malaysia time (default: one hour after start)" },
+        attendees: { type: "array", items: { type: "string" }, description: "Staff names or emails; outside emails become guests" },
+        room: { type: "string", description: "Meeting room name (optional)" },
+        notes: { type: "string" },
+        company: COMPANY_PARAM,
+      },
+      required: ["title", "start"],
+      additionalProperties: false,
+    },
+    annotations: actionHint,
+  },
+  {
+    name: "propose_email",
+    title: "Propose an email (the person confirms)",
+    description: `Prepare an email from one of the person's own Mail Center mailboxes. Nothing is sent yet: it returns a summary and a confirmationId. ${CONFIRM_RULE} Once confirmed the email leaves the company. Plain text, no attachments.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        to: { type: "array", items: { type: "string" } },
+        cc: { type: "array", items: { type: "string" } },
+        subject: { type: "string" },
+        body: { type: "string", description: "Plain text" },
+        from_mailbox: { type: "string", description: "Which of the person's mailboxes to send from (needed when they have more than one)" },
+        company: COMPANY_PARAM,
+      },
+      required: ["to", "subject", "body"],
+      additionalProperties: false,
+    },
+    annotations: actionHint,
+  },
+  {
+    name: "confirm_action",
+    title: "Do a confirmed action",
+    description: "Book the meeting or send the email prepared by propose_meeting / propose_email. ONLY after the person has seen the summary and explicitly said yes. Each confirmationId works once, within 10 minutes.",
+    inputSchema: { type: "object", properties: { confirmationId: { type: "string" } }, required: ["confirmationId"], additionalProperties: false },
+    annotations: actionHint,
+  },
+  {
+    name: "cancel_action",
+    title: "Cancel a proposed action",
+    description: "Throw away a proposal the person does not want.",
+    inputSchema: { type: "object", properties: { confirmationId: { type: "string" } }, required: ["confirmationId"], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
 ];
 
-async function innerGet(c: Context<HonoEnv>, token: string, pathWithQuery: string, company: string | null): Promise<Response> {
+async function innerCall(c: Context<HonoEnv>, token: string, pathWithQuery: string, company: string | null, write: { actionId: string; method: string; body: unknown } | null): Promise<Response> {
   if (!appRef) throw new Error("MCP app not initialised");
   let ctx: unknown;
   try {
@@ -287,8 +404,12 @@ async function innerGet(c: Context<HonoEnv>, token: string, pathWithQuery: strin
   }
   const headers: Record<string, string> = { authorization: `Bearer ${token}`, [MCP_INNER_HEADER]: mcpInnerSecret(), accept: "application/json" };
   if (company) headers["X-Company-Id"] = company;
-  return appRef.fetch(new Request(originOf(c) + pathWithQuery, { method: "GET", headers }), c.env, ctx);
+  if (!write) return appRef.fetch(new Request(originOf(c) + pathWithQuery, { method: "GET", headers }), c.env, ctx);
+  headers[MCP_ACTION_HEADER] = write.actionId;
+  headers["content-type"] = "application/json";
+  return appRef.fetch(new Request(originOf(c) + pathWithQuery, { method: write.method, headers, body: JSON.stringify(write.body) }), c.env, ctx);
 }
+const innerGet = (c: Context<HonoEnv>, token: string, pathWithQuery: string, company: string | null) => innerCall(c, token, pathWithQuery, company, null);
 
 type ReadValue =
   | { ok: true; status: number; value: unknown; removed: string[]; target: string }
@@ -421,6 +542,164 @@ async function fetchTool(c: Context<HonoEnv>, token: string, rawId: unknown, com
   return { result: text(JSON.stringify(doc)), status: 200, note: "", target };
 }
 
+// ── document flow ───────────────────────────────────────────────────────────
+
+const FLOW_ENRICH_MAX = 15;
+const FLOW_ENRICH_PARALLEL = 5;
+
+async function documentFlowTool(c: Context<HonoEnv>, token: string, q: string, company: string | null): Promise<Outcome> {
+  const target = `flow:${q}`.slice(0, 200);
+  if (!q) return { result: text("Give a document number (e.g. HC-SO-013402) or an id from search.", true), status: 400, note: "", target };
+  let anchor = flowAnchorFromId(q);
+  if (!anchor) {
+    const found = await readValue(c, token, "/api/search", { q }, company);
+    if (!found.ok) return { result: text(found.message, true), status: found.status, note: found.note, target };
+    anchor = flowAnchorFromSearch(found.value, q);
+    if (!anchor) return { result: text(`No sales order, delivery order, invoice, purchase order, GRN or return matches "${q}".`, true), status: 404, note: "not found", target };
+  }
+  const r = await readValue(c, token, `/api/scm/document-flow/${anchor.type}/${encodeURIComponent(anchor.id)}`, undefined, company);
+  if (!r.ok) return { result: text(r.message, true), status: r.status, note: r.note, target };
+
+  // Date and amount come from each document's own detail read, as the person (money stripped by cohort there too).
+  const nodes = (Array.isArray((r.value as { nodes?: unknown }).nodes) ? (r.value as { nodes: Record<string, unknown>[] }).nodes : []).filter((n) => {
+    const spec = flowSpec(String(n.type));
+    return !!spec?.fetch && typeof n.id === "string" && /^[A-Za-z0-9._-]{1,80}$/.test(n.id);
+  });
+  const extra = new Map<string, { date: string | null; amountRM: number | null }>();
+  const todo = nodes.slice(0, FLOW_ENRICH_MAX);
+  for (let i = 0; i < todo.length; i += FLOW_ENRICH_PARALLEL) {
+    // eslint-disable-next-line no-await-in-loop -- bounded fan-out: 5 in-process reads at a time, at most 15 in all
+    await Promise.all(
+      todo.slice(i, i + FLOW_ENRICH_PARALLEL).map(async (n) => {
+        const kind = fetchKind(String(flowSpec(String(n.type))?.fetch ?? ""));
+        if (!kind) return;
+        const d = await readValue(c, token, kind.api(String(n.id)), undefined, company);
+        if (d.ok) extra.set(String(n.key ?? `${String(n.type)}:${String(n.id)}`), pickDateAmount(d.value));
+      }),
+    );
+  }
+  const shaped = shapeFlow(r.value, originOf(c), extra);
+  const out: Record<string, unknown> = { anchor: `${flowSpec(anchor.type)?.word ?? anchor.type} ${anchor.id}`, links: shaped.links.map(({ nodeType: _t, id: _i, ...l }) => l), steps: shaped.steps };
+  if (nodes.length > FLOW_ENRICH_MAX) out.note = `Dates and amounts filled for the first ${FLOW_ENRICH_MAX} of ${nodes.length} documents; open the others with fetch.`;
+  if (shaped.incomplete.length) out.couldNotRead = shaped.incomplete;
+  return { result: text(JSON.stringify(out).slice(0, MAX_RESULT_CHARS)), status: 200, note: "", target };
+}
+
+// ── print / PDF ─────────────────────────────────────────────────────────────
+
+async function getPdfTool(c: Context<HonoEnv>, id: Identity, token: string, type: string, docId: string, company: string | null): Promise<Outcome> {
+  const target = `pdf:${type}:${docId}`.slice(0, 200);
+  const spec = pdfKind(type);
+  const kind = fetchKind(type);
+  if (!spec || !kind) return { result: text(`get_pdf does not know "${type}". Use a type from search, e.g. sales_order, delivery_order, sales_invoice, purchase_order, assr_case, project.`, true), status: 400, note: "", target };
+  if (!/^[A-Za-z0-9._-]{1,80}$/.test(docId)) return { result: text("Give the document id from search.", true), status: 400, note: "", target };
+  // Never weaker than opening the document: read it as the person first.
+  const seen = await readValue(c, token, kind.api(docId), undefined, company);
+  if (!seen.ok) return { result: text(seen.message, true), status: seen.status, note: seen.note, target };
+  const page = originOf(c) + kind.page(docId);
+  const browserOnly = (why: string) => ({
+    result: text(JSON.stringify({ page, serverPdf: false, howTo: `${why} Open the page and press Print / PDF there.` })),
+    status: 200,
+    note: "",
+    target,
+  });
+  if (!spec.print) return browserOnly("This document's PDF is made in the browser by the ERP page, not on the server.");
+  if (spec.financeOnly && !isFinanceViewer(id.user)) return browserOnly("This printout carries cost and profit, which the AI connector shows only to finance.");
+  const res = await innerGet(c, token, spec.print(docId), company);
+  const ctype = res.headers.get("content-type") ?? "";
+  if (res.status === 401 || res.status === 403) return { result: text("Not available to your role: you do not have permission for this in the ERP.", true), status: res.status, note: "no permission", target };
+  if (!res.ok || !ctype.includes("text/html")) return browserOnly(`The printout could not be made here (HTTP ${res.status}).`);
+  const key = randomToken(32);
+  const expiresAt = new Date(Date.now() + EXPORT_TTL_MS).toISOString();
+  await c.env.POD_BUCKET.put(`${EXPORT_PREFIX}${key}.html`, await res.text(), {
+    httpMetadata: { contentType: "text/html; charset=utf-8" },
+    customMetadata: { expiresAt, userId: String(id.user.id), doc: `${type}:${docId}` },
+  });
+  return {
+    result: text(JSON.stringify({ download: `${originOf(c)}/api/mcp/export/${key}`, expiresAt, page, howTo: "The link opens the ERP's own printout and works for 15 minutes. Open it, then print or save as PDF." })),
+    status: 200,
+    note: "",
+    target,
+  };
+}
+
+// ── actions: propose, confirm, cancel ───────────────────────────────────────
+
+async function proposeTool(c: Context<HonoEnv>, id: Identity, token: string, kind: ActionKind, args: Record<string, unknown>, company: string | null): Promise<Outcome> {
+  let target = `propose ${kind}`;
+  if (!(await actionsEnabled(c.env.DB))) return { result: text(ACTIONS_OFF, true), status: 403, note: "actions off", target };
+  let p: Proposal;
+  if (kind === "meeting") {
+    const boot = await readValue(c, token, "/api/meetings/bootstrap", undefined, company);
+    if (!boot.ok) return { result: text(boot.message, true), status: boot.status, note: boot.note, target };
+    p = proposeMeeting(args, readBootstrap(boot.value), Date.now());
+  } else {
+    // Mail Center is never READ through the connector; this asks only which mailboxes the person may send from.
+    const res = await innerGet(c, token, "/api/mail-center/compose/senders", company);
+    if (res.status === 401 || res.status === 403) return { result: text("Not available to your role: you may not send email from the Mail Center.", true), status: res.status, note: "no permission", target };
+    const body = (await jsonOrNull(res, "senders")) as { senders?: unknown } | null;
+    if (!res.ok || !body || !Array.isArray(body.senders)) return { result: text(`Your mailboxes could not be read (HTTP ${res.status}). Try again in a moment.`, true), status: 502, note: "senders unreadable", target };
+    p = proposeEmail(args, body.senders.map(String));
+  }
+  if (!p.ok) return { result: text(p.error, true), status: 400, note: p.error.slice(0, 120), target };
+  const confirmationId = await createPendingAction(c.env.DB, { tokenId: id.tokenId, userId: id.user.id, kind, payload: { company, body: p.payload }, summary: p.logLine, ttlMs: PENDING_TTL_MS });
+  target = `propose ${p.logLine}`;
+  return {
+    result: text(JSON.stringify({ confirmationId, expiresInMinutes: PENDING_TTL_MS / 60_000, summary: p.summary, next: "Show this summary to the person and ask them to confirm. Only call confirm_action after they explicitly say yes." })),
+    status: 200,
+    note: "",
+    target,
+  };
+}
+
+/** A reply's JSON, or null when it is not JSON (logged; the caller words the status). */
+async function jsonOrNull(res: Response, what: string): Promise<unknown> {
+  try {
+    return await res.json();
+  } catch (e) {
+    console.warn(`[mcp] ${what}: HTTP ${res.status} reply is not JSON:`, e instanceof Error ? e.message : String(e));
+    return null;
+  }
+}
+
+const UNKNOWN_CONFIRMATION = "That confirmation is unknown, expired (10 minutes), already used, or belongs to another connection. Propose it again.";
+
+async function confirmTool(c: Context<HonoEnv>, id: Identity, token: string, confirmationId: string): Promise<Outcome> {
+  let target = "confirm";
+  if (!confirmationId) return { result: text("Give the confirmationId from propose_meeting or propose_email.", true), status: 400, note: "", target };
+  if (!(await actionsEnabled(c.env.DB))) return { result: text(ACTIONS_OFF, true), status: 403, note: "actions off", target };
+  if ((await confirmedLastDay(c.env.DB, id.user.id)) >= MAX_CONFIRMED_PER_DAY) {
+    return { result: text(`You have reached the limit of ${MAX_CONFIRMED_PER_DAY} AI actions in 24 hours. Do this one in the ERP.`, true), status: 429, note: "daily limit", target };
+  }
+  const row = await claimPendingAction(c.env.DB, confirmationId, id.tokenId, id.user.id, "confirmed");
+  if (!row) return { result: text(UNKNOWN_CONFIRMATION, true), status: 404, note: "unknown or used", target };
+  target = `confirm ${row.summary}`;
+  const route = actionRoute(row.kind);
+  const kind = row.kind === "meeting" || row.kind === "email" ? row.kind : null;
+  if (!route || !kind) {
+    await finishPendingAction(c.env.DB, row.id, "failed", "unknown kind");
+    return { result: text("That action cannot be done.", true), status: 400, note: "unknown kind", target };
+  }
+  const company = typeof row.payload.company === "string" ? row.payload.company : null;
+  armAction(row.id, kind, id.tokenId, Date.now());
+  let res: Response;
+  try {
+    res = await innerCall(c, token, route.path, company, { actionId: row.id, method: route.method, body: row.payload.body });
+  } finally {
+    disarmAction(row.id);
+  }
+  const body: unknown = await jsonOrNull(res, `confirm ${kind}`);
+  const out = actionOutcome(kind, res.status, body);
+  await finishPendingAction(c.env.DB, row.id, out.ok ? "done" : "failed", out.ok ? `HTTP ${res.status}` : out.text);
+  return { result: text(out.text, !out.ok), status: res.status, note: out.ok ? "" : out.text.slice(0, 120), target };
+}
+
+async function cancelTool(c: Context<HonoEnv>, id: Identity, confirmationId: string): Promise<Outcome> {
+  const row = confirmationId ? await claimPendingAction(c.env.DB, confirmationId, id.tokenId, id.user.id, "cancelled") : null;
+  if (!row) return { result: text(UNKNOWN_CONFIRMATION, true), status: 404, note: "unknown or used", target: "cancel" };
+  return { result: text("Cancelled. Nothing was booked or sent."), status: 200, note: "", target: `cancel ${row.summary}` };
+}
+
 async function callTool(c: Context<HonoEnv>, id: Identity, token: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {
   const t0 = Date.now();
   let status = 200;
@@ -444,8 +723,20 @@ async function callTool(c: Context<HonoEnv>, id: Identity, token: string, name: 
       const o = name === "search" ? await searchTool(c, token, String(args.query ?? args.q ?? "").trim(), company) : await fetchTool(c, token, args.id, company);
       ({ result, status, note } = o);
       target = tag + o.target;
+    } else if (name === "document_flow" || name === "get_pdf") {
+      const o = name === "document_flow" ? await documentFlowTool(c, token, String(args.number_or_id ?? "").trim(), company) : await getPdfTool(c, id, token, String(args.type ?? ""), String(args.id ?? "").trim(), company);
+      ({ result, status, note } = o);
+      target = tag + o.target;
+    } else if (name === "propose_meeting" || name === "propose_email") {
+      const o = await proposeTool(c, id, token, name === "propose_meeting" ? "meeting" : "email", args, company);
+      ({ result, status, note } = o);
+      target = tag + o.target;
+    } else if (name === "confirm_action" || name === "cancel_action") {
+      const o = name === "confirm_action" ? await confirmTool(c, id, token, String(args.confirmationId ?? "").trim()) : await cancelTool(c, id, String(args.confirmationId ?? "").trim());
+      ({ result, status, note } = o);
+      target = o.target;
     } else if (name === "whoami") {
-      result = text(JSON.stringify({ name: id.user.name, email: id.user.email, position: id.user.position_name, department: id.user.department_name, readOnly: true }));
+      result = text(JSON.stringify({ name: id.user.name, email: id.user.email, position: id.user.position_name, department: id.user.department_name, actionsAllowed: await actionsEnabled(c.env.DB) }));
     } else if (name === "list_modules") {
       result = text(JSON.stringify({ readOnly: true, modules: moduleCatalog(mcpAppRoutes()), tip: "Call list_endpoints with a prefix, then erp_get. A module you may not open answers 'not available to your role'." }));
     } else if (name === "list_endpoints") {
@@ -547,6 +838,33 @@ app.post("/", async (c) => {
   }
   if (out.length === 0) return c.body(null, 202);
   return c.json(Array.isArray(body) ? out : out[0]);
+});
+
+// A get_pdf printout: the ERP's own print HTML, stored for 15 minutes under an
+// unguessable key (R2 mcp-exports/). The key is the permission: it was made only
+// after the person's own read of the document succeeded. Sandboxed so the page
+// runs with no access to the ERP's origin (no session, no storage).
+app.get("/export/:key", async (c) => {
+  const key = c.req.param("key");
+  const gone = (status: 404 | 410) =>
+    new Response("This printout link has expired or does not exist. Ask the AI for the PDF again.\n", { status, headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" } });
+  if (!EXPORT_KEY_RE.test(key)) return gone(404);
+  const objKey = `${EXPORT_PREFIX}${key}.html`;
+  const obj = await c.env.POD_BUCKET.get(objKey);
+  if (!obj) return gone(404);
+  if (!exportAlive(obj.customMetadata?.expiresAt, Date.now())) {
+    await c.env.POD_BUCKET.delete(objKey);
+    return gone(410);
+  }
+  return new Response(obj.body, {
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Security-Policy": "sandbox allow-scripts allow-modals allow-popups",
+      "Cache-Control": "no-store",
+      "Referrer-Policy": "no-referrer",
+      "X-Robots-Tag": "noindex",
+    },
+  });
 });
 
 // Stateless server: no server-initiated stream.

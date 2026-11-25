@@ -1,9 +1,9 @@
 // ---------------------------------------------------------------------------
 // /ai-connector — System > AI Connector. Everyone: connect your own Claude /
-// ChatGPT (read-only, your own permissions), request access, see and stop your
+// ChatGPT (your own permissions), request access, see and stop your
 // connections. Admin (ai_connector.manage, the Owner via "*"): approve people,
 // see who is connected and what was looked up, disconnect anyone, run the leak
-// check. Every rule is the server's (routes/mcpAdmin.ts); this lays it out.
+// check, and switch AI actions (meetings, email; confirm first) on or off. Every rule is the server's (routes/mcpAdmin.ts); this lays it out.
 // Desktop and phone (AuthGate renders it standalone on the phone shell).
 // ---------------------------------------------------------------------------
 import { useCallback, useEffect, useState } from "react";
@@ -17,6 +17,7 @@ type Me = { allowed: boolean; isAdmin: boolean; pendingRequest: { id: string; cr
 type Person = { userId: number; name: string; position: string };
 type Overview = {
   connectorUrl: string;
+  actionsEnabled: boolean;
   stats: { connectedPeople: number; callsToday: number; refusedToday: number; waiting: number };
   requests: (Person & { id: string; reason: string; createdAt: string | null })[];
   connected: (Person & { tokenId: string; app: string; connectedAt: string | null; lastUsedAt: string | null })[];
@@ -351,9 +352,31 @@ function AdminView({ ov, reload }: { ov: Overview; reload: () => void }) {
         )}
       </Section>
 
+      <Section
+        title="AI actions"
+        sub="Let a connected AI book a meeting or send an email for the person, only after they confirm the summary in their chat. Never orders, money, stock, approvals or deletes. At most 30 actions per person a day; each one is listed under Recent lookups."
+        right={
+          <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-ink">
+            <input
+              type="checkbox"
+              className="h-4 w-4"
+              checked={ov.actionsEnabled}
+              disabled={busy !== null}
+              onChange={(e) => {
+                const enabled = e.target.checked;
+                void act("actions", () => api.post("/api/mcp-admin/admin/actions", { enabled }));
+              }}
+            />
+            Allow AI actions (meetings, email)
+          </label>
+        }
+      >
+        <Empty>{ov.actionsEnabled ? "On: connected AIs may propose meetings and emails; nothing happens until the person confirms." : "Off: connected AIs can only read."}</Empty>
+      </Section>
+
       <LeakCheck people={ov.allowed} />
 
-      <Section title="Recent lookups" sub="The last 100 things an AI read, newest first.">
+      <Section title="Recent lookups" sub="The last 100 things an AI read or did, newest first.">
         {ov.calls.length === 0 ? (
           <Empty>Nothing yet.</Empty>
         ) : (
@@ -433,7 +456,7 @@ export function AiConnector() {
           </div>
           <div>
             <h1 className="text-xl font-semibold text-ink">AI Connector</h1>
-            <p className="text-sm text-ink-secondary">Ask Claude or ChatGPT about the ERP. Read only, and only what your own login can see.</p>
+            <p className="text-sm text-ink-secondary">Ask Claude or ChatGPT about the ERP: only what your own login can see. Booking a meeting or sending an email needs your admin's switch and your confirmation.</p>
           </div>
         </div>
         <Button variant="secondary" icon={<RefreshCw size={14} />} onClick={reload}>
