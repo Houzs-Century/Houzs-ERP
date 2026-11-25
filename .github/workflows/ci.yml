@@ -1221,8 +1221,6 @@ jobs:
       - run: node scripts/check-file-size.mjs --require-base
 
   agent-guardrails:
-    needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.reuse != 'true') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -1249,8 +1247,6 @@ jobs:
         run: node scripts/check-new-markdown.mjs
 
   tla:
-    needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.reuse != 'true') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
