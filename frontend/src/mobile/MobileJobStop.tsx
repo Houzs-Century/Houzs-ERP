@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { shouldAutoCompleteOnPhoto } from "./autoCompleteJob";
 import { JOB_PROGRESS_KEY } from "../vendor/scm/lib/job-progress-queries";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 import { fieldPhotoContext, uploadFieldPhoto } from "../vendor/scm/lib/slip";
@@ -118,6 +119,42 @@ export function MobileJobStop({ jobRef, seq, onBack, onDone }: {
     onDone();
   };
 
+  /* Fair setup / dismantle: the crew should not have to press Complete. The
+     moment the stop's photos are up (project stop only), file them to the
+     project and tick the phase done on their behalf, reusing the same POD path.
+     The crew stays on the screen so it visibly flips to "Completed"; a manual
+     "Complete" button remains for the dp / service / delivery stops and as the
+     retry if this one auto attempt fails. */
+  const autoFired = useRef(false);
+  useEffect(() => {
+    const gate = photos.gate("");
+    if (!shouldAutoCompleteOnPhoto({
+      sourceType: jobRef.sourceType, completed: done, busy, issueOn,
+      alreadyFired: autoFired.current, gateOk: gate.ok,
+    })) return;
+    if (!gate.ok) return; // narrows the union; the guard above already required it
+    autoFired.current = true;
+    const keys = gate.keys;
+    void (async () => {
+      setError(null); setBusy(true);
+      try {
+        await authedFetch(`${base}/complete`, {
+          method: "POST",
+          body: JSON.stringify({ photoKeys: keys, notes, ...(gps ? { lat: gps.lat, lng: gps.lng, accuracyM: gps.accuracyM, locatedAt: gps.atIso } : {}) }),
+        });
+        await refresh();
+      } catch (e) {
+        // Keep autoFired set so a transient failure does not re-fire on every
+        // render; the footer's "Complete job" button is the retry.
+        setError((e as Error).message || "Could not complete the job automatically. Tap Complete to try again.");
+        void refresh();
+      } finally {
+        setBusy(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- gate/notes/gps read fresh each run; re-evaluate when the photo set, step, or in-flight state changes
+  }, [jobRef.sourceType, done, busy, issueOn, photos.photos, base]);
+
   const sendIssue = async (failPrefix: string): Promise<boolean> => {
     try {
       await reportJobDeliveryIssue(jobRef, issueDraft);
@@ -214,7 +251,8 @@ export function MobileJobStop({ jobRef, seq, onBack, onDone }: {
                 </button>
               </div>
             )}
-            <MobileDeliveryIssues issues={issuesQ.data} />
+            {/* The crew reports; the office opens the case from the DO / SO screen. */}
+            <MobileDeliveryIssues issues={issuesQ.data} canCreateCase={false} />
             {(step === "arrived" || done) && (
               !issueOn ? (
                 <button type="button" className="btn-ghost" onClick={() => setIssueOn(true)} style={{ width: "100%", marginTop: 12, color: "var(--red)", borderColor: "var(--red)" }}>
