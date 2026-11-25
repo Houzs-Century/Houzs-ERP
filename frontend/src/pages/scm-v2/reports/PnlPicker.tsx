@@ -1,52 +1,50 @@
 // ----------------------------------------------------------------------------
-// PnlPicker — the P&Ls as one report (owner 2026-11-25: 几份P&L, 可以combine 起来
-// 然后 类似这样我在这里选), in his three categories: across the top of each P&L, in
-// a white bar of its own, the segmented tracks the Department P&L picks its
-// department with — the category, Actual (by sales invoice) | Performance (by
-// sales order) | Forecast, then Overall | Department (reports-catalog
-// PNL_CHOICES). Only the choices the reader may open are offered; a category
-// with one part shows no second track.
+// PnlPicker — a P&L's three views (owner 2026-11-25: 入口可以改成根据overall
+// P&L, Department P&L 每个P&L 有三个view): across the top of each view of the
+// Overall P&L or the Department P&L, in a white bar of its own, the P&L's name
+// and the segmented track the Department P&L picks its department with —
+// Actual (by sales invoice) | Performance (by sales order) | Forecast
+// (reports-catalog PNL_CHOICES). Only the views the reader may open are offered;
+// a view not built yet (the Department P&L's Forecast) stays in its place,
+// greyed, saying it comes later.
 //
-// A choice is that report's own address — so a link to it, old or new, lands on
-// it — carrying the range in use, so the dates follow the reader. A category
-// opens the part the reader is on where it has one, else its Overall; between
-// the two Department P&Ls the page's own settings (its department, its view)
-// come along. On a phone the tracks scroll sideways, the open choice kept in
-// view. The report shell draws it, so no P&L page carries it.
+// A view is that report's own address — so a link to it, old or new, lands on
+// it — carrying the range in use, so the dates follow the reader; between the
+// Department P&L's two views the page's own settings (its department, its view)
+// come along. On a phone the track scrolls sideways, the open view kept in view.
+// The report shell draws it, so no P&L page carries it.
 // ----------------------------------------------------------------------------
 
 import { useLayoutEffect, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
-  PNL_CATEGORIES, PNL_PARTS, reportById, reportHref, type PnlCategory, type PnlChoice, type ReportRange,
+  PNL_CHOICES, PNL_FAMILIES, PNL_VIEWS, reportById, reportHref, type PnlChoice, type PnlView, type ReportRange,
 } from '../reports-catalog';
 import { ReportTool } from './reportParts';
 import s from './ReportShell.module.css';
 
-/** What each choice reads, said on hover. */
-const CATEGORY_TITLE: Record<PnlCategory, string> = {
+/** What each view reads, said on hover. */
+const VIEW_TITLE: Record<PnlView, string> = {
   actual: 'Actual: by sales invoice, the books',
   performance: 'Performance: by sales order (SO date), the expenses as booked',
   forecast: 'Forecast: the targets per account',
 };
-const PART_TITLE = {
-  overall: 'The company as a whole',
-  department: 'Each department by its own P&L: Exhibition, Operation, Logistics, G&A',
-} as const;
+const LATER = 'Comes later: this P&L’s Forecast is not built yet';
 
-/** The address bits the Department P&L keeps for itself, carried between its two bases. */
+/** The address bits the Department P&L keeps for itself, carried between its two views. */
 const NOT_CARRIED = new Set(['tab', 'dbasis', 'from', 'to']);
 
 export function PnlPicker({ current, choices, range }: {
-  /** The choice this page is. */
+  /** The view this page is. */
   current: PnlChoice;
-  /** The choices the reader may open, in the picker's order. */
+  /** This P&L's views the reader may open, in the picker's order. */
   choices: readonly PnlChoice[];
-  /** The range the choices carry; null opens each on its own dates. */
+  /** The range the views carry; null opens each on its own dates. */
   range: ReportRange | null;
 }) {
   const [params] = useSearchParams();
   const nav = useRef<HTMLElement>(null);
+  const family = PNL_FAMILIES.find((f) => f.id === current.family)!;
 
   const hrefOf = (c: PnlChoice): string => {
     const item = reportById(c.report);
@@ -58,13 +56,13 @@ export function PnlPicker({ current, choices, range }: {
     for (const [k, v] of new URLSearchParams(search)) if (k !== 'tab') q.set(k, v);
     return `${path}?${q.toString()}`;
   };
-  const categories = PNL_CATEGORIES.filter((k) => choices.some((c) => c.category === k.id));
-  /** A category opens the part the reader is on where it has one, else its first. */
-  const openOf = (category: PnlCategory): PnlChoice =>
-    choices.find((c) => c.category === category && c.part === current.part) ?? choices.find((c) => c.category === category)!;
-  const parts = PNL_PARTS
-    .map((p) => ({ ...p, choice: choices.find((c) => c.category === current.category && c.part === p.id) }))
-    .filter((p): p is typeof p & { choice: PnlChoice } => p.choice != null);
+  /* Each view: the reader's where they may open it, greyed where this P&L has none yet. */
+  const views = PNL_VIEWS.flatMap((v): Array<{ id: PnlView; label: string; choice: PnlChoice | null }> => {
+    const choice = choices.find((c) => c.view === v.id);
+    if (choice) return [{ ...v, choice }];
+    const built = PNL_CHOICES.some((c) => c.family === current.family && c.view === v.id);
+    return built ? [] : [{ ...v, choice: null }];
+  });
 
   useLayoutEffect(() => {
     for (const box of nav.current?.querySelectorAll<HTMLElement>('[data-track]') ?? []) {
@@ -78,33 +76,23 @@ export function PnlPicker({ current, choices, range }: {
   }, [current]);
 
   return (
-    <nav ref={nav} className={s.toolbar} aria-label="Choose a P&L">
-      <ReportTool label="P&L">
-        <div className={s.segs} role="group" aria-label="P&L category" data-track>
-          {categories.map((k) => {
-            const on = k.id === current.category;
+    <nav ref={nav} className={s.toolbar} aria-label="P&L views">
+      <ReportTool label={family.label}>
+        <div className={s.segs} role="group" aria-label="View" data-track>
+          {views.map((v) => {
+            if (!v.choice) {
+              return <span key={v.id} className={`${s.seg} ${s.segOff}`} aria-disabled="true" title={LATER}>{v.label}</span>;
+            }
+            const on = v.id === current.view;
             return (
-              <Link key={k.id} to={hrefOf(openOf(k.id))} className={`${s.seg} ${on ? s.segOn : ''}`} title={CATEGORY_TITLE[k.id]}
+              <Link key={v.id} to={hrefOf(v.choice)} className={`${s.seg} ${on ? s.segOn : ''}`} title={VIEW_TITLE[v.id]}
                 aria-current={on ? 'page' : undefined}>
-                {k.label}
+                {v.label}
               </Link>
             );
           })}
         </div>
       </ReportTool>
-      {parts.length > 1 && (
-        <div className={s.segs} role="group" aria-label="Overall or by department" data-track>
-          {parts.map((p) => {
-            const on = p.id === current.part;
-            return (
-              <Link key={p.id} to={hrefOf(p.choice)} className={`${s.seg} ${on ? s.segOn : ''}`} title={PART_TITLE[p.id]}
-                aria-current={on ? 'page' : undefined}>
-                {p.label}
-              </Link>
-            );
-          })}
-        </div>
-      )}
     </nav>
   );
 }

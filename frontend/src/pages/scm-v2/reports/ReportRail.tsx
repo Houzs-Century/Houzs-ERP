@@ -9,10 +9,10 @@
 //
 // The reports are reports-catalog's, filtered by today's sidebar gates — the
 // list shows a report exactly where the sidebar shows its entry — and each link
-// carries the range in use, so the dates follow the reader. The P&Ls are one
-// entry, P&L (owner 2026-11-25), where the first of them sits: it opens the
-// first P&L the reader may open and is lit on any; the picker across the top of
-// each P&L (PnlPicker) opens the others.
+// carries the range in use, so the dates follow the reader. A P&L's views are
+// one entry, Overall P&L or Department P&L (owner 2026-11-25), where the first
+// of them sits: it opens the first view the reader may open and is lit on any;
+// the picker across the top of each view (PnlPicker) opens the others.
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
@@ -21,9 +21,9 @@ import { List, Pin, PinOff, type LucideIcon } from 'lucide-react';
 import { useAuth } from '../../../auth/AuthContext';
 import { NAV_TABS, type NavTab } from '../../../components/Sidebar';
 import { makeNavFilter } from '../../../components/navFilter';
-import { REPORT_CATALOG, REPORT_GROUPS, isPnlReport, reportHref, type ReportId, type ReportItem, type ReportRange } from '../reports-catalog';
+import { REPORT_CATALOG, REPORT_GROUPS, pnlFamilyOf, reportHref, type ReportId, type ReportItem, type ReportRange } from '../reports-catalog';
 import { readRailPinned, writeRailPinned } from './reportPrefs';
-import { PNL_ENTRY_LOOK, REPORT_LOOK } from './reportListLook';
+import { PNL_LOOK, REPORT_LOOK } from './reportListLook';
 import s from './ReportShell.module.css';
 
 const OPEN_DELAY_MS = 90;
@@ -46,25 +46,24 @@ export function useVisibleReports(): readonly ReportItem[] {
   }, [user, can, pageAccess]);
 }
 
-/** One entry of the list: a report, or the P&Ls as one. */
+/** One entry of the list: a report, or a P&L's views as one. */
 export type ReportListEntry = {
-  /** The report it opens: for the P&Ls, the first the reader may open. */
+  /** The report it opens: for a P&L, the first of its views the reader may open. */
   item: ReportItem;
   label: string;
   icon: LucideIcon;
   desc: string;
-  /** Lit while this report is open — for the P&Ls, while any of them is. */
+  /** Lit while this report is open — for a P&L, while any of its views is. */
   isOn: (current: ReportId) => boolean;
 };
 
 /** The list's entries for the reports a reader may open, in the catalog's order. */
 export function reportListEntries(reports: readonly ReportItem[]): ReportListEntry[] {
-  const firstPnl = reports.find((r) => isPnlReport(r.id));
   return reports.flatMap((r): ReportListEntry[] => {
-    if (!isPnlReport(r.id)) {
-      return [{ item: r, label: r.label, ...REPORT_LOOK[r.id], isOn: (current) => current === r.id }];
-    }
-    return r === firstPnl ? [{ item: r, ...PNL_ENTRY_LOOK, isOn: isPnlReport }] : [];
+    const family = pnlFamilyOf(r.id);
+    if (!family) return [{ item: r, label: r.label, ...REPORT_LOOK[r.id], isOn: (current) => current === r.id }];
+    const first = reports.find((x) => pnlFamilyOf(x.id) === family);
+    return r === first ? [{ item: r, ...PNL_LOOK[family], isOn: (current) => pnlFamilyOf(current) === family }] : [];
   });
 }
 

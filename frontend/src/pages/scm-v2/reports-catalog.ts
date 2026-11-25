@@ -19,15 +19,14 @@
 // so the Finance group's own gate still applies). Journal entries, the General
 // ledger and the Trial balance keep their Books entries' gates.
 //
-// THE P&Ls ARE ONE ENTRY (owner 2026-11-25: 几份P&L, 可以combine 起来 … 我在这里
-// 选): the list shows them as P&L, and a picker across the top of each opens the
-// others — a category, Actual (by sales invoice: the books) | Performance (by
-// sales order) | Forecast, then Overall | Department (PNL_CHOICES; his three
-// categories, settled the same day). Each stays a report of its own here — its
-// address, its gate, its method and data — so old links land where they did and
-// a reader is offered only the P&Ls they may open. Logistics cost (by DO) and the
-// Product changes P&L are entries of their own (「现有的logistics by DO的放side
-// bar 先」).
+// THE P&Ls ARE TWO ENTRIES, each with three views (owner 2026-11-25: 入口可以改成
+// 根据overall P&L, Department P&L 每个P&L 有三个view): Overall P&L and
+// Department P&L, and across the top of each its views, Actual (by sales
+// invoice: the books) | Performance (by sales order) | Forecast (PNL_CHOICES).
+// Each view stays a report of its own here — its address, its gate, its method
+// and data — so old links land where they did and a reader is offered only the
+// views they may open. Logistics cost (by DO) and the Product changes P&L are
+// entries of their own (「现有的logistics by DO的放side bar 先」).
 // ----------------------------------------------------------------------------
 
 import type { LucideIcon } from 'lucide-react';
@@ -107,16 +106,17 @@ const tabItem = (tab: AccountingTab & ReportId, group: ReportGroupId, books = fa
 
 /** Every report, in the design's order (the list draws them group by group). */
 export const REPORT_CATALOG: readonly ReportItem[] = [
-  // The P&Ls — the list's one P&L entry, each with its own method and data (owner 2026-11-25: 我会有很多个不同的
-  // p&L, 每个的算法和提取的资料不一样). The books' P&L.
+  // The Overall P&L's three views, each with its own method and data (owner 2026-11-25: 我会有很多个不同的p&L,
+  // 每个的算法和提取的资料不一样). Actual: the books' P&L.
   tabItem('pnl', 'statements'),
-  // The month's orders per group against a budgeted operating expense (owner 2026-09-12; docs/bugs/0835).
+  // Performance: the month's orders per group against a budgeted operating expense (owner 2026-09-12; docs/bugs/0835).
   tabItem('performance', 'statements'),
-  // Each department by its own P&L, on the invoices or on the orders (`dbasis`; owner 2026-11-19, 2026-11-25).
-  tabItem('departments', 'statements'),
-  // The Forecast P&L (owner 2026-09-21: the Hookka Forecast P&L, trading edition — a target per account on the
-  // P&L's own tree; the Dashboard reads them beside the actuals).
+  // Forecast: the Forecast P&L (owner 2026-09-21: the Hookka Forecast P&L, trading edition — a target per account on
+  // the P&L's own tree; the Dashboard reads them beside the actuals).
   { id: 'forecast', label: 'Forecast P&L', group: 'statements', path: '/scm/forecast', navTo: '/scm/forecast', gate: FORECAST_GATE },
+  // The Department P&L: each department by its own P&L, Actual on the invoices or Performance on the orders
+  // (`dbasis`; owner 2026-11-19, 2026-11-25).
+  tabItem('departments', 'statements'),
   tabItem('bs', 'statements'),
   tabItem('rp', 'statements'),
   tabItem('tb', 'statements', true),
@@ -155,36 +155,36 @@ export const REPORT_CATALOG: readonly ReportItem[] = [
   tabItem('corrections', 'audit'),
 ];
 
-/** The P&L entry's picker (owner 2026-11-25): first the category — Actual by
- *  sales invoice (the books), Performance by sales order, Forecast — then
- *  Overall or Department. A choice opens a report of the list; the Department
- *  P&L takes its basis from `dbasis` (none reads as Performance there). The
- *  Forecast's departments are not built yet. */
-export type PnlCategory = 'actual' | 'performance' | 'forecast';
-export type PnlPart = 'overall' | 'department';
-export type PnlChoice = { category: PnlCategory; part: PnlPart; report: ReportId; dbasis: 'actual' | 'performance' | null };
+/** The two P&L entries and their views (owner 2026-11-25): Overall P&L and
+ *  Department P&L, each Actual by sales invoice (the books), Performance by
+ *  sales order, Forecast. A view opens a report of the list; the Department
+ *  P&L takes its basis from `dbasis` (none reads as Performance there). A view
+ *  with no row is not built yet (the Department P&L's Forecast). */
+export type PnlFamily = 'overall' | 'department';
+export type PnlView = 'actual' | 'performance' | 'forecast';
+export type PnlChoice = { family: PnlFamily; view: PnlView; report: ReportId; dbasis: 'actual' | 'performance' | null };
 
-export const PNL_CATEGORIES: ReadonlyArray<{ id: PnlCategory; label: string }> = [
+export const PNL_FAMILIES: ReadonlyArray<{ id: PnlFamily; label: string }> = [
+  { id: 'overall', label: 'Overall P&L' },
+  { id: 'department', label: 'Department P&L' },
+];
+export const PNL_VIEWS: ReadonlyArray<{ id: PnlView; label: string }> = [
   { id: 'actual', label: 'Actual' },
   { id: 'performance', label: 'Performance' },
   { id: 'forecast', label: 'Forecast' },
 ];
-export const PNL_PARTS: ReadonlyArray<{ id: PnlPart; label: string }> = [
-  { id: 'overall', label: 'Overall' },
-  { id: 'department', label: 'Department' },
-];
 export const PNL_CHOICES: readonly PnlChoice[] = [
-  { category: 'actual', part: 'overall', report: 'pnl', dbasis: null },
-  { category: 'actual', part: 'department', report: 'departments', dbasis: 'actual' },
-  { category: 'performance', part: 'overall', report: 'performance', dbasis: null },
-  { category: 'performance', part: 'department', report: 'departments', dbasis: 'performance' },
-  { category: 'forecast', part: 'overall', report: 'forecast', dbasis: null },
+  { family: 'overall', view: 'actual', report: 'pnl', dbasis: null },
+  { family: 'overall', view: 'performance', report: 'performance', dbasis: null },
+  { family: 'overall', view: 'forecast', report: 'forecast', dbasis: null },
+  { family: 'department', view: 'actual', report: 'departments', dbasis: 'actual' },
+  { family: 'department', view: 'performance', report: 'departments', dbasis: 'performance' },
 ];
 
-/** A P&L of the picker: the list shows them as one entry, P&L. */
-export const isPnlReport = (id: ReportId): boolean => PNL_CHOICES.some((c) => c.report === id);
+/** The P&L a report is a view of: the list shows each P&L's views as one entry. */
+export const pnlFamilyOf = (id: ReportId): PnlFamily | null => PNL_CHOICES.find((c) => c.report === id)?.family ?? null;
 
-/** The choice a page is: its report, and on the Department P&L its basis. */
+/** The view a page is: its report, and on the Department P&L its basis. */
 export function pnlChoiceOf(id: ReportId, dbasis: string | null): PnlChoice | null {
   const basis = dbasis === 'actual' ? 'actual' : 'performance';
   return PNL_CHOICES.find((c) => c.report === id && (c.dbasis == null || c.dbasis === basis)) ?? null;

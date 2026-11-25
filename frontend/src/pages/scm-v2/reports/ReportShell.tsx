@@ -6,15 +6,15 @@
 //
 // A report adopts the frame from inside, with reportParts (header buttons, the
 // grey line, the toolbar card, the exports); one that adopts nothing renders as
-// it did, under the header. A P&L gets the P&L picker under its header, when
-// the reader may open another P&L (owner 2026-11-25).
+// it did, under the header. A P&L's view gets the views picker under its
+// header, when the reader may open another view (owner 2026-11-25).
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { PageHeader } from '../../../components/Layout';
 import { todayMyt } from '../../../vendor/scm/lib/dates';
-import { PNL_CHOICES, isPnlReport, pnlChoiceOf, reportById, type ReportId } from '../reports-catalog';
+import { PNL_CHOICES, pnlChoiceOf, pnlFamilyOf, reportById, type ReportId } from '../reports-catalog';
 import { ReportRail, reportListEntries, useRailPinned, useVisibleReports } from './ReportRail';
 import { PnlPicker } from './PnlPicker';
 import { writeLastReport } from './lastReport';
@@ -57,8 +57,9 @@ export function ReportShell({ report, subtitle, actions, ownHeader = false, chil
   const entries = useMemo(() => reportListEntries(reports), [reports]);
   /* A reader who may open one report only has no list to choose from — the P&Ls counting as one. */
   const showRail = entries.length > 1;
-  /* The P&L picker: the choices whose report this reader may open, and the one this page is. */
-  const choices = useMemo(() => (isPnlReport(report) ? PNL_CHOICES.filter((c) => reports.some((r) => r.id === c.report)) : []), [report, reports]);
+  /* The P&L's views picker: this P&L's views whose report this reader may open, and the one this page is. */
+  const family = pnlFamilyOf(report);
+  const choices = useMemo(() => (family ? PNL_CHOICES.filter((c) => c.family === family && reports.some((r) => r.id === c.report)) : []), [family, reports]);
   const pnlNow = pnlChoiceOf(report, params.get('dbasis'));
 
   return (
