@@ -1,28 +1,31 @@
 // ----------------------------------------------------------------------------
 // acc-departments — the Department P&L (owner 2026-11-19: an Operation report =
 // his "Operation PNL - Auto" sheet, a G&A report = admin, IT, legal and HQ, and
-// 「我要可以看全部的，也要可以看单独部门的」; 2026-11-25: each department by its own
-// method — the Exhibition on its orders, Logistics by the Logistics P&L — and All
-// not the books split again). Registered on the /acc-events router beside the
-// Logistics cost report, behind the same Finance › Accounting guard:
+// 「我要可以看全部的，也要可以看单独部门的」; 2026-11-25: his three categories — Actual
+// by sales invoice, Performance by sales order, Forecast — each Overall and by
+// Department, the departments charging each other, scm/lib/department-charges.ts).
+// Registered on the /acc-events router beside the Logistics cost report, behind the
+// same Finance › Accounting guard. `dbasis` = actual | performance (absent: performance):
 //
-//   GET /departments/plan                  the company's departments (its plan)
-//   GET /departments/all?from=&to=         every department's own P&L in a few
-//                                          figures, side by side, and their total
-//   GET /departments/ga?from=&to=          G&A month by month: its share of the
-//                                          Performance sales against what it booked
-//   GET /departments/operation?from=&to=   the Operation sheet month by month, by region
-//   GET /departments/dept?d=&from=&to=     one department's own P&L month by month
-//                                          (the Exhibition P&L on its orders, the
-//                                          Showroom P&L as booked)
-//   GET /departments/lines?view=&keys=…    the lines behind one figure of a
-//                                          department's own P&L or G&A (the Operation
-//                                          sheet sends its own with the report)
-//   PUT /departments/rate                  { dept: 'ga' | 'operation', pct } — G&A's
-//                                          share (8%) or Operation's income (7%)
+//   GET /departments/plan                    the company's departments (its plan) and
+//                                            Logistics' branch, Setup & dismantle
+//   GET /departments/all?dbasis=&from=&to=   every department's own P&L in a few figures,
+//                                            side by side, and their total
+//   GET /departments/ga?dbasis=&from=&to=    G&A month by month: its share of the sales
+//                                            excluding service against what it booked
+//   GET /departments/dept?d=&dbasis=&…       one department's own P&L month by month: the
+//                                            selling department's sales (the orders' in
+//                                            Performance), its expenses, what it pays
+//   GET /departments/unit?u=&dbasis=&…       Operation, Logistics or Setup & dismantle:
+//                                            what it is paid less its real cost
+//                                            (scm/lib/department-units.ts)
+//   GET /departments/operation?from=&to=     the Operation sheet month by month, by region (by DO)
+//   GET /departments/lines?view=&keys=…      the lines behind one figure of a department's
+//                                            own P&L, G&A or Setup & dismantle's fair transport
+//   PUT /departments/rate                    { dept: 'ga' | 'operation' | 'merchandise', pct }
 //
-// Logistics' own P&L is the Logistics cost report's (GET /logistics/pnl), which All reads.
-// Every read is a financial statement: the statements' right
+// Logistics' own report by DO is the Logistics cost report's (GET /logistics/pnl), which the
+// units read. Every read is a financial statement: the statements' right
 // (scm.payment_voucher.post), as the P&L. The PUT is Finance's money right too.
 // Which department an amount belongs to: scm/lib/department-rows.ts; the
 // arithmetic: scm/lib/department-pnl.ts.
@@ -42,7 +45,7 @@ import { buildPnl, dbSources, pnlStockLines, type PnlReport } from './accounting
 import { allowedIds, resolveLayout } from './accounting-report-layouts';
 import { PERFORMANCE_MONTHS_MAX, buildPerformanceMonths, perfDbSources, type PerformanceMonth } from './accounting-performance';
 import { loadLogisticsPnl, type LogisticsPnlLoad } from './acc-logistics-pnl';
-import { fail } from './acc-logistics';
+import { DEFAULT_DO_INCOME_BP, DEFAULT_FAIR_INCOME_BP, fail } from './acc-logistics';
 import { MAX_SPREAD, addMonths, monthsBetween, type Leg } from '../lib/logistics-pnl';
 import {
   DEPARTMENT_LABEL, MANPOWER_LABEL, NONE_LABEL, OP_REGIONS, OP_ROW_LABEL, RECRUITMENT_LABEL, accountHome, isMixedAccount,
@@ -50,10 +53,15 @@ import {
   type Department, type DepartmentPlan, type DeptAccount, type DeptKey, type GaTeam, type ManpowerRow, type OpRow,
 } from '../lib/department-rows';
 import {
-  PNL_BLOCKS, addSummaries, basisOf, buildDeptView, buildGaPnl, buildOperationPnl, gaLines, operationRows, splitPnlLineParts, splitPnlLines,
-  summaryOfDept, summaryOfGa, summaryOfLogistics, summaryOfOperation, unassignedOf,
-  type DeptMonthSplit, type DeptOrders, type DeptSummary, type GaPnl, type LogisticsMonthIn, type OperationPnl, type PnlBlock, type SplitLeg,
+  PNL_BLOCKS, addSummaries, bookedByAccount, bookedSalesExService, buildDeptView, buildGaPnl, buildOperationPnl, gaLines, opTotal, operationRows,
+  splitPnlLineParts, splitPnlLines, summaryOfDept, summaryOfGa, summaryOfUnit, unassignedOf,
+  type DeptCharges, type DeptMonthSplit, type DeptOrders, type DeptSummary, type GaPnl, type LogisticsMonthIn, type OperationPnl, type PnlBlock, type SplitLeg,
 } from '../lib/department-pnl';
+import {
+  chargesOf, isDeptBasis, parseChargeAccounts, serviceAccountsOf,
+  type ChargeAccounts, type ChargeRates, type DeptBasis, type MonthCharges, type Payees,
+} from '../lib/department-charges';
+import { buildLogisticsUnit, buildOperationUnit, buildSetupDismantleUnit, type UnitKind, type UnitView } from '../lib/department-units';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- PostgREST client, untyped throughout the acc layer */
 type Row = Record<string, any>;
@@ -87,40 +95,102 @@ function rangeOf(c: any): ({ ok: true } & Range) | { ok: false; res: Response } 
   return { ok: true, from, to, months };
 }
 
+/** Which sales the departments' P&Ls stand on: Actual (the sales invoices — the books) or
+    Performance (the sales orders by SO date), Performance when the address names none. */
+function basisOf(c: any): { ok: true; basis: DeptBasis } | { ok: false; res: Response } {
+  const raw = c.req.query('dbasis');
+  if (raw == null || raw === '') return { ok: true, basis: 'performance' };
+  return isDeptBasis(raw) ? { ok: true, basis: raw } : { ok: false, res: c.json({ error: 'bad_basis', message: 'dbasis is actual or performance.' }, 400) };
+}
+
 export const DEFAULT_GA_SHARE_BP = 800;
 export const DEFAULT_OPERATION_INCOME_BP = 700;
 
-/** The chart (every column, so the Department column reads once its migration is in)
-    and the company's two rates. */
+type Failed = { ok: false; what: string; reason: string };
+
+/** The chart (every column, so the Department column reads once its migration is in), the
+    company's rates — G&A's share and Operation's (its own settings), Logistics' and Setup &
+    dismantle's (the Logistics cost report's) — what the charges move, and the service
+    group's sales accounts (what "sales excluding service" leaves out of the books). */
 async function loadSetup(sb: any, companyId: number): Promise<
-  { ok: true; chart: DeptAccount[]; gaShareBp: number; operationIncomeBp: number; plan: DepartmentPlan } | { ok: false; what: string; reason: string }
+  {
+    ok: true; chart: DeptAccount[]; gaShareBp: number; operationIncomeBp: number; plan: DepartmentPlan;
+    logisticsBp: number; setupDismantleBp: number; chargeAccounts: ChargeAccounts; service: ReadonlySet<string>;
+  } | Failed
 > {
-  const [chartRes, setRes] = await Promise.all([
+  const [chartRes, setRes, lgRes, groupRes] = await Promise.all([
     sb.from('accounts').select('*').eq('company_id', companyId),
     sb.from('acc_department_settings').select('*').eq('company_id', companyId).maybeSingle(),
+    sb.from('acc_logistics_settings').select('*').eq('company_id', companyId).maybeSingle(),
+    sb.from('acc_item_group_accounts').select('group_code, sales_account, sales_return_account').eq('company_id', companyId),
   ]);
   if (chartRes.error) return { ok: false, what: 'chart of accounts', reason: chartRes.error.message };
   if (setRes.error) return { ok: false, what: 'Department P&L settings', reason: setRes.error.message };
-  const set = setRes.data as { ga_share_bp?: number | null; operation_income_bp?: number | null; plan?: unknown } | null;
+  if (lgRes.error) return { ok: false, what: 'Logistics cost settings', reason: lgRes.error.message };
+  if (groupRes.error) return { ok: false, what: 'item groups', reason: groupRes.error.message };
+  const set = setRes.data as { ga_share_bp?: number | null; operation_income_bp?: number | null; plan?: unknown; charges?: unknown } | null;
+  const lg = lgRes.data as { do_income_bp?: number | null; fair_income_bp?: number | null } | null;
   return {
     ok: true,
     chart: (chartRes.data ?? []) as DeptAccount[],
     gaShareBp: set?.ga_share_bp == null ? DEFAULT_GA_SHARE_BP : Number(set.ga_share_bp),
     operationIncomeBp: set?.operation_income_bp == null ? DEFAULT_OPERATION_INCOME_BP : Number(set.operation_income_bp),
     plan: parsePlan(set?.plan),
+    logisticsBp: lg?.do_income_bp == null ? DEFAULT_DO_INCOME_BP : Number(lg.do_income_bp),
+    setupDismantleBp: lg?.fair_income_bp == null ? DEFAULT_FAIR_INCOME_BP : Number(lg.fair_income_bp),
+    chargeAccounts: parseChargeAccounts(set?.charges),
+    service: serviceAccountsOf((groupRes.data ?? []) as Row[]),
   };
 }
 type Setup = Extract<Awaited<ReturnType<typeof loadSetup>>, { ok: true }>;
-type Failed = { ok: false; what: string; reason: string };
 
-/** The view a department opens: G&A its share, Operation the sheet, Logistics the
-    Logistics P&L, any other its own P&L (the Exhibition on its orders). */
+/** The view a department opens: G&A its share, Operation and Logistics what they are paid
+    less their real cost, any other its own P&L (the selling department pays the others). */
 type ViewKind = 'ga' | 'operation' | 'logistics' | 'dept';
 const viewOf = (d: Department): ViewKind => (d === 'ga' || d === 'operation' || d === 'logistics' ? d : 'dept');
-const planBody = (plan: DepartmentPlan) => ({
-  departments: plan.departments.map((key) => ({ key, label: DEPARTMENT_LABEL[key], view: viewOf(key), basis: viewOf(key) === 'dept' ? basisOf(key) : null })),
-  selling: plan.selling,
+export const SETUP_DISMANTLE_LABEL = 'Setup & dismantle';
+/** Setup & dismantle — a branch of Logistics (「logistics report 的再分支」): a company with a
+    Logistics department and the fair transport accounts the branch carries. */
+const hasSetupDismantle = (setup: Pick<Setup, 'plan' | 'chargeAccounts'>): boolean =>
+  setup.plan.departments.includes('logistics') && setup.chargeAccounts.setupDismantle.length > 0;
+const planBody = (setup: Setup) => ({
+  departments: setup.plan.departments.map((key) => ({ key, label: DEPARTMENT_LABEL[key], view: viewOf(key) })),
+  selling: setup.plan.selling,
+  /** Logistics' branch, shown after it. */
+  branches: hasSetupDismantle(setup) ? [{ key: 'setupDismantle' as const, label: SETUP_DISMANTLE_LABEL, under: 'logistics' as const }] : [],
 });
+
+/** The rates, every one of the selling department's sales excluding service. */
+const ratesOf = (setup: Setup): ChargeRates => ({
+  gaBp: setup.gaShareBp, operationBp: setup.operationIncomeBp, logisticsBp: setup.logisticsBp,
+  setupDismantleBp: setup.setupDismantleBp, merchandiseBp: setup.chargeAccounts.merchandiseBp,
+});
+/** The departments the selling department pays: those the company has. */
+const payeesOf = (setup: Setup): Payees => {
+  const has = (d: Department) => setup.plan.departments.includes(d);
+  return { ga: has('ga'), operation: has('operation'), logistics: has('logistics'), setupDismantle: hasSetupDismantle(setup) };
+};
+/** Every month's charges on the basis's sales excluding service: the orders' by SO date
+    (Performance), the selling department's sales as booked less the service group's (Actual). */
+const chargesFor = (setup: Setup, basis: DeptBasis, months: readonly string[], split: readonly DeptMonthSplit[] | null, perf: readonly PerformanceMonth[] | null): MonthCharges[] =>
+  chargesOf({
+    months, rates: ratesOf(setup), payees: payeesOf(setup), basis,
+    base: basis === 'performance'
+      ? new Map((perf ?? []).map((m) => [m.month, m.salesExServiceSen] as const))
+      : bookedSalesExService(split ?? [], setup.service, setup.plan.selling),
+  });
+const baseMap = (charges: readonly MonthCharges[]): Map<string, number> => new Map(charges.map((m) => [m.month, m.baseSen] as const));
+/** What the selling department's own P&L carries of the charges: what it pays, the fair
+    transport that leaves it for Setup & dismantle, in Performance merchandise in place of the
+    terminal charges (「merchant charge … 以percentage算」). */
+const deptChargesOf = (setup: Setup, basis: DeptBasis, charges: readonly MonthCharges[]): DeptCharges => {
+  const a = setup.chargeAccounts;
+  return {
+    months: charges, rates: ratesOf(setup),
+    moved: new Set(hasSetupDismantle(setup) ? a.setupDismantle : []),
+    merchandise: basis === 'performance' && a.merchandise.length > 0 && a.merchandiseBp > 0 ? { codes: new Set(a.merchandise) } : null,
+  };
+};
 
 /** The expense accounts' codes, mixed or not, and the chart by code. */
 const chartOf = (chart: readonly DeptAccount[]) => {
@@ -212,8 +282,8 @@ function deptOrders(dept: DeptKey, months: readonly PerformanceMonth[], setup: S
 const expenseCodesOf = (chart: readonly DeptAccount[]): string[] =>
   [...new Set(chart.filter((a) => String(a.section ?? '').toUpperCase() === 'EXPENSES').map((a) => a.account_code))];
 
-/** G&A over the range: the Performance sales' share against every line the plan puts in G&A. */
-async function gaOf(sb: any, companyId: number, setup: Setup, layout: readonly LayoutItem[], r: Range, perf: readonly PerformanceMonth[]): Promise<{ ok: true; g: GaPnl } | Failed> {
+/** G&A over the range: its share of the sales excluding service against every line the plan puts in G&A. */
+async function gaOf(sb: any, companyId: number, setup: Setup, layout: readonly LayoutItem[], r: Range, base: ReadonlyMap<string, number>): Promise<{ ok: true; g: GaPnl } | Failed> {
   /* Every expense account: what folds into G&A (Houzs's showroom) is G&A's too. */
   const legsRes = await readLegs(sb, companyId, expenseCodesOf(setup.chart), r.from, r.to);
   if (!legsRes.ok) return { ok: false, what: 'ledger', reason: legsRes.reason };
@@ -221,7 +291,7 @@ async function gaOf(sb: any, companyId: number, setup: Setup, layout: readonly L
     ok: true,
     g: buildGaPnl({
       months: r.months,
-      sales: new Map(perf.map((m) => [m.month, m.salesSen] as const)),
+      sales: base,
       shareBp: setup.gaShareBp,
       legs: legsRes.legs,
       chart: new Map(setup.chart.map((a) => [a.account_code, a] as const)),
@@ -273,6 +343,55 @@ async function operationOf(sb: any, companyId: number, setup: Setup, r: Range, l
   };
 }
 
+/* ── The units: Operation, Logistics, Setup & dismantle on the charges ────── */
+
+type LogisticsOk = Extract<LogisticsPnlLoad, { ok: true }>;
+/** The Logistics cost report's months, row → its figure (every region added up). */
+const logisticsRowsOf = (lg: LogisticsOk): Map<string, Map<string, number>> =>
+  new Map(lg.body.perMonth.map((m) => [m.month, new Map(m.rows.map((x) => [String(x.key), Number(x.totalSen ?? 0)] as const))] as const));
+
+/** The Operation sheet's rows the unit reads: what Finance bills for warehousing and the warehouse. */
+const OP_UNIT_INCOME = ['income_warehouse', 'income_2990', 'income_other'] as const;
+const opLabelOf = (setup: Setup) => {
+  const labels: Record<string, string> = { ...MANPOWER_LABEL, ...OP_ROW_LABEL, recruitment: RECRUITMENT_LABEL };
+  const sheet = operationRows(setup.operationIncomeBp);
+  return { sheet, label: (k: string): string => sheet.find((x) => x.key === k)?.label || labels[k] || k };
+};
+function operationUnitOf(setup: Setup, r: Range, charges: readonly MonthCharges[], op: OperationPnl): UnitView {
+  const { sheet, label } = opLabelOf(setup);
+  return buildOperationUnit({
+    months: r.months, charges, operationBp: setup.operationIncomeBp, logisticsBp: setup.logisticsBp,
+    income: OP_UNIT_INCOME.map((key) => ({ key, label: label(key) })),
+    expenses: sheet.filter((x) => x.group === 'expense').map((x) => ({ key: x.key, label: label(x.key) })),
+    rows: new Map(op.perMonth.map((m) => [m.month, new Map(Object.entries(m.rows).map(([k, cells]) => [k, opTotal(cells)] as const))] as const)),
+  });
+}
+const logisticsUnitOf = (setup: Setup, r: Range, charges: readonly MonthCharges[], lg: LogisticsOk): UnitView =>
+  buildLogisticsUnit({ months: r.months, charges, logisticsBp: setup.logisticsBp, rows: logisticsRowsOf(lg), trips: hasSetupDismantle(setup) });
+const setupDismantleUnitOf = (setup: Setup, r: Range, charges: readonly MonthCharges[], split: readonly DeptMonthSplit[], lg: LogisticsOk): UnitView => {
+  const rows = logisticsRowsOf(lg);
+  return buildSetupDismantleUnit({
+    months: r.months, charges, setupDismantleBp: setup.setupDismantleBp,
+    fairTransport: bookedByAccount(split, new Set(setup.chargeAccounts.setupDismantle)),
+    inHouse: new Map(r.months.map((m) => [m, rows.get(m)?.get('sd_income') ?? 0] as const)),
+  });
+};
+
+/** One department's own P&L: the selling department's on the basis's sales (the orders' in
+    Performance, its commission at the month's bills), paying the others; any other as booked. */
+function deptViewOf(input: {
+  dept: Department; basis: DeptBasis; setup: Setup; r: Range; split: readonly DeptMonthSplit[]; perf: readonly PerformanceMonth[] | null;
+  charges: readonly MonthCharges[]; layout: Readonly<Record<string, readonly LayoutItem[]>>; companyId: number;
+}) {
+  const { dept, basis, setup } = input;
+  const selling = dept === setup.plan.selling;
+  return buildDeptView({
+    dept, basis, months: input.r.months, split: input.split, layout: input.layout, companyId: input.companyId,
+    orders: selling && basis === 'performance' && input.perf ? deptOrders(dept, input.perf, setup) : null,
+    charges: selling ? deptChargesOf(setup, basis, input.charges) : null,
+  });
+}
+
 /* ── GET /departments/plan ────────────────────────────────────────────────── */
 export const departmentsPlanHandler = async (c: any): Promise<Response> => {
   if (!canRead(c)) return c.json(NO_PERM, 403);
@@ -280,7 +399,7 @@ export const departmentsPlanHandler = async (c: any): Promise<Response> => {
   if (!co.ok) return c.json(co.refusal, 409);
   const setup = await loadSetup(c.get('supabase'), co.companyId);
   if (!setup.ok) return fail(c, setup.what, setup.reason);
-  return c.json(planBody(setup.plan));
+  return c.json(planBody(setup));
 };
 
 /** The legs of some accounts in [from, to] the books count, as the statements count them. */
@@ -302,16 +421,19 @@ async function readLegs(sb: any, companyId: number, codes: readonly string[], fr
 }
 
 /* ── GET /departments/all ─────────────────────────────────────────────────── */
-/** Every department's own P&L in a few figures, side by side (owner 2026-11-25: the books
-    split again 「就和我的actual重复了」): each read by its own view's builder over the same
-    range — the Exhibition on its orders, Operation by its sheet, Logistics by the Logistics
-    P&L, G&A against its share — and their total, the departments added up. */
+/** Every department's own P&L in a few figures, side by side (owner 2026-11-25), on the
+    basis's sales: the selling department paying the others, G&A, Operation, Logistics and
+    Setup & dismantle what they are paid less their real cost — and their total, in which
+    what the departments pay each other comes out even. */
 export const departmentsAllHandler = async (c: any): Promise<Response> => {
   if (!canRead(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const r = rangeOf(c);
   if (!r.ok) return r.res;
+  const b = basisOf(c);
+  if (!b.ok) return b.res;
+  const basis = b.basis;
   const sb = c.get('supabase');
   const companyId = co.companyId;
   const ids = allowedIds(c);
@@ -321,39 +443,41 @@ export const departmentsAllHandler = async (c: any): Promise<Response> => {
   if (!laid.ok) return fail(c, 'P&L layout', laid.reason);
   const depts = setup.plan.departments;
   const has = (v: ViewKind) => depts.some((d) => viewOf(d) === v);
-  const needPerf = has('ga') || depts.some((d) => viewOf(d) === 'dept' && basisOf(d) === 'orders');
+  const sd = hasSetupDismantle(setup);
   const [split, perf, lg] = await Promise.all([
     splitMonths(sb, companyId, ids, setup, r),
-    needPerf ? performanceOf(sb, companyId, ids, r) : Promise.resolve(null),
-    has('operation') || has('logistics') ? loadLogisticsPnl(c, companyId, r.from, r.to) : Promise.resolve(null),
+    basis === 'performance' ? performanceOf(sb, companyId, ids, r) : Promise.resolve(null),
+    has('operation') || has('logistics') || sd ? loadLogisticsPnl(c, companyId, r.from, r.to) : Promise.resolve(null),
   ]);
   if (!split.ok) return fail(c, split.what, split.reason);
   if (perf && !perf.ok) return fail(c, 'Performance P&L', perf.reason);
   if (lg && !lg.ok) return lg.res;
+  const perfMonths = perf?.ok ? perf.months : null;
+  const charges = chargesFor(setup, basis, r.months, split.split, perfMonths);
   const [ga, op] = await Promise.all([
-    has('ga') && perf ? gaOf(sb, companyId, setup, expenseLayout(laid.layout.blocks), r, perf.months) : Promise.resolve(null),
+    has('ga') ? gaOf(sb, companyId, setup, expenseLayout(laid.layout.blocks), r, baseMap(charges)) : Promise.resolve(null),
     has('operation') && lg ? operationOf(sb, companyId, setup, r, lg) : Promise.resolve(null),
   ]);
   if (ga && !ga.ok) return fail(c, ga.what, ga.reason);
   if (op && !op.ok) return fail(c, op.what, op.reason);
 
-  const summary: Partial<Record<Department, DeptSummary>> = {};
+  const summary: Partial<Record<Department | 'setupDismantle', DeptSummary>> = {};
   for (const d of depts) {
     const v = viewOf(d);
     if (v === 'ga' && ga?.ok) summary[d] = summaryOfGa(ga.g);
-    else if (v === 'operation' && op?.ok) summary[d] = summaryOfOperation(op.p);
-    else if (v === 'logistics' && lg?.ok) summary[d] = summaryOfLogistics(lg.body.rows);
+    else if (v === 'operation' && op?.ok) summary[d] = summaryOfUnit(operationUnitOf(setup, r, charges, op.p));
+    else if (v === 'logistics' && lg?.ok) summary[d] = summaryOfUnit(logisticsUnitOf(setup, r, charges, lg));
     else if (v === 'dept') {
-      const orders = basisOf(d) === 'orders' && perf?.ok ? deptOrders(d, perf.months, setup) : null;
-      summary[d] = summaryOfDept(buildDeptView({ dept: d, months: r.months, split: split.split, layout: laid.layout.blocks, companyId, orders }));
+      summary[d] = summaryOfDept(deptViewOf({ dept: d, basis, setup, r, split: split.split, perf: perfMonths, charges, layout: laid.layout.blocks, companyId }));
     }
   }
+  if (sd && lg?.ok) summary.setupDismantle = summaryOfUnit(setupDismantleUnitOf(setup, r, charges, split.split, lg));
   return c.json({
-    from: r.from, to: r.to,
-    ...planBody(setup.plan),
-    gaShareBp: setup.gaShareBp,
+    from: r.from, to: r.to, basis,
+    ...planBody(setup),
+    rates: ratesOf(setup),
     summary,
-    total: addSummaries(depts.map((d) => summary[d]).filter((x): x is DeptSummary => x != null)),
+    total: addSummaries(Object.values(summary)),
     /* An expense account no department claims yet: in no department's figures, named. */
     unassigned: { label: NONE_LABEL, lines: unassignedOf(split.split) },
     logisticsProblem: lg?.ok ? (lg.body.fairsProblem ?? lg.body.tripsProblem ?? null) : null,
@@ -367,20 +491,26 @@ export const departmentsGaHandler = async (c: any): Promise<Response> => {
   if (!co.ok) return c.json(co.refusal, 409);
   const r = rangeOf(c);
   if (!r.ok) return r.res;
+  const b = basisOf(c);
+  if (!b.ok) return b.res;
   const sb = c.get('supabase');
   const companyId = co.companyId;
+  const ids = allowedIds(c);
 
-  const [setup, laid, perf] = await Promise.all([
-    loadSetup(sb, companyId),
-    resolveLayout(sb, allowedIds(c), 'pnl'),
-    performanceOf(sb, companyId, allowedIds(c), r),
-  ]);
+  const [setup, laid] = await Promise.all([loadSetup(sb, companyId), resolveLayout(sb, ids, 'pnl')]);
   if (!setup.ok) return fail(c, setup.what, setup.reason);
   if (!laid.ok) return fail(c, 'P&L layout', laid.reason);
-  if (!perf.ok) return fail(c, 'Performance P&L', perf.reason);
-  const ga = await gaOf(sb, companyId, setup, expenseLayout(laid.layout.blocks), r, perf.months);
+  /* The base: the orders' sales (Performance), the selling department's as booked (Actual). */
+  const [split, perf] = await Promise.all([
+    b.basis === 'actual' ? splitMonths(sb, companyId, ids, setup, r) : Promise.resolve(null),
+    b.basis === 'performance' ? performanceOf(sb, companyId, ids, r) : Promise.resolve(null),
+  ]);
+  if (split && !split.ok) return fail(c, split.what, split.reason);
+  if (perf && !perf.ok) return fail(c, 'Performance P&L', perf.reason);
+  const charges = chargesFor(setup, b.basis, r.months, split?.ok ? split.split : null, perf?.ok ? perf.months : null);
+  const ga = await gaOf(sb, companyId, setup, expenseLayout(laid.layout.blocks), r, baseMap(charges));
   if (!ga.ok) return fail(c, ga.what, ga.reason);
-  return c.json({ from: r.from, to: r.to, ...ga.g });
+  return c.json({ from: r.from, to: r.to, basis: b.basis, ...ga.g });
 };
 
 /* ── GET /departments/dept?d= ─────────────────────────────────────────────── */
@@ -390,6 +520,8 @@ export const departmentViewHandler = async (c: any): Promise<Response> => {
   if (!co.ok) return c.json(co.refusal, 409);
   const r = rangeOf(c);
   if (!r.ok) return r.res;
+  const b = basisOf(c);
+  if (!b.ok) return b.res;
   const sb = c.get('supabase');
   const companyId = co.companyId;
   const ids = allowedIds(c);
@@ -400,18 +532,68 @@ export const departmentViewHandler = async (c: any): Promise<Response> => {
   const dept = setup.plan.departments.find((x) => x === d);
   if (!dept) return c.json({ error: 'bad_department', message: `${d || '(none)'} is not one of this company's departments.` }, 400);
 
-  /* Month by month, the P&L's own figures split as the departments take them; on
-     orders, the sales and cost of sales of the Performance P&L's own months. */
-  const onOrders = basisOf(dept) === 'orders';
+  /* Month by month, the P&L's own figures split as the departments take them; in
+     Performance the selling department's sales and cost of sales are the orders'. */
+  const selling = dept === setup.plan.selling;
   const [split, perf] = await Promise.all([
     splitMonths(sb, companyId, ids, setup, r),
-    onOrders ? performanceOf(sb, companyId, ids, r) : Promise.resolve(null),
+    selling && b.basis === 'performance' ? performanceOf(sb, companyId, ids, r) : Promise.resolve(null),
   ]);
   if (!split.ok) return fail(c, split.what, split.reason);
   if (perf && !perf.ok) return fail(c, 'Performance P&L', perf.reason);
-  const orders = perf?.ok ? deptOrders(dept, perf.months, setup) : null;
-  const view = buildDeptView({ dept, months: r.months, split: split.split, layout: laid.layout.blocks, companyId, orders });
-  return c.json({ from: r.from, to: r.to, label: DEPARTMENT_LABEL[dept], ...view });
+  const perfMonths = perf?.ok ? perf.months : null;
+  const charges = selling ? chargesFor(setup, b.basis, r.months, split.split, perfMonths) : [];
+  const view = deptViewOf({ dept, basis: b.basis, setup, r, split: split.split, perf: perfMonths, charges, layout: laid.layout.blocks, companyId });
+  return c.json({ from: r.from, to: r.to, label: DEPARTMENT_LABEL[dept], rates: ratesOf(setup), ...view });
+};
+
+/* ── GET /departments/unit?u= ─────────────────────────────────────────────── */
+const UNIT_LABEL: Record<UnitKind, string> = { operation: DEPARTMENT_LABEL.operation, logistics: DEPARTMENT_LABEL.logistics, setupDismantle: SETUP_DISMANTLE_LABEL };
+const isUnit = (v: string): v is UnitKind => v === 'operation' || v === 'logistics' || v === 'setupDismantle';
+/** Operation, Logistics or Setup & dismantle month by month on the basis's sales: what it is
+    paid, less its real cost. Operation brings the sheet's lines (what a figure opens). */
+export const departmentUnitHandler = async (c: any): Promise<Response> => {
+  if (!canRead(c)) return c.json(NO_PERM, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const r = rangeOf(c);
+  if (!r.ok) return r.res;
+  const b = basisOf(c);
+  if (!b.ok) return b.res;
+  const u = String(c.req.query('u') ?? '');
+  if (!isUnit(u)) return c.json({ error: 'bad_unit', message: 'u is operation, logistics or setupDismantle.' }, 400);
+  const sb = c.get('supabase');
+  const companyId = co.companyId;
+  const ids = allowedIds(c);
+  const setup = await loadSetup(sb, companyId);
+  if (!setup.ok) return fail(c, setup.what, setup.reason);
+  const offered = u === 'setupDismantle' ? hasSetupDismantle(setup) : setup.plan.departments.includes(u);
+  if (!offered) return c.json({ error: 'bad_department', message: `This company has no ${UNIT_LABEL[u]} P&L — its costs count in another department.` }, 400);
+
+  const [split, perf, lg] = await Promise.all([
+    b.basis === 'actual' || u === 'setupDismantle' ? splitMonths(sb, companyId, ids, setup, r) : Promise.resolve(null),
+    b.basis === 'performance' ? performanceOf(sb, companyId, ids, r) : Promise.resolve(null),
+    loadLogisticsPnl(c, companyId, r.from, r.to),
+  ]);
+  if (split && !split.ok) return fail(c, split.what, split.reason);
+  if (perf && !perf.ok) return fail(c, 'Performance P&L', perf.reason);
+  if (!lg.ok) return lg.res;
+  const splitMonthsRead = split?.ok ? split.split : null;
+  const charges = chargesFor(setup, b.basis, r.months, splitMonthsRead, perf?.ok ? perf.months : null);
+  const common = {
+    from: r.from, to: r.to, basis: b.basis, label: UNIT_LABEL[u], rates: ratesOf(setup),
+    base: Object.fromEntries(charges.map((m) => [m.month, m.baseSen])),
+    logisticsProblem: lg.body.fairsProblem ?? lg.body.tripsProblem ?? null,
+  };
+  if (u === 'operation') {
+    const op = await operationOf(sb, companyId, setup, r, lg);
+    if (!op.ok) return fail(c, op.what, op.reason);
+    const view = operationUnitOf(setup, r, charges, op.p);
+    const keys = new Set(view.rows.map((x) => x.key));
+    return c.json({ ...common, ...view, regions: OP_REGIONS, lines: op.p.lines.filter((l) => keys.has(l.row)) });
+  }
+  const view = u === 'logistics' ? logisticsUnitOf(setup, r, charges, lg) : setupDismantleUnitOf(setup, r, charges, splitMonthsRead ?? [], lg);
+  return c.json({ ...common, ...view, regions: OP_REGIONS, lines: [] });
 };
 
 /* ── GET /departments/operation ───────────────────────────────────────────── */
@@ -449,8 +631,9 @@ export const departmentsOperationHandler = async (c: any): Promise<Response> => 
 export const LINES_KEYS_MAX = 2000;
 
 /** One line behind a figure: a ledger line, the stock engine's opening or closing stock
-    (the P&L's own, not a journal line), or — the commission on orders — a commission bill
-    on the prepayment, in the month it pays for. `sen` in the figure's sign. */
+    (the P&L's own, not a journal line), the commission on orders — a commission bill on
+    the prepayment, in the month it pays for — or a month's merchandise at its rate. `sen`
+    in the figure's sign. */
 export type DeptEntry = {
   id: string; month: string; day: string | null;
   accountCode: string; accountName: string | null;
@@ -458,7 +641,7 @@ export type DeptEntry = {
   /** The department it counts in; on G&A, the HQ team its words name. */
   dept: DeptKey; team: GaTeam | null;
   sen: number;
-  source: 'ledger' | 'stock_opening' | 'stock_closing' | 'rest' | 'bill';
+  source: 'ledger' | 'stock_opening' | 'stock_closing' | 'rest' | 'bill' | 'rate';
 };
 const linesBody = (lines: DeptEntry[]) => {
   lines.sort((a, b) => (a.day ?? '').localeCompare(b.day ?? '') || a.accountCode.localeCompare(b.accountCode) || a.id.localeCompare(b.id));
@@ -468,14 +651,17 @@ const linesBody = (lines: DeptEntry[]) => {
 const isRelease = (sourceType: string | null | undefined): boolean => String(sourceType ?? '').replace(/_REVERSAL$/, '') === RELEASE_SOURCE;
 
 /**
- * GET /departments/lines?view=dept|ga&from=&to=&keys=…[&block=][&d=]
- * The lines behind one figure of a department's own P&L or G&A — read and split by
- * the rules that made the figure, so they add up to it:
+ * GET /departments/lines?view=dept|ga|sd&dbasis=&from=&to=&keys=…[&block=][&d=]
+ * The lines behind one figure of a department's own P&L, G&A or Setup & dismantle —
+ * read and split by the rules that made the figure, so they add up to it:
  *   view=dept  `block`; the department `d`; the column's months, each month read
- *              as the view reads it (its own opening and closing stock); a department
- *              on orders has no lines behind its sales and cost of sales (they are the
- *              orders'), and its commission account's are its bills, not the release;
- *   view=ga    the column's months; a key is an account's code or team:<TEAM>.
+ *              as the view reads it (its own opening and closing stock). The selling
+ *              department in Performance has no lines behind its sales and cost of
+ *              sales (they are the orders'), its commission account's are its bills,
+ *              not the release, and its merchandise is each month's at its rate; the
+ *              fair transport Setup & dismantle carries is not its;
+ *   view=ga    the column's months; a key is an account's code or team:<TEAM>;
+ *   view=sd    Setup & dismantle's fair transport accounts, as booked.
  * `keys`: the accounts under the figure's row (one account, a category's, a block's).
  */
 export const departmentLinesHandler = async (c: any): Promise<Response> => {
@@ -484,8 +670,10 @@ export const departmentLinesHandler = async (c: any): Promise<Response> => {
   if (!co.ok) return c.json(co.refusal, 409);
   const r = rangeOf(c);
   if (!r.ok) return r.res;
+  const b = basisOf(c);
+  if (!b.ok) return b.res;
   const view = String(c.req.query('view') ?? '');
-  if (view !== 'dept' && view !== 'ga') return c.json({ error: 'bad_view', message: 'view is dept or ga.' }, 400);
+  if (view !== 'dept' && view !== 'ga' && view !== 'sd') return c.json({ error: 'bad_view', message: 'view is dept, ga or sd.' }, 400);
   const keys = [...new Set(String(c.req.query('keys') ?? '').split(',').map((k) => k.trim()).filter(Boolean))];
   if (keys.length === 0 || keys.length > LINES_KEYS_MAX) return c.json({ error: 'bad_keys', message: `Name from 1 to ${LINES_KEYS_MAX} accounts.` }, 400);
   const sb = c.get('supabase');
@@ -511,6 +699,19 @@ export const departmentLinesHandler = async (c: any): Promise<Response> => {
     return c.json(linesBody(lines));
   }
 
+  if (view === 'sd') {
+    /* Setup & dismantle's own read: the fair transport accounts asked, as booked. */
+    const moved = new Set(hasSetupDismantle(setup) ? setup.chargeAccounts.setupDismantle : []);
+    const codes = keys.filter((k) => moved.has(k));
+    if (codes.length === 0) return c.json({ error: 'bad_keys', message: "Name Setup & dismantle's fair transport accounts." }, 400);
+    const legs = await readLegs(sb, companyId, codes, r.from, r.to);
+    if (!legs.ok) return fail(c, 'ledger', legs.reason);
+    return c.json(linesBody(legs.legs.filter((l) => l.debitSen !== l.creditSen).map((l): DeptEntry => ({
+      id: l.lineId, month: l.day.slice(0, 7), day: l.day, accountCode: l.accountCode, accountName: l.accountName ?? nameOf(l.accountCode),
+      ref: l.docNo, text: l.notes, dept: setup.plan.selling, team: null, sen: l.debitSen - l.creditSen, source: 'ledger',
+    }))));
+  }
+
   const blockArg = String(c.req.query('block') ?? '');
   const blockDef = PNL_BLOCKS.find((b) => b.block === blockArg);
   if (!blockDef) return c.json({ error: 'bad_block', message: `block is one of ${PNL_BLOCKS.map((b) => b.block).join(', ')}.` }, 400);
@@ -518,9 +719,29 @@ export const departmentLinesHandler = async (c: any): Promise<Response> => {
   const d = String(c.req.query('d') ?? '');
   const dept = setup.plan.departments.find((x) => x === d);
   if (!dept) return c.json({ error: 'bad_department', message: `${d || '(none)'} is not one of this company's departments.` }, 400);
-  const onOrders = basisOf(dept) === 'orders';
+  const selling = dept === setup.plan.selling;
+  const onOrders = selling && b.basis === 'performance';
   if (onOrders && (block === 'tradingIncome' || block === 'costOfSales')) {
     return c.json({ error: 'from_orders', message: "These figures are the sales orders' (the Performance P&L's), not ledger lines." }, 400);
+  }
+  /* The selling department's charges: the fair transport is Setup & dismantle's, and in
+     Performance merchandise stands where the terminal charges stood — the figure's own
+     lines are the month's rate, under the first of those accounts. */
+  const dc = selling && block === 'expenses' ? deptChargesOf(setup, b.basis, []) : null;
+  const merch = dc?.merchandise ? [...dc.merchandise.codes].sort() : [];
+  const asked = keys.filter((k) => !dc?.moved.has(k) && !merch.includes(k));
+  const rateLines: DeptEntry[] = [];
+  if (merch.length > 0 && keys.includes(merch[0]!)) {
+    const perf = await performanceOf(sb, companyId, allowedIds(c), r);
+    if (!perf.ok) return fail(c, 'Performance P&L', perf.reason);
+    const rate = (setup.chargeAccounts.merchandiseBp / 100).toFixed(2).replace(/\.?0+$/, '');
+    for (const m of chargesFor(setup, b.basis, r.months, null, perf.months)) {
+      if (m.merchandise === 0) continue;
+      rateLines.push({
+        id: `rate:${m.month}`, month: m.month, day: null, accountCode: merch[0]!, accountName: 'Merchandise', ref: null,
+        text: `${rate}% of the month's sales excluding service (${(m.baseSen / 100).toFixed(2)})`, dept, team: null, sen: m.merchandise, source: 'rate',
+      });
+    }
   }
 
   /* On orders the commission account reads its bills in place of the release — when the
@@ -549,14 +770,14 @@ export const departmentLinesHandler = async (c: any): Promise<Response> => {
     }
   }
   const stockCodes = new Set(stock.flatMap((s) => [...s.codes]));
-  const legsRes = await readLegs(sb, companyId, keys.filter((k) => !stockCodes.has(k)), r.from, r.to);
+  const legsRes = await readLegs(sb, companyId, asked.filter((k) => !stockCodes.has(k)), r.from, r.to);
   if (!legsRes.ok) return fail(c, 'ledger', legsRes.reason);
 
-  const lines: DeptEntry[] = [];
+  const lines: DeptEntry[] = [...rateLines];
   periods.forEach((p, i) => {
     const legsOf = new Map<string, typeof legsRes.legs>();
     for (const l of legsRes.legs) if (l.day >= p.from && l.day <= p.to) legsOf.set(l.accountCode, [...(legsOf.get(l.accountCode) ?? []), l]);
-    for (const code of keys) {
+    for (const code of asked) {
       const billed = commission != null && code === commission.code;
       const engine = stockCodes.has(code) ? (stock[i]?.lines ?? []).filter((x) => x.code === code) : null;
       const legs = engine ? undefined : (legsOf.get(code) ?? []).filter((l) => !billed || !isRelease(l.sourceType));
@@ -607,15 +828,27 @@ export const saveDepartmentRateHandler = async (c: any): Promise<Response> => {
   let body: any;
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
   const dept = String(body?.dept ?? '');
-  if (dept !== 'ga' && dept !== 'operation') return c.json({ error: 'bad_dept', message: 'The rate is G&A\'s (ga) or Operation\'s (operation).' }, 400);
+  if (dept !== 'ga' && dept !== 'operation' && dept !== 'merchandise') {
+    return c.json({ error: 'bad_dept', message: "The rate is G&A's (ga), Operation's (operation) or merchandise's (merchandise)." }, 400);
+  }
   const pct = Number(body?.pct);
   if (typeof body?.pct !== 'number' || !Number.isFinite(pct) || pct < 0 || pct > 100 || Math.round(pct * 100) !== pct * 100) {
     return c.json({ error: 'bad_pct', message: 'The rate is a percentage from 0 to 100, two decimals at most.' }, 400);
   }
   const bp = Math.round(pct * 100);
-  const column = dept === 'ga' ? 'ga_share_bp' : 'operation_income_bp';
-  const { error } = await c.get('supabase').from('acc_department_settings').upsert(
-    { company_id: co.companyId, [column]: bp, updated_at: new Date().toISOString(), updated_by: actorOf(c) },
+  const sb = c.get('supabase');
+  let change: Record<string, unknown>;
+  if (dept === 'merchandise') {
+    /* Merchandise's rate sits in the charges with the accounts it stands in for. */
+    const cur = await sb.from('acc_department_settings').select('charges').eq('company_id', co.companyId).maybeSingle();
+    if (cur.error) return c.json({ error: 'save_failed', message: 'The rate could not be saved — try again.', reason: cur.error.message }, 500);
+    const raw = (cur.data as { charges?: unknown } | null)?.charges;
+    change = { charges: { ...(raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}), merchandiseBp: bp } };
+  } else {
+    change = { [dept === 'ga' ? 'ga_share_bp' : 'operation_income_bp']: bp };
+  }
+  const { error } = await sb.from('acc_department_settings').upsert(
+    { company_id: co.companyId, ...change, updated_at: new Date().toISOString(), updated_by: actorOf(c) },
     { onConflict: 'company_id' },
   );
   if (error) return c.json({ error: 'save_failed', message: 'The rate could not be saved — try again.', reason: error.message }, 500);

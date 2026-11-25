@@ -7,17 +7,21 @@
        Transport Income, the warehouse rows, manpower by team line (a region named,
        else shared by the DO value), insurance spread over 12 months, then the
        Logistics and Setup/Dismantle results and the net after both;
-     • G&A: its share of the Performance sales against what the HQ teams and the
-       G&A accounts booked, on the P&L's own tree;
+     • G&A: its share of the sales against what the HQ teams and the G&A accounts
+       booked, on the P&L's own tree;
+     • the selling department (owner 2026-11-25): what it pays the others, the fair
+       transport leaving it, in Performance merchandise in place of the terminal charges;
      • the lines a figure opens (owner 2026-11-20: 「我希望这里点开也能看」): a P&L
        line's parts, the Operation sheet's lines, G&A's legs — each adding up to its figure. */
 
 import { describe, expect, test } from 'vitest';
 import {
-  addSummaries, basisOf, buildDeptView, buildGaPnl, buildOperationPnl, gaLines, operationRows, opSum, shareByValue, splitLine, splitLineParts,
-  summaryOfDept, summaryOfGa, summaryOfLogistics, summaryOfOperation, unassignedOf,
-  type GaPnl, type LogisticsMonthIn, type OrdersMonthIn,
+  addSummaries, bookedByAccount, bookedSalesExService, buildDeptView, buildGaPnl, buildOperationPnl, gaLines, operationRows, opSum, shareByValue,
+  splitLine, splitLineParts, summaryOfDept, summaryOfGa, summaryOfUnit, unassignedOf,
+  type DeptCharges, type GaPnl, type LogisticsMonthIn, type OrdersMonthIn,
 } from './department-pnl';
+import { chargesOf } from './department-charges';
+import { buildLogisticsUnit, buildOperationUnit } from './department-units';
 import { parsePlan, type DeptAccount } from './department-rows';
 import type { BillLine, Leg } from './logistics-pnl';
 import type { LayoutItem } from '../../acc/report-layout';
@@ -331,14 +335,17 @@ describe('one department: its column of the P&L, month by month (the Exhibition 
       { kind: 'category', id: 'pl:general:salary', label: 'Salary & related', children: [{ kind: 'account', code: '900-S100' }] },
     ],
   } as unknown as Record<string, LayoutItem[]>;
-  const v = buildDeptView({ dept: 'exhibition', months: ['2026-09', '2026-10'], split: [split('2026-09', 1), split('2026-10', 2)], layout, companyId: 1, orders: null });
+  const v = buildDeptView({
+    dept: 'exhibition', basis: 'actual', months: ['2026-09', '2026-10'], split: [split('2026-09', 1), split('2026-10', 2)], layout, companyId: 1, orders: null, charges: null,
+  });
 
   test('sales less cost of sales less its expenses, each month', () => {
-    expect(v.basis).toBe('books');
+    expect(v.basis).toBe('actual');
     expect(v.orders).toBeNull();
+    expect(v.charges).toEqual([]);
     expect(v.perMonth).toEqual([
-      { month: '2026-09', salesSen: 100_000, costOfSalesSen: 60_000, grossSen: 40_000, otherIncomeSen: 0, expensesSen: 21_000, taxationSen: 0, netSen: 19_000 },
-      { month: '2026-10', salesSen: 200_000, costOfSalesSen: 120_000, grossSen: 80_000, otherIncomeSen: 0, expensesSen: 41_000, taxationSen: 0, netSen: 39_000 },
+      { month: '2026-09', salesSen: 100_000, costOfSalesSen: 60_000, grossSen: 40_000, otherIncomeSen: 0, expensesSen: 21_000, taxationSen: 0, chargesSen: 0, baseSen: null, netSen: 19_000 },
+      { month: '2026-10', salesSen: 200_000, costOfSalesSen: 120_000, grossSen: 80_000, otherIncomeSen: 0, expensesSen: 41_000, taxationSen: 0, chargesSen: 0, baseSen: null, netSen: 39_000 },
     ]);
   });
 
@@ -385,17 +392,12 @@ describe('the Exhibition on its orders (owner 2026-11-25): the Performance P&L\'
   const label = '900-C003 COMMISSION ( EVENT ) — the commission bills for Sep 2026, Oct 2026, in place of the monthly release';
   const months = [month('2026-09', 1, { billSen: 15_000, releaseSen: 0 }), month('2026-10', 2, { billSen: 18_000, releaseSen: 9_000 })];
   const v = buildDeptView({
-    dept: 'exhibition', months: ['2026-09', '2026-10'], split: [split('2026-09', 1, 0), split('2026-10', 2, 9_000)], layout, companyId: 1,
-    orders: { months, commission: { code: '900-C003', name: 'COMMISSION ( EVENT )', label } },
-  });
-
-  test('only the Exhibition reads its orders', () => {
-    expect(basisOf('exhibition')).toBe('orders');
-    expect(basisOf('showroom')).toBe('books');
+    dept: 'exhibition', basis: 'performance', months: ['2026-09', '2026-10'], split: [split('2026-09', 1, 0), split('2026-10', 2, 9_000)], layout, companyId: 1,
+    orders: { months, commission: { code: '900-C003', name: 'COMMISSION ( EVENT )', label } }, charges: null,
   });
 
   test("sales and cost of sales are the orders' product groups, never the books'; a group with nothing is left out", () => {
-    expect(v.basis).toBe('orders');
+    expect(v.basis).toBe('performance');
     expect(v.tree.tradingIncome.map((n) => [n.key, n.label, n.cells])).toEqual([
       ['order:bedframe', 'Bedframe', { '2026-09': 70_000, '2026-10': 140_000 }],
       ['order:mattress', 'Mattress', { '2026-09': 50_000, '2026-10': 100_000 }],
@@ -413,24 +415,100 @@ describe('the Exhibition on its orders (owner 2026-11-25): the Performance P&L\'
     expect(commission.cells).toEqual({ '2026-09': 15_000, '2026-10': 18_000 });
     expect(commission.label).toBe(label);
     expect(v.perMonth).toEqual([
-      { month: '2026-09', salesSen: 125_000, costOfSalesSen: 50_000, grossSen: 75_000, otherIncomeSen: 0, expensesSen: 35_000, taxationSen: 0, netSen: 40_000 },
-      { month: '2026-10', salesSen: 245_000, costOfSalesSen: 100_000, grossSen: 145_000, otherIncomeSen: 0, expensesSen: 58_000, taxationSen: 0, netSen: 87_000 },
+      { month: '2026-09', salesSen: 125_000, costOfSalesSen: 50_000, grossSen: 75_000, otherIncomeSen: 0, expensesSen: 35_000, taxationSen: 0, chargesSen: 0, baseSen: null, netSen: 40_000 },
+      { month: '2026-10', salesSen: 245_000, costOfSalesSen: 100_000, grossSen: 145_000, otherIncomeSen: 0, expensesSen: 58_000, taxationSen: 0, chargesSen: 0, baseSen: null, netSen: 87_000 },
     ]);
   });
 
   test('a commission account that counts in another department is left as booked', () => {
     const w = buildDeptView({
-      dept: 'exhibition', months: ['2026-10'], split: [split('2026-10', 2, 9_000)], layout, companyId: 1,
-      orders: { months: [month('2026-10', 2, null)], commission: null },
+      dept: 'exhibition', basis: 'performance', months: ['2026-10'], split: [split('2026-10', 2, 9_000)], layout, companyId: 1,
+      orders: { months: [month('2026-10', 2, null)], commission: null }, charges: null,
     });
     expect(w.perMonth[0]!.expensesSen).toBe(40_000 + 9_000);
+  });
+});
+
+describe('the selling department pays the others (owner 2026-11-25: G&A 5%, Operation 7%, Setup & dismantle 1%)', () => {
+  /* Made-up: September's sales 100,000 of which service 4,000; the fair transport 900-T031 booked 1,500 and the
+     terminal charges 900-T009 booked 700; the booth setup 900-B003 stays as booked (「不是replace booth setup」). */
+  const split = [{
+    month: '2026-09',
+    blocks: {
+      tradingIncome: [
+        { code: '500-0001', name: 'SALES OF BEDDING', cells: { exhibition: 96_000 } },
+        { code: '503-0000', name: 'SERVICE INCOME', cells: { exhibition: 4_000 } },
+      ],
+      costOfSales: [{ code: '601-0001', name: 'PURCHASES OF BEDDING', cells: { exhibition: 50_000 } }],
+      otherIncome: [],
+      expenses: [
+        { code: '900-B003', name: 'BOOTH SET UP', cells: { exhibition: 3_000 } },
+        { code: '900-T009', name: 'TERMINAL INTEREST CHARGES', cells: { exhibition: 700 } },
+        { code: '900-T031', name: 'TRANSPORT FAIR (KL)', cells: { exhibition: 1_500 } },
+      ],
+      taxation: [],
+    },
+  }];
+  const layout = {
+    expenses: [
+      { kind: 'category', id: 'pl:exh', label: 'Exhibition & roadshow expense', children: [{ kind: 'account', code: '900-B003' }, { kind: 'account', code: '900-T031' }] },
+      { kind: 'category', id: 'pl:bank', label: 'Bank charges', children: [{ kind: 'account', code: '900-T009' }] },
+    ],
+  } as unknown as Record<string, LayoutItem[]>;
+  const rates = { gaBp: 500, operationBp: 700, logisticsBp: 300, setupDismantleBp: 100, merchandiseBp: 200 };
+  const payees = { ga: true, operation: true, logistics: true, setupDismantle: true };
+  const base = bookedSalesExService(split, new Set(['503-0000']), 'exhibition');
+  const chargesFor = (basis: 'actual' | 'performance'): DeptCharges => ({
+    months: chargesOf({ months: ['2026-09'], base, rates, payees, basis }), rates,
+    moved: new Set(['900-T030', '900-T031']),
+    merchandise: basis === 'performance' ? { codes: new Set(['900-T009']) } : null,
+  });
+  const view = (basis: 'actual' | 'performance') => buildDeptView({
+    dept: 'exhibition', basis, months: ['2026-09'], split, layout, companyId: 1, orders: null, charges: chargesFor(basis),
+  });
+
+  test("the base is the selling department's sales less the service group's", () => {
+    expect([...base]).toEqual([['2026-09', 96_000]]);
+  });
+
+  test('Actual: the fair transport leaves, every other expense as booked, the three charges paid', () => {
+    const v = view('actual');
+    expect(v.tree.expenses.flatMap((n) => n.children.map((x) => [x.code, x.cells]))).toEqual([
+      ['900-B003', { '2026-09': 3_000 }], ['900-T009', { '2026-09': 700 }],
+    ]);
+    expect(v.charges.map((n) => [n.id, n.cells])).toEqual([
+      ['charge:ga', { '2026-09': 4_800 }], ['charge:operation', { '2026-09': 6_720 }], ['charge:setupDismantle', { '2026-09': 960 }],
+    ]);
+    expect(v.perMonth[0]).toMatchObject({ salesSen: 100_000, expensesSen: 3_700, chargesSen: 12_480, baseSen: 96_000, netSen: 100_000 - 50_000 - 3_700 - 12_480 });
+  });
+
+  test('Performance: merchandise at 2% stands where the terminal charges stood, named with what was booked', () => {
+    const v = view('performance');
+    const merch = v.tree.expenses.find((n) => n.id === 'pl:bank')!.children[0]!;
+    expect([merch.code, merch.cells]).toEqual(['900-T009', { '2026-09': 1_920 }]);
+    expect(merch.label).toBe('Merchandise — 2% of sales excluding service, in place of 900-T009 TERMINAL INTEREST CHARGES (7.00 booked)');
+    expect(v.perMonth[0]).toMatchObject({ expensesSen: 3_000 + 1_920, chargesSen: 12_480 });
+  });
+
+  test('a company paying G&A only (2990) carries one charge, nothing moved, no merchandise', () => {
+    const only = chargesOf({ months: ['2026-09'], base, rates, payees: { ga: true, operation: false, logistics: false, setupDismantle: false }, basis: 'actual' });
+    const v = buildDeptView({
+      dept: 'exhibition', basis: 'actual', months: ['2026-09'], split, layout, companyId: 1, orders: null,
+      charges: { months: only, rates, moved: new Set(), merchandise: null },
+    });
+    expect(v.charges.map((n) => n.id)).toEqual(['charge:ga']);
+    expect(v.perMonth[0]).toMatchObject({ expensesSen: 5_200, chargesSen: 4_800 });
+  });
+
+  test("Setup & dismantle's fair transport as booked, by account and month", () => {
+    expect(bookedByAccount(split, new Set(['900-T030', '900-T031']))).toEqual([{ code: '900-T031', name: 'TRANSPORT FAIR (KL)', cells: { '2026-09': 1_500 } }]);
   });
 });
 
 describe('All: each department\'s own P&L in a few figures, side by side (owner 2026-11-25)', () => {
   test('a department\'s own P&L: its months added up, taxation with its expenses', () => {
     const v = buildDeptView({
-      dept: 'showroom', months: ['2026-09'], companyId: 1, orders: null, layout: {},
+      dept: 'showroom', basis: 'actual', months: ['2026-09'], companyId: 1, orders: null, charges: null, layout: {},
       split: [{
         month: '2026-09',
         blocks: {
@@ -442,10 +520,10 @@ describe('All: each department\'s own P&L in a few figures, side by side (owner 
         },
       }],
     });
-    expect(summaryOfDept(v)).toEqual({ incomeSen: 100_000, costSen: 60_000, grossSen: 40_000, otherIncomeSen: 1_000, expensesSen: 22_000, profitSen: 19_000 });
+    expect(summaryOfDept(v)).toEqual({ incomeSen: 100_000, costSen: 60_000, grossSen: 40_000, otherIncomeSen: 1_000, expensesSen: 22_000, chargesSen: 0, profitSen: 19_000 });
   });
 
-  test('Operation stops at its Net Profit: the Logistics column carries the logistics result', () => {
+  test('Operation: 7% of the sales and what it bills, less the 3% it passes to Logistics and the warehouse', () => {
     const op = buildOperationPnl({
       months: ['2026-09'], incomeBp: 700,
       logistics: new Map<string, LogisticsMonthIn>([['2026-09', { doValue: { KL: 1_000_000 }, doCount: { KL: 4 }, transportIncome: { KL: 30_000 }, fairIncome: {}, net: { KL: 50_000 }, fairs: [] }]]),
@@ -453,22 +531,39 @@ describe('All: each department\'s own P&L in a few figures, side by side (owner 
       chart: new Map([['900-R005', acc('900-R005', 'WAREHOUSE - (BELAKONG)', { department_row: 'op_rental_kl' })]]),
       payroll: new Set(), spreadMonths: new Map(),
     });
-    expect(summaryOfOperation(op)).toEqual({ incomeSen: 70_000, costSen: 30_000, grossSen: 40_000, otherIncomeSen: 0, expensesSen: 25_000, profitSen: 15_000 });
-    /* The sheet's own last line carries the Logistics result; All leaves it to the Logistics column. */
+    const charges = chargesOf({
+      months: ['2026-09'], base: new Map([['2026-09', 500_000]]), basis: 'performance',
+      rates: { gaBp: 500, operationBp: 700, logisticsBp: 300, setupDismantleBp: 100, merchandiseBp: 0 },
+      payees: { ga: true, operation: true, logistics: true, setupDismantle: true },
+    });
+    const unit = buildOperationUnit({
+      months: ['2026-09'], charges, operationBp: 700, logisticsBp: 300,
+      income: [{ key: 'income_warehouse', label: 'Warehouse income' }], expenses: [{ key: 'rental', label: 'Rental Warehouse' }],
+      rows: new Map([['2026-09', new Map(Object.entries(op.perMonth[0]!.rows).map(([k, c]) => [k, c.PG + c.KL + c.EM]))]]),
+    });
+    expect(unit.rows.map((r) => [r.key, r.cells['2026-09']])).toEqual([['from_selling', 35_000], ['to_logistics', -15_000], ['rental', 25_000]]);
+    expect(summaryOfUnit(unit)).toEqual({ incomeSen: 35_000, costSen: 0, grossSen: 35_000, otherIncomeSen: 0, expensesSen: 25_000, chargesSen: 15_000, profitSen: -5_000 });
+    /* The by-DO sheet is unchanged: its own 7% of the DO value and its own last line. */
     expect(opSum(op, 'net_after')).toBe(65_000);
   });
 
-  test('Logistics by its own P&L, G&A against its share, and the departments added up', () => {
-    const logistics = summaryOfLogistics([
-      { key: 'do_value', totalSen: 1_000_000 }, { key: 'total_income', totalSen: 90_000 }, { key: 'total_expense', totalSen: 70_000 }, { key: 'net', totalSen: 20_000 },
-    ]);
-    expect(logistics).toEqual({ incomeSen: 90_000, costSen: 0, grossSen: 90_000, otherIncomeSen: 0, expensesSen: 70_000, profitSen: 20_000 });
+  test('Logistics by the 3%, G&A against its share, and the departments added up: what they pay each other comes out even', () => {
+    const charges = chargesOf({
+      months: ['2026-09'], base: new Map([['2026-09', 500_000]]), basis: 'actual',
+      rates: { gaBp: 500, operationBp: 700, logisticsBp: 300, setupDismantleBp: 100, merchandiseBp: 200 },
+      payees: { ga: true, operation: true, logistics: true, setupDismantle: true },
+    });
+    const logistics = summaryOfUnit(buildLogisticsUnit({
+      months: ['2026-09'], charges, logisticsBp: 300, trips: true,
+      rows: new Map([['2026-09', new Map([['do_income', 99_999], ['sd_income', 2_000], ['outsource', 12_000], ['manpower', 4_000]])]]),
+    }));
+    expect(logistics).toEqual({ incomeSen: 17_000, costSen: 0, grossSen: 17_000, otherIncomeSen: 0, expensesSen: 16_000, chargesSen: 0, profitSen: 1_000 });
     const ga: GaPnl = {
-      months: ['2026-09'], shareBp: 800, tree: [], teams: [],
-      perMonth: [{ month: '2026-09', salesSen: 100_000, shareSen: 8_000, expenseSen: 10_000, surplusSen: -2_000 }],
+      months: ['2026-09'], shareBp: 500, tree: [], teams: [],
+      perMonth: [{ month: '2026-09', salesSen: 500_000, shareSen: 25_000, expenseSen: 30_000, surplusSen: -5_000 }],
     };
-    expect(summaryOfGa(ga)).toEqual({ incomeSen: 8_000, costSen: 0, grossSen: 8_000, otherIncomeSen: 0, expensesSen: 10_000, profitSen: -2_000 });
-    expect(addSummaries([logistics, summaryOfGa(ga)])).toEqual({ incomeSen: 98_000, costSen: 0, grossSen: 98_000, otherIncomeSen: 0, expensesSen: 80_000, profitSen: 18_000 });
+    expect(summaryOfGa(ga)).toEqual({ incomeSen: 25_000, costSen: 0, grossSen: 25_000, otherIncomeSen: 0, expensesSen: 30_000, chargesSen: 0, profitSen: -5_000 });
+    expect(addSummaries([logistics, summaryOfGa(ga)])).toEqual({ incomeSen: 42_000, costSen: 0, grossSen: 42_000, otherIncomeSen: 0, expensesSen: 46_000, chargesSen: 0, profitSen: -4_000 });
   });
 
   test('an expense account no department claims is named, its months added up', () => {
