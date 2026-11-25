@@ -34,7 +34,7 @@ import {
   type BillLine, type Leg, type SetupTrip,
 } from '../lib/logistics-pnl';
 import { buildMonthCost, fairBlock, monthCostTotal, type FairBlock, type FairLineIn, type ThreeplBill } from '../lib/logistics-breakdown';
-import { lorryUpkeep, type UpkeepLorry } from '../lib/lorry-upkeep';
+import { lorrySpend, type LorrySpend } from '../lib/lorry-spend';
 import { normalizePlate } from '../lib/plate-normalize';
 import { readFairTrips, type FairRow } from '../lib/fair-trips';
 import { LOGISTICS_CHARGE_DOC } from '../lib/event-books';
@@ -74,8 +74,8 @@ export type LogisticsPnlLoad = { ok: true; body: LogisticsPnlBody; billLines: Bi
 export type LogisticsPnlBody = ReturnType<typeof buildLogisticsPnl> & {
   tripsProblem: string | null; fairsProblem: string | null; perMonth: LogisticsPnlMonth[];
   areaRates: Array<{ key: string; label: string; region: RegionCode; rateSen: number | null; defaultRateSen: number | null; isDefault: boolean }>;
-  /** Repairs by lorry: the Upkeep Cost row, one line per lorry (scm/lib/lorry-upkeep.ts). */
-  upkeepLorries: UpkeepLorry[];
+  /** Spend by lorry: the in-house rows, one entry per lorry and Not tied (scm/lib/lorry-spend.ts). */
+  lorrySpend: LorrySpend[];
 };
 export type LogisticsPnlMonth = {
   month: string; rows: ReturnType<typeof buildLogisticsPnl>['rows']; dos: ReturnType<typeof buildLogisticsPnl>['dos'];
@@ -291,9 +291,8 @@ export async function loadLogisticsPnl(c: any, companyId: number, from: string, 
       fairsProblem,
       perMonth,
       areaRates: AREAS.map((a) => ({ key: a.key, label: a.label, region: a.region, rateSen: rateOf(a, rates), defaultRateSen: a.defaultRateSen, isDefault: !rates.has(a.key) })),
-      upkeepLorries: lorryUpkeep({
-        rows: pnl.spreads, range,
-        accounts: [...accounts.upkeep].map((code) => ({ code, name: nameOf.get(code) ?? null })),
+      lorrySpend: lorrySpend({
+        lines: pnl.inHouseLines, spreads: pnl.spreads, range, accountNames: nameOf,
         ourPlates: new Set(setup.lorries.filter((l) => l.isInternal).map((l) => normalizePlate(l.plate)).filter(Boolean)),
       }),
     },
