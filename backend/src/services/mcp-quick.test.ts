@@ -137,10 +137,15 @@ describe("AI Connector quick answers", () => {
     expect(recallVerified("hzmcp_never", 1_000)).toBeNull();
   });
 
-  it("the tool list: quick answers first, every tool read-only, the instructions point at them", () => {
-    expect(MCP_TOOLS.map((t) => t.name)).toEqual(["sales_summary", "delivery_summary", "search", "fetch", "whoami", "list_modules", "list_endpoints", "erp_get"]);
-    for (const t of MCP_TOOLS) expect(t.annotations.readOnlyHint).toBe(true);
-    for (const name of ["sales_summary", "delivery_summary", "search", "fetch"]) expect(MCP_INSTRUCTIONS).toContain(name);
+  it("the tool list: quick answers first, reads read-only, only the action tools write, the instructions point at them", () => {
+    expect(MCP_TOOLS.map((t) => t.name)).toEqual(["sales_summary", "delivery_summary", "search", "fetch", "whoami", "list_modules", "list_endpoints", "erp_get", "document_flow", "get_pdf", "propose_meeting", "propose_email", "confirm_action", "cancel_action"]);
+    const writers = ["propose_meeting", "propose_email", "confirm_action", "cancel_action"];
+    for (const t of MCP_TOOLS) expect(t.annotations.readOnlyHint).toBe(!writers.includes(t.name));
+    for (const t of MCP_TOOLS.filter((x) => x.name.startsWith("propose_"))) {
+      expect(t.annotations).toEqual({ readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true });
+      expect(t.description).toContain("Only call confirm_action after they explicitly say yes.");
+    }
+    for (const name of ["sales_summary", "delivery_summary", "search", "fetch", "document_flow", "get_pdf", "confirm_action"]) expect(MCP_INSTRUCTIONS).toContain(name);
     expect(MAX_RESULT_CHARS).toBe(30_000);
   });
 });

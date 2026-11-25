@@ -274,3 +274,85 @@ export async function logCall(
     console.warn("[mcp] call log failed:", e instanceof Error ? e.message : String(e));
   }
 }
+
+// ── AI actions: the switch and pending actions (services/mcp-actions.ts) ─────
+
+const ACTIONS_KEY = "mcp_actions_enabled";
+
+/** "Allow AI actions (meetings, email)" — OFF unless an admin turned it on. A failed read is OFF. */
+export async function actionsEnabled(db: Db): Promise<boolean> {
+  try {
+    const r = await db.prepare("SELECT value FROM app_settings WHERE key = ?").bind(ACTIONS_KEY).first<Record<string, unknown>>();
+    return str(r ?? {}, "value") === "true";
+  } catch (e) {
+    console.warn("[mcp] actions switch read failed, treating as off:", e instanceof Error ? e.message : String(e));
+    return false;
+  }
+}
+
+export async function setActionsEnabled(db: Db, on: boolean): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+    )
+    .bind(ACTIONS_KEY, on ? "true" : "false", new Date().toISOString())
+    .run();
+}
+
+export type PendingAction = { id: string; kind: string; payload: Record<string, unknown>; summary: string };
+
+export async function createPendingAction(
+  db: Db,
+  a: { tokenId: string; userId: number; kind: string; payload: Record<string, unknown>; summary: string; ttlMs: number },
+): Promise<string> {
+  const id = `mcpx_${randomToken(18)}`;
+  const now = Date.now();
+  await db
+    .prepare(
+      `INSERT INTO mcp_pending_actions (id, token_id, user_id, kind, payload_json, summary, created_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(id, a.tokenId, a.userId, a.kind, JSON.stringify(a.payload), a.summary.slice(0, 500), new Date(now).toISOString(), new Date(now + a.ttlMs).toISOString())
+    .run();
+  return id;
+}
+
+/**
+ * Single use: the UPDATE claims the action for this token + person while it is
+ * unused and unexpired; a replay, another token or a late confirm gets null.
+ * `outcome` = 'confirmed' or 'cancelled'.
+ */
+export async function claimPendingAction(db: Db, id: string, tokenId: string, userId: number, outcome: "confirmed" | "cancelled"): Promise<PendingAction | null> {
+  const nowIso = new Date().toISOString();
+  const r = await db
+    .prepare(
+      `UPDATE mcp_pending_actions SET used_at = ?, outcome = ?
+        WHERE id = ? AND token_id = ? AND user_id = ? AND used_at IS NULL AND expires_at > ?
+        RETURNING id, kind, payload_json, summary`,
+    )
+    .bind(nowIso, outcome, id, tokenId, userId, nowIso)
+    .first<Record<string, unknown>>();
+  if (!r) return null;
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(str(r, "payload_json")) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  return { id: str(r, "id"), kind: str(r, "kind"), payload, summary: str(r, "summary") };
+}
+
+/** How a confirmed action ended ('done' / 'failed'), for the admin page. */
+export async function finishPendingAction(db: Db, id: string, outcome: "done" | "failed", note: string): Promise<void> {
+  await db.prepare("UPDATE mcp_pending_actions SET outcome = ?, outcome_note = ? WHERE id = ?").bind(outcome, note.slice(0, 300), id).run();
+}
+
+/** Actions this person confirmed in the last 24 hours (the daily cap counts these). */
+export async function confirmedLastDay(db: Db, userId: number): Promise<number> {
+  const r = await db
+    .prepare("SELECT COUNT(*) AS n FROM mcp_pending_actions WHERE user_id = ? AND used_at > ? AND outcome <> 'cancelled'")
+    .bind(userId, new Date(Date.now() - 24 * 3600_000).toISOString())
+    .first<Record<string, unknown>>();
+  return Number(str(r ?? {}, "n") || 0);
+}

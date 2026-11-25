@@ -1964,6 +1964,11 @@
       "check": "D1",
       "key": "HEIGHT,NEW_LINE,OPTION,PIECES,QTY,REMOVED_LINE,SKU|backend/src/scm/lib/so-product-change.ts frontend/src/pages/scm-v2/product-changes-view.ts",
       "why": "ONE vocabulary, one definition and one PRESENTATION of it: PRODUCT_CHANGE_TYPES (backend) decides what a product change is and records it; TYPE_LABEL (frontend) is how the Product changes report names each recorded type. A type the backend adds shows as its raw key until labelled, a blank-chip cost, not a wrong number."
+    },
+    {
+      "check": "D2",
+      "key": "DELIVERY_ORDER,DELIVERY_RETURN,GRN,PAYMENT_VOUCHER,PURCHASE_INVOICE,PURCHASE_ORDER,SALES_INVOICE,SALES_ORDER ~ DELIVERY_ORDER,DELIVERY_RETURN,GRN,PURCHASE_INVOICE,PURCHASE_ORDER,SALES_INVOICE,SALES_ORDER",
+      "why": "TWO DIFFERENT QUESTIONS over the search hit types, differing by PAYMENT_VOUCHER on purpose: globalSearch STATUS_DOC lists the hits that carry a status pill; the AI Connector's SEARCH_TO_FLOW (services/mcp-actions.ts) lists the hits that anchor a relationship map (scm/routes/document-flow.ts), and a payment voucher has no map. Divergence costs a document_flow answer 'no map for this', never a wrong number."
     }
   ]
 }
