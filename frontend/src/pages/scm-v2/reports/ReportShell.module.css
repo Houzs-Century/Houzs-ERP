@@ -130,8 +130,12 @@
 }
 .seg:hover { color: var(--fin-ink); }
 .segOn, .segOn:hover { background: var(--fin-surface); color: var(--fin-petrol-ink); font-weight: 600; box-shadow: 0 1px 2px rgba(17, 24, 16, 0.14); }
-/* A choice that is a link (the P&L picker): a button's centring and no underline. */
-a.seg { display: inline-flex; align-items: center; text-decoration: none; }
+/* A choice that is a link (the P&L picker): a button's centring and no underline; one not built yet greyed. */
+a.seg, span.seg { display: inline-flex; align-items: center; text-decoration: none; }
+.segOff, .segOff:hover { color: var(--fin-muted); opacity: 0.55; cursor: default; }
+/* A choice that turns on and off (the Overall P&L's views, two or three side by side): its tick beside its name. */
+.segToggle { display: inline-flex; align-items: center; gap: 4px; }
+.pickerHint { font-size: 12px; color: var(--fin-muted); }
 .switch {
   display: inline-flex; align-items: center; gap: 8px; padding: 0; border: 0; background: none;
   font: 500 12.5px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-text); cursor: pointer; white-space: nowrap;
