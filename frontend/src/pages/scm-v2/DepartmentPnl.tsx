@@ -16,7 +16,7 @@
 //   • Operation — the owner's sheet by region (Penang | KL | SBH & SWK), or a
 //     Total and one column per month; a % of the Delivery Order value beside;
 //   • Logistics — the whole Logistics cost report (LogisticsCost.tsx: its P&L, By
-//     region & trip, Setup & Dismantle, Repairs by lorry), every company's: 2990,
+//     region & trip, Setup & Dismantle, Spend by lorry), every company's: 2990,
 //     whose plan folds logistics into its Showroom, is offered it all the same
 //     (owner 2026-11-25: 把整个 logistic cost 搬进来; 两家都放 Department 里).
 // A figure opens the lines behind it under its line (owner 2026-11-20:「我希望这里

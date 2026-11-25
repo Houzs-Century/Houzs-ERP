@@ -148,7 +148,7 @@ describe('Logistics', () => {
     expect(rowText(table, 'NET PROFIT')).toContain('11,000.00');
     expect(fetchMock.mock.calls.some(([p]) => String(p).startsWith('/acc-events/logistics/pnl?from=2026-09-01&to=2026-10-31'))).toBe(true);
     expect(within(screen.getByRole('group', { name: 'Logistics views' })).getAllByRole('button').map((b) => b.textContent))
-      .toEqual(['P&L', 'By region & trip', 'Setup & Dismantle', 'Repairs by lorry']);
+      .toEqual(['P&L', 'By region & trip', 'Setup & Dismantle', 'Spend by lorry']);
     const depts = screen.getByRole('group', { name: 'Department' });
     expect(within(depts).getByRole('button', { name: 'Logistics' }).getAttribute('aria-pressed')).toBe('true');
     /* One toolbar: the dates, the departments, then the report's own tools. */

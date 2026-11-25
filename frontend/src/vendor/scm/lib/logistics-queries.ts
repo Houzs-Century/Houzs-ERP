@@ -132,21 +132,21 @@ export type LogisticsPnl = {
   /** Set when the fairs could not be read — no setup / dismantle trip is priced then. */
   tripsProblem: string | null;
   areaRates: LogisticsAreaRate[];
-  /** Repairs by lorry: the Upkeep Cost row, one line per lorry. Absent from a server
-      not yet updated. */
-  upkeepLorries?: LogisticsUpkeepLorry[];
+  /** Spend by lorry: the in-house rows, one entry per lorry and one for the lines that
+      name no lorry. Absent from a server not yet updated. */
+  lorrySpend?: LogisticsLorrySpend[];
 };
 
-/** One upkeep bill: its part in each month shown; another plate its description
-    names when it names none of its account's own (Finance's to correct). */
-export type LogisticsUpkeepBill = {
-  lineId: string; day: string; docNo: string | null; notes: string | null;
+export type LogisticsSpendKind = 'petrol' | 'upkeep' | 'instalment' | 'roadtax' | 'other' | 'manpower';
+/** One in-house line: its part in each month shown as the P&L counts it (its spread for upkeep
+    and road tax); another plate its description names when it names none of its account's own. */
+export type LogisticsSpendLine = {
+  lineId: string; kind: LogisticsSpendKind; accountCode: string; day: string; docNo: string | null; notes: string | null;
   amountSen: number; months: number; byMonth: Record<string, number>; otherPlate: string | null;
 };
-/** One lorry's upkeep account and its bills; plate null when the account names none. */
-export type LogisticsUpkeepLorry = {
-  accountCode: string; accountName: string | null; plate: string | null; ours: boolean;
-  byMonth: Record<string, number>; totalSen: number; bills: LogisticsUpkeepBill[];
+/** One lorry's lines; plate null = the lines that name no lorry. */
+export type LogisticsLorrySpend = {
+  plate: string | null; ours: boolean; lines: LogisticsSpendLine[]; byMonth: Record<string, number>; totalSen: number;
 };
 
 const PNL_KEY = ['acc-events', 'logistics-pnl'] as const;
