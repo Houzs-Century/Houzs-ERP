@@ -136,11 +136,12 @@ export type LogisticsPnl = {
 
 const PNL_KEY = ['acc-events', 'logistics-pnl'] as const;
 
-export function useLogisticsPnl(from: string, to: string) {
+/** `enabled`: false while the page shows something else (the Department P&L reads it for Logistics only). */
+export function useLogisticsPnl(from: string, to: string, enabled: boolean) {
   return useQuery({
     queryKey: [...PNL_KEY, from, to],
     queryFn: () => authedFetch<LogisticsPnl>(`/acc-events/logistics/pnl?from=${from}&to=${to}`),
-    staleTime: 30_000,
+    staleTime: 30_000, enabled,
   });
 }
 

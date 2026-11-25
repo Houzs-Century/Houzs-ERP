@@ -1,25 +1,28 @@
 // ----------------------------------------------------------------------------
 // DepartmentPnl — the Department P&L tab (owner 2026-11-19: an Operation report =
 // his "Operation PNL - Auto" sheet, a G&A report = admin, IT, legal and HQ, and
-// 「我要可以看全部的，也要可以看单独部门的」; nothing in no department). Each company
-// has its own departments (its plan: Houzs — Exhibition, Operation, Logistics, G&A;
-// 2990 — Showroom, G&A). Report style (FinanceGrid — the statement look), all from
-// the books:
-//   • All departments — the whole P&L on its own tree, each figure split across the
-//     company's departments, Total = the P&L; an expense account no department
-//     claims yet is named under the table, its figure in Total only;
+// 「我要可以看全部的，也要可以看单独部门的」; nothing in no department; 2026-11-25:
+// each department by its own method, 「我会有很多个不同的p&L, 每个的算法和提取的资料
+// 不一样」). Each company has its own departments (its plan: Houzs — Exhibition,
+// Operation, Logistics, G&A; 2990 — Showroom, G&A). Report style (FinanceGrid):
+//   • All departments — every department's own P&L in a few figures side by side,
+//     and their total (the departments added up, not the company's profit: the P&L
+//     is); an expense account no department claims yet is named above the table;
+//   • the Exhibition P&L — its sales and cost of sales the Performance P&L's own
+//     (the sales orders by SO date), less what it booked and its commission at the
+//     month's bills; the Showroom P&L as booked;
 //   • G&A — its share of the Performance sales against what it booked (the HQ
 //     teams' payroll lines, the accounts and folds the plan gives G&A), the surplus;
 //   • Operation — the owner's sheet by region (Penang | KL | SBH & SWK), or a
 //     Total and one column per month; a % of the Delivery Order value beside;
-//   • every other department its own P&L month by month — the Exhibition P&L (the
-//     fairs' sales less their cost and what Exhibition booked), the Showroom P&L.
-// Logistics is its own report (Logistics cost) and has no view here.
+//   • Logistics — the Logistics P&L, the Logistics cost report's own view.
 // A figure opens the lines behind it under its line (owner 2026-11-20:「我希望这里
 // 点开也能看」; DepartmentPnlLines.tsx), adding up to it: an account's ledger lines
-// as split, a category's or a block's every line; on the Operation sheet a row's
-// salary, ledger and bill lines, the fairs, the Logistics cost report's figures.
-// What only adds up the rows above (Gross profit, the results) opens nothing.
+// as split (the Exhibition's commission: its bills), a category's or a block's every
+// line; on the Operation sheet a row's salary, ledger and bill lines, the fairs, the
+// Logistics cost report's figures. What comes from the orders and what only adds up
+// the rows above (Gross profit, the results) opens nothing; on All a figure says
+// where it comes from and opens its department's own P&L.
 // Server: backend/src/scm/routes/acc-departments.ts. The view lives in the URL.
 // ----------------------------------------------------------------------------
 
@@ -29,9 +32,12 @@ import { monthEnd, monthStart } from '../../lib/dateRangePresets';
 import { fmtDateOrDash } from '../../vendor/shared/format';
 import {
   useDepartmentPlan, useDepartmentView, useDepartmentsAll, useDepartmentsGa, useDepartmentsOperation, useSaveDepartmentRate, useSaveOperationSpread,
-  type DepartmentView, type DepartmentsAll, type DepartmentsGa, type DepartmentsOperation, type DeptBlock, type DeptKey, type DeptNode, type OpLine, type OpRegion,
+  type Department, type DepartmentView, type DepartmentsAll, type DepartmentsGa, type DepartmentsOperation, type DeptBlock, type DeptNode, type DeptSummary,
+  type OpLine, type OpRegion,
 } from '../../vendor/scm/lib/department-queries';
+import { useLogisticsPnl } from '../../vendor/scm/lib/logistics-queries';
 import { DeptLinesPanel, DrillPanel, type DrillLedger, type DrillRow } from './DepartmentPnlLines';
+import { PnlView as LogisticsPnlView } from './LogisticsPnl';
 import { FinanceGrid, fmtMoney, gridMuted, type GridColumn, type GridRow } from './reports/FinanceGrid';
 import { FinanceDateRange } from './reports/FinanceDateRange';
 import {
@@ -63,7 +69,7 @@ export const DepartmentPnlTab = () => {
   /* All, then each department of the company that has a view of its own. */
   const views = useMemo(() => [
     { value: 'all', label: 'All departments', kind: 'all' as const },
-    ...(plan.data?.departments ?? []).filter((d) => d.view != null).map((d) => ({ value: d.key as string, label: d.label, kind: d.view! })),
+    ...(plan.data?.departments ?? []).map((d) => ({ value: d.key as string, label: d.label, kind: d.view })),
   ], [plan.data]);
   /* A department the address names waits for the plan; anything else is All. */
   const wanted = params.get('dv');
@@ -89,8 +95,10 @@ export const DepartmentPnlTab = () => {
   const ga = useDepartmentsGa(from, to, kind === 'ga');
   const op = useDepartmentsOperation(from, to, kind === 'operation');
   const dept = useDepartmentView(current?.value ?? '', from, to, kind === 'dept');
-  const q = kind === 'all' ? all : kind === 'ga' ? ga : kind === 'operation' ? op : kind === 'dept' ? dept : plan;
-  const pctLabel = kind === 'ga' ? '% of Performance sales' : kind === 'operation' ? '% of DO' : '% of sales';
+  const lg = useLogisticsPnl(from, to, kind === 'logistics');
+  const q = kind === 'all' ? all : kind === 'ga' ? ga : kind === 'operation' ? op : kind === 'dept' ? dept : kind === 'logistics' ? lg : plan;
+  const pctLabel = kind === 'ga' ? '% of Performance sales' : kind === 'operation' || kind === 'logistics' ? '% of DO' : '% of sales';
+  const openDept = (key: Department) => setParam('dv', key);
 
   return (
     <>
@@ -99,16 +107,17 @@ export const DepartmentPnlTab = () => {
         <ReportTool label="Department"><Segmented options={views} value={current?.value ?? 'all'} onChange={(v) => setParam('dv', v === 'all' ? null : v)} label="Department" /></ReportTool>
         {kind != null && kind !== 'all' && <ReportTool label="Show"><Segmented options={MODES} value={mode} onChange={(v) => setParam('dm', v === 'single' ? null : v)} label="Whole range or by month" /></ReportTool>}
         {kind != null && kind !== 'all' && <ReportSwitch on={showPct} onChange={(v) => setParam('dpct', v ? null : '0')}>{pctLabel}</ReportSwitch>}
-        {kind === 'operation' && mode === 'months' && <ReportSwitch on={split} onChange={(v) => setParam('dsplit', v ? '1' : null)}>Split each month by region</ReportSwitch>}
+        {(kind === 'operation' || kind === 'logistics') && mode === 'months' && <ReportSwitch on={split} onChange={(v) => setParam('dsplit', v ? '1' : null)}>Split each month by region</ReportSwitch>}
       </ReportToolbar>
       {!r.usable && <ReportMessage>Pick dates.</ReportMessage>}
       {plan.isError && <ReportMessage tone="error">The departments could not be read — {plan.error instanceof Error ? plan.error.message : String(plan.error)}</ReportMessage>}
       {q.isError && <ReportMessage tone="error">The report could not be read — {q.error instanceof Error ? q.error.message : String(q.error)}</ReportMessage>}
       {q.isLoading && <ReportTiles tiles={['Income', 'Expenses', 'Result'].map((label) => ({ key: label, label, value: '' }))} label="Department totals" pending />}
-      {kind === 'all' && all.data && <AllView p={all.data} period={period} />}
+      {kind === 'all' && all.data && <AllView p={all.data} period={period} onOpen={openDept} />}
       {kind === 'ga' && ga.data && <GaView p={ga.data} mode={mode} showPct={showPct} period={period} />}
       {kind === 'operation' && op.data && <OperationView p={op.data} mode={mode} split={split} showPct={showPct} period={period} />}
       {kind === 'dept' && dept.data && <DeptView p={dept.data} mode={mode} showPct={showPct} period={period} />}
+      {kind === 'logistics' && lg.data && <LogisticsPnlView p={lg.data} mode={mode} split={split} showPct={showPct} period={period} months={lg.data.months} />}
     </>
   );
 };
@@ -126,90 +135,109 @@ const leafKeys = (n: DeptNode): string[] => (n.kind === 'account' ? [n.key ?? n.
 const spanText = (months: readonly string[]) => (months.length === 1 ? short(months[0]!) : `${short(months[0]!)} – ${short(months[months.length - 1]!)}`);
 const datesOf = (months: readonly string[]) => ({ from: `${months[0]}-01`, to: monthEnd(`${months[months.length - 1]}-01`) });
 
-/* ── All departments ──────────────────────────────────────────────────────── */
-function AllView({ p, period }: { p: DepartmentsAll; period: string }) {
+/* ── All departments: every department's own P&L, side by side ─────────────── */
+type PlanDept = DepartmentsAll['departments'][number];
+const SUMMARY_ROWS: ReadonlyArray<{ key: keyof DeptSummary; label: string; kind?: GridRow['kind']; optional?: boolean }> = [
+  { key: 'incomeSen', label: 'Income' },
+  { key: 'costSen', label: 'Cost of sales' },
+  { key: 'grossSen', label: 'GROSS PROFIT', kind: 'strong' },
+  { key: 'otherIncomeSen', label: 'Other income', optional: true },
+  { key: 'expensesSen', label: 'Expenses' },
+  { key: 'profitSen', label: 'PROFIT / (LOSS)', kind: 'final' },
+];
+
+/** Where a department's figures come from, as its column says it. */
+const basisText = (d: PlanDept, gaShareBp: number): string => (
+  d.view === 'ga' ? `${rateText(gaShareBp)}% of Performance sales`
+    : d.view === 'operation' ? 'Operation sheet, to Net Profit'
+      : d.view === 'logistics' ? 'Logistics P&L'
+        : d.basis === 'orders' ? 'sales orders by SO date' : 'as booked'
+);
+
+/** How one figure of All is arrived at, in a sentence. */
+function howText(d: PlanDept, row: keyof DeptSummary, gaShareBp: number): string {
+  if (row === 'grossSen') return 'Income less cost of sales.';
+  if (row === 'profitSen') {
+    if (d.view === 'operation') return "The Operation sheet's Net Profit, before Profit From Logistics and From Setup/Dismantle: Logistics has its own column here, and the fairs' setup and dismantle transport is booked in the Exhibition's expenses.";
+    if (d.view === 'ga') return "G&A's surplus or deficit: its share less what it booked.";
+    return 'Gross profit and other income, less expenses.';
+  }
+  if (d.view === 'ga') {
+    return row === 'incomeSen' ? `G&A's share: ${rateText(gaShareBp)}% of the Performance sales (the sales orders by SO date).`
+      : "What G&A booked: the HQ teams' pay and the accounts the Chart of Accounts gives G&A.";
+  }
+  if (d.view === 'operation') {
+    return row === 'incomeSen' ? "Operation's rate of the DOs' value and the WAREHOUSE / OPERATION CHARGES billed, as on its sheet."
+      : row === 'costSen' ? "(-) Logistic Expense: the Logistics P&L's transport income from the DOs."
+        : "Total Warehouse Expenses, as on its sheet (upkeep and insurance spread over their months).";
+  }
+  if (d.view === 'logistics') return row === 'incomeSen' ? "The Logistics P&L's TOTAL INCOME." : "The Logistics P&L's TOTAL EXPENSE.";
+  if (row === 'incomeSen') return d.basis === 'orders' ? "The sales orders dated in these months (not draft or cancelled), delivered or not: the Performance P&L's own sales." : 'Sales as booked.';
+  if (row === 'costSen') return d.basis === 'orders' ? "Each order line's own cost: the Performance P&L's own cost of sales." : 'Cost of sales as booked.';
+  if (row === 'expensesSen') {
+    return `What the ${d.label} department booked, by journal date${d.basis === 'orders' ? ", with its commission at the month's commission bills in place of the monthly release" : ''}.`;
+  }
+  return `Other income booked for the ${d.label} department.`;
+}
+
+/** What a figure of All opens: where it comes from, and its department's own P&L. */
+function AllFigure({ d, row, how, onOpen, onClose }: { d: PlanDept; row: string; how: string; onOpen: (key: Department) => void; onClose: () => void }) {
+  return (
+    <div role="region" aria-label={`${d.label} · ${row}`} className={s.rates}>
+      <span className={s.rate}>{how}</span>
+      <button type="button" className={`${s.btn} ${s.btnSolid}`} onClick={() => onOpen(d.key)}>Open the {d.label} P&amp;L</button>
+      <button type="button" className={s.btn} onClick={onClose} aria-label="Close">Close</button>
+    </div>
+  );
+}
+
+function AllView({ p, period, onOpen }: { p: DepartmentsAll; period: string; onOpen: (key: Department) => void }) {
+  const depts = p.departments;
   const columns = useMemo<GridColumn[]>(() => [
-    ...p.columns.map((c) => ({ key: c.key, label: c.label, kind: 'money' as const, width: 150 })),
-    { key: 'T', label: 'Total', sub: 'the P&L', kind: 'money', width: 150, total: true, edge: true },
-  ], [p.columns]);
-  const rows = useMemo<GridRow[]>(() => {
-    const depts = p.columns.map((c) => c.key);
-    const cellsOf = (n: DeptNode): Record<string, number> => ({ ...Object.fromEntries(depts.map((k) => [k, n.cells?.[k] ?? 0])), T: n.amountSen });
-    const block = (b: DeptBlock): Record<string, number> => ({ ...Object.fromEntries(depts.map((k) => [k, p.blockTotals[b][k] ?? 0])), T: sumBlock(p, b) });
-    const minus = (a: Record<string, number>, b: Record<string, number>): Record<string, number> =>
-      Object.fromEntries(Object.keys(a).map((k) => [k, (a[k] ?? 0) - (b[k] ?? 0)]));
-    const plus = (a: Record<string, number>, b: Record<string, number>): Record<string, number> =>
-      Object.fromEntries(Object.keys(a).map((k) => [k, (a[k] ?? 0) + (b[k] ?? 0)]));
-    /* A figure opens its lines: the column's department, or every part in Total. */
-    const colName = (key: string) => (key === 'T' ? 'Total' : p.columns.find((c) => c.key === key)?.label ?? key);
-    const detailIn = (b: DeptBlock): DetailOf => (keys, title) => (colKey, close) => (
-      <DeptLinesPanel title={title} sub={`${colName(colKey)} · ${period}`} onClose={close}
-        ask={{ view: 'all', block: b, dept: colKey === 'T' ? null : colKey as DeptKey, from: p.from, to: p.to, keys }} />
-    );
-    const group = (b: DeptBlock, label: string, totalLabel: string): GridRow =>
-      ({ id: b, label, totalLabel, kind: 'block', kids: nodeRows(p.tree[b], cellsOf, detailIn(b)), cells: block(b), detail: detailIn(b)(p.tree[b].flatMap(leafKeys), totalLabel) });
-    const gross = minus(block('tradingIncome'), block('costOfSales'));
-    const beforeTax = minus(plus(gross, block('otherIncome')), block('expenses'));
-    const net = minus(beforeTax, block('taxation'));
-    const expenses = group('expenses', 'EXPENSES', 'Total expenses');
-    /* An expense account no department claims yet: named, its figure in Total only. */
-    const noneSen = p.unassigned.lines.reduce((x, l) => x + l.amountSen, 0);
-    if (noneSen !== 0) {
-      const keys = p.unassigned.lines.map((l) => l.code);
-      expenses.kids = [...(expenses.kids ?? []), {
-        id: 'unassigned', label: `${p.unassigned.label} — set its Department on the Chart of Accounts`, kind: 'warn',
-        cells: { ...Object.fromEntries(depts.map((k) => [k, null])), T: noneSen },
-        detail: (colKey, close) => (colKey !== 'T' ? null : (
-          <DeptLinesPanel title={p.unassigned.label} sub={`Total · ${period}`} onClose={close}
-            ask={{ view: 'all', block: 'expenses', dept: 'none', from: p.from, to: p.to, keys }} />
-        )),
-      }];
-    }
-    const out: GridRow[] = [
-      group('tradingIncome', 'TRADING INCOME', 'Total trading income'),
-      group('costOfSales', 'COST OF SALES', 'Total cost of sales'),
-      { id: 'gross', label: 'GROSS PROFIT', kind: 'strong', cells: gross },
-      group('otherIncome', 'OTHER INCOME', 'Total other income'),
-      expenses,
-      { id: 'pbt', label: 'PROFIT BEFORE TAXATION', kind: 'strong', cells: beforeTax },
-      group('taxation', 'TAXATION', 'Total taxation'),
-      { id: 'net', label: 'NET PROFIT / (LOSS)', kind: 'final', cells: net },
-    ];
-    return out.filter((x) => !x.kids || x.kids.length > 0);
-  }, [p, period]);
-  const t = p.totals;
+    ...depts.map((d) => ({ key: d.key, label: d.label, sub: basisText(d, p.gaShareBp), kind: 'money' as const, width: 170 })),
+    { key: 'T', label: 'Total', sub: 'departments added up', kind: 'money', width: 170, total: true, edge: true },
+  ], [depts, p.gaShareBp]);
+  const rows = useMemo<GridRow[]>(() => SUMMARY_ROWS
+    .filter((r) => !r.optional || depts.some((d) => (p.summary[d.key]?.[r.key] ?? 0) !== 0))
+    .map((r): GridRow => ({
+      id: r.key, label: r.label, kind: r.kind,
+      cells: { ...Object.fromEntries(depts.map((d) => [d.key, p.summary[d.key]?.[r.key] ?? 0])), T: p.total[r.key] },
+      detail: (colKey, close) => {
+        const d = depts.find((x) => x.key === colKey);
+        if (!d || (p.summary[d.key]?.[r.key] ?? 0) === 0) return null;
+        return <AllFigure d={d} row={r.label} how={howText(d, r.key, p.gaShareBp)} onOpen={onOpen} onClose={close} />;
+      },
+    })), [p, depts, onOpen]);
   const tiles: ReportTile[] = [
-    ...p.columns.map((c) => {
-      const sen = p.blockTotals.expenses[c.key] ?? 0;
-      return { key: c.key, label: `${c.label} expenses`, value: whole(sen), sub: `${pctText(sen, t.expensesSen)} of all expenses` };
+    ...depts.map((d): ReportTile => {
+      const sen = p.summary[d.key]?.profitSen ?? 0;
+      return { key: d.key, label: `${d.label} profit`, value: whole(sen), tone: sen < 0 ? 'late' : 'good', sub: basisText(d, p.gaShareBp) };
     }),
-    { key: 'net', label: 'Net profit', value: whole(t.netProfitSen), tone: t.netProfitSen < 0 ? 'late' : 'good', sub: 'as the P&L' },
+    { key: 'total', label: 'Departments added up', value: whole(p.total.profitSen), tone: p.total.profitSen < 0 ? 'late' : 'good', sub: 'not the P&L: each by its own method' },
   ];
-  const sheet = () => gridSheet({ title: 'Department P&L · all departments', subtitle: `${period} · RM`, period, nameLabel: 'Account', columns, rows, showPct: false });
+  const sheet = () => gridSheet({ title: 'Department P&L · all departments', subtitle: `${period} · RM`, period, nameLabel: 'Line', columns, rows, showPct: false });
   return (
     <>
       <ReportHeaderActions><ReportExports sheet={sheet} fileBase={`department-pnl-all-${p.from.slice(0, 7)}-${p.to.slice(0, 7)}`} /></ReportHeaderActions>
       <ReportTiles tiles={tiles} label="Department totals" />
       {p.unassigned.lines.length > 0 && (
         <ReportMessage tone="error">
-          {p.unassigned.label}: {p.unassigned.lines.map((l) => `${l.code} · ${l.name} (${fmtMoney(l.amountSen)})`).join('; ')} — give each a Department (or a Logistics row) on the Chart of Accounts.
+          {p.unassigned.label}: {p.unassigned.lines.map((l) => `${l.code} · ${l.name} (${fmtMoney(l.amountSen)})`).join('; ')} — give each a Department (or a Logistics row) on the Chart of Accounts; until then it counts in no department.
         </ReportMessage>
       )}
-      <FinanceGrid layoutKey="department-pnl-all" nameColumn={{ label: 'Account', width: 420 }} columns={columns} rows={rows}
+      {p.logisticsProblem && <ReportMessage>The fairs could not be read — {p.logisticsProblem}. The Logistics P&amp;L counts no fair.</ReportMessage>}
+      <FinanceGrid layoutKey="department-pnl-all|own" nameColumn={{ label: 'Line', width: 220 }} columns={columns} rows={rows}
         title="Department P&L · all departments" subtitle={`${period} · RM`} ariaLabel="Department P&L, all departments" drillKey={`${p.from}|${p.to}`}
         foot={<span>
-          Every figure as booked, by journal date — Total is the P&L. A payroll account splits by the salary journal&rsquo;s team lines (a line
-          naming no team is the selling department&rsquo;s); a job ad by the post it names; an Other Debtor recharge by its words (OPERATION /
-          WAREHOUSE CHARGES to Operation, LOGISTICS CHARGES to Logistics); sales and cost of sales are the selling department&rsquo;s; every other
-          account by the Chart of Accounts&rsquo; Department and Logistics columns, a department this company does not have counting where its
-          plan puts it. The G&amp;A and Operation views add their shares of sales and spread insurance and upkeep over months.
-          Click a figure for the lines behind it.
-          {p.stock.closingProvisional ? ' The closing stock is provisional until the month is closed.' : ''}
+          Each department by its own P&amp;L: the Exhibition on its sales orders by SO date (the Performance P&amp;L&rsquo;s sales and cost), less what
+          it booked and its commission bills; Operation by its sheet, to its Net Profit; Logistics by the Logistics P&amp;L; G&amp;A against its share of
+          the Performance sales. Total is the departments added up: G&amp;A&rsquo;s share and Operation&rsquo;s and Logistics&rsquo; income from the DOs
+          and the fairs are paid by no department here, so it is not the company&rsquo;s profit — the P&amp;L is. Click a figure for where it comes
+          from; pick a department above for its own P&amp;L and the lines behind each figure.
         </span>} />
     </>
   );
 }
-const sumBlock = (p: DepartmentsAll, b: DeptBlock): number => p.tree[b].reduce((x, n) => x + n.amountSen, 0);
 
 /* ── G&A ──────────────────────────────────────────────────────────────────── */
 function GaView({ p, mode, showPct, period }: { p: DepartmentsGa; mode: Mode; showPct: boolean; period: string }) {
@@ -294,8 +322,10 @@ function TeamsList({ p }: { p: DepartmentsGa }) {
   );
 }
 
-/* ── One department's own P&L (Exhibition, Showroom) ──────────────────────── */
+/* ── One department's own P&L (the Exhibition on its orders, the Showroom) ─── */
 function DeptView({ p, mode, showPct, period }: { p: DepartmentView; mode: Mode; showPct: boolean; period: string }) {
+  /* On orders, sales and cost of sales are the orders' own: they open no ledger line. */
+  const fromOrders = p.basis === 'orders';
   const columns = useMemo<GridColumn[]>(() => {
     const span = p.months.length === 1 ? short(p.months[0]!) : `${short(p.months[0]!)} – ${short(p.months[p.months.length - 1]!)}`;
     const total: GridColumn = { key: 'T', label: 'Total', sub: span, kind: 'money', width: showPct ? 172 : 130, total: true, edge: mode === 'months' };
@@ -312,15 +342,16 @@ function DeptView({ p, mode, showPct, period }: { p: DepartmentView; mode: Mode;
       <DeptLinesPanel title={title} sub={colKey === 'T' ? `Total · ${spanText(p.months)}` : short(colKey)} onClose={close}
         ask={{ view: 'dept', d: p.dept, block: b, ...datesOf(scope(colKey)), keys: accounts }} />
     );
+    const opens = (b: DeptBlock) => !(fromOrders && (b === 'tradingIncome' || b === 'costOfSales'));
     const group = (b: DeptBlock, label: string, totalLabel: string, cells: Record<string, number>): GridRow => ({
-      id: b, label, totalLabel, kind: 'block', kids: withPct(nodeRows(p.tree[b], cellsOf, detailIn(b)), sales), cells, pct: pctOf(cells, sales),
-      detail: detailIn(b)(p.tree[b].flatMap(leafKeys), totalLabel),
+      id: b, label, totalLabel, kind: 'block', kids: withPct(nodeRows(p.tree[b], cellsOf, opens(b) ? detailIn(b) : null), sales), cells, pct: pctOf(cells, sales),
+      ...(opens(b) ? { detail: detailIn(b)(p.tree[b].flatMap(leafKeys), totalLabel) } : {}),
     });
     const gross = by((m) => m.grossSen);
     const net = by((m) => m.netSen);
     const out: GridRow[] = [
-      group('tradingIncome', 'SALES', 'Total sales', sales),
-      group('costOfSales', 'COST OF SALES', 'Total cost of sales', by((m) => m.costOfSalesSen)),
+      group('tradingIncome', fromOrders ? 'SALES (SALES ORDERS BY SO DATE)' : 'SALES', 'Total sales', sales),
+      group('costOfSales', fromOrders ? "COST OF SALES (THE ORDERS' OWN)" : 'COST OF SALES', 'Total cost of sales', by((m) => m.costOfSalesSen)),
       { id: 'gross', label: 'GROSS PROFIT', kind: 'strong', cells: gross, pct: pctOf(gross, sales) },
       group('otherIncome', 'OTHER INCOME', 'Total other income', by((m) => m.otherIncomeSen)),
       group('expenses', `${p.label.toUpperCase()} EXPENSES`, `Total ${p.label} expenses`, by((m) => m.expensesSen)),
@@ -328,11 +359,12 @@ function DeptView({ p, mode, showPct, period }: { p: DepartmentView; mode: Mode;
       { id: 'net', label: `${p.label.toUpperCase()} PROFIT / (LOSS)`, kind: 'final', cells: net, pct: pctOf(net, sales) },
     ];
     return out.filter((x) => !x.kids || x.kids.length > 0);
-  }, [p, columns]);
+  }, [p, columns, fromOrders]);
   const tot = (f: (m: DepartmentView['perMonth'][number]) => number) => p.perMonth.reduce((x, m) => x + f(m), 0);
   const sales = tot((m) => m.salesSen); const gross = tot((m) => m.grossSen); const expenses = tot((m) => m.expensesSen); const net = tot((m) => m.netSen);
+  const counted = p.orders?.counted ?? 0;
   const tiles: ReportTile[] = [
-    { key: 'sales', label: 'Sales', value: whole(sales), sub: 'as booked' },
+    { key: 'sales', label: 'Sales', value: whole(sales), sub: fromOrders ? `${counted.toLocaleString('en-US')} order${counted === 1 ? '' : 's'} by SO date` : 'as booked' },
     { key: 'gross', label: 'Gross profit', value: whole(gross), sub: `${pctText(gross, sales)} of sales` },
     { key: 'expenses', label: `${p.label} expenses`, value: whole(expenses), sub: `${pctText(expenses, sales)} of sales` },
     { key: 'net', label: `${p.label} profit`, value: whole(net), tone: net < 0 ? 'late' : 'good', sub: `${pctText(net, sales)} of sales` },
@@ -345,9 +377,14 @@ function DeptView({ p, mode, showPct, period }: { p: DepartmentView; mode: Mode;
       <ReportTiles tiles={tiles} label={`${p.label} totals`} />
       <FinanceGrid layoutKey={`department-pnl-dept|${mode}|${showPct ? 1 : 0}`} nameColumn={{ label: 'Account', width: 380 }} columns={columns} rows={rows} showPct={showPct}
         title={title} subtitle={`${period} · RM`} ariaLabel={`Department P&L, ${p.label}`} drillKey={`${p.dept}|${p.from}|${p.to}|${mode}`}
-        foot={<span>
-          The {p.label} column of All departments, month by month: the books by journal date — sales and cost of sales as the P&amp;L has them,
-          less what the {p.label} department booked. Every % is of the column&rsquo;s sales. Click a figure for the lines behind it.
+        foot={fromOrders ? <span>
+          Sales and cost of sales are the Performance P&amp;L&rsquo;s own: the sales orders dated in each month (not draft or cancelled), delivered or
+          not, each line&rsquo;s own cost{p.orders ? ` — ${p.orders.counted.toLocaleString('en-US')} orders, ${p.orders.notDelivered.toLocaleString('en-US')} not yet delivered` : ''}.
+          Expenses: what the {p.label} department booked, by journal date, its commission at the month&rsquo;s commission bills in place of the monthly
+          release, as the Performance P&amp;L shows it. Every % is of the column&rsquo;s sales. Click an expense for the lines behind it.
+        </span> : <span>
+          The books by journal date, month by month: sales and cost of sales as the P&amp;L has them, less what the {p.label} department booked.
+          Every % is of the column&rsquo;s sales. Click a figure for the lines behind it.
         </span>} />
     </>
   );

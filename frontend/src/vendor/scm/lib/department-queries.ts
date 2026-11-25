@@ -1,7 +1,7 @@
 // ----------------------------------------------------------------------------
 // department-queries — the Department P&L (owner 2026-11-19: an Operation report =
-// his "Operation PNL - Auto" sheet, a G&A report = admin, IT, legal and HQ, and
-// every account split across the departments). Server:
+// his "Operation PNL - Auto" sheet, a G&A report = admin, IT, legal and HQ; 2026-11-25:
+// each department by its own method, All their own P&Ls side by side). Server:
 // backend/src/scm/routes/acc-departments.ts; which department an amount belongs
 // to: backend/src/scm/lib/department-rows.ts (the Chart of Accounts' Department
 // column and the salary journal's team lines). Money in sen.
@@ -15,10 +15,14 @@ import { writeFailedAs } from './mutation-error';
 export type Department = 'ga' | 'exhibition' | 'showroom' | 'operation' | 'logistics';
 export type DeptKey = Department | 'none';
 
-/** The company's departments and the view each opens: G&A its share, Operation the sheet,
-    the others their own P&L; Logistics is its own report (no view here). */
+/** The view a department opens: G&A its share, Operation the sheet, Logistics the
+    Logistics P&L, any other its own P&L. */
+export type DeptViewKind = 'ga' | 'operation' | 'logistics' | 'dept';
+/** A department's own P&L: sales and cost of sales as booked, or from the orders (the Exhibition). */
+export type DeptBasis = 'books' | 'orders';
+/** The company's departments and the view each opens. */
 export type DepartmentPlan = {
-  departments: Array<{ key: Department; label: string; view: 'ga' | 'operation' | 'dept' | null }>;
+  departments: Array<{ key: Department; label: string; view: DeptViewKind; basis: DeptBasis | null }>;
   selling: Department;
 };
 
@@ -32,19 +36,20 @@ export type DeptNode = {
 };
 
 export type DeptBlock = 'tradingIncome' | 'costOfSales' | 'otherIncome' | 'expenses' | 'taxation';
+/** A department's own P&L in a few figures: what it earns by its own method, what that
+    income costs directly, its other income, its expenses and its result. */
+export type DeptSummary = { incomeSen: number; costSen: number; grossSen: number; otherIncomeSen: number; expensesSen: number; profitSen: number };
+/** Every department's own P&L side by side (owner 2026-11-25), and their total. */
 export type DepartmentsAll = DepartmentPlan & {
   from: string; to: string;
-  columns: Array<{ key: Department; label: string }>;
-  tree: Record<DeptBlock, DeptNode[]>;
-  blockTotals: Record<DeptBlock, Partial<Record<DeptKey, number>>>;
-  /** Expense accounts no department claims yet: their figures sit in Total only. */
+  gaShareBp: number;
+  summary: Partial<Record<Department, DeptSummary>>;
+  /** The departments added up — not the company's profit (the P&L is). */
+  total: DeptSummary;
+  /** Expense accounts no department claims yet: in no department's figures. */
   unassigned: { label: string; lines: Array<{ code: string; name: string; amountSen: number }> };
-  totals: {
-    tradingIncomeSen: number; costOfSalesSen: number; grossProfitSen: number; otherIncomeSen: number;
-    expensesSen: number; profitBeforeTaxSen: number; taxationSen: number; netProfitSen: number;
-  };
-  baseSen: number | null;
-  stock: { closingProvisional: boolean; asOf: string };
+  /** Set when the fairs could not be read for the Logistics P&L. */
+  logisticsProblem: string | null;
 };
 
 export type GaTeam = 'DIRECTOR OFFICE' | 'FINANCE' | 'HR' | 'IT' | 'MANAGEMENT' | 'OTHER';
@@ -95,25 +100,28 @@ export type DepartmentsOperation = {
   logisticsProblem: string | null;
 };
 
-/** One department's own P&L month by month (the Exhibition P&L, the Showroom P&L). */
+/** One department's own P&L month by month (the Exhibition P&L on its orders, the Showroom P&L). */
 export type DepartmentView = {
   from: string; to: string; dept: Department; label: string; months: string[];
+  basis: DeptBasis;
+  /** On orders: the orders counted and how many are not delivered yet. */
+  orders: { counted: number; notDelivered: number } | null;
   perMonth: Array<{ month: string; salesSen: number; costOfSalesSen: number; grossSen: number; otherIncomeSen: number; expensesSen: number; taxationSen: number; netSen: number }>;
   tree: Record<DeptBlock, DeptNode[]>;
 };
 
-/** One line behind a figure of All, a department's P&L or G&A: a ledger line, or the stock
-    engine's opening / closing stock. `sen` in the figure's sign. */
+/** One line behind a figure of a department's P&L or G&A: a ledger line, the stock
+    engine's opening / closing stock, or a commission bill (the Exhibition's commission,
+    in the month the bill pays for). `sen` in the figure's sign. */
 export type DeptEntry = {
   id: string; month: string; day: string | null; accountCode: string; accountName: string | null;
   ref: string | null; text: string | null; dept: DeptKey; team: GaTeam | null; sen: number;
-  source: 'ledger' | 'stock_opening' | 'stock_closing' | 'rest';
+  source: 'ledger' | 'stock_opening' | 'stock_closing' | 'rest' | 'bill';
 };
 export type DeptLines = { lines: DeptEntry[]; totalSen: number };
-/** Which figure: the view, its column's department or months, the block and the accounts
+/** Which figure: the view, its column's months, the department and block, and the accounts
     (a code, or team:<TEAM> on G&A) under the row. */
 export type DeptLinesAsk =
-  | { view: 'all'; block: DeptBlock; dept: DeptKey | null; from: string; to: string; keys: string[] }
   | { view: 'dept'; d: Department; block: DeptBlock; from: string; to: string; keys: string[] }
   | { view: 'ga'; from: string; to: string; keys: string[] };
 
@@ -121,9 +129,10 @@ const KEY = ['acc-events', 'departments'] as const;
 
 export const deptLinesQuery = (ask: DeptLinesAsk): string => {
   const q = new URLSearchParams({ view: ask.view, from: ask.from, to: ask.to });
-  if (ask.view !== 'ga') q.set('block', ask.block);
-  if (ask.view === 'all' && ask.dept) q.set('dept', ask.dept);
-  if (ask.view === 'dept') q.set('d', ask.d);
+  if (ask.view === 'dept') {
+    q.set('block', ask.block);
+    q.set('d', ask.d);
+  }
   q.set('keys', ask.keys.join(','));
   return q.toString();
 };
