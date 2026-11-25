@@ -5,7 +5,7 @@
 import { describe, expect, test } from 'vitest';
 import {
   accountKey, addCategory, addSubtotal, blockOfKey, categoryIds, flattenLaid, fmtPct, foldsChildren, folderOpen, itemKey, laidDepth, leafKeys, linesVisible, moveWithinSiblings, newCategoryId, newSubtotalId, pctOf, placeItem,
-  removeCategory, removeSubtotal, renameCategory, setAccountFlow, setCategoryFlow, setCategorySplit, setCategoryTick, setTotalLabel, splitChoice, splitOfChoice, splitPart,
+  removeCategory, removeSubtotal, renameCategory, setAccountFlow, setAccountSplit, setCategoryFlow, setCategorySplit, setCategoryTick, setTotalLabel, splitChoice, splitOfChoice, splitPart, splitWord,
   unplaceAccount, unplacedAccounts,
   type LaidNode, type Layout, type LayoutAccountRow, type LayoutBlockDef, type LayoutCategory, type LayoutItem,
 } from './report-layout';
@@ -311,6 +311,33 @@ describe('the Cash Flow tree', () => {
     expect(l.blocks.accounts![0]).not.toHaveProperty('split');
     /* Only a category carries parts. */
     expect(setCategorySplit(before, 'a:in:300-0000', { settlement: 1, deposit: 0 })).toBe(before);
+  });
+
+  test('an account line takes its own parts, which go where it goes; cleared, it follows its group again (owner 2026-11-25)', () => {
+    const before = cashFlow();
+    let l = setAccountSplit(before, 'accounts', 'a:in:300-0000', { settlement: 1, deposit: 0 });
+    const ca = (x: Layout) => ((x.blocks.accounts![0] as LayoutCategory).children[0] as LayoutCategory).children;
+    expect(ca(l)[0]).toEqual({ kind: 'account', code: '300-0000', flow: 'in', split: { settlement: 1, deposit: 0 } });
+    expect(ca(before)[0]).not.toHaveProperty('split');
+    /* One account, two lines: its Out line still follows its group. */
+    expect((l.blocks.accounts![1] as LayoutCategory).children[0]).not.toHaveProperty('split');
+    /* A new direction, then a move: the parts stay on the line. */
+    l = setAccountFlow(l, 'accounts', 'a:in:300-0000', 'net');
+    l = placeItem(l, 'accounts', ca(l)[0]!, { kind: 'into', categoryId: 'out:acc:601-0000' });
+    const purchases = () => ((l.blocks.accounts![1] as LayoutCategory).children[1] as LayoutCategory).children;
+    expect(purchases()[1]).toEqual({ kind: 'account', code: '300-0000', flow: 'net', split: { settlement: 1, deposit: 0 } });
+    l = setAccountSplit(l, 'accounts', 'a:net:300-0000', null);
+    expect(purchases()[1]).toEqual({ kind: 'account', code: '300-0000', flow: 'net' });
+    /* Only an account line, and only one the block holds. */
+    expect(setAccountSplit(before, 'accounts', 'side:in', { settlement: 1, deposit: 0 })).toBe(before);
+    expect(setAccountSplit(before, 'accounts', 'a:in:910-0000', { settlement: 1, deposit: 0 })).toBe(before);
+  });
+
+  test('"As above" names what a row follows: Settlement, Deposit, the parts, or not split', () => {
+    expect(splitWord(undefined)).toBe('not split');
+    expect(splitWord({ settlement: 3, deposit: 0 })).toBe('Settlement');
+    expect(splitWord({ settlement: 0, deposit: 1 })).toBe('Deposit');
+    expect(splitWord({ settlement: 1, deposit: 2 })).toBe('1 : 2');
   });
 
   test('the parts a split reads as: all Settlement, all Deposit, or parts', () => {

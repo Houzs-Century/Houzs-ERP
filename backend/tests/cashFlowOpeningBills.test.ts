@@ -15,7 +15,8 @@
 import { Hono } from 'hono';
 import { describe, expect, test } from 'vitest';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
-import { openingBillHome, receiptsPaymentsReport, TRADE_FINANCE_AP } from '../src/scm/routes/accounting-rp';
+import { receiptsPaymentsReport, TRADE_FINANCE_AP } from '../src/scm/routes/accounting-rp';
+import { openingBillHome } from '../src/acc/opening-bill-places';
 
 const CO = 2;
 const OTHER_CO = 3;
