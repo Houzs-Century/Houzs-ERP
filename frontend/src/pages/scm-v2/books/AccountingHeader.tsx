@@ -24,6 +24,7 @@ export function accountingSection(tab: AccountingTab, inReports: boolean): Accou
       return inReports ? 'Reports' : 'Books';
     case 'check':
     case 'close':
+    case 'commrel':
       return 'Books';
     case 'coa':
     case 'groups':

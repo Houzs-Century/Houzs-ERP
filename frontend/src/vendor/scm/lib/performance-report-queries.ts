@@ -42,6 +42,10 @@ export type PerformanceReport = {
       income and the expenses as trees, the computed operating expense
       standing where the account it replaces sits, % of sales on every line. */
   layout: { stored: boolean; baseSen: number | null; otherIncome: LaidNode[]; expenses: LaidNode[] };
+  /** The commission (owner 2026-11-25): the bills for the period's months on the
+      commission expense, whenever they were booked, in place of what the monthly
+      release booked there; null when the company keeps no commission prepayment. */
+  commission?: { code: string; name: string | null; billSen: number; months: string[]; releaseSen: number } | null;
 };
 
 const KEY = 'report-performance';
@@ -147,6 +151,11 @@ export const performanceNotes = (r: PerformanceReport): string[] => {
   if (also.length > 0) {
     const named = also.map((a) => `${a.code}${a.name ? ` ${a.name}` : ''}`).join(', ');
     notes.push(`The rate also covers ${named} (with the accounts under them): the ${fmtPerf(o.alsoBookedSen ?? 0)} booked on those in the period is left out of the expenses too — they print at nil.`);
+  }
+  const c = r.commission;
+  if (c) {
+    const months = c.months.map((m) => new Date(`${m}-01T00:00:00Z`).toLocaleString('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' })).join(', ');
+    notes.push(`Commission on ${c.code}${c.name ? ` ${c.name}` : ''} is the commission bills for ${months || 'no month in the period'} (${fmtPerf(c.billSen)}), whenever they were booked, in place of the monthly release booked on the account in the period (${fmtPerf(c.releaseSen)}); anything else booked there stays as booked.`);
   }
   const accessory = r.groups.find((g) => g.key === 'accessory');
   if (accessory && accessory.cogsSen > accessory.salesSen) notes.push('Accessory lines are largely free gifts — no sales against their cost — so a negative margin there is expected.');

@@ -161,6 +161,7 @@ describe('the Finance sidebar', () => {
       ['Trial balance', '/scm/accounting?tab=tb'],
       ['Self-check', '/scm/accounting?tab=check'],
       ['Stock close', '/scm/accounting?tab=close'],
+      ['Commission release', '/scm/accounting?tab=commrel'],
     ]);
     for (const t of entries('Books')) expect(t, t.label).toMatchObject({ anyPerm: ['*', 'scm.access'], anyAccess: ['scm.finance.books'] });
     expect(entries('Setup').map((t) => t.label)).toEqual([

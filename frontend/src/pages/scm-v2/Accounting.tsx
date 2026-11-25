@@ -28,6 +28,7 @@ import { DataTable, type Column } from '../../components/DataTable';
 import { ItemGroupsTab } from './ItemGroups';
 import { TrialBalanceTab } from './TrialBalance';
 import { StockCloseTab } from './StockClose';
+import { CommissionReleaseTab } from './CommissionRelease';
 import { PnLTab, BalanceSheetTab } from './Reports';
 import { ReceiptsPaymentsTab } from './ReceiptsPayments';
 import { PaymentCorrectionsTab } from './PaymentCorrectionsTab';
@@ -54,7 +55,7 @@ import { DateField } from "../../vendor/scm/components/DateField";
 type Tab = AccountingTab;
 
 /* The tabs that draw their own head, with their actions in it. */
-const OWN_HEADER: ReadonlySet<Tab> = new Set<Tab>(['je', 'gl', 'check', 'close']);
+const OWN_HEADER: ReadonlySet<Tab> = new Set<Tab>(['je', 'gl', 'check', 'close', 'commrel']);
 
 export const Accounting = () => {
   /* THE TAB THE URL NAMES (docs/bugs/0824). The Finance sidebar deep-links
@@ -84,6 +85,7 @@ export const Accounting = () => {
       {tab === 'gl'    && <GlTab />}
       {tab === 'tb'    && <TrialBalanceTab />}
       {tab === 'close' && <StockCloseTab />}
+      {tab === 'commrel' && <CommissionReleaseTab />}
       {tab === 'pnl'   && <PnLTab />}
       {tab === 'bs'    && <BalanceSheetTab />}
       {tab === 'rp'    && <ReceiptsPaymentsTab />}

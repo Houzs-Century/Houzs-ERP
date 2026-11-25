@@ -21,6 +21,8 @@
 //  Card taken in by the bank | Dr bank, Dr charges   / Cr transit      | SETTLECARD  | SETTLECARD_REVERSAL
 //  Another company's swipe   | Dr transit / Cr its account, less fees | SETTLEFOR   | SETTLEFOR_REVERSAL
 //  Books' opening balances   | each account to the old book's B/F     | OPENING     | OPENING_REVERSAL
+//  Monthly commission release| Dr COMMISSION_EXPENSE / Cr COMMISSION_  | COMMREL     | COMMREL_REVERSAL
+//    PREPAID, per bill month (acc/commission-release.ts; owner 2026-11-25)
 //    (Houzs 31/08/2026 from AutoCount; the Opening Balance page. Its bills,
 //    credits and debtor bills are ordinary API / SCN / ODB documents flagged
 //    `opening`, so the books count them whatever their date.)
@@ -67,7 +69,11 @@ export type AccountRole =
      the final invoice is a sale the day it arrives — the owner's e-invoice
      reading, 2026-09-12 — booked on the DEPOSIT PAY BY CUSTOMER sales
      account, never on the deposit LIABILITY (CUSTOMER_DEPOSITS above). */
-  | 'DEPOSIT_INCOME';
+  | 'DEPOSIT_INCOME'
+  /* The monthly commission release (owner 2026-11-25): the bills from the
+     company paying the salespeople sit on PREPAYMENT COMMISSION until their
+     orders become sales, then move to the commission expense. */
+  | 'COMMISSION_PREPAID' | 'COMMISSION_EXPENSE';
 
 /* Fallback = the accountant's own AutoCount codes (migration 0344; owner
    decision 2026-09-02: 迁到 AutoCount 码). Every company carries these codes,
@@ -107,6 +113,8 @@ export const DEFAULT_ROLE_CODES: Record<AccountRole, string> = {
   SALES_RETURNS: '510-0000',     // RETURN INWARDS (a customer credit note's default line)
   PURCHASE_RETURNS: '612-0000',  // PURCHASES RETURN (a supplier credit note's default line)
   DEPOSIT_INCOME: '509-0000',    // DEPOSIT PAY BY CUSTOMER (a deposit invoice's credit side)
+  COMMISSION_PREPAID: '360-0050', // PREPAYMENT COMMISSION (the monthly commission bills)
+  COMMISSION_EXPENSE: '900-C003', // COMMISSION ( EVENT ) (what the release moves them to)
 };
 
 /** The accounts each closing-stock bucket books on (acc/stock-close.ts). */
@@ -157,6 +165,7 @@ export const REVERSAL_SOURCE: Record<string, string> = {
   RCT: 'RCT_REVERSAL',
   DI: 'DI_REVERSAL',
   OPENING: 'OPENING_REVERSAL',
+  COMMREL: 'COMMREL_REVERSAL',
 };
 
 export type RoleCodes = Record<AccountRole, string>;
@@ -773,4 +782,33 @@ export function clearingMoveLinesFrom(
       notes: `Out of clearing ${f.code} — ${tag}`,
     })),
   ];
+}
+
+/**
+ * The month's commission release (owner 2026-11-25: 「系统自动转」, on net
+ * sales): one pair per bill month that moved, the cost on the expense account
+ * and the prepayment taken down by the same amount. A month that gives some
+ * back (a deposit refunded, an invoice cancelled) books the pair the other way.
+ *
+ *     Dr COMMISSION ( EVENT )      a      (Oct 2026 bill — orders sold)
+ *         Cr PREPAYMENT COMMISSION      a
+ */
+export function commissionReleaseLines(
+  roles: Pick<RoleCodes, 'COMMISSION_PREPAID' | 'COMMISSION_EXPENSE'>,
+  month: string,
+  parts: ReadonlyArray<{ label: string; sen: number }>,
+): RuleLine[] {
+  return parts.filter((p) => Number.isInteger(p.sen) && p.sen !== 0).flatMap((p) => {
+    const a = Math.abs(p.sen);
+    const notes = `Commission released ${month} — ${p.label}${p.sen < 0 ? ' (given back)' : ''}`;
+    return p.sen > 0
+      ? [
+          { accountCode: roles.COMMISSION_EXPENSE, debitSen: a, creditSen: 0, notes },
+          { accountCode: roles.COMMISSION_PREPAID, debitSen: 0, creditSen: a, notes },
+        ]
+      : [
+          { accountCode: roles.COMMISSION_PREPAID, debitSen: a, creditSen: 0, notes },
+          { accountCode: roles.COMMISSION_EXPENSE, debitSen: 0, creditSen: a, notes },
+        ];
+  });
 }

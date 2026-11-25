@@ -50,6 +50,7 @@ import type { CardPayoutFacts } from '../../acc/card-in-bank';
 import type { OrderPaymentFacts } from '../../acc/order-payment-kind';
 import { buildReceiptsPayments, rpDbSources, supplierVouchersOf, type RpGlLine, type RpSources, type RpSplit, type RpTotals } from './accounting-rp';
 import { buildPerformance, perfDbSources, type PerfSources, type PerformancePayload } from './accounting-performance';
+import type { CommissionFacts } from '../../acc/performance-commission';
 import { loadForecastAccounts, loadGrid } from './accounting-forecast';
 import { buildBalanceSheetForecast } from './accounting-cashflow-forecast';
 import {
@@ -157,7 +158,7 @@ type Preload = {
   /** The compare groups' sales and purchase accounts, from the same bindings. */
   compareAccounts: CompareAccounts;
   /** The Performance P&L's own inputs, read once for the window: the sales orders and their lines, the rate and account, the rate's account row. */
-  perf: { settings: PerformanceSettings; orders: PerfOrder[]; lines: PerfLine[]; rateAccount: { code: string; name: string } | null };
+  perf: { settings: PerformanceSettings; orders: PerfOrder[]; lines: PerfLine[]; rateAccount: { code: string; name: string } | null; commission: CommissionFacts | null };
   /** The Cash Flow's own inputs, read once: the money accounts and what the window's supplier-payment vouchers settled. */
   rp: { moneyAccounts: Array<{ code: string; name: string }>; splits: Map<string, RpSplit[]>; acquirerTransits: string[]; cardPayouts: CardPayoutFacts; orderPayments: OrderPaymentFacts };
 };
@@ -200,7 +201,7 @@ async function preload(sb: Sb, companyId: number, layoutIds: number[], windowSta
   };
 
   /* Wave 1 — the window's tables. */
-  const [gl, moves, wh, accs, roles, closings, laidPnl, laidBs, laidPerf, laidRp, fAccounts, bindings, settings, orders, money, acquirers, books, cardPayouts] = await Promise.all([
+  const [gl, moves, wh, accs, roles, closings, laidPnl, laidBs, laidPerf, laidRp, fAccounts, bindings, settings, orders, money, acquirers, books, cardPayouts, commission] = await Promise.all([
     paginateAll<GlRow>((f, t) => sb.from('v_gl_entries').select(GL_COLS).eq('company_id', companyId).lte('entry_date', windowEnd).order('line_id').range(f, t)),
     loadOwnedMovementsUpTo(sb, companyId, windowEnd),
     bucketByWarehouse(sb, companyId),
@@ -219,6 +220,7 @@ async function preload(sb: Sb, companyId: number, layoutIds: number[], windowSta
     rpDb.acquirerTransits(),
     loadBooksOpening(sb, companyId),
     rpDb.cardPayouts(),
+    perfDb.commission(),
   ]);
   if (gl.error) return { ok: false, reason: `ledger: ${failed(gl.error)}` };
   if (!moves.ok) return { ok: false, reason: `stock: ${moves.reason}` };
@@ -237,6 +239,7 @@ async function preload(sb: Sb, companyId: number, layoutIds: number[], windowSta
   if (!acquirers.ok) return { ok: false, reason: `acquirers: ${acquirers.reason}` };
   if (!books.ok) return { ok: false, reason: books.reason };
   if (!cardPayouts.ok) return { ok: false, reason: cardPayouts.reason };
+  if (!commission.ok) return { ok: false, reason: commission.reason };
   const layouts: Preload['layouts'] = { pnl: laidPnl, balance_sheet: laidBs, performance: laidPerf, rp: laidRp };
   const glRows = (gl.data ?? []).filter((r) => countsInTheBooks(r));
 
@@ -273,7 +276,7 @@ async function preload(sb: Sb, companyId: number, layoutIds: number[], windowSta
       gl: glRows,
       moves: moves.rows, bucketOf: wh.of, accounts: accs.accounts, roles, closingBooked: closings.closingBooked, booksOpening: books.opening, layouts,
       forecast: { grid, suppliers, accounts: fAccounts.accounts }, purchaseAccountsOf: bindings.purchaseAccountsOf, categoryOfItem, compareAccounts: bindings.compareAccounts,
-      perf: { settings: settings.settings, orders: orders.orders, lines: lines.lines, rateAccount: rateAccount.account },
+      perf: { settings: settings.settings, orders: orders.orders, lines: lines.lines, rateAccount: rateAccount.account, commission: commission.facts },
       rp: { moneyAccounts: money.accounts, splits: splits.byPv, acquirerTransits: acquirers.codes, cardPayouts: cardPayouts.facts, orderPayments: orderPayments.facts },
     },
   };
@@ -332,6 +335,7 @@ function sourcesOf(pre: Preload): { report: ReportSources; rp: RpSources; perf: 
       return { ok: true as const, lines: pre.perf.lines.filter((l) => want.has(l.doc_no)) };
     },
     rateAccount: async () => ({ ok: true as const, account: pre.perf.rateAccount }),
+    commission: async () => ({ ok: true as const, facts: pre.perf.commission }),
   };
   return { report, rp, perf };
 }

@@ -54,6 +54,7 @@ export const JOB_CADENCE_MIN: Record<string, number> = {
   "failed-logins-retention": DAY,
   "hr-trip-sync": DAY,
   "stock-close": DAY,
+  "commission-release": DAY,
   "lorry-day-routes": DAY,
   "do-stamp-retry": DAY,
   "integrity-nightly": DAY,

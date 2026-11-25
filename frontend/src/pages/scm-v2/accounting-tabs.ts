@@ -15,6 +15,7 @@ export const ACCOUNTING_TAB_TITLES = {
   gl: 'General ledger',
   tb: 'Trial balance',
   close: 'Stock close',
+  commrel: 'Commission release',
   pnl: 'P&L',
   bs: 'Balance sheet',
   rp: 'Cash flow',
