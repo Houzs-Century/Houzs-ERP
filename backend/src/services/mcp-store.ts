@@ -3,7 +3,7 @@
 //
 // Owner 2026-11-25 「把全部系统的mcp都complete掉」: staff connect Claude / ChatGPT
 // to the ERP with THEIR OWN login, read-only, and the owner sees who connected
-// and what was looked up. Tables: migration 20261125T1800_mcp_connector.sql.
+// and what was looked up. Tables: migration 20261125T2200_mcp_connector.sql.
 // Tokens are stored as SHA-256 hashes only.
 // ---------------------------------------------------------------------------
 import type { Env } from "../types";

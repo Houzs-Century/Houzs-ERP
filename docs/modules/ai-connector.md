@@ -16,5 +16,5 @@ Staff ask Claude / ChatGPT / any remote-MCP app about the ERP with their OWN log
 - Leak check (admin): runs every parameter-free GET as one approved staff account and lists which money / people field names reach them. Names only, never values. Its token is revoked when the page finishes.
 
 ## Files
-- Backend: `routes/mcp.ts`, `routes/mcpAdmin.ts`, `services/mcp-store.ts`, `services/mcp-access.ts`, `services/mcp-inner.ts`; migration `20261125T1800_mcp_connector.sql`.
+- Backend: `routes/mcp.ts`, `routes/mcpAdmin.ts`, `services/mcp-store.ts`, `services/mcp-access.ts`, `services/mcp-inner.ts`; migration `20261125T2200_mcp_connector.sql`.
 - Frontend: `pages/AiConnector.tsx` (System > AI Connector; standalone on the phone shell), `pages/AiConnect.tsx` (the "Allow?" screen, rendered by `auth/AuthGate.tsx`), `functions/.well-known/*`.

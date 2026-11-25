@@ -1,4 +1,4 @@
--- 20261125T1800_mcp_connector.sql
+-- 20261125T2200_mcp_connector.sql
 --
 -- WHY. Owner 2026-11-25 「把全部系统的mcp都complete掉」: staff connect Claude /
 -- ChatGPT / Gemini to the ERP with THEIR OWN login, READ-ONLY, and the owner sees
