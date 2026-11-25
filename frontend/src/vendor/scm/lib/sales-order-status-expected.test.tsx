@@ -73,3 +73,36 @@ describe('useUpdateMfgSalesOrderStatus — expectedStatus', () => {
     expect('expectedStatus' in sent).toBe(false);
   });
 });
+
+/* The final cancel approval runs THIS mutation, and the server closes the
+ * cancellation request (EXECUTED) on it. The order page's cancel card must be
+ * refetched, or it keeps offering "Cancel now" on a cancelled order. */
+describe('useUpdateMfgSalesOrderStatus — cancellation card', () => {
+  beforeEach(() => authedFetch.mockReset());
+
+  const run = async (docNo: string, status: string) => {
+    const qc = new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } });
+    qc.setQueryData(['mfg-sales-order-detail', docNo], { salesOrder: { doc_no: docNo, status: 'CONFIRMED', version: 1 }, items: [] });
+    qc.setQueryData(['document-cancel-request', 'so', docNo], { open: { status: 'APPROVED' } });
+    qc.setQueryData(['document-cancel-requests', 'open'], { requests: [] });
+    authedFetch.mockResolvedValue({ salesOrder: {}, version: 2 });
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      React.createElement(QueryClientProvider, { client: qc }, children);
+    const { result } = renderHook(() => useUpdateMfgSalesOrderStatus(), { wrapper });
+    await result.current.mutateAsync({ docNo, status, expectedStatus: 'CONFIRMED' });
+    await waitFor(() => expect(qc.getQueryState(['mfg-sales-order-detail', docNo])?.isInvalidated).toBe(true));
+    return qc;
+  };
+
+  it('refreshes the cancel card and the inbox when the order is cancelled', async () => {
+    const qc = await run('HC-SO-2611-010', 'CANCELLED');
+    expect(qc.getQueryState(['document-cancel-request', 'so', 'HC-SO-2611-010'])?.isInvalidated).toBe(true);
+    expect(qc.getQueryState(['document-cancel-requests', 'open'])?.isInvalidated).toBe(true);
+  });
+
+  it('leaves them alone on any other status change', async () => {
+    const qc = await run('HC-SO-2611-011', 'IN_PRODUCTION');
+    expect(qc.getQueryState(['document-cancel-request', 'so', 'HC-SO-2611-011'])?.isInvalidated).toBe(false);
+    expect(qc.getQueryState(['document-cancel-requests', 'open'])?.isInvalidated).toBe(false);
+  });
+});
