@@ -326,14 +326,14 @@ export function ProjectChat({
         growToFit(el);
       }, 0);
       toast.success("Image read. Please check and send.");
-    } catch (e: any) {
+    } catch (e: unknown) {
       /* postBinary throws HttpError whose message carries the response body
          verbatim — our backend returns {"error":"..."} JSON for failures, so
          pull .error back out before showing it, or fall back to the whole
          message when it isn't JSON. */
-      let msg: string = e?.message || "Couldn't read the image.";
+      let msg = e instanceof Error ? e.message : "Couldn't read the image.";
       try {
-        const parsed = JSON.parse(msg);
+        const parsed = JSON.parse(msg) as { error?: unknown };
         if (parsed && typeof parsed === "object" && typeof parsed.error === "string") {
           msg = parsed.error;
         }
