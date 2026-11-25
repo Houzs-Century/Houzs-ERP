@@ -926,6 +926,8 @@ export type BsForecastPayload = {
   accrual: { code: string; name: string } | null;
   /** The open orders' balances at the start, and what of them was counted: never beyond the debtors on the start sheet. */
   receipts: { orders: number; sen: number; capSen: number; countedSen: number };
+  /** The stock engine's total at the start: the forecast keeps it. */
+  stockTotalSen: number;
 };
 
 const SALARY_ACCRUAL = /ACCRU\w*\W*SALAR/i;
@@ -1042,6 +1044,7 @@ export async function buildBalanceSheetForecast(sb: Sb, companyId: number, layou
         orders: due.length, sen: due.reduce((s, d) => s + d.sen, 0), capSen: Math.max(0, arOnSheet),
         countedSen: openingReceipts.reduce((s, r) => s + r.sen, 0),
       },
+      stockTotalSen: sheet.stockTotalSen,
     },
   };
 }

@@ -28,7 +28,7 @@ export function orderAddressText(so: OrderRow): string {
   return [text(so.address1), text(so.address2), text(so.address3), text(so.address4), text(so.city), text(so.postcode)].filter(Boolean).join(' ');
 }
 
-export function doFacts(lines: readonly SetLine[], zone: string | null, address: string | null): DeliveryFacts {
+export function doFacts(lines: readonly SetLine[], zone: string | null, address: string | null, goodsValueSen: number | null): DeliveryFacts {
   const live = lines.filter((l) => !l.cancelled);
   const itemCount = live
     .filter((l) => String(l.category).toUpperCase() !== 'SOFA')
@@ -38,6 +38,7 @@ export function doFacts(lines: readonly SetLine[], zone: string | null, address:
     itemCount,
     dropCount: 1,
     customerCount: 1,
+    goodsValueSen,
     destinationZone: zone,
     destinationZones: zone ? [zone] : [],
     addressText: address,

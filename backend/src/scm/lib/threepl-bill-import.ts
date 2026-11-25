@@ -34,9 +34,9 @@ import { orderBookletTokens } from '../../routes/lib/sales-report-evidence';
 import { chunkIn, paginateAll } from './paginate-all';
 import { scopeToCompanyId } from './companyScope';
 import { toBase64 } from './scan-ocr';
-import { readTransportBill } from './threepl-bill-read';
+import { BILL_LINE_KINDS, readTransportBill, type BillLineKind } from './threepl-bill-read';
 import {
-  billBreakdown, chargeNote, chargesPerDo, foldTrips, matchLines, orderKeys, pickDo, preselect,
+  billBreakdown, chargeNote, chargesPerDo, foldTrips, matchLines, orderKeys, pickDo, preselect, shareOrderTotals,
   type Assignment, type DoCandidate, type LineAssign, type MatchedLine, type OrderKeys,
 } from './threepl-bill-match';
 import { loadCarrierCards, loadDoFacts, type CompanyScopeFn } from './threepl-charge-load';
@@ -197,15 +197,20 @@ function resolverFor(r: Resolved) {
   };
 }
 
-/** The rate card amount of each DO on one 3PL's card (null without a card). */
-async function pricer(deps: BillDeps, carrierId: string | null, dos: readonly DoCandidate[]): Promise<{ ok: true; expectedOf: (doId: string) => number | null } | { ok: false; reason: string }> {
+/** The rate card amount of each DO on one 3PL's card (null without a card),
+ *  and each DO's goods value (a bill's shared price is split by it). */
+async function pricer(deps: BillDeps, carrierId: string | null, dos: readonly DoCandidate[]): Promise<{ ok: true; expectedOf: (doId: string) => number | null; goodsOf: (doId: string) => number | null } | { ok: false; reason: string }> {
   const cards = await loadCarrierCards(deps.sb, deps.companyId);
   if (!cards.ok) return cards;
   /* Orders are zoned by the paying company's map, the one its cards' places sit in. */
   const facts = await loadDoFacts(scopeOf(deps), deps.sb, dos.map((d) => ({ id: d.id, soDocNo: d.soDocNo })), cards.cards.zoneMap);
   if (!facts.ok) return facts;
   const spec = carrierId ? cards.cards.specByCarrier.get(carrierId)?.spec ?? null : null;
-  return { ok: true, expectedOf: (doId) => { const f = facts.facts.get(doId); return f ? expectedSen(spec, f) : null; } };
+  return {
+    ok: true,
+    expectedOf: (doId) => { const f = facts.facts.get(doId); return f ? expectedSen(spec, f) : null; },
+    goodsOf: (doId) => facts.facts.get(doId)?.goodsValueSen ?? null,
+  };
 }
 
 /** The AP invoice's own lines: their amounts and fairs, for the setup /
@@ -224,6 +229,7 @@ export type BillReading = {
   assignments: Assignment[];
   dos: Map<string, DoCandidate>;
   expectedOf: (doId: string) => number | null;
+  goodsOf: (doId: string) => number | null;
   /** DOs another bill or a hand entry already charges on this 3PL. */
   elsewhere: Map<string, { invoiceNo: string | null; billedSen: number }>;
   stamp: FileStamp;
@@ -264,8 +270,8 @@ export async function readBill(deps: BillDeps, bill: ApBill, askedCarrierId: str
   }
   return {
     ok: true, carrierId, carriers: carriers.rows, lines,
-    assignments: lines.map((l) => preselect(l, apLines.rows)),
-    dos, expectedOf: priced.expectedOf, elsewhere, stamp: files.stamp,
+    assignments: shareOrderTotals(lines, lines.map((l) => preselect(l, apLines.rows))),
+    dos, expectedOf: priced.expectedOf, goodsOf: priced.goodsOf, elsewhere, stamp: files.stamp,
   };
 }
 
@@ -341,7 +347,7 @@ export async function rederiveCharges(deps: BillDeps, bill: ApBill, carrierId: s
   const { sb, companyId } = deps;
   const { inv } = bill;
   const { data: lineRows, error: lErr } = await scopeToCompanyId(sb.from('threepl_bill_lines')
-    .select('line_no, text, amount_sen, printed, assign, do_ids'), companyId).eq('ap_invoice_id', String(inv.id)).order('line_no');
+    .select('line_no, text, kind, amount_sen, printed, assign, do_ids'), companyId).eq('ap_invoice_id', String(inv.id)).order('line_no');
   if (lErr) return fail(500, 'load_failed', lErr.message);
   const doLines = ((lineRows ?? []) as Row[]).filter((l) => l.assign === 'do' && Array.isArray(l.do_ids) && l.do_ids.length > 0);
   const doIds = [...new Set(doLines.flatMap((l) => (l.do_ids as unknown[]).map(String)))];
@@ -351,11 +357,12 @@ export async function rederiveCharges(deps: BillDeps, bill: ApBill, carrierId: s
   const priced = await pricer(deps, carrierId, [...live.values()]);
   if (!priced.ok) return fail(500, 'load_failed', priced.reason);
   const asMatched: MatchedLine[] = doLines.map((l) => ({
-    index: Number(l.line_no), text: String(l.text ?? ''), date: null, kind: 'delivery', amountSen: l.amount_sen == null ? null : Number(l.amount_sen),
+    index: Number(l.line_no), text: String(l.text ?? ''), date: null, kind: (BILL_LINE_KINDS as readonly string[]).includes(String(l.kind)) ? l.kind as BillLineKind : 'delivery',
+    amountSen: l.amount_sen == null ? null : Number(l.amount_sen),
     printed: (l.printed as string[] | null) ?? [], status: 'matched',
     dos: (l.do_ids as unknown[]).map(String).map((id) => live.get(id)).filter((d): d is DoCandidate => !!d),
   }));
-  const charges = chargesPerDo(asMatched, priced.expectedOf);
+  const charges = chargesPerDo(asMatched, priced.expectedOf, priced.goodsOf);
 
   const [mine, prior] = await Promise.all([
     scopeToCompanyId(sb.from('threepl_do_charges').select('id, do_id, threepl_company_id, billed_sen, billed_by_hand'), companyId).eq('ap_invoice_id', String(inv.id)),

@@ -208,7 +208,7 @@ export function Meetings({ erpName = "Houzs ERP", embedded = false }: { erpName?
     setSaving(true);
     setDialogError(null);
     try {
-      const body = { name: f.name, location: f.location, floor: f.floor, seats: f.seats, equipment: f.equipment, days: f.days, openFrom: f.openFrom, openTo: f.openTo, color: f.color, bufferMin: f.bufferMin, maxHours: f.maxHours, advanceDays: f.advanceDays, active: f.active, closures: f.closures };
+      const body = { name: f.name, location: f.location, address: f.address, floor: f.floor, seats: f.seats, equipment: f.equipment, days: f.days, openFrom: f.openFrom, openTo: f.openTo, color: f.color, bufferMin: f.bufferMin, maxHours: f.maxHours, advanceDays: f.advanceDays, active: f.active, closures: f.closures };
       if (f.id) await api.patch(`/api/meetings/rooms/${f.id}`, body); else await api.post("/api/meetings/rooms", body);
       flash(`Saved room ${f.name}`);
       setRoomEdit(null);

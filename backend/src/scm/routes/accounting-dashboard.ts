@@ -51,6 +51,7 @@ import type { OrderPaymentFacts } from '../../acc/order-payment-kind';
 import { buildReceiptsPayments, rpDbSources, supplierVouchersOf, type RpGlLine, type RpSources, type RpSplit, type RpTotals } from './accounting-rp';
 import { buildPerformance, perfDbSources, type PerfSources, type PerformancePayload } from './accounting-performance';
 import { loadForecastAccounts, loadGrid } from './accounting-forecast';
+import { buildBalanceSheetForecast } from './accounting-cashflow-forecast';
 import {
   COMPARE_GROUPS, COST_GROUPS, MONTH_RE, STAFF_COST_CATEGORY_ID, addFigures, compareAccountsOf, compareGroupOfPerformance, compareGroupOfPurchaseAccount, compareGroupOfSalesAccount,
   compareList, compareTotals, costGroupOfItemGroup, costGroupOfPerformance, costStructureList, emptyCompare, emptyCostStructure,
@@ -113,6 +114,11 @@ export type DashboardPeriodPayload = DashboardPeriod & {
   cashFlow: DashboardCashFlow | null;
   balanceSheet: BalanceSummary | null;
   ratios: Ratios;
+  /** The Forecast Balance Sheet at the period's last month-end (step 7 of the forecast port): from the
+      current month on; null before it or when the forecast could not be read. */
+  forecastBalanceSheet: BalanceSummary | null;
+  /** The same six ratios off the Forecast P&L and the Forecast Balance Sheet; null without a Forecast P&L row. */
+  forecastRatios: Ratios | null;
   /** The period's closing stock is the engine's, provisional until the close books that month-end. */
   stock: { closingProvisional: boolean };
 };
@@ -421,6 +427,19 @@ function firstSalesMonth(rows: GlRow[], secOf: (r: SumRow) => string): string | 
 
 const sumSection = (ls: ReportLine[], section: string): number => ls.filter((l) => l.section === section).reduce((s, l) => s + l.amountSen, 0);
 
+/** The balance sheet's summary the cards read — the actual's and the forecast's alike. */
+export function balanceSummaryOf(
+  report: { assets: ReportLine[]; liabilities: ReportLine[]; totals: { assetsSen: number; liabilitiesSen: number; equitySen: number; earningsSen: number; checkSen: number } },
+  stockTotalSen: number,
+): BalanceSummary {
+  const bt = report.totals;
+  return {
+    assetsSen: bt.assetsSen, liabilitiesSen: bt.liabilitiesSen, equitySen: bt.equitySen, earningsSen: bt.earningsSen,
+    currentAssetsSen: sumSection(report.assets, 'CURRENT ASSETS'), currentLiabilitiesSen: sumSection(report.liabilities, 'CURRENT LIABILITIES'),
+    inventorySen: stockTotalSen, debtToAssetPct: pct1(bt.liabilitiesSen, bt.assetsSen), checkSen: bt.checkSen,
+  };
+}
+
 /* ── The build ───────────────────────────────────────────────────────────── */
 
 export async function buildDashboard(sb: Sb, companyId: number, layoutIds: number[], q: DashboardQuery, today: string): Promise<{ ok: true; payload: DashboardPayload } | Fail> {
@@ -447,7 +466,7 @@ export async function buildDashboard(sb: Sb, companyId: number, layoutIds: numbe
   for (const p of periods) {
     const forecast = forecastOf(pre, staffCodes, p.months);
     if (p.from > today) {
-      out.push({ ...p, actual: null, forecast, performance: null, compare: compareOf(pre, secOf, [], null, p.months), costStructure: null, cashFlow: null, balanceSheet: null, ratios: ratiosOf(null, null), stock: { closingProvisional: true } });
+      out.push({ ...p, actual: null, forecast, performance: null, compare: compareOf(pre, secOf, [], null, p.months), costStructure: null, cashFlow: null, balanceSheet: null, ratios: ratiosOf(null, null), forecastBalanceSheet: null, forecastRatios: null, stock: { closingProvisional: true } });
       continue;
     }
     const pnl = await buildPnl(src.report, companyId, p.from, p.to);
@@ -477,17 +496,23 @@ export async function buildDashboard(sb: Sb, companyId: number, layoutIds: numbe
 
     const bs = await buildBalanceSheet(src.report, companyId, p.to);
     if (!bs.ok) return { ok: false, reason: `Balance sheet ${p.key}: ${bs.reason}` };
-    const bt = bs.report.totals;
-    const balanceSheet: BalanceSummary = {
-      assetsSen: bt.assetsSen, liabilitiesSen: bt.liabilitiesSen, equitySen: bt.equitySen, earningsSen: bt.earningsSen,
-      currentAssetsSen: sumSection(bs.report.assets, 'CURRENT ASSETS'), currentLiabilitiesSen: sumSection(bs.report.liabilities, 'CURRENT LIABILITIES'),
-      inventorySen: bs.stockTotalSen, debtToAssetPct: pct1(bt.liabilitiesSen, bt.assetsSen), checkSen: bt.checkSen,
-    };
+    const balanceSheet = balanceSummaryOf(bs.report, bs.stockTotalSen);
 
     out.push({
       ...p, actual, forecast, performance, compare, costStructure: { groups: cost.groups }, cashFlow, balanceSheet,
-      ratios: ratiosOf(actual, balanceSheet), stock: { closingProvisional: pnl.report.stock.closingProvisional },
+      ratios: ratiosOf(actual, balanceSheet), forecastBalanceSheet: null, forecastRatios: null, stock: { closingProvisional: pnl.report.stock.closingProvisional },
     });
+  }
+  /* The Forecast Balance Sheet (step 7 of the forecast port): one build for every period it reaches —
+     a period's forecast sheet is its last month-end's — and the six ratios off it and the Forecast P&L,
+     by the same functions as the actual ones. A forecast that cannot be read leaves them empty. */
+  const currentMonth = today.slice(0, 7);
+  const reaches = out.some((p) => (p.months.at(-1) ?? '') >= currentMonth);
+  const fbs = reaches ? await buildBalanceSheetForecast(sb, companyId, layoutIds, today) : null;
+  const sheetOf = new Map(fbs?.ok ? fbs.payload.months.map((m) => [m.month, balanceSummaryOf(m.report, fbs.payload.stockTotalSen)]) : []);
+  for (const p of out) {
+    p.forecastBalanceSheet = sheetOf.get(p.months.at(-1) ?? '') ?? null;
+    p.forecastRatios = p.forecast ? ratiosOf(p.forecast, p.forecastBalanceSheet) : null;
   }
   return {
     ok: true,
@@ -511,7 +536,7 @@ const CACHE_TTL_MS = 60_000;
 const CACHE_MAX = 64;
 const cache = new Map<string, { at: number; payload: DashboardPayload }>();
 /** For the tests. */
-export const clearDashboardCache = (): void => cache.clear();
+export const clearDashboardCache = (): void => { cache.clear(); monthCache.clear(); };
 
 export const dashboardHandler = async (c: Ctx): Promise<Response> => {
   if (!requirePerm(c)) return c.json(NO_PERM, 403);
@@ -528,5 +553,51 @@ export const dashboardHandler = async (c: Ctx): Promise<Response> => {
   if (!r.ok) return c.json({ error: 'load_failed', reason: r.reason }, 500);
   if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value as string);
   cache.set(key, { at: Date.now(), payload: r.payload });
+  return c.json(r.payload);
+};
+
+/* ── A past month's forecast, back-calculated (step 7 of the forecast port, part 3) ── */
+
+export type DashboardForecastMonth = { month: string; balanceSheet: BalanceSummary | null; ratios: Ratios | null };
+
+/** A month's forecast as it would have been worked out then: the Forecast
+    Balance Sheet run with "today" its 1st — the month-end before it as the
+    start, the papers open at its 1st, the timings measured over the three
+    months before it, its own Forecast P&L — and the six ratios off it and that
+    month's Forecast P&L, by the same functions as the actual ones. A month
+    with no Forecast P&L row has none: only its bills would move the sheet. */
+export async function buildForecastMonth(sb: Sb, companyId: number, layoutIds: number[], month: string): Promise<{ ok: true; payload: DashboardForecastMonth } | Fail> {
+  const [grid, accs, pnl] = await Promise.all([loadGrid(sb, companyId), loadForecastAccounts(sb, companyId), resolveLayout(sb, layoutIds, 'pnl')]);
+  if (!grid.ok) return { ok: false, reason: `forecast: ${grid.reason}` };
+  if (!accs.ok) return { ok: false, reason: `forecast accounts: ${accs.reason}` };
+  if (!pnl.ok) return { ok: false, reason: pnl.reason };
+  if (!Object.prototype.hasOwnProperty.call(grid.grid, month)) return { ok: true, payload: { month, balanceSheet: null, ratios: null } };
+  const staffCodes = new Set(codesUnder(pnl.layout.blocks.expenses ?? [], STAFF_COST_CATEGORY_ID));
+  const f = monthFigures(grid.grid[month] ?? {}, grid.suppliers[month] ?? {}, accs.accounts);
+  const figures = figuresOf(f.totals, f.lines.filter((l) => staffCodes.has(l.code)).reduce((s, l) => s + l.amountSen, 0));
+  const fbs = await buildBalanceSheetForecast(sb, companyId, layoutIds, `${month}-01`);
+  if (!fbs.ok) return { ok: false, reason: `forecast balance sheet: ${fbs.reason}` };
+  const sheet = fbs.payload.months.find((m) => m.month === month);
+  const balanceSheet = sheet ? balanceSummaryOf(sheet.report, fbs.payload.stockTotalSen) : null;
+  return { ok: true, payload: { month, balanceSheet, ratios: ratiosOf(figures, balanceSheet) } };
+}
+
+const monthCache = new Map<string, { at: number; payload: DashboardForecastMonth }>();
+
+/** GET /accounting/dashboard/forecast-month?month=YYYY-MM — the statements' read key; an answer kept 60 s. */
+export const dashboardForecastMonthHandler = async (c: Ctx): Promise<Response> => {
+  if (!requirePerm(c)) return c.json(NO_PERM, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const month = String(c.req.query('month') ?? '').trim();
+  if (!MONTH_RE.test(month)) return c.json({ error: 'bad_month', message: 'month must be YYYY-MM.' }, 400);
+  const ids = allowedIds(c);
+  const key = [co.companyId, ids.join('.'), month, todayMyt()].join('|');
+  const hit = monthCache.get(key);
+  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return c.json({ ...hit.payload, cached: true });
+  const r = await buildForecastMonth(c.get('supabase'), co.companyId, ids, month);
+  if (!r.ok) return c.json({ error: 'load_failed', reason: r.reason }, 500);
+  if (monthCache.size >= CACHE_MAX) monthCache.delete(monthCache.keys().next().value as string);
+  monthCache.set(key, { at: Date.now(), payload: r.payload });
   return c.json(r.payload);
 };

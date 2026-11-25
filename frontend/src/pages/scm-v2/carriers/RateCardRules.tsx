@@ -12,7 +12,8 @@ import { DataTable, type Column } from '../../../components/DataTable';
 import { useSmallViewport } from '../../../hooks/useSmallViewport';
 import { CATEGORY_HINT, CATEGORY_LABEL, RULE_LABEL } from '../../../vendor/scm/lib/rate-rule-taxonomy';
 import { CATEGORY_ORDER, flatTitle, flatTypesOf, type FlatRuleType, type PriceCell, type RuleBlock, type RuleSection } from './rateCardLayout';
-import { AddPriceCell, AddRule, Panel, PriceButton, panelId, tabId, type RateSection } from './ruleEditors';
+import { AddPriceCell, AddRule, DoChargeButton, Panel, PriceButton, panelId, tabId, type RateSection } from './ruleEditors';
+import { chargeText } from './doCharge';
 import { OutstationPrices } from './OutstationPrices';
 import { PriceCheck } from './PriceCheck';
 import type { PriceCheckForm } from './priceCheckFacts';
@@ -113,9 +114,12 @@ const PricesPanel = ({ cardId, section, zones }: { cardId: string; section: Rule
     {
       key: 'rm', label: 'RM', align: 'right', width: '170px', disableSort: true,
       getValue: (r) => (r.cell ? r.cell.rule.amountSen / 100 : null),
-      exportValue: (r) => (r.cell ? r.cell.rule.amountSen / 100 : ''),
+      /* A charge on each DO may be a % of the goods, so it exports as it reads. */
+      exportValue: (r) => (r.cell ? (r.cell.rule.ruleType === 'DO_CHARGE' ? chargeText(r.cell.rule) : r.cell.rule.amountSen / 100) : ''),
       render: (r) => (r.cell
-        ? <PriceButton cardId={cardId} rule={r.cell.rule} name={r.label} />
+        ? (r.cell.rule.ruleType === 'DO_CHARGE'
+          ? <DoChargeButton cardId={cardId} rule={r.cell.rule} name={r.label} />
+          : <PriceButton cardId={cardId} rule={r.cell.rule} name={r.label} />)
         : r.missing && <AddPriceCell cardId={cardId} rule={{ ruleType: r.missing }} label={r.label} />),
     },
   ], [cardId]);

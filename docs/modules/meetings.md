@@ -37,5 +37,6 @@ relays (`backend/src/routes/meetings.ts`) and draws (`frontend/src/pages/Meeting
 - The 409 body is relayed unchanged; the page builds the conflict dialog from it
   (`lib/meetings.ts` `readConflict`). A hub 401 becomes 502, never 401.
 - Not connected (no `IT_HUB_URL` or key) = 501, and the menu row is hidden with IT Support's.
-- Notifications are ERP-only until Gmail and WhatsApp are connected (tasks/TODO.md).
-  Video links are pasted; automatic Meet/Zoom links come with the Google setup.
+- Emails: the hub writes them; `services/meetingMail.ts` collects this company's with its hub key, sends them
+  through `sendEmail` (purpose `meeting`, no outbox retry: the hub retries) and reports each result. Runs after
+  a booking, change or cancel here and from the 5-minute cron (reminders). WhatsApp is not connected yet.

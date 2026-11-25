@@ -4,7 +4,7 @@
 // becomes blocks:
 //   ladder  a row of labelled price tiles: positional tiers as 1st set / 2nd set
 //           / 3rd set and after, sofa brackets as 1 to 3 compartments / 4 or more,
-//           flat charges by name
+//           charges on each DO by their own names, flat charges by name
 //   zones   outstation as zone rows (per order, per trip), which priceBands()
 //           groups into one band per amount
 // Pure, so the grouping is tested without rendering.
@@ -30,7 +30,7 @@ export interface ZoneRow {
   tripTwice: boolean;
 }
 export type RuleBlock =
-  | { kind: 'ladder'; id: 'tiers' | 'overage' | 'sofa' | 'flat'; title: string; cells: PriceCell[] }
+  | { kind: 'ladder'; id: 'tiers' | 'overage' | 'sofa' | 'charges' | 'flat'; title: string; cells: PriceCell[] }
   | { kind: 'zones'; id: 'zones'; title: string; rows: ZoneRow[] };
 export interface RuleSection { category: RateRuleCategory; count: number; blocks: RuleBlock[] }
 
@@ -59,7 +59,7 @@ const zoneKey = (z: string | null) => (z ?? '').trim().toUpperCase();
 export const FLAT_ORDER = ['DISPOSE', 'SETUP', 'DISMANTLE', 'SERVICE', 'PICKUP', 'INSPECTION', 'SUPPLIER_PICKUP', 'TRANSFER'] as const;
 export type FlatRuleType = (typeof FLAT_ORDER)[number];
 export const flatTypesOf = (category: RateRuleCategory): FlatRuleType[] => FLAT_ORDER.filter((t) => categoryOf(t) === category);
-const LADDER_TYPES = new Set(['POSITIONAL_TIER', 'OVERAGE', 'SOFA_BRACKET', 'OUTSTATION', 'OUTSTATION_TRIP']);
+const LADDER_TYPES = new Set(['POSITIONAL_TIER', 'OVERAGE', 'SOFA_BRACKET', 'OUTSTATION', 'OUTSTATION_TRIP', 'DO_CHARGE']);
 
 const markDuplicates = (cells: Array<Omit<PriceCell, 'duplicate'> & { key: string }>): PriceCell[] => {
   const seen = new Map<string, number>();
@@ -90,6 +90,14 @@ const sofaCells = (brackets: RateRule[]): PriceCell[] => markDuplicates(
     .map((r) => ({ key: `${r.bracketMin}-${r.bracketMax}`, label: sofaLabel(r.bracketMin ?? 0, r.bracketMax), rule: r })),
 );
 
+/* Charges on each DO, by the names they were given ("SST", "Permit"); a name
+   used twice is flagged, as both are charged. */
+const chargeCells = (charges: RateRule[]): PriceCell[] => markDuplicates(
+  [...charges]
+    .sort((a, b) => a.sortOrder - b.sortOrder || (a.label ?? '').localeCompare(b.label ?? ''))
+    .map((r) => ({ key: (r.label ?? '').trim().toUpperCase(), label: r.label?.trim() || labelOf(r.ruleType), rule: r })),
+);
+
 const flatCells = (rules: RateRule[]): PriceCell[] => markDuplicates(
   [...rules]
     .sort((a, b) => {
@@ -104,11 +112,12 @@ const flatCells = (rules: RateRule[]): PriceCell[] => markDuplicates(
 export const flatTitle = (category: RateRuleCategory) => (category === 'DELIVERY' ? 'Extras, each' : 'Each time');
 
 /** The title over a block of Delivery tiles; `unit` is what the tier ladder counts. */
-export const ladderTitle = (id: 'tiers' | 'overage' | 'sofa' | 'flat', unit: string): string => (
+export const ladderTitle = (id: 'tiers' | 'overage' | 'sofa' | 'charges' | 'flat', unit: string): string => (
   id === 'tiers' ? (unit === 'trip' ? 'Per trip' : `Per ${unit}, by position on the trip`)
     : id === 'overage' ? 'Beyond the cap'
       : id === 'sofa' ? 'Sofa, by compartments'
-        : flatTitle('DELIVERY'));
+        : id === 'charges' ? 'On each DO'
+          : flatTitle('DELIVERY'));
 
 /** Every category, in the taxonomy's order, empty ones included so a rule can
  *  be added to any of them. An unknown rule type lands in Delivery as a flat
@@ -131,6 +140,8 @@ export function layoutRateCard(rules: readonly RateRule[], unit: string): RuleSe
     }
     const sofa = of('SOFA_BRACKET');
     if (sofa.length) blocks.push({ kind: 'ladder', id: 'sofa', title: ladderTitle('sofa', unit), cells: sofaCells(sofa) });
+    const charges = of('DO_CHARGE');
+    if (charges.length) blocks.push({ kind: 'ladder', id: 'charges', title: ladderTitle('charges', unit), cells: chargeCells(charges) });
     const flat = mine.filter((r) => !LADDER_TYPES.has(r.ruleType));
     if (flat.length) blocks.push({ kind: 'ladder', id: 'flat', title: flatTitle(category), cells: flatCells(flat) });
 

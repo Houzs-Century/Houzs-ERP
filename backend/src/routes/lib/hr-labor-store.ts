@@ -11,7 +11,7 @@ import { getDb } from "../../db/client";
 import { hr_attendance, hr_employees, hr_hour_deductions, hr_ot_claims, hr_public_holidays, hr_working_hours } from "../../db/schema";
 import { minutesFromWorkDate } from "../../scm/shared/hr-attendance";
 import { MIN_DOCK_HOURS, isWorkingDay, punchDayHours, punchShortfallHours, rulesForEmployeeHours } from "../../scm/shared/hr-labor";
-import { planAutoOtClaim, punchOtMinutes } from "./hr-ot";
+import { isDriverPosition, planAutoOtClaim, punchOtMinutes } from "./hr-ot";
 import { asDate } from "./hr-attendance-view";
 import type { AttendanceRules } from "../../scm/shared/hr-attendance";
 import { closeForgottenPunches, payRulesResolver } from "./hr-attendance-store";
@@ -74,6 +74,7 @@ async function syncAutoOtClaim(
   workDate: string,
   rules: AttendanceRules,
   otMin: number,
+  isDriver: boolean,
 ): Promise<void> {
   const claims = await db
     .select({ id: hr_ot_claims.id, status: hr_ot_claims.status, source: hr_ot_claims.source })
@@ -81,7 +82,7 @@ async function syncAutoOtClaim(
     .where(and(eq(hr_ot_claims.company_id, companyId), eq(hr_ot_claims.employee_id, employeeId), eq(hr_ot_claims.work_date, workDate)));
   const existingAuto = claims.find((r) => r.source === "AUTO") ?? null;
   const reportedOwnsDay = claims.some((r) => r.source === "REPORTED" && (r.status === "PENDING" || r.status === "CONFIRMED"));
-  const plan = planAutoOtClaim({ existingAuto, reportedOwnsDay, shiftEndMin: rules.endMin, otMin });
+  const plan = planAutoOtClaim({ existingAuto, reportedOwnsDay, isDriver, shiftEndMin: rules.endMin, otMin });
   if (plan.kind === "none") return;
   if (plan.kind === "delete") {
     await db.delete(hr_ot_claims).where(and(eq(hr_ot_claims.id, plan.id), eq(hr_ot_claims.company_id, companyId)));
@@ -116,7 +117,7 @@ export async function syncDayFromPunch(db: Db, companyId: number, attendanceId: 
   if (!day?.clock_in_at || !day.clock_out_at) return;
   const emp = (
     await db
-      .select({ department_id: hr_employees.department_id, hours: hr_employees.working_hours_per_day })
+      .select({ department_id: hr_employees.department_id, hours: hr_employees.working_hours_per_day, position: hr_employees.position })
       .from(hr_employees)
       .where(and(eq(hr_employees.company_id, companyId), eq(hr_employees.id, day.employee_id)))
       .limit(1)
@@ -165,7 +166,7 @@ export async function syncDayFromPunch(db: Db, companyId: number, attendanceId: 
   /* Overtime from the same punch (HC-0125 hybrid). A forgotten or broken punch,
      and Sunday / holiday work (all OT via the hours path), earn no weekday claim. */
   const otMin = forgotten || broken || !workingDay ? 0 : punchOtMinutes(outMin - inMin, rules.standardWorkMin, rules.lunchMin);
-  await syncAutoOtClaim(db, companyId, day.employee_id, day.work_date, rules, otMin);
+  await syncAutoOtClaim(db, companyId, day.employee_id, day.work_date, rules, otMin, isDriverPosition(emp.position));
 }
 
 /** Close forgotten punches for a company (or one employee) and put each closed day on Working Hours. */

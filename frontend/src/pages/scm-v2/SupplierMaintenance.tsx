@@ -32,6 +32,8 @@ import { AddressTripleFields } from '../../vendor/scm/components/AddressTripleFi
 import { masterNeedsPostcode, masterPostcodeError } from '../../vendor/shared/master-postcode-rule';
 import type { SupplierCodeKind } from '../../vendor/shared/supplier-code';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
+import { PickListField, type PickListClasses } from '../../vendor/scm/components/PickListField';
+import { BANK_OTHER, MALAYSIAN_BANKS, PAYMENT_TERMS, PAYMENT_TERMS_CUSTOM, listEntryOf } from '../../vendor/shared/pick-lists';
 import { Modal } from '../../vendor/scm/components/Modal';
 import { DataTable, type Column } from '../../components/DataTable';
 import { PageHeader } from '../../components/Layout';
@@ -361,8 +363,10 @@ type FormState = {
 };
 /** The form's plain text fields — what the one-line field helper edits. */
 type TextKey = { [K in keyof FormState]: FormState[K] extends string ? K : never }[keyof FormState];
-/* The supplier's name and bank are kept in upper case (owner 2026-11-09; the database upper-cases them too). */
-const UPPER_FIELDS: ReadonlySet<string> = new Set(['name', 'bankName', 'bankAccountName']);
+/* The supplier's name and bank are kept in upper case (owner 2026-11-09; the database upper-cases them too);
+   the bank is picked, and only a bank typed under Other is marked (PickListField's `upper`). */
+const UPPER_FIELDS: ReadonlySet<string> = new Set(['name', 'bankAccountName']);
+const PICK: PickListClasses = { field: styles.field, label: styles.fieldLabel, select: styles.fieldSelect, selectWrap: styles.selectWrap, chevron: styles.selectChevron, input: styles.fieldInput };
 
 const fromSupplier = (s: SupplierRow | null): FormState => ({
   code: s?.code ?? '', name: s?.name ?? '', status: s?.status ?? 'ACTIVE',
@@ -374,8 +378,10 @@ const fromSupplier = (s: SupplierRow | null): FormState => ({
   state: s?.state ?? '', city: s?.city ?? '', postcode: s?.postcode ?? '', country: s?.country ?? '',
   tinNumber: s?.tin_number ?? '', businessRegNo: s?.business_reg_no ?? '', registrationNo: s?.registration_no ?? '', exemptionNo: s?.exemption_no ?? '',
   creditLimitSen: s?.credit_limit_sen ?? null, statementType: s?.statement_type ?? 'OPEN_ITEM', agingBasis: s?.aging_basis ?? 'INVOICE_DATE',
-  bankName: s?.bank_name ?? '', bankAccountNo: s?.bank_account_no ?? '', bankAccountName: s?.bank_account_name ?? '',
-  paymentTerms: s?.payment_terms ?? '', contactPerson: s?.contact_person ?? '',
+  /* Terms and bank are pick lists (owner 2026-11-24): one on the list in another
+     spelling opens as that entry, so a save writes what the screen shows. */
+  bankName: listEntryOf(MALAYSIAN_BANKS, s?.bank_name) ?? s?.bank_name ?? '', bankAccountNo: s?.bank_account_no ?? '', bankAccountName: s?.bank_account_name ?? '',
+  paymentTerms: listEntryOf(PAYMENT_TERMS, s?.payment_terms) ?? s?.payment_terms ?? '', contactPerson: s?.contact_person ?? '',
   phone: s?.phone ?? '', email: s?.email ?? '', email2: s?.email2 ?? '', email3: s?.email3 ?? '', address: s?.address ?? '', notes: s?.notes ?? '',
 });
 
@@ -531,14 +537,16 @@ const SupplierForm = ({ supplier, onDone, onCancel }: {
 
       <h3 style={h3}>Bank — carried onto the payments to this supplier</h3>
       <div style={grid}>
-        {field('Bank', 'bankName', { placeholder: 'Maybank' })}
+        <PickListField label="Bank" options={MALAYSIAN_BANKS} other={BANK_OTHER} value={f.bankName} onChange={(v) => set('bankName', v)}
+          pickLabel="Pick the bank" typePlaceholder="The bank's name, e.g. a bank abroad" upper classes={PICK} />
         {field('Account no.', 'bankAccountNo')}
         {field('Account name', 'bankAccountName')}
       </div>
 
       <h3 style={h3}>Purchasing</h3>
       <div style={grid}>
-        {field('Payment terms', 'paymentTerms', { placeholder: '30 days' })}
+        <PickListField label="Payment terms" options={PAYMENT_TERMS} other={PAYMENT_TERMS_CUSTOM} value={f.paymentTerms} onChange={(v) => set('paymentTerms', v)}
+          pickLabel="Pick the term" typePlaceholder="Type the term" upper={false} classes={PICK} />
         {field('Contact person', 'contactPerson')}
         {field('Phone', 'phone')}
         {field('Email', 'email')}

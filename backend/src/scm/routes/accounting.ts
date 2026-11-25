@@ -33,7 +33,7 @@ import { CONVERT_SOURCE, backfillSoPayments, paymentEntryDisagreements, unbooked
 import { dailyBankHandler, cashbookBoardHandler } from './accounting-daily-bank';
 import {
   cashbookGet, cashbookStartPut, cashbookStartDelete, cashbookReceiptCreate, cashbookReceiptUpdate, cashbookReceiptDelete,
-  cashbookReceiptsDayPut,
+  cashbookReceiptsDayPut, cashbookSkipPut, cashbookSkipDelete,
 } from './accounting-daily-bank-cashbook';
 import { systemTakings, postCashOverShort } from '../../acc/daily-close';
 import { resolveRoles, piLines, DEFAULT_ROLE_CODES } from '../../acc/rules';
@@ -88,7 +88,7 @@ import { collectionReport } from './accounting-collection';
 import { merchantChargesReport } from './accounting-merchant-charges';
 import { performanceMonthsHandler, performanceReport, savePerformanceSettingsHandler } from './accounting-performance';
 import { forecastFiguresHandler, forecastGetHandler, forecastPutHandler } from './accounting-forecast';
-import { dashboardHandler } from './accounting-dashboard';
+import { dashboardForecastMonthHandler, dashboardHandler } from './accounting-dashboard';
 import { financeTodoHandler, financeTodoCountHandler } from './accounting-todo';
 import {
   todoPeopleHandler, todoSettingsGetHandler, todoSettingsPutHandler, todoGroupAddHandler,
@@ -259,6 +259,7 @@ accounting.put('/forecast', forecastPutHandler);
 accounting.get('/forecast/figures', forecastFiguresHandler);
 /* The Financial Dashboard (owner 2026-09-21): the statements per period, beside the forecast. */
 accounting.get('/dashboard', dashboardHandler);
+accounting.get('/dashboard/forecast-month', dashboardForecastMonthHandler);
 /* Finance's To do (the owner's Claude Design redesign, 2026-11-02): the jobs
    the books raise, and their count for the sidebar badge (routes/accounting-todo.ts). */
 accounting.get('/todo', financeTodoHandler);
@@ -1313,6 +1314,9 @@ accounting.post('/daily-bank/receipts', cashbookReceiptCreate);
 accounting.put('/daily-bank/receipts/day', cashbookReceiptsDayPut);
 accounting.patch('/daily-bank/receipts/:id', cashbookReceiptUpdate);
 accounting.delete('/daily-bank/receipts/:id', cashbookReceiptDelete);
+/* An approved voucher ticked as already in its bank's starting balance, and unticked (owner 2026-11-25: 要，加勾选). */
+accounting.put('/daily-bank/skips/:pvId', cashbookSkipPut);
+accounting.delete('/daily-bank/skips/:pvId', cashbookSkipDelete);
 
 /* ════════════════════════════════════════════════════════════════════════
    Daily close (cashup, brief 3.5 layer 2)

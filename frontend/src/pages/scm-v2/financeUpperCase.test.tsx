@@ -56,10 +56,15 @@ describe('Finance typed words in upper case', () => {
     for (const field of fields) expect(text, field).toMatch(new RegExp(`<(input|textarea) data-upper ${field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
   });
 
-  test('the supplier form marks its name and bank, not its email or code; the debtor form its name only', () => {
+  test('the supplier form marks its name, a bank typed under Other and the account name, not its email or code; the debtor form its name only', () => {
     const supplier = source('pages/scm-v2/SupplierMaintenance.tsx');
-    expect(supplier).toContain("const UPPER_FIELDS: ReadonlySet<string> = new Set(['name', 'bankName', 'bankAccountName']);");
+    expect(supplier).toContain("const UPPER_FIELDS: ReadonlySet<string> = new Set(['name', 'bankAccountName']);");
     expect(supplier).toContain("data-upper={UPPER_FIELDS.has(k) ? '' : undefined}");
+    /* The bank is picked from a list (owner 2026-11-24); only the box Other opens is typed. */
+    const bank = /<PickListField label="Bank"[\s\S]*?\/>/.exec(supplier)?.[0] ?? '';
+    expect(bank).toContain('options={MALAYSIAN_BANKS} other={BANK_OTHER}');
+    expect(bank).toMatch(/\bupper classes=/);
+    expect(/<PickListField label="Payment terms"[\s\S]*?\/>/.exec(supplier)?.[0] ?? '').toContain('upper={false}');
     expect(source('pages/scm-v2/money-in/DebtorForm.tsx')).toContain("data-upper={key === 'name' ? '' : undefined}");
   });
 });

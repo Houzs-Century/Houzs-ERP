@@ -73,6 +73,9 @@ export const ENTITY_TYPES = [
      receipt, keyed by its row id (typed, edited, deleted). */
   'DAILY_BANK_START',
   'DAILY_BANK_RECEIPT',
+  /* An approved voucher ticked off the cash book as already in its bank's starting
+     balance, and unticked (owner 2026-11-25: 要，加勾选), keyed by the voucher's id. */
+  'DAILY_BANK_SKIP',
 ] as const;
 export type EntityType = (typeof ENTITY_TYPES)[number];
 

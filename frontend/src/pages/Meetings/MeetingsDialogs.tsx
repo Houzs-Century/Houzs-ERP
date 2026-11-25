@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { Calendar, MapPin, Paperclip, Pencil, Repeat, StickyNote, Trash2, Users, Video, Bell, X } from "lucide-react";
+import { Calendar, MapPin, Paperclip, Pencil, Repeat, StickyNote, Trash2, Users, Video, Bell, X, Mail } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { DateField } from "../../vendor/scm/components/DateField";
 import {
@@ -115,7 +115,15 @@ export function MeetingDetail(p: {
           </>)}
           {m.notes && row(<StickyNote size={17} />, <span className="whitespace-pre-wrap text-ink-secondary">{m.notes}</span>)}
           {p.files.length > 0 && row(<Paperclip size={17} />, <div className="flex flex-wrap gap-1.5">{p.files.map((f) => <button key={f.id} type="button" onClick={() => p.onFile(f)} className={cn(CHIP, "border-border")}>{f.file_name}</button>)}</div>)}
-          {m.reminders && m.reminders.length > 0 && row(<Bell size={17} />, <span className="text-[13px] text-ink-secondary">{m.reminders.map((rm) => `${remLabel(rm.min)} in the ERP`).join("; ")}</span>)}
+          {m.reminders && m.reminders.length > 0 && row(<Bell size={17} />, <span className="text-[13px] text-ink-secondary">{m.reminders.map((rm) => `${remLabel(rm.min)} by ${rm.ch.map((c) => (c === "erp" ? "ERP" : c === "email" ? "email" : "WhatsApp")).join(" and ")}`).join("; ")}</span>)}
+          {m.guestEmails && m.guestEmails.length > 0 && row(<Mail size={17} />, <span className="text-[13px] text-ink-secondary">Outside guests: {m.guestEmails.join(", ")}</span>)}
+          {m.emails && m.emails.length > 0 && row(<Mail size={17} />, (
+            <details className="text-[13px] text-ink-secondary" open={m.emails.some((e) => !e.sentAt)}><summary className="cursor-pointer">Emails · {m.emails.filter((e) => e.sentAt).length} sent{m.emails.some((e) => !e.sentAt && e.error) ? `, ${m.emails.filter((e) => !e.sentAt && e.error).length} failed` : ""}</summary>
+              {m.emails.map((e, i) => (
+                <div key={i} className="mt-1">{({ invite: "Invitation", changed: "Change", cancelled: "Cancellation", reminder: "Reminder", guest_confirm: "Booking confirmation", guest_notice: "Guest booking notice" } as Record<string, string>)[e.kind] ?? e.kind} to {e.to.join(", ")}: {e.sentAt ? <b className="text-ink">sent</b> : e.error ? <span className="text-warning-text">not sent, {e.error}</span> : <span className="text-ink-muted">waiting to send</span>}</div>
+              ))}
+            </details>
+          ))}
           {p.history && p.history.length > 0 && row(<Repeat size={17} />, (
             <details className="text-[13px] text-ink-secondary"><summary className="cursor-pointer">History · {p.history.length}</summary>
               {p.history.map((h, i) => <div key={i} className="mt-1">{fmtDay(ms(h.at))} {fmtTime(ms(h.at))} · <b className="text-ink">{personName(h.who, people)}</b> {h.text}</div>)}
@@ -143,7 +151,7 @@ const REPEAT_OPTIONS = (start: number): [Draft["repeat"], string][] => [
 ];
 
 /** In person (pick a room, best fit first) or Online (no room, private to the people in it). Over-full rooms warn but still book. */
-function RoomPicker({ rooms, d, busyRooms, onRoom, compact }: { rooms: Room[]; d: Draft; busyRooms: Set<number>; onRoom: (id: number | null) => void; compact: boolean }) {
+function RoomPicker({ rooms, d, busyRooms, onRoom, compact, onOnline }: { rooms: Room[]; d: Draft; busyRooms: Set<number>; onRoom: (id: number | null) => void; compact: boolean; onOnline: (() => void) | null }) {
   const [online, setOnline] = useState(d.roomId === null && d.id !== null);
   const count = 1 + d.attendees.length;
   const best = bestRoom(rooms, count, busyRooms);
@@ -152,7 +160,7 @@ function RoomPicker({ rooms, d, busyRooms, onRoom, compact }: { rooms: Room[]; d
     <div className="flex flex-col gap-1.5">
       <div className="flex flex-wrap gap-1.5">
         <button type="button" className={chip(!online)} onClick={() => { setOnline(false); if (d.roomId === null) onRoom(best?.id ?? null); }}>In person</button>
-        <button type="button" className={chip(online)} onClick={() => { setOnline(true); onRoom(null); }}>Online</button>
+        <button type="button" className={chip(online)} onClick={() => { setOnline(true); onRoom(null); onOnline?.(); }}>Online</button>
       </div>
       {online ? (
         <div className="text-[12.5px] text-ink-secondary">No room. Only you and the people you add can see this meeting.</div>
@@ -199,7 +207,7 @@ export function QuickBook(p: {
         <input autoFocus className="h-11 w-full border-0 border-b-2 border-primary bg-transparent px-0.5 text-[21px] text-ink outline-none" placeholder="Add title" aria-label="Title" value={d.title} onChange={(e) => setD({ ...d, title: e.target.value })} />
         <div className="my-3 text-ink-secondary">{fmtDayLong(d.start)} · <b className="text-ink">{fmtRange(d.start, d.end)}</b></div>
         <div className={cn(LABEL, "mb-1")}>Where</div>
-        <RoomPicker rooms={p.rooms} d={d} busyRooms={p.busyRooms} onRoom={(id) => setD({ ...d, roomId: id })} compact />
+        <RoomPicker rooms={p.rooms} d={d} busyRooms={p.busyRooms} onRoom={(id) => setD({ ...d, roomId: id })} compact onOnline={null} />
         <label className={cn(LABEL, "mt-2.5")}>Repeat
           <select className={CONTROL} value={d.repeat} onChange={(e) => setD({ ...d, repeat: e.target.value as Draft["repeat"], repeatUntil: d.repeatUntil ?? isoDay(addDays(d.start, 56)) })}>
             {REPEAT_OPTIONS(d.start).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
@@ -493,14 +501,15 @@ export function MeetingEditor(p: {
             <div className="grid grid-cols-[22px_minmax(0,1fr)] items-start gap-3">
               <span className="mt-2.5 text-ink-secondary"><MapPin size={18} /></span>
               <div>
-                <RoomPicker rooms={p.rooms} d={d} busyRooms={p.busyRooms} onRoom={(id) => set({ roomId: id })} compact={false} />
+                <RoomPicker rooms={p.rooms} d={d} busyRooms={p.busyRooms} onRoom={(id) => set({ roomId: id })} compact={false}
+                  onOnline={() => { if (d.videoType === "none") { set({ videoType: "meet" }); if (p.makeMeet && !d.videoUrl) void newMeet(); } }} />
               </div>
               <span className="mt-1.5 text-ink-secondary"><Video size={18} /></span>
               <div className="flex flex-col gap-2">
                 <div className="flex flex-wrap gap-1.5">
-                  {([["meet", "Google Meet"], ["zoom", "Zoom"], ["link", "Paste a link"], ["none", "None"]] as const).map(([k, l]) => <button key={k} type="button" className={chip(d.videoType === k)} onClick={() => { set({ videoType: k }); if (k === "meet" && p.makeMeet && !d.videoUrl) void newMeet(); }}>{l}</button>)}
+                  {([["meet", "Google Meet"], ["link", "Paste a link"], ["none", "None"]] as const).map(([k, l]) => <button key={k} type="button" className={chip(d.videoType === k)} onClick={() => { set({ videoType: k }); if (k === "meet" && p.makeMeet && !d.videoUrl) void newMeet(); }}>{l}</button>)}
                 </div>
-                {d.videoType !== "none" && <input className={CONTROL} aria-label="Video link" placeholder={d.videoType === "zoom" ? "https://zoom.us/j/..." : d.videoType === "meet" ? "https://meet.google.com/..." : "https://..."} value={d.videoUrl} onChange={(e) => set({ videoUrl: e.target.value })} />}
+                {d.videoType !== "none" && <input className={CONTROL} aria-label="Video link" placeholder={d.videoType === "meet" ? "https://meet.google.com/..." : "https://..."} value={d.videoUrl} onChange={(e) => set({ videoUrl: e.target.value })} />}
                 {d.videoType === "meet" && p.makeMeet && (
                   <div className="flex flex-wrap items-center gap-2 text-[12px] text-ink-muted">
                     <button type="button" className={chip(false)} disabled={meetBusy} onClick={() => void newMeet()}>{meetBusy ? "Creating..." : d.videoUrl ? "New Meet link" : "Create Meet link"}</button>
@@ -508,7 +517,7 @@ export function MeetingEditor(p: {
                   </div>
                 )}
                 {meetError && <div className="text-[12.5px] text-warning-text">{meetError}</div>}
-                {d.videoType !== "none" && !(d.videoType === "meet" && p.makeMeet) && <div className="text-[12px] text-ink-muted">Paste the link from {d.videoType === "meet" ? "Google Meet" : d.videoType === "zoom" ? "Zoom" : "your video app"}. You can also add it later; everyone in the meeting is told.</div>}
+                {d.videoType !== "none" && !(d.videoType === "meet" && p.makeMeet) && <div className="text-[12px] text-ink-muted">Paste the link from {d.videoType === "meet" ? "Google Meet" : "your video app"}. You can also add it later; everyone in the meeting is told.</div>}
               </div>
               <span className="mt-1.5 text-ink-secondary"><Bell size={18} /></span>
               <div className="flex flex-col gap-2">
@@ -517,14 +526,15 @@ export function MeetingEditor(p: {
                     <select aria-label="Reminder time" className={cn(CONTROL, "w-auto")} value={rm.min} onChange={(e) => set({ reminders: d.reminders.map((x, j) => (j === i ? { ...x, min: Number(e.target.value) } : x)) })}>
                       {REMINDER_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                     </select>
-                    <span className={chip(true)}>ERP</span>
-                    <span className={cn(chip(false), "opacity-60")} title="Comes when Gmail is connected">Email</span>
-                    <span className={cn(chip(false), "opacity-60")} title="Comes when WhatsApp is connected">WhatsApp</span>
+                    {(["erp", "email"] as const).map((c) => (
+                      <button key={c} type="button" className={chip(rm.ch.includes(c))} onClick={() => set({ reminders: d.reminders.map((x, j) => (j === i ? { ...x, ch: x.ch.includes(c) ? x.ch.filter((y) => y !== c) : [...x.ch, c] } : x)) })}>{c === "erp" ? "ERP" : "Email"}</button>
+                    ))}
+                    <span className={cn(chip(false), "opacity-60")} title="WhatsApp reminders are coming soon">WhatsApp · Coming soon</span>
                     <button type="button" aria-label="Remove reminder" className="rounded-full p-1.5 text-ink-secondary hover:bg-surface-2" onClick={() => set({ reminders: d.reminders.filter((_, j) => j !== i) })}><X size={15} /></button>
                   </div>
                 ))}
-                <button type="button" className="self-start text-[12.5px] font-semibold text-primary" onClick={() => set({ reminders: [...d.reminders, { min: 1440, ch: ["erp"] }] })}>+ Add reminder</button>
-                <div className="text-[12px] text-ink-muted">Reminders show in the ERP. Email and WhatsApp reminders come when Gmail and WhatsApp are connected.</div>
+                <button type="button" className="self-start text-[12.5px] font-semibold text-primary" onClick={() => set({ reminders: [...d.reminders, { min: 1440, ch: ["erp", "email"] }] })}>+ Add reminder</button>
+                <div className="text-[12px] text-ink-muted">ERP reminders show in the ERP. Email reminders go to everyone in the meeting who has an email address, outside guests too.</div>
               </div>
               <span className="mt-2.5 text-ink-secondary"><StickyNote size={18} /></span>
               <textarea aria-label="Notes" className={cn(CONTROL, "h-20")} placeholder="Agenda, what to prepare" value={d.notes} onChange={(e) => set({ notes: e.target.value })} />
@@ -558,6 +568,7 @@ export function MeetingEditor(p: {
                     {d.attendees.filter((a) => a !== d.organizer).map((k) => <span key={k} className="inline-flex h-7 items-center gap-1 rounded-full bg-primary-soft pl-2.5 pr-1 text-[12.5px] text-primary-ink">{personName(k, p.peopleMap)}<button type="button" aria-label={`Remove ${personName(k, p.peopleMap)}`} className="rounded-full p-0.5" onClick={() => set({ attendees: d.attendees.filter((x) => x !== k) })}><X size={13} /></button></span>)}
                   </div>
                   <PeoplePicker people={p.people} value={d.attendees} exclude={d.organizer} onChange={(v) => set({ attendees: v })} />
+                  <GuestEmails value={d.guestEmails} onChange={(v) => set({ guestEmails: v })} />
                 </>
               ) : (
                 <FindTime d={d} rooms={p.rooms} people={p.peopleMap} meetings={p.meetings} now={p.now} onPick={(s, e, rid) => set({ start: s, end: e, ...(rid !== undefined ? { roomId: rid } : {}) })} />
@@ -580,3 +591,34 @@ export async function copyText(text: string): Promise<boolean> {
   }
 }
 
+/** People outside our companies, by email (owner 2026-11-24). They get the invitation, changes, the reminder and the
+ *  Meet link by email; they do not see the ERP. */
+function GuestEmails({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
+  const [t, setT] = useState("");
+  const [bad, setBad] = useState<string | null>(null);
+  const add = () => {
+    const list = t.split(/[\s,;]+/).map((x) => x.trim().toLowerCase()).filter(Boolean);
+    const wrong = list.find((x) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x));
+    if (wrong) { setBad(`${wrong} is not an email address.`); return; }
+    onChange([...new Set([...value, ...list])]);
+    setT("");
+    setBad(null);
+  };
+  return (
+    <div className="mt-3 flex flex-col gap-1.5">
+      <div className="text-[11.5px] font-semibold uppercase tracking-wide text-ink-muted">Outside guests (email)</div>
+      {value.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {value.map((e) => (
+            <span key={e} className={chip(true)}>{e}<button type="button" aria-label={`Remove ${e}`} className="ml-1" onClick={() => onChange(value.filter((x) => x !== e))}><X size={13} /></button></span>
+          ))}
+        </div>
+      )}
+      <div className="flex gap-1.5">
+        <input className={CONTROL} type="email" placeholder="name@gmail.com" aria-label="Outside guest email" value={t} onChange={(e) => setT(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); add(); } }} />
+        <button type="button" className={chip(false)} onClick={add} disabled={!t.trim()}>Add</button>
+      </div>
+      {bad ? <div className="text-[12px] text-warning-text">{bad}</div> : <div className="text-[12px] text-ink-muted">They get the invitation, any change, the reminder and the meeting link by email.</div>}
+    </div>
+  );
+}

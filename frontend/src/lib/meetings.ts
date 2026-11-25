@@ -14,6 +14,8 @@ export type Room = {
   id: number;
   name: string;
   location: string;
+  /** Full street address for visitors (shown with a map link in emails). */
+  address?: string;
   floor: string;
   seats: number;
   equipment: string[];
@@ -50,6 +52,10 @@ export type Meeting = {
   createdIn: string;
   linkId: number | null;
   guest: Guest | null;
+  /** Outside guests invited by email. */
+  guestEmails?: string[];
+  /** The emails sent for it; only the organiser and booker get this. */
+  emails?: { kind: string; to: string[]; sentAt: string | null; attempts: number; error: string | null }[];
 };
 export type Bootstrap = { me: string; canManage: boolean; rooms: Room[]; people: Person[]; unread: number; meetConnected?: boolean };
 export type Notice = { id: number; meetingId: number | null; text: string; at: string; read: boolean };
@@ -92,6 +98,8 @@ export type Draft = {
   videoType: Meeting["video"]["type"];
   videoUrl: string;
   notes: string;
+  /** Outside guests invited by email. */
+  guestEmails: string[];
   reminders: Reminder[];
   repeat: "none" | "daily" | "weekdays" | "weekly" | "monthly";
   repeatUntil: string | null;
@@ -265,7 +273,7 @@ export function bestRoom(rooms: Room[], people: number, busy: Set<number>): Room
 }
 
 export function emptyDraft(me: string, start: number, end: number, roomId: number | null): Draft {
-  return { id: null, title: "", start, end, roomId, organizer: me, attendees: [], videoType: "none", videoUrl: "", notes: "", reminders: [{ min: 15, ch: ["erp"] }], repeat: "none", repeatUntil: null, seriesId: null };
+  return { id: null, title: "", start, end, roomId, organizer: me, attendees: [], videoType: "none", videoUrl: "", notes: "", guestEmails: [], reminders: [{ min: 15, ch: ["erp", "email"] }], repeat: "none", repeatUntil: null, seriesId: null };
 }
 
 export function draftFrom(m: Meeting): Draft {
@@ -280,6 +288,7 @@ export function draftFrom(m: Meeting): Draft {
     videoType: m.video.type,
     videoUrl: m.video.url,
     notes: m.notes,
+    guestEmails: m.guestEmails ?? [],
     reminders: m.reminders ?? [],
     repeat: "none",
     repeatUntil: null,
@@ -299,6 +308,7 @@ export function draftBody(d: Draft) {
     videoType: d.videoType,
     videoUrl: d.videoType === "none" ? "" : d.videoUrl.trim(),
     notes: d.notes,
+    guestEmails: d.guestEmails,
     reminders: d.reminders,
     repeat: d.repeat,
     repeatUntil: d.repeat === "none" ? null : d.repeatUntil,

@@ -14,6 +14,7 @@ import {
   type CashLeg, type PnlCashInput,
 } from './cashflow-pnl-forecast';
 import type { ForecastAccount } from '../scm/shared/forecast-pnl';
+import { PAYMENT_TERMS } from '../scm/shared/pick-lists';
 
 describe('payment terms', () => {
   it("reads the supplier page's choices and the older free text; blank or anything else is a month later and flagged", () => {
@@ -29,6 +30,13 @@ describe('payment terms', () => {
     expect(parseTermMonths('60 Days')).toEqual({ months: 2, flagged: false });
     expect(parseTermMonths('2 MONTHS')).toEqual({ months: 2, flagged: false });
     for (const t of [null, '', '   ', '30 terms', '+60000000000', 'NET 45 with 2% early discount']) expect(parseTermMonths(t), String(t)).toEqual({ months: 1, flagged: true });
+  });
+
+  /* The supplier forms pick a term from this list (owner 2026-11-24), so a term
+     added to it that the forecast cannot read would quietly pay a month later. */
+  it('reads every term the supplier forms offer', () => {
+    expect(PAYMENT_TERMS.length).toBeGreaterThan(0);
+    for (const t of PAYMENT_TERMS) expect(parseTermMonths(t).flagged, t).toBe(false);
   });
 });
 

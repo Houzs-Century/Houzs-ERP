@@ -76,8 +76,9 @@ import {
   useLocalities,
   distinctCountries,
   citiesInState,
-  PAYMENT_TERMS_OPTIONS,
 } from '../../vendor/scm/lib/localities-queries';
+import { PAYMENT_TERMS, PAYMENT_TERMS_CUSTOM } from '../../vendor/shared/pick-lists';
+import { PickListField } from '../../vendor/scm/components/PickListField';
 import { SgPostcodeField } from '../../vendor/scm/components/SgPostcodeField';
 import { StatePicker } from '../../vendor/scm/components/StatePicker';
 import { PostcodeCascadeField } from '../../vendor/scm/components/PostcodeCascadeField';
@@ -2500,7 +2501,9 @@ const SupplierInfoCard = ({
             <PhoneEditField label="WhatsApp" value={form.whatsappNumber} onChange={(v) => setF('whatsappNumber', v)} />
             <EditField label="Website" value={form.website} onChange={(v) => setF('website', v)} />
             {/* Commercial */}
-            <PaymentTermsSelect value={form.paymentTerms} onChange={(v) => setF('paymentTerms', v)} />
+            <PickListField label="Payment Terms" options={PAYMENT_TERMS} other={PAYMENT_TERMS_CUSTOM} value={form.paymentTerms}
+              onChange={(v) => setF('paymentTerms', v)} pickLabel="— Pick term —" typePlaceholder="Type custom term" upper={false}
+              classes={{ field: styles.field, label: styles.fieldLabel, select: styles.fieldSelect, selectWrap: styles.selectWrap, chevron: styles.selectChevron, input: styles.fieldInput }} />
             {/* Supplier currency — fixed MYR/RMB/CNY/USD/SGD enum (order canonical,
                 NOT sorted). Flows to PO + PI pricing once set. */}
             <CurrencyEditSelect value={form.currency} onChange={(v) => setF('currency', v)} />
@@ -3745,41 +3748,6 @@ const CitySelect = ({
         </select>
         <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
       </span>
-    </label>
-  );
-};
-
-const PaymentTermsSelect = ({ value, onChange }: { value: string; onChange: (v: string) => void }) => {
-  /* When user picks "Custom", we surface a second input so they can type a
-     bespoke term (e.g. "NET 45 with 2% early discount"). We treat any value
-     not in the preset list as "Custom" mode. */
-  const isPreset = PAYMENT_TERMS_OPTIONS.includes(value as (typeof PAYMENT_TERMS_OPTIONS)[number]) && value !== 'Custom';
-  const [customMode, setCustomMode] = useState(!isPreset && Boolean(value));
-
-  return (
-    <label className={styles.field}>
-      <span className={styles.fieldLabel}>Payment Terms</span>
-      <div style={{ display: 'flex', gap: 6 }}>
-        <span className={styles.selectWrap} style={{ flex: customMode ? 0.5 : 1 }}>
-          <select className={styles.fieldSelect}
-            value={customMode ? 'Custom' : (isPreset ? value : '')}
-            onChange={(e) => {
-              const v = e.target.value;
-              if (v === 'Custom') { setCustomMode(true); onChange(''); }
-              else { setCustomMode(false); onChange(v); }
-            }}>
-            <option value="">— Pick term —</option>
-            {PAYMENT_TERMS_OPTIONS.map((p) => <option key={p} value={p}>{p}</option>)}
-          </select>
-          <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
-        </span>
-        {customMode && (
-          <input className={styles.fieldInput} style={{ flex: 1 }}
-            placeholder="Type custom term"
-            value={value}
-            onChange={(e) => onChange(e.target.value)} />
-        )}
-      </div>
     </label>
   );
 };

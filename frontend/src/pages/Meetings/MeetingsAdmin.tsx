@@ -122,13 +122,13 @@ export function RoomsPage({ rooms, meetings, now, canManage, onEdit, onAdd, onBo
 }
 
 export type RoomForm = {
-  id: number | null; name: string; location: string; floor: string; seats: number; equipment: string[]; days: number[]; openFrom: number; openTo: number;
+  id: number | null; name: string; location: string; address: string; floor: string; seats: number; equipment: string[]; days: number[]; openFrom: number; openTo: number;
   color: string; bufferMin: number; maxHours: number; advanceDays: number; active: boolean; closures: Closure[];
 };
 export const roomForm = (r: Room | null, count: number): RoomForm =>
   r
-    ? { id: r.id, name: r.name, location: r.location, floor: r.floor, seats: r.seats, equipment: r.equipment, days: r.open_days, openFrom: r.open_from, openTo: r.open_to, color: r.color, bufferMin: r.buffer_min, maxHours: r.max_hours, advanceDays: r.advance_days, active: r.active, closures: r.closures }
-    : { id: null, name: "", location: "Head office", floor: "", seats: 6, equipment: [], days: [1, 2, 3, 4, 5], openFrom: 9, openTo: 18, color: ROOM_COLORS[count % ROOM_COLORS.length], bufferMin: 0, maxHours: 0, advanceDays: 0, active: true, closures: [] };
+    ? { id: r.id, name: r.name, location: r.location, address: r.address ?? "", floor: r.floor, seats: r.seats, equipment: r.equipment, days: r.open_days, openFrom: r.open_from, openTo: r.open_to, color: r.color, bufferMin: r.buffer_min, maxHours: r.max_hours, advanceDays: r.advance_days, active: r.active, closures: r.closures }
+    : { id: null, name: "", location: "Head office", address: "", floor: "", seats: 6, equipment: [], days: [1, 2, 3, 4, 5], openFrom: 9, openTo: 18, color: ROOM_COLORS[count % ROOM_COLORS.length], bufferMin: 0, maxHours: 0, advanceDays: 0, active: true, closures: [] };
 
 export function RoomDialog({ initial, locations, futureBookings, saving, error, onClose, onSave }: {
   initial: RoomForm; locations: string[]; futureBookings: number; saving: boolean; error: string | null; onClose: () => void; onSave: (r: RoomForm) => void;
@@ -145,6 +145,7 @@ export function RoomDialog({ initial, locations, futureBookings, saving, error, 
           <label className={LABEL}>Location<input className={CONTROL} list="meeting-locations" value={x.location} onChange={(e) => setX({ ...x, location: e.target.value })} /><datalist id="meeting-locations">{locations.map((l) => <option key={l} value={l} />)}</datalist></label>
           <label className={LABEL}>Floor / area<input className={CONTROL} value={x.floor} placeholder="Level 2" onChange={(e) => setX({ ...x, floor: e.target.value })} /></label>
         </div>
+        <label className={LABEL}>Address for visitors<input className={CONTROL} value={x.address} placeholder="Street, postcode, city" onChange={(e) => setX({ ...x, address: e.target.value })} /><span className="text-[12px] font-normal text-ink-muted">Shown with a Google Maps link in the emails outside guests get.</span></label>
         <div className="grid grid-cols-3 gap-2.5">
           <label className={LABEL}>How many people<input type="number" min={1} max={500} className={CONTROL} value={x.seats} onChange={(e) => setX({ ...x, seats: Number(e.target.value) })} /></label>
           <label className={LABEL}>Opens<select className={CONTROL} value={x.openFrom} onChange={(e) => setX({ ...x, openFrom: Number(e.target.value) })}>{[6, 7, 8, 9, 10].map((h) => <option key={h} value={h}>{h}:00</option>)}</select></label>
