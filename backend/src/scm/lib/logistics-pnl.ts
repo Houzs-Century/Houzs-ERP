@@ -327,6 +327,12 @@ export type PnlInput = {
   /** Our lorries' trips in the months (one lorry, one day). */
   ownTrips: number;
 };
+/** A line the P&L counts in an in-house row it does not spread, with the amount it counts. */
+export type InHouseKind = 'petrol' | 'other' | 'instalment' | 'manpower';
+export type InHouseLine = {
+  lineId: string; kind: InHouseKind; accountCode: string; accountName: string | null; day: string;
+  docNo: string | null; sourceDocNo?: string | null; notes: string | null; amountSen: number;
+};
 export type LogisticsPnl = {
   from: string; to: string; months: string[];
   doIncomeBp: number;
@@ -336,6 +342,8 @@ export type LogisticsPnl = {
   income: IncomeLine[];
   trips: SetupTrip[];
   spreads: SpreadRow[];
+  /** Petrol, other lorry cost, instalment and manpower as counted (upkeep and road tax are `spreads`). */
+  inHouseLines: InHouseLine[];
   ownTrips: number;
   inHousePerTripSen: number | null;
 };
@@ -364,6 +372,16 @@ export function buildLogisticsPnl(input: PnlInput): LogisticsPnl {
   const outsource = zero();
   const kl = { petrol: 0, instalment: 0, manpower: 0, other: 0 };
   const spreadLegs: SpreadLeg[] = [];
+  const inHouseLines: InHouseLine[] = [];
+  const counted = (l: Leg, kind: InHouseKind, amountSen: number): number => {
+    if (amountSen !== 0) {
+      inHouseLines.push({
+        lineId: l.lineId, kind, accountCode: l.accountCode, accountName: l.accountName, day: l.day,
+        docNo: l.docNo, sourceDocNo: l.sourceDocNo, notes: l.notes, amountSen,
+      });
+    }
+    return amountSen;
+  };
   const a = input.accounts;
   for (const l of input.legs) {
     const net = l.debitSen - l.creditSen;
@@ -378,10 +396,10 @@ export function buildLogisticsPnl(input: PnlInput): LogisticsPnl {
     if (!inDays(l.day)) continue;
     const region = a.outsource.get(l.accountCode);
     if (region) outsource[region] += net;
-    else if (a.petrol.has(l.accountCode)) kl.petrol += net;
-    else if (a.otherLorry.has(l.accountCode)) kl.other += net;
-    else if (a.instalment.has(l.accountCode)) kl.instalment += l.debitSen;
-    else if (a.salary.has(l.accountCode) && isManpowerLine(l.notes)) kl.manpower += net;
+    else if (a.petrol.has(l.accountCode)) kl.petrol += counted(l, 'petrol', net);
+    else if (a.otherLorry.has(l.accountCode)) kl.other += counted(l, 'other', net);
+    else if (a.instalment.has(l.accountCode)) kl.instalment += counted(l, 'instalment', l.debitSen);
+    else if (a.salary.has(l.accountCode) && isManpowerLine(l.notes)) kl.manpower += counted(l, 'manpower', net);
   }
   const spread = spreadBills(spreadLegs, input.spreadMonths, range);
 
@@ -444,6 +462,7 @@ export function buildLogisticsPnl(input: PnlInput): LogisticsPnl {
     income: [...input.income],
     trips: [...input.trips],
     spreads: spread.rows,
+    inHouseLines,
     ownTrips: input.ownTrips,
     inHousePerTripSen: input.ownTrips > 0 ? Math.round(total(inHouseTotal) / input.ownTrips) : null,
   };
