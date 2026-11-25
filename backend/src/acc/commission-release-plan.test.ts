@@ -26,7 +26,7 @@ const sale = (docNo: string, day: string, amountSen: number): PlanSale => ({ doc
 
 const base = (over: Partial<PlanInput>): PlanInput => ({
   booksStart: '2026-09', through: '2026-12', prepaid: [], closes: [], orders: [], sales: [],
-  goodsAt: () => 0, openingFrom: null, ...over,
+  goodsAt: () => 0, ...over,
 });
 
 const releasedBy = (plan: ReturnType<typeof planCommissionRelease>, key: string): Record<string, number> =>
@@ -238,10 +238,6 @@ describe('the books\' opening balance', () => {
     expect(plan.layers.find((l) => l.key === 'opening')!.fromMonth).toBe('2026-09');
   });
 
-  test('only the orders dated from the day named, when one is named', () => {
-    const plan = planCommissionRelease({ ...input, openingFrom: '2026-01-01' });
-    expect([...plan.shares.get('opening')!.entries()]).toEqual([['SO-O1', 800_00]]);
-  });
 });
 
 describe('whole sen', () => {

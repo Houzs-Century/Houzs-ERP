@@ -130,8 +130,6 @@ export type PlanInput = {
   sales: PlanSale[];
   /** An order's goods as at the end of a day (the four goods buckets). */
   goodsAt: (docNo: string, day: string) => number;
-  /** Only orders dated on or after this day carry the opening balance; null = every older order. */
-  openingFrom: string | null;
 };
 
 /* ── What it answers ────────────────────────────────────────────────────── */
@@ -260,12 +258,13 @@ export function planCommissionRelease(input: PlanInput): CommissionPlan {
   }
 
   if (opening && opening.amountSen !== 0) {
-    /* The orders the opening carried: dated before the first billed month (and on
-       or after openingFrom), still live and unsold the day the books start. */
+    /* The orders the opening carried: every order dated before the first billed
+       month, however old, still live and unsold the day the books start (owner
+       2026-11-25: 「我是从一开始就放佣金了」). */
     const cutoff = `${firstBilled < input.booksStart ? firstBilled : input.booksStart}-01`;
     const eve = dayBefore(booksStartDay);
     const docs = input.orders
-      .filter((o) => live(o) && o.soDate != null && o.soDate < cutoff && (input.openingFrom == null || o.soDate >= input.openingFrom))
+      .filter((o) => live(o) && o.soDate != null && o.soDate < cutoff)
       .filter((o) => !endedBy(o, eve) && !(salesOf.get(o.docNo) ?? []).some((s) => s.day < booksStartDay))
       .map((o) => o.docNo);
     const shares = splitByWeight(opening.amountSen, goodsWeights(docs, eve));

@@ -113,7 +113,7 @@ export async function loadReleaseData(sb: Db, companyId: number, booksStart: Ym 
   if (!pl.ok) return pl;
   const prepaid = pl.lines;
   const start = booksStart ?? [...prepaid.map((p) => p.month ?? p.entryDate.slice(0, 7))].sort().at(0) ?? through;
-  const empty: PlanInput = { booksStart: start, through, prepaid, closes: [], orders: [], sales: [], goodsAt: () => 0, openingFrom: null };
+  const empty: PlanInput = { booksStart: start, through, prepaid, closes: [], orders: [], sales: [], goodsAt: () => 0 };
   if (prepaid.length === 0) return { ok: true, data: { input: empty, roles, prepaid } };
 
   /* The closes: what each month paid each order, by SO date, its adjustments for earlier months included. */
@@ -194,7 +194,7 @@ export async function loadReleaseData(sb: Db, companyId: number, booksStart: Ym 
     return s ? goodsOf(s) : 0;
   };
 
-  return { ok: true, data: { input: { booksStart: start, through, prepaid, closes, orders, sales, goodsAt, openingFrom: null }, roles, prepaid } };
+  return { ok: true, data: { input: { booksStart: start, through, prepaid, closes, orders, sales, goodsAt }, roles, prepaid } };
 }
 
 /* ── Posting one month ───────────────────────────────────────────────────── */
