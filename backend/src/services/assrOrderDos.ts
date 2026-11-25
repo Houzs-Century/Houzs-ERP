@@ -24,6 +24,7 @@
    ---------------------------------------------------------------------------- */
 import type { Env } from "../types";
 import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
+import { soDocNosByPoNumber } from "./assrOrderPos";
 
 export interface AssrOrderDo {
   do_number: string;
@@ -45,7 +46,7 @@ export async function findOrdersByDoNumber(
   allowedCompanyIds: number[] | undefined,
 ): Promise<DoNumberSearchMatches> {
   const likePattern = `%${searchTerm.toLowerCase()}%`;
-  const [transferred, mirrored, scmSoDocNos] = await Promise.all([
+  const [transferred, mirrored, scmSoDocNos, poSoDocNos] = await Promise.all([
     env.DB.prepare(
       `SELECT doc_no FROM sales_orders
         WHERE LOWER(transfer_to) LIKE ? AND LOWER(transfer_to) NOT LIKE 'xs%' LIMIT ${DO_SEARCH_ROW_CAP}`,
@@ -59,12 +60,14 @@ export async function findOrdersByDoNumber(
       .bind(likePattern)
       .all<{ ref: string | null }>(),
     findScmSoDocNosByDoNumber(env, searchTerm, allowedCompanyIds),
+    // The PO column's Order POs ride the same SO doc_no arm of the list search.
+    isSupabaseConfigured(env) ? soDocNosByPoNumber(getSupabaseService(env), searchTerm, allowedCompanyIds) : [],
   ]);
   const refKeys = (mirrored.results ?? [])
     .map((row) => String(row.ref ?? "").trim().toLowerCase())
     .filter(hasLetterOrDigit);
   return {
-    soDocNos: [...new Set([...(transferred.results ?? []).map((row) => row.doc_no), ...scmSoDocNos])],
+    soDocNos: [...new Set([...(transferred.results ?? []).map((row) => row.doc_no), ...scmSoDocNos, ...poSoDocNos])],
     refKeys: [...new Set(refKeys)],
   };
 }

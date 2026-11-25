@@ -21,7 +21,6 @@ import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
 import { assrVisibilityPredicateSql } from "./assrVisibility";
 import { attachOrderPosAndFill, attachExchangePosEnv, caseCompanySql, pickedSupplierName, showErpSupplierNames } from "./assrCreditorFill";
 import { attachOrderDeliveryDates, findOrdersByDoNumber } from "./assrOrderDos";
-import { soDocNosByPoNumber } from "./assrOrderPos";
 import { caseAddressFromSo, fetchScmSoContext, soAddressForDoc } from "./assrSoContext";
 import { saveCaseAddress } from "./assrCaseAddress";
 import { CASE_ADDRESS_KEYS } from "../scm/shared/assr-case-address";
@@ -1743,23 +1742,17 @@ async function pushCaseSearch(
   const like = `%${search.toLowerCase()}%`;
   const digits = cleanPhone(search);
   const phoneLike = digits ? `%${digits.toLowerCase()}%` : like;
-  const [doMatches, poSoDocNos] = await Promise.all([
-    findOrdersByDoNumber(env, search, allowedCompanyIds),
-    isSupabaseConfigured(env) ? soDocNosByPoNumber(getSupabaseService(env), search, allowedCompanyIds) : [],
-  ]);
-  // The PO column: the SO's Order POs (by SO doc_no) and the case's own po_no.
-  const soDocNos = [...new Set([...doMatches.soDocNos, ...poSoDocNos])];
+  const doMatches = await findOrdersByDoNumber(env, search, allowedCompanyIds);
   const placeholders = (values: string[]) => values.map(() => "?").join(",");
   const doArms = [
-    "LOWER(c.delivery_order) LIKE ?",
-    "LOWER(c.po_no) LIKE ?",
-    ...(soDocNos.length > 0 ? [`c.doc_no IN (${placeholders(soDocNos)})`] : []),
+    "LOWER(c.delivery_order) LIKE ? OR LOWER(c.po_no) LIKE ?", // po_no: the PO column's service PO
+    ...(doMatches.soDocNos.length > 0 ? [`c.doc_no IN (${placeholders(doMatches.soDocNos)})`] : []),
     ...(doMatches.refKeys.length > 0 ? [`LOWER(TRIM(c.ref_no)) IN (${placeholders(doMatches.refKeys)})`] : []),
   ];
   where.push(
     `(LOWER(c.assr_no) LIKE ? OR LOWER(c.doc_no) LIKE ? OR LOWER(c.ref_no) LIKE ? OR LOWER(c.customer_name) LIKE ? OR LOWER(c.sales_agent) LIKE ? OR LOWER(c.complaint_issue) LIKE ? OR LOWER(c.item_code) LIKE ? OR LOWER(c.phone) LIKE ? OR LOWER(c.phone) LIKE ? OR EXISTS (SELECT 1 FROM assr_items i WHERE i.assr_id = c.id AND (LOWER(i.item_code) LIKE ? OR LOWER(i.item_description) LIKE ?)) OR EXISTS (SELECT 1 FROM assr_supplier_returns sr WHERE sr.assr_id = c.id AND LOWER(sr.ref_no) LIKE ?) OR ${doArms.join(" OR ")})`,
   );
-  binds.push(like, like, like, like, like, like, like, like, phoneLike, like, like, like, like, like, ...soDocNos, ...doMatches.refKeys);
+  binds.push(like, like, like, like, like, like, like, like, phoneLike, like, like, like, like, like, ...doMatches.soDocNos, ...doMatches.refKeys);
 }
 
 /** Shared company-scope WHERE fragment for the raw-SQL ASSR readers. Receives
