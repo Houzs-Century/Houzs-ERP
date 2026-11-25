@@ -112,11 +112,13 @@ export const boardTotalsLine = (board: DailyBankBoard): string =>
 
 /* ── The colours a row wears — the sample's: received green, pending orange ── */
 
+/* On white, its greys neutral (owner 2026-11-25: 要白色 background，看起来还是米色): the warm
+   greys of the bank rows, the lines and the dark bar read as beige. */
 export const DB_COLORS = {
-  ink: '#221F20', soft: '#6F6A63', green: '#2F5D4F', red: '#B8331F', orange: '#B76B00', grey: '#8A857E',
-  band: '#E4F0E9', sectionBg: '#EDE8E2', bar: '#2B2320', barText: '#F6F1EA', rule: '#DDD7CF',
+  ink: '#202124', soft: '#5F6368', green: '#2F5D4F', red: '#B8331F', orange: '#B76B00', grey: '#80868B',
+  band: '#E4F0E9', sectionBg: '#F1F3F4', bar: '#202124', barText: '#FFFFFF', rule: '#E0E3E7',
   /* The cash book's picture draws its lines to be seen (owner 2026-11-23: 线条). */
-  line: '#B3AA9F',
+  line: '#BDC1C6',
 } as const;
 
 export const rowColor = (k: DailyBankRowKind): string => {

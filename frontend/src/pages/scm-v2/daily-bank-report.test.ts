@@ -139,9 +139,14 @@ describe('the exported picture', () => {
     expect(drawn.filter((c) => /mono|Menlo/i.test(c.font ?? ''))).toEqual([]);
   });
 
-  test('the picture is on white (owner 2026-11-25: background 颜色可以换成白色)', () => {
+  /* Owner 2026-11-25: background 颜色可以换成白色, then 看起来还是米色 — the warm greys read as beige. */
+  test('the picture is on white, and its bands, lines and bar are neutral greys, not beige', () => {
     const [background] = draw(board({ blocks: [quietBank] }));
     expect(background).toMatchObject({ op: 'fillRect', args: [0, 0, 980, expect.any(Number)], fill: '#FFFFFF' });
+    const warmth = (hex: string) => { const [r, , b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)); return r! - b!; };
+    for (const c of [DB_COLORS.sectionBg, DB_COLORS.rule, DB_COLORS.line, DB_COLORS.bar, DB_COLORS.barText, DB_COLORS.soft, DB_COLORS.ink]) {
+      expect(warmth(c), c).toBeLessThanOrEqual(0);
+    }
   });
 
   /* Owner 2026-11-25 (可以优化一下): names and descriptions were cut short with "…". */
