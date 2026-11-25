@@ -19,7 +19,7 @@
 // Routing: /scm/purchase-orders/from-so.
 // ----------------------------------------------------------------------------
 
-import { MFG_CATEGORY_LABELS, MFG_PRODUCT_CATEGORIES } from '../../vendor/shared/product-categories';
+import { useProductCategories } from '../../vendor/scm/lib/product-categories-store';
 import { useMemo, useState, type CSSProperties } from 'react';
 // HOUZS VENDOR — Link + useSearchParams live on 'react-router-dom' in
 // react-router v6 (the version Houzs ships). Only the import specifier changed.
@@ -63,11 +63,6 @@ const FILTER_INPUT: CSSProperties = {
   color: 'var(--c-ink)',
 };
 
-/** Category filter options. 'all' shows everything; the rest match item_group. */
-const CATEGORY_OPTIONS = [
-  { value: 'all', label: 'All categories' },
-  ...MFG_PRODUCT_CATEGORIES.map((c) => ({ value: c.toLowerCase(), label: MFG_CATEGORY_LABELS[c] })),
-];
 
 /** Which date field the range filter targets. */
 const DATE_FIELD_OPTIONS = [
@@ -89,6 +84,11 @@ type Pick = { picked: boolean; qty: number };
 
 export const PurchaseOrderFromSo = () => {
   const navigate = useNavigate();
+  /** Category filter options (the registry). 'all' shows everything; the rest match item_group. */
+  const CATEGORY_OPTIONS = [
+    { value: 'all', label: 'All categories' },
+    ...useProductCategories().active.map((c) => ({ value: c.code.toLowerCase(), label: c.name })),
+  ];
   const itemsQ   = useOutstandingSoItems();
 
   /* Commander 2026-05-29 — when opened from a PO ("Transfer from Sales Order" / "Add Line

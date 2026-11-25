@@ -19,6 +19,6 @@ export function toProductCategories(rows: readonly Row[]): ProductCategory[] {
 
 export async function loadProductCategories(supabase: SupabaseClient): Promise<ProductCategory[]> {
   const { data, error } = await supabase.from('acc_item_groups').select('code, name, is_active');
-  if (error) throw new Error(`product_categories_load_failed: ${error.message ?? 'unknown'}`);
-  return toProductCategories((data ?? []) as Row[]);
+  if (error) throw new Error(`product_categories_load_failed: ${error.message}`);
+  return toProductCategories(data as Row[]);
 }

@@ -26,7 +26,7 @@
 // URL is state: ?q= (search) and ?cat= (category filter).
 // ----------------------------------------------------------------------------
 
-import { MFG_CATEGORY_LABELS, MFG_PRODUCT_CATEGORIES, type MfgProductCategory } from "../../vendor/shared/product-categories";
+import { useProductCategories, type MfgProductCategory } from "../../vendor/scm/lib/product-categories-store";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { expandSofaPieceItems } from "../../vendor/scm/lib/sofa-piece-lines";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -74,10 +74,6 @@ import { passesSoffioReminder } from "../../vendor/scm/lib/soffio-reminder";
 
 type Category = "ALL" | MfgProductCategory;
 
-const CATEGORIES: Array<{ key: Category; label: string }> = [
-  { key: "ALL", label: "All" },
-  ...MFG_PRODUCT_CATEGORIES.map((c) => ({ key: c, label: MFG_CATEGORY_LABELS[c] })),
-];
 
 type Customer = {
   name: string;
@@ -490,7 +486,11 @@ function Catalogue({
   onAdjust: (code: string, delta: number) => void;
   onClearFilters: () => void;
   onManualAdd: () => void;
-}) {
+}) {  const CATEGORIES: Array<{ key: Category; label: string }> = [
+    { key: "ALL", label: "All" },
+    ...useProductCategories().active.map((c) => ({ key: c.code, label: c.name })),
+  ];
+
   const filteredActive = useMemo(
     () => products.filter((p) => p.status === "ACTIVE"),
     [products],

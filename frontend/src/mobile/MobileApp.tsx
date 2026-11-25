@@ -1,4 +1,5 @@
 import { lazy, useEffect, useState, type ReactNode } from "react";
+import { useProductCategories } from "../vendor/scm/lib/product-categories-store";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
@@ -635,6 +636,8 @@ function MobileAppInner() {
   const { user, can, pageAccess, logout } = useAuth();
   const notify = useNotify();
   const qc = useQueryClient();
+  // Load the product categories once, so every label is the registry name from the first screen.
+  useProductCategories();
   // App-wide unread badge — un-acked human announcements AND the actionable
   // system notices (scan / service case). Shown on the Profile tab (below) +
   // the Profile > Announcements row, so a phone user sees a new broadcast or

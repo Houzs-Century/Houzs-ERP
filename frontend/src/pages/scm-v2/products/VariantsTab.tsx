@@ -25,7 +25,7 @@
 // ships, renames must be done one row at a time via SKU Master.
 // ----------------------------------------------------------------------------
 
-import { MFG_PRODUCT_CATEGORIES, mfgCategoryLabel, type MfgProductCategory } from "../../../vendor/shared/product-categories";
+import { useProductCategories, type MfgProductCategory } from "../../../vendor/scm/lib/product-categories-store";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
@@ -85,7 +85,6 @@ const fmtRm = (sen: number | null | undefined): string => fmtSen(sen);
 // The model registry takes every product category (product-models.ts) — the
 // tab was SOFA-hardcoded for no backend reason (owner 2026-08-07).
 
-const VARIANT_CATEGORIES = MFG_PRODUCT_CATEGORIES;
 type VariantCategory = MfgProductCategory;
 
 const useModelsByCategory = (category: VariantCategory) =>
@@ -105,9 +104,8 @@ export function VariantsTab() {
   const [searchParams, setSearchParams] = useSearchParams();
   const modelId = searchParams.get("model") ?? "";
   const rawCat = searchParams.get("cat") ?? "SOFA";
-  const category: VariantCategory = (VARIANT_CATEGORIES as readonly string[]).includes(rawCat)
-    ? (rawCat as VariantCategory)
-    : "SOFA";
+  // Any registry-shaped code (the picker offers the registry's); anything else reads as SOFA.
+  const category: VariantCategory = /^[A-Z][A-Z0-9_]{1,29}$/.test(rawCat) ? rawCat : "SOFA";
 
   const setModelId = (id: string) => {
     const sp = new URLSearchParams(searchParams);
@@ -415,7 +413,8 @@ function ModelPicker({
   onPick: (id: string) => void;
   /** SKU count under the picked model — the picker's one-line summary. */
   variantCount: number | null;
-}) {
+}) {  const categoryOptions = useProductCategories().active.map((c) => ({ value: c.code, label: c.name }));
+
   /* Owner, 2026-08-07 (twice): picking ONE required model from a long code
      list is a COMBOBOX job — this is the same SearchableSelect the rest of
      the system's long dropdowns use (owner 2026-07-27: "全部下拉的 option 都要
@@ -448,7 +447,7 @@ function ModelPicker({
             <SearchableSelect
               value={category}
               onChange={(c) => c && onCategory(c)}
-              options={VARIANT_CATEGORIES.map((c) => ({ value: c, label: mfgCategoryLabel(c) }))}
+              options={categoryOptions}
               className={inputCls}
               ariaLabel="Category"
             />

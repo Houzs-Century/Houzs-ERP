@@ -1,3 +1,4 @@
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { describe, expect, test } from 'vitest';
 import { toProductCategories, loadProductCategories } from './product-category-registry';
 
@@ -16,6 +17,6 @@ describe('product categories from scm.acc_item_groups', () => {
   });
   test('a read error throws, so a write is never checked against an empty list', async () => {
     const sb = { from: () => ({ select: async () => ({ data: null, error: { message: 'boom' } }) }) };
-    await expect(loadProductCategories(sb as never)).rejects.toThrow('product_categories_load_failed: boom');
+    await expect(loadProductCategories(sb as unknown as SupabaseClient)).rejects.toThrow('product_categories_load_failed: boom');
   });
 });

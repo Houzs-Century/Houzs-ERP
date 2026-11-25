@@ -61,7 +61,8 @@ import {
   type SofaPriceMatrix,
   type BedframePriceMatrix,
 } from '../../vendor/scm/lib/suppliers-queries';
-import { useMfgProducts, useMaintenanceConfig, mfgCategoryLabel, MFG_PRODUCT_CATEGORIES, type MfgCategory, type MfgProductRow } from '../../vendor/scm/lib/mfg-products-queries';
+import { useMfgProducts, useMaintenanceConfig, mfgCategoryLabel, type MfgCategory, type MfgProductRow } from '../../vendor/scm/lib/mfg-products-queries';
+import { useProductCategories } from '../../vendor/scm/lib/product-categories-store';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 /* A refused write must SAY so. The five grid cells below fire-and-forget, and
    useUpdateBinding carries no onError (unlike useDeleteBinding and
@@ -2625,9 +2626,10 @@ const PhoneEditField = ({
    where one Model genuinely needs different supplier codes per size variant.
    ════════════════════════════════════════════════════════════════════════ */
 
-const MODEL_CATEGORY_CHIPS: { value: 'all' | MfgCategory; label: string }[] = [
+/** Category chips: All + the registry's active categories. */
+const useCategoryChips = (): { value: 'all' | MfgCategory; label: string }[] => [
   { value: 'all', label: 'All' },
-  ...MFG_PRODUCT_CATEGORIES.map((c) => ({ value: c, label: mfgCategoryLabel(c) })),
+  ...useProductCategories().active.map((c) => ({ value: c.code, label: c.name })),
 ];
 
 type ModelDraft = {
@@ -2686,6 +2688,7 @@ const ModelSkuPickerDialog = ({
   const initialCategory: 'all' | MfgCategory =
     mfgCategoryFromSupplierCategory(supplierCategory) ?? 'all';
   const [category, setCategory] = useState<'all' | MfgCategory>(initialCategory);
+  const MODEL_CATEGORY_CHIPS = useCategoryChips();
   const [search, setSearch] = useState('');
   const [advanced, setAdvanced] = useState(false);
 
@@ -3251,10 +3254,6 @@ type MultiDraft = {
   isMainSupplier: boolean;
 };
 
-const CATEGORY_CHIPS: { value: 'all' | MfgCategory; label: string }[] = [
-  { value: 'all', label: 'All' },
-  ...MFG_PRODUCT_CATEGORIES.map((c) => ({ value: c, label: mfgCategoryLabel(c) })),
-];
 
 /* Perf cap (parity with MobileSkuPicker / SalesOrderNewFromProducts #342) —
    never paint more than this many catalogue rows at once; the full active
@@ -3277,6 +3276,7 @@ const MultiSkuPickerDialog = ({
   const notify = useNotify();
   const [step, setStep] = useState<1 | 2>(1);
   const [category, setCategory] = useState<'all' | MfgCategory>('all');
+  const CATEGORY_CHIPS = useCategoryChips();
   const [search, setSearch] = useState(initialSearch);
   /* Perf (parity with MobileSkuPicker / #342) — DEBOUNCE the search before it
      drives the server query, so a fast typist doesn't fire one

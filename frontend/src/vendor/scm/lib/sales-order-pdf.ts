@@ -25,7 +25,7 @@ import { docPageLabel,
 } from './pdf-common';
 import { billToBlock } from './pdf-party-blocks';
 import { orderAddressLines } from './order-address';
-import { mfgCategoryLabel } from '../../shared/product-categories';
+import { ensureProductCategories, mfgCategoryLabel } from './product-categories-store';
 import { loadFabricDescriptionMap, loadFabricSupplierMap } from './supplier-doc-data';
 import { composeSoLineDescription } from './so-line-description';
 import { stripBookText } from './book-text';
@@ -410,6 +410,8 @@ export async function renderSalesOrderInto(
   /* Fabric Tracking lookup (fail-soft, before any drawing): internal fabric
      code → fabric_description so the customer reads "EZ-001 — <description>"
      instead of a bare internal code. */
+  // Section headings print the category name; fail-soft, a failed load prints the Title Case code.
+  await ensureProductCategories().catch(() => undefined);
   const fabricDescMap = await loadFabricDescriptionMap(collectFabricCodes(items));
   /* Internal fabric code → supplier EXTERNAL colour code (Fabric Tracking), so
      the SO shows both like the supplier docs: "EZ-001 (KN390-1) — <desc>"

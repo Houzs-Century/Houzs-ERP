@@ -1,7 +1,7 @@
 /* Import SKUs result: a row that changed the category of a SKU on a model moved
    the model and every SKU of it (owner 2026-09-15), so the owner is told which
    model moved and how many SKUs went with it. */
-import { mfgCategoryLabel } from '../../shared/product-categories';
+import { mfgCategoryLabel } from '../lib/product-categories-store';
 import type { ImportModelMove } from '../lib/mfg-products-queries';
 
 export function ImportModelsMoved({ moves }: { moves: ImportModelMove[] | undefined }) {

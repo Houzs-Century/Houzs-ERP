@@ -23,7 +23,7 @@
 // repointed to /scm/grns (the New GRN form + the append-to-GRN edit page).
 // ----------------------------------------------------------------------------
 
-import { MFG_CATEGORY_LABELS, MFG_PRODUCT_CATEGORIES } from '../../vendor/shared/product-categories';
+import { useProductCategories } from '../../vendor/scm/lib/product-categories-store';
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { readScmHandoff, writeScmHandoff } from '../../lib/scmHandoffStorage';
@@ -74,11 +74,6 @@ const FILTER_INPUT: CSSProperties = {
   color: 'var(--c-ink)',
 };
 
-/** Category filter options — same set as Create-PO-from-SO. */
-const CATEGORY_OPTIONS = [
-  { value: 'all', label: 'All categories' },
-  ...MFG_PRODUCT_CATEGORIES.map((c) => ({ value: c.toLowerCase(), label: MFG_CATEGORY_LABELS[c] })),
-];
 
 /** Which date field the range filter targets (PO has PO Date + Expected). */
 const DATE_FIELD_OPTIONS = [
@@ -98,6 +93,11 @@ export type GrnFromPoPick = OutstandingPoItem & { _pickQty: number };
 
 export const GrnFromPo = () => {
   const navigate = useNavigate();
+  /** Category filter options (the registry, as Create-PO-from-SO). */
+  const CATEGORY_OPTIONS = [
+    { value: 'all', label: 'All categories' },
+    ...useProductCategories().active.map((c) => ({ value: c.code.toLowerCase(), label: c.name })),
+  ];
 
   /* Commander 2026-05-31 — "Partially Convert" from the PO list lands here with
      ?poId=<id>, scoping the picker to ONE PO's outstanding lines so the operator
