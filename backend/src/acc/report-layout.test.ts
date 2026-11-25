@@ -14,7 +14,7 @@
 
 import { describe, expect, test } from 'vitest';
 import {
-  REPORT_BLOCKS, defaultLayout, isCashFlowTyped, laidDepth, laidLineNode, layOutBlock, layOutCashFlow, pctOf, upgradeCashFlowLayout, validateLayout,
+  REPORT_BLOCKS, cashFlowHomes, defaultLayout, isCashFlowTyped, laidDepth, laidLineNode, layOutBlock, layOutCashFlow, pctOf, upgradeCashFlowLayout, validateLayout,
   type ChartAccount, type LaidLine, type LaidNode, type Layout, type LayoutCategory, type LayoutItem,
 } from './report-layout';
 
@@ -633,5 +633,57 @@ describe('a Total name at any depth', () => {
     const laid = layOutBlock(ok.layout.blocks.expenses!, [{ code: '900-R002', name: 'RENTAL OF WAREHOUSE', amountSen: 50_000 }], 2, null);
     expect(laid[0]!.totalLabel).toBe('Total warehouse');
     expect(laid[0]!.children[0]!.totalLabel).toBe('Total warehouse rental');
+  });
+});
+
+/* Owner 2026-11-25: an opening bill's payment can sit in a category rather than on an
+   account — where its supplier's accounts all print. The homes are where layOutCashFlow
+   itself prints each account's money in and out, for one company. */
+describe('Cash Flow: where an account prints, and a line placed by category', () => {
+  const tree: LayoutItem[] = [
+    {
+      kind: 'category', id: 'cf:out', label: 'OUTFLOWS', flow: 'out', children: [
+        { kind: 'account', code: '900-A001', flow: 'out' },
+        {
+          kind: 'category', id: 'cf:out:fair', label: 'FAIR', code: '900-F000', children: [
+            { kind: 'account', code: '900-F001', flow: 'net' },
+            { kind: 'category', id: 'cf:out:fair:lorry', label: 'LORRY', children: [{ kind: 'account', code: '900-L001', flow: 'out' }] },
+          ],
+        },
+        { kind: 'category', id: 'cf:out:hidden', label: 'NOT FOR CO 2', hiddenFor: [2], children: [{ kind: 'account', code: '900-H001', flow: 'out' }] },
+      ],
+    },
+    { kind: 'category', id: 'cf:in', label: 'RECEIPTS', flow: 'in', children: [{ kind: 'account', code: '900-F001', flow: 'in' }] },
+  ];
+
+  test('each account by direction: its own category, a header in its own, the first placing wins, an unticked category places nothing', () => {
+    const homes = cashFlowHomes(tree, 2);
+    expect(homes.out.get('900-A001')).toEqual({ id: 'cf:out', label: 'OUTFLOWS' });
+    expect(homes.out.get('900-F000')).toEqual({ id: 'cf:out:fair', label: 'FAIR' });
+    expect(homes.out.get('900-F001')).toEqual({ id: 'cf:out:fair', label: 'FAIR' });
+    expect(homes.out.get('900-L001')).toEqual({ id: 'cf:out:fair:lorry', label: 'LORRY' });
+    /* A Net line takes both directions where it sits; the In line further down is never reached. */
+    expect(homes.in.get('900-F001')).toEqual({ id: 'cf:out:fair', label: 'FAIR' });
+    expect(homes.in.has('900-A001')).toBe(false);
+    expect(homes.out.has('900-H001')).toBe(false);
+    expect(cashFlowHomes(tree, 3).out.get('900-H001')).toEqual({ id: 'cf:out:hidden', label: 'NOT FOR CO 2' });
+  });
+
+  test('a line placed by category prints at the category\'s foot with no code; unticked, it goes to Unassigned', () => {
+    const line: LaidLine = { code: 'OPENING-BILLS:cf:out:fair', key: 'OPENING-BILLS:cf:out:fair', name: 'Opening bills (AutoCount)', label: 'Opening bills (AutoCount)', amountSen: 7_000, category: 'cf:out:fair' };
+    const payments: LaidLine[] = [{ code: '900-F001', name: 'FAIR STAND', amountSen: 3_000 }, line];
+    const laid = layOutCashFlow(tree, [], payments, 2);
+    const fair = laid.nodes[0]!.children.find((n) => n.id === 'cf:out:fair')!;
+    expect(fair.amountSen).toBe(10_000);
+    expect(fair.children.map((n) => n.label)).toEqual(['900-F001 · FAIR STAND', 'Opening bills (AutoCount)']);
+    expect(fair.children[1]).toMatchObject({ kind: 'account', key: 'OPENING-BILLS:cf:out:fair', flow: 'out', amountSen: 7_000 });
+    expect(fair.children[1]!.code).toBeUndefined();
+    expect(laid.outSen).toBe(10_000);
+
+    const hidden = layOutCashFlow(tree, [], [{ ...line, code: 'OPENING-BILLS:cf:out:hidden', key: 'OPENING-BILLS:cf:out:hidden', category: 'cf:out:hidden' }], 2);
+    const rest = hidden.nodes.find((n) => n.id === 'unassigned:out')!;
+    expect(rest.children).toHaveLength(1);
+    expect(rest.children[0]!.code).toBeUndefined();
+    expect(hidden.outSen).toBe(7_000);
   });
 });

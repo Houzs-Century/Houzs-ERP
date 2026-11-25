@@ -2,9 +2,10 @@
    handler on a fake PostgREST:
      • the opening journal is Balance b/f, never a receipt, a payment or a
        transfer, whatever day it is dated (the August column was all of it);
-     • a supplier payment that settles an opening bill (its other side the
-       opening clearing, 190-0000) reads as the creditor control, as does money
-       paid ahead of a bill;
+     • a supplier payment that settles an opening bill (its own line the
+       opening clearing, 190-0000) whose supplier has no bill in the ERP reads
+       as the creditor control, as does money paid ahead of a bill (one whose
+       supplier has bills reads by them: cashFlowOpeningBills.test.ts);
      • what a trade-finance account pays a supplier is its own line, TF-AP;
      • a transfer between two of the report's own columns is off the tree. */
 
@@ -61,7 +62,7 @@ const world = () => fakeSb({
     { id: 'al-1', company_id: CO, pv_id: 'pv-1', pi_id: null, ap_invoice_id: 'api-ob', amount_sen: 40000, applied_sen: 40000, from_advance: false },
   ],
   purchase_invoices: [],
-  ap_invoices: [{ id: 'api-ob', company_id: CO, invoice_number: 'API-OB' }],
+  ap_invoices: [{ id: 'api-ob', company_id: CO, invoice_number: 'API-OB', supplier_id: 'sup-ob', opening: true, status: 'PAID' }],
   ap_invoice_lines: [{ id: 'l1', company_id: CO, invoice_id: 'api-ob', debit_account_code: '190-0000', amount_sen: 40000 }],
   acc_report_layouts: [],
   acc_acquirers: [],
@@ -113,7 +114,7 @@ describe('Cash Flow: the rules of 2026-11-05', () => {
     expect(r.totals.closing).toEqual({ '310-0010': 100000, '310-0060': 50000 });
   });
 
-  test('a payment of an opening bill reads as the creditor control, not the opening clearing', async () => {
+  test('a payment of an opening bill whose supplier has no bill in the ERP reads as the creditor control, not the opening clearing', async () => {
     const r = await get('2026-09-01', '2026-09-30');
     expect(r.payments.find((x) => x.key === '190-0000')).toBeUndefined();
     expect(r.payments.find((x) => x.key === '400-0000')?.cells).toEqual({ '310-0010': 40000 });

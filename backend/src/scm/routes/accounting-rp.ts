@@ -15,9 +15,13 @@
 //     601-0001 bedding…), the allocation split in the proportion of the PI's
 //     own debit lines (a single-group PI is simply that group);
 //   · an AP invoice → the bill's own lines' accounts, the same way;
-//   · money the voucher paid beyond what it settled, and a bill from before the
-//     books (an opening paper, its other side the opening clearing) → the
-//     creditor control itself (owner 2026-11-05);
+//   · a bill from before the books (an opening paper, its own line the opening
+//     clearing) → what that supplier's own bills in the ERP are for: the one
+//     account they sit on, else the one Cash Flow category those accounts print
+//     in (a line of its own there), else the creditor control (owner 2026-11-25);
+//   · money the voucher paid beyond what it settled → the creditor control
+//     itself (owner 2026-11-05), until the advance is knocked off against a
+//     bill: then it reads as what it settled;
 //   · paid out of a trade-finance account → its own line, TF-AP.
 // The opening journal is Balance b/f, never a receipt or a payment.
 // With `party=1` (AutoCount's "display trade debtor/creditor in details") the
@@ -53,7 +57,7 @@ import { requireActiveCompanyId } from '../lib/companyScope';
 import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { resolveRoles, type RoleCodes } from '../../acc/rules';
 import { countsInTheBooks } from '../../acc/reversal-pairs';
-import { layOutCashFlow, type LaidLine, type LaidNode, type SplitTo } from '../../acc/report-layout';
+import { cashFlowHomes, layOutCashFlow, type CashFlowHome, type LaidLine, type LaidNode, type SplitTo } from '../../acc/report-layout';
 import { OPENING_CLEARING, OPENING_SOURCE } from '../../acc/opening-balance';
 import { inBankShares, loadCardPayoutFacts, merchantMatched, paymentKey, type CardPayoutFacts } from '../../acc/card-in-bank';
 import { loadOrderPaymentFacts, paymentKinds, type OrderPaymentFacts, type PaymentKind } from '../../acc/order-payment-kind';
@@ -80,6 +84,9 @@ export type RpRow = {
   /** The Settlement / Deposit column the row's money goes to whatever its category says
       (a customer's order payment by its kind, a refund to Deposit — owner 2026-11-09). */
   splitTo?: SplitTo;
+  /** The Cash Flow category, by id, the row prints directly under — a row no account places
+      (opening bills paid, read by their supplier's category). */
+  category?: string;
 };
 export type RpEntry = {
   jeNo: string; entryDate: string; sourceType: string | null; sourceDocNo: string | null;
@@ -160,6 +167,10 @@ const settlementOwn = (l: { source_type: string | null }): boolean => String(l.s
    places this code like any account, under Unassigned payments until it does. */
 export const TRADE_FINANCE_AP = 'TF-AP';
 const TRADE_FINANCE_AP_NAME = 'Trade finance - Accounts payable & creditors';
+/* Opening bills paid whose supplier's own bills spread over several accounts of ONE Cash Flow
+   category (owner 2026-11-25): a line of that category's own, keyed by it, with no account. */
+const OPENING_BILLS = 'OPENING-BILLS';
+const OPENING_BILLS_NAME = 'Opening bills (AutoCount)';
 /* A money account is a trade-finance one by its name (CASH AT BANK - MAYBANK (TRADE FINANCE)). */
 const isTradeFinanceAccount = (name: string | null | undefined): boolean => /TRADE\s*FINANCE/i.test(String(name ?? ''));
 /* The opening journal (acc/opening-balance) is the books' starting position, not a
@@ -211,8 +222,28 @@ async function loadAcquirerTransits(sb: Sb, companyId: number): Promise<{ ok: tr
   return { ok: true, codes: [...codes].sort() };
 }
 
-export type RpSplit = { code: string; name: string; sen: number };
+export type RpAccount = { code: string; name: string };
+export type RpSplit = {
+  code: string; name: string; sen: number;
+  /** A share of an opening bill: the accounts its supplier's own live bills in the ERP sit on
+      (none: no such bill), which place it (openingBillHome). */
+  supplierAccounts?: RpAccount[];
+};
 type Split = RpSplit;
+
+/** Where a payment of an opening bill reads (owner 2026-11-25: 这个 other creditor 是还 booth
+    setup 的，它应该在 cashflow 的 exhibition & roadshow): the one account its supplier's own bills
+    in the ERP sit on; else the one Cash Flow category every one of those accounts prints directly
+    under (`homes`, the payment's direction); else — spread over categories, one not placed, or no
+    bill in the ERP — null, and it stays on the creditor control. */
+export function openingBillHome(accounts: readonly RpAccount[], homes: ReadonlyMap<string, CashFlowHome>): ({ kind: 'account' } & RpAccount) | ({ kind: 'category' } & CashFlowHome) | null {
+  const [first, ...rest] = accounts;
+  if (!first) return null;
+  if (rest.length === 0) return { kind: 'account', ...first };
+  const home = homes.get(first.code);
+  if (!home || rest.some((a) => homes.get(a.code)?.id !== home.id)) return null;
+  return { kind: 'category', ...home };
+}
 
 /** The supplier-payment vouchers among `period`'s journals: a PV (or its
     reversal) with a leg on a selected money account and a leg on a creditor
@@ -291,7 +322,10 @@ async function supplierPurposeSplits(
     .select('pv_id, pi_id, ap_invoice_id, amount_sen, applied_sen, from_advance')
     .eq('company_id', companyId).in('pv_id', batch).range(f, t));
   if (allocs.error) return { ok: false, reason: allocs.error.message };
-  const rows = allocs.data.filter((a) => a.from_advance !== true);
+  /* An advance knocked off against bills later (from_advance) is written on the voucher that
+     paid it: what it settled is what that voucher's money was for (owner 2026-11-25: booth
+     set-up paid ahead, knocked off against its opening bills a month on). */
+  const rows = allocs.data;
   const piIds = [...new Set(rows.flatMap((a) => (a.pi_id ? [String(a.pi_id)] : [])))];
   const apiIds = [...new Set(rows.flatMap((a) => (a.ap_invoice_id ? [String(a.ap_invoice_id)] : [])))];
 
@@ -321,11 +355,26 @@ async function supplierPurposeSplits(
       }
     }
   }
-  /* An AP invoice's purpose = its own lines. */
+  /* An AP invoice's purpose = its own lines. An opening bill's own line is the opening
+     clearing, which says nothing of what was bought: its purpose is the accounts its
+     supplier's own live bills in the ERP sit on (owner 2026-11-25), placed by the report. */
   const apiSplit = new Map<string, Split[]>();
+  const openingAccounts = new Map<string, RpAccount[]>();
   if (apiIds.length > 0) {
+    type ApHead = { id: string; supplier_id: string | null; opening: boolean | null };
+    const heads = await chunkIn<ApHead>(apiIds, (batch, f, t) => sb.from('ap_invoices')
+      .select('id, supplier_id, opening').eq('company_id', companyId).in('id', batch).range(f, t));
+    if (heads.error) return { ok: false, reason: heads.error.message };
+    const supplierOfOpening = new Map<string, string>();
+    for (const h of heads.data) if (h.opening === true && h.supplier_id) supplierOfOpening.set(String(h.id), String(h.supplier_id));
+    /* Live = what the settle function takes: neither a draft nor cancelled. */
+    const bills = await chunkIn<{ id: string; supplier_id: string }>([...new Set(supplierOfOpening.values())], (batch, f, t) => sb.from('ap_invoices')
+      .select('id, supplier_id').eq('company_id', companyId).in('supplier_id', batch).eq('opening', false)
+      .not('status', 'in', '(DRAFT,CANCELLED)').range(f, t));
+    if (bills.error) return { ok: false, reason: bills.error.message };
+    const supplierOfBill = new Map(bills.data.map((b) => [String(b.id), String(b.supplier_id)]));
     type ApLine = { invoice_id: string; debit_account_code: string; amount_sen: number };
-    const lines = await chunkIn<ApLine>(apiIds, (batch, f, t) => sb.from('ap_invoice_lines')
+    const lines = await chunkIn<ApLine>([...new Set([...apiIds, ...supplierOfBill.keys()])], (batch, f, t) => sb.from('ap_invoice_lines')
       .select('invoice_id, debit_account_code, amount_sen').eq('company_id', companyId).in('invoice_id', batch).range(f, t));
     if (lines.error) return { ok: false, reason: lines.error.message };
     const codes = [...new Set(lines.data.map((l) => String(l.debit_account_code)))];
@@ -336,10 +385,21 @@ async function supplierPurposeSplits(
       if (accs.error) return { ok: false, reason: accs.error.message };
       for (const a of accs.data) names.set(String(a.account_code), String(a.account_name));
     }
+    const allocated = new Set(apiIds);
+    const supplierCodes = new Map<string, Set<string>>();
     for (const l of lines.data) {
-      const list = apiSplit.get(String(l.invoice_id)) ?? [];
-      list.push({ code: String(l.debit_account_code), name: names.get(String(l.debit_account_code)) ?? String(l.debit_account_code), sen: Number(l.amount_sen ?? 0) });
-      apiSplit.set(String(l.invoice_id), list);
+      const id = String(l.invoice_id);
+      const code = String(l.debit_account_code);
+      if (allocated.has(id)) {
+        const list = apiSplit.get(id) ?? [];
+        list.push({ code, name: names.get(code) ?? code, sen: Number(l.amount_sen ?? 0) });
+        apiSplit.set(id, list);
+      }
+      const supplier = supplierOfBill.get(id);
+      if (supplier && code !== OPENING_CLEARING) supplierCodes.set(supplier, (supplierCodes.get(supplier) ?? new Set<string>()).add(code));
+    }
+    for (const [id, supplier] of supplierOfOpening) {
+      openingAccounts.set(id, [...(supplierCodes.get(supplier) ?? [])].sort().map((code) => ({ code, name: names.get(code) ?? code })));
     }
   }
 
@@ -364,9 +424,14 @@ async function supplierPurposeSplits(
     if (!pv) continue;
     const settled = Number(a.applied_sen ?? 0) > 0 ? Number(a.applied_sen) : Number(a.amount_sen ?? 0);
     if (settled <= 0) continue;
-    const parts = a.pi_id ? piSplit.get(String(a.pi_id)) : a.ap_invoice_id ? apiSplit.get(String(a.ap_invoice_id)) : undefined;
     const list = byPv.get(pv) ?? [];
-    list.push(...proportion(settled, parts ?? []));
+    const opening = !a.pi_id && a.ap_invoice_id ? openingAccounts.get(String(a.ap_invoice_id)) : undefined;
+    if (opening) {
+      list.push({ code: OPENING_CLEARING, name: OPENING_CLEARING, sen: settled, supplierAccounts: opening });
+    } else {
+      const parts = a.pi_id ? piSplit.get(String(a.pi_id)) : a.ap_invoice_id ? apiSplit.get(String(a.ap_invoice_id)) : undefined;
+      list.push(...proportion(settled, parts ?? []));
+    }
     byPv.set(pv, list);
   }
   return { ok: true, byPv };
@@ -431,14 +496,19 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
   if (!orderFacts.ok) return { ok: false, reason: orderFacts.reason };
   const kinds = paymentKinds(orderFacts.facts);
   if (!splits.ok) return { ok: false, reason: splits.reason };
+  /* The tree, read before the rows: an opening bill's payment reads by where its supplier's accounts sit on it. */
+  const laid = await src.layout();
+  if (!laid.ok) return { ok: false, reason: laid.reason };
+  const tree = laid.layout.blocks.accounts ?? [];
+  const homes = cashFlowHomes(tree, companyId);
 
   const receipts = new Map<string, RpRow>();
   const payments = new Map<string, RpRow>();
   const entries: RpEntry[] = [];
-  const add = (side: 'R' | 'P', key: string, code: string | null, name: string, column: string, amount: number, e: { jeNo: string; entryDate: string; sourceType: string | null; sourceDocNo: string | null; narration: string | null; party: string | null }, group?: RpRow['group'], splitTo?: SplitTo) => {
+  const add = (side: 'R' | 'P', key: string, code: string | null, name: string, column: string, amount: number, e: { jeNo: string; entryDate: string; sourceType: string | null; sourceDocNo: string | null; narration: string | null; party: string | null }, group?: RpRow['group'], splitTo?: SplitTo, category?: string) => {
     if (amount === 0) return;
     const book = side === 'R' ? receipts : payments;
-    const row: RpRow = book.get(key) ?? { key, code, name, cells: {}, totalSen: 0, ...(group ? { group } : {}), ...(splitTo ? { splitTo } : {}) };
+    const row: RpRow = book.get(key) ?? { key, code, name, cells: {}, totalSen: 0, ...(group ? { group } : {}), ...(splitTo ? { splitTo } : {}), ...(category ? { category } : {}) };
     row.cells[column] = (row.cells[column] ?? 0) + amount;
     row.totalSen += amount;
     book.set(key, row);
@@ -507,14 +577,21 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
         const control = counterparts.find((l) => apControls.has(l.account_code))!;
         const supplierMeta = { ...meta, party: control.party_name ?? null };
         /* Owner 2026-11-05: what a trade-finance account pays a supplier is its own line;
-           a bill from before the books (an opening paper, whose other side is the opening
-           clearing) and money paid ahead of a bill both read as the creditor control. */
+           money paid ahead of a bill reads as the creditor control. */
         const toControl = (amt: number) => add(side, control.account_code, control.account_code, String(control.account_name ?? control.account_code), leg.account_code, amt, supplierMeta);
+        /* Owner 2026-11-25: an opening bill reads by its supplier's own bills in the ERP. */
+        const toOpeningHome = (accounts: RpAccount[], amt: number): void => {
+          const home = openingBillHome(accounts, side === 'R' ? homes.in : homes.out);
+          if (home === null) toControl(amt);
+          else if (home.kind === 'account') add(side, home.code, home.code, home.name, leg.account_code, amt, supplierMeta);
+          else add(side, `${OPENING_BILLS}:${home.id}`, null, OPENING_BILLS_NAME, leg.account_code, amt, supplierMeta, undefined, undefined, home.id);
+        };
         const tf = tradeFinance.has(leg.account_code);
         for (const x of split) {
           const amt = Math.round(x.sen * scale);
           placed += amt;
           if (tf) add(side, TRADE_FINANCE_AP, TRADE_FINANCE_AP, TRADE_FINANCE_AP_NAME, leg.account_code, amt, supplierMeta);
+          else if (x.supplierAccounts) toOpeningHome(x.supplierAccounts, amt);
           else if (x.code === OPENING_CLEARING) toControl(amt);
           else add(side, x.code, x.code, x.name, leg.account_code, amt, supplierMeta);
         }
@@ -613,9 +690,6 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
     codes: clearingCodes,
   };
 
-  const laid = await src.layout();
-  if (!laid.ok) return { ok: false, reason: laid.reason };
-  const tree = laid.layout.blocks.accounts ?? [];
   /* A transfer between two of the report's own columns is neither cash in nor out
      (owner 2026-11-05: 完全不显示): off the tree, kept in the rows and the per-column
      balances. A transfer to an account left out of the columns still shows. */
@@ -664,5 +738,6 @@ export function cashFlowLines(rows: RpRow[]): LaidLine[] {
     amountSen: r.totalSen, cells: { ...r.cells },
     ...(r.group ? { group: r.group } : {}),
     ...(r.splitTo ? { splitTo: r.splitTo } : {}),
+    ...(r.category ? { category: r.category } : {}),
   }));
 }
