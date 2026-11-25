@@ -27,6 +27,8 @@ export type LayoutAccount = {
   code: string;
   /** Cash Flow only: the line's direction. */
   flow?: Flow;
+  /** Cash Flow only: the line's own Settlement / Deposit parts (owner 2026-11-25); absent = its group's. */
+  split?: CashSplit;
 };
 export type LayoutCategory = {
   kind: 'category';
@@ -425,7 +427,7 @@ export function setTotalLabel(layout: Layout, id: string, label: string): Layout
 }
 
 /** A category's Settlement / Deposit parts, at any depth; null clears them, and the
-    category follows the one above it again. An account line has none (it follows its group). */
+    category follows the one above it again. */
 export function setCategorySplit(layout: Layout, id: string, split: CashSplit | null): Layout {
   const next = clone(layout);
   for (const items of Object.values(next.blocks)) {
@@ -437,6 +439,16 @@ export function setCategorySplit(layout: Layout, id: string, split: CashSplit | 
   return layout;
 }
 
+/** An account line's own Settlement / Deposit parts (owner 2026-11-25: 我希望每个都可以自由调),
+    which win over its group's; null clears them, and the line follows its group again. */
+export function setAccountSplit(layout: Layout, block: string, key: string, split: CashSplit | null): Layout {
+  const next = clone(layout);
+  const hit = locate(next.blocks[block] ?? [], key);
+  if (!hit || hit.item.kind !== 'account') return layout;
+  if (split) hit.item.split = { settlement: split.settlement, deposit: split.deposit }; else delete hit.item.split;
+  return next;
+}
+
 /** The editor's choice for a split: '' (as above / not split), all Settlement, all Deposit, or parts. */
 export type SplitChoice = '' | 'settlement' | 'deposit' | 'parts';
 export const splitChoice = (split: CashSplit | undefined): SplitChoice => {
@@ -444,6 +456,14 @@ export const splitChoice = (split: CashSplit | undefined): SplitChoice => {
   if (split.deposit === 0) return 'settlement';
   if (split.settlement === 0) return 'deposit';
   return 'parts';
+};
+/** A split in a word, for "As above (…)": Settlement, Deposit, its parts, or not split. */
+export const splitWord = (split: CashSplit | undefined): string => {
+  if (!split) return 'not split';
+  const choice = splitChoice(split);
+  if (choice === 'settlement') return 'Settlement';
+  if (choice === 'deposit') return 'Deposit';
+  return `${split.settlement} : ${split.deposit}`;
 };
 /** The parts a choice starts from — parts start at his workbook's third and two thirds. */
 export const splitOfChoice = (choice: SplitChoice): CashSplit | null => {
