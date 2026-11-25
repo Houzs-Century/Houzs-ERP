@@ -306,7 +306,8 @@ async function callTool(c: Context<HonoEnv>, id: Identity, token: string, name: 
         result = text(JSON.stringify({ prefix: d.path, endpoints: readablePaths(mcpAppRoutes(), d.path).slice(0, 300) }));
       }
     } else if (name === "erp_get") {
-      const company = args.company === "2990" ? "2990" : args.company === "HOUZS" ? "HOUZS" : null;
+      // Passed through as the X-Company-Id pick; companyContext admits only a company this person holds.
+      const company = typeof args.company === "string" && /^[A-Za-z0-9]{1,12}$/.test(args.company) ? args.company : null;
       const r = await readEndpoint(c, token, String(args.path ?? ""), (args.query as Record<string, unknown> | undefined) ?? undefined, company);
       result = r.result;
       status = r.status;
