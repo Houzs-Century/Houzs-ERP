@@ -21,6 +21,7 @@ import { closeNote } from './DailyBankClose';
 import { drawDailyBankCanvas } from './daily-bank-report';
 import { useDailyClose, type DailyBankBoard, type DailyCloseRow } from './accounting-phase1-queries';
 import { useTodoCalendar, type CalEvent } from './finance/finance-todo-queries';
+import { printPageAs } from '../../lib/printFrame';
 
 const money = (sen: number): string => fmtSenPlain(sen);
 const dayLabel = (ymd: string): string =>
@@ -151,6 +152,7 @@ export function DailyBankPrintModal({ kind, board, date, today, onClose }: {
   const upcoming = useMemo(() => (thisMonth.data && after.data
     ? upcomingPayments([...thisMonth.data.events, ...after.data.events], date) : null), [thisMonth.data, after.data, date]);
   const printedAt = useMemo(() => new Date().toISOString(), []);
+  const sheetName = `${kind === 'bank' ? 'Daily Bank' : 'Daily close'} ${date}`;
   return (
     <div className={styles.backdrop} role="dialog" aria-label={kind === 'bank' ? 'Print the day' : 'Print the count sheet'}>
       <div className={styles.modal}>
@@ -162,8 +164,8 @@ export function DailyBankPrintModal({ kind, board, date, today, onClose }: {
               ? 'A4 portrait · bank balance available: each account’s B/F, the day’s money in and out, pending vouchers, available, then upcoming payments'
               : 'A4 portrait · count sheet with Counted by / Checked by'}</span>
           </div>
-          <button type="button" className={styles.secondary} onClick={() => { setHint(true); window.print(); }}>Save as PDF</button>
-          <button type="button" className={styles.primary} onClick={() => window.print()}><Printer size={14} />Print</button>
+          <button type="button" className={styles.secondary} onClick={() => { setHint(true); printPageAs(sheetName); }}>Save as PDF</button>
+          <button type="button" className={styles.primary} onClick={() => printPageAs(sheetName)}><Printer size={14} />Print</button>
           <button type="button" className={styles.iconButton} onClick={onClose} aria-label="Close"><X size={15} /></button>
         </div>
         {hint && <div className={`${styles.hint} no-print`}>In the print dialog, choose “Save as PDF”.</div>}

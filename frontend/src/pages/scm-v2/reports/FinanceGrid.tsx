@@ -19,6 +19,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSPr
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { readGridLayout, writeGridLayout } from './reportPrefs';
 import s from './FinanceGrid.module.css';
+import { printFrameAs } from '../../../lib/printFrame';
 
 export type GridKind = 'money' | 'int' | 'pct' | 'text' | 'center';
 export type GridColumn = {
@@ -285,8 +286,7 @@ export function FinanceGrid({ layoutKey, nameColumn, columns, rows, showPct = fa
       table { border-collapse: collapse; font-variant-numeric: tabular-nums; } colgroup { display: none; }
     </style></head><body><h1>${esc(title)}</h1>${subtitle ? `<p>${esc(subtitle)}</p>` : ''}${clone.outerHTML}</body></html>`);
     doc.close();
-    frame.contentWindow!.focus();
-    frame.contentWindow!.print();
+    printFrameAs(frame, title);
     setTimeout(() => frame.remove(), 1000);
   };
 

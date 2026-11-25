@@ -43,6 +43,7 @@ import { PrintPreviewModal, usePrintPreview } from './PrintPreviewModal';
 import { fmtDate, fmtDateTime } from '../../vendor/shared/format';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { DateField } from "../../vendor/scm/components/DateField";
+import { printPageAs } from '../../lib/printFrame';
 
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -214,7 +215,7 @@ export function DetailListingShell<R extends DetailListingRow>({
       void notify({ title: 'The listing could not be loaded, so there is nothing to print.', tone: 'error' });
       return;
     }
-    if (pendingOutput === 'print') window.print();
+    if (pendingOutput === 'print') printPageAs(title);
     else void generatePreviewPdf(rows);
   });
 
