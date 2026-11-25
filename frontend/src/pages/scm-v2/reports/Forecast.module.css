@@ -63,6 +63,9 @@
 }
 .nameHead { z-index: 2; background: var(--fin-paper); font-size: 12px; font-weight: 600; color: var(--fin-text); vertical-align: bottom; padding-bottom: 8px; }
 .cell { padding: 3px 6px; border-left: 1px solid var(--fin-rule-soft); text-align: right; white-space: nowrap; font-size: 12.5px; }
+/* A column of words that scrolls with the figures (only the first column stays put). */
+.text { padding: 3px 8px; border-left: 1px solid var(--fin-rule-soft); text-align: left; font-size: 12.5px; }
+.textHead { text-align: left; }
 .pctCell { padding: 3px 8px 3px 2px; text-align: right; white-space: nowrap; font-size: 11.5px; color: var(--fin-muted); }
 .row td { height: 34px; border-top: 1px solid var(--fin-rule-soft); }
 .blockRow td { height: 32px; border-top: 1px solid var(--fin-rule); font-weight: 600; color: var(--fin-ink); }
