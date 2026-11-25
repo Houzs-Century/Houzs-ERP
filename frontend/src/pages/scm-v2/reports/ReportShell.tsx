@@ -14,7 +14,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { PageHeader } from '../../../components/Layout';
 import { todayMyt } from '../../../vendor/scm/lib/dates';
-import { PNL_CHOICES, pnlChoiceOf, pnlFamilyOf, reportById, type ReportId } from '../reports-catalog';
+import { PNL_CHOICES, PNL_SIDE_BY_SIDE, pnlChoiceOf, pnlFamilyOf, pnlViewsOf, reportById, type ReportId } from '../reports-catalog';
 import { ReportRail, reportListEntries, useRailPinned, useVisibleReports } from './ReportRail';
 import { PnlPicker } from './PnlPicker';
 import { writeLastReport } from './lastReport';
@@ -61,6 +61,13 @@ export function ReportShell({ report, subtitle, actions, ownHeader = false, chil
   const family = pnlFamilyOf(report);
   const choices = useMemo(() => (family ? PNL_CHOICES.filter((c) => c.family === family && reports.some((r) => r.id === c.report)) : []), [family, reports]);
   const pnlNow = pnlChoiceOf(report, params.get('dbasis'));
+  /* The views shown now: the one this page is, or those the side-by-side page names. */
+  const sideBySide = report === PNL_SIDE_BY_SIDE.report;
+  const views = params.get('views');
+  const selected = useMemo(
+    () => (sideBySide ? pnlViewsOf(views).filter((v) => choices.some((c) => c.view === v)) : pnlNow ? [pnlNow.view] : []),
+    [sideBySide, views, choices, pnlNow],
+  );
 
   return (
     <div className={`${tokens.root} ${s.shell} ${!showRail ? s.shellBare : pinned ? s.shellPinned : ''}`} data-report={report}>
@@ -81,8 +88,10 @@ export function ReportShell({ report, subtitle, actions, ownHeader = false, chil
                 </div>
               )}
             />
-            {choices.length > 1 && pnlNow && (
-              <div className={inPlace ? s.asideNow : s.inPlace}><PnlPicker current={pnlNow} choices={choices} range={carried} /></div>
+            {family && choices.length > 1 && (pnlNow || sideBySide) && (
+              <div className={inPlace ? s.asideNow : s.inPlace}>
+                <PnlPicker family={family} current={pnlNow} selected={selected} choices={choices} range={carried} />
+              </div>
             )}
             <div ref={setInPlaceHost} className={s.inPlace} />
             <div className={inPlace ? s.asideNow : s.inPlace} data-report-body>

@@ -36,7 +36,7 @@ import { ACCOUNTING_TAB_TITLES, type AccountingTab } from './accounting-tabs';
 export type ReportGroupId = 'statements' | 'owes' | 'sales' | 'events' | 'cards' | 'plan' | 'books' | 'audit';
 
 export type ReportId =
-  | 'pnl' | 'departments' | 'bs' | 'rp' | 'tb'
+  | 'pnl' | 'pnlviews' | 'departments' | 'bs' | 'rp' | 'tb'
   | 'ar' | 'ap'
   | 'collection' | 'fair' | 'performance' | 'products' | 'changes' | 'changesum' | 'sotodo'
   | 'events' | 'commission' | 'logistics'
@@ -114,6 +114,8 @@ export const REPORT_CATALOG: readonly ReportItem[] = [
   // Forecast: the Forecast P&L (owner 2026-09-21: the Hookka Forecast P&L, trading edition — a target per account on
   // the P&L's own tree; the Dashboard reads them beside the actuals).
   { id: 'forecast', label: 'Forecast P&L', group: 'statements', path: '/scm/forecast', navTo: '/scm/forecast', gate: FORECAST_GATE },
+  // The Overall P&L's views side by side, two or three on the P&L's own rows (owner 2026-11-25: 一张表并排).
+  tabItem('pnlviews', 'statements'),
   // The Department P&L: each department by its own P&L, Actual on the invoices or Performance on the orders
   // (`dbasis`; owner 2026-11-19, 2026-11-25).
   tabItem('departments', 'statements'),
@@ -181,8 +183,18 @@ export const PNL_CHOICES: readonly PnlChoice[] = [
   { family: 'department', view: 'performance', report: 'departments', dbasis: 'performance' },
 ];
 
+/** The Overall P&L's views side by side (`?tab=pnlviews&views=actual,forecast`): two or three on one table. */
+export const PNL_SIDE_BY_SIDE: { family: PnlFamily; report: ReportId } = { family: 'overall', report: 'pnlviews' };
+
 /** The P&L a report is a view of: the list shows each P&L's views as one entry. */
-export const pnlFamilyOf = (id: ReportId): PnlFamily | null => PNL_CHOICES.find((c) => c.report === id)?.family ?? null;
+export const pnlFamilyOf = (id: ReportId): PnlFamily | null =>
+  PNL_CHOICES.find((c) => c.report === id)?.family ?? (id === PNL_SIDE_BY_SIDE.report ? PNL_SIDE_BY_SIDE.family : null);
+
+/** The views an address names (`views=actual,forecast`), each once, in the picker's order. */
+export const pnlViewsOf = (raw: string | null): PnlView[] => {
+  const named = new Set((raw ?? '').split(',').map((v) => v.trim()));
+  return PNL_VIEWS.filter((v) => named.has(v.id)).map((v) => v.id);
+};
 
 /** The view a page is: its report, and on the Department P&L its basis. */
 export function pnlChoiceOf(id: ReportId, dbasis: string | null): PnlChoice | null {
