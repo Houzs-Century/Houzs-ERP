@@ -4,10 +4,11 @@
    → NET 60, a phone number cleared; "HLBB", "HONG LEONG BANK BERHAD", "PUBLIC
    BANK BERHAD" → the bank, upper case as stored); what is already right, and
    what no rule knows, is left alone; every value a tidy writes is on the list;
-   a phone number is never printed. Codes made up. */
+   a phone number is never printed; SET_TERM sets the term picked for a supplier
+   (owner 2026-11-25: T.H.L. SOFA 「30 days」), a list term only. Codes made up. */
 import { describe, expect, it } from 'vitest';
 import {
-  bankIsOnList, planFor, shown, storedBank, termIsOnList, tidyBank, tidyTerm,
+  bankIsOnList, parseSetTerms, planFor, shown, storedBank, termIsOnList, tidyBank, tidyTerm,
 } from '../scripts/lib/supplier-pick-tidy.mjs';
 import { MALAYSIAN_BANKS, PAYMENT_TERMS } from '../src/scm/shared/pick-lists.ts';
 
@@ -57,7 +58,7 @@ describe('the plan', () => {
   ];
 
   it('lists each change with its company and reason, and names what it leaves as typed', () => {
-    const { changes, leftAsTyped } = planFor(2, rows);
+    const { changes, leftAsTyped } = planFor(2, rows, new Map());
     expect(changes.map((c) => [c.companyId, c.code, c.field, c.from, c.to])).toEqual([
       [2, '400-X001', 'payment_terms', '30 DAYS', 'NET 30'],
       [2, '400-X002', 'payment_terms', '+6052013576', null],
@@ -71,7 +72,7 @@ describe('the plan', () => {
   });
 
   it('every value it writes is on the list (or cleared), so a second run changes nothing', () => {
-    const { changes } = planFor(1, rows);
+    const { changes } = planFor(1, rows, new Map());
     for (const c of changes) {
       if (c.to === null) continue;
       expect(c.field === 'payment_terms' ? termIsOnList(c.to) : bankIsOnList(c.to), `${c.code} ${c.field}`).toBe(true);
@@ -81,7 +82,35 @@ describe('the plan', () => {
       for (const c of changes.filter((x) => x.id === r.id)) next[c.field] = c.to;
       return next;
     });
-    expect(planFor(1, after).changes).toEqual([]);
+    expect(planFor(1, after, new Map()).changes).toEqual([]);
+  });
+});
+
+describe('SET_TERM: the term picked for a supplier', () => {
+  it('reads CODE=TERM pairs into the list spelling, and refuses a term off the list or a malformed part', () => {
+    expect([...parseSetTerms('400-t002=net 30, 405-X009=COD')]).toEqual([['400-T002', 'NET 30'], ['405-X009', 'COD']]);
+    expect(parseSetTerms(undefined).size).toBe(0);
+    expect(parseSetTerms('').size).toBe(0);
+    expect(() => parseSetTerms('400-T002=30 days')).toThrow(/not a term on the list/);
+    expect(() => parseSetTerms('400-T002')).toThrow(/is not CODE=TERM/);
+    expect(() => parseSetTerms('=NET 30')).toThrow(/is not CODE=TERM/);
+  });
+
+  it('sets a blank term (empty text or none) in the company that has the code; one already set is left; others follow the tidy rules', () => {
+    const set = parseSetTerms('400-T002=NET 30');
+    const rows = [
+      { id: 'a', code: '400-T002', payment_terms: '', bank_name: null },
+      { id: 'b', code: '400-X001', payment_terms: '30 DAYS', bank_name: null },
+    ];
+    const plan = planFor(1, rows, set);
+    expect(plan.changes.map((c) => [c.code, c.field, c.from, c.to, c.why])).toEqual([
+      ['400-T002', 'payment_terms', '', 'NET 30', 'the term picked for it (SET_TERM)'],
+      ['400-X001', 'payment_terms', '30 DAYS', 'NET 30', '30 days'],
+    ]);
+    expect(plan.setFound).toEqual(['400-T002']);
+    expect(planFor(2, [{ id: 'c', code: '400-T002', payment_terms: null, bank_name: null }], set).changes.map((c) => c.to)).toEqual(['NET 30']);
+    expect(planFor(2, [{ id: 'c', code: '400-T002', payment_terms: 'NET 30', bank_name: null }], set).changes).toEqual([]);
+    expect(planFor(2, [{ id: 'd', code: '405-X002', payment_terms: null, bank_name: null }], set).setFound).toEqual([]);
   });
 });
 
