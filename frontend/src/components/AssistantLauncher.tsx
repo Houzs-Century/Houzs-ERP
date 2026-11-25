@@ -186,6 +186,7 @@ export function AssistantLauncher() {
       onPointerCancel={endGesture}
       onClick={onClick}
       aria-label="Open Assistant"
+      data-assistant-launcher=""
       title="Assistant — drag to reposition"
       // touch-action:none stops the browser from treating a touch-drag as a
       // page scroll/pan, so the disc actually follows the finger on mobile.

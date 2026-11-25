@@ -186,11 +186,16 @@
 }
 /* Desktop: draw over the sidebar (z-50, earlier in the DOM, so equal z wins;
    drawers are portaled later and still cover it), and stop short of the
-   48px quick-actions button at right 20px so the two sit side by side. */
+   48px quick-actions button at right 20px so the two sit side by side. When
+   the 56px Assistant disc is shown it parks at right 80px (its default,
+   assistantLauncherPosition.DEFAULT_OFFSET), so stop short of that too. */
 @media (min-width: 1024px) {
   .bulkBar {
     z-index: 50;
     right: calc(20px + 48px + 12px);
+  }
+  :global(body:has([data-assistant-launcher])) .bulkBar {
+    right: calc(80px + 56px + 12px);
   }
 }
 .bulkCount { font-weight: 600; color: var(--hz-c-primary-ink); white-space: nowrap; }
