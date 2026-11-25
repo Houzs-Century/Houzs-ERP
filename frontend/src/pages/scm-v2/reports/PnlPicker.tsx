@@ -15,7 +15,7 @@
 // A view is that report's own address — so a link to it, old or new, lands on
 // it — carrying the range in use, so the dates follow the reader; between the
 // Department P&L's two views the page's own settings (its department, its view)
-// come along. On a phone the track scrolls sideways, the open view kept in view.
+// come along, and on the side-by-side table its By month. On a phone the track scrolls sideways, the open view kept in view.
 // The report shell draws it, so no P&L page carries it.
 // ----------------------------------------------------------------------------
 
@@ -23,7 +23,7 @@ import { useLayoutEffect, useRef } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Check } from 'lucide-react';
 import {
-  PNL_CHOICES, PNL_FAMILIES, PNL_SIDE_BY_SIDE, PNL_VIEWS, reportById, reportHref,
+  PNL_BY_MONTH, PNL_CHOICES, PNL_FAMILIES, PNL_SIDE_BY_SIDE, PNL_VIEWS, reportById, reportHref,
   type PnlChoice, type PnlFamily, type PnlView, type ReportRange,
 } from '../reports-catalog';
 import { ReportTool } from './reportParts';
@@ -78,6 +78,9 @@ export function PnlPicker({ family, current, selected, choices, range }: {
     const [path, search = ''] = reportHref(item, range).split('?');
     const q = new URLSearchParams({ tab: item.tab ?? PNL_SIDE_BY_SIDE.report, views: next.join(',') });
     for (const [k, v] of new URLSearchParams(search)) if (k !== 'tab') q.set(k, v);
+    /* On the table, By month stays as the views change. */
+    const by = current == null ? params.get(PNL_BY_MONTH.param) : null;
+    if (by === PNL_BY_MONTH.value) q.set(PNL_BY_MONTH.param, by);
     return `${path}?${q.toString()}`;
   };
   /* Each view: the reader's where they may open it, greyed where this P&L has none yet. */
