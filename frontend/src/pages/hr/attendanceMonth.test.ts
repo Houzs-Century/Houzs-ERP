@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { cellOf, monthAttendanceStats } from "./attendanceMonth";
+import { cellOf, monthAttendanceStats, monthDayDetail } from "./attendanceMonth";
 import type { WorkDay } from "./hrApi";
 
 const wd = (p: Partial<WorkDay>): WorkDay => ({
@@ -58,5 +58,32 @@ describe("monthAttendanceStats", () => {
     const { perDay, lateByEmp } = monthAttendanceStats([]);
     expect(perDay).toEqual([]);
     expect(lateByEmp.size).toBe(0);
+  });
+});
+
+describe("monthDayDetail", () => {
+  const emps = [
+    { id: 1, name: "Ann" },
+    { id: 2, name: "Bob" },
+    { id: 3, name: "Cat" },
+    { id: 4, name: "Dan" },
+  ];
+
+  it("groups names by state for each day; rest and no-record carry nobody", () => {
+    const days: WorkDay[] = [
+      wd({ employeeId: 1, workDate: "2026-11-03", status: "PRESENT", lateMin: 0 }),
+      wd({ employeeId: 2, workDate: "2026-11-03", status: "PRESENT", lateMin: 30 }),
+      wd({ employeeId: 3, workDate: "2026-11-03", status: "ABSENT" }),
+      wd({ employeeId: 4, workDate: "2026-11-03", status: "ANNUAL_LEAVE" }),
+      wd({ employeeId: 1, workDate: "2026-11-04", status: "REST_DAY" }),
+    ];
+    const m = monthDayDetail(days, emps);
+    expect(m.get("2026-11-03")).toEqual({ onTime: ["Ann"], late: ["Bob"], absent: ["Cat"], leave: ["Dan"] });
+    expect(m.has("2026-11-04")).toBe(false);
+  });
+
+  it("falls back to an id tag when the name is unknown", () => {
+    const m = monthDayDetail([wd({ employeeId: 9, workDate: "2026-11-03", status: "PRESENT", lateMin: 0 })], []);
+    expect(m.get("2026-11-03")?.onTime).toEqual(["#9"]);
   });
 });

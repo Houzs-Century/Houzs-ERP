@@ -1,6 +1,6 @@
 // HR Overview reminders built from the employee master's compliance dates.
 import { describe, expect, test } from "vitest";
-import { buildUpcoming, permitAlert } from "./overviewReminders";
+import { buildUpcoming, permitAlert, probationAlert } from "./overviewReminders";
 
 const TODAY = "2026-11-23";
 const emp = (over: Partial<{ name: string; status: string; workPermitExpiry: string; confirmDueOn: string }>) => ({
@@ -52,5 +52,25 @@ describe("buildUpcoming", () => {
 
   test("a holiday with no name falls back to a label", () => {
     expect(buildUpcoming([{ date: "2026-12-25", name: null }], [], TODAY)).toEqual([{ date: "2026-12-25", label: "Public holiday", kind: "Holiday" }]);
+  });
+});
+
+describe("probationAlert", () => {
+  test("counts active staff with a future confirmation date and days to the nearest; skips past, blank and non-active", () => {
+    const r = probationAlert(
+      [
+        emp({ confirmDueOn: "2026-12-08" }), // 15 days out — nearest
+        emp({ confirmDueOn: "2027-02-01" }), // further out
+        emp({ confirmDueOn: "2026-10-01" }), // already past
+        emp({ confirmDueOn: "" }), // none
+        emp({ status: "RESIGNED", confirmDueOn: "2026-12-01" }), // not active
+      ],
+      TODAY,
+    );
+    expect(r).toEqual({ count: 2, nearestDays: 15 });
+  });
+
+  test("nobody awaiting confirmation yields zero and null", () => {
+    expect(probationAlert([emp({ confirmDueOn: "" })], TODAY)).toEqual({ count: 0, nearestDays: null });
   });
 });

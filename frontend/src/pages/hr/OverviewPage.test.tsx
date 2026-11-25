@@ -3,7 +3,7 @@
  * data actually backs (not punched in, unlinked accounts, OT, penalties, a draft
  * payroll). The working-hours days are dated in the CURRENT month so the chart
  * is never empty regardless of the run date. */
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, fireEvent } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { todayMY } from "../../vendor/shared/format";
 import type { AttendanceResponse, PayrollResponse, WorkDay, WorkingHoursResponse } from "./hrApi";
@@ -117,6 +117,19 @@ describe("HR Overview dashboard", () => {
     show();
     expect(screen.getByText("Christmas Day")).toBeTruthy();
     expect(screen.queryByText("No public holidays ahead.")).toBeNull();
+  });
+
+  it("reveals a per-day name breakdown when a chart bar is hovered", () => {
+    show();
+    // The hover card is not in the DOM until a bar is hovered.
+    expect(screen.queryByText("On time")).toBeNull();
+    expect(screen.queryByText("Faslie Anak")).toBeNull();
+    fireEvent.mouseEnter(screen.getByTestId("chart-day-1"));
+    // The card lists who was on time / late / absent that day.
+    expect(screen.getByText("On time")).toBeTruthy();
+    expect(screen.getByText("Faslie Anak")).toBeTruthy();
+    fireEvent.mouseLeave(screen.getByTestId("chart-day-1"));
+    expect(screen.queryByText("On time")).toBeNull();
   });
 
   it("flags a work permit expiring and lists the permit and confirmation dates in Coming up", () => {
