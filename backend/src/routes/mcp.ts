@@ -266,7 +266,13 @@ export async function readEndpoint(
   if (!ctype.includes("json")) {
     return { result: text(`This endpoint returns a file (${ctype || "unknown type"}), not data. Open it in the ERP instead.`, true), status: res.status, note: "non-json", target, body: null, removed: [] };
   }
-  const body = (await res.json().catch(() => null)) as unknown;
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch (e) {
+    const why = e instanceof Error ? e.message : String(e);
+    return { result: text(`The ERP sent a reply that could not be read (HTTP ${res.status}).`, true), status: 502, note: `unreadable reply: ${why}`.slice(0, 120), target, body: null, removed: [] };
+  }
   if (res.status >= 400) {
     const msg = body && typeof body === "object" && typeof (body as { error?: unknown }).error === "string" ? (body as { error: string }).error : `HTTP ${res.status}`;
     return { result: text(`The ERP answered: ${msg}`, true), status: res.status, note: msg.slice(0, 120), target, body: null, removed: [] };
