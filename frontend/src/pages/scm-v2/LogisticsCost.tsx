@@ -1,6 +1,6 @@
 // ----------------------------------------------------------------------------
 // LogisticsCost — the Logistics cost tab, the design the owner approved on
-// 2026-11-05 (demo https://claude.ai/artifact/JoQSYerQXoWd7gQgWLrZQw). Three
+// 2026-11-05 (demo https://claude.ai/artifact/JoQSYerQXoWd7gQgWLrZQw). Four
 // views, all report style (FinanceGrid — the statement look, the owner's
 // "finance table"), each Single month (regions across the top) or By month
 // (Total first, then a column per month; optionally each month split by region):
@@ -9,8 +9,10 @@
 //     carrier, so that its Total IS the P&L's TOTAL EXPENSE (Difference 0); a
 //     lorry's figure opens its trips;
 //   • Setup & Dismantle — each fair in its region: 1% of its sales as income,
-//     its cost from its own books (Project Overview), the net, and the check.
-// One read for all three: GET /acc-events/logistics/pnl (backend/src/scm/routes/
+//     its cost from its own books (Project Overview), the net, and the check;
+//   • Repairs by lorry — each lorry's upkeep from the books, adding up to the
+//     P&L's Upkeep Cost (LogisticsRepairs.tsx; no regions).
+// One read for all four: GET /acc-events/logistics/pnl (backend/src/scm/routes/
 // acc-logistics-pnl.ts; the arithmetic scm/lib/logistics-pnl.ts and
 // logistics-breakdown.ts). The view and mode live in the URL.
 // ----------------------------------------------------------------------------
@@ -29,6 +31,7 @@ import {
 import { monthName } from './reports/statementColumns';
 import { useReportRange } from './reports/useReportRange';
 import { PnlView } from './LogisticsPnl';
+import { RepairsView } from './LogisticsRepairs';
 import {
   ALL_REGIONS, REGIONS, cellsBy, gridSheet, isWhole, logisticsColumns, pctOf, regionName, totalsOnly,
   type Mode, type Scope,
@@ -41,11 +44,12 @@ export const tileRm = (sen: number): string => {
   return sen < 0 ? `(${text})` : text;
 };
 
-type View = 'pnl' | 'region' | 'events';
+type View = 'pnl' | 'region' | 'events' | 'repairs';
 const VIEWS: ReadonlyArray<{ value: View; label: string }> = [
   { value: 'pnl', label: 'P&L' },
   { value: 'region', label: 'By region & trip' },
   { value: 'events', label: 'Setup & Dismantle' },
+  { value: 'repairs', label: 'Repairs by lorry' },
 ];
 const MODES: ReadonlyArray<{ value: Mode; label: string }> = [{ value: 'single', label: 'Single month' }, { value: 'months', label: 'By month' }];
 
@@ -81,10 +85,10 @@ export const LogisticsCostTab = () => {
         <FinanceDateRange label="Months" />
         <ReportTool label="View"><Segmented options={VIEWS} value={view} onChange={(v) => setParam('lv', v === 'pnl' ? null : v)} label="Logistics views" /></ReportTool>
         <ReportTool label="Show"><Segmented options={MODES} value={mode} onChange={(v) => setParam('lm', v === 'single' ? null : v)} label="Single month or by month" /></ReportTool>
-        {view !== 'region' && (
+        {view !== 'region' && view !== 'repairs' && (
           <ReportSwitch on={showPct} onChange={(v) => setParam('lpct', v ? null : '0')}>{view === 'events' ? '% of fair sales' : '% of DO'}</ReportSwitch>
         )}
-        {mode === 'months' && <ReportSwitch on={split} onChange={(v) => setParam('lsplit', v ? '1' : null)}>Split each month by region</ReportSwitch>}
+        {mode === 'months' && view !== 'repairs' && <ReportSwitch on={split} onChange={(v) => setParam('lsplit', v ? '1' : null)}>Split each month by region</ReportSwitch>}
       </ReportToolbar>
       {!r.usable && <ReportMessage>Pick dates.</ReportMessage>}
       {q.isError && <ReportMessage tone="error">The report could not be read — {q.error instanceof Error ? q.error.message : String(q.error)}</ReportMessage>}
@@ -92,6 +96,7 @@ export const LogisticsCostTab = () => {
       {p && view === 'pnl' && <PnlView p={p} mode={mode} split={split} showPct={showPct} period={period} months={months} />}
       {p && view === 'region' && <RegionView p={p} mode={mode} split={split} showPct={false} period={period} months={months} />}
       {p && view === 'events' && <EventsView p={p} mode={mode} split={split} showPct={showPct} period={period} months={months} />}
+      {p && view === 'repairs' && <RepairsView p={p} mode={mode} split={false} showPct={false} period={period} months={months} />}
     </>
   );
 };
