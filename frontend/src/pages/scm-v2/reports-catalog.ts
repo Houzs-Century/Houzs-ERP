@@ -185,6 +185,8 @@ export const PNL_CHOICES: readonly PnlChoice[] = [
 
 /** The Overall P&L's views side by side (`?tab=pnlviews&views=actual,forecast`): two or three on one table. */
 export const PNL_SIDE_BY_SIDE: { family: PnlFamily; report: ReportId } = { family: 'overall', report: 'pnlviews' };
+/** The side-by-side table read month by month (`&by=month`); it stays as the views turn on and off. */
+export const PNL_BY_MONTH = { param: 'by', value: 'month' } as const;
 
 /** The P&L a report is a view of: the list shows each P&L's views as one entry. */
 export const pnlFamilyOf = (id: ReportId): PnlFamily | null =>

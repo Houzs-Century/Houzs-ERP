@@ -281,6 +281,17 @@ describe('two P&Ls, Overall and Department, each with its views Actual | Perform
     expect(within(nav).getAllByRole('link').map((a) => a.getAttribute('href'))).not.toContain('/scm/accounting?tab=pnlviews&from=2026-09-01&to=2026-09-30');
   });
 
+  test('on the side-by-side table By month stays as the views change; a view’s own page does not take it', () => {
+    auth.access = new Set(ALL);
+    at('/scm/accounting?tab=pnlviews&views=actual,performance&by=month&from=2026-09-01&to=2026-11-30', <ReportShell report="pnlviews"><p>body</p></ReportShell>);
+    fireEvent.click(toggle('Forecast'));
+    expect(address()).toBe('/scm/accounting?tab=pnlviews&views=actual%2Cperformance%2Cforecast&from=2026-09-01&to=2026-11-30&by=month');
+    cleanup();
+    at('/scm/accounting?tab=pnlviews&views=actual,performance&by=month&from=2026-09-01&to=2026-11-30', <ReportShell report="pnlviews"><p>body</p></ReportShell>);
+    fireEvent.click(toggle('Actual'));
+    expect(address()).toBe('/scm/accounting?tab=performance&from=2026-09-01&to=2026-11-30');
+  });
+
   test('the Department P&L: Actual | Performance, its Forecast greyed as coming later; the other view keeps the department and its view', () => {
     auth.access = new Set(ALL);
     at('/scm/accounting?tab=departments&dbasis=actual&dv=exhibition&dm=months&from=2026-09-01&to=2026-09-30', <ReportShell report="departments"><p>body</p></ReportShell>);
