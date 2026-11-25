@@ -1,9 +1,13 @@
 // ----------------------------------------------------------------------------
-// LogisticsCost — the Logistics cost tab, the design the owner approved on
-// 2026-11-05 (demo https://claude.ai/artifact/JoQSYerQXoWd7gQgWLrZQw). Four
-// views, all report style (FinanceGrid — the statement look, the owner's
-// "finance table"), each Single month (regions across the top) or By month
-// (Total first, then a column per month; optionally each month split by region):
+// LogisticsCost — the Logistics cost report, the design the owner approved on
+// 2026-11-05 (demo https://claude.ai/artifact/JoQSYerQXoWd7gQgWLrZQw), drawn as
+// the Department P&L's Logistics, every company's (owner 2026-11-25: 把整个
+// logistic cost 搬进来; 2990 too, though its plan folds logistics into its
+// Showroom): the Department P&L lends its department picker, and the switches
+// keep the Department P&L's names in the URL (dm, dsplit, dpct). Four views,
+// all report style (FinanceGrid — the statement look, the owner's "finance
+// table"), each Whole range (regions across the top) or By month (Total first,
+// then a column per month; optionally each month split by region):
 //   • P&L — the owner's Logistic Cost Report from the books (LogisticsPnl.tsx);
 //   • By region & trip — our lorries one line per lorry, 3PL one line per
 //     carrier, so that its Total IS the P&L's TOTAL EXPENSE (Difference 0); a
@@ -51,17 +55,20 @@ const VIEWS: ReadonlyArray<{ value: View; label: string }> = [
   { value: 'events', label: 'Setup & Dismantle' },
   { value: 'repairs', label: 'Repairs by lorry' },
 ];
-const MODES: ReadonlyArray<{ value: Mode; label: string }> = [{ value: 'single', label: 'Single month' }, { value: 'months', label: 'By month' }];
+const MODES: ReadonlyArray<{ value: Mode; label: string }> = [{ value: 'single', label: 'Whole range' }, { value: 'months', label: 'By month' }];
 
 export type ViewProps = { p: LogisticsPnl; mode: Mode; split: boolean; showPct: boolean; period: string; months: string[] };
 
-export const LogisticsCostTab = () => {
+export const LogisticsCostTab = ({ departmentPicker }: {
+  /** The Department P&L's department picker, after the dates. */
+  departmentPicker: ReactNode;
+}) => {
   const r = useReportRange();
   const [params, setParams] = useSearchParams();
   const view = (VIEWS.find((v) => v.value === params.get('lv'))?.value ?? 'pnl');
-  const mode: Mode = params.get('lm') === 'months' ? 'months' : 'single';
-  const split = params.get('lsplit') === '1';
-  const showPct = params.get('lpct') !== '0';
+  const mode: Mode = params.get('dm') === 'months' ? 'months' : 'single';
+  const split = params.get('dsplit') === '1';
+  const showPct = params.get('dpct') !== '0';
   const setParam = (k: string, v: string | null) => setParams((prev) => {
     const n = new URLSearchParams(prev);
     if (v == null) n.delete(k); else n.set(k, v);
@@ -73,7 +80,7 @@ export const LogisticsCostTab = () => {
   const to = r.usable ? monthEnd(r.to) : monthEnd(r.today);
   const period = from.slice(0, 7) === to.slice(0, 7) ? monthName(from) : `${monthName(from)} – ${monthName(to)}`;
   const partMonths = r.usable && (r.from !== from || r.to !== to);
-  useReportSubtitle(`${period}${partMonths ? ' · whole months' : ''}${mode === 'months' ? ' · by month' : ''} · RM`);
+  useReportSubtitle(`${period}${partMonths ? ' · whole months' : ''}${mode === 'months' ? ' · by month' : ''} · Logistics · RM`);
 
   const q = useLogisticsPnl(from, to, true);
   const p = q.data;
@@ -83,12 +90,13 @@ export const LogisticsCostTab = () => {
     <>
       <ReportToolbar>
         <FinanceDateRange label="Months" />
+        {departmentPicker}
         <ReportTool label="View"><Segmented options={VIEWS} value={view} onChange={(v) => setParam('lv', v === 'pnl' ? null : v)} label="Logistics views" /></ReportTool>
-        <ReportTool label="Show"><Segmented options={MODES} value={mode} onChange={(v) => setParam('lm', v === 'single' ? null : v)} label="Single month or by month" /></ReportTool>
+        <ReportTool label="Show"><Segmented options={MODES} value={mode} onChange={(v) => setParam('dm', v === 'single' ? null : v)} label="Whole range or by month" /></ReportTool>
         {view !== 'region' && view !== 'repairs' && (
-          <ReportSwitch on={showPct} onChange={(v) => setParam('lpct', v ? null : '0')}>{view === 'events' ? '% of fair sales' : '% of DO'}</ReportSwitch>
+          <ReportSwitch on={showPct} onChange={(v) => setParam('dpct', v ? null : '0')}>{view === 'events' ? '% of fair sales' : '% of DO'}</ReportSwitch>
         )}
-        {mode === 'months' && view !== 'repairs' && <ReportSwitch on={split} onChange={(v) => setParam('lsplit', v ? '1' : null)}>Split each month by region</ReportSwitch>}
+        {mode === 'months' && view !== 'repairs' && <ReportSwitch on={split} onChange={(v) => setParam('dsplit', v ? '1' : null)}>Split each month by region</ReportSwitch>}
       </ReportToolbar>
       {!r.usable && <ReportMessage>Pick dates.</ReportMessage>}
       {q.isError && <ReportMessage tone="error">The report could not be read — {q.error instanceof Error ? q.error.message : String(q.error)}</ReportMessage>}

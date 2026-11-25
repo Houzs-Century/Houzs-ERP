@@ -15,7 +15,10 @@
 //     teams' payroll lines, the accounts and folds the plan gives G&A), the surplus;
 //   • Operation — the owner's sheet by region (Penang | KL | SBH & SWK), or a
 //     Total and one column per month; a % of the Delivery Order value beside;
-//   • Logistics — the Logistics P&L, the Logistics cost report's own view.
+//   • Logistics — the whole Logistics cost report (LogisticsCost.tsx: its P&L, By
+//     region & trip, Setup & Dismantle, Repairs by lorry), every company's: 2990,
+//     whose plan folds logistics into its Showroom, is offered it all the same
+//     (owner 2026-11-25: 把整个 logistic cost 搬进来; 两家都放 Department 里).
 // A figure opens the lines behind it under its line (owner 2026-11-20:「我希望这里
 // 点开也能看」; DepartmentPnlLines.tsx), adding up to it: an account's ledger lines
 // as split (the Exhibition's commission: its bills), a category's or a block's every
@@ -32,12 +35,12 @@ import { monthEnd, monthStart } from '../../lib/dateRangePresets';
 import { fmtDateOrDash } from '../../vendor/shared/format';
 import {
   useDepartmentPlan, useDepartmentView, useDepartmentsAll, useDepartmentsGa, useDepartmentsOperation, useSaveDepartmentRate, useSaveOperationSpread,
-  type Department, type DepartmentView, type DepartmentsAll, type DepartmentsGa, type DepartmentsOperation, type DeptBlock, type DeptNode, type DeptSummary,
+  type Department, type DepartmentPlan, type DepartmentView, type DepartmentsAll, type DepartmentsGa, type DepartmentsOperation, type DeptBlock, type DeptNode,
+  type DeptSummary, type DeptViewKind,
   type OpLine, type OpRegion,
 } from '../../vendor/scm/lib/department-queries';
-import { useLogisticsPnl } from '../../vendor/scm/lib/logistics-queries';
 import { DeptLinesPanel, DrillPanel, type DrillLedger, type DrillRow } from './DepartmentPnlLines';
-import { PnlView as LogisticsPnlView } from './LogisticsPnl';
+import { LogisticsCostTab } from './LogisticsCost';
 import { FinanceGrid, fmtMoney, gridMuted, type GridColumn, type GridRow } from './reports/FinanceGrid';
 import { FinanceDateRange } from './reports/FinanceDateRange';
 import {
@@ -62,27 +65,49 @@ const pctText = (part: number, base: number) => (base !== 0 ? `${((part / base) 
 const short = (m: string) => monthName(`${m}-01`);
 const rateText = (bp: number) => (bp / 100).toFixed(2).replace(/\.?0+$/, '');
 
+type DeptChoice = { value: string; label: string; kind: 'all' | DeptViewKind };
+
+/** All, then each department of the company that has a view of its own, then Logistics where
+    the company has no Logistics department (2990): the Logistics cost report lives here. */
+export function departmentChoices(plan: DepartmentPlan | undefined): DeptChoice[] {
+  const own: DeptChoice[] = (plan?.departments ?? []).map((d) => ({ value: d.key as string, label: d.label, kind: d.view }));
+  const logistics: DeptChoice[] = plan && !own.some((d) => d.kind === 'logistics') ? [{ value: 'logistics', label: 'Logistics', kind: 'logistics' }] : [];
+  return [{ value: 'all', label: 'All departments', kind: 'all' }, ...own, ...logistics];
+}
+
 export const DepartmentPnlTab = () => {
-  const r = useReportRange();
   const [params, setParams] = useSearchParams();
   const plan = useDepartmentPlan();
-  /* All, then each department of the company that has a view of its own. */
-  const views = useMemo(() => [
-    { value: 'all', label: 'All departments', kind: 'all' as const },
-    ...(plan.data?.departments ?? []).map((d) => ({ value: d.key as string, label: d.label, kind: d.view })),
-  ], [plan.data]);
+  const views = useMemo(() => departmentChoices(plan.data), [plan.data]);
   /* A department the address names waits for the plan; anything else is All. */
   const wanted = params.get('dv');
   const current = views.find((v) => v.value === wanted) ?? (plan.data || !wanted ? views[0]! : null);
-  const kind = current?.kind ?? null;
-  const mode: Mode = params.get('dm') === 'months' ? 'months' : 'single';
-  const split = params.get('dsplit') === '1';
-  const showPct = params.get('dpct') !== '0';
   const setParam = (k: string, v: string | null) => setParams((prev) => {
     const n = new URLSearchParams(prev);
     if (v == null) n.delete(k); else n.set(k, v);
     return n;
   }, { replace: true });
+  const picker = (
+    <ReportTool label="Department"><Segmented options={views} value={current?.value ?? 'all'} onChange={(v) => setParam('dv', v === 'all' ? null : v)} label="Department" /></ReportTool>
+  );
+  return current?.kind === 'logistics'
+    ? <LogisticsCostTab departmentPicker={picker} />
+    : <DepartmentReport current={current} picker={picker} plan={plan} setParam={setParam} />;
+};
+
+/** Every department but Logistics, and All: the Department P&L's own figures. */
+function DepartmentReport({ current, picker, plan, setParam }: {
+  current: DeptChoice | null;
+  picker: ReactNode;
+  plan: ReturnType<typeof useDepartmentPlan>;
+  setParam: (k: string, v: string | null) => void;
+}) {
+  const r = useReportRange();
+  const [params] = useSearchParams();
+  const kind = current?.kind ?? null;
+  const mode: Mode = params.get('dm') === 'months' ? 'months' : 'single';
+  const split = params.get('dsplit') === '1';
+  const showPct = params.get('dpct') !== '0';
 
   /* Whole months: the range widens to its months' first and last days. */
   const from = r.usable ? monthStart(r.from) : monthStart(r.today);
@@ -95,19 +120,18 @@ export const DepartmentPnlTab = () => {
   const ga = useDepartmentsGa(from, to, kind === 'ga');
   const op = useDepartmentsOperation(from, to, kind === 'operation');
   const dept = useDepartmentView(current?.value ?? '', from, to, kind === 'dept');
-  const lg = useLogisticsPnl(from, to, kind === 'logistics');
-  const q = kind === 'all' ? all : kind === 'ga' ? ga : kind === 'operation' ? op : kind === 'dept' ? dept : kind === 'logistics' ? lg : plan;
-  const pctLabel = kind === 'ga' ? '% of Performance sales' : kind === 'operation' || kind === 'logistics' ? '% of DO' : '% of sales';
+  const q = kind === 'all' ? all : kind === 'ga' ? ga : kind === 'operation' ? op : kind === 'dept' ? dept : plan;
+  const pctLabel = kind === 'ga' ? '% of Performance sales' : kind === 'operation' ? '% of DO' : '% of sales';
   const openDept = (key: Department) => setParam('dv', key);
 
   return (
     <>
       <ReportToolbar>
         <FinanceDateRange label="Months" />
-        <ReportTool label="Department"><Segmented options={views} value={current?.value ?? 'all'} onChange={(v) => setParam('dv', v === 'all' ? null : v)} label="Department" /></ReportTool>
+        {picker}
         {kind != null && kind !== 'all' && <ReportTool label="Show"><Segmented options={MODES} value={mode} onChange={(v) => setParam('dm', v === 'single' ? null : v)} label="Whole range or by month" /></ReportTool>}
         {kind != null && kind !== 'all' && <ReportSwitch on={showPct} onChange={(v) => setParam('dpct', v ? null : '0')}>{pctLabel}</ReportSwitch>}
-        {(kind === 'operation' || kind === 'logistics') && mode === 'months' && <ReportSwitch on={split} onChange={(v) => setParam('dsplit', v ? '1' : null)}>Split each month by region</ReportSwitch>}
+        {kind === 'operation' && mode === 'months' && <ReportSwitch on={split} onChange={(v) => setParam('dsplit', v ? '1' : null)}>Split each month by region</ReportSwitch>}
       </ReportToolbar>
       {!r.usable && <ReportMessage>Pick dates.</ReportMessage>}
       {plan.isError && <ReportMessage tone="error">The departments could not be read — {plan.error instanceof Error ? plan.error.message : String(plan.error)}</ReportMessage>}
@@ -117,10 +141,9 @@ export const DepartmentPnlTab = () => {
       {kind === 'ga' && ga.data && <GaView p={ga.data} mode={mode} showPct={showPct} period={period} />}
       {kind === 'operation' && op.data && <OperationView p={op.data} mode={mode} split={split} showPct={showPct} period={period} />}
       {kind === 'dept' && dept.data && <DeptView p={dept.data} mode={mode} showPct={showPct} period={period} />}
-      {kind === 'logistics' && lg.data && <LogisticsPnlView p={lg.data} mode={mode} split={split} showPct={showPct} period={period} months={lg.data.months} />}
     </>
   );
-};
+}
 
 /* ── A node of the P&L's tree as a grid row ───────────────────────────────── */
 type DetailOf = (keys: string[], title: string) => GridRow['detail'];
@@ -490,7 +513,7 @@ function OperationView({ p, mode, split, showPct, period }: { p: DepartmentsOper
       <ReportTiles tiles={tiles} label="Operation totals" />
       <div className={s.rates}>
         <RateBox dept="operation" bp={p.incomeBp} what="Operation income = DO value ×" />
-        <span className={s.rate}>(-) Logistic Expense = the Logistics cost report&rsquo;s Transport Income ({rateText(p.logisticsIncomeBp)}% of DO), set there.</span>
+        <span className={s.rate}>(-) Logistic Expense = the Logistics cost report&rsquo;s Transport Income ({rateText(p.logisticsIncomeBp)}% of DO), set under Logistics.</span>
       </div>
       {p.logisticsProblem && <ReportMessage>The fairs could not be read — {p.logisticsProblem}. Profit / (Loss) From Setup/Dismantle counts no fair.</ReportMessage>}
       <FinanceGrid layoutKey={`department-pnl-operation|${mode}|${split ? 1 : 0}|${showPct ? 1 : 0}`} nameColumn={{ label: 'Category', width: 400 }} columns={columns} rows={rows} showPct={showPct}
