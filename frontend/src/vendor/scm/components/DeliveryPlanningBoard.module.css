@@ -169,10 +169,10 @@
 .bulkBar {
   position: fixed;
   bottom: var(--space-4);
-  left: 16px;
-  right: 16px;
-  margin-inline: auto;
-  width: fit-content;
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: calc(100vw - 32px);
   z-index: 40;
   box-shadow: 0 8px 28px rgba(34, 31, 32, 0.18);
   display: flex;
@@ -184,19 +184,11 @@
   border: 1px solid var(--hz-c-primary);
   border-radius: var(--radius-md);
 }
-/* Desktop: draw over the sidebar (z-50, earlier in the DOM, so equal z wins;
-   drawers are portaled later and still cover it), and stop short of the
-   48px quick-actions button at right 20px so the two sit side by side. When
-   the 56px Assistant disc is shown it parks at right 80px (its default,
-   assistantLauncherPosition.DEFAULT_OFFSET), so stop short of that too. */
+/* Desktop: draw over the sidebar (z-50, later in the DOM than the sidebar, so
+   equal z wins; drawers at z-90 still cover it). Mobile keeps z-40 so the
+   sidebar drawer opens over the bar. */
 @media (min-width: 1024px) {
-  .bulkBar {
-    z-index: 50;
-    right: calc(20px + 48px + 12px);
-  }
-  :global(body:has([data-assistant-launcher])) .bulkBar {
-    right: calc(80px + 56px + 12px);
-  }
+  .bulkBar { z-index: 50; }
 }
 .bulkCount { font-weight: 600; color: var(--hz-c-primary-ink); white-space: nowrap; }
 .bulkSep { color: var(--hz-c-ink-muted); }
