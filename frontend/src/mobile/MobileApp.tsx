@@ -636,7 +636,7 @@ function MobileAppInner() {
   const notify = useNotify();
   const qc = useQueryClient();
   // Load the product categories once, so labels read the registry name; lazy, to keep it out of the first bundle.
-  useEffect(() => { void import("../vendor/scm/lib/product-categories-store").then((m) => m.ensureProductCategories()).catch(() => undefined); }, []);
+  useEffect(() => { void import("../vendor/scm/lib/product-categories-store").then((m) => m.ensureProductCategories()).catch((e: unknown) => console.warn("product categories not loaded; labels read the code", e)); }, []);
   // App-wide unread badge — un-acked human announcements AND the actionable
   // system notices (scan / service case). Shown on the Profile tab (below) +
   // the Profile > Announcements row, so a phone user sees a new broadcast or

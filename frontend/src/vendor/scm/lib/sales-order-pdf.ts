@@ -411,7 +411,7 @@ export async function renderSalesOrderInto(
      code → fabric_description so the customer reads "EZ-001 — <description>"
      instead of a bare internal code. */
   // Section headings print the category name; fail-soft, a failed load prints the Title Case code.
-  await ensureProductCategories().catch(() => undefined);
+  await ensureProductCategories().catch((e: unknown) => console.warn("product categories not loaded; headings read the code", e));
   const fabricDescMap = await loadFabricDescriptionMap(collectFabricCodes(items));
   /* Internal fabric code → supplier EXTERNAL colour code (Fabric Tracking), so
      the SO shows both like the supplier docs: "EZ-001 (KN390-1) — <desc>"

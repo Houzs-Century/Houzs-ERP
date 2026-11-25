@@ -18,7 +18,7 @@ interface Props {
 
 export function Layout({ children }: Props) {
   // Load the product categories once, so labels read the registry name; lazy, to keep it out of the first bundle.
-  useEffect(() => { void import("../vendor/scm/lib/product-categories-store").then((m) => m.ensureProductCategories()).catch(() => undefined); }, []);
+  useEffect(() => { void import("../vendor/scm/lib/product-categories-store").then((m) => m.ensureProductCategories()).catch((e: unknown) => console.warn("product categories not loaded; labels read the code", e)); }, []);
   // Desktop collapse — only used at lg+. Mobile no longer has a
   // drawer-opening hamburger; the bottom rail's centre Menu disc
   // covers nav, so the top bar is just brand + chrome.
