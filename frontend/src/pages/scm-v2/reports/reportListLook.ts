@@ -13,7 +13,7 @@
 
 import type { LucideIcon } from 'lucide-react';
 import {
-  ArrowLeftRight, Banknote, BarChart3, BookOpen, CalendarDays, CreditCard, FileText, Flag, Gauge, HandCoins, History,
+  ArrowLeftRight, Banknote, BarChart3, BookOpen, CalendarDays, Columns3, CreditCard, FileText, Flag, Gauge, HandCoins, History,
   LayoutDashboard, ListChecks, Network, Package, PieChart, Replace, Scale, TrendingUp, Truck, Users, Wallet,
 } from 'lucide-react';
 import type { PnlFamily, ReportId } from '../reports-catalog';
@@ -26,6 +26,7 @@ export const PNL_LOOK: Readonly<Record<PnlFamily, { label: string; icon: LucideI
 
 export const REPORT_LOOK: Readonly<Record<ReportId, { icon: LucideIcon; desc: string }>> = {
   pnl: { icon: BarChart3, desc: 'Income and expenses for a period on the report layout, with each line’s % of sales' },
+  pnlviews: { icon: Columns3, desc: 'The Overall P&L’s views side by side — Actual, Performance and Forecast on the same rows, with their differences' },
   departments: { icon: Network, desc: 'Each department by its own P&L: the Exhibition on its orders, Operation by its sheet, G&A against its share, Logistics with its whole cost report' },
   bs: { icon: Scale, desc: 'What the company owns and owes as at a day, with each line’s % of total assets' },
   rp: { icon: Banknote, desc: 'Money in and out of every bank and cash account, by layout row' },

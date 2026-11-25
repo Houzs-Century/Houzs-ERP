@@ -133,6 +133,9 @@
 /* A choice that is a link (the P&L picker): a button's centring and no underline; one not built yet greyed. */
 a.seg, span.seg { display: inline-flex; align-items: center; text-decoration: none; }
 .segOff, .segOff:hover { color: var(--fin-muted); opacity: 0.55; cursor: default; }
+/* A choice that turns on and off (the Overall P&L's views, two or three side by side): its tick beside its name. */
+.segToggle { display: inline-flex; align-items: center; gap: 4px; }
+.pickerHint { font-size: 12px; color: var(--fin-muted); }
 .switch {
   display: inline-flex; align-items: center; gap: 8px; padding: 0; border: 0; background: none;
   font: 500 12.5px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-text); cursor: pointer; white-space: nowrap;

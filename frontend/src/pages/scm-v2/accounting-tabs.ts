@@ -34,6 +34,7 @@ export const ACCOUNTING_TAB_TITLES = {
   sotodo: 'SO conversion & backlog',
   logistics: 'Logistics cost',
   departments: 'Department P&L',
+  pnlviews: 'Overall P&L',
 } as const;
 
 export type AccountingTab = keyof typeof ACCOUNTING_TAB_TITLES;

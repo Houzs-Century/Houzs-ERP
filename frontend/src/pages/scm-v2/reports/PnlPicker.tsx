@@ -2,11 +2,15 @@
 // PnlPicker — a P&L's three views (owner 2026-11-25: 入口可以改成根据overall
 // P&L, Department P&L 每个P&L 有三个view): across the top of each view of the
 // Overall P&L or the Department P&L, in a white bar of its own, the P&L's name
-// and the segmented track the Department P&L picks its department with —
-// Actual (by sales invoice) | Performance (by sales order) | Forecast
-// (reports-catalog PNL_CHOICES). Only the views the reader may open are offered;
-// a view not built yet (the Department P&L's Forecast) stays in its place,
-// greyed, saying it comes later.
+// and its views — Actual (by sales invoice) | Performance (by sales order) |
+// Forecast (reports-catalog PNL_CHOICES). Only the views the reader may open
+// are offered; a view not built yet (the Department P&L's Forecast) stays in
+// its place, greyed, saying it comes later.
+//
+// The Overall P&L's views turn on and off (the same day: 这个view 我可以select
+// 我要看什么view，也可以同时显示两个还是三个): one on is that view's own page,
+// two or three on are the side-by-side table (PNL_SIDE_BY_SIDE); the last one
+// on stays on. The Department P&L's are picked one at a time.
 //
 // A view is that report's own address — so a link to it, old or new, lands on
 // it — carrying the range in use, so the dates follow the reader; between the
@@ -16,9 +20,11 @@
 // ----------------------------------------------------------------------------
 
 import { useLayoutEffect, useRef } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Check } from 'lucide-react';
 import {
-  PNL_CHOICES, PNL_FAMILIES, PNL_VIEWS, reportById, reportHref, type PnlChoice, type PnlView, type ReportRange,
+  PNL_CHOICES, PNL_FAMILIES, PNL_SIDE_BY_SIDE, PNL_VIEWS, reportById, reportHref,
+  type PnlChoice, type PnlFamily, type PnlView, type ReportRange,
 } from '../reports-catalog';
 import { ReportTool } from './reportParts';
 import s from './ReportShell.module.css';
@@ -34,17 +40,22 @@ const LATER = 'Comes later: this P&L’s Forecast is not built yet';
 /** The address bits the Department P&L keeps for itself, carried between its two views. */
 const NOT_CARRIED = new Set(['tab', 'dbasis', 'from', 'to']);
 
-export function PnlPicker({ current, choices, range }: {
-  /** The view this page is. */
-  current: PnlChoice;
+export function PnlPicker({ family, current, selected, choices, range }: {
+  family: PnlFamily;
+  /** The view this page is; null on the side-by-side table. */
+  current: PnlChoice | null;
+  /** The views shown now: this page's, or the side-by-side table's. */
+  selected: readonly PnlView[];
   /** This P&L's views the reader may open, in the picker's order. */
   choices: readonly PnlChoice[];
   /** The range the views carry; null opens each on its own dates. */
   range: ReportRange | null;
 }) {
   const [params] = useSearchParams();
+  const navigate = useNavigate();
   const nav = useRef<HTMLElement>(null);
-  const family = PNL_FAMILIES.find((f) => f.id === current.family)!;
+  const name = PNL_FAMILIES.find((f) => f.id === family)!.label;
+  const toggles = family === PNL_SIDE_BY_SIDE.family;
 
   const hrefOf = (c: PnlChoice): string => {
     const item = reportById(c.report);
@@ -52,7 +63,20 @@ export function PnlPicker({ current, choices, range }: {
     if (c.dbasis == null || !item.tab) return plain;
     const [path, search = ''] = plain.split('?');
     const q = new URLSearchParams({ tab: item.tab, dbasis: c.dbasis });
-    if (current.report === c.report) for (const [k, v] of params) if (!NOT_CARRIED.has(k)) q.set(k, v);
+    if (current?.report === c.report) for (const [k, v] of params) if (!NOT_CARRIED.has(k)) q.set(k, v);
+    for (const [k, v] of new URLSearchParams(search)) if (k !== 'tab') q.set(k, v);
+    return `${path}?${q.toString()}`;
+  };
+  /** Where a set of views opens: one, its own page; two or three, the side-by-side table. */
+  const openOf = (next: readonly PnlView[]): string | null => {
+    if (next.length === 0) return null;
+    if (next.length === 1) {
+      const c = choices.find((x) => x.view === next[0]);
+      return c ? hrefOf(c) : null;
+    }
+    const item = reportById(PNL_SIDE_BY_SIDE.report);
+    const [path, search = ''] = reportHref(item, range).split('?');
+    const q = new URLSearchParams({ tab: item.tab ?? PNL_SIDE_BY_SIDE.report, views: next.join(',') });
     for (const [k, v] of new URLSearchParams(search)) if (k !== 'tab') q.set(k, v);
     return `${path}?${q.toString()}`;
   };
@@ -60,30 +84,45 @@ export function PnlPicker({ current, choices, range }: {
   const views = PNL_VIEWS.flatMap((v): Array<{ id: PnlView; label: string; choice: PnlChoice | null }> => {
     const choice = choices.find((c) => c.view === v.id);
     if (choice) return [{ ...v, choice }];
-    const built = PNL_CHOICES.some((c) => c.family === current.family && c.view === v.id);
+    const built = PNL_CHOICES.some((c) => c.family === family && c.view === v.id);
     return built ? [] : [{ ...v, choice: null }];
   });
 
+  /* What is open, as text: the view kept in view moves only when it changes. */
+  const openKey = `${current?.report ?? ''}|${current?.view ?? ''}|${selected.join(',')}`;
   useLayoutEffect(() => {
     for (const box of nav.current?.querySelectorAll<HTMLElement>('[data-track]') ?? []) {
-      const lit = box.querySelector('[aria-current="page"]');
+      const lit = box.querySelector('[aria-current="page"], [aria-pressed="true"]');
       if (!lit) continue;
       const b = box.getBoundingClientRect();
       const l = lit.getBoundingClientRect();
       if (l.left < b.left) box.scrollLeft -= b.left - l.left;
       else if (l.right > b.right) box.scrollLeft += l.right - b.right;
     }
-  }, [current]);
+  }, [openKey]);
 
   return (
     <nav ref={nav} className={s.toolbar} aria-label="P&L views">
-      <ReportTool label={family.label}>
+      <ReportTool label={name}>
         <div className={s.segs} role="group" aria-label="View" data-track>
           {views.map((v) => {
             if (!v.choice) {
               return <span key={v.id} className={`${s.seg} ${s.segOff}`} aria-disabled="true" title={LATER}>{v.label}</span>;
             }
-            const on = v.id === current.view;
+            if (toggles) {
+              const on = selected.includes(v.id);
+              const next = on ? selected.filter((x) => x !== v.id) : PNL_VIEWS.map((x) => x.id).filter((x) => x === v.id || selected.includes(x));
+              const to = openOf(next);
+              return (
+                <button key={v.id} type="button" className={`${s.seg} ${s.segToggle} ${on ? s.segOn : ''}`} aria-pressed={on}
+                  title={to ? VIEW_TITLE[v.id] : `${VIEW_TITLE[v.id]} — the one view shown, it stays on`}
+                  onClick={() => { if (to) navigate(to); }}>
+                  {on && <Check size={12} strokeWidth={2.25} aria-hidden />}
+                  {v.label}
+                </button>
+              );
+            }
+            const on = v.id === current?.view;
             return (
               <Link key={v.id} to={hrefOf(v.choice)} className={`${s.seg} ${on ? s.segOn : ''}`} title={VIEW_TITLE[v.id]}
                 aria-current={on ? 'page' : undefined}>
@@ -93,6 +132,7 @@ export function PnlPicker({ current, choices, range }: {
           })}
         </div>
       </ReportTool>
+      {toggles && <span className={s.pickerHint}>Turn on two or three to see them side by side.</span>}
     </nav>
   );
 }
