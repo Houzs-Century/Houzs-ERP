@@ -1025,6 +1025,15 @@ export const NAV_TABS: NavTab[] = [
       { to: "/ai-usage", label: "AI Usage", icon: Sparkles, requireCapability: "it.pages.view" },
     ],
   },
+  // AI Connector (owner 2026-11-25): connect Claude / ChatGPT read-only with
+  // your own permissions; the owner approves and disconnects here. Open to
+  // everyone (request access lives on the page); the server decides the rest.
+  {
+    section: "system",
+    to: "/ai-connector",
+    label: "AI Connector",
+    icon: Bot,
+  },
   // Next to System Health because it answers the same shape of question — "is
   // the thing that runs in the background still working" — and because the
   // owner's is "did my sales order reach AutoCount". anyPerm mirrors the two
