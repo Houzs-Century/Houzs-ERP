@@ -1,4 +1,4 @@
--- 20261125T1100_acc_opening_bill_places.sql
+-- 20261125T1300_acc_opening_bill_places.sql
 --
 -- WHY. Owner 2026-11-25 (「要，做 A」): where a payment of an opening bill
 -- (an AutoCount bill brought over at go-live, scm.ap_invoices.opening) reads in

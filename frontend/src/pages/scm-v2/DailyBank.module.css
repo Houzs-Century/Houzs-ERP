@@ -192,6 +192,12 @@
 .cbDeletedList td { color: var(--fin-muted); }
 .cbDetails { font-size: 12.5px; }
 .cbDetails > summary { cursor: pointer; font-weight: 600; color: var(--fin-detail); }
+/* The cash book's tick (owner 2026-11-25: 要，加勾选): an approved voucher already in the starting balance. */
+.tickLabel { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; color: var(--fin-detail); cursor: pointer; white-space: nowrap; }
+.tickLabel input { margin: 0; cursor: pointer; }
+.notDeductedRow td { background: var(--hz-dk-surface-2, #f6f7f5); }
+.notDeductedTag { margin-top: 2px; font-size: 11.5px; color: var(--hz-dk-accent-ink, #7a5a1e); }
+.notDeductedAmount { color: var(--fin-muted); text-decoration: line-through; }
 
 /* ── The day's income as a table, bank by method (owner 2026-11-23: 不能做成这样的表格给我keyin income？) ── */
 .cbGrid td, .cbGrid th { padding: 6px 5px; }
