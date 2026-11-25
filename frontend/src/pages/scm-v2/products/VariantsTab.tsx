@@ -25,6 +25,7 @@
 // ships, renames must be done one row at a time via SKU Master.
 // ----------------------------------------------------------------------------
 
+import { MFG_PRODUCT_CATEGORIES, mfgCategoryLabel, type MfgProductCategory } from "../../../vendor/shared/product-categories";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
@@ -81,13 +82,11 @@ type StagedEdit = {
 const fmtRm = (sen: number | null | undefined): string => fmtSen(sen);
 
 // ── Hook: models by category ────────────────────────────────────────────────
-// The model registry carries five categories (backend CATEGORIES enum,
-// product-models.ts) — the tab was SOFA-hardcoded for no backend reason
-// (owner 2026-08-07: "only 1 category can be choose?").
+// The model registry takes every product category (product-models.ts) — the
+// tab was SOFA-hardcoded for no backend reason (owner 2026-08-07).
 
-const VARIANT_CATEGORIES = ["SOFA", "BEDFRAME", "MATTRESS", "ACCESSORY", "SERVICE"] as const;
-type VariantCategory = (typeof VARIANT_CATEGORIES)[number];
-const catLabel = (c: string) => c.charAt(0) + c.slice(1).toLowerCase();
+const VARIANT_CATEGORIES = MFG_PRODUCT_CATEGORIES;
+type VariantCategory = MfgProductCategory;
 
 const useModelsByCategory = (category: VariantCategory) =>
   useQuery({
@@ -449,7 +448,7 @@ function ModelPicker({
             <SearchableSelect
               value={category}
               onChange={(c) => c && onCategory(c)}
-              options={VARIANT_CATEGORIES.map((c) => ({ value: c, label: catLabel(c) }))}
+              options={VARIANT_CATEGORIES.map((c) => ({ value: c, label: mfgCategoryLabel(c) }))}
               className={inputCls}
               ariaLabel="Category"
             />

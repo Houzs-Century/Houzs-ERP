@@ -61,7 +61,7 @@ import {
   type SofaPriceMatrix,
   type BedframePriceMatrix,
 } from '../../vendor/scm/lib/suppliers-queries';
-import { useMfgProducts, useMaintenanceConfig, mfgCategoryLabel, type MfgCategory, type MfgProductRow } from '../../vendor/scm/lib/mfg-products-queries';
+import { useMfgProducts, useMaintenanceConfig, mfgCategoryLabel, MFG_PRODUCT_CATEGORIES, type MfgCategory, type MfgProductRow } from '../../vendor/scm/lib/mfg-products-queries';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 /* A refused write must SAY so. The five grid cells below fire-and-forget, and
    useUpdateBinding carries no onError (unlike useDeleteBinding and
@@ -2627,11 +2627,7 @@ const PhoneEditField = ({
 
 const MODEL_CATEGORY_CHIPS: { value: 'all' | MfgCategory; label: string }[] = [
   { value: 'all', label: 'All' },
-  { value: 'BEDFRAME', label: 'Bedframe' },
-  { value: 'SOFA', label: 'Sofa' },
-  { value: 'MATTRESS', label: 'Mattress' },
-  { value: 'ACCESSORY', label: 'Accessory' },
-  { value: 'SERVICE', label: 'Service' },
+  ...MFG_PRODUCT_CATEGORIES.map((c) => ({ value: c, label: mfgCategoryLabel(c) })),
 ];
 
 type ModelDraft = {
@@ -3257,11 +3253,7 @@ type MultiDraft = {
 
 const CATEGORY_CHIPS: { value: 'all' | MfgCategory; label: string }[] = [
   { value: 'all', label: 'All' },
-  { value: 'BEDFRAME', label: 'Bedframe' },
-  { value: 'SOFA', label: 'Sofa' },
-  { value: 'MATTRESS', label: 'Mattress' },
-  { value: 'ACCESSORY', label: 'Accessory' },
-  { value: 'SERVICE', label: 'Service' },
+  ...MFG_PRODUCT_CATEGORIES.map((c) => ({ value: c, label: mfgCategoryLabel(c) })),
 ];
 
 /* Perf cap (parity with MobileSkuPicker / SalesOrderNewFromProducts #342) —

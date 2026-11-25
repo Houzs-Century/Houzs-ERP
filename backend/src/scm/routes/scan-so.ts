@@ -57,7 +57,7 @@ import {
 import { depositSenAfterReceiptPass, safeScanDepositSen } from '../lib/scan-header-deposit';
 import { applySlipTotalToUnpricedLines } from '../lib/scan-slip-total';
 import { scanTimer } from '../lib/scan-timing';
-import { scanCatalogSkus, type CatalogSku, type ScanCatalogRow } from '../lib/scan-catalog-skus';
+import { scanCatalogSkus, SCAN_CATALOG_CATEGORY_ORDER, type CatalogSku, type ScanCatalogRow } from '../lib/scan-catalog-skus';
 import { buildScanLineVariants } from '../lib/scan-line-variants';
 import { resolveSlipAddress } from '../lib/scan-address-lookup';
 import { localityForPostcode } from '../lib/postcode-from-address';
@@ -582,9 +582,7 @@ function formatCatalog(c: Catalog): string {
     list.push(s);
     byCategory.set(s.category, list);
   }
-  // SERVICE gets its own labelled section (delivery / lift / dispose fees),
-  // the goods categories follow.
-  for (const cat of ['SOFA', 'BEDFRAME', 'MATTRESS', 'ACCESSORY', 'SERVICE']) {
+  for (const cat of SCAN_CATALOG_CATEGORY_ORDER) {
     const list = byCategory.get(cat);
     if (!list || list.length === 0) continue;
     // Slim: code | name only (base_model dropped 2026-06-23). The model name in

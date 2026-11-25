@@ -26,6 +26,7 @@
 // URL is state: ?q= (search) and ?cat= (category filter).
 // ----------------------------------------------------------------------------
 
+import { MFG_CATEGORY_LABELS, MFG_PRODUCT_CATEGORIES, type MfgProductCategory } from "../../vendor/shared/product-categories";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { expandSofaPieceItems } from "../../vendor/scm/lib/sofa-piece-lines";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -71,15 +72,11 @@ import { passesSoffioReminder } from "../../vendor/scm/lib/soffio-reminder";
 
 // ── Types & constants ───────────────────────────────────────────────────────
 
-type Category = "ALL" | "SOFA" | "BEDFRAME" | "MATTRESS" | "ACCESSORY" | "SERVICE";
+type Category = "ALL" | MfgProductCategory;
 
 const CATEGORIES: Array<{ key: Category; label: string }> = [
   { key: "ALL", label: "All" },
-  { key: "SOFA", label: "Sofas" },
-  { key: "BEDFRAME", label: "Bedframes" },
-  { key: "MATTRESS", label: "Mattresses" },
-  { key: "ACCESSORY", label: "Accessories" },
-  { key: "SERVICE", label: "Services" },
+  ...MFG_PRODUCT_CATEGORIES.map((c) => ({ key: c, label: MFG_CATEGORY_LABELS[c] })),
 ];
 
 type Customer = {

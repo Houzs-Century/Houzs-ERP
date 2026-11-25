@@ -19,6 +19,7 @@
 // Routing: /scm/purchase-orders/from-so.
 // ----------------------------------------------------------------------------
 
+import { MFG_CATEGORY_LABELS, MFG_PRODUCT_CATEGORIES } from '../../vendor/shared/product-categories';
 import { useMemo, useState, type CSSProperties } from 'react';
 // HOUZS VENDOR — Link + useSearchParams live on 'react-router-dom' in
 // react-router v6 (the version Houzs ships). Only the import specifier changed.
@@ -64,13 +65,9 @@ const FILTER_INPUT: CSSProperties = {
 
 /** Category filter options. 'all' shows everything; the rest match item_group. */
 const CATEGORY_OPTIONS = [
-  { value: 'all',       label: 'All categories' },
-  { value: 'sofa',      label: 'Sofa' },
-  { value: 'bedframe',  label: 'Bedframe' },
-  { value: 'mattress',  label: 'Mattress' },
-  { value: 'accessory', label: 'Accessory' },
-  { value: 'service',   label: 'Service' },
-] as const;
+  { value: 'all', label: 'All categories' },
+  ...MFG_PRODUCT_CATEGORIES.map((c) => ({ value: c.toLowerCase(), label: MFG_CATEGORY_LABELS[c] })),
+];
 
 /** Which date field the range filter targets. */
 const DATE_FIELD_OPTIONS = [

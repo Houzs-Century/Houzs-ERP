@@ -23,6 +23,7 @@
 // repointed to /scm/grns (the New GRN form + the append-to-GRN edit page).
 // ----------------------------------------------------------------------------
 
+import { MFG_CATEGORY_LABELS, MFG_PRODUCT_CATEGORIES } from '../../vendor/shared/product-categories';
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { readScmHandoff, writeScmHandoff } from '../../lib/scmHandoffStorage';
@@ -75,13 +76,9 @@ const FILTER_INPUT: CSSProperties = {
 
 /** Category filter options — same set as Create-PO-from-SO. */
 const CATEGORY_OPTIONS = [
-  { value: 'all',       label: 'All categories' },
-  { value: 'sofa',      label: 'Sofa' },
-  { value: 'bedframe',  label: 'Bedframe' },
-  { value: 'mattress',  label: 'Mattress' },
-  { value: 'accessory', label: 'Accessory' },
-  { value: 'service',   label: 'Service' },
-] as const;
+  { value: 'all', label: 'All categories' },
+  ...MFG_PRODUCT_CATEGORIES.map((c) => ({ value: c.toLowerCase(), label: MFG_CATEGORY_LABELS[c] })),
+];
 
 /** Which date field the range filter targets (PO has PO Date + Expected). */
 const DATE_FIELD_OPTIONS = [
