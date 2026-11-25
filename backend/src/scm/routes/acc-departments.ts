@@ -36,6 +36,7 @@ import { hasHouzsPerm } from '../lib/houzs-perms';
 import { chunkIn } from '../lib/paginate-all';
 import { todayMyt } from '../lib/my-time';
 import { dateOrNull } from '../lib/date-coerce';
+import { fmtMoneySen } from '../shared/format';
 import { countsInTheBooks } from '../../acc/reversal-pairs';
 import { commissionLabel } from '../../acc/performance-pnl';
 import { RELEASE_SOURCE, loadPrepaidLines, type PrepaidLedgerLine } from '../../acc/commission-bills';
@@ -743,7 +744,7 @@ export const departmentLinesHandler = async (c: any): Promise<Response> => {
       if (m.merchandise === 0) continue;
       rateLines.push({
         id: `rate:${m.month}`, month: m.month, day: null, accountCode: merch[0]!, accountName: 'Merchandise', ref: null,
-        text: `${rate}% of the month's sales excluding service (${(m.baseSen / 100).toFixed(2)})`, dept, team: null, sen: m.merchandise, source: 'rate',
+        text: `${rate}% of the month's sales excluding service (${fmtMoneySen(m.baseSen)})`, dept, team: null, sen: m.merchandise, source: 'rate',
       });
     }
   }

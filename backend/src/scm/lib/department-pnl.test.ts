@@ -486,7 +486,7 @@ describe('the selling department pays the others (owner 2026-11-25: G&A 5%, Oper
     const v = view('performance');
     const merch = v.tree.expenses.find((n) => n.id === 'pl:bank')!.children[0]!;
     expect([merch.code, merch.cells]).toEqual(['900-T009', { '2026-09': 1_920 }]);
-    expect(merch.label).toBe('Merchandise — 2% of sales excluding service, in place of 900-T009 TERMINAL INTEREST CHARGES (7.00 booked)');
+    expect(merch.label).toBe('Merchandise — 2% of sales excluding service, in place of 900-T009 TERMINAL INTEREST CHARGES (RM 7.00 booked)');
     expect(v.perMonth[0]).toMatchObject({ expensesSen: 3_000 + 1_920, chargesSen: 12_480 });
   });
 

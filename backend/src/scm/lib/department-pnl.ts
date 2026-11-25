@@ -44,6 +44,7 @@ import { share, type RegionCode } from './logistics-cost';
 import { addMonths, incomeRowOf, monthNamed, type BillLine, type IncomeRow, type Leg } from './logistics-pnl';
 import { layOutBlock, type LaidLine, type LaidNode, type LayoutItem } from '../../acc/report-layout';
 import type { ChargeRates, DeptBasis, MonthCharges } from './department-charges';
+import { fmtMoneySen } from '../shared/format';
 import type { UnitRow, UnitView } from './department-units';
 import {
   GA_TEAMS, GA_TEAM_LABEL, MANPOWER_ROWS, OP_REGION_CODES, OP_ROWS, accountHome, lineHome, resolveDept,
@@ -611,7 +612,6 @@ function orderGroupNodes(months: readonly OrdersMonthIn[], pick: 'salesSen' | 'c
     }));
 }
 
-const rm2 = (sen: number): string => new Intl.NumberFormat('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(sen / 100);
 const pctWords = (bp: number): string => `${(bp / 100).toFixed(2).replace(/\.?0+$/, '')}%`;
 /** A row of figures by month (no account behind it: it opens nothing). */
 const figureNode = (id: string, label: string, cells: Record<string, number>): LaidNode => ({
@@ -676,7 +676,7 @@ export function buildDeptView(input: {
       const bookedSen = replaced.reduce((s, r) => s + r.sen, 0);
       for (const m of ch.months) if (m.merchandise !== 0) add(first, 'Merchandise', m.month, m.merchandise);
       const cur = byCode.get(first);
-      if (cur) cur.label = `Merchandise — ${pctWords(ch.rates.merchandiseBp)} of sales excluding service, in place of ${named || 'the terminal charges'} (${rm2(bookedSen)} booked)`;
+      if (cur) cur.label = `Merchandise — ${pctWords(ch.rates.merchandiseBp)} of sales excluding service, in place of ${named || 'the terminal charges'} (${fmtMoneySen(bookedSen)} booked)`;
     }
     const lines: LaidLine[] = [...byCode.entries()]
       .map(([code, x]) => ({ code, x, cells: Object.fromEntries(Object.entries(x.cells).filter(([, v]) => v !== 0)) }))

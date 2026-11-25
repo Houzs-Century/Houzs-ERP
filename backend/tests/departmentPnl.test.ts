@@ -255,7 +255,7 @@ describe('Setup & dismantle and merchandise (owner 2026-11-25: 1% for the setup 
     expect(d.charges.map((n: any) => [n.id, n.amountSen])).toEqual([['charge:ga', 125_000], ['charge:operation', 175_000], ['charge:setupDismantle', 25_000]]);
     const merch = leaf(d.tree.expenses, '900-T009');
     expect(merch.amountSen).toBe(50_000);
-    expect(merch.label).toBe('Merchandise — 2% of sales excluding service, in place of 900-T009 TERMINAL INTEREST CHARGES (70.00 booked)');
+    expect(merch.label).toBe('Merchandise — 2% of sales excluding service, in place of 900-T009 TERMINAL INTEREST CHARGES (RM 70.00 booked)');
     expect(leaf(d.tree.expenses, '900-T031')).toBeUndefined();
     /* Merchandise opens its months at the rate; the fair transport is no longer the Exhibition's. */
     const m = (await h.get(`/departments/lines?view=dept&d=exhibition&block=expenses&keys=900-T009,900-T031${SEP_AND}`)).body;
