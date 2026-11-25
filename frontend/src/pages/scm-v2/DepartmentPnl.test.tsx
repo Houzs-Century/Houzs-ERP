@@ -5,13 +5,15 @@
    (DepartmentPnl.fixture.json; the server half is backend/tests/departmentPnl.test.ts).
    Pinned:
      • the company's own departments (Houzs: Exhibition, Operation, Logistics, G&A),
-       each with a view of its own — Logistics the Logistics P&L;
+       each with a view of its own — Logistics the whole Logistics cost report;
      • All: each department's own P&L side by side, where each comes from under its
        name, the total the departments added up; a figure says where it comes from
        and opens its department;
      • Exhibition: its sales orders' sales and cost by product group, less what it
        booked and the commission bills; the orders' figures open nothing;
-     • Logistics: the Logistics cost report's own P&L view;
+     • Logistics: the whole Logistics cost report, its four views beside the
+       department picker, every company's — 2990, with no Logistics department, is
+       offered it all the same (owner 2026-11-25); the Show switch keeps its name;
      • G&A: the share of the Performance sales, the HQ teams under Salary & related,
        the surplus; its rate saved;
      • Operation: the owner's sheet by region with a % of DO beside; the rows in his
@@ -36,7 +38,8 @@ vi.mock('../../vendor/scm/lib/authed-fetch', () => ({
   authedFetch: (path: string, init?: RequestInit) => fetchMock(path, init),
 }));
 
-import { DepartmentPnlTab } from './DepartmentPnl';
+import { DepartmentPnlTab, departmentChoices } from './DepartmentPnl';
+import type { DepartmentPlan } from '../../vendor/scm/lib/department-queries';
 
 /* What a figure of All, Exhibition or G&A reads when opened: made-up lines. */
 const LINES = {
@@ -139,11 +142,50 @@ describe('Exhibition', () => {
 });
 
 describe('Logistics', () => {
-  test('the Logistics P&L, the Logistics cost report\'s own', async () => {
+  test('the whole Logistics cost report: its four views beside the department picker, its P&L first', async () => {
     draw('&dv=logistics');
     const table = await screen.findByRole('table', { name: 'Logistics P&L' });
     expect(rowText(table, 'NET PROFIT')).toContain('11,000.00');
     expect(fetchMock.mock.calls.some(([p]) => String(p).startsWith('/acc-events/logistics/pnl?from=2026-09-01&to=2026-10-31'))).toBe(true);
+    expect(within(screen.getByRole('group', { name: 'Logistics views' })).getAllByRole('button').map((b) => b.textContent))
+      .toEqual(['P&L', 'By region & trip', 'Setup & Dismantle', 'Repairs by lorry']);
+    const depts = screen.getByRole('group', { name: 'Department' });
+    expect(within(depts).getByRole('button', { name: 'Logistics' }).getAttribute('aria-pressed')).toBe('true');
+    /* One toolbar: the dates, the departments, then the report's own tools. */
+    expect(screen.getAllByRole('toolbar')).toHaveLength(1);
+  });
+
+  test('a company with no Logistics department (2990) is offered Logistics all the same', async () => {
+    const own = fixture.plan.departments;
+    fixture.plan.departments = [
+      { key: 'showroom', label: 'Showroom', view: 'dept', basis: 'books' },
+      { key: 'ga', label: 'G&A', view: 'ga', basis: null },
+    ] as typeof own;
+    try {
+      draw('&dv=logistics');
+      expect(await screen.findByRole('table', { name: 'Logistics P&L' })).toBeTruthy();
+      expect(within(screen.getByRole('group', { name: 'Department' })).getAllByRole('button').map((b) => b.textContent))
+        .toEqual(['All departments', 'Showroom', 'G&A', 'Logistics']);
+    } finally {
+      fixture.plan.departments = own;
+    }
+  });
+
+  test('the Show switch keeps its place in the URL from a department to Logistics', async () => {
+    draw('&dv=operation&dm=months');
+    await screen.findByRole('table', { name: 'Department P&L, Operation' });
+    fireEvent.click(within(screen.getByRole('group', { name: 'Department' })).getByRole('button', { name: 'Logistics' }));
+    await screen.findByRole('group', { name: 'Logistics views' });
+    expect(within(screen.getByRole('group', { name: 'Whole range or by month' })).getByRole('button', { name: 'By month' }).getAttribute('aria-pressed')).toBe('true');
+  });
+});
+
+describe('departmentChoices', () => {
+  test('All, the company\'s own departments, and Logistics where it has none; nothing but All before the plan', () => {
+    expect(departmentChoices(undefined).map((c) => c.value)).toEqual(['all']);
+    expect(departmentChoices(fixture.plan as DepartmentPlan).map((c) => c.value)).toEqual(['all', 'exhibition', 'operation', 'logistics', 'ga']);
+    expect(departmentChoices({ departments: [{ key: 'showroom', label: 'Showroom', view: 'dept', basis: 'books' }, { key: 'ga', label: 'G&A', view: 'ga', basis: null }], selling: 'showroom' })
+      .map((c) => `${c.value}:${c.kind}`)).toEqual(['all:all', 'showroom:dept', 'ga:ga', 'logistics:logistics']);
   });
 });
 

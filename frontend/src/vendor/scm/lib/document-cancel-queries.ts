@@ -19,7 +19,7 @@
    release in the one place each already lives.
    ---------------------------------------------------------------------------- */
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 
 /** The two documents a cancellation REQUEST can sit on — the ones with
@@ -180,12 +180,17 @@ export function useCancelRequests(scope: 'open' | 'all') {
   });
 }
 
+/** Refresh the document's cancel card and the inbox. Also called by the
+ *  document's own cancel: the server closes the request (EXECUTED) on that
+ *  PATCH, which none of the request hooks below see. */
+export function invalidateCancelRequestViews(qc: QueryClient, docType: CancelDocType, key: string): void {
+  void qc.invalidateQueries({ queryKey: detailKey(docType, key) });
+  void qc.invalidateQueries({ queryKey: [INBOX_KEY] });
+}
+
 function useInvalidate(docType: CancelDocType) {
   const qc = useQueryClient();
-  return (key: string) => {
-    void qc.invalidateQueries({ queryKey: detailKey(docType, key) });
-    void qc.invalidateQueries({ queryKey: [INBOX_KEY] });
-  };
+  return (key: string) => invalidateCancelRequestViews(qc, docType, key);
 }
 
 /** Raise a request — the reason is mandatory (the server refuses < 5 chars). */

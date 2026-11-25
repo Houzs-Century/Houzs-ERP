@@ -59,6 +59,12 @@ describe('listAssrCases — search matches name / phone / reference', () => {
     expect(await ids('012-345 6789')).toEqual([1]);
   });
 
+  test("HC-0257: the case's own service PO (po_no)", async () => {
+    await env.DB.prepare(`UPDATE assr_cases SET po_no = 'HC-PO-009672' WHERE id = 2`).run();
+    expect(await ids('hc-po-009672')).toEqual([2]);
+    expect(await ids('009672')).toEqual([2]);
+  });
+
   test('a term matching nothing returns no rows', async () => {
     expect(await ids('nomatch-xyz')).toEqual([]);
   });

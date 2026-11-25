@@ -25,6 +25,25 @@ export function permitAlert(
   return { count, anyExpired };
 }
 
+/** Active employees still awaiting confirmation: a confirmation-due date set,
+ *  today or later. count, and the whole days until the nearest one, for the
+ *  Overview's "on probation" reminder. */
+export function probationAlert(
+  employees: ReadonlyArray<{ status: string; confirmDueOn: string }>,
+  today: string,
+): { count: number; nearestDays: number | null } {
+  let count = 0;
+  let nearest: string | null = null;
+  for (const e of employees) {
+    if (e.status !== "ACTIVE") continue;
+    const x = e.confirmDueOn;
+    if (!x || x < today) continue;
+    count++;
+    if (nearest === null || x < nearest) nearest = x;
+  }
+  return { count, nearestDays: nearest === null ? null : daysBetweenYmd(today, nearest) };
+}
+
 export type UpcomingKind = "Holiday" | "Permit" | "Confirm";
 export type UpcomingItem = { date: string; label: string; kind: UpcomingKind };
 
@@ -55,4 +74,9 @@ function addDaysYmd(ymd: string, days: number): string {
   const d = new Date(`${ymd}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
+}
+
+/** Whole days from one YMD to another (UTC), so it never shifts near midnight. */
+function daysBetweenYmd(from: string, to: string): number {
+  return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000);
 }

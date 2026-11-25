@@ -237,7 +237,7 @@ export function supplierRowsFor(code: string, open: boolean, list: ForecastSuppl
 
 /* ── The page ────────────────────────────────────────────────────────────── */
 
-/** In the Finance report shell (batch 6 §4.3), under Reports › P&L › Forecast. */
+/** In the Finance report shell (batch 6 §4.3), under Reports › Plan. */
 export const ForecastPnl = () => (
   <ReportShell report="forecast">
     <ForecastGridPage />

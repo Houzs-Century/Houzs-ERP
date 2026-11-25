@@ -23,7 +23,9 @@
 // 选): the list shows them as P&L, and a picker across the top of each opens the
 // others (`pnlPick`, its name there). Each stays a report of its own here — its
 // address, its gate, its method and data — so old links land where they did and
-// a reader is offered only the P&Ls they may open.
+// a reader is offered only the P&Ls they may open. The Forecast P&L is a plan and
+// sits under Plan with the Dashboard; the Logistics cost report is the Department
+// P&L's Logistics, not an entry of its own (owner, the same day).
 // ----------------------------------------------------------------------------
 
 import type { LucideIcon } from 'lucide-react';
@@ -36,7 +38,7 @@ export type ReportId =
   | 'pnl' | 'departments' | 'bs' | 'rp' | 'tb'
   | 'ar' | 'ap'
   | 'collection' | 'fair' | 'performance' | 'products' | 'changes' | 'changesum' | 'sotodo'
-  | 'events' | 'commission' | 'logistics'
+  | 'events' | 'commission'
   | 'charges'
   | 'forecast' | 'dashboard'
   | 'je' | 'gl'
@@ -116,9 +118,6 @@ export const REPORT_CATALOG: readonly ReportItem[] = [
   asPnl(tabItem('performance', 'statements'), 'Performance'),
   // The product changes added up P&L-style, by month and by salesperson (owner 2026-11-23: 类似 p&L).
   asPnl(tabItem('changesum', 'statements'), 'Product changes'),
-  // The Forecast P&L (owner 2026-09-21: the Hookka Forecast P&L, trading edition — a target per account on the
-  // P&L's own tree; the Dashboard reads them beside the actuals).
-  asPnl({ id: 'forecast', label: 'Forecast P&L', group: 'statements', path: '/scm/forecast', navTo: '/scm/forecast', gate: FORECAST_GATE }, 'Forecast'),
   tabItem('bs', 'statements'),
   tabItem('rp', 'statements'),
   tabItem('tb', 'statements', true),
@@ -140,13 +139,11 @@ export const REPORT_CATALOG: readonly ReportItem[] = [
   tabItem('events', 'events'),
   // Each fair's commission and each order's under it — goods × brand rate once 30% is paid (owner 2026-10-20).
   tabItem('commission', 'events'),
-  // What delivery cost — by region, per trip (our lorries overall: the month's lorry cost ÷ its trips; 3PL bill
-  // lines), setup & dismantle (owner 2026-10-29).
-  tabItem('logistics', 'events'),
   // What each acquirer charged against the gross, per month (owner 2026-09-12; docs/bugs/0826).
   tabItem('charges', 'cards'),
-  // The Dashboard (owner 2026-09-21: the Hookka Dashboard, trading edition — the statements' actuals beside the
-  // Forecast P&L).
+  // The Forecast P&L and the Dashboard (owner 2026-09-21: the Hookka Forecast P&L + Dashboard, trading
+  // edition — targets per account on the P&L's own tree; the Dashboard reads them beside the actuals).
+  { id: 'forecast', label: 'Forecast P&L', group: 'plan', path: '/scm/forecast', navTo: '/scm/forecast', gate: FORECAST_GATE },
   { id: 'dashboard', label: 'Dashboard', group: 'plan', path: '/scm/finance-dashboard', navTo: '/scm/finance-dashboard', gate: FORECAST_GATE },
   tabItem('je', 'books', true),
   tabItem('gl', 'books', true),

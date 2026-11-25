@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ACCOUNTING_TABS, ACCOUNTING_TAB_TITLES, accountingTabFromSearch } from './accounting-tabs';
+import { ACCOUNTING_TABS, ACCOUNTING_TAB_TITLES, accountingTabFromSearch, logisticsMovedTo } from './accounting-tabs';
 
 /* The sidebar's deep links land on a tab by name (docs/bugs/0824); a name the
    page does not know must fall back, never render an empty page. */
@@ -16,5 +16,15 @@ describe('the Accounting tab named in the URL', () => {
     expect(accountingTabFromSearch(null)).toBeNull();
     expect(accountingTabFromSearch(undefined)).toBeNull();
     expect(accountingTabFromSearch('PNL')).toBeNull();
+  });
+});
+
+/* The Logistics cost tab is the Department P&L's Logistics now (owner 2026-11-25). */
+describe('an old Logistics cost address', () => {
+  it('lands on the Department P&L\'s Logistics, its dates and view kept, its switches under the Department P&L\'s names', () => {
+    expect(accountingTabFromSearch('logistics')).toBeNull();
+    expect(logisticsMovedTo(new URLSearchParams('tab=logistics'))).toBe('/scm/accounting?tab=departments&dv=logistics');
+    expect(logisticsMovedTo(new URLSearchParams('tab=logistics&from=2026-09-01&to=2026-10-31&lv=region&lm=months&lsplit=1&lpct=0')))
+      .toBe('/scm/accounting?tab=departments&dv=logistics&from=2026-09-01&to=2026-10-31&lv=region&dm=months&dsplit=1&dpct=0');
   });
 });

@@ -72,7 +72,8 @@ describe('the Finance sidebar', () => {
       '/scm/daily-bank-cashbook',
     ]) expect(tos, `${to} is still reachable`).toContain(to);
     /* The Accounting page's tabs, now reachable by name. */
-    for (const tab of ['je', 'gl', 'tb', 'close', 'check', 'pnl', 'bs', 'rp', 'ar', 'ap', 'corrections', 'collection', 'charges', 'groups', 'performance', 'products', 'logistics']) {
+    /* Logistics cost is the Department P&L's Logistics since 2026-11-25; its old address lands there (logisticsMovedTo). */
+    for (const tab of ['je', 'gl', 'tb', 'close', 'check', 'pnl', 'bs', 'rp', 'ar', 'ap', 'corrections', 'collection', 'charges', 'groups', 'performance', 'products', 'departments']) {
       expect(tos, `tab ${tab} is deep-linked`).toContain(`/scm/accounting?tab=${tab}`);
     }
     expect(new Set(tos).size, 'no destination twice').toBe(tos.length);
