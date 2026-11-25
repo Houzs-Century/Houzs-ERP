@@ -260,11 +260,10 @@ export async function supplierPickerResults(
   }
 }
 
-/* HC-0257 (Farra, 25 Nov): the list search matches the PO column's Order POs.
-   The reverse of the soConvertedPos walk: PO number -> its PO lines -> the SO
-   lines they were raised from -> SO doc_no. CANCELLED dropped like the column.
-   companyIds as in pushAllowedCompanies: undefined = unresolved (no predicate),
-   [] = no company (no match). Read error -> [] so the rest of the search works. */
+/* List search by the PO column's Order POs: the reverse of soConvertedPos
+   (PO number -> PO lines -> SO lines -> SO doc_no), CANCELLED dropped like the
+   column. companyIds: undefined = unresolved (no predicate), [] = no match.
+   Read error -> [] so the rest of the search still works. */
 const PO_SEARCH_CAP = 200;
 
 export async function soDocNosByPoNumber(
@@ -278,7 +277,8 @@ export async function soDocNosByPoNumber(
   const scoped = (q: any) => (companyIds ? q.in("company_id", companyIds) : q);
   try {
     const pos = await scoped(sb.from("purchase_orders").select("id, status"))
-      .ilike("po_number", `%${term.trim()}%`).limit(PO_SEARCH_CAP);
+      // shortcut: a very short term keeps only the newest 200 POs; page if staff search that way.
+      .ilike("po_number", `%${term.trim()}%`).order("po_number", { ascending: false }).limit(PO_SEARCH_CAP);
     const poIds = ((pos.data ?? []) as Array<{ id: string; status: string | null }>)
       .filter((p) => (p.status ?? "").toUpperCase() !== "CANCELLED").map((p) => p.id);
     if (pos.error || poIds.length === 0) return [];
