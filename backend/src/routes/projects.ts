@@ -15,6 +15,7 @@ import {
   salesDirectorMayAttach,
 } from "../services/projectGates";
 import { detectFloorplanSize, isFloorplanTitle } from "../services/floorplanSize";
+import { readSalesReportImage } from "../services/salesReportOcr";
 import {
   createProject,
   patchProject,
@@ -2718,6 +2719,32 @@ app.post("/:id/notes", requireAnyPermission(["projects.write", "projects.chat"])
   await logProjectActivity(c.env, id, "note", null, null, body.note.trim(), user?.id);
   return c.json({ ok: true });
 });
+
+// Read a sales-report image and return its text, so the chat composer can
+// show it for the salesperson to preview and send. Owner 2026-11-25: the
+// floor sometimes snaps a photo of a tally or screenshots the report from
+// another WhatsApp group; before this, those images sat in the chat as
+// pictures and the books never counted them.
+app.post(
+  "/:id/sales-report-image/ocr",
+  requireAnyPermission(["projects.write", "projects.chat"]),
+  async (c) => {
+    const id = parseInt(c.req.param("id"), 10);
+    if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+    { const foreign = await refuseForeignProject(c, id); if (foreign) return foreign; }
+    const user = c.get("user");
+    const mime = (c.req.header("content-type") || "").toLowerCase().split(";")[0]!.trim();
+    const buf = await c.req.arrayBuffer();
+    const result = await readSalesReportImage(c.env, {
+      buf,
+      mime,
+      userId: user?.id ?? null,
+      companyId: activeCompanyId(c) ?? null,
+    });
+    if (!result.ok) return c.json({ error: result.error }, result.status);
+    return c.json({ text: result.text });
+  },
+);
 
 // ── Activity polling ─────────────────────────────────────────
 // Lightweight endpoint used by the chat pane to pull only rows newer
