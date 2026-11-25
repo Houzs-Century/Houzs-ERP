@@ -1177,7 +1177,7 @@ function CasesView({
         search={{
           value: search,
           onChange: (v) => { setSearch(v); },
-          placeholder: "Search ASSR no, SO no, Ref no, DO no, customer, salesperson, phone…",
+          placeholder: "Search ASSR no, SO no, Ref no, DO no, PO no, customer, salesperson, phone…",
           searching: searchTransition.isSearching,
           countPending: list.loading || list.placeholder || Boolean(list.error) || searchTransition.resultsAreStale,
           scope: "server",
