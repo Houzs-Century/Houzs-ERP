@@ -60,7 +60,21 @@
 .blockTools { display: inline-flex; align-items: center; gap: 12px; }
 .category td { font-weight: 600; }
 .subtotal td { background: var(--fin-row); font-weight: 600; font-style: italic; }
-.spareHead td { height: 30px; font-size: 12px; font-style: italic; color: var(--fin-muted); }
+/* Owner 2026-11-25: what the tree does not place is its own table under the tree, set apart
+   by a band and a count; a group heading per block (Cash flow: per side). */
+.unassigned { margin-top: 20px; border-top: 1px solid var(--fin-rule); }
+.unassignedHead {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 12px; padding: 12px 16px 10px;
+  background: var(--fin-warn-bg); border-bottom: 1px solid var(--fin-rule-soft);
+}
+.unassignedTitle { display: inline-flex; align-items: center; margin: 0; font-size: 14px; font-weight: 600; color: var(--fin-ink); }
+.count {
+  display: inline-flex; align-items: center; height: 18px; box-sizing: border-box; margin-left: 8px; padding: 0 7px;
+  border: 1px solid var(--fin-line); border-radius: 9px; background: var(--fin-surface);
+  font-size: 11px; font-weight: 600; font-style: normal; color: var(--fin-text); font-variant-numeric: tabular-nums;
+}
+.spareTable { min-width: 560px; }
+.spareHead td { height: 32px; background: var(--fin-row); font-size: 12px; font-weight: 600; color: var(--fin-text); }
 .spare td { color: var(--fin-text); }
 .empty td { height: 30px; font-size: 12px; color: var(--fin-muted); }
 .dragging { opacity: 0.45; }
