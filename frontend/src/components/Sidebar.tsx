@@ -715,6 +715,7 @@ export const NAV_TABS: NavTab[] = [
           { to: "/scm/stock-adjustments", label: "Adjustments", icon: SlidersHorizontal, anyPerm: ["*", "scm.access"], anyAccess: ["scm.warehouse.adjustments"], hideForSalesRep: true },
           { to: "/scm/stock-transfers", label: "Transfers", icon: ArrowLeftRight, anyPerm: ["*", "scm.access"], anyAccess: ["scm.warehouse.transfers"], hideForSalesRep: true },
           { to: "/scm/stock-takes", label: "Stock Take", icon: ClipboardCheck, anyPerm: ["*", "scm.access"], anyAccess: ["scm.warehouse.stock_take"], hideForSalesRep: true },
+          { to: "/scm/stock-take-approvals", label: "Stock Take Approvals", icon: ClipboardCheck, anyPerm: ["*", "scm.stock_take.supervise"], anyAccess: ["scm.warehouse.stock_take"], hideForSalesRep: true, badge: "stock-take-approvals" },
         ],
       },
     ],

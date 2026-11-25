@@ -589,6 +589,9 @@ export type StockTakeListFilters = {
   warehouseId?: string;
   dateFrom?: string;
   dateTo?: string;
+  /* Approvals inbox "All" scope: every take ever submitted for approval,
+     whatever its status is now. */
+  submitted?: boolean;
 };
 
 export function useStockTakes(opts?: StockTakeListFilters) {
@@ -597,6 +600,7 @@ export function useStockTakes(opts?: StockTakeListFilters) {
     queryFn: () => {
       const params = new URLSearchParams();
       if (opts?.status)      params.set('status', opts.status);
+      if (opts?.submitted)   params.set('submitted', 'true');
       if (opts?.warehouseId) params.set('warehouseId', opts.warehouseId);
       if (opts?.dateFrom)    params.set('dateFrom', opts.dateFrom);
       if (opts?.dateTo)      params.set('dateTo',   opts.dateTo);
@@ -723,6 +727,7 @@ export function useApproveStockTake() {
       void qc.invalidateQueries({ queryKey: ['stock-takes'] });
       void qc.invalidateQueries({ queryKey: ['stock-takes', id] });
       void qc.invalidateQueries({ queryKey: ['inventory'] });
+      void qc.invalidateQueries({ queryKey: ['scm', 'stock-take-approvals'] });
     },
   });
 }
@@ -737,6 +742,7 @@ export function useRejectStockTake() {
     onSuccess: (_data, id) => {
       void qc.invalidateQueries({ queryKey: ['stock-takes'] });
       void qc.invalidateQueries({ queryKey: ['stock-takes', id] });
+      void qc.invalidateQueries({ queryKey: ['scm', 'stock-take-approvals'] });
     },
   });
 }

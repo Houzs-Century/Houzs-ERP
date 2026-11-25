@@ -29,6 +29,7 @@ import {
   postStockTakeHandler,
   rejectStockTakeHandler,
   reopenStockTakeHandler,
+  pendingApprovalCountHandler,
 } from '../src/scm/routes/stock-takes';
 import { readStockTakeSheetHandler } from '../src/scm/routes/stock-take-sheet-read';
 
@@ -45,8 +46,9 @@ class FakeQuery {
   private op: 'select' | 'update' | 'delete' | 'insert' = 'select';
   private patch: Row = {};
   private inserted: Row[] = [];
+  private countMode = false;
   constructor(private rows: Row[], private table: string, private log: string[]) {}
-  select() { return this; }
+  select(_cols?: unknown, opts?: { count?: string; head?: boolean }) { if (opts?.head) this.countMode = true; return this; }
   order() { return this; }
   limit() { return this; }
   range() { return this; }
@@ -84,7 +86,9 @@ class FakeQuery {
     return Promise.resolve({ data: h[0] ?? null, error: h.length ? null : { message: 'no rows' } });
   }
   then(res: (v: any) => any, rej?: (e: any) => any) {
-    return Promise.resolve({ data: this.run(), error: null }).then(res, rej);
+    const hit = this.run();
+    const payload = this.countMode ? { data: null, count: hit.length, error: null } : { data: hit, error: null };
+    return Promise.resolve(payload).then(res, rej);
   }
 }
 
@@ -119,6 +123,7 @@ function harness(tables: Record<string, Row[]>, opts?: { perms?: string[] }) {
     await next();
   });
   app.post('/stock-takes', createStockTakeHandler as never);
+  app.get('/stock-takes/pending-count', pendingApprovalCountHandler as never);
   app.get('/stock-takes/:id', getStockTakeDetailHandler as never);
   app.patch('/stock-takes/:id/post', postStockTakeHandler as never);
   app.patch('/stock-takes/:id/approve', approveStockTakeHandler as never);
@@ -261,9 +266,11 @@ describe('post gate — variance threshold now SUBMITS for approval (owner 2026-
 });
 
 describe('approve / reject a pending count (owner 2026-11-20)', () => {
-  /* A take already submitted and waiting: +10 variance, over the limit. */
+  /* A take already submitted and waiting: +10 variance, over the limit. Submitted
+     by SOMEONE ELSE — a supervisor's own post never goes pending, so the approver
+     is never the submitter (the self-approval guard below covers the edge). */
   const pendingFixture = () => {
-    const t = takeFixture({ status: 'PENDING_APPROVAL', submitted_by: CALLER_STAFF, submitted_at: '2026-11-20T00:00:00Z' });
+    const t = takeFixture({ status: 'PENDING_APPROVAL', submitted_by: OTHER_STAFF, submitted_at: '2026-11-20T00:00:00Z' });
     t.stock_take_lines[0].counted_qty = 20;
     return t;
   };
@@ -320,6 +327,42 @@ describe('approve / reject a pending count (owner 2026-11-20)', () => {
     );
     expect(res.status).toBe(409);
     expect(((await res.json()) as Row).error).toBe('not_pending');
+  });
+
+  test('nobody approves their own submission (owner 2026-11-24, parity with backdate)', async () => {
+    const t = pendingFixture();
+    t.stock_takes[0].submitted_by = CALLER_STAFF; // the approver IS the submitter
+    const res = await jsonReq(
+      harness(t, { perms: ['scm.stock_take.supervise'] }).app,
+      '/stock-takes/st-1/approve', 'PATCH',
+    );
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as Row).error).toBe('own_submission');
+    expect(t.stock_takes[0].status).toBe('PENDING_APPROVAL');
+    expect(t.inventory_movements).toHaveLength(0);
+  });
+});
+
+describe('pending-approval count — the approvals-inbox sidebar badge (owner 2026-11-24)', () => {
+  const twoPending = (): Record<string, Row[]> => ({
+    stock_takes: [
+      { id: 'st-1', take_no: 'STK-2611-010', company_id: CO, status: 'PENDING_APPROVAL' },
+      { id: 'st-2', take_no: 'STK-2611-011', company_id: CO, status: 'PENDING_APPROVAL' },
+      { id: 'st-3', take_no: 'STK-2611-012', company_id: CO, status: 'OPEN' },          // not pending
+      { id: 'st-4', take_no: 'STK-2611-013', company_id: 2,  status: 'PENDING_APPROVAL' }, // other company
+    ],
+  });
+
+  test('a supervisor gets the live count of pending takes in their company', async () => {
+    const res = await harness(twoPending(), { perms: ['scm.stock_take.supervise'] }).app.request('/stock-takes/pending-count');
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as Row).count).toBe(2);
+  });
+
+  test('a non-supervisor is never polled a real number — always 0, so no badge', async () => {
+    const res = await harness(twoPending()).app.request('/stock-takes/pending-count');
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as Row).count).toBe(0);
   });
 });
 
