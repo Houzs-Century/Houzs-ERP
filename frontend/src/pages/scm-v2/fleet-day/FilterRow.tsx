@@ -39,7 +39,9 @@ export function FleetDayFilterRow({
       <FilterPills
         value={filters.region}
         onChange={(v) => set({ region: v })}
-        options={[{ value: 'ALL', label: 'All' }, ...regionTabs.map((r) => ({ value: r.key, label: r.label }))]}
+        // The shared region list (regionTabsFrom) already starts with its own "All";
+        // drop it so the row shows one All chip, not two.
+        options={[{ value: 'ALL', label: 'All' }, ...regionTabs.filter((r) => r.key !== 'ALL').map((r) => ({ value: r.key, label: r.label }))]}
       />
 
       <span className="h-5 w-px bg-border" />
