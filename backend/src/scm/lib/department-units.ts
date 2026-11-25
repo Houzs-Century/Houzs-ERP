@@ -11,18 +11,20 @@
 //                      from the selling department, less the fair transport as
 //                      booked and the in-house trips it pays Logistics for.
 //   OPERATION          the 7% from the selling department and what Finance bills
-//                      for warehousing, less the 3% it passes to Logistics and the
-//                      warehouse (its own sheet's rows, every region added up).
+//                      for warehousing, less the warehouse (its own sheet's rows,
+//                      every region added up) and the 3% it pays Logistics.
+// A row is income, an expense, or what the unit pays another department ('paid'),
+// as the selling department's charges are.
 // Pure: the route reads, this adds up.
 // ----------------------------------------------------------------------------
 
 import type { MonthCharges } from './department-charges';
 
 export type UnitKind = 'logistics' | 'setupDismantle' | 'operation';
-/** A row of a unit's P&L: income or expense (a negative income — the 3% Operation passes on —
-    is an income row with a negative figure), its figure per month. */
-export type UnitRow = { key: string; label: string; group: 'income' | 'expense'; cells: Record<string, number> };
-export type UnitMonth = { month: string; incomeSen: number; expenseSen: number; netSen: number };
+/** A row of a unit's P&L: income, an expense, or what it pays another department (the 3%
+    Operation passes on to Logistics), its figure per month. */
+export type UnitRow = { key: string; label: string; group: 'income' | 'expense' | 'paid'; cells: Record<string, number> };
+export type UnitMonth = { month: string; incomeSen: number; expenseSen: number; paidSen: number; netSen: number };
 export type UnitView = { unit: UnitKind; months: string[]; rows: UnitRow[]; perMonth: UnitMonth[] };
 
 /** The rows kept (a row that is nil every month is left out), the months added up. */
@@ -32,7 +34,8 @@ function unitView(unit: UnitKind, months: readonly string[], rows: UnitRow[]): U
     const sum = (g: UnitRow['group']) => kept.filter((r) => r.group === g).reduce((s, r) => s + (r.cells[month] ?? 0), 0);
     const incomeSen = sum('income');
     const expenseSen = sum('expense');
-    return { month, incomeSen, expenseSen, netSen: incomeSen - expenseSen };
+    const paidSen = sum('paid');
+    return { month, incomeSen, expenseSen, paidSen, netSen: incomeSen - expenseSen - paidSen };
   });
   return { unit, months: [...months], rows: kept, perMonth };
 }
@@ -104,7 +107,7 @@ export function buildOperationUnit(input: {
   return unitView('operation', input.months, [
     { key: 'from_selling', label: `From the selling department (${pct(input.operationBp)}% of sales excluding service)`, group: 'income', cells: byMonth(input.months, (m) => ch.get(m)?.operation ?? 0) },
     ...input.income.map((x) => ({ key: x.key, label: x.label, group: 'income' as const, cells: byMonth(input.months, row(x.key)) })),
-    { key: 'to_logistics', label: `(-) To Logistics (${pct(input.logisticsBp)}% of sales excluding service)`, group: 'income', cells: byMonth(input.months, (m) => -(ch.get(m)?.logistics ?? 0)) },
     ...input.expenses.map((x) => ({ key: x.key, label: x.label, group: 'expense' as const, cells: byMonth(input.months, row(x.key)) })),
+    { key: 'to_logistics', label: `Logistics — ${pct(input.logisticsBp)}% of sales excluding service`, group: 'paid', cells: byMonth(input.months, (m) => ch.get(m)?.logistics ?? 0) },
   ]);
 }

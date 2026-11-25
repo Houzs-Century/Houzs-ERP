@@ -160,7 +160,7 @@ describe("GET /departments/all — every department's own P&L, side by side (own
     /* Operation: its 7% and what it billed, less the 3% to Logistics and the warehouse (its sheet's rows). */
     const op = (await h.get(`/departments/unit?u=operation${SEP_AND}`)).body;
     expect(cell(op, 'from_selling')).toBe(175_000);
-    expect(cell(op, 'to_logistics')).toBe(-75_000);
+    expect(cell(op, 'to_logistics')).toBe(75_000);
     expect(body.summary.operation).toEqual({
       incomeSen: 175_000 + 70_000, costSen: 0, grossSen: 245_000, otherIncomeSen: 0, expensesSen: 576_000, chargesSen: 75_000, profitSen: 245_000 - 75_000 - 576_000,
     });

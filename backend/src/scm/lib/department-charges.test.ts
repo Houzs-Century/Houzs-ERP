@@ -67,7 +67,7 @@ describe('the units the charges feed', () => {
     expect(u.rows.map((r) => [r.key, r.group, r.cells['2026-09']])).toEqual([
       ['from_selling', 'income', 10_000], ['900-T031', 'expense', 4_000], ['in_house', 'expense', 2_500],
     ]);
-    expect(u.perMonth).toEqual([{ month: '2026-09', incomeSen: 10_000, expenseSen: 6_500, netSen: 3_500 }]);
+    expect(u.perMonth).toEqual([{ month: '2026-09', incomeSen: 10_000, expenseSen: 6_500, paidSen: 0, netSen: 3_500 }]);
   });
 
   test("Logistics: the 3% from Operation, Finance's recharges, the trips only where Setup & dismantle pays; never the report's own 3% of DO", () => {

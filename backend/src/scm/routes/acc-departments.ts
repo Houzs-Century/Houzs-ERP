@@ -544,11 +544,15 @@ export const departmentViewHandler = async (c: any): Promise<Response> => {
   const perfMonths = perf?.ok ? perf.months : null;
   const charges = selling ? chargesFor(setup, b.basis, r.months, split.split, perfMonths) : [];
   const view = deptViewOf({ dept, basis: b.basis, setup, r, split: split.split, perf: perfMonths, charges, layout: laid.layout.blocks, companyId });
-  return c.json({ from: r.from, to: r.to, label: DEPARTMENT_LABEL[dept], rates: ratesOf(setup), ...view });
+  return c.json({
+    from: r.from, to: r.to, label: DEPARTMENT_LABEL[dept], rates: ratesOf(setup), ...view,
+    /* The accounts merchandise stands in for: its rate is offered where it can apply. */
+    merchandiseAccounts: selling ? setup.chargeAccounts.merchandise : [],
+  });
 };
 
 /* ── GET /departments/unit?u= ─────────────────────────────────────────────── */
-const UNIT_LABEL: Record<UnitKind, string> = { operation: DEPARTMENT_LABEL.operation, logistics: DEPARTMENT_LABEL.logistics, setupDismantle: SETUP_DISMANTLE_LABEL };
+const unitLabel = (u: UnitKind): string => (u === 'setupDismantle' ? SETUP_DISMANTLE_LABEL : DEPARTMENT_LABEL[u]);
 const isUnit = (v: string): v is UnitKind => v === 'operation' || v === 'logistics' || v === 'setupDismantle';
 /** Operation, Logistics or Setup & dismantle month by month on the basis's sales: what it is
     paid, less its real cost. Operation brings the sheet's lines (what a figure opens). */
@@ -568,7 +572,7 @@ export const departmentUnitHandler = async (c: any): Promise<Response> => {
   const setup = await loadSetup(sb, companyId);
   if (!setup.ok) return fail(c, setup.what, setup.reason);
   const offered = u === 'setupDismantle' ? hasSetupDismantle(setup) : setup.plan.departments.includes(u);
-  if (!offered) return c.json({ error: 'bad_department', message: `This company has no ${UNIT_LABEL[u]} P&L — its costs count in another department.` }, 400);
+  if (!offered) return c.json({ error: 'bad_department', message: `This company has no ${unitLabel(u)} P&L — its costs count in another department.` }, 400);
 
   const [split, perf, lg] = await Promise.all([
     b.basis === 'actual' || u === 'setupDismantle' ? splitMonths(sb, companyId, ids, setup, r) : Promise.resolve(null),
@@ -581,7 +585,7 @@ export const departmentUnitHandler = async (c: any): Promise<Response> => {
   const splitMonthsRead = split?.ok ? split.split : null;
   const charges = chargesFor(setup, b.basis, r.months, splitMonthsRead, perf?.ok ? perf.months : null);
   const common = {
-    from: r.from, to: r.to, basis: b.basis, label: UNIT_LABEL[u], rates: ratesOf(setup),
+    from: r.from, to: r.to, basis: b.basis, label: unitLabel(u), rates: ratesOf(setup),
     base: Object.fromEntries(charges.map((m) => [m.month, m.baseSen])),
     logisticsProblem: lg.body.fairsProblem ?? lg.body.tripsProblem ?? null,
   };

@@ -541,7 +541,8 @@ describe('All: each department\'s own P&L in a few figures, side by side (owner 
       income: [{ key: 'income_warehouse', label: 'Warehouse income' }], expenses: [{ key: 'rental', label: 'Rental Warehouse' }],
       rows: new Map([['2026-09', new Map(Object.entries(op.perMonth[0]!.rows).map(([k, c]) => [k, c.PG + c.KL + c.EM]))]]),
     });
-    expect(unit.rows.map((r) => [r.key, r.cells['2026-09']])).toEqual([['from_selling', 35_000], ['to_logistics', -15_000], ['rental', 25_000]]);
+    expect(unit.rows.map((r) => [r.key, r.group, r.cells['2026-09']])).toEqual([['from_selling', 'income', 35_000], ['rental', 'expense', 25_000], ['to_logistics', 'paid', 15_000]]);
+    expect(unit.perMonth).toEqual([{ month: '2026-09', incomeSen: 35_000, expenseSen: 25_000, paidSen: 15_000, netSen: -5_000 }]);
     expect(summaryOfUnit(unit)).toEqual({ incomeSen: 35_000, costSen: 0, grossSen: 35_000, otherIncomeSen: 0, expensesSen: 25_000, chargesSen: 15_000, profitSen: -5_000 });
     /* The by-DO sheet is unchanged: its own 7% of the DO value and its own last line. */
     expect(opSum(op, 'net_after')).toBe(65_000);

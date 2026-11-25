@@ -694,8 +694,8 @@ export function buildDeptView(input: {
   if (ch) {
     const rows: Array<[keyof MonthCharges, string]> = [
       ['ga', `G&A — ${pctWords(ch.rates.gaBp)} of sales excluding service`],
-      ['operation', `Operation — ${pctWords(ch.rates.operationBp)} of sales excluding service (${pctWords(ch.rates.logisticsBp)} of it passed on to Logistics)`],
-      ['setupDismantle', `Setup & dismantle — ${pctWords(ch.rates.setupDismantleBp)} of sales excluding service (the setup and dismantle transport)`],
+      ['operation', `Operation — ${pctWords(ch.rates.operationBp)} of sales excluding service`],
+      ['setupDismantle', `Setup & dismantle — ${pctWords(ch.rates.setupDismantleBp)} of sales excluding service`],
     ];
     for (const [key, label] of rows) {
       const cells = Object.fromEntries(ch.months.map((m) => [m.month, Number(m[key])] as const).filter(([, v]) => v !== 0));
@@ -734,7 +734,7 @@ export function bookedByAccount(split: readonly DeptMonthSplit[], codes: Readonl
   for (const m of split) {
     for (const l of m.blocks.expenses) {
       if (!codes.has(l.code)) continue;
-      const v = Object.values(l.cells).reduce((a: number, b) => a + (b ?? 0), 0);
+      const v = Object.values(l.cells).reduce((a, b) => a + b, 0);
       if (v === 0) continue;
       const cur = by.get(l.code) ?? { code: l.code, name: l.name, cells: {} };
       cur.cells[m.month] = (cur.cells[m.month] ?? 0) + v;
@@ -764,12 +764,11 @@ export function summaryOfDept(v: DeptView): DeptSummary {
   return summary(sum((m) => m.salesSen), sum((m) => m.costOfSalesSen), sum((m) => m.otherIncomeSen), sum((m) => m.expensesSen + m.taxationSen), sum((m) => m.chargesSen));
 }
 
-/** Operation, Logistics or Setup & dismantle (department-units.ts): its income, its real cost;
-    what Operation passes on to Logistics is what it pays the other departments. */
+/** Operation, Logistics or Setup & dismantle (department-units.ts): its income, its real cost,
+    what it pays the other departments (Operation's 3% to Logistics). */
 export function summaryOfUnit(u: UnitView): DeptSummary {
-  const sum = (pick: (r: UnitRow) => boolean) => u.rows.filter(pick).reduce((s, r) => s + Object.values(r.cells).reduce((a, b) => a + b, 0), 0);
-  const passedOn = 0 - sum((r) => r.key === 'to_logistics');
-  return summary(sum((r) => r.group === 'income' && r.key !== 'to_logistics'), 0, 0, sum((r) => r.group === 'expense'), passedOn);
+  const sum = (group: UnitRow['group']) => u.rows.filter((r) => r.group === group).reduce((s, r) => s + Object.values(r.cells).reduce((a, b) => a + b, 0), 0);
+  return summary(sum('income'), 0, 0, sum('expense'), sum('paid'));
 }
 
 /** G&A: its share of the sales against what it booked. */
