@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useMfgProducts, matchesProductQuery, type MfgCategory, type MfgProductRow } from "../vendor/scm/lib/mfg-products-queries";
+import { useMfgProducts, matchesProductQuery, mfgCategoryLabel, MFG_PRODUCT_CATEGORIES, type MfgCategory, type MfgProductRow } from "../vendor/scm/lib/mfg-products-queries";
 import { dropOneMultiPick, isSofaGroup, multiPickCount, tapMultiPick } from "../vendor/scm/lib/sofa-piece-lines";
 import { pickDefaultVariants } from "../vendor/shared/model-default-variants";
 import { isServiceCategory } from "../vendor/shared/service-sku";
@@ -34,10 +34,7 @@ export type SkuPickerCat = "" | "sofa" | "bedframe";
 
 const CAT_CHIPS: Array<{ value: MfgCategory | ""; label: string }> = [
   { value: "", label: "All" },
-  { value: "BEDFRAME", label: "Bedframe" },
-  { value: "SOFA", label: "Sofa" },
-  { value: "MATTRESS", label: "Mattress" },
-  { value: "ACCESSORY", label: "Accessory" },
+  ...MFG_PRODUCT_CATEGORIES.filter((c) => c !== "SERVICE").map((c) => ({ value: c, label: mfgCategoryLabel(c) })),
 ];
 
 /** What a picked SKU hands back to the line: the canonical catalog code, the

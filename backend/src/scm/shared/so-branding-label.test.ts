@@ -10,6 +10,7 @@
    bottom as nothing. A test that lists the cases someone thought of would have
    passed the whole time. So the domain here is DERIVED (CATEGORY_SOURCES) and
    the assertion is a property over all of it. */
+import { MFG_PRODUCT_CATEGORIES } from './product-categories';
 import { describe, expect, test } from 'vitest';
 
 import { brandingLabel, isPlaceholderBrandText, brandingCategoryNoun, CATEGORY_SOURCES, NO_ITEMS_LABEL } from './so-branding-label';
@@ -223,13 +224,9 @@ describe('brandingCategoryNoun — the superset, refereed against normCategory',
   });
 
   test('the derived category list still matches the source it was read from', () => {
-    /* If someone adds a member to mfg_product_category and not here, THIS is
-       the assertion that should be updated in the same commit — and the
-       property test above then covers the new value automatically. */
-    expect([...CATEGORY_SOURCES.productEnum]).toEqual([
-      'SOFA', 'BEDFRAME', 'ACCESSORY', 'MATTRESS', 'SERVICE',
-      'DINING', 'BEDLINES', 'DIFFUSER', 'CARPET', 'FABRIC_ACCESSORY',
-    ]);
+    /* productEnum IS the one category list, so a new category reaches the
+       property test above with no edit here. */
+    expect(CATEGORY_SOURCES.productEnum).toBe(MFG_PRODUCT_CATEGORIES);
     expect([...CATEGORY_SOURCES.normBuckets]).toEqual([
       'SOFA', 'BEDFRAME', 'MATTRESS', 'ACCESSORY', 'SERVICE', 'OTHERS',
     ]);

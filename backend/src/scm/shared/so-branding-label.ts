@@ -93,6 +93,8 @@
 // ----------------------------------------------------------------------------
 
 /** Company whose house-brand labels are NOT the 2990 ones. */
+import { MFG_PRODUCT_CATEGORIES } from './product-categories';
+
 const HOUZS = 'HOUZS';
 
 /**
@@ -103,8 +105,7 @@ const HOUZS = 'HOUZS';
  */
 export const CATEGORY_SOURCES = {
   /** public/scm.mfg_product_category enum members (schema + migrations 0258-0265). */
-  productEnum: ['SOFA', 'BEDFRAME', 'ACCESSORY', 'MATTRESS', 'SERVICE',
-                'DINING', 'BEDLINES', 'DIFFUSER', 'CARPET', 'FABRIC_ACCESSORY'] as const,
+  productEnum: MFG_PRODUCT_CATEGORIES,
   /** normCategory (backend/src/scm/lib/so-readiness.ts:66) output buckets — what
    *  the SO list, Delivery Planning and the reports actually hand us. */
   normBuckets: ['SOFA', 'BEDFRAME', 'MATTRESS', 'ACCESSORY', 'SERVICE', 'OTHERS'] as const,
