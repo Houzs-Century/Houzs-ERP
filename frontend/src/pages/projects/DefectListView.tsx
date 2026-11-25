@@ -342,7 +342,7 @@ export function DefectListView() {
                   // A defect is settled in the project either by the photo's
                   // action timeline OR by ticking the defect ITEM done/na — honour
                   // both so the badge here matches the project (owner 2026-11-25).
-                  const itemStatus = (r.item_status ?? "").toLowerCase();
+                  const itemStatus = r.item_status.toLowerCase();
                   const itemClosed = itemStatus === "done" || itemStatus === "na";
                   const stage = itemClosed ? "resolved" : defectStage(latest);
                   const canReview = canReviewDefect(user, r.state);
