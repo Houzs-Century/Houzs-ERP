@@ -73,7 +73,12 @@ export type AccountRole =
   /* The monthly commission release (owner 2026-11-25): the bills from the
      company paying the salespeople sit on PREPAYMENT COMMISSION until their
      orders become sales, then move to the commission expense. */
-  | 'COMMISSION_PREPAID' | 'COMMISSION_EXPENSE';
+  | 'COMMISSION_PREPAID' | 'COMMISSION_EXPENSE'
+  /* Where the books opened with the deposits AutoCount took (owner 2026-11-25):
+     each month AutoCount's cash debtor was moved into DEFERRED REVENUE. An
+     order's AutoCount deposit leaves it at the order's sales invoice
+     (acc/autocount-deposits.ts). */
+  | 'AUTOCOUNT_DEFERRED';
 
 /* Fallback = the accountant's own AutoCount codes (migration 0344; owner
    decision 2026-09-02: 迁到 AutoCount 码). Every company carries these codes,
@@ -115,6 +120,7 @@ export const DEFAULT_ROLE_CODES: Record<AccountRole, string> = {
   DEPOSIT_INCOME: '509-0000',    // DEPOSIT PAY BY CUSTOMER (a deposit invoice's credit side)
   COMMISSION_PREPAID: '360-0050', // PREPAYMENT COMMISSION (the monthly commission bills)
   COMMISSION_EXPENSE: '900-C003', // COMMISSION ( EVENT ) (what the release moves them to)
+  AUTOCOUNT_DEFERRED: '440-0000', // DEFERRED REVENUE (the AutoCount deposits the books opened with)
 };
 
 /** The accounts each closing-stock bucket books on (acc/stock-close.ts). */

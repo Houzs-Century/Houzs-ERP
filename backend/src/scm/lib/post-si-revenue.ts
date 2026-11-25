@@ -21,6 +21,7 @@ import { resolveRoles, siLines, DEFAULT_ROLE_CODES } from '../../acc/rules';
 import { splitByItemGroup } from '../../acc/item-group-split';
 import { customerPartyCode } from '../../acc/payments';
 import { applyDepositInvoicesBestEffort } from '../../acc/deposit-invoices';
+import { applyAutoCountDepositBestEffort } from '../../acc/autocount-deposits';
 
 export type PostSiResult =
   | { ok: true; status: 'posted'; jeNo: string; jeId: string; totalSen: number }
@@ -114,6 +115,12 @@ export async function postSiRevenue(sb: any, invoiceNumber: string): Promise<Pos
        raised from it — once, idempotent, never blocking the posting. */
     await applyDepositInvoicesBestEffort(sb, {
       companyId, siId: (si as { id: string }).id, siNumber: si.invoice_number, soDocNo, invoiceDate: si.invoice_date, actor: null,
+    });
+    /* The deposit the order took in AutoCount leaves DEFERRED REVENUE here, onto
+       the same AR party — once per order (owner 2026-11-25). */
+    await applyAutoCountDepositBestEffort(sb, {
+      companyId, siId: (si as { id: string }).id, siNumber: si.invoice_number, soDocNo, invoiceDate: si.invoice_date,
+      party: { code: partyCode, name: si.debtor_name ?? null }, actor: null,
     });
     if (r.status === 'already_posted') return { ok: true, status: 'already_posted', jeNo: r.jeNo, jeId: r.jeId };
     return { ok: true, status: 'posted', jeNo: r.jeNo, jeId: r.jeId, totalSen };

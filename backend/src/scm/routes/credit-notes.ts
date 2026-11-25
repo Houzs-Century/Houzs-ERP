@@ -317,14 +317,15 @@ export const creditNoteDetailHandler = async (c: any): Promise<Response> => {
   }
   /* A customer note answering a deposit invoice says what it answers, leaves no
      credit on the customer, and a close-out names the final invoice it closed
-     against — its print's KNOCKED OFF AGAINST. */
+     against — its print's KNOCKED OFF AGAINST; an AutoCount deposit note names
+     the invoice it was raised at the same way. */
   if (found.note.kind === 'CN') {
     const papers = await depositPapers(sb, co.companyId, [found.note]);
     if (!papers.ok) return c.json({ error: 'load_failed', reason: papers.reason }, 500);
     const paper = papers.value.get(String(found.note.id)) ?? null;
     credit.depositPaper = paper;
     if (paper) credit.leftSen = 0;
-    if (paper?.kind === 'closes' && found.note.sales_invoice_id) {
+    if ((paper?.kind === 'closes' || paper?.kind === 'autocount') && found.note.sales_invoice_id) {
       const { data: si, error: siErr } = await scopeToCompany(sb.from('sales_invoices').select('id, invoice_number, invoice_date, total_sen').eq('id', found.note.sales_invoice_id), c).maybeSingle();
       if (siErr) return c.json({ error: 'load_failed', reason: siErr.message }, 500);
       const s = si as Row | null;
