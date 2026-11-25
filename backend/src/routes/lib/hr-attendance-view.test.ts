@@ -58,11 +58,12 @@ describe("attendanceView", () => {
 
 describe("planPunch", () => {
   const today = (o: Partial<{ clock_in_at: string | null; clock_out_at: string | null }>) => ({ id: 5, work_date: "2026-10-22", clock_in_at: null, clock_out_at: null, ...o });
-  test("clock in: new day inserts, a second tap is a no-op, a closed day is refused", () => {
+  test("clock in: new day inserts, a second tap is a no-op, a closed day reopens", () => {
     expect(planPunch("CLOCK_IN", null, null)).toEqual({ kind: "insert" });
     expect(planPunch("CLOCK_IN", today({}), null)).toEqual({ kind: "stamp-in", rowId: 5 });
     expect(planPunch("CLOCK_IN", today({ clock_in_at: at("2026-10-22T08:00:00") }), { id: 5 })).toEqual({ kind: "already-in", rowId: 5 });
-    expect(planPunch("CLOCK_IN", today({ clock_in_at: at("2026-10-22T08:00:00"), clock_out_at: at("2026-10-22T18:02:00") }), null)).toEqual({ kind: "already-out", rowId: 5, clock: "18:02" });
+    // Back on duty after clocking out (multi-punch): the day reopens, not refused.
+    expect(planPunch("CLOCK_IN", today({ clock_in_at: at("2026-10-22T08:00:00"), clock_out_at: at("2026-10-22T18:02:00") }), null)).toEqual({ kind: "reopen", rowId: 5 });
   });
   test("clock out closes the open punch even from yesterday; nothing open is refused", () => {
     expect(planPunch("CLOCK_OUT", null, { id: 4 })).toEqual({ kind: "stamp-out", rowId: 4 });
@@ -99,6 +100,8 @@ describe("punchGateRefusal", () => {
     expect(punchGateRefusal(g, "insert", false, inSite)?.error).toBe("photo_required");
     expect(punchGateRefusal(g, "stamp-in", false, inSite)?.error).toBe("photo_required");
     expect(punchGateRefusal(g, "stamp-out", false, inSite)?.error).toBe("photo_required");
+    // Going back on duty (reopen) is a recording punch, so the gate still applies.
+    expect(punchGateRefusal(g, "reopen", false, inSite)?.error).toBe("photo_required");
     expect(punchGateRefusal(g, "insert", true, inSite)).toBeNull();
   });
 
@@ -108,6 +111,7 @@ describe("punchGateRefusal", () => {
     const far = punchGateRefusal(g, "insert", true, offSite);
     expect(far?.error).toBe("off_site");
     expect(far?.message).toContain("KL WAREHOUSE");
+    expect(punchGateRefusal(g, "reopen", true, offSite)?.error).toBe("off_site");
     expect(punchGateRefusal(g, "stamp-out", true, noGps)?.message).toContain("location");
   });
 

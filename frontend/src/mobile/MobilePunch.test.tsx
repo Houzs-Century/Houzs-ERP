@@ -70,3 +70,17 @@ describe("punch screen — live distance to the site", () => {
     await waitFor(() => expect(screen.getByText(/Turn on location/)).toBeTruthy());
   });
 });
+
+describe("punch screen — multi-punch", () => {
+  const side = (clock: string) => ({ clock, geo: "IN" as const, siteName: "KL WAREHOUSE", distanceM: 40, source: "PHONE" });
+  const doneDay = { id: 1, workDate: ME.today, status: "PRESENT", in: side("08:00"), out: side("18:00"), open: false, lateMin: 0, otMin: 0, spanMin: 600, notes: null };
+
+  it("done for today: offers a re-clock-in, not a dead 'Done' button", async () => {
+    api.get.mockResolvedValue({ ...ME, todayDay: doneDay, recent: [doneDay] });
+    show();
+    await waitFor(() => expect(screen.getByText(/Clock in again/)).toBeTruthy());
+    const btn = screen.getByText(/Clock in again/).closest("button") as HTMLButtonElement | null;
+    expect(btn?.disabled).toBe(false);
+    expect(screen.queryByText(/Done for today:/)).toBeTruthy();
+  });
+});
