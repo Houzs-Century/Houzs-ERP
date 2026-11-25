@@ -2,9 +2,10 @@
 // list — the design's groups and order, today's sidebar gates, the open report
 // lit, hover / tap / pin — the header ("Finance · Reports", the report's name,
 // its grey line, its actions), the shared date range in the address and the
-// Excel / PDF / Print buttons.
+// Excel / PDF / Print buttons. The P&Ls are one entry with a picker across the
+// top of each (owner 2026-11-25).
 
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
@@ -70,8 +71,13 @@ describe('the report catalog', () => {
       'Statements', 'Who owes whom', 'Sales & collection', 'Events & logistics', 'Card money', 'Plan', 'Books', 'Audit',
     ]);
     expect(REPORT_CATALOG.map((r) => r.id)).toEqual([
-      'pnl', 'departments', 'bs', 'rp', 'tb', 'ar', 'ap', 'collection', 'fair', 'performance', 'products', 'changes', 'changesum', 'sotodo',
-      'events', 'commission', 'logistics', 'charges', 'forecast', 'dashboard', 'je', 'gl', 'corrections',
+      'pnl', 'departments', 'performance', 'changesum', 'forecast', 'bs', 'rp', 'tb', 'ar', 'ap', 'collection', 'fair', 'products', 'changes', 'sotodo',
+      'events', 'commission', 'logistics', 'charges', 'dashboard', 'je', 'gl', 'corrections',
+    ]);
+    /* The P&Ls, in the picker's order, by their names there — each still a report of its own, in Statements. */
+    expect(REPORT_CATALOG.filter((r) => r.pnlPick).map((r) => [r.id, r.pnlPick, r.group])).toEqual([
+      ['pnl', 'Actual', 'statements'], ['departments', 'Department', 'statements'], ['performance', 'Performance', 'statements'],
+      ['changesum', 'Product changes', 'statements'], ['forecast', 'Forecast', 'statements'],
     ]);
     for (const r of REPORT_CATALOG) {
       if (r.tab) expect(r.label).toBe(ACCOUNTING_TAB_TITLES[r.tab]);
@@ -113,7 +119,7 @@ describe('the report list', () => {
     const nav = screen.getByRole('navigation', { name: 'Reports' });
     const statements = within(nav).getByRole('group', { name: 'Statements' });
     expect(within(statements).getAllByRole('link').map((a) => a.textContent)).toEqual([
-      ACCOUNTING_TAB_TITLES.pnl, ACCOUNTING_TAB_TITLES.departments, ACCOUNTING_TAB_TITLES.bs, ACCOUNTING_TAB_TITLES.rp,
+      'P&L', ACCOUNTING_TAB_TITLES.bs, ACCOUNTING_TAB_TITLES.rp,
     ]);
     /* Books and Forecasting are closed to this reader, and the Sales report keeps its cohort gate. */
     expect(within(nav).queryByRole('group', { name: 'Books' })).toBeNull();
@@ -123,7 +129,9 @@ describe('the report list', () => {
     const lit = within(nav).getAllByRole('link').filter((a) => a.getAttribute('aria-current') === 'page');
     expect(lit.map((a) => a.getAttribute('aria-label') ?? a.textContent)).toEqual([ACCOUNTING_TAB_TITLES.bs, ACCOUNTING_TAB_TITLES.bs]);
     /* A name's description shows on hover. */
-    expect(within(statements).getByText(ACCOUNTING_TAB_TITLES.pnl).closest('a')!.getAttribute('title')).toMatch(/% of sales/);
+    expect(within(statements).getByText(ACCOUNTING_TAB_TITLES.bs).closest('a')!.getAttribute('title')).toMatch(/% of total assets/);
+    /* A report that is not a P&L has no P&L picker. */
+    expect(screen.queryByRole('navigation', { name: 'Choose a P&L' })).toBeNull();
   });
 
   test('Books pages open from the list with in=reports, and every link carries the range in use', () => {
@@ -195,6 +203,123 @@ describe('the report list', () => {
     at('/scm/accounting?tab=bs', <ReportShell report="bs"><p>alone</p></ReportShell>);
     expect(screen.getByText('alone')).toBeTruthy();
     expect(screen.getAllByRole('navigation', { name: 'Reports' })).toHaveLength(1);
+  });
+});
+
+describe('the P&Ls as one entry, with a picker across the top (owner 2026-11-25)', () => {
+  const PICKS = ['Actual', 'Department', 'Performance', 'Product changes', 'Forecast'];
+  const picker = () => screen.getByRole('navigation', { name: 'Choose a P&L' });
+
+  test('the list shows one P&L where the five were, lit on any of them, opening the first the reader may open', () => {
+    auth.access = new Set(['scm.finance', 'scm.finance.reports', 'scm.finance.forecast']);
+    at('/scm/accounting?tab=changesum&from=2026-09-01&to=2026-09-30', <ReportShell report="changesum"><p>body</p></ReportShell>);
+    const nav = screen.getByRole('navigation', { name: 'Reports' });
+    const names = within(nav).getAllByRole('link').map((a) => a.getAttribute('aria-label') ?? a.textContent);
+    for (const gone of ['Department P&L', 'Performance P&L', 'Product changes P&L', 'Forecast P&L']) expect(names).not.toContain(gone);
+    /* Once in the strip, once in the full list. */
+    const entry = within(nav).getAllByRole('link', { name: 'P&L' });
+    expect(entry).toHaveLength(2);
+    for (const a of entry) {
+      expect(a.getAttribute('href')).toBe('/scm/accounting?tab=pnl&from=2026-09-01&to=2026-09-30');
+      expect(a.getAttribute('aria-current')).toBe('page');
+    }
+    expect(entry[1]!.getAttribute('title')).toMatch(/^Every P&L in one place/);
+    /* The Plan group keeps the Dashboard alone. */
+    expect(within(within(nav).getByRole('group', { name: 'Plan' })).getAllByRole('link').map((a) => a.textContent)).toEqual(['Dashboard']);
+    expect(within(within(nav).getByRole('group', { name: 'Sales & collection' })).getAllByRole('link').map((a) => a.textContent))
+      .not.toContain(ACCOUNTING_TAB_TITLES.performance);
+  });
+
+  test('the picker opens each P&L at its own address, with the range in use; the open one lit, each saying what it reads', () => {
+    auth.access = new Set(['scm.finance', 'scm.finance.reports', 'scm.finance.forecast']);
+    at('/scm/accounting?tab=performance&from=2026-09-01&to=2026-09-30', <ReportShell report="performance"><p>body</p></ReportShell>);
+    const choices = within(picker()).getAllByRole('link');
+    expect(choices.map((a) => a.textContent)).toEqual(PICKS);
+    expect(choices.map((a) => a.getAttribute('href'))).toEqual([
+      '/scm/accounting?tab=pnl&from=2026-09-01&to=2026-09-30',
+      '/scm/accounting?tab=departments&from=2026-09-01&to=2026-09-30',
+      '/scm/accounting?tab=performance&from=2026-09-01&to=2026-09-30',
+      '/scm/accounting?tab=changesum&from=2026-09-01&to=2026-09-30',
+      '/scm/forecast?from=2026-09-01&to=2026-09-30',
+    ]);
+    expect(choices.filter((a) => a.getAttribute('aria-current') === 'page').map((a) => a.textContent)).toEqual(['Performance']);
+    expect(choices[2]!.getAttribute('title')).toBe(REPORT_LOOK.performance.desc);
+    /* The header still names the P&L open. */
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe(ACCOUNTING_TAB_TITLES.performance);
+  });
+
+  test('with no dates in the address the choices carry the range picked earlier in the tab, never the bare default', () => {
+    auth.access = new Set(['scm.finance', 'scm.finance.reports', 'scm.finance.forecast']);
+    at('/scm/accounting?tab=pnl', <ReportShell report="pnl"><p>body</p></ReportShell>);
+    expect(within(picker()).getByRole('link', { name: 'Department' }).getAttribute('href')).toBe('/scm/accounting?tab=departments');
+    window.sessionStorage.setItem('fin-report-range', JSON.stringify({ from: '2026-07-01', to: '2026-09-30' }));
+    at('/scm/forecast', <ReportShell report="forecast"><p>body</p></ReportShell>);
+    const pickers = screen.getAllByRole('navigation', { name: 'Choose a P&L' });
+    expect(within(pickers.at(-1)!).getByRole('link', { name: 'Actual' }).getAttribute('href'))
+      .toBe('/scm/accounting?tab=pnl&from=2026-07-01&to=2026-09-30');
+  });
+
+  test('a reader is offered only the P&Ls they may open; with one, there is nothing to pick', () => {
+    at('/scm/accounting?tab=pnl', <ReportShell report="pnl"><p>body</p></ReportShell>);
+    expect(within(picker()).getAllByRole('link').map((a) => a.textContent)).toEqual(PICKS.slice(0, 4));
+    cleanup();
+    /* The Forecast P&L and the Dashboard alone: the P&L entry opens the Forecast P&L, and no picker. */
+    auth.access = new Set(['scm.finance', 'scm.finance.forecast']);
+    at('/scm/forecast', <ReportShell report="forecast"><p>body</p></ReportShell>);
+    const nav = screen.getByRole('navigation', { name: 'Reports' });
+    expect(within(nav).getAllByRole('link', { name: 'P&L' }).map((a) => a.getAttribute('href'))).toEqual(['/scm/forecast', '/scm/forecast']);
+    expect(within(within(nav).getByRole('group', { name: 'Statements' })).getAllByRole('link').map((a) => a.textContent)).toEqual(['P&L']);
+    expect(screen.queryByRole('navigation', { name: 'Choose a P&L' })).toBeNull();
+  });
+
+  test('an old link to a P&L still opens it as a report, with the picker', () => {
+    for (const tab of ['pnl', 'departments', 'performance', 'changesum'] as const) {
+      expect(reportOfAccountingTab(tab, false)?.pnlPick, tab).toBeTruthy();
+    }
+    at('/scm/accounting?tab=departments', <ReportShell report="departments"><p>body</p></ReportShell>);
+    expect(within(picker()).getAllByRole('link').filter((a) => a.getAttribute('aria-current') === 'page').map((a) => a.textContent)).toEqual(['Department']);
+    expect(screen.getByText('body')).toBeTruthy();
+  });
+
+  test('on a narrow screen the choices scroll sideways to keep the open one in view', () => {
+    auth.access = new Set(['scm.finance', 'scm.finance.reports', 'scm.finance.forecast']);
+    /* The track shows 0–200 px; Forecast, the last choice, sits at 380–460 px, Actual at -90 – -40 px. */
+    const box = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      const r = this.getAttribute('aria-current') !== 'page' ? { left: 0, right: 200 }
+        : this.textContent === 'Forecast' ? { left: 380, right: 460 } : { left: -90, right: -40 };
+      return { ...r, top: 0, bottom: 26, width: r.right - r.left, height: 26, x: r.left, y: 0, toJSON: () => r } as DOMRect;
+    });
+    const tree = (report: 'forecast' | 'pnl') => (
+      <MemoryRouter initialEntries={['/scm/forecast']}>
+        <Routes><Route path="*" element={<ReportShell report={report}><p>body</p></ReportShell>} /></Routes>
+      </MemoryRouter>
+    );
+    try {
+      const { rerender } = render(tree('forecast'));
+      const track = within(picker()).getByRole('link', { name: 'Forecast' }).parentElement!;
+      expect(track.scrollLeft).toBe(260);
+      /* The same picker, Actual now open: back left by its 90 px. */
+      rerender(tree('pnl'));
+      expect(track.scrollLeft).toBe(170);
+      /* Forecast open again: right by 260 px; a re-render that opens nothing new moves nothing. */
+      rerender(tree('forecast'));
+      rerender(tree('forecast'));
+      expect(track.scrollLeft).toBe(430);
+    } finally {
+      box.mockRestore();
+    }
+  });
+
+  test('the picker steps aside with the header buttons while the Layout editor stands in for the report', async () => {
+    const Report = () => (
+      <>
+        <p>the statement</p>
+        <InPlaceOfReport><section aria-label="Layout · P&L">the editor</section></InPlaceOfReport>
+      </>
+    );
+    at('/scm/accounting?tab=pnl', <ReportShell report="pnl"><Report /></ReportShell>);
+    await waitFor(() => expect(screen.getByRole('region', { name: 'Layout · P&L' })).toBeTruthy());
+    expect(picker().parentElement!.className).toMatch(/asideNow/);
   });
 });
 

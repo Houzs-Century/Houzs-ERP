@@ -9,18 +9,21 @@
 //
 // The reports are reports-catalog's, filtered by today's sidebar gates — the
 // list shows a report exactly where the sidebar shows its entry — and each link
-// carries the range in use, so the dates follow the reader.
+// carries the range in use, so the dates follow the reader. The P&Ls are one
+// entry, P&L (owner 2026-11-25), where the first of them sits: it opens the
+// first P&L the reader may open and is lit on any; the picker across the top of
+// each P&L (PnlPicker) opens the others.
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { List, Pin, PinOff } from 'lucide-react';
+import { List, Pin, PinOff, type LucideIcon } from 'lucide-react';
 import { useAuth } from '../../../auth/AuthContext';
 import { NAV_TABS, type NavTab } from '../../../components/Sidebar';
 import { makeNavFilter } from '../../../components/navFilter';
-import { REPORT_CATALOG, REPORT_GROUPS, reportHref, type ReportId, type ReportItem, type ReportRange } from '../reports-catalog';
+import { REPORT_CATALOG, REPORT_GROUPS, reportById, reportHref, type ReportId, type ReportItem, type ReportRange } from '../reports-catalog';
 import { readRailPinned, writeRailPinned } from './reportPrefs';
-import { REPORT_LOOK } from './reportListLook';
+import { PNL_ENTRY_LOOK, REPORT_LOOK } from './reportListLook';
 import s from './ReportShell.module.css';
 
 const OPEN_DELAY_MS = 90;
@@ -43,9 +46,33 @@ export function useVisibleReports(): readonly ReportItem[] {
   }, [user, can, pageAccess]);
 }
 
-export function ReportRail({ current, reports, range, pinned, onPinned }: {
+/** One entry of the list: a report, or the P&Ls as one. */
+export type ReportListEntry = {
+  /** The report it opens: for the P&Ls, the first the reader may open. */
+  item: ReportItem;
+  label: string;
+  icon: LucideIcon;
+  desc: string;
+  /** Lit while this report is open — for the P&Ls, while any of them is. */
+  isOn: (current: ReportId) => boolean;
+};
+
+/** The list's entries for the reports a reader may open, in the catalog's order. */
+export function reportListEntries(reports: readonly ReportItem[]): ReportListEntry[] {
+  const firstPnl = reports.find((r) => r.pnlPick);
+  return reports.flatMap((r): ReportListEntry[] => {
+    if (!r.pnlPick) {
+      return [{ item: r, label: r.label, ...REPORT_LOOK[r.id], isOn: (current) => current === r.id }];
+    }
+    return r === firstPnl
+      ? [{ item: r, ...PNL_ENTRY_LOOK, isOn: (current) => reportById(current).pnlPick != null }]
+      : [];
+  });
+}
+
+export function ReportRail({ current, entries, range, pinned, onPinned }: {
   current: ReportId;
-  reports: readonly ReportItem[];
+  entries: readonly ReportListEntry[];
   /** The range the links carry; null opens each report on its own dates. */
   range: ReportRange | null;
   pinned: boolean;
@@ -94,7 +121,7 @@ export function ReportRail({ current, reports, range, pinned, onPinned }: {
   const togglePin = () => { clear(); setOpen(false); onPinned(!pinned); };
 
   const groups = REPORT_GROUPS
-    .map((g) => ({ ...g, items: reports.filter((r) => r.group === g.id) }))
+    .map((g) => ({ ...g, items: entries.filter((e) => e.item.group === g.id) }))
     .filter((g) => g.items.length > 0);
 
   return (
@@ -119,16 +146,16 @@ export function ReportRail({ current, reports, range, pinned, onPinned }: {
         {groups.map((g) => (
           <div key={g.id} className={s.stripGroup}>
             <span className={s.stripRule} aria-hidden />
-            {g.items.map((r) => {
-              const Icon = REPORT_LOOK[r.id].icon;
-              const on = r.id === current;
+            {g.items.map((e) => {
+              const Icon = e.icon;
+              const on = e.isOn(current);
               return (
                 <Link
-                  key={r.id}
-                  to={reportHref(r, range)}
+                  key={e.item.id}
+                  to={reportHref(e.item, range)}
                   className={`${s.stripItem} ${on ? s.stripItemOn : ''}`}
-                  title={r.label}
-                  aria-label={r.label}
+                  title={e.label}
+                  aria-label={e.label}
                   aria-current={on ? 'page' : undefined}
                   onClick={picked}
                 >
@@ -157,20 +184,20 @@ export function ReportRail({ current, reports, range, pinned, onPinned }: {
         {groups.map((g) => (
           <div key={g.id} role="group" aria-label={g.label}>
             <div className={s.groupLabel}>{g.label}</div>
-            {g.items.map((r) => {
-              const Icon = REPORT_LOOK[r.id].icon;
-              const on = r.id === current;
+            {g.items.map((e) => {
+              const Icon = e.icon;
+              const on = e.isOn(current);
               return (
                 <Link
-                  key={r.id}
-                  to={reportHref(r, range)}
+                  key={e.item.id}
+                  to={reportHref(e.item, range)}
                   className={`${s.item} ${on ? s.itemOn : ''}`}
-                  title={REPORT_LOOK[r.id].desc}
+                  title={e.desc}
                   aria-current={on ? 'page' : undefined}
                   onClick={picked}
                 >
                   <Icon size={13} strokeWidth={1.75} aria-hidden className={s.itemIcon} />
-                  <span className={s.itemLabel}>{r.label}</span>
+                  <span className={s.itemLabel}>{e.label}</span>
                 </Link>
               );
             })}
