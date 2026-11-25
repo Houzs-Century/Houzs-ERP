@@ -14,9 +14,9 @@
 //
 // WHICH ORDERS. The rule the hook follows, read in SQL: an order of the company
 // with AutoCount money (payment rows of method 'imported' above nought, dated
-// before the books' first day) whose earliest live, non-migrated sales invoice
-// dated on or after the books' first day has posted its revenue, and that
-// carries no live AutoCount deposit note yet. EXCLUDE (comma list of order
+// before the books' first day), a live, non-migrated sales invoice dated on or
+// after the books' first day that has posted its revenue (the earliest such is
+// the note's), and no live AutoCount deposit note yet. EXCLUDE (comma list of order
 // numbers) leaves orders out — one whose AutoCount deposit Finance already took
 // out of DEFERRED REVENUE by hand.
 //
@@ -73,23 +73,28 @@ async function readPlan(sql) {
   const [books] = await sql`SELECT books_start_date FROM scm.acc_company_settings WHERE company_id = ${COMPANY_ID}`;
   if (!books?.books_start_date) throw new Error(`company ${COMPANY_ID} has no books start — nothing to offset.`);
   const start = day(books.books_start_date);
+  /* The earliest invoice that POSTED its revenue — an RM 0 invoice posts none,
+     so it never stands in front of the order's real one. */
   const rows = await sql`
     WITH ac AS (
       SELECT p.so_doc_no, SUM(p.amount_sen)::bigint AS ac_sen
         FROM scm.mfg_sales_order_payments p
        WHERE p.company_id = ${COMPANY_ID} AND p.method = 'imported' AND p.amount_sen > 0 AND p.paid_at < ${start}::date
        GROUP BY p.so_doc_no),
-    si AS (
-      SELECT DISTINCT ON (s.so_doc_no) s.id, s.invoice_number, s.invoice_date, s.so_doc_no, s.debtor_code, s.debtor_name, s.total_sen
-        FROM scm.sales_invoices s
-       WHERE s.company_id = ${COMPANY_ID} AND s.so_doc_no IS NOT NULL
+    live AS (
+      SELECT s.id, s.invoice_number, s.invoice_date, s.so_doc_no, s.debtor_code, s.debtor_name, s.total_sen,
+             EXISTS (SELECT 1 FROM scm.journal_entries j
+                      WHERE j.company_id = ${COMPANY_ID} AND j.source_type = 'SI' AND j.source_doc_no = s.invoice_number
+                        AND j.posted AND NOT COALESCE(j.reversed, FALSE)) AS revenue_posted
+        FROM scm.sales_invoices s JOIN ac ON ac.so_doc_no = s.so_doc_no
+       WHERE s.company_id = ${COMPANY_ID}
          AND s.status NOT IN ('DRAFT', 'CANCELLED') AND COALESCE(s.migrated_no_stock, FALSE) = FALSE
-         AND s.invoice_date >= ${start}::date
-       ORDER BY s.so_doc_no, s.invoice_date, s.invoice_number)
-    SELECT si.id, si.invoice_number, si.invoice_date, si.so_doc_no, si.debtor_code, si.debtor_name, si.total_sen, ac.ac_sen,
-           EXISTS (SELECT 1 FROM scm.journal_entries j
-                    WHERE j.company_id = ${COMPANY_ID} AND j.source_type = 'SI' AND j.source_doc_no = si.invoice_number
-                      AND j.posted AND NOT COALESCE(j.reversed, FALSE)) AS revenue_posted
+         AND s.invoice_date >= ${start}::date),
+    si AS (
+      SELECT DISTINCT ON (live.so_doc_no) live.*
+        FROM live
+       ORDER BY live.so_doc_no, live.revenue_posted DESC, live.invoice_date, live.invoice_number)
+    SELECT si.*, ac.ac_sen
       FROM si JOIN ac ON ac.so_doc_no = si.so_doc_no
      WHERE NOT EXISTS (SELECT 1 FROM scm.acc_credit_notes n
                         WHERE n.company_id = ${COMPANY_ID} AND n.kind = 'CN' AND n.so_doc_no = si.so_doc_no
@@ -131,7 +136,7 @@ console.log(`Company ${COMPANY_ID}, books from ${plan.start}: ${plan.take.length
 for (const [m, t] of [...byMonth].sort()) console.log(`  invoices of ${m}: ${t.orders} order(s), ${rm(t.sen)}`);
 for (const r of plan.take) console.log(`  ${r.so_doc_no} at ${r.invoice_number} (${day(r.invoice_date)}): ${rm(r.ac_sen)}`);
 if (plan.unposted.length > 0) {
-  console.log(`Left for their invoice's own posting (its revenue is not posted yet), ${plan.unposted.length}:`);
+  console.log(`Left for their invoice's own posting (no invoice of theirs has posted revenue yet), ${plan.unposted.length}:`);
   for (const r of plan.unposted) console.log(`  ${r.so_doc_no} at ${r.invoice_number} (${day(r.invoice_date)})`);
 }
 if (plan.excluded.length > 0) {

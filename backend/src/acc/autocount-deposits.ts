@@ -197,16 +197,17 @@ export async function applyAutoCountDepositBestEffort(
   }
 }
 
-/** The order's earliest live, non-migrated invoice dated after the opening day, other than `exceptId`. */
+/** The order's earliest live, non-migrated invoice dated after the opening day
+    that bills something (an RM 0 invoice posts no revenue), other than `exceptId`. */
 async function nextInvoiceOf(sb: Db, companyId: number, soDocNo: string, exceptId: string, openingDate: string): Promise<{ ok: true; si: Row | null } | { ok: false; reason: string }> {
   const { data, error } = await sb.from('sales_invoices')
-    .select('id, invoice_number, invoice_date, status, so_doc_no, debtor_code, debtor_name, migrated_no_stock')
+    .select('id, invoice_number, invoice_date, status, so_doc_no, debtor_code, debtor_name, total_sen, migrated_no_stock')
     .eq('company_id', companyId).eq('so_doc_no', soDocNo)
     .not('status', 'in', '(DRAFT,CANCELLED)')
     .order('invoice_date').order('invoice_number');
   if (error) return { ok: false, reason: `invoices: ${error.message}` };
   const si = ((data ?? []) as Row[]).find((r) => String(r.id) !== exceptId && r.migrated_no_stock !== true
-    && String(r.invoice_date ?? '').slice(0, 10) > openingDate) ?? null;
+    && Number(r.total_sen ?? 0) > 0 && String(r.invoice_date ?? '').slice(0, 10) > openingDate) ?? null;
   return { ok: true, si };
 }
 

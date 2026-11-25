@@ -143,6 +143,8 @@ describe('the AutoCount deposit at the order\'s invoice', () => {
   test('a cancelled invoice cancels its note by contra and the note is raised again on the order\'s next live invoice', async () => {
     const sb = harness();
     invoice(sb, 'si-1', 'HC-SI-2609-001', '2026-09-20', 100_000);
+    /* An RM 0 invoice bills nothing and posts nothing: the note never moves onto it. */
+    invoice(sb, 'si-0', 'HC-SI-2609-007', '2026-09-25', 0);
     invoice(sb, 'si-2', 'HC-SI-2610-004', '2026-10-03', 100_000);
     await postSiRevenue(sb, 'HC-SI-2609-001');
     await postSiRevenue(sb, 'HC-SI-2610-004');
