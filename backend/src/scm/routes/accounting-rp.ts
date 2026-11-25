@@ -22,7 +22,8 @@
 //   · money the voucher paid beyond what it settled → the creditor control
 //     itself (owner 2026-11-05), until the advance is knocked off against a
 //     bill: then it reads as what it settled;
-//   · paid out of a trade-finance account → its own line, TF-AP.
+//   · paid out of a trade-finance account, or paid by a trade-finance drawdown
+//     booked through another bank → its own line, TF-AP.
 // The opening journal is Balance b/f, never a receipt or a payment.
 // With `party=1` (AutoCount's "display trade debtor/creditor in details") the
 // control-account rows are named by the party instead and are not split.
@@ -176,6 +177,61 @@ const OPENING_BILLS = 'OPENING-BILLS';
 const OPENING_BILLS_NAME = 'Opening bills (AutoCount)';
 /* A money account is a trade-finance one by its name (CASH AT BANK - MAYBANK (TRADE FINANCE)). */
 const isTradeFinanceAccount = (name: string | null | undefined): boolean => /TRADE\s*FINANCE/i.test(String(name ?? ''));
+/* Owner 2026-11-25 (不是应该和下面 drawdown 一样吗): a drawdown is the bank paying a supplier, so the
+   same money is Drawdown in and TF-AP out, whichever bank Finance books it through. The facility
+   is a liability named TRADE FINANCE that is no money account (460-0009). */
+const DRAWDOWN_PAIR_DAYS = 7;
+const dayNo = (d: string): number => Math.round(Date.parse(`${d}T00:00:00Z`) / 86_400_000);
+const onFacility = (l: GlLine, moneySet: Set<string>): boolean => !moneySet.has(l.account_code) && isTradeFinanceAccount(l.account_name);
+
+/** The supplier-payment vouchers a drawdown paid through a bank that is not a trade-finance one:
+    a drawdown line (that bank debited in a journal crediting the facility) pairs with the voucher
+    out of the same bank that puts the same amount on the creditor control, the nearest within
+    DRAWDOWN_PAIR_DAYS days either way; each line and each voucher once. */
+export function drawdownPaidVouchers(journals: Iterable<[string, GlLine[]]>, moneySet: Set<string>, tradeFinance: Set<string>, apControls: Set<string>): Set<string> {
+  const draws: Array<{ day: number; account: string; sen: number }> = [];
+  const vouchers: Array<{ jeNo: string; day: number; account: string; sen: number }> = [];
+  for (const [jeNo, lines] of journals) {
+    if (lines.some(isOpeningJournal)) continue; // the books' starting balances, not a drawdown
+    if (lines.some((l) => onFacility(l, moneySet) && sen(l) < 0)) {
+      for (const l of lines) {
+        if (moneySet.has(l.account_code) && !tradeFinance.has(l.account_code) && sen(l) > 0) draws.push({ day: dayNo(l.entry_date), account: l.account_code, sen: sen(l) });
+      }
+      continue;
+    }
+    if (String(lines[0]?.source_type ?? '').replace(/_REVERSAL$/, '') !== 'PV') continue;
+    const banks = [...new Set(lines.filter((l) => moneySet.has(l.account_code)).map((l) => l.account_code))];
+    const owed = lines.filter((l) => apControls.has(l.account_code)).reduce((s, l) => s + sen(l), 0);
+    if (banks.length === 1 && !tradeFinance.has(banks[0]!) && owed > 0) vouchers.push({ jeNo, day: dayNo(lines[0]!.entry_date), account: banks[0]!, sen: owed });
+  }
+  const paid = new Set<string>();
+  for (const d of draws.sort((a, b) => a.day - b.day)) {
+    let best: { jeNo: string; gap: number } | null = null;
+    for (const v of vouchers) {
+      if (paid.has(v.jeNo) || v.account !== d.account || v.sen !== d.sen) continue;
+      const gap = Math.abs(v.day - d.day);
+      if (gap <= DRAWDOWN_PAIR_DAYS && (best === null || gap < best.gap)) best = { jeNo: v.jeNo, gap };
+    }
+    if (best) paid.add(best.jeNo);
+  }
+  return paid;
+}
+
+/** A journal on the facility whose lines pair off into equal opposite amounts (a drawdown into one
+    bank with a bank charge taken from another) is read pair by pair, so the charge does not shave
+    the drawdown; any other journal is read whole. */
+function facilityParts(lines: GlLine[], moneySet: Set<string>): GlLine[][] {
+  if (lines.length < 4 || !lines.some((l) => onFacility(l, moneySet))) return [lines];
+  const left = [...lines].sort((a, b) => Number(moneySet.has(b.account_code)) - Number(moneySet.has(a.account_code)));
+  const parts: GlLine[][] = [];
+  while (left.length > 0) {
+    const a = left.shift()!;
+    const i = left.findIndex((b) => sen(b) !== 0 && sen(b) === -sen(a));
+    if (i < 0) return [lines];
+    parts.push([a, left.splice(i, 1)[0]!]);
+  }
+  return parts;
+}
 /* The opening journal (acc/opening-balance) is the books' starting position, not a
    receipt or a payment: its money legs are Balance b/f whatever their date. */
 const isOpeningJournal = (l: GlLine): boolean => String(l.source_type ?? '').replace(/_REVERSAL$/, '') === OPENING_SOURCE;
@@ -481,6 +537,8 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
       byJe.set(jeNo, net === 0 ? rest : [...rest, { ...onCard[0]!, account_code: CARD_COLUMN, account_name: CARD_COLUMN_NAME, debit_sen: Math.max(net, 0), credit_sen: Math.max(-net, 0) }]);
     }
   }
+  const drawdownPaid = drawdownPaidVouchers(byJe, moneySet, tradeFinance, apControls);
+  const readable: Array<[string, GlLine[]]> = [...byJe].flatMap(([jeNo, lines]) => facilityParts(lines, moneySet).map((part): [string, GlLine[]] => [jeNo, part]));
   const supplierPvs = supplierVouchersOf(loaded.period, colSet, apControls);
   const splits = byParty ? { ok: true as const, byPv: new Map<string, Split[]>() } : await src.splits(supplierPvs, controlCodes);
   const customerPayments = [...new Set([...byJe.values()].flatMap((ls) => {
@@ -527,7 +585,7 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
     row.totalSen += d;
   };
 
-  for (const [jeNo, lines] of byJe) {
+  for (const [jeNo, lines] of readable) {
     const moneyLegs = lines.filter((l) => colSet.has(l.account_code));
     if (moneyLegs.length === 0) continue;
     if (lines.some(isOpeningJournal)) continue; // counted in Balance b/f above
@@ -571,8 +629,9 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
         let placed = 0;
         const control = counterparts.find((l) => apControls.has(l.account_code))!;
         const supplierMeta = { ...meta, party: control.party_name ?? null };
-        /* Owner 2026-11-05: what a trade-finance account pays a supplier is its own line;
-           money paid ahead of a bill reads as the creditor control. */
+        /* Owner 2026-11-05: what a trade-finance account pays a supplier is its own line, as is
+           (2026-11-25) what a drawdown paid through another bank; money paid ahead of a bill
+           reads as the creditor control. */
         const toControl = (amt: number) => add(side, control.account_code, control.account_code, String(control.account_name ?? control.account_code), leg.account_code, amt, supplierMeta);
         /* Owner 2026-11-25: an opening bill reads as Finance set it for the bill or its supplier,
            else by the supplier's own bills in the ERP, else the creditor control. */
@@ -582,7 +641,7 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
           else if (home.kind === 'account') add(side, home.code, home.code, home.name, leg.account_code, amt, supplierMeta);
           else add(side, `${OPENING_BILLS}:${home.id}`, null, OPENING_BILLS_NAME, leg.account_code, amt, supplierMeta, undefined, undefined, home.id);
         };
-        const tf = tradeFinance.has(leg.account_code);
+        const tf = tradeFinance.has(leg.account_code) || drawdownPaid.has(jeNo);
         for (const x of split) {
           const amt = Math.round(x.sen * scale);
           placed += amt;
