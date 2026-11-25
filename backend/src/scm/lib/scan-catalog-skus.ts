@@ -3,8 +3,6 @@
 // is inactive (BUG-50), even while its own status reads ACTIVE. Offering one
 // lets the model pick a code the create then refuses on both attempts.
 
-import { MFG_PRODUCT_CATEGORIES } from '../shared/product-categories';
-
 export type ScanCatalogRow = {
   code: string;
   name: string;
@@ -21,10 +19,11 @@ export function scanCatalogSkus(rows: ScanCatalogRow[] | null): CatalogSku[] {
     .map((p) => ({ code: p.code, name: p.name, category: p.category, baseModel: p.base_model ?? null }));
 }
 
-/* The order the scan prompt lists SKU sections in: every product category, the
-   SERVICE fees last. It printed only five, so a Dining / Carpet / Sofa Accessory
-   SKU was never offered to the model (HC-0258). */
-export const SCAN_CATALOG_CATEGORY_ORDER: readonly string[] = [
-  ...MFG_PRODUCT_CATEGORIES.filter((c) => c !== 'SERVICE'),
-  'SERVICE',
-];
+/* The order the scan prompt lists SKU sections in: every category the SKUs
+   carry, A-Z, the SERVICE fees last. Read from the SKUs, not a list: a typed
+   five-item list hid every Dining / Carpet / Sofa Accessory SKU from the model
+   (HC-0258). */
+export function scanCatalogCategoryOrder(skus: readonly CatalogSku[]): string[] {
+  const cats = [...new Set(skus.map((s) => s.category))].filter((c) => c !== 'SERVICE').sort();
+  return skus.some((s) => s.category === 'SERVICE') ? [...cats, 'SERVICE'] : cats;
+}

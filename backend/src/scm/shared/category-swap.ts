@@ -8,10 +8,11 @@
    What a move does NOT do: orders already on the books keep the category their
    lines were written with (moving those is a separate, audited data run), and a
    SKU that belongs to a model moves only with its model. */
-import { isMfgProductCategory } from './product-categories';
+import { isMfgProductCategory, type ProductCategory } from './product-categories';
 
-export function categorySwapAllowed(from: string | null | undefined, to: string | null | undefined): boolean {
+/* `list` is the registry (scm.acc_item_groups). A switched-off category is not a target. */
+export function categorySwapAllowed(list: readonly ProductCategory[], from: string | null | undefined, to: string | null | undefined): boolean {
   const a = String(from ?? '').toUpperCase();
   const b = String(to ?? '').toUpperCase();
-  return a !== b && isMfgProductCategory(b);
+  return a !== b && isMfgProductCategory(list.filter((r) => r.isActive), b);
 }

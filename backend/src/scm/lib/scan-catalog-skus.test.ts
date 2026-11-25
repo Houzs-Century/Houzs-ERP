@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { scanCatalogSkus, SCAN_CATALOG_CATEGORY_ORDER, type ScanCatalogRow } from './scan-catalog-skus';
-import { MFG_PRODUCT_CATEGORIES } from '../shared/product-categories';
+import { scanCatalogSkus, scanCatalogCategoryOrder, type ScanCatalogRow } from './scan-catalog-skus';
 
 const row = (code: string, model: ScanCatalogRow['model']): ScanCatalogRow =>
   ({ code, name: code, category: 'ACCESSORY', base_model: null, model });
@@ -25,10 +24,12 @@ describe('scanCatalogSkus', () => {
   });
 });
 
-describe('SCAN_CATALOG_CATEGORY_ORDER', () => {
-  // HC-0258: the prompt listed 5 categories, so a Dining SKU was never offered.
-  it('lists every product category once, SERVICE last', () => {
-    expect([...SCAN_CATALOG_CATEGORY_ORDER].sort()).toEqual([...MFG_PRODUCT_CATEGORIES].sort());
-    expect(SCAN_CATALOG_CATEGORY_ORDER.at(-1)).toBe('SERVICE');
+describe('scanCatalogCategoryOrder', () => {
+  // HC-0258: the prompt listed 5 typed categories, so a Dining SKU was never offered.
+  it('lists every category the SKUs carry once, A-Z, SERVICE last', () => {
+    const sku = (category: string) => ({ code: category, name: category, category, baseModel: null });
+    expect(scanCatalogCategoryOrder([sku('SERVICE'), sku('SOFA'), sku('DINING'), sku('SOFA'), sku('NEW_GROUP')]))
+      .toEqual(['DINING', 'NEW_GROUP', 'SOFA', 'SERVICE']);
+    expect(scanCatalogCategoryOrder([sku('CARPET')])).toEqual(['CARPET']);
   });
 });

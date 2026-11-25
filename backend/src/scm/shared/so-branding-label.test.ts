@@ -10,7 +10,6 @@
    bottom as nothing. A test that lists the cases someone thought of would have
    passed the whole time. So the domain here is DERIVED (CATEGORY_SOURCES) and
    the assertion is a property over all of it. */
-import { MFG_PRODUCT_CATEGORIES } from './product-categories';
 import { describe, expect, test } from 'vitest';
 
 import { brandingLabel, isPlaceholderBrandText, brandingCategoryNoun, CATEGORY_SOURCES, NO_ITEMS_LABEL } from './so-branding-label';
@@ -22,7 +21,8 @@ const CO_HOUZS = 'HOUZS';
 /* Every shape a category can arrive in, crossed with every shape a brand can.
    Built once and reused so a case added here is added to every property. */
 const CATEGORIES: Array<string | null | undefined> = [
-  ...CATEGORY_SOURCES.productEnum,
+  ...CATEGORY_SOURCES.categoryNouns,
+      'FABRIC_ACCESSORY', 'NEW_GROUP', /* registry codes with no noun of their own */
   ...CATEGORY_SOURCES.normBuckets,
   /* mfg_sales_order_items.item_group is free TEXT, so these really do arrive. */
   'BEDFRAME - DIVAN', 'sofa set', ' Mattress  ', 'ACCESSORIES', 'DELIVERY SERVICE',
@@ -224,9 +224,9 @@ describe('brandingCategoryNoun — the superset, refereed against normCategory',
   });
 
   test('the derived category list still matches the source it was read from', () => {
-    /* productEnum IS the one category list, so a new category reaches the
-       property test above with no edit here. */
-    expect(CATEGORY_SOURCES.productEnum).toBe(MFG_PRODUCT_CATEGORIES);
+    expect(CATEGORY_SOURCES.categoryNouns).toEqual([
+      'BEDFRAME', 'SOFA', 'MATTRESS', 'ACCESSORY', 'SERVICE', 'BEDLINES', 'DIFFUSER', 'DINING', 'CARPET',
+    ]);
     expect([...CATEGORY_SOURCES.normBuckets]).toEqual([
       'SOFA', 'BEDFRAME', 'MATTRESS', 'ACCESSORY', 'SERVICE', 'OTHERS',
     ]);
