@@ -25,6 +25,7 @@
    Fail-soft like do_numbers: a failed read leaves [] and the case still loads.
    ---------------------------------------------------------------------------- */
 import { soConvertedPos, type SoConvertedPo } from "../scm/lib/so-converted-po";
+import { chunkIn } from "../scm/lib/paginate-all";
 
 export type AssrOrderPo = SoConvertedPo;
 
@@ -256,6 +257,42 @@ export async function supplierPickerResults(
       .slice(0, 20);
   } catch {
     return creditorHits;
+  }
+}
+
+/* HC-0257 (Farra, 25 Nov): the list search matches the PO column's Order POs.
+   The reverse of the soConvertedPos walk: PO number -> its PO lines -> the SO
+   lines they were raised from -> SO doc_no. CANCELLED dropped like the column.
+   companyIds as in pushAllowedCompanies: undefined = unresolved (no predicate),
+   [] = no company (no match). Read error -> [] so the rest of the search works. */
+const PO_SEARCH_CAP = 200;
+
+export async function soDocNosByPoNumber(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  term: string,
+  companyIds: number[] | undefined,
+): Promise<string[]> {
+  if (!term.trim() || companyIds?.length === 0) return [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const scoped = (q: any) => (companyIds ? q.in("company_id", companyIds) : q);
+  try {
+    const pos = await scoped(sb.from("purchase_orders").select("id, status"))
+      .ilike("po_number", `%${term.trim()}%`).limit(PO_SEARCH_CAP);
+    const poIds = ((pos.data ?? []) as Array<{ id: string; status: string | null }>)
+      .filter((p) => (p.status ?? "").toUpperCase() !== "CANCELLED").map((p) => p.id);
+    if (pos.error || poIds.length === 0) return [];
+    const links = await chunkIn<{ so_item_id: string | null }>(poIds, (part, from, to) =>
+      scoped(sb.from("purchase_order_items").select("so_item_id"))
+        .in("purchase_order_id", part).not("so_item_id", "is", null).order("id").range(from, to));
+    const lineIds = [...new Set(links.data.map((l) => l.so_item_id).filter((id): id is string => !!id))];
+    if (links.error || lineIds.length === 0) return [];
+    const lines = await chunkIn<{ doc_no: string | null }>(lineIds, (part, from, to) =>
+      scoped(sb.from("mfg_sales_order_items").select("doc_no")).in("id", part).order("id").range(from, to));
+    if (lines.error) return [];
+    return [...new Set(lines.data.map((l) => l.doc_no).filter((d): d is string => !!d))];
+  } catch {
+    return [];
   }
 }
 
