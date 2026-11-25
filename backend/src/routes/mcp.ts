@@ -19,7 +19,8 @@ import type { Context } from "hono";
 import type { Env } from "../types";
 import { getUserById, type AuthUser } from "../services/auth";
 import { hasPermission } from "../services/permissions";
-import { MCP_INNER_HEADER, mcpInnerSecret } from "../services/mcp-inner";
+import { MCP_INNER_HEADER, mcpInnerSecret, rememberVerified } from "../services/mcp-inner";
+import { docTitle, fetchKind, myToday, parseFetchId, pickFields, PROMPTS, promptText, resolveWindow, searchResults, singleMonth, summariseDelivery, summariseSales, type Window } from "../services/mcp-quick";
 import { classifyPath, moduleCatalog, readablePaths, redactSecrets, type RouteInfo } from "../services/mcp-access";
 import {
   consumeCode,
@@ -50,7 +51,7 @@ export function mcpAppRoutes(): RouteInfo[] {
 }
 
 export const MCP_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
-export const MAX_RESULT_CHARS = 60_000;
+export const MAX_RESULT_CHARS = 30_000;
 const SERVER_INFO = { name: "houzs-erp", title: "Houzs ERP", version: "1.0.0" };
 
 /**
@@ -190,42 +191,88 @@ app.post("/oauth/token", async (c) => {
 
 // ── MCP endpoint ────────────────────────────────────────────────────────────
 
-type Identity = { tokenId: string; clientId: string; user: AuthUser };
+export type McpIdentity = { tokenId: string; clientId: string; user: AuthUser };
+type Identity = McpIdentity;
 type RpcReq = { jsonrpc?: string; id?: string | number | null; method?: string; params?: Record<string, unknown> };
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
 const text = (t: string, isError = false): ToolResult => ({ content: [{ type: "text", text: t }], ...(isError ? { isError: true } : {}) });
 
-const INSTRUCTIONS = `You are connected to Houzs ERP (Houzs Century furniture retail + the 2990's POS: sales orders, projects / exhibitions, service cases (ASSR), purchasing, delivery, warehouse, accounting, HR, fleet) as the signed-in staff member.
+export const MCP_INSTRUCTIONS = `You are connected to Houzs ERP (Houzs Century furniture retail + the 2990's POS: sales orders, projects / exhibitions, service cases (ASSR), purchasing, delivery, warehouse, accounting, HR, fleet) as the signed-in staff member.
 Everything is READ-ONLY and limited to what this person may see in the ERP. Never guess figures a call did not return.
-Start with list_modules, then list_endpoints for a module, then erp_get. Most of the trading ERP is under /api/scm/... (e.g. /api/scm/sales-orders, /api/scm/purchase-orders, /api/scm/delivery-orders). Use query parameters (dates YYYY-MM-DD, page/limit, search, status) to keep answers small.
-Two companies share the ERP: HOUZS (default) and 2990 (the 2990's POS). Pass company "2990" to erp_get for 2990 data, if this person may see it.
+ANSWER FAST: use a quick answer first. It is one call and already summarised.
+- Sales (a month, quarter or year; vs the same days of the previous period; by showroom, brand, salesperson, state; daily; top models; trend): sales_summary {period: "YYYY-MM" | "YYYY-Qn" | "YYYY"} or {from, to}.
+- Deliveries (delivery orders and amount; vs the same days of the previous period; by region and lorry; daily; open process gaps such as delivery orders not closed or delivered but still owing): delivery_summary {period} or {from, to}.
+- One document, customer or supplier by number or name, or the status of an order: search {query}, then fetch {id} for the full record.
+Only when no quick answer fits: list_modules, then list_endpoints for a module, then erp_get. Most of the trading ERP is under /api/scm/... With erp_get pass "fields" (only the keys you need) and query parameters (dates YYYY-MM-DD, page/limit, search, status) to keep replies small.
+Two companies share the ERP: HOUZS (default) and 2990 (the 2990's POS). Pass company "2990" to sales_summary, delivery_summary, search, fetch or erp_get for 2990 data, if this person may see it.
+Money in the ERP is integer sen (RM x 100) unless a field says RM. Dates are Malaysia time.
 If a call says "not available to your role" or "You don't have permission", tell the person they do not have permission for that data.`;
 
-const TOOLS = [
-  { name: "whoami", title: "Who am I connected as", description: "The ERP account this connection uses and its position.", inputSchema: { type: "object", properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true, openWorldHint: false } },
-  { name: "list_modules", title: "List ERP modules", description: "The ERP modules (API path prefixes) with how many read endpoints each has. Start here.", inputSchema: { type: "object", properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true, openWorldHint: false } },
+const readOnly = { readOnlyHint: true, openWorldHint: false };
+const COMPANY_PARAM = { type: "string", enum: ["HOUZS", "2990"], description: "Which company's data (default HOUZS)" };
+const PERIOD_PROPS = {
+  period: { type: "string", description: "YYYY-MM, YYYY-Qn or YYYY. Default: this month (to today)." },
+  from: { type: "string", description: "YYYY-MM-DD; with to, instead of period." },
+  to: { type: "string", description: "YYYY-MM-DD; with from, instead of period." },
+  company: COMPANY_PARAM,
+};
+
+export const MCP_TOOLS = [
+  {
+    name: "sales_summary",
+    title: "Sales summary (quick answer)",
+    description:
+      "Sales for a month, quarter, year or date range in ONE call: orders and sales (RM), change vs the same days of the previous period, by showroom, brand, salesperson and state, daily figures, top models and a 6-month trend. Same numbers as the Sales Report.",
+    inputSchema: { type: "object", properties: PERIOD_PROPS, additionalProperties: false },
+    annotations: readOnly,
+  },
+  {
+    name: "delivery_summary",
+    title: "Delivery summary (quick answer)",
+    description:
+      "Deliveries for a month, quarter, year or date range in ONE call: delivery orders and amount (RM), change vs the same days of the previous period, by region and lorry, daily figures, a 6-month trend and today's process gaps (not closed, no cost, delivered but still owing). Same numbers as the Logistic Overview.",
+    inputSchema: { type: "object", properties: PERIOD_PROPS, additionalProperties: false },
+    annotations: readOnly,
+  },
+  {
+    name: "search",
+    title: "Search the ERP",
+    description: "Find sales orders, delivery orders, invoices, purchase orders, GRNs, customers, suppliers, service cases, projects and more by number or name. Returns ids to open with fetch.",
+    inputSchema: { type: "object", properties: { query: { type: "string", description: "A document number, customer, supplier, product or project name" }, company: COMPANY_PARAM }, required: ["query"], additionalProperties: false },
+    annotations: readOnly,
+  },
+  {
+    name: "fetch",
+    title: "Open a search result",
+    description: "The full record for an id returned by search (e.g. \"sales_order:HC-SO-013402\"): a sales order with its lines and status, an invoice, a customer, a service case...",
+    inputSchema: { type: "object", properties: { id: { type: "string", description: "An id from search" }, company: COMPANY_PARAM }, required: ["id"], additionalProperties: false },
+    annotations: readOnly,
+  },
+  { name: "whoami", title: "Who am I connected as", description: "The ERP account this connection uses and its position.", inputSchema: { type: "object", properties: {}, additionalProperties: false }, annotations: readOnly },
+  { name: "list_modules", title: "List ERP modules", description: "The ERP modules (API path prefixes) with how many read endpoints each has. Use when no quick answer fits.", inputSchema: { type: "object", properties: {}, additionalProperties: false }, annotations: readOnly },
   {
     name: "list_endpoints",
     title: "List read endpoints",
     description: "Every readable GET endpoint under a module prefix (e.g. /api/scm/sales-orders), with :id style placeholders.",
     inputSchema: { type: "object", properties: { prefix: { type: "string", description: "Module prefix from list_modules" } }, required: ["prefix"], additionalProperties: false },
-    annotations: { readOnlyHint: true, openWorldHint: false },
+    annotations: readOnly,
   },
   {
     name: "erp_get",
     title: "Read from the ERP",
-    description: "Read one ERP endpoint as the signed-in person (GET only) and return its JSON. Large replies are cut; narrow them with query parameters.",
+    description: "Read one ERP endpoint as the signed-in person (GET only) and return its JSON. Large replies are cut; pass fields and narrow them with query parameters.",
     inputSchema: {
       type: "object",
       properties: {
         path: { type: "string", description: "Endpoint path without query string, with real ids in place of :id, e.g. /api/scm/sales-orders" },
         query: { type: "object", description: "Query parameters, e.g. {\"from\":\"2026-11-01\",\"to\":\"2026-11-30\"}", additionalProperties: { type: ["string", "number", "boolean"] } },
-        company: { type: "string", enum: ["HOUZS", "2990"], description: "Which company's data (default HOUZS)" },
+        fields: { type: "array", items: { type: "string" }, description: "Only keep these keys (at any depth), e.g. [\"doc_no\",\"status\",\"total_sen\"]. Makes big replies small and fast." },
+        company: COMPANY_PARAM,
       },
       required: ["path"],
       additionalProperties: false,
     },
-    annotations: { readOnlyHint: true, openWorldHint: false },
+    annotations: readOnly,
   },
 ];
 
@@ -242,16 +289,14 @@ async function innerGet(c: Context<HonoEnv>, token: string, pathWithQuery: strin
   return appRef.fetch(new Request(originOf(c) + pathWithQuery, { method: "GET", headers }), c.env, ctx);
 }
 
-/** Read one endpoint as the person; shared with the leak check (routes/mcpAdmin.ts). */
-export async function readEndpoint(
-  c: Context<HonoEnv>,
-  token: string,
-  rawPath: string,
-  query: Record<string, unknown> | undefined,
-  company: string | null,
-): Promise<{ result: ToolResult; status: number; note: string; target: string; body: unknown; removed: string[] }> {
+type ReadValue =
+  | { ok: true; status: number; value: unknown; removed: string[]; target: string }
+  | { ok: false; status: number; message: string; note: string; target: string };
+
+/** Read one endpoint as the person (gate, in-process GET, credential strip). Shared by erp_get, the quick answers, search and fetch. */
+async function readValue(c: Context<HonoEnv>, token: string, rawPath: string, query: Record<string, unknown> | undefined, company: string | null): Promise<ReadValue> {
   const d = classifyPath(rawPath);
-  if (!d.ok) return { result: text(d.reason, true), status: 400, note: "blocked path", target: rawPath, body: null, removed: [] };
+  if (!d.ok) return { ok: false, status: 400, message: d.reason, note: "blocked path", target: rawPath };
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(query ?? {})) {
     if (v === undefined || v === null || typeof v === "object") continue;
@@ -261,33 +306,113 @@ export async function readEndpoint(
   const res = await innerGet(c, token, target, company);
   const ctype = res.headers.get("content-type") ?? "";
   if (res.status === 401 || res.status === 403) {
-    return { result: text("Not available to your role: you do not have permission for this in the ERP.", true), status: res.status, note: "no permission", target, body: null, removed: [] };
+    return { ok: false, status: res.status, message: "Not available to your role: you do not have permission for this in the ERP.", note: "no permission", target };
   }
   if (!ctype.includes("json")) {
-    return { result: text(`This endpoint returns a file (${ctype || "unknown type"}), not data. Open it in the ERP instead.`, true), status: res.status, note: "non-json", target, body: null, removed: [] };
+    return { ok: false, status: res.status, message: `This endpoint returns a file (${ctype || "unknown type"}), not data. Open it in the ERP instead.`, note: "non-json", target };
   }
   let body: unknown;
   try {
     body = await res.json();
   } catch (e) {
     const why = e instanceof Error ? e.message : String(e);
-    return { result: text(`The ERP sent a reply that could not be read (HTTP ${res.status}).`, true), status: 502, note: `unreadable reply: ${why}`.slice(0, 120), target, body: null, removed: [] };
+    return { ok: false, status: 502, message: `The ERP sent a reply that could not be read (HTTP ${res.status}).`, note: `unreadable reply: ${why}`.slice(0, 120), target };
   }
   if (res.status >= 400) {
     const msg = body && typeof body === "object" && typeof (body as { error?: unknown }).error === "string" ? (body as { error: string }).error : `HTTP ${res.status}`;
-    return { result: text(`The ERP answered: ${msg}`, true), status: res.status, note: msg.slice(0, 120), target, body: null, removed: [] };
+    return { ok: false, status: res.status, message: `The ERP answered: ${msg}`, note: msg.slice(0, 120), target };
   }
   const { value, removed } = redactSecrets(body);
-  let out = JSON.stringify(value);
+  return { ok: true, status: res.status, value, removed: [...removed], target };
+}
+
+/** Read one endpoint as the person, as tool text; shared with the leak check (routes/mcpAdmin.ts). */
+export async function readEndpoint(
+  c: Context<HonoEnv>,
+  token: string,
+  rawPath: string,
+  query: Record<string, unknown> | undefined,
+  company: string | null,
+  fields: readonly string[],
+): Promise<{ result: ToolResult; status: number; note: string; target: string; body: unknown; removed: string[] }> {
+  const r = await readValue(c, token, rawPath, query, company);
+  if (!r.ok) return { result: text(r.message, true), status: r.status, note: r.note, target: r.target, body: null, removed: [] };
+  let out = JSON.stringify(pickFields(r.value, fields));
   let cut = false;
   if (out.length > MAX_RESULT_CHARS) {
     out = out.slice(0, MAX_RESULT_CHARS);
     cut = true;
   }
   const notes: string[] = [];
-  if (removed.size) notes.push(`Credential fields removed: ${[...removed].join(", ")}.`);
-  if (cut) notes.push(`Reply cut at ${MAX_RESULT_CHARS} characters — narrow it with query parameters (dates, page/limit, search).`);
-  return { result: text((notes.length ? notes.join(" ") + "\n" : "") + out), status: res.status, note: "", target, body: value, removed: [...removed] };
+  if (r.removed.length) notes.push(`Credential fields removed: ${r.removed.join(", ")}.`);
+  if (cut) notes.push(`Reply cut at ${MAX_RESULT_CHARS} characters. Pass "fields" and narrow it with query parameters (dates, page/limit, search), or use a quick answer.`);
+  return { result: text((notes.length ? notes.join(" ") + "\n" : "") + out), status: r.status, note: "", target: r.target, body: r.value, removed: r.removed };
+}
+
+/** The X-Company-Id pick passed through; companyContext admits only a company this person holds. */
+const companyArg = (args: Record<string, unknown>): string | null =>
+  typeof args.company === "string" && /^[A-Za-z0-9]{1,12}$/.test(args.company) ? args.company : null;
+
+type Outcome = { result: ToolResult; status: number; note: string; target: string };
+
+/** A quick answer: the summary as JSON, or the main read's refusal / error in plain words. */
+function quick(target: string, main: ReadValue, summary: () => unknown): Outcome {
+  if (!main.ok) return { result: text(main.message, true), status: main.status, note: main.note, target };
+  return { result: text(JSON.stringify(summary())), status: 200, note: "", target };
+}
+
+const valueOf = (r: ReadValue): unknown => (r.ok ? r.value : null);
+const BAD_WINDOW = "Give period as YYYY-MM, YYYY-Qn or YYYY (not in the future), or from and to as YYYY-MM-DD (from before to, at most 400 days).";
+
+async function salesSummary(c: Context<HonoEnv>, token: string, w: Window, company: string | null): Promise<Outcome> {
+  const fair = (r: { from: string; to: string }) => readValue(c, token, "/api/scm/reports/fair-report", { stage: "so", date_from: r.from, date_to: r.to }, company);
+  // Top models come from the Sales Analysis, which takes one month; for a longer window only its trend is used.
+  const month = singleMonth(w);
+  const [cur, prev, analysis] = await Promise.all([fair(w), fair(w.prev), readValue(c, token, "/api/scm/sales-analysis", { period: month ?? w.to.slice(0, 7) }, company)]);
+  const a = valueOf(analysis);
+  const trendOnly = { monthly: (a as { monthly?: unknown } | null)?.monthly };
+  // Only the window itself must succeed; the comparison and the Sales Analysis are extras.
+  return quick(`sales:${w.from}..${w.to}`, cur, () => summariseSales(w, valueOf(cur), valueOf(prev), month ? a : trendOnly, w.to.slice(0, 7)));
+}
+
+async function deliverySummary(c: Context<HonoEnv>, token: string, w: Window, company: string | null): Promise<Outcome> {
+  const [cur, prev] = await Promise.all([
+    readValue(c, token, "/api/scm/logistic-overview", { from: w.from, to: w.to }, company),
+    readValue(c, token, "/api/scm/logistic-overview", { from: w.prev.from, to: w.prev.to }, company),
+  ]);
+  return quick(`delivery:${w.from}..${w.to}`, cur, () => summariseDelivery(w, valueOf(cur), valueOf(prev)));
+}
+
+async function searchTool(c: Context<HonoEnv>, token: string, query: string, company: string | null): Promise<Outcome> {
+  const target = `search:${query}`.slice(0, 200);
+  if (!query) return { result: text("Give something to search for: a document number or a name.", true), status: 400, note: "", target };
+  const r = await readValue(c, token, "/api/search", { q: query }, company);
+  if (!r.ok) return { result: text(r.message, true), status: r.status, note: r.note, target };
+  const degraded = (r.value as { degraded?: unknown }).degraded;
+  const out: Record<string, unknown> = { results: searchResults(r.value, originOf(c), 20) };
+  if (Array.isArray(degraded) && degraded.length) out.couldNotSearch = degraded;
+  return { result: text(JSON.stringify(out)), status: 200, note: "", target };
+}
+
+async function fetchTool(c: Context<HonoEnv>, token: string, rawId: unknown, company: string | null): Promise<Outcome> {
+  const f = parseFetchId(rawId);
+  const target = `fetch:${String(rawId ?? "")}`.slice(0, 200);
+  if (!f) return { result: text("Give an id from search, e.g. sales_order:HC-SO-013402.", true), status: 400, note: "", target };
+  const spec = fetchKind(f.kind);
+  if (!spec) return { result: text(`A ${f.kind.replace(/_/g, " ")} has no record to open here; use its link from search.`, true), status: 400, note: "", target };
+  const r = await readValue(c, token, spec.api(f.rowId), undefined, company);
+  if (!r.ok) return { result: text(r.message, true), status: r.status, note: r.note, target };
+  let body = JSON.stringify(r.value);
+  const cut = body.length > MAX_RESULT_CHARS;
+  if (cut) body = body.slice(0, MAX_RESULT_CHARS);
+  const doc = {
+    id: `${f.kind}:${f.rowId}`,
+    title: docTitle(f.kind, f.rowId, r.value),
+    text: body,
+    url: originOf(c) + spec.page(f.rowId),
+    metadata: { kind: f.kind, ...(cut ? { cutAtChars: MAX_RESULT_CHARS } : {}), ...(r.removed.length ? { credentialFieldsRemoved: r.removed } : {}) },
+  };
+  return { result: text(JSON.stringify(doc)), status: 200, note: "", target };
 }
 
 async function callTool(c: Context<HonoEnv>, id: Identity, token: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {
@@ -296,8 +421,24 @@ async function callTool(c: Context<HonoEnv>, id: Identity, token: string, name: 
   let note = "";
   let target = "";
   let result: ToolResult;
+  const company = companyArg(args);
+  const tag = company ? `[${company}] ` : "";
   try {
-    if (name === "whoami") {
+    if (name === "sales_summary" || name === "delivery_summary") {
+      const w = resolveWindow(args, myToday());
+      if (!w) {
+        result = text(BAD_WINDOW, true);
+        status = 400;
+      } else {
+        const o = name === "sales_summary" ? await salesSummary(c, token, w, company) : await deliverySummary(c, token, w, company);
+        ({ result, status, note } = o);
+        target = tag + o.target;
+      }
+    } else if (name === "search" || name === "fetch") {
+      const o = name === "search" ? await searchTool(c, token, String(args.query ?? args.q ?? "").trim(), company) : await fetchTool(c, token, args.id, company);
+      ({ result, status, note } = o);
+      target = tag + o.target;
+    } else if (name === "whoami") {
       result = text(JSON.stringify({ name: id.user.name, email: id.user.email, position: id.user.position_name, department: id.user.department_name, readOnly: true }));
     } else if (name === "list_modules") {
       result = text(JSON.stringify({ readOnly: true, modules: moduleCatalog(mcpAppRoutes()), tip: "Call list_endpoints with a prefix, then erp_get. A module you may not open answers 'not available to your role'." }));
@@ -312,13 +453,12 @@ async function callTool(c: Context<HonoEnv>, id: Identity, token: string, name: 
         result = text(JSON.stringify({ prefix: d.path, endpoints: readablePaths(mcpAppRoutes(), d.path).slice(0, 300) }));
       }
     } else if (name === "erp_get") {
-      // Passed through as the X-Company-Id pick; companyContext admits only a company this person holds.
-      const company = typeof args.company === "string" && /^[A-Za-z0-9]{1,12}$/.test(args.company) ? args.company : null;
-      const r = await readEndpoint(c, token, String(args.path ?? ""), (args.query as Record<string, unknown> | undefined) ?? undefined, company);
+      const fields = Array.isArray(args.fields) ? (args.fields as unknown[]).map(String).filter(Boolean).slice(0, 40) : [];
+      const r = await readEndpoint(c, token, String(args.path ?? ""), (args.query as Record<string, unknown> | undefined) ?? undefined, company, fields);
       result = r.result;
       status = r.status;
       note = r.note;
-      target = (company ? `[${company}] ` : "") + r.target;
+      target = tag + r.target;
     } else {
       result = text(`Unknown tool: ${name}`, true);
       status = 400;
@@ -342,18 +482,24 @@ async function handleRpc(c: Context<HonoEnv>, id: Identity, token: string, m: Rp
     case "initialize": {
       const asked = String(m.params?.protocolVersion ?? "");
       const protocolVersion = MCP_PROTOCOL_VERSIONS.includes(asked) ? asked : MCP_PROTOCOL_VERSIONS[0];
-      return reply({ protocolVersion, capabilities: { tools: { listChanged: false } }, serverInfo: SERVER_INFO, instructions: INSTRUCTIONS });
+      return reply({ protocolVersion, capabilities: { tools: { listChanged: false }, prompts: { listChanged: false } }, serverInfo: SERVER_INFO, instructions: MCP_INSTRUCTIONS });
     }
     case "ping":
       return reply({});
     case "tools/list":
-      return reply({ tools: TOOLS });
+      return reply({ tools: MCP_TOOLS });
     case "tools/call":
       return reply(await callTool(c, id, token, String(m.params?.name ?? ""), (m.params?.arguments as Record<string, unknown> | undefined) ?? {}));
     case "resources/list":
       return reply({ resources: [] });
     case "prompts/list":
-      return reply({ prompts: [] });
+      return reply({ prompts: PROMPTS });
+    case "prompts/get": {
+      const pname = String(m.params?.name ?? "");
+      const ptext = promptText(pname, (m.params?.arguments as Record<string, unknown> | undefined) ?? {});
+      if (ptext === null) return { jsonrpc: "2.0", id: m.id ?? null, error: { code: -32602, message: `Unknown prompt: ${pname}` } };
+      return reply({ description: PROMPTS.find((x) => x.name === pname)?.description ?? "", messages: [{ role: "user", content: { type: "text", text: ptext } }] });
+    }
     default:
       if (m.id === undefined || m.id === null || (m.method ?? "").startsWith("notifications/")) return null;
       return { jsonrpc: "2.0", id: m.id, error: { code: -32601, message: `Method not found: ${m.method ?? ""}` } };
@@ -378,6 +524,9 @@ app.post("/", async (c) => {
       "WWW-Authenticate": `Bearer realm="houzs-erp", resource_metadata="${originOf(c)}/.well-known/oauth-protected-resource/api/mcp"${token ? ', error="invalid_token"' : ""}`,
     });
   }
+  // The inner GETs of this request reuse this check instead of repeating it
+  // (middleware/auth.ts recallVerified): one token check per lookup, not two.
+  rememberVerified(token, id, Date.now());
   let body: unknown;
   try {
     body = await c.req.json();

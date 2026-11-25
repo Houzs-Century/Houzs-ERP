@@ -334,7 +334,7 @@ app.post("/admin/leak-check", async (c) => {
       const got = await Promise.all(
         chunk.map(async (path) => {
           try {
-            const r = await readEndpoint(c, tok.accessToken, path, { limit: 5, page: 1 }, null);
+            const r = await readEndpoint(c, tok.accessToken, path, { limit: 5, page: 1 }, null, []);
             return analyseBody(path, r.status, !!r.result.isError, r.body, r.removed);
           } catch {
             return { path, outcome: "error" as const, status: 500, hidden: [], sensitive: [] };
