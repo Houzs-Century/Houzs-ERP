@@ -16,7 +16,7 @@
 // ----------------------------------------------------------------------------
 import tseslint from 'typescript-eslint';
 import reactHooks from 'eslint-plugin-react-hooks';
-import { sharedRules } from '../scripts/eslint/houzs-lint-rules.mjs';
+import { sharedRules, houzsPlugin } from '../scripts/eslint/houzs-lint-rules.mjs';
 
 export default tseslint.config(
   {
@@ -46,6 +46,7 @@ export default tseslint.config(
       // found", which is a hard error and would make the job red on 97 comments
       // rather than on any code.
       'react-hooks': reactHooks,
+      houzs: houzsPlugin,
     },
     linterOptions: { reportUnusedDisableDirectives: 'off' },
     rules: {

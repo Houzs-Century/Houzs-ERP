@@ -111,6 +111,8 @@ const asNever = {
     'green. Type the value, or import the shared constant that already types it.',
 };
 
+export { houzsPlugin } from './houzs-plugin.mjs';
+
 /** The `no-restricted-syntax` option list. Order is the report order. */
 export const restrictedSyntax = [
   doStatusList,
@@ -196,6 +198,20 @@ export const sharedRules = {
   // ── the hand-copied literal lists ─────────────────────────────────────────
   // Each selector cites its own entry above.
   'no-restricted-syntax': ['warn', ...restrictedSyntax],
+
+  // Own rule ids, not more no-restricted-syntax selectors: lint:update refuses
+  // to raise an existing rule's ceiling, but gives a new rule id its first one.
+  'houzs/no-prose-comments': 'warn',
+  'houzs/no-imperative-timers': 'warn',
+  '@typescript-eslint/ban-ts-comment': [
+    'warn',
+    {
+      'ts-expect-error': 'allow-with-description',
+      'ts-ignore': 'allow-with-description',
+      'ts-nocheck': 'allow-with-description',
+      'ts-check': false,
+    },
+  ],
 };
 
 /**
