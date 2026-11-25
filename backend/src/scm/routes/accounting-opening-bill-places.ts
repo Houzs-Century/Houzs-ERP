@@ -10,7 +10,9 @@
 //       choice, what its own ERP bills give; the pick lists (the company's
 //       accounts, the Cash Flow's categories).
 //   GET /accounting/reports/receipts-payments/opening-bills/:supplierId
-//       that supplier's opening bills, each with its own choice.
+//       that supplier's opening bills, each with its own choice and what it
+//       bought by AutoCount's lines (scm.acc_opening_bill_goods), as the Cash
+//       Flow splits it.
 //   PUT /accounting/reports/receipts-payments/opening-bills/place
 //       { supplierId, billId, account, category }: one of supplierId / billId;
 //       an account or a category, or neither to clear the choice.
@@ -24,7 +26,8 @@ import { requireActiveCompanyId } from '../lib/companyScope';
 import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { cashFlowHomes, type LayoutItem } from '../../acc/report-layout';
 import {
-  loadOpeningPlaces, loadSupplierBillAccounts, openingBillHome, type PlaceAccount, type StoredPlace,
+  goodsParts, loadGroupPurchaseAccounts, loadOpeningBillGoods, loadOpeningPlaces, loadSupplierBillAccounts, openingBillHome,
+  type PlaceAccount, type StoredPlace,
 } from '../../acc/opening-bill-places';
 import { allowedIds, resolveLayout } from './accounting-report-layouts';
 
@@ -44,12 +47,19 @@ export type OpeningSupplierRow = {
   bills: number; openBills: number; owingSen: number; paidSen: number;
   /** How many of its bills carry a choice of their own. */
   billsSet: number;
+  /** How many of its bills read by what they bought (AutoCount's lines). */
+  billsByGoods: number;
   set: PlaceOut | null;
   /** What its own live bills in the ERP give; null = the creditor control. */
   auto: PlaceOut | null;
 };
 export type OpeningBillsPayload = { suppliers: OpeningSupplierRow[]; accounts: PlaceAccount[]; categories: CashFlowCategory[] };
-export type OpeningBillRow = { id: string; number: string; date: string; text: string; totalSen: number; paidSen: number; status: string; set: PlaceOut | null };
+/** What a bill bought as the Cash Flow splits it: a share per purchase account, and the rest that reads as the supplier's line. Weights only. */
+export type BillGoodsOut = { parts: Array<PlaceAccount & { sen: number }>; restSen: number };
+export type OpeningBillRow = {
+  id: string; number: string; date: string; text: string; totalSen: number; paidSen: number; status: string; set: PlaceOut | null;
+  goods: BillGoodsOut | null;
+};
 
 type Sb = Parameters<typeof loadOpeningPlaces>[0];
 
@@ -105,19 +115,22 @@ export const openingBillsGet = async (c: Ctx): Promise<Response> => {
   if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase') as Sb;
   type Bill = { id: string; supplier_id: string; status: string | null; total_sen: number | null; paid_sen: number | null };
-  const [bills, places, tree, accs] = await Promise.all([
+  const [bills, places, tree, accs, goods, groups] = await Promise.all([
     paginateAll<Bill>((f, t) => sb.from('ap_invoices').select('id, supplier_id, status, total_sen, paid_sen')
       .eq('company_id', co.companyId).eq('opening', true).order('id').range(f, t)),
     loadOpeningPlaces(sb, co.companyId), loadTree(c, sb), loadAccounts(sb, co.companyId),
+    loadOpeningBillGoods(sb, co.companyId, 'all'), loadGroupPurchaseAccounts(sb, co.companyId),
   ]);
   if (bills.error) return c.json({ error: 'load_failed', reason: `opening bills: ${failed(bills.error)}` }, 500);
   if (!places.ok) return c.json({ error: 'load_failed', reason: places.reason }, 500);
   if (!tree.ok) return c.json({ error: 'load_failed', reason: tree.reason }, 500);
   if (!accs.ok) return c.json({ error: 'load_failed', reason: accs.reason }, 500);
+  if (!goods.ok) return c.json({ error: 'load_failed', reason: goods.reason }, 500);
+  if (!groups.ok) return c.json({ error: 'load_failed', reason: groups.reason }, 500);
 
-  const per = new Map<string, { bills: number; openBills: number; owingSen: number; paidSen: number; billsSet: number }>();
+  const per = new Map<string, { bills: number; openBills: number; owingSen: number; paidSen: number; billsSet: number; billsByGoods: number }>();
   for (const b of bills.data ?? []) {
-    const s = per.get(String(b.supplier_id)) ?? { bills: 0, openBills: 0, owingSen: 0, paidSen: 0, billsSet: 0 };
+    const s = per.get(String(b.supplier_id)) ?? { bills: 0, openBills: 0, owingSen: 0, paidSen: 0, billsSet: 0, billsByGoods: 0 };
     s.bills += 1;
     s.paidSen += Number(b.paid_sen ?? 0);
     if (OPEN.has(String(b.status ?? '').toUpperCase())) {
@@ -125,6 +138,7 @@ export const openingBillsGet = async (c: Ctx): Promise<Response> => {
       s.owingSen += Math.max(0, Number(b.total_sen ?? 0) - Number(b.paid_sen ?? 0));
     }
     if (places.bills.has(String(b.id))) s.billsSet += 1;
+    else if (goodsParts(goods.byBill.get(String(b.id)), groups.accountOf)) s.billsByGoods += 1;
     per.set(String(b.supplier_id), s);
   }
   const ids = [...per.keys()];
@@ -161,22 +175,29 @@ export const openingBillsOfSupplier = async (c: Ctx): Promise<Response> => {
   const sb = c.get('supabase') as Sb;
   const supplierId = String(c.req.param('supplierId') ?? '').trim();
   type Bill = { id: string; invoice_number: string; invoice_date: string; status: string | null; total_sen: number | null; paid_sen: number | null; notes: string | null };
-  const [bills, places, tree, accs] = await Promise.all([
+  const [bills, places, tree, accs, groups] = await Promise.all([
     paginateAll<Bill>((f, t) => sb.from('ap_invoices').select('id, invoice_number, invoice_date, status, total_sen, paid_sen, notes')
       .eq('company_id', co.companyId).eq('supplier_id', supplierId).eq('opening', true).order('invoice_date').order('invoice_number').range(f, t)),
-    loadOpeningPlaces(sb, co.companyId), loadTree(c, sb), loadAccounts(sb, co.companyId),
+    loadOpeningPlaces(sb, co.companyId), loadTree(c, sb), loadAccounts(sb, co.companyId), loadGroupPurchaseAccounts(sb, co.companyId),
   ]);
   if (bills.error) return c.json({ error: 'load_failed', reason: `opening bills: ${failed(bills.error)}` }, 500);
   if (!places.ok) return c.json({ error: 'load_failed', reason: places.reason }, 500);
   if (!tree.ok) return c.json({ error: 'load_failed', reason: tree.reason }, 500);
   if (!accs.ok) return c.json({ error: 'load_failed', reason: accs.reason }, 500);
+  if (!groups.ok) return c.json({ error: 'load_failed', reason: groups.reason }, 500);
   if ((bills.data ?? []).length === 0) return c.json({ error: 'not_found', message: 'This company has no opening bill from that supplier.' }, 404);
+  const goods = await loadOpeningBillGoods(sb, co.companyId, (bills.data ?? []).map((b) => String(b.id)));
+  if (!goods.ok) return c.json({ error: 'load_failed', reason: goods.reason }, 500);
   const labels = new Map(cashFlowCategories(tree.items, co.companyId).map((k) => [k.id, k.label]));
-  const rows: OpeningBillRow[] = (bills.data ?? []).map((b) => ({
-    id: String(b.id), number: String(b.invoice_number), date: String(b.invoice_date), text: billText(b.notes),
-    totalSen: Number(b.total_sen ?? 0), paidSen: Number(b.paid_sen ?? 0), status: String(b.status ?? ''),
-    set: outOf(places.bills.get(String(b.id)), accs.all, labels),
-  }));
+  const rows: OpeningBillRow[] = (bills.data ?? []).map((b) => {
+    const g = goodsParts(goods.byBill.get(String(b.id)), groups.accountOf);
+    return {
+      id: String(b.id), number: String(b.invoice_number), date: String(b.invoice_date), text: billText(b.notes),
+      totalSen: Number(b.total_sen ?? 0), paidSen: Number(b.paid_sen ?? 0), status: String(b.status ?? ''),
+      set: outOf(places.bills.get(String(b.id)), accs.all, labels),
+      goods: g === null ? null : { parts: g.parts.map((p) => ({ code: p.code, name: accs.all.get(p.code) ?? p.code, sen: p.sen })), restSen: g.restSen },
+    };
+  });
   return c.json({ bills: rows });
 };
 
