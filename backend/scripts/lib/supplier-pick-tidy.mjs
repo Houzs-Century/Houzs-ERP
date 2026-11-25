@@ -78,18 +78,42 @@ export function tidyBank(raw) {
   return to === raw ? null : { to, why: b.why };
 }
 
+/** SET_TERM: "400-T002=NET 30,405-X001=COD" → code (upper case) → the list's term, for a
+ *  term the owner picked for a supplier (2026-11-25: T.H.L. SOFA 「30 days」). A term not on
+ *  the list, or a part that is not CODE=TERM, is refused before anything is read. */
+export function parseSetTerms(spec) {
+  const out = new Map();
+  for (const part of String(spec ?? '').split(',')) {
+    if (!part.trim()) continue;
+    const at = part.indexOf('=');
+    const code = at === -1 ? '' : part.slice(0, at).trim().toUpperCase();
+    const term = at === -1 ? '' : part.slice(at + 1).trim();
+    if (!code || !term) throw new Error(`SET_TERM "${part.trim()}" is not CODE=TERM`);
+    const entry = listEntryOf(PAYMENT_TERMS, term);
+    if (!entry) throw new Error(`SET_TERM ${code}: "${term}" is not a term on the list (${PAYMENT_TERMS.join(', ')})`);
+    out.set(code, entry);
+  }
+  return out;
+}
+
 /** A stored value as the shape check reads it: a list entry as stored, or not. */
 export const termIsOnList = (v) => PAYMENT_TERMS.includes(v);
 export const bankIsOnList = (v) => MALAYSIAN_BANKS.some((e) => storedBank(e) === v);
 
-/** The plan for one company's suppliers: every change, and what is left as typed.
- *  rows: [{ id, code, payment_terms, bank_name }]. */
-export function planFor(companyId, rows) {
+/** The plan for one company's suppliers: every change, what is left as typed, and
+ *  which SET_TERM codes this company has. rows: [{ id, code, payment_terms, bank_name }];
+ *  setTerms: parseSetTerms' map (empty for a tidy alone) — a supplier named there gets
+ *  that term whatever it holds, instead of the tidy rules. */
+export function planFor(companyId, rows, setTerms) {
   const changes = [];
   const leftAsTyped = [];
+  const setFound = [];
   for (const r of rows) {
+    const picked = setTerms.get(String(r.code ?? '').toUpperCase()) ?? null;
+    if (picked !== null) setFound.push(String(r.code).toUpperCase());
+    const setTerm = (raw) => (raw === picked ? null : { to: picked, why: 'the term picked for it (SET_TERM)' });
     for (const [field, raw, tidy, onList] of [
-      ['payment_terms', r.payment_terms, tidyTerm, termIsOnList],
+      ['payment_terms', r.payment_terms, picked !== null ? setTerm : tidyTerm, termIsOnList],
       ['bank_name', r.bank_name, tidyBank, bankIsOnList],
     ]) {
       const t = tidy(raw);
@@ -97,7 +121,7 @@ export function planFor(companyId, rows) {
       else if (String(raw ?? '').trim() && !onList(raw)) leftAsTyped.push({ companyId, id: r.id, code: r.code, field, value: raw });
     }
   }
-  return { changes, leftAsTyped };
+  return { changes, leftAsTyped, setFound };
 }
 
 /** A value as the public Actions log may show it: a phone number is not printed. */
