@@ -322,3 +322,59 @@ describe('the rate also covers other accounts', () => {
     expect((await bad.json() as { error: string }).error).toBe('bad_also');
   });
 });
+
+/* The commission (owner 2026-11-25: 「如果performance PNL就remain invoice amount，
+   因为这个是performance」): the bills on PREPAYMENT COMMISSION show on the
+   commission expense in the month they pay for, whenever they were booked, in
+   place of what the monthly release (COMMREL) booked there; anything else on
+   the account stays as booked. Made-up figures. */
+describe('the commission is the month\'s bills, not the release', () => {
+  const harnessWith = (extraGl: Row[], extraAccounts: Row[]) => {
+    const { app, sb } = harness();
+    const tables = sb as unknown as { from: (n: string) => { insert: (r: Row | Row[]) => Promise<unknown> } };
+    return { app, seed: async () => {
+      await tables.from('accounts').insert(extraAccounts);
+      await tables.from('v_gl_entries').insert(extraGl);
+    } };
+  };
+  const ACCTS: Row[] = [
+    acct('360-0050', 'PREPAYMENT COMMISSION', 'ASSET', 'CURRENT ASSETS'),
+    acct('900-C003', 'COMMISSION ( EVENT )', 'EXPENSE', 'EXPENSES'),
+  ];
+  const GL: Row[] = [
+    /* July's bill, booked in August — it is July's. August's own bill. */
+    gl('360-0050', 'PREPAYMENT COMMISSION', 'ASSET', '2026-08-15', 120000, 0, { source_type: 'API', source_doc_no: 'API-1', notes: "REVENUE TEAM PAYROLL - JUL'26" }),
+    gl('360-0050', 'PREPAYMENT COMMISSION', 'ASSET', '2026-08-31', 90000, 0, { source_type: 'API', source_doc_no: 'API-2', notes: 'REVENUE TEAM PAYROLL AUG26' }),
+    /* The release July booked, and a hand journal on the same account. */
+    gl('900-C003', 'COMMISSION ( EVENT )', 'EXPENSE', '2026-07-31', 30000, 0, { source_type: 'COMMREL', source_doc_no: 'COMMREL-2-2026-07' }),
+    gl('360-0050', 'PREPAYMENT COMMISSION', 'ASSET', '2026-07-31', 0, 30000, { source_type: 'COMMREL', source_doc_no: 'COMMREL-2-2026-07' }),
+    gl('900-C003', 'COMMISSION ( EVENT )', 'EXPENSE', '2026-07-10', 5000, 0, { source_type: 'MANUAL' }),
+  ];
+
+  test('July shows July\'s bill and the hand journal; the release it booked is left out', async () => {
+    const { app, seed } = harnessWith(GL, ACCTS);
+    await seed();
+    const { status, body } = await read(app, 'from=2026-07-01&to=2026-07-31');
+    expect(status).toBe(200);
+    expect(body.commission).toEqual({ code: '900-C003', name: 'COMMISSION ( EVENT )', billSen: 120000, months: ['2026-07'], releaseSen: 30000 });
+    expect(body.otherExpenses.find((e: any) => e.code === '900-C003')).toEqual({ code: '900-C003', name: 'COMMISSION ( EVENT )', amountSen: 125000 });
+    const line = body.layout.expenses.find((n: any) => n.key === '900-C003');
+    expect(line.label).toBe('900-C003 COMMISSION ( EVENT ) — the commission bills for Jul 2026, in place of the monthly release');
+    expect(line.amountSen).toBe(125000);
+  });
+
+  test('a month whose account booked nothing still shows its bill', async () => {
+    const { app, seed } = harnessWith(GL, ACCTS);
+    await seed();
+    const { body } = await read(app, 'from=2026-08-01&to=2026-08-31');
+    expect(body.commission.billSen).toBe(90000);
+    expect(body.otherExpenses.find((e: any) => e.code === '900-C003')?.amountSen).toBe(90000);
+  });
+
+  test('a company with no commission bills reads as before', async () => {
+    const { app } = harness();
+    const { body } = await read(app, 'from=2026-07-01&to=2026-07-31');
+    expect(body.commission).toBeNull();
+    expect(body.otherExpenses.some((e: any) => e.code === '900-C003')).toBe(false);
+  });
+});

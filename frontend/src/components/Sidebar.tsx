@@ -847,6 +847,7 @@ export const NAV_TABS: NavTab[] = [
           { to: "/scm/accounting?tab=tb", label: "Trial balance", icon: Receipt, notWithParam: "in", anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.books"] },
           { to: "/scm/accounting?tab=check", label: "Self-check", icon: ClipboardCheck, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.books"] },
           { to: "/scm/accounting?tab=close", label: "Stock close", icon: History, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.books"] },
+          { to: "/scm/accounting?tab=commrel", label: "Commission release", icon: History, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.books"] },
         ],
       },
       {

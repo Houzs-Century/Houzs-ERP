@@ -199,6 +199,7 @@ import { CLAUDE_MODEL } from "./scm/lib/scan-ocr";
 import { runAgentHeartbeat } from "./services/agent-scheduler";
 import { getSupabaseService } from "./db/supabase";
 import { sweepStockClose } from "./acc/stock-close";
+import { sweepCommissionRelease } from "./acc/commission-release";
 import { retryOpenDoStamps } from "./scm/lib/do-shipped-from-retry";
 import { INTEGRITY_JOB, runNightlyIntegrity } from "./services/nightlyIntegrityRun";
 import { JOB_ALERTS_JOB, runJobFailureAlerts } from "./services/jobFailureAlerts";
@@ -1437,6 +1438,25 @@ export default {
             (changed.length ? ` — ${changed.map((o) => `${o.companyId}/${o.month}:${o.action}`).join(", ")}` : ""),
           );
         }).catch((e) => console.error("[cron stock-close]", e)),
+      );
+      // The monthly commission release (owner 2026-11-25: 系统自动转): every month
+      // from the books' start to last month worked out again for each company that
+      // switched it on — a month whose lines moved (a bill booked late, an invoice
+      // keyed back) is reversed on its own date and posted again. Counts only.
+      ctx.waitUntil(
+        track("commission-release", async () => {
+          const sb = getSupabaseService(env);
+          const { data, error } = await sb.schema("public").from("companies").select("id");
+          if (error) throw new Error(`companies: ${error.message}`);
+          const ids = ((data ?? []) as Array<{ id: number }>).map((r) => Number(r.id));
+          const outcomes = await sweepCommissionRelease(sb, ids, "cron");
+          const changed = outcomes.filter((o) => o.action !== "unchanged");
+          console.log(
+            `[cron commission-release] ${outcomes.length} month check(s), ${changed.length} change(s)` +
+            (changed.length ? ` — ${changed.map((o) => `${o.companyId}/${"month" in o ? o.month : "-"}:${o.action}`).join(", ")}` : ""),
+          );
+          if (outcomes.some((o) => o.action === "failed")) throw new Error("a commission release month failed — see acc_commission_release_runs");
+        }).catch((e) => console.error("[cron commission-release]", e)),
       );
       // Each lorry's day by road (owner 2026-11-08): the two days just gone are worked
       // out on the server, so Fleet Health and Lorry Capacity have every day whether or

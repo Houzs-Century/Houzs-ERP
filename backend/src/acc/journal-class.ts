@@ -35,6 +35,7 @@ const FIXED: Record<string, JournalClass> = {
   SETTLECARD: 'BANK', // card payments a bank movement took in itself (owner 2026-11-17)
   SETTLEFOR: 'BANK', // another company's card sale swiped on this terminal (owner 2026-11-17)
   STOCKADJ: 'GENERAL',
+  COMMREL: 'GENERAL', // the monthly commission release (acc/commission-release.ts)
   MANUAL: 'GENERAL',
   SOCONV: 'GENERAL', // money moved from a cancelled order to a new one (docs/bugs/0927)
   OPENING: 'GENERAL', // the books' opening balances (Houzs 31/08/2026, from AutoCount)

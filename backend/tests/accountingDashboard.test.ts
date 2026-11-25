@@ -401,7 +401,9 @@ describe('buildDashboard — reads', () => {
     expect(count('mfg_sales_order_items')).toBe(1);
     /* The Performance P&L's rate and the books' opening (acc/books-opening.ts), then the forecast's start sheet. */
     expect(count('acc_company_settings')).toBe(2 + 1);
-    expect(count('v_gl_entries')).toBe(1 + 5);
+    /* + 2: the Performance P&L's commission (acc/performance-commission.ts) — the
+       bills on the prepayment and the release on the expense, read once for every period. */
+    expect(count('v_gl_entries')).toBe(1 + 5 + 2);
     expect(count('acc_forecast_pnl')).toBe(1 + 1);
   });
 

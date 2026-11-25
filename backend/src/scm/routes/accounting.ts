@@ -79,6 +79,7 @@ import {
 import { itemGroupsList, itemGroupCreate, itemGroupBind, itemGroupPatch } from './accounting-item-groups';
 import { piPeriodicBackfill } from './accounting-pi-backfill';
 import { stockCloseStatus, stockCloseRun } from './accounting-stock-close';
+import { commissionReleaseOrders, commissionReleaseRun, commissionReleaseSettings, commissionReleaseStatus } from './accounting-commission-release';
 import { pnlReport, balanceSheetReport } from './accounting-reports';
 import { journalEntryEdit } from './accounting-journal-edit';
 import { reportLayoutGet, reportLayoutPut, reportLayoutReset } from './accounting-report-layouts';
@@ -213,6 +214,12 @@ accounting.post('/backfill/pi-periodic', piPeriodicBackfill);
    the manual run — the nightly close itself fires from the cron. */
 accounting.get('/stock-close', stockCloseStatus);
 accounting.post('/stock-close/run', stockCloseRun);
+/* The monthly commission release (owner 2026-11-25): what the prepayment holds
+   and releases, the switch and a manual run — the nightly run fires from the cron. */
+accounting.get('/commission-release', commissionReleaseStatus);
+accounting.get('/commission-release/orders', commissionReleaseOrders);
+accounting.post('/commission-release/run', commissionReleaseRun);
+accounting.post('/commission-release/settings', commissionReleaseSettings);
 /* The standard statements (GL redesign item 6) — one source (v_gl_entries),
    AutoCount arithmetic; handlers in accounting-reports.ts. */
 accounting.get('/reports/pnl', pnlReport);
