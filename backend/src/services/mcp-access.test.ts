@@ -63,3 +63,25 @@ describe("AI Connector access rules", () => {
     expect(isMcpInner("0".repeat(sec.length))).toBe(false);
   });
 });
+
+describe("money fields by the ERP's own cohorts", () => {
+  it("hides margin / profit / any cost from a non-finance, non-purchasing person", async () => {
+    const { redactMoney } = await import("./mcp-access");
+    const body = { rows: [{ soNo: "SO-1", totalSen: 100, unitCostSen: 60, marginPct: 40, contractor_cost: 5, cost_notes: "x" }] };
+    const { value, removed } = redactMoney(body, { finance: false, productCost: false });
+    expect(value).toEqual({ rows: [{ soNo: "SO-1", totalSen: 100 }] });
+    expect([...removed].sort()).toEqual(["contractor_cost", "cost_notes", "marginPct", "unitCostSen"]);
+  });
+
+  it("Purchasing (product cost) sees unit cost but not margin or project cost", async () => {
+    const { redactMoney } = await import("./mcp-access");
+    const { value } = redactMoney({ unitCostSen: 60, costPriceSen: 50, grossProfitSen: 9, fin_total_cost: 3 }, { finance: false, productCost: true });
+    expect(value).toEqual({ unitCostSen: 60, costPriceSen: 50 });
+  });
+
+  it("the finance cohort sees everything unchanged", async () => {
+    const { redactMoney } = await import("./mcp-access");
+    const body = { unitCostSen: 60, marginPct: 40 };
+    expect(redactMoney(body, { finance: true, productCost: true }).value).toBe(body);
+  });
+});

@@ -10,6 +10,7 @@ Staff ask Claude / ChatGPT / any remote-MCP app about the ERP with their OWN log
 - Read-only by construction: a tool call re-enters the app in-process as a GET. `middleware/auth.ts` accepts an `hzmcp_` token ONLY with the per-isolate `x-houzs-mcp-inner` header and ONLY for GET/HEAD; a token used directly against `/api/*` gets 403.
 - Own permissions: the inner call runs as the real user (`getUserById`), so every route's own permission, page access and company scope decide. `erp_get` takes `company` (HOUZS / 2990).
 - Never readable: sign-in, TOTP, PIN, private mail, sync, public portals, the connector itself (`services/mcp-access.ts MCP_BLOCKED_PREFIXES`). Credential-shaped fields are stripped from every reply.
+- Money fields by the ERP's own cohorts (`services/mcp-access.ts redactMoney`): margin / profit / any cost key only for `isFinanceViewer`; product / line unit cost also for `isProductCostViewer` (Purchasing). Unknown caller → all stripped. Added after the 2026-11-25 leak check found unitCostSen / costPriceSen / contractor_cost / fin_total_cost / cost_notes reaching a Sales Executive through the ERP's replies.
 - Who may connect: holders of `ai_connector.manage` (Owner via `*`) always; everyone else after approval (`mcp_access`). Staff request on System > AI Connector; admins get a bell notice.
 - Tokens: access 24 h, refresh 90 d (rotating), SHA-256 hashes only (`mcp_tokens`). Remove / Disconnect revokes at once.
 - Every lookup is logged (`mcp_calls`) and shown on the AI Connector page.
