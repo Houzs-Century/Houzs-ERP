@@ -6,7 +6,8 @@
 // deleted (what it held moves up a level — an account is never lost), moved
 // by drag or by the ↑ ↓ buttons, and ticked per company like the chart of
 // accounts. Accounts are the leaves; the block's accounts the tree does not
-// place sit under Unassigned, where the report prints them, until dragged in.
+// place (the report prints them under Unassigned) are their own table under
+// the tree (owner 2026-11-25) until placed, dragged in or picked up.
 // Nothing reaches the server until Save; Reset puts the chart's own tree back.
 // The block itself is never editable — the chart's section decides it.
 // The Cash Flow (owner 2026-09-18) adds a Direction column: a top category is
@@ -434,22 +435,28 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
     );
   });
 
+  /* A block's spares: the accounts its tree does not place — on the Cash Flow per side, the
+     accounts whose money in (or out) no line reads yet. */
+  const sparesOf = (block: LayoutBlockDef): Array<{ side: Side | null; rows: LayoutAccountRow[] }> => {
+    if (!draft || !data) return [];
+    return cashFlow
+      ? [{ side: 'in', rows: unplacedAccounts(draft, block, data.accounts, 'in') }, { side: 'out', rows: unplacedAccounts(draft, block, data.accounts, 'out') }]
+      : [{ side: null, rows: unplacedAccounts(draft, block, data.accounts) }];
+  };
+  /* Place puts a spare at the end of its block — on the Cash Flow inside the first category of its side. */
+  const sideCategory = (block: string, side: Side): LayoutCategory | null =>
+    (draft?.blocks[block] ?? []).find((it): it is LayoutCategory => it.kind === 'category' && (it.flow ?? 'in') === side) ?? null;
+  const placeSpare = (block: string, code: string, side: Side | null) => {
+    if (!draft) return;
+    if (side === null) { apply(placeItem(draft, block, { kind: 'account', code }, { kind: 'end' })); return; }
+    const into = sideCategory(block, side);
+    if (into) apply(placeItem(draft, block, { kind: 'account', code, flow: side }, { kind: 'into', categoryId: into.id }));
+  };
+
   const renderBlock = (block: LayoutBlockDef) => {
     if (!draft || !data) return null;
     const items = draft.blocks[block.key] ?? [];
-    /* The Cash Flow offers its spares per side: the accounts whose money in
-       (or out) no line reads yet; Place puts one inside the first category
-       of that side. */
-    const spares: Array<{ side: Side | null; rows: LayoutAccountRow[] }> = cashFlow
-      ? [{ side: 'in', rows: unplacedAccounts(draft, block, data.accounts, 'in') }, { side: 'out', rows: unplacedAccounts(draft, block, data.accounts, 'out') }]
-      : [{ side: null, rows: unplacedAccounts(draft, block, data.accounts) }];
-    const sideCategory = (side: Side): string | null =>
-      items.find((it): it is LayoutCategory => it.kind === 'category' && (it.flow ?? 'in') === side)?.id ?? null;
-    const placeSpare = (code: string, side: Side | null) => {
-      if (side === null) { apply(placeItem(draft, block.key, { kind: 'account', code }, { kind: 'end' })); return; }
-      const into = sideCategory(side);
-      if (into) apply(placeItem(draft, block.key, { kind: 'account', code, flow: side }, { kind: 'into', categoryId: into }));
-    };
+    const spareCount = sparesOf(block).reduce((n, sp) => n + sp.rows.length, 0);
     const blockKey = `block:${block.key}`;
     return (
       <Fragment key={block.key}>
@@ -474,49 +481,86 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
           <td colSpan={span - 2} />
         </tr>
         {renderItems(block.key, items, 1, undefined)}
-        {items.length === 0 && spares.every((sp) => sp.rows.length === 0) && (
-          <tr className={s.empty}><td colSpan={span}>No accounts in this block.</td></tr>
+        {items.length === 0 && (
+          <tr className={s.empty}>
+            <td colSpan={span}>{spareCount > 0 ? 'Nothing placed yet — its accounts are under Unassigned accounts below.' : 'No accounts in this block.'}</td>
+          </tr>
         )}
-        {spares.map(({ side, rows }) => rows.length > 0 && (
-          <Fragment key={side ?? 'all'}>
-            <tr className={s.spareHead} data-unassigned={side ? `${block.key}:${side}` : block.key}>
-              <td colSpan={span}>
-                {side
-                  ? `Unassigned ${side === 'in' ? 'receipts' : 'payments'} — printed as their own group at the foot until placed on the ${sideWord(side)} side`
-                  : `Unassigned — printed at the foot of ${block.title} until placed`}
-              </td>
-            </tr>
-            {rows.map((a) => {
-              const item: LayoutItem = side ? { kind: 'account', code: a.code, flow: side } : { kind: 'account', code: a.code };
-              const key = `spare:${side ?? 'all'}:${a.code}`;
-              const noSide = side !== null && sideCategory(side) === null;
-              return (
-                <tr key={a.code} data-kind="spare" className={rowClass(s.spare, key)} {...startDrag(block.key, item, key)}>
-                  <td className={s.shrink}>
-                    <span className={s.codeCell} style={indentOf(2)}>
-                      <span className={s.chevGap} aria-hidden />
-                      <span className={s.grip} title="Drag to move" aria-hidden><GripVertical {...ICON} /></span>
-                      <span className={s.code}>{a.code}</span>
-                    </span>
-                  </td>
-                  <td>{a.name}</td>
-                  {cashFlow && <td><span className={s.dirText}>{side ? sideWord(side) : ''}</span></td>}
-                  {cashFlow && <td />}
-                  {noTicks}
-                  <td />
-                  <td className={`${s.shrink} ${s.right}`}>
-                    <button type="button" className={s.place} aria-label={side ? `Place ${a.code} as ${sideWord(side)}` : `Place ${a.code}`}
-                      disabled={noSide} title={noSide ? `Add an ${sideWord(side)} category first` : undefined}
-                      onClick={() => placeSpare(a.code, side)}>
-                      Place
-                    </button>
-                  </td>
-                </tr>
-              );
-            })}
-          </Fragment>
-        ))}
       </Fragment>
+    );
+  };
+
+  /* Owner 2026-11-25 (unassigned 的可以和上面 assign 的区别掉吗？… 做成一个 table 在下面): what the
+     tree does not place is its own table under the tree, never rows of the tree — per block,
+     and on the Cash Flow per side. Place, drag a row onto the tree, or Pick up and Place here. */
+  const renderUnassigned = () => {
+    if (!draft || !data) return null;
+    const groups = data.blocks.flatMap((block) => sparesOf(block).map((sp) => ({ block, ...sp })));
+    const total = groups.reduce((n, g) => n + g.rows.length, 0);
+    const groupTitle = (block: LayoutBlockDef, side: Side | null): string => (side
+      ? `${side === 'in' ? 'Receipts' : 'Payments'} (${sideWord(side)}) — the report prints them under Unassigned ${side === 'in' ? 'receipts' : 'payments'} at its foot`
+      : `${block.title} — the report prints them under Unassigned at the foot of ${block.title}`);
+    return (
+      <section className={s.unassigned} aria-label="Unassigned accounts">
+        <div className={s.unassignedHead}>
+          <h3 className={s.unassignedTitle}>Unassigned accounts{' '}<span className={s.count}>{total}</span></h3>
+          <span className={s.sub}>
+            {total === 0
+              ? 'Every account is placed in the layout above.'
+              : `Not in the layout above yet. Place puts one ${cashFlow ? 'inside the first category of its side' : 'at the end of its block'}; or drag it onto a category above, or Pick up and Place here.`}
+          </span>
+        </div>
+        {total > 0 && (
+          <div className={s.scroll}>
+            <table className={`${s.table} ${s.spareTable}`}>
+              <thead>
+                <tr>
+                  <th>Account No.</th>
+                  <th>Name</th>
+                  <th className={s.right}><span className="sr-only">Actions</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                {groups.map(({ block, side, rows }) => rows.length > 0 && (
+                  <Fragment key={`${block.key}:${side ?? 'all'}`}>
+                    <tr className={s.spareHead} data-unassigned={side ? `${block.key}:${side}` : block.key}>
+                      <td colSpan={3}>{groupTitle(block, side)}{' '}<span className={s.count}>{rows.length}</span></td>
+                    </tr>
+                    {rows.map((a) => {
+                      const item: LayoutItem = side ? { kind: 'account', code: a.code, flow: side } : { kind: 'account', code: a.code };
+                      const key = `spare:${block.key}:${side ?? 'all'}:${a.code}`;
+                      const into = side === null ? null : sideCategory(block.key, side);
+                      const noSide = side !== null && into === null;
+                      return (
+                        <tr key={a.code} data-kind="spare" className={rowClass(s.spare, key)} {...startDrag(block.key, item, key)}>
+                          <td className={s.shrink}>
+                            <span className={s.codeCell}>
+                              <span className={s.grip} title="Drag onto a category above" aria-hidden><GripVertical {...ICON} /></span>
+                              <span className={s.code}>{a.code}</span>
+                            </span>
+                          </td>
+                          <td>{a.name}</td>
+                          <td className={`${s.shrink} ${s.right}`}>
+                            <span className={s.icons}>
+                              {pickUp(block.key, item, key, a.code)}
+                              <button type="button" className={s.place} aria-label={side ? `Place ${a.code} as ${sideWord(side)}` : `Place ${a.code}`}
+                                disabled={noSide}
+                                title={side === null ? `At the end of ${block.title}` : into ? `Inside ${into.label}` : `Add an ${sideWord(side)} category first`}
+                                onClick={() => placeSpare(block.key, a.code, side)}>
+                                Place
+                              </button>
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
     );
   };
 
@@ -564,7 +608,8 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
             <div className={s.note}>
               Drag a row onto a category to put it inside, onto an account to put it above, or use ↑ ↓. A tick means that
               company shows the category; unticked, its accounts print under Unassigned there. The block an account belongs
-              to follows its section on the chart of accounts.
+              to follows its section on the chart of accounts. Accounts not in the layout yet are listed under Unassigned
+              accounts, below it.
               {cashFlow && (
                 <>
                   {' '}On the Cash flow every top category is In or Out — that decides the sign of its lines and which total they
@@ -600,6 +645,7 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
                 <tbody>{data.blocks.map(renderBlock)}</tbody>
               </table>
             </div>
+            {renderUnassigned()}
           </>
         )}
       </section>
