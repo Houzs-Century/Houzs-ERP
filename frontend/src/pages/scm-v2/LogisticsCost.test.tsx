@@ -1,5 +1,6 @@
-/* The Logistics cost tab as the owner approved it on 2026-11-05 (demo
-   JoQSYerQXoWd7gQgWLrZQw). Pinned:
+/* The Logistics cost report as the owner approved it on 2026-11-05 (demo
+   JoQSYerQXoWd7gQgWLrZQw), the Department P&L's Logistics since 2026-11-25 (its
+   picker and its own place: DepartmentPnl.test.tsx). Pinned:
      • P&L: the regions across the top, a % beside every figure of its column's
        Delivery Order value, "Transport Income (1% of fair sales)" with its own rate;
      • By region & trip: one line per lorry and per carrier, the 3PL on no DO in
@@ -109,7 +110,7 @@ import { LogisticsCostTab } from './LogisticsCost';
 
 const draw = (search = '') => {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<MemoryRouter initialEntries={[`/finance/reports${search}`]}><QueryClientProvider client={qc}><LogisticsCostTab /></QueryClientProvider></MemoryRouter>);
+  return render(<MemoryRouter initialEntries={[`/finance/reports${search}`]}><QueryClientProvider client={qc}><LogisticsCostTab departmentPicker={null} /></QueryClientProvider></MemoryRouter>);
 };
 const putOf = (path: string) => fetchMock.mock.calls.filter(([p, i]) => p === path && i?.method === 'PUT').map(([, i]) => JSON.parse(String(i!.body)));
 const rowText = (table: HTMLElement, label: string) => within(table).getAllByText(label)[0]!.closest('tr')!.textContent;
@@ -170,7 +171,7 @@ describe('By region & trip', () => {
   });
 
   test('By month: Total first, then one column per month; split each month by region on a switch', async () => {
-    draw('?lv=region&lm=months');
+    draw('?lv=region&dm=months');
     const table = await screen.findByRole('table', { name: 'Delivery cost by region and trip' });
     const heads = within(table).getAllByRole('columnheader').map((h) => h.textContent);
     expect(heads[1]).toMatch(/^Total/);
@@ -205,7 +206,7 @@ describe('Repairs by lorry', () => {
   });
 
   test('By month: Total first, then one column per month, no split by region', async () => {
-    draw('?lv=repairs&lm=months');
+    draw('?lv=repairs&dm=months');
     const table = await screen.findByRole('table', { name: 'Repairs and maintenance by lorry' });
     expect(within(table).getAllByRole('columnheader').map((h) => h.textContent)[1]).toMatch(/^Total/);
     expect(screen.queryByRole('switch', { name: /Split each month by region/ })).toBeNull();

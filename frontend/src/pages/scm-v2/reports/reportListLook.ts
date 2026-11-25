@@ -15,7 +15,7 @@
 import type { LucideIcon } from 'lucide-react';
 import {
   ArrowLeftRight, Banknote, BarChart3, BookOpen, CalendarDays, CreditCard, FileText, Flag, Gauge, HandCoins, History,
-  LayoutDashboard, ListChecks, Network, Package, PieChart, Replace, Scale, TrendingUp, Truck, Users, Wallet,
+  LayoutDashboard, ListChecks, Network, Package, PieChart, Replace, Scale, TrendingUp, Users, Wallet,
 } from 'lucide-react';
 import type { ReportId } from '../reports-catalog';
 
@@ -23,12 +23,12 @@ import type { ReportId } from '../reports-catalog';
 export const PNL_ENTRY_LOOK: { label: string; icon: LucideIcon; desc: string } = {
   label: 'P&L',
   icon: BarChart3,
-  desc: 'Every P&L in one place, picked at the top: Actual from the books, Department, Performance from the orders, Product changes, Forecast',
+  desc: 'Every P&L in one place, picked at the top: Actual from the books, Department (Logistics among them), Performance from the orders, Product changes',
 };
 
 export const REPORT_LOOK: Readonly<Record<ReportId, { icon: LucideIcon; desc: string }>> = {
   pnl: { icon: BarChart3, desc: 'Income and expenses for a period on the report layout, with each line’s % of sales' },
-  departments: { icon: Network, desc: 'G&A and Operation against their shares, and every account split across the departments' },
+  departments: { icon: Network, desc: 'Each department by its own P&L: the Exhibition on its orders, Operation by its sheet, G&A against its share, Logistics with its whole cost report' },
   bs: { icon: Scale, desc: 'What the company owns and owes as at a day, with each line’s % of total assets' },
   rp: { icon: Banknote, desc: 'Money in and out of every bank and cash account, by layout row' },
   tb: { icon: ListChecks, desc: 'Debits and credits of every account; the difference must be 0.00' },
@@ -43,7 +43,6 @@ export const REPORT_LOOK: Readonly<Record<ReportId, { icon: LucideIcon; desc: st
   sotodo: { icon: PieChart, desc: "The month's orders by Processing Date, this month's and the backlog's, and the backlog cover rates with their average" },
   events: { icon: CalendarDays, desc: 'What each event cost, from the voucher and bill lines tagged with it' },
   commission: { icon: Users, desc: 'Each fair’s commission and the orders under it' },
-  logistics: { icon: Truck, desc: 'What delivery cost: by region, per trip, and setup & dismantle' },
   charges: { icon: CreditCard, desc: 'What each merchant charged against the gross, month by month, cash and online included' },
   forecast: { icon: Flag, desc: 'Months across, P&L accounts down on the layout tree, a target per account' },
   dashboard: { icon: LayoutDashboard, desc: 'The statements’ actuals beside the forecast, per month or quarter' },
